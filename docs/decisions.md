@@ -3506,3 +3506,32 @@ runs tests wants, and not what an interactive program started by one does.
 private context of `std.env` keeps them, computed the first time they are
 read: the standard library's own use of initial values computed once.
 
+## 2026-10-31 — Config files edited in place, and tools that wrap tools
+
+The rest of the seventeenth lot is what tools of the ddtest kind write and
+read. A tool that changes a CI file or a project's settings has to leave
+what a person wrote: re-encoding the YAML loses every comment and the order
+of keys. `yaml.Document` keeps the text and where each node is in it, and
+`set` replaces only the characters of the value it changes, as an editor
+would. It is a document of a config file, in memory whole; what is too big
+for that wants an event reader, which can come later. `writeTo` is there so
+that writing it back does not make a second copy, which `text()` would.
+
+A merge key `<<` is how such files share settings, and without it `job.x`
+was `none` where the reader sees a value; it is resolved where every map
+is made, so `parse`, `decode` and `Document.value` agree.
+
+`@omitNone` exists because APIs differ on whether a missing value is
+`null` or no key; `null` stays the default, as `encoding/json` and serde
+write, and the annotation goes on the field or on the whole type, where a
+request of a dozen optional fields wants it. `htmlSafe` is asked for, as
+Go escapes always, because only JSON put inside HTML needs it and the
+escapes make every other JSON harder to read.
+
+In `std.cli`, a command's options also work after its subcommands, because
+`app run --verbose` is what people type. `@cli.Rest` is for a command that
+runs another, as `ddtest run -- go test -v`: it gets what the command does
+not read, as written. `env` became a list because a renamed variable has to
+keep its old name working for a while, as `DATADOG_API_KEY` beside
+`DD_API_KEY`; the first that is set wins, and the help names them all.
+

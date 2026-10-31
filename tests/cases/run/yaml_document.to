@@ -1,0 +1,106 @@
+// A merge key `<<` brings the keys of an anchored map that the map lacks;
+// a `yaml.Document` keeps its text: `find` says where a value is and its
+// comment, and `set` changes a value or adds one and leaves the rest of
+// the text as it was.
+
+import std.console
+import std.io
+import std.yaml
+
+pub type Job = {
+    image: String
+    retries: Int
+    name: String
+}
+
+pub type Jobs = {
+    job: Job
+    other: Job
+}
+
+fn merged(): !yaml.YamlError {
+    let text =
+        "base: &b\n  image: alpine\n  retries: 1\nextra: &e\n  retries: 5\n  name: extra\njob:\n  <<: [*b, *e]\n  name: build\nother:\n  <<: *b\n  retries: 3\n  name: other\n"
+    let value = yaml.parse(text)?
+    console.println(
+        "{value.find("job.image")} {value.find("job.retries")} {value.find("job.name")}",
+    )
+    console.println("{value.find("other.image")} {value.find("other.retries")}")
+    let jobs: Jobs = yaml.decode(text, unknownFields: yaml.UnknownFields.Ignore)?
+    console.println("{jobs.job.image} {jobs.job.retries} {jobs.job.name} {jobs.other.retries}")
+    match yaml.parse("a:\n  <<: 3\n") {
+        ok(_) => console.println("merged a number")
+        err(failure) => console.println("{failure}")
+    }
+}
+
+fn edited(): !(yaml.YamlError | io.IoError) {
+    let text =
+        "# The build of the site.\nname: site   # its name\njobs:   # what runs\n  build:\n    # How long it may take.\n    timeout: 10\n    steps:\n      - checkout\n      - run: make   # the site\n  test: {{image: alpine}}\njobsX: 1\n"
+    var doc = yaml.load(text)?
+    match doc.find("jobs.build.timeout") {
+        some(node) => console.println("{node.value} at {node.line}:{node.column}, {node.comment}")
+        none => console.println("no timeout")
+    }
+    console.println(
+        "{doc.find("name").andThen((node) { node.comment })} {doc.find("jobs").andThen((node) { node.comment })}",
+    )
+    console.println(
+        "{doc.find("jobs.build").andThen((node) { node.comment })} {doc.find("jobs.build.steps[1].run").map((node) { node.value })}",
+    )
+    console.println("{doc.find("jobs.deploy").isNone()}")
+    doc.set("jobs.build.timeout", 30)?
+    doc.set("jobs.build.cache", true)?
+    doc.set("jobs.build.steps[2]", "deploy")?
+    doc.set("jobs.test.image", "debian")?
+    doc.set("owner.team.name", "web")?
+    doc.set("name", ["a", "b"])?
+    console.print(doc.text())
+    match doc.set("jobs.build.steps[5]", "far") {
+        ok(_) => console.println("set far")
+        err(failure) => console.println("{failure}")
+    }
+    let out = io.Buffer()
+    doc.writeTo(out.writer())?
+    console.println("{out.text()? == doc.text()}")
+}
+
+fn main() {
+    match merged() {
+        ok(_) => {}
+        err(failure) => console.println("{failure}")
+    }
+    match edited() {
+        ok(_) => {}
+        err(failure) => console.println("{failure}")
+    }
+}
+
+// expect-stdout: some(alpine) some(1) some(build)
+// expect-stdout: some(alpine) some(3)
+// expect-stdout: alpine 1 build 3
+// expect-stdout: a merge key `<<` takes a map, or a list of maps at $.a.<< (line 2, column 7)
+// expect-stdout: 10 at 6:14, some(How long it may take.)
+// expect-stdout: some(its name) some(what runs)
+// expect-stdout: none some(make)
+// expect-stdout: true
+// expect-stdout: # The build of the site.
+// expect-stdout: name:   # its name
+// expect-stdout:   - a
+// expect-stdout:   - b
+// expect-stdout: jobs:   # what runs
+// expect-stdout:   build:
+// expect-stdout:     # How long it may take.
+// expect-stdout:     timeout: 30
+// expect-stdout:     steps:
+// expect-stdout:       - checkout
+// expect-stdout:       - run: make   # the site
+// expect-stdout:       - deploy
+// expect-stdout:     cache: true
+// expect-stdout:   test: {image: debian}
+// expect-stdout: jobsX: 1
+// expect-stdout: owner:
+// expect-stdout:   team:
+// expect-stdout:     name: web
+// expect-stdout: the list has 3 items, and `set` adds only the next one, `jobs.build.steps[3]` at $.jobs.build.steps[5]
+// expect-stdout: true

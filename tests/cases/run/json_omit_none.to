@@ -1,0 +1,51 @@
+// `@omitNone` leaves a field that is `none` out of every format, on the
+// field or on its whole record, where JSON writes `null` by default;
+// decoding still reads it missing as `none`. `htmlSafe: true` escapes what
+// would end a `<script>` around the JSON.
+
+import std.console
+import std.json
+import std.yaml
+
+pub type Profile = {
+    name: String
+    @omitNone
+    nickname: String?
+    email: String?
+}
+
+@omitNone
+pub type Query = {
+    @name("q")
+    text: String?
+    page: Int?
+    tags: Array[String]?
+}
+
+fn main(): !json.JsonError {
+    let profile = Profile { name: "Ana", nickname: none, email: none }
+    console.println(json.encode(profile))
+    console.println(json.encode(Profile { name: "Ana", nickname: some("an"), email: some("a@b") }))
+    console.println(json.encode(Query { text: some("x"), page: none, tags: none }))
+    console.println(json.encode(Query { text: none, page: none, tags: none }))
+    console.print(yaml.encode(Query { text: none, page: some(2), tags: none }))
+    let back: Profile = json.decode("{{\"name\": \"Bo\", \"email\": null}}")?
+    console.println("{back.name} {back.nickname} {back.email}")
+    let script = ["html": "</script><b>&</b>"]
+    console.println(json.encode(script))
+    console.println(json.encode(script, htmlSafe: true))
+    console.println(json.encode("\u{2028}\u{2029}", htmlSafe: true))
+    let decoded: Map[String, String] = json.decode(json.encode(script, htmlSafe: true))?
+    console.println("{decoded == script}")
+}
+
+// expect-stdout: {"name":"Ana","email":null}
+// expect-stdout: {"name":"Ana","nickname":"an","email":"a@b"}
+// expect-stdout: {"q":"x"}
+// expect-stdout: {}
+// expect-stdout: page: 2
+// expect-stdout: Bo none none
+// expect-stdout: {"html":"</script><b>&</b>"}
+// expect-stdout: {"html":"\u003c/script\u003e\u003cb\u003e\u0026\u003c/b\u003e"}
+// expect-stdout: "\u2028\u2029"
+// expect-stdout: true

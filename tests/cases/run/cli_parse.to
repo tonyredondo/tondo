@@ -26,7 +26,7 @@ pub type Build = {
     @cli.Argument
     source: String?
     /// Where to write the site.
-    @cli.Option(short: "d", default: "public", env: "SITE_DESTINATION")
+    @cli.Option(short: "d", default: "public", env: ["SITE_DESTINATION"])
     destination: String
     /// Writes the drafts too.
     @cli.Option(short: "D")

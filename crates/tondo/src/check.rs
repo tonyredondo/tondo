@@ -3772,7 +3772,10 @@ impl<'a> Checker<'a> {
     /// `@packed` or `@align(n)`.
     fn c_type_declaration(&mut self, decl: &ast::TypeDecl) -> bool {
         if !decl.foreign {
-            if let Some(annotation) = decl.annotations.first() {
+            // `@omitNone` leaves out of every format the record's fields that
+            // are `none`.
+            let record = matches!(decl.body, ast::TypeBody::Record(_));
+            if let Some(annotation) = decl.annotations.iter().find(|a| !(record && a.name.name == "omitNone")) {
                 let (code, message) = match annotation.name.name.as_str() {
                     "packed" | "align" | "union" => (
                         "E1704",
@@ -4309,7 +4312,17 @@ impl<'a> Checker<'a> {
                         self.diags.error("E1616", annotation.span, message);
                     }
                     ("name", Some(_)) => {}
-                    ("ignore", None) if matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Error) => {}
+                    ("ignore" | "omitNone", None)
+                        if matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Error) => {}
+                    ("omitNone", None) => {
+                        let message = format!(
+                            "`@omitNone` leaves out a field that is `none`, and `{}` is not optional: write `{}: {}?`, or leave out `@omitNone`",
+                            field.name.name,
+                            field.name.name,
+                            self.types.display(ty)
+                        );
+                        self.diags.error("E1102", annotation.span, message);
+                    }
                     ("ignore", None) => {
                         let message = format!(
                             "an ignored field is optional, since decoding leaves it `none`: write `{}: {}?`",
@@ -4324,7 +4337,7 @@ impl<'a> Checker<'a> {
                     }
                     _ => {
                         let message = format!(
-                            "unknown annotation `@{}`; a field takes `@name(\"text\")` or `@ignore`",
+                            "unknown annotation `@{}`; a field takes `@name(\"text\")`, `@ignore` or `@omitNone`",
                             annotation.name.name
                         );
                         self.diags.error("E1001", annotation.span, message);

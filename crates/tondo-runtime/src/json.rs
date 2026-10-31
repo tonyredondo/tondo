@@ -710,6 +710,9 @@ struct Writer {
     out: String,
     pretty: bool,
     canonical: bool,
+    /// `htmlSafe`: `<`, `>`, `&`, U+2028 and U+2029 escaped, so the output
+    /// can go inside an HTML page's script.
+    html: bool,
     /// Per open container: whether it has members yet, and whether a key was
     /// just written.
     open: Vec<(bool, bool)>,
@@ -728,21 +731,35 @@ pub struct WriterObject {
     writer: Mutex<Writer>,
 }
 
-fn quote(out: &mut String, text: &str) {
+/// A text as a JSON string; with `html`, also safe inside an HTML page.
+fn quote(out: &mut String, text: &str, html: bool) {
     out.push('"');
     // The runs that need no escape go in whole.
     let mut run = 0;
-    for (at, byte) in text.bytes().enumerate() {
-        let escape = match byte {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x08 => "\\b",
-            0x0c => "\\f",
-            0x00..=0x1f => "",
-            _ => continue,
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let (escape, length) = match byte {
+            b'"' => ("\\\"", 1),
+            b'\\' => ("\\\\", 1),
+            b'\n' => ("\\n", 1),
+            b'\r' => ("\\r", 1),
+            b'\t' => ("\\t", 1),
+            0x08 => ("\\b", 1),
+            0x0c => ("\\f", 1),
+            0x00..=0x1f => ("", 1),
+            b'<' if html => ("\\u003c", 1),
+            b'>' if html => ("\\u003e", 1),
+            b'&' if html => ("\\u0026", 1),
+            // U+2028 and U+2029, which end a line of JavaScript.
+            0xe2 if html && bytes.get(at + 1) == Some(&0x80) && matches!(bytes.get(at + 2), Some(0xa8 | 0xa9)) => {
+                (if bytes[at + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }, 3)
+            }
+            _ => {
+                at += 1;
+                continue;
+            }
         };
         out.push_str(&text[run..at]);
         if escape.is_empty() {
@@ -750,7 +767,8 @@ fn quote(out: &mut String, text: &str) {
         } else {
             out.push_str(escape);
         }
-        run = at + 1;
+        at += length;
+        run = at;
     }
     out.push_str(&text[run..]);
     out.push('"');
@@ -859,7 +877,7 @@ impl Writer {
             return;
         }
         self.separator();
-        quote(&mut self.out, name);
+        quote(&mut self.out, name, self.html);
         self.out.push_str(if self.pretty { ": " } else { ":" });
         if let Some((_, keyed)) = self.open.last_mut() {
             *keyed = true;
@@ -904,7 +922,7 @@ impl Writer {
                             if index > 0 {
                                 out.push(',');
                             }
-                            quote(out, key);
+                            quote(out, key, false);
                             out.push(':');
                             emit(value, out);
                         }
@@ -954,12 +972,14 @@ fn writer<'a>(object: *mut WriterObject) -> Guard<'a> {
     Guard(unsafe { (*object).writer.lock().unwrap_or_else(|e| e.into_inner()) })
 }
 
-fn writer_object(pretty: u8, canonical: u8, sink: Option<Source>) -> *mut WriterObject {
+fn writer_object(pretty: u8, canonical: u8, html: u8, sink: Option<Source>) -> *mut WriterObject {
     LIVE_OBJECTS.made();
     let writer = Writer {
         out: String::new(),
         pretty: pretty != 0 && canonical == 0,
         canonical: canonical != 0,
+        // Canonical output has one way to write each text.
+        html: html != 0 && canonical == 0,
         open: Vec::new(),
         stack: Vec::new(),
         root: None,
@@ -970,21 +990,22 @@ fn writer_object(pretty: u8, canonical: u8, sink: Option<Source>) -> *mut Writer
     Box::into_raw(Box::new(WriterObject { rc: AtomicUsize::new(1), writer: Mutex::new(writer) }))
 }
 
-/// `jsonnative.writer(pretty, canonical)`
+/// `jsonnative.writer(pretty, canonical, htmlSafe)`
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8) -> *mut WriterObject {
-    writer_object(pretty, canonical, None)
+pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8, html: u8) -> *mut WriterObject {
+    writer_object(pretty, canonical, html, None)
 }
 
-/// `jsonnative.streamWriter(stream, pretty, canonical)`: passes the output
-/// to the stream as it grows.
+/// `jsonnative.streamWriter(stream, pretty, canonical, htmlSafe)`: passes
+/// the output to the stream as it grows.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_stream_writer(
     stream: *mut StreamObject,
     pretty: u8,
     canonical: u8,
+    html: u8,
 ) -> *mut WriterObject {
-    writer_object(pretty, canonical, Some(Source(retain(stream))))
+    writer_object(pretty, canonical, html, Some(Source(retain(stream))))
 }
 
 /// The first failure to write a stream writer's stream, or empty.
@@ -1076,12 +1097,13 @@ pub unsafe extern "C" fn tondo_rt_json_write_string(object: *mut WriterObject, t
     let mut w = writer(object);
     if w.canonical {
         let mut quoted = String::new();
-        quote(&mut quoted, &text);
+        quote(&mut quoted, &text, false);
         return w.leaf(quoted);
     }
     // Quoted straight into the output.
     w.separator();
-    quote(&mut w.out, &text);
+    let html = w.html;
+    quote(&mut w.out, &text, html);
 }
 
 #[unsafe(no_mangle)]
@@ -1139,7 +1161,7 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
             }
             STRING => {
                 let mut quoted = String::new();
-                quote(&mut quoted, &r.text);
+                quote(&mut quoted, &r.text, w.html);
                 w.leaf(quoted)
             }
             BEGIN_ARRAY => w.begin(false),

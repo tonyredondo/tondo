@@ -76,6 +76,7 @@ impl Kind {
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
             (Kind::Reflect, "sql") => matches!(name, "Database" | "SqlError"),
+            (Kind::Reflect, "time") => name == "Duration",
             _ => false,
         }
     }
@@ -484,6 +485,12 @@ fn ignored(field: &ast::FieldDecl) -> bool {
     field.annotations.iter().any(|a| a.name.name == "ignore")
 }
 
+/// Whether a field that is `none` is left out of every format: `@omitNone`
+/// on it or on its record.
+fn omits_none(field: &ast::FieldDecl, record: bool) -> bool {
+    record || field.annotations.iter().any(|a| a.name.name == "omitNone")
+}
+
 /// The formats whose annotations the implementations give them as notes
 /// (standard library 14.7).
 const NOTED: &[&str] = &["xml"];
@@ -555,7 +562,8 @@ impl Generator<'_> {
         match item {
             ast::Item::Type(t) => match &t.body {
                 ast::TypeBody::Record(fields) => {
-                    out.push_str(&self.write_fields((&t.name.name, &t.uses), fields, "self.", "        "))
+                    let omits = t.annotations.iter().any(|a| a.name.name == "omitNone");
+                    out.push_str(&self.write_fields((&t.name.name, &t.uses), fields, omits, "self.", "        "))
                 }
                 ast::TypeBody::Newtype(_) => out.push_str(&format!("        {s}.Encode.encode(self.value, out)\n")),
                 ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
@@ -588,7 +596,7 @@ impl Generator<'_> {
                             out.push_str(&format!("            {path} {{ {} }} => {{\n", names.join(", ")));
                             out.push_str(&format!("                out.beginMap(1)\n                out.key({key})\n"));
                             let record = (variant.name.name.as_str(), variant.uses.as_slice());
-                            out.push_str(&self.write_fields(record, fields, "__field_", "                "));
+                            out.push_str(&self.write_fields(record, fields, false, "__field_", "                "));
                             out.push_str("                out.endMap()\n            }\n");
                         }
                     }
@@ -603,11 +611,13 @@ impl Generator<'_> {
 
     /// The statements that write the fields of a record as a map, each
     /// value read as `{prefix}name`, after the record's name and notes. A
-    /// format without null leaves out the optional ones that are `none`.
+    /// format without null leaves out the optional ones that are `none`, and
+    /// every format those of `@omitNone`, or all of them with `omits`.
     fn write_fields(
         &self,
         (name, uses): (&str, &[ast::AnnotationUse]),
         fields: &[ast::FieldDecl],
+        omits: bool,
         prefix: &str,
         indent: &str,
     ) -> String {
@@ -621,8 +631,9 @@ impl Generator<'_> {
             out.push_str(&format!("{indent}var __count = {}\n", written.len()));
             for field in written.iter().filter(|f| optional(f)) {
                 let name = &field.name.name;
+                let omitted = if omits_none(field, omits) { "true" } else { "out.omitsNone()" };
                 out.push_str(&format!(
-                    "{indent}let __skip_{name} = match {prefix}{name} {{\n{indent}    none => out.omitsNone()\n{indent}    _ => false\n{indent}}}\n{indent}if __skip_{name} {{\n{indent}    __count -= 1\n{indent}}}\n"
+                    "{indent}let __skip_{name} = match {prefix}{name} {{\n{indent}    none => {omitted}\n{indent}    _ => false\n{indent}}}\n{indent}if __skip_{name} {{\n{indent}    __count -= 1\n{indent}}}\n"
                 ));
             }
             "__count".to_string()

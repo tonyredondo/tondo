@@ -16,7 +16,7 @@ fn text<'a>(s: *const Str) -> &'a str {
     std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
 }
 
-fn ints(values: &[i64]) -> *mut ArrayHeader {
+pub(crate) fn ints(values: &[i64]) -> *mut ArrayHeader {
     let array = super::tondo_rt_array_new(8, values.len());
     for (index, &value) in values.iter().enumerate() {
         unsafe { *(super::element(array, 8, index) as *mut i64) = value };

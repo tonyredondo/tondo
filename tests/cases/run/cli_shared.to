@@ -1,0 +1,112 @@
+// The options of a command are read after its subcommand too; a
+// `@cli.Rest` field takes what the command does not read, to pass on;
+// `time.Duration` options read `30s` or `1m30s`; and `env` names the
+// variables read before an option's default, the first that is set.
+
+import std.cli
+import std.console
+import std.env
+import std.time
+
+/// Runs tasks.
+pub type App = {
+    /// Prints more.
+    @cli.Option(short: "v")
+    verbose: Bool
+    /// The key of the service.
+    @cli.Option(env: ["APP_KEY", "LEGACY_KEY"])
+    key: String?
+    @cli.Argument
+    command: Task
+}
+
+pub enum Task {
+    /// Runs a program.
+    Run(Run)
+    /// Waits.
+    Wait {
+        /// How long.
+        @cli.Option(default: "1s")
+        timeout: time.Duration
+    }
+}
+
+pub type Run = {
+    /// Stops it after this long.
+    timeout: time.Duration?
+    @cli.Argument
+    program: String
+    @cli.Rest(name: "program-args")
+    args: Array[String]
+}
+
+fn show(args: Array[String]) {
+    match cli.parseArgs[App](args) {
+        ok(app) => {
+            let command = match app.command {
+                Task.Run(run) => "run {run.program} {run.args} {run.timeout}"
+                Task.Wait { timeout } => "wait {timeout}"
+            }
+            console.println("{app.verbose} {app.key} {command}")
+        }
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main() {
+    show(["-v", "run", "ls"])
+    show(["run", "ls", "--verbose"])
+    show(["run", "-v", "--timeout", "1m30s", "ls", "-la", "--color=auto", "dir"])
+    show(["run", "ls", "--", "--verbose", "-v"])
+    show(["wait"])
+    show(["wait", "--timeout=250ms", "-v"])
+    show(["wait", "--timeout", "soon"])
+    env.set("LEGACY_KEY", "old")
+    show(["wait"])
+    env.set("APP_KEY", "new")
+    show(["wait"])
+    show(["--key", "given", "wait"])
+    show(["run", "--help"])
+    console.print(cli.completions[App](cli.Shell.Fish))
+}
+
+// expect-stdout: true none run ls [] none
+// expect-stdout: true none run ls [] none
+// expect-stdout: true none run ls [-la, --color=auto, dir] some(1m30s)
+// expect-stdout: false none run ls [--verbose, -v] none
+// expect-stdout: false none wait 1s
+// expect-stdout: true none wait 250ms
+// expect-stdout: error: --timeout: `soon` is not a duration, as `30s`, `1m30s` or `250ms`
+// expect-stdout: 
+// expect-stdout: Usage: cli_shared wait [options]
+// expect-stdout: 
+// expect-stdout: For more, try `cli_shared wait --help`.
+// expect-stdout: false some(old) wait 1s
+// expect-stdout: false some(new) wait 1s
+// expect-stdout: false some(given) wait 1s
+// expect-stdout: Runs a program.
+// expect-stdout: 
+// expect-stdout: Usage: cli_shared run [options] <program> [-- <program-args>...]
+// expect-stdout: 
+// expect-stdout: Arguments:
+// expect-stdout:   <program>
+// expect-stdout: 
+// expect-stdout: Options:
+// expect-stdout:       --timeout <timeout>  Stops it after this long.
+// expect-stdout:   -v, --verbose            Prints more.
+// expect-stdout:       --key <key>          The key of the service. [env: APP_KEY, LEGACY_KEY]
+// expect-stdout:   -h, --help               Shows this help.
+// expect-stdout: 
+// expect-stdout: complete -c cli_shared -f -n '__fish_use_subcommand' -l help
+// expect-stdout: complete -c cli_shared -f -n '__fish_use_subcommand' -l verbose
+// expect-stdout: complete -c cli_shared -f -n '__fish_use_subcommand' -l key
+// expect-stdout: complete -c cli_shared -f -n '__fish_use_subcommand' -a run
+// expect-stdout: complete -c cli_shared -f -n '__fish_use_subcommand' -a wait
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from run' -l help
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from run' -l timeout
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from run' -l verbose
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from run' -l key
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from wait' -l help
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from wait' -l timeout
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from wait' -l verbose
+// expect-stdout: complete -c cli_shared -f -n '__fish_seen_subcommand_from wait' -l key

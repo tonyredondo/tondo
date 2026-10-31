@@ -1248,9 +1248,9 @@ pub const NATIVES: &[Native] = {
     }
     &[
         f("reader", &[String, Bool], JsonReader, "tondo_rt_json_reader"),
-        f("writer", &[Bool, Bool], JsonWriter, "tondo_rt_json_writer"),
+        f("writer", &[Bool, Bool, Bool], JsonWriter, "tondo_rt_json_writer"),
         f("streamReader", &[IoReader, Bool], JsonReader, "tondo_rt_json_stream_reader"),
-        f("streamWriter", &[IoWriter, Bool, Bool], JsonWriter, "tondo_rt_json_stream_writer"),
+        f("streamWriter", &[IoWriter, Bool, Bool, Bool], JsonWriter, "tondo_rt_json_stream_writer"),
         f("isInt", &[String], Bool, "tondo_rt_json_is_int"),
         f("parseInt", &[String], Int, "tondo_rt_json_parse_int"),
         f("parseFloat", &[String], Float, "tondo_rt_json_parse_float"),
@@ -1534,6 +1534,10 @@ pub const NATIVES: &[Native] = {
         yaml("writeOpen", &[Object, Bool], Unit, "tondo_rt_yaml_write_open"),
         yaml("writeClose", &[Object], Unit, "tondo_rt_yaml_write_close"),
         yaml("finish", &[Object], String, "tondo_rt_yaml_finish"),
+        yaml("outline", &[String], Object, "tondo_rt_yaml_outline"),
+        yaml("outlinePaths", &[Object], Strings, "tondo_rt_yaml_outline_paths"),
+        yaml("outlineNumbers", &[Object], Ints, "tondo_rt_yaml_outline_numbers"),
+        yaml("outlineError", &[Object], String, "tondo_rt_yaml_outline_error"),
         msgpack("parse", &[Bytes], Object, "tondo_rt_msgpack_parse"),
         msgpack("next", &[Object], Int, "tondo_rt_msgpack_next"),
         msgpack("text", &[Object], String, "tondo_rt_msgpack_text"),

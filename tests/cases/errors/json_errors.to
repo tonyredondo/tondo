@@ -10,6 +10,8 @@ type Settings = {
     secret: String
     @rename("x")
     other: Int
+    @omitNone
+    count: Int
 }
 
 fn main() {
@@ -19,5 +21,6 @@ fn main() {
 
 // expect-error: E1105 `Handler` does not implement `serialization.Encode`, which `json.encode` requires of `T`
 // expect-error: E1102 an ignored field is optional, since decoding leaves it `none`: write `secret: String?`
-// expect-error: E1001 unknown annotation `@rename`; a field takes `@name("text")` or `@ignore`
+// expect-error: E1001 unknown annotation `@rename`; a field takes `@name("text")`, `@ignore` or `@omitNone`
+// expect-error: E1102 `@omitNone` leaves out a field that is `none`, and `count` is not optional: write `count: Int?`, or leave out `@omitNone`
 // expect-error: E1102 expected `Array[Int]`, found `Array[Int] ! serialization.Error`: add `?` to pass the failure on, give a fallback with `.unwrapOr(value)`, or handle it with `match`

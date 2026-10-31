@@ -11,6 +11,7 @@ import std.process as __process
 import std.reflect as __reflect
 import std.shapes as __shapes
 import std.sync as __sync
+import std.time as __time
 import std.validate as __validate
 
 // ---------------------------------------------------------------------------
@@ -24,13 +25,22 @@ pub annotation Argument = {
 }
 
 /// How a field is written as an option: its letter, its value when it is
-/// missing, written as on the command line, the variable of the
-/// environment read before it, and whether the help leaves it out.
+/// missing, written as on the command line, the variables of the
+/// environment read before it, the first that is set, and whether the help
+/// leaves it out.
 pub annotation Option = {
     short: String? = none
     default: String? = none
-    env: String? = none
+    env: Array[String] = []
     hidden: Bool = false
+}
+
+/// Makes a field, an `Array[String]`, take what the command does not read:
+/// the arguments after `--`, the options it does not declare and the
+/// arguments past its own, as written, to pass them on to another program.
+pub annotation Rest = {
+    /// What the help calls them.
+    name: String = "args"
 }
 
 impl __reflect.Reflect for Argument {
@@ -42,6 +52,12 @@ impl __reflect.Reflect for Argument {
 impl __reflect.Reflect for Option {
     fn reflectShow(self, nested: Bool): String {
         "cli.Option"
+    }
+}
+
+impl __reflect.Reflect for Rest {
+    fn reflectShow(self, nested: Bool): String {
+        "cli.Rest"
     }
 }
 
@@ -141,9 +157,11 @@ type Spec = {
     docs: String
     short: String?
     default: String?
-    env: String?
+    env: Array[String]
     hidden: Bool
     positional: Bool
+    /// `@cli.Rest`: what the command does not read.
+    rest: Bool
     info: __reflect.TypeInfo
 }
 
@@ -152,9 +170,18 @@ fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
         (field) {
             let argument = field.annotation[Argument]()
             let option = field.annotation[Option]().unwrapOr(Option {})
+            let rest = field.annotation[Rest]()
+            if rest.isSome() and "{field.typeInfo()}" != "Array[String]" {
+                panic(
+                    "`@cli.Rest` takes what a command passes on as written: declare `{field.name()}: Array[String]`",
+                )
+            }
             Spec {
                 field: field.name()
-                name: kebab(field.name())
+                name: match rest {
+                    some(found) => found.name
+                    none => kebab(field.name())
+                }
                 docs: field.docs().unwrapOr("")
                 short: option.short
                 default: match argument {
@@ -164,6 +191,7 @@ fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
                 env: option.env
                 hidden: option.hidden
                 positional: argument.isSome()
+                rest: rest.isSome()
                 info: field.typeInfo()
             }
         },
@@ -213,17 +241,27 @@ fn usageError(path: String, problem: String, usage: String): CliError {
 /// The value a command line writes of a record or an enum.
 fn valueOf(info: __reflect.TypeInfo, args: Array[String], path: String): __reflect.Value ! CliError {
     match info.kind() {
-        __reflect.TypeKind.Enum => subcommand(info, args, path)?
-        __reflect.TypeKind.Record => __shapes.record(
-            members(info.fields(), info.docs(), args, path)?,
-        )
+        __reflect.TypeKind.Enum => {
+            var lifted: Map[String, Array[String]] = [:]
+            subcommand(info, args, path, [], var lifted)?
+        }
+        __reflect.TypeKind.Record => {
+            var lifted: Map[String, Array[String]] = [:]
+            __shapes.record(members(info.fields(), info.docs(), args, path, [], var lifted)?)
+        }
         _ => panic("std.cli reads a command line into a record or an enum, and `{info}` is neither")
     }
 }
 
-/// The subcommand the arguments start with, and what it reads of the rest.
-fn subcommand(info: __reflect.TypeInfo, args: Array[String], path: String): __reflect.Value !
-    CliError {
+/// The subcommand the arguments start with, and what it reads of the rest;
+/// the options of the commands around it that come after it go to `lifted`.
+fn subcommand(
+    info: __reflect.TypeInfo,
+    args: Array[String],
+    path: String,
+    outer: Array[Spec],
+    lifted: var Map[String, Array[String]],
+): __reflect.Value ! CliError {
     let usage = commandsUsage(info, path)
     let first = match args.first() {
         some(first) => first
@@ -257,7 +295,7 @@ fn subcommand(info: __reflect.TypeInfo, args: Array[String], path: String): __re
         __reflect.VariantPayloadKind.Record => {
             __shapes.variant(
                 chosen.name(),
-                members(chosen.fields(), chosen.docs(), rest, inner)?,
+                members(chosen.fields(), chosen.docs(), rest, inner, outer, var lifted)?,
                 [],
             )
         }
@@ -271,9 +309,11 @@ fn subcommand(info: __reflect.TypeInfo, args: Array[String], path: String): __re
             let payload = match parts[0].kind() {
                 __reflect.TypeKind.Record => {
                     let docs = parts[0].docs().orElse(chosen.docs())
-                    __shapes.record(members(parts[0].fields(), docs, rest, inner)?)
+                    __shapes.record(
+                        members(parts[0].fields(), docs, rest, inner, outer, var lifted)?,
+                    )
                 }
-                __reflect.TypeKind.Enum => subcommand(parts[0], rest, inner)?
+                __reflect.TypeKind.Enum => subcommand(parts[0], rest, inner, outer, var lifted)?
                 _ => panic(
                     "std.cli reads the payload of `{chosen.name()}` when it is one record or one enum",
                 )
@@ -283,16 +323,24 @@ fn subcommand(info: __reflect.TypeInfo, args: Array[String], path: String): __re
     }
 }
 
-/// The members of a record that the arguments write.
-fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String], path: String): Map[
-    String,
-    __reflect.Value,
-] !
-    CliError {
+/// The members of a record that the arguments write. An option of the
+/// commands around it, `outer`, may come after its subcommand: it goes to
+/// `lifted`, for the command that has it.
+fn members(
+    fields: Array[__reflect.FieldInfo],
+    docs: String?,
+    args: Array[String],
+    path: String,
+    outer: Array[Spec],
+    lifted: var Map[String, Array[String]],
+): Map[String, __reflect.Value] ! CliError {
     let specs = specsOf(fields)
     let usage = recordUsage(specs, path)
-    let options = specs.filter((spec) { not spec.positional })
+    let options = specs.filter((spec) { not spec.positional and not spec.rest })
     let arguments = specs.filter((spec) { spec.positional })
+    let rest = specs.find((spec) { spec.rest })
+    // Those of the commands around it that it does not shadow.
+    let shared = outer.filter((spec) { not options.any((own) { own.name == spec.name }) })
     var written: Map[String, Array[String]] = [:]
     var found: Map[String, __reflect.Value] = [:]
     var position = 0
@@ -302,10 +350,19 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
         let arg = args[index]
         index += 1
         if not plain and (arg == "-h" or arg == "--help") {
-            fail CliError { message: recordHelp(specs, docs, path), help: true }
+            fail CliError { message: recordHelp(specs.concat(shared), docs, path), help: true }
         }
         if not plain and arg == "--" {
-            plain = true
+            match rest {
+                some(spec) => {
+                    written[spec.field] = written
+                        .get(spec.field)
+                        .unwrapOr([])
+                        .concat(args.drop(index))
+                    index = args.length()
+                }
+                none => plain = true
+            }
             continue
         }
         if not plain and arg.startsWith("--") {
@@ -313,15 +370,23 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
                 some(at) => (arg.slice(2, at).unwrapOr(""), arg.slice(at + 1, arg.length()).ok())
                 none => (arg.removePrefix("--"), none)
             }
-            let spec = match options.find((spec) { spec.name == name }) {
-                some(spec) => spec
-                none => {
-                    let known = options.map((spec) { "--{spec.name}" })
-                    fail usageError(
-                        path,
-                        "unknown option `--{name}`{suggested("--{name}", known)}",
-                        usage,
-                    )
+            // Its own, one of the commands around it, or what it passes on.
+            let (spec, owner) = match options.find((spec) { spec.name == name }) {
+                some(spec) => (spec, true)
+                none => match (shared.find((spec) { spec.name == name }), rest) {
+                    (some(spec), _) => (spec, false)
+                    (none, some(passed)) => {
+                        written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                        continue
+                    }
+                    (none, none) => {
+                        let known = options.map((spec) { "--{spec.name}" })
+                        fail usageError(
+                            path,
+                            "unknown option `--{name}`{suggested("--{name}", known)}",
+                            usage,
+                        )
+                    }
                 }
             }
             let value = match (arityOf(spec), inline) {
@@ -335,21 +400,44 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
                     none => fail usageError(path, "`--{name}` needs a value", usage)
                 }
             }
-            written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+            if owner {
+                written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+            } else {
+                lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat([value])
+            }
             continue
         }
         if not plain and arg.startsWith("-") and arg.length() > 1 and not (arg[1].isDigit()) {
+            // Letters this command does not know go on whole, with a `Rest`.
+            let letters = arg.slice(1, arg.length()).unwrapOr("")
+            let knows = (letter: Char) {
+                options.concat(shared).any((spec) { spec.short == some("{letter}") })
+            }
+            match rest {
+                some(passed) if not letters.chars().all(knows) => {
+                    written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                    continue
+                }
+                _ => {}
+            }
             // Letters together, the last of which may take the rest as its value.
             var at = 1
             for at < arg.length() {
                 let letter = "{arg[at]}"
                 at += 1
-                let spec = match options.find((spec) { spec.short == some(letter) }) {
-                    some(spec) => spec
-                    none => fail usageError(path, "unknown option `-{letter}`", usage)
+                let (spec, owner) = match options.find((spec) { spec.short == some(letter) }) {
+                    some(spec) => (spec, true)
+                    none => match shared.find((spec) { spec.short == some(letter) }) {
+                        some(spec) => (spec, false)
+                        none => fail usageError(path, "unknown option `-{letter}`", usage)
+                    }
                 }
                 if arityOf(spec) == Arity.Flag {
-                    written[spec.field] = written.get(spec.field).unwrapOr([]).concat(["true"])
+                    if owner {
+                        written[spec.field] = written.get(spec.field).unwrapOr([]).concat(["true"])
+                    } else {
+                        lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat(["true"])
+                    }
                     continue
                 }
                 let value = if at < arg.length() {
@@ -363,18 +451,34 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
                         none => fail usageError(path, "`-{letter}` needs a value", usage)
                     }
                 }
-                written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+                if owner {
+                    written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+                } else {
+                    lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat([value])
+                }
                 at = arg.length()
             }
             continue
         }
         // A positional argument; an enum's takes the rest as its command.
-        let spec = match arguments.get(position) {
-            some(spec) => spec
-            none => fail usageError(path, "unexpected argument `{arg}`", usage)
+        let spec = match (arguments.get(position), rest) {
+            (some(spec), _) => spec
+            (none, some(passed)) => {
+                written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                continue
+            }
+            (none, none) => fail usageError(path, "unexpected argument `{arg}`", usage)
         }
         if arityOf(spec) == Arity.Commands {
-            found[spec.field] = subcommand(spec.info, args.drop(index - 1), path)?
+            // Its options may come after it too.
+            found[spec.field] =
+                subcommand(
+                    spec.info,
+                    args.drop(index - 1),
+                    path,
+                    options.concat(shared),
+                    var written,
+                )?
             index = args.length()
             continue
         }
@@ -389,7 +493,7 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
         }
         var texts = written.get(spec.field).unwrapOr([])
         if texts.isEmpty() {
-            match spec.env.map((name) { __env.get(name) }) {
+            match spec.env.map((name) { __env.get(name) }).find((value) { value.isSome() }) {
                 some(some(value)) => texts = [value]
                 _ => {}
             }
@@ -424,6 +528,12 @@ fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String
             }
         }
     }
+    // What a command around it has, for that command.
+    for (field, texts) in written {
+        if not specs.any((spec) { spec.field == field }) {
+            lifted[field] = lifted.get(field).unwrapOr([]).concat(texts)
+        }
+    }
     found
 }
 
@@ -450,8 +560,16 @@ fn typed(info: __reflect.TypeInfo, written: String, shown: String, path: String,
             some(inner) => typed(inner, written, shown, path, usage)?
             none => panic("std.cli cannot read a `{info}`")
         }
+        _ if "{info}" == "time.Duration" => match __time.parseDuration(written) {
+            ok(duration) => __reflect.valueOf(duration)
+            err(_) => fail usageError(
+                path,
+                "{shown}: `{written}` is not a duration, as `30s`, `1m30s` or `250ms`",
+                usage,
+            )
+        }
         _ => panic(
-            "std.cli reads texts, characters, numbers, `Bool`s and enums without data, optional or in arrays, and not a `{info}`",
+            "std.cli reads texts, characters, numbers, `Bool`s, durations and enums without data, optional or in arrays, and not a `{info}`",
         )
     }
 }
@@ -535,7 +653,11 @@ fn recordUsage(specs: Array[Spec], path: String): String {
     if specs.any((spec) { not spec.positional }) {
         line = "{line} [options]"
     }
-    for spec in specs.filter((spec) { spec.positional }) {
+    for spec in specs.filter((spec) { spec.positional or spec.rest }) {
+        if spec.rest {
+            line = "{line} [-- <{spec.name}>...]"
+            continue
+        }
         line = match arityOf(spec) {
             Arity.Optional => "{line} [{spec.name}]"
             Arity.Many => "{line} [{spec.name}...]"
@@ -562,7 +684,7 @@ fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
         }
     }
     var rows: Array[(String, String)] = []
-    for spec in specs.filter((spec) { not spec.positional and not spec.hidden }) {
+    for spec in specs.filter((spec) { not spec.positional and not spec.hidden and not spec.rest }) {
         let letter = match spec.short {
             some(short) => "-{short}, "
             none => "    "
@@ -590,9 +712,8 @@ fn details(spec: Spec): String {
         some(value) => written = "{written} [default: {value}]"
         none => {}
     }
-    match spec.env {
-        some(name) => written = "{written} [env: {name}]"
-        none => {}
+    if not spec.env.isEmpty() {
+        written = "{written} [env: {spec.env.join(", ")}]"
     }
     written.trim()
 }
@@ -608,7 +729,11 @@ type Completed = {
     words: Array[String]
 }
 
-fn completedOf(info: __reflect.TypeInfo, path: Array[String]): Array[Completed] {
+/// What completes each command; `shared` are the options of the commands
+/// around it, which it reads too.
+fn completedOf(info: __reflect.TypeInfo, path: Array[String], shared: Array[String]): Array[
+    Completed,
+] {
     var found: Array[Completed] = []
     match info.kind() {
         __reflect.TypeKind.Enum => {
@@ -619,35 +744,41 @@ fn completedOf(info: __reflect.TypeInfo, path: Array[String]): Array[Completed] 
                 let inner = path.concat([kebab(variant.name())])
                 match variant.payloadKind() {
                     __reflect.VariantPayloadKind.Record => found.extend(
-                        fieldsCompleted(variant.fields(), inner),
+                        fieldsCompleted(variant.fields(), inner, shared),
                     )
                     __reflect.VariantPayloadKind.Tuple => {
                         for part in variant.tupleElements() {
-                            found.extend(completedOf(part, inner))
+                            found.extend(completedOf(part, inner, shared))
                         }
                     }
                     __reflect.VariantPayloadKind.Unit => found.push(
-                        Completed { path: inner, words: [] },
+                        Completed { path: inner, words: shared },
                     )
                 }
             }
         }
-        __reflect.TypeKind.Record => found.extend(fieldsCompleted(info.fields(), path))
+        __reflect.TypeKind.Record => found.extend(fieldsCompleted(info.fields(), path, shared))
         _ => {}
     }
     found
 }
 
-fn fieldsCompleted(fields: Array[__reflect.FieldInfo], path: Array[String]): Array[Completed] {
+fn fieldsCompleted(fields: Array[__reflect.FieldInfo], path: Array[String], shared: Array[String]): Array[
+    Completed,
+] {
     let specs = specsOf(fields)
     var words: Array[String] = ["--help"]
-    var found: Array[Completed] = []
     for spec in specs {
-        if not spec.positional and not spec.hidden {
+        if not spec.positional and not spec.hidden and not spec.rest {
             words.push("--{spec.name}")
         }
+    }
+    let own = words
+    words.extend(shared.filter((word) { not own.any((known) { known == word }) }))
+    var found: Array[Completed] = []
+    for spec in specs {
         if arityOf(spec) == Arity.Commands {
-            found.extend(completedOf(spec.info, path))
+            found.extend(completedOf(spec.info, path, words.filter((word) { word != "--help" })))
         }
     }
     found.insert(0, Completed { path, words })
@@ -657,7 +788,7 @@ fn fieldsCompleted(fields: Array[__reflect.FieldInfo], path: Array[String]): Arr
 /// The script that completes the program's command line in `shell`.
 pub fn completions[T: __reflect.Reflect](shell: Shell): String {
     let name = program()
-    let commands = completedOf(__reflect.typeInfo[T](), [])
+    let commands = completedOf(__reflect.typeInfo[T](), [], [])
     let function = "_{name.replace("-", "_")}"
     match shell {
         Shell.Fish => {

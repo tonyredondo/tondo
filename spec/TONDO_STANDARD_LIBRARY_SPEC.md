@@ -3003,6 +3003,10 @@ pub trait Decode {
   es `Null`; un formato sin null (`omitsNone`) omite el campo, y un campo
   opcional ausente se decodifica como `none`. Un campo obligatorio ausente da
   `Missing`; uno desconocido se ignora salvo que el `Source` lo rechace.
+- `@omitNone` en un campo opcional lo omite en todo formato cuando es `none`,
+  en vez de escribir `Null`; en un record, omite así todos sus campos
+  opcionales. En un campo que no es opcional es `E1102`. Decodificar no
+  cambia: el campo ausente es `none`.
 - Un record se lee miembro a miembro con `nextField(names)`, donde `names`
   son sus claves en orden de declaración: da el índice en `names` de la
   clave del miembro siguiente, leído hasta su valor, o `none` al final del
@@ -3443,9 +3447,9 @@ pub alias ErrorKind = serialization.ErrorKind
 pub alias JsonError = serialization.Error
 pub enum UnknownFields { Ignore, Reject }
 
-pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false): String
+pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): String
 pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
-pub fn encodeTo[T: Encode](value: T, stream: io.Writer, pretty: Bool = false, canonical: Bool = false): Unit ! JsonError
+pub fn encodeTo[T: Encode](value: T, stream: io.Writer, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Unit ! JsonError
 pub fn decodeFrom[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
 pub fn parse(text: String): Value ! JsonError
 pub fn toValue[T: Encode](value: T): Value
@@ -3474,8 +3478,8 @@ pub type Reader
 pub type Writer
 pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
 pub fn readerFrom(stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
-pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer
-pub fn writerTo(stream: io.Writer, pretty: Bool = false, canonical: Bool = false): Writer
+pub fn writer(pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
+pub fn writerTo(stream: io.Writer, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
 pub fn Reader.next(self): Event? ! JsonError
 pub fn Writer.null(self)
 pub fn Writer.bool(self, value: Bool)
@@ -3505,6 +3509,10 @@ Codificación tipada:
   [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785.html): claves
   ordenadas por unidades UTF-16, sin espacios y números como doubles. Un float
   no finito se escribe `null`.
+- `htmlSafe` escribe `<`, `>`, `&`, U+2028 y U+2029 en los strings como
+  `\u003c`, `\u003e`, `\u0026`, `\u2028` y `\u2029`, para poner el JSON
+  dentro de un `<script>` de HTML sin que lo cierre. `canonical` lo ignora,
+  porque JCS fija la forma de cada string.
 
 Documentos dinámicos:
 
@@ -3747,6 +3755,7 @@ pub fn encode[T: serialization.Encode](value: T): String
 pub fn encodeAll[T: serialization.Encode](values: Array[T]): String
 pub fn parse(text: String): Value ! YamlError
 pub fn parseAll(text: String): Array[Value] ! YamlError
+pub fn load(text: String): Document ! YamlError
 
 pub fn Value.isNull(self): Bool
 pub fn Value.get(self, key: String): Value?
@@ -3759,6 +3768,14 @@ pub fn Value.asBool(self): Bool?
 pub fn Value.asArray(self): Array[Value]?
 pub fn Value.asMap(self): Map[String, Value]?
 impl Display for Value                             // como documento YAML
+
+pub type Document                                  // un documento que conserva su texto
+pub type Node = { value: Value, line: Int, column: Int, comment: String? }
+pub fn Document.value(self): Value
+pub fn Document.find(self, path: String): Node?    // `jobs.build.steps[0]`; la raíz es `""`
+pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError
+pub fn Document.text(self): String
+pub fn Document.writeTo(self, out: io.Writer): !io.IoError
 ~~~
 
 - El schema implícito es Core: `null`, `~` y un escalar vacío son null; `true` y
@@ -3768,14 +3785,36 @@ impl Display for Value                             // como documento YAML
   cabe en `Int` es un `Number`.
 - Solo se aceptan los tags core (`!!str`, `!!int`, `!!float`, `!!bool`, `!!null`,
   `!!seq`, `!!map`); un tag propio es un error. Las claves son texto y no se
-  repiten en un mapa; `<<` no tiene semántica de merge. `.inf` y `.nan` son un
-  error, y un float no finito se escribe `null`.
+  repiten en un mapa. `.inf` y `.nan` son un error, y un float no finito se
+  escribe `null`.
+- Una clave `<<` es de merge: su valor, un mapa o una lista de mapas
+  (normalmente alias), aporta las claves que el mapa no tiene, y en una lista
+  gana el primero que la tiene. `parse` y `decode` ven el mapa ya mezclado;
+  otro valor bajo `<<` es un error.
 - Un alias repite el valor de su ancla, que debe estar completa antes; un
   documento no puede superar el millón de valores con sus alias expandidos.
 - `decode` exige exactamente un documento; `decodeAll` y `parseAll` leen todos
   los que separa `---`, y `encodeAll` los escribe así. Un texto que necesita
   comillas se escribe entre ellas, y uno de varias líneas como bloque `|`.
 - Los errores llevan el camino, la línea y la columna del valor.
+- Un `Document` es para editar un archivo de configuración sin perder lo que
+  escribió una persona. `load` lee el primer documento del texto y guarda el
+  texto y dónde está cada nodo. `find` da el valor de un camino de claves e
+  índices, su línea y columna, desde 1, y su comentario sin `#`: el de su
+  línea, o el de la línea de su clave si es un mapa o una lista en bloque, o
+  si no las líneas de comentario justo encima de su clave. Una clave que
+  aporta `<<` está en `value()` pero no es un nodo del texto.
+- `set` escribe el valor como lo escribe `encode`: en lugar del anterior,
+  como clave nueva al final de su mapa, o como el elemento siguiente al
+  final de su lista, con las claves que falten del camino; un índice más allá
+  del siguiente es un error. El resto del texto queda igual, byte a byte: sus
+  comentarios, su orden y sus estilos. El comentario de la línea de la clave
+  se queda en ella; los de dentro de un mapa o una lista que se reemplaza se
+  van con ellos. Un mapa o una lista en estilo flow, `{...}` o `[...]`, que
+  gana una clave o un elemento se escribe de nuevo en bloque.
+- `text` da el texto con sus cambios y `writeTo` lo escribe en un stream sin
+  copiarlo. El documento entero está en memoria, como texto y como el índice
+  de sus nodos.
 
 ### 14.14 `std.toml`
 
@@ -5388,7 +5427,7 @@ pub type Build = {
     @cli.Argument
     source: String?
     /// Where to write the site.
-    @cli.Option(short: "d", default: "public", env: "SITE_DESTINATION")
+    @cli.Option(short: "d", default: "public", env: ["SITE_DESTINATION"])
     destination: String
     /// Writes the drafts too.
     drafts: Bool
@@ -5405,7 +5444,8 @@ match cli.parse[Site]() {
 
 ~~~tondo pseudocode
 pub annotation Argument = { default: String? = none }
-pub annotation Option = { short: String? = none, default: String? = none, env: String? = none, hidden: Bool = false }
+pub annotation Option = { short: String? = none, default: String? = none, env: Array[String] = [], hidden: Bool = false }
+pub annotation Rest = { name: String = "args" }
 pub type CliError = { message: String, help: Bool }
 pub enum Shell { Bash, Zsh, Fish }
 
@@ -5432,13 +5472,15 @@ pub fn secret(question: String): String
 
 - Cada campo de un record es una opción `--nombre`, en kebab-case (`dryRun` es
   `--dry-run`). `@cli.Option` le da una letra (`-d`), un valor por defecto
-  escrito como en la línea de comandos y una variable de entorno que se lee si
-  falta; `hidden` la quita de la ayuda.
+  escrito como en la línea de comandos y variables de entorno que se leen si
+  falta, antes que el defecto: `env: ["DD_API_KEY", "DATADOG_API_KEY"]`, por
+  orden de preferencia, la primera que existe; `hidden` la quita de la ayuda.
 - `@cli.Argument` hace del campo un argumento posicional, en el orden de los
   campos: uno `T?` es opcional y va tras los obligatorios, uno `Array[T]` toma
   los que quedan y va el último.
-- Un valor es un texto, un `Char`, un número, un `Bool` o un enum sin datos
-  (sus variantes en kebab-case), o `T?` y `Array[T]` de ellos. Un `Bool` es un
+- Un valor es un texto, un `Char`, un número, un `Bool`, un `time.Duration`
+  escrito como lo lee `time.parseDuration` (`30s`, `1m30s`, `250ms`) o un enum
+  sin datos (sus variantes en kebab-case), o `T?` y `Array[T]` de ellos. Un `Bool` es un
   flag: `--drafts` lo pone a `true`, y también `--drafts=false`. Un `T?` que
   falta es `none`, un `Array[T]` está vacío, y otro sin defecto es obligatorio.
   Un `Array[T]` se repite: `--section a --section b`.
@@ -5447,11 +5489,20 @@ pub fn secret(question: String): String
   una sin payload no las tiene. Un enum dentro de otro da subcomandos anidados,
   y un argumento cuyo tipo es un enum elige un subcomando, con las opciones del
   record que lo tiene para todos.
+- Las opciones de un comando valen también tras sus subcomandos: con
+  `verbose` en el record de arriba, `app --verbose run` y `app run --verbose`
+  son lo mismo. Una opción del subcomando con el mismo nombre o la misma letra
+  la tapa. La ayuda y el autocompletado de un subcomando las muestran.
+- Un campo `Array[String]` con `@cli.Rest` recibe lo que el comando no lee,
+  tal como se escribió, para pasarlo a otro programa: lo que sigue a `--`, las
+  opciones que no declara, con sus letras si alguna es desconocida, y los
+  argumentos que sobran. El uso lo muestra como `[-- <args>...]`, con el
+  nombre que da `name`. Sin él, todo eso es un error.
 - Se aceptan `--nombre=valor`, `-d valor`, `-dvalor`, flags juntos (`-ab`) y
   `--` para terminar las opciones.
 - `-h` y `--help` dan la ayuda del comando al que se ha llegado: su
   descripción, su uso, sus subcomandos, y sus opciones con su ayuda, su defecto
-  y su variable.
+  y sus variables, `[env: DD_API_KEY, DATADOG_API_KEY]`.
 - Un tipo que `std.cli` no lee es un pánico que dice los que lee.
 - Las reglas de `std.validate` de los campos se comprueban al leer: una que
   se rompe es un error que nombra la opción, `` `--age` must be at least 18``

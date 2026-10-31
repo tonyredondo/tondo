@@ -69,11 +69,14 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 enum Frame {
     List(usize),
     /// A map, whether its next node is a key, its keys so far and the key
-    /// of the value being read.
+    /// of the value being read; where the value of a merge key `<<` starts
+    /// while it is read, and the entries merged into the map, by key.
     Map {
         key: bool,
         keys: Vec<String>,
         current: String,
+        merge: Option<usize>,
+        merged: Vec<(String, Vec<Event>)>,
     },
 }
 
@@ -111,13 +114,35 @@ impl Builder {
         matches!(self.frames.last(), Some(Frame::Map { key: true, .. }))
     }
 
-    /// After a value: the map waits for a key, the list counts it.
-    fn done(&mut self) {
-        match self.frames.last_mut() {
-            Some(Frame::List(index)) => *index += 1,
-            Some(Frame::Map { key, .. }) => *key = true,
-            None => {}
+    /// After a value: the map waits for a key, the list counts it. The
+    /// value of a merge key becomes the entries the map merges.
+    fn done(&mut self, line: usize, column: usize) -> Result<(), Failure> {
+        let start = match self.frames.last_mut() {
+            Some(Frame::List(index)) => {
+                *index += 1;
+                None
+            }
+            Some(Frame::Map { key, merge, .. }) => {
+                *key = true;
+                merge.take()
+            }
+            None => None,
+        };
+        let Some(start) = start else { return Ok(()) };
+        let value = self.events.split_off(start);
+        let path = self.path();
+        let map = path.strip_suffix(".<<").unwrap_or(&path).to_string();
+        let Some(entries) = merged(&value, &map) else {
+            return Err(self.failure("a merge key `<<` takes a map, or a list of maps", line, column));
+        };
+        if let Some(Frame::Map { merged, .. }) = self.frames.last_mut() {
+            for (key, events) in entries {
+                if !merged.iter().any(|(k, _)| *k == key) {
+                    merged.push((key, events));
+                }
+            }
         }
+        Ok(())
     }
 
     fn push(&mut self, code: i64, line: usize, column: usize) -> Result<&mut Event, Failure> {
@@ -129,15 +154,23 @@ impl Builder {
         Ok(self.events.last_mut().unwrap())
     }
 
-    /// A key of the innermost map.
-    fn key(&mut self, key: String, line: usize, column: usize) -> Result<(), Failure> {
-        let Some(Frame::Map { key: expecting, keys, current }) = self.frames.last_mut() else { return Ok(()) };
+    /// A key of the innermost map; a plain `<<` merges the maps its value
+    /// gives, whose keys the map's own take over.
+    fn key(&mut self, key: String, plain: bool, line: usize, column: usize) -> Result<(), Failure> {
+        let start = self.events.len();
+        let Some(Frame::Map { key: expecting, keys, current, merge, .. }) = self.frames.last_mut() else {
+            return Ok(());
+        };
         if keys.contains(&key) {
             return Err(self.failure(format!("the key `{key}` appears twice in this map"), line, column));
         }
         keys.push(key.clone());
         *current = key.clone();
         *expecting = false;
+        if plain && key == "<<" {
+            *merge = Some(start);
+            return Ok(());
+        }
         self.push(KEY, line, column)?.text = key;
         Ok(())
     }
@@ -157,7 +190,7 @@ impl Builder {
                     if tag.as_ref().is_some_and(|t| !t.is_yaml_core_schema() || t.suffix != "str") {
                         return Err(self.failure("a key is text", line, column));
                     }
-                    return self.key(value.into_owned(), line, column);
+                    return self.key(value.into_owned(), style == ScalarStyle::Plain, line, column);
                 }
                 let first = self.events.len();
                 self.scalar(&value, style, tag.as_deref(), line, column)?;
@@ -166,7 +199,7 @@ impl Builder {
                     let recorded = self.events[first..].iter().map(|e| relative(e, base)).collect();
                     self.anchors.insert(anchor, recorded);
                 }
-                self.done();
+                self.done(line, column)?;
             }
             Parsed::Alias(anchor) => {
                 if self.at_key() {
@@ -191,12 +224,30 @@ impl Builder {
                     e.path = format!("{base}{}", e.path);
                     e
                 }));
-                self.done();
+                self.done(line, column)?;
             }
             Parsed::SequenceStart(anchor, tag) => self.open(false, anchor, tag, line, column)?,
             Parsed::MappingStart(anchor, tag) => self.open(true, anchor, tag, line, column)?,
             Parsed::SequenceEnd | Parsed::MappingEnd => {
-                let map = matches!(self.frames.pop(), Some(Frame::Map { .. }));
+                let closed = self.frames.pop();
+                let map = matches!(closed, Some(Frame::Map { .. }));
+                // The merged entries whose keys the map does not have.
+                if let Some(Frame::Map { keys, merged, .. }) = closed {
+                    let path = self.path();
+                    for (key, value) in merged.into_iter().filter(|(key, _)| !keys.contains(key)) {
+                        if self.events.len() + value.len() >= LIMIT {
+                            return Err(self.failure(
+                                format!("the document holds more than {LIMIT} values"),
+                                line,
+                                column,
+                            ));
+                        }
+                        let mut named = value[0].clone();
+                        (named.code, named.text, named.path) = (KEY, key.clone(), format!("{path}.{key}"));
+                        self.events.push(named);
+                        self.events.extend(value);
+                    }
+                }
                 self.push(if map { END_MAP } else { END_LIST }, line, column)?;
                 if let Some(&(anchor, first, ref path, depth)) = self.open.last()
                     && depth == self.frames.len()
@@ -206,7 +257,7 @@ impl Builder {
                     self.anchors.insert(anchor, recorded);
                     self.open.pop();
                 }
-                self.done();
+                self.done(line, column)?;
             }
             _ => {}
         }
@@ -240,7 +291,7 @@ impl Builder {
             self.open.push((anchor, first, self.path(), self.frames.len()));
         }
         self.frames.push(if map {
-            Frame::Map { key: true, keys: Vec::new(), current: String::new() }
+            Frame::Map { key: true, keys: Vec::new(), current: String::new(), merge: None, merged: Vec::new() }
         } else {
             Frame::List(0)
         });
@@ -305,6 +356,80 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// The entries a merge key's value gives: those of its map, or of each map
+/// of its list, the first map's taking over; each value's events with
+/// paths of the map `map` merges into. `None` for another value.
+fn merged(value: &[Event], map: &str) -> Option<Vec<(String, Vec<Event>)>> {
+    let maps: Vec<&[Event]> = match value.first()?.code {
+        BEGIN_MAP => vec![value],
+        BEGIN_LIST => {
+            let mut maps = Vec::new();
+            let mut depth = 0;
+            let mut start = 0;
+            for (index, event) in value.iter().enumerate().skip(1) {
+                match event.code {
+                    BEGIN_MAP | BEGIN_LIST => {
+                        if depth == 0 {
+                            start = index;
+                        }
+                        depth += 1;
+                    }
+                    END_MAP | END_LIST if depth > 0 => {
+                        depth -= 1;
+                        if depth == 0 {
+                            maps.push(&value[start..=index]);
+                        }
+                    }
+                    END_LIST => {}
+                    _ if depth == 0 => return None,
+                    _ => {}
+                }
+            }
+            maps
+        }
+        _ => return None,
+    };
+    let mut entries: Vec<(String, Vec<Event>)> = Vec::new();
+    for one in maps {
+        if one.first()?.code != BEGIN_MAP {
+            return None;
+        }
+        // The path of the merged map, which its events start with.
+        let base = one[0].path.len();
+        let mut index = 1;
+        while index < one.len() - 1 {
+            let key = &one[index];
+            let start = index + 1;
+            let mut end = start;
+            let mut depth = 0;
+            loop {
+                match one[end].code {
+                    BEGIN_MAP | BEGIN_LIST => depth += 1,
+                    END_MAP | END_LIST => depth -= 1,
+                    _ => {}
+                }
+                end += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            if !entries.iter().any(|(k, _)| *k == key.text) {
+                let events = one[start..end]
+                    .iter()
+                    .map(|event| {
+                        let mut event = event.clone();
+                        event.path = format!("{map}{}", event.path.get(base..).unwrap_or_default());
+                        event
+                    })
+                    .collect();
+                entries.push((key.text.clone(), events));
+            }
+            index = end;
+        }
+    }
+    Some(entries)
 }
 
 /// An event with its path from the node at `base` bytes of path on.
@@ -626,4 +751,200 @@ pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject) -> *mut Str {
         out.push('\n');
     }
     str_new(out.as_bytes())
+}
+
+// ---------------------------------------------------------------------------
+// The outline of a document, for `yaml.Document`
+// ---------------------------------------------------------------------------
+
+/// A node of a document, as `yaml.Document` finds and changes it in its
+/// text, with offsets in characters.
+struct Outlined {
+    /// As `jobs.build.steps[0]`; empty for the root.
+    path: String,
+    /// 0 a scalar or an alias, 1 a map, 2 a list; 3 and 4 a map and a list
+    /// written in flow style, `{...}` and `[...]`.
+    kind: i64,
+    start: usize,
+    end: usize,
+    line: usize,
+    column: usize,
+    /// Right after the `:` of its key; none for a list's item and the root.
+    after_key: Option<usize>,
+    /// The column its key, or its item's `-`, starts at.
+    indent: usize,
+}
+
+/// The nodes of the first document of a text, or why it is not one.
+struct Outline {
+    nodes: Vec<Outlined>,
+    error: String,
+}
+
+/// A collection being outlined: its node, and its key or its count.
+enum Opened {
+    Map { node: usize, key: Option<(String, usize, usize)> },
+    List { node: usize, count: usize },
+}
+
+fn outline(source: &str) -> Result<Vec<Outlined>, String> {
+    let bytes = source.as_bytes();
+    let mut nodes: Vec<Outlined> = Vec::new();
+    let mut open: Vec<Opened> = Vec::new();
+    // The path, `after_key` and indent of the node that comes next.
+    let place = |open: &Vec<Opened>, nodes: &Vec<Outlined>, start: usize| -> (String, Option<usize>, usize) {
+        match open.last() {
+            Some(Opened::Map { node, key: Some((key, after, indent)) }) => {
+                let parent = &nodes[*node].path;
+                let path = if parent.is_empty() { key.clone() } else { format!("{parent}.{key}") };
+                (path, Some(*after), *indent)
+            }
+            Some(Opened::List { node, count }) => {
+                // The `-` before a block item, or the item for a flow one.
+                let mut dash = start;
+                while dash > 0 && bytes[dash - 1] == b' ' {
+                    dash -= 1;
+                }
+                let dash = if dash > 0 && bytes[dash - 1] == b'-' { dash - 1 } else { start };
+                let line_start = source[..dash].rfind('\n').map_or(0, |i| i + 1);
+                (format!("{}[{count}]", nodes[*node].path), None, dash - line_start)
+            }
+            _ => (String::new(), None, 0),
+        }
+    };
+    let mut documents = 0;
+    for result in Parser::new_from_str(source) {
+        let (event, span) =
+            result.map_err(|failure| format!("{} at line {}", failure.info(), failure.marker().line()))?;
+        let (start, end) = (span.start.index(), span.end.index());
+        match event {
+            Parsed::DocumentStart(_) => {
+                documents += 1;
+                if documents > 1 {
+                    break;
+                }
+            }
+            Parsed::Scalar(text, ..) if matches!(open.last(), Some(Opened::Map { key: None, .. })) => {
+                // A key: where its `:` ends, and its column.
+                let mut colon = end;
+                while colon < bytes.len() && matches!(bytes[colon], b' ' | b'\t') {
+                    colon += 1;
+                }
+                let after = if colon < bytes.len() && bytes[colon] == b':' { colon + 1 } else { end };
+                let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+                if let Some(Opened::Map { key, .. }) = open.last_mut() {
+                    *key = Some((text.into_owned(), after, start - line_start));
+                }
+            }
+            Parsed::Scalar(..) | Parsed::Alias(_) => {
+                let (path, after_key, indent) = place(&open, &nodes, start);
+                let (line, column) = (span.start.line(), span.start.col() + 1);
+                nodes.push(Outlined { path, kind: 0, start, end, line, column, after_key, indent });
+                finished(&mut open, &mut nodes, end);
+            }
+            Parsed::MappingStart(..) | Parsed::SequenceStart(..) => {
+                let map = matches!(event, Parsed::MappingStart(..));
+                let flow = bytes.get(start).is_some_and(|b| matches!(b, b'{' | b'['));
+                let kind = match (map, flow) {
+                    (true, false) => 1,
+                    (false, false) => 2,
+                    (true, true) => 3,
+                    (false, true) => 4,
+                };
+                let (path, after_key, indent) = place(&open, &nodes, start);
+                let (line, column) = (span.start.line(), span.start.col() + 1);
+                nodes.push(Outlined { path, kind, start, end: start, line, column, after_key, indent });
+                let node = nodes.len() - 1;
+                open.push(if map { Opened::Map { node, key: None } } else { Opened::List { node, count: 0 } });
+            }
+            Parsed::MappingEnd | Parsed::SequenceEnd => {
+                let Some(Opened::Map { node, .. } | Opened::List { node, .. }) = open.pop() else { continue };
+                // A flow collection ends with its bracket, before what the
+                // parser reads past it; a block one with its last value.
+                if nodes[node].kind >= 3 {
+                    let bracket = if nodes[node].kind == 3 { '}' } else { ']' };
+                    let closed = source[start..].find(bracket).map_or(end, |at| start + at + 1);
+                    nodes[node].end = nodes[node].end.max(closed);
+                }
+                let last = nodes[node].end;
+                finished(&mut open, &mut nodes, last);
+            }
+            _ => {}
+        }
+    }
+    // Offsets in characters, as `String.slice` counts them.
+    let mut wanted: Vec<usize> = nodes.iter().flat_map(|n| [n.start, n.end, n.after_key.unwrap_or(0)]).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut counted = HashMap::new();
+    let (mut characters, mut next) = (0, 0);
+    for (byte, _) in source.char_indices().chain(std::iter::once((source.len(), ' '))) {
+        while next < wanted.len() && wanted[next] <= byte {
+            counted.insert(wanted[next], characters);
+            next += 1;
+        }
+        characters += 1;
+    }
+    for node in &mut nodes {
+        node.start = counted[&node.start];
+        node.end = counted[&node.end];
+        node.after_key = node.after_key.map(|after| counted[&after]);
+    }
+    Ok(nodes)
+}
+
+/// After a value: its collection's end reaches it, and the collection
+/// waits for its next key or counts the item.
+fn finished(open: &mut [Opened], nodes: &mut [Outlined], end: usize) {
+    for opened in open.iter() {
+        let (Opened::Map { node, .. } | Opened::List { node, .. }) = opened;
+        nodes[*node].end = nodes[*node].end.max(end);
+    }
+    match open.last_mut() {
+        Some(Opened::Map { key, .. }) => *key = None,
+        Some(Opened::List { count, .. }) => *count += 1,
+        None => {}
+    }
+}
+
+/// The outline of the first document of `source`, or its failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_yaml_outline(source: *const Str) -> *mut NativeObject {
+    let source = text(source);
+    let outlined = match outline(&source) {
+        Ok(nodes) => Outline { nodes, error: String::new() },
+        Err(error) => Outline { nodes: Vec::new(), error },
+    };
+    native::new(outlined)
+}
+
+/// Each node's path, in order.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_yaml_outline_paths(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+    let paths: Vec<String> =
+        native::get::<Outline>(object).map_or(Vec::new(), |o| o.nodes.iter().map(|n| n.path.clone()).collect());
+    crate::http::string_array(&paths)
+}
+
+/// Seven numbers a node: its kind, start, end, line, column, the end of its
+/// key's `:` or -1, and its indent.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+    let numbers: Vec<i64> = native::get::<Outline>(object).map_or(Vec::new(), |o| {
+        o.nodes
+            .iter()
+            .flat_map(|n| {
+                let after = n.after_key.map_or(-1, |a| a as i64);
+                [n.kind, n.start as i64, n.end as i64, n.line as i64, n.column as i64, after, n.indent as i64]
+            })
+            .collect()
+    });
+    crate::files::ints(&numbers)
+}
+
+/// Why the text is not a document, or empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_yaml_outline_error(object: *mut NativeObject) -> *mut Str {
+    let error = native::get::<Outline>(object).map_or(String::new(), |o| o.error.clone());
+    str_new(error.as_bytes())
 }

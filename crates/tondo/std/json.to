@@ -364,9 +364,12 @@ pub type Writer = {
 }
 
 /// `pretty` indents the output; `canonical` writes RFC 8785 (JCS): sorted
-/// keys, no whitespace and numbers as doubles.
-pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer {
-    Writer { native: jsonnative.writer(pretty, canonical) }
+/// keys, no whitespace and numbers as doubles. `htmlSafe` escapes `<`, `>`,
+/// `&`, U+2028 and U+2029 in texts, so the output can go inside a page's
+/// `<script>`; canonical output has one way to write each text, and leaves
+/// it out.
+pub fn writer(pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer {
+    Writer { native: jsonnative.writer(pretty, canonical, htmlSafe) }
 }
 
 /// Writes `null`.
@@ -427,8 +430,13 @@ pub fn Writer.endObject(self) {
 
 /// A JSON document written value by value to a stream, which receives the
 /// output as it grows.
-pub fn writerTo(stream: jsonio.Writer, pretty: Bool = false, canonical: Bool = false): Writer {
-    Writer { native: jsonnative.streamWriter(stream, pretty, canonical) }
+pub fn writerTo(
+    stream: jsonio.Writer,
+    pretty: Bool = false,
+    canonical: Bool = false,
+    htmlSafe: Bool = false,
+): Writer {
+    Writer { native: jsonnative.streamWriter(stream, pretty, canonical, htmlSafe) }
 }
 
 /// The document written so far; empty for a writer to a stream, which
@@ -602,9 +610,14 @@ impl serialization.Sink for Writer {
 // Encoding and decoding
 // ---------------------------------------------------------------------------
 
-/// The JSON text of a value.
-pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false, canonical: Bool = false): String {
-    let out = writer(pretty, canonical)
+/// The JSON text of a value, as `writer` writes it.
+pub fn encode[T: serialization.Encode](
+    value: T,
+    pretty: Bool = false,
+    canonical: Bool = false,
+    htmlSafe: Bool = false,
+): String {
+    let out = writer(pretty, canonical, htmlSafe)
     value.encode(out)
     out.finish()
 }
@@ -661,8 +674,9 @@ pub fn encodeTo[T: serialization.Encode](
     stream: jsonio.Writer,
     pretty: Bool = false,
     canonical: Bool = false,
+    htmlSafe: Bool = false,
 ): !JsonError {
-    let out = writerTo(stream, pretty, canonical)
+    let out = writerTo(stream, pretty, canonical, htmlSafe)
     value.encode(out)
     out.flush()?
 }

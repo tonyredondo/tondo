@@ -3,6 +3,7 @@
 // times since the Unix epoch.
 
 import std.internal.time as timeNative
+import std.reflect as __reflect
 import std.serialization
 import std.time as __time
 import std.timetext as __text
@@ -364,5 +365,13 @@ impl serialization.Decode for ZonedDateTime {
                 "`{text}` is not a date and time",
             )
         }
+    }
+}
+
+/// A duration in reflection, as `std.cli` reads an option of one: shown as
+/// `time` writes it, `1m30s`.
+impl __reflect.Reflect for __time.Duration {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
     }
 }

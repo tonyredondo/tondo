@@ -5,6 +5,7 @@
 
 import std.internal.codec as yamlcodec
 import std.internal.yaml as yamlnative
+import std.io as yamlio
 import std.serialization
 
 // ---------------------------------------------------------------------------
@@ -391,4 +392,351 @@ impl serialization.Decode for Value {
             _ => fail input.mismatch(first, "a YAML value")
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Documents that keep their text
+// ---------------------------------------------------------------------------
+
+/// A YAML document that keeps its text: its comments, styles and order,
+/// and where each value is. `set` changes a value and leaves the rest of
+/// the text as it was, byte for byte; `writeTo` writes it as it is, with no
+/// copy. A config of a project is what it is for: the whole document is in
+/// memory, as its text and its outline.
+pub type Document = {
+    priv source: String
+    priv root: Value
+    priv paths: Array[String]
+    /// Seven a node: kind, start, end, line, column, after its key's `:`
+    /// or -1, and indent; offsets in characters.
+    priv numbers: Array[Int]
+}
+
+/// A value of a document and where it is: its line and column, counted
+/// from 1, and the comment on its line, or else on the lines right above
+/// it, without `#`.
+pub type Node = {
+    value: Value
+    line: Int
+    column: Int
+    comment: String?
+}
+
+/// The document of YAML text, which must hold one.
+pub fn load(text: String): Document ! YamlError {
+    let root = parse(text)?
+    let outlined = yamlnative.outline(text)
+    let failure = yamlnative.outlineError(outlined)
+    if not failure.isEmpty() {
+        fail documentError(failure, "")
+    }
+    Document {
+        source: text
+        root
+        paths: yamlnative.outlinePaths(outlined)
+        numbers: yamlnative.outlineNumbers(outlined)
+    }
+}
+
+/// The value of the whole document.
+pub fn Document.value(self): Value {
+    self.root
+}
+
+/// The node at a path of keys and indices, as `jobs.build.steps[0]`, the
+/// root at `""`; `none` when there is none. A key that a merge key `<<`
+/// brings is in `value()`, and is not a node of the text.
+pub fn Document.find(self, path: String): Node? {
+    let index = self.paths.findIndex((each) { each == path })?
+    let value = valueAt(self.root, path)?
+    let at = index * 7
+    some(Node {
+        value
+        line: self.numbers[at + 3]
+        column: self.numbers[at + 4]
+        comment: self.commentOf(index)
+    })
+}
+
+/// The text of the document, with its changes.
+pub fn Document.text(self): String {
+    self.source
+}
+
+/// Writes the text of the document, with its changes, to a stream.
+pub fn Document.writeTo(self, out: yamlio.Writer): !yamlio.IoError {
+    out.write(self.source)?
+}
+
+/// Sets the value at a path, written as `encode` writes it: in place of
+/// the old one, as a new key at the end of its map, or as a new item at
+/// the end of its list, with the keys a path names that are missing; the
+/// rest of the text stays as it was. A map or a list written in flow
+/// style, `{...}` or `[...]`, that gets a key or an item is written again
+/// in block style.
+pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError {
+    let written = encode(value).trimEnd()
+    let changed = match self.paths.findIndex((each) { each == path }) {
+        some(index) => self.replaced(index, written)
+        none => self.added(path, written)?
+    }
+    let next = load(changed)?
+    self.source = next.source
+    self.root = next.root
+    self.paths = next.paths
+    self.numbers = next.numbers
+}
+
+/// An error of a document at a path of it.
+fn documentError(message: String, path: String): YamlError {
+    serialization.Error {
+        kind: serialization.ErrorKind.Syntax
+        message
+        path: if path.isEmpty() or path.startsWith("[") { "${path}" } else { "$.{path}" }
+        line: 0
+        column: 0
+        violations: []
+    }
+}
+
+/// The value at a path of keys and indices.
+fn valueAt(root: Value, path: String): Value? {
+    var found = root
+    for part in segments(path) {
+        found = match part {
+            (key, -1) => found.get(key)?
+            (_, index) => found.at(index)?
+        }
+    }
+    found
+}
+
+/// The keys and indices of a path: a key with -1, an index with its key
+/// empty.
+fn segments(path: String): Array[(String, Int)] {
+    var parts: Array[(String, Int)] = []
+    if path.isEmpty() {
+        return parts
+    }
+    for dotted in path.split(".") {
+        let pieces = dotted.split("[")
+        if not pieces[0].isEmpty() {
+            parts.push((pieces[0], -1))
+        }
+        for piece in pieces.slice(1, pieces.length()).unwrapOr([]) {
+            parts.push(("", Int.parse(piece.trimEnd("]")).unwrapOr(-2)))
+        }
+    }
+    parts
+}
+
+fn Document.number(self, index: Int, field: Int): Int {
+    self.numbers[index * 7 + field]
+}
+
+/// The text with `start..end` replaced.
+fn Document.spliced(self, start: Int, end: Int, replacement: String): String {
+    "{self.source.slice(0, start).unwrapOr("")}{replacement}{self.source.slice(end, self.source.length()).unwrapOr("")}"
+}
+
+/// Each line but the first indented by `width` spaces.
+fn indentedAfterFirst(text: String, width: Int): String {
+    let pad = " ".repeat(width)
+    text
+        .lines()
+        .enumerate()
+        .map((pair) { if pair.0 == 0 { pair.1 } else { "{pad}{pair.1}" } })
+        .join("\n")
+}
+
+/// Whether a value as `encode` writes it takes lines of its own: a map or
+/// a list with members, not a scalar, a block scalar or an empty one.
+fn ownLines(written: String): Bool {
+    match parse(written) {
+        ok(Value.Map(members)) => not members.isEmpty()
+        ok(Value.Array(items)) => not items.isEmpty()
+        _ => false
+    }
+}
+
+/// The text with the node `index`'s value replaced by `written`. The
+/// comment on its key's line stays there; those inside a map or a list it
+/// replaces go with it.
+fn Document.replaced(self, index: Int, written: String): String {
+    let (kind, start, end) = (self.number(index, 0), self.number(index, 1), self.number(index, 2))
+    let (afterKey, indent) = (self.number(index, 5), self.number(index, 6))
+    if afterKey >= 0 and (ownLines(written) or kind == 1 or kind == 2) {
+        // After the key's `:`, to the end of the old value's last line, and
+        // the key line's comment before the value's lines or after it.
+        let block = kind == 1 or kind == 2
+        let comment = self.source
+            .slice(
+                if block { afterKey } else { end },
+                self.lineEnd(if block { afterKey } else { end }),
+            )
+            .unwrapOr("")
+        let rendered = if ownLines(written) {
+            "{comment}\n{" ".repeat(indent + 2)}{indentedAfterFirst(written, indent + 2)}"
+        } else {
+            " {indentedAfterFirst(written, indent + 2)}{comment}"
+        }
+        return self.spliced(afterKey, self.lineEnd(end), rendered)
+    }
+    let width = if afterKey >= 0 {
+        indent + 2
+    } else if self.paths[index].isEmpty() {
+        0
+    } else {
+        indent + 2
+    }
+    self.spliced(start, end, indentedAfterFirst(written, width))
+}
+
+/// The end of the line a position is on.
+fn Document.lineEnd(self, position: Int): Int {
+    let rest = self.source.slice(position, self.source.length()).unwrapOr("")
+    match rest.find("\n") {
+        some(at) => position + at
+        none => self.source.length()
+    }
+}
+
+/// The text with a key or an item at `path` that it does not have.
+fn Document.added(self, path: String, written: String): String ! YamlError {
+    let parts = segments(path)
+    // The longest part of the path the document has.
+    var known = parts.length() - 1
+    for known > 0 and
+        self.paths.findIndex((each) { each == joined(parts.slice(0, known).unwrapOr([])) }).isNone() {
+        known -= 1
+    }
+    let parentPath = joined(parts.slice(0, known).unwrapOr([]))
+    let parent = match self.paths.findIndex((each) { each == parentPath }) {
+        some(found) => found
+        none => fail documentError(
+            "the document is empty, so `set` has nowhere to add a value",
+            path,
+        )
+    }
+    // What is missing, as one value under the parent.
+    var value = written
+    var index = parts.length() - 1
+    for index > known {
+        let (key, at) = parts[index]
+        if at != -1 {
+            fail documentError("there is no list to add item {at} to: set the whole list", path)
+        }
+        value = entry(key, value)
+        index -= 1
+    }
+    let (key, at) = parts[known]
+    let kind = self.number(parent, 0)
+    match kind {
+        // A map in block style: the new key at its end.
+        1 if at == -1 => {
+            let indent = self.childIndent(parent, parentPath)
+            let line = self.lineEnd(self.number(parent, 2))
+            let added = indentedAfterFirst(entry(key, value), indent)
+            self.spliced(line, line, "\n{" ".repeat(indent)}{added}")
+        }
+        // A list in block style: the item after its last.
+        2 if at == self.childCount(parentPath) => {
+            let indent = self.childIndent(parent, parentPath)
+            let line = self.lineEnd(self.number(parent, 2))
+            self.spliced(
+                line,
+                line,
+                "\n{" ".repeat(indent)}- {indentedAfterFirst(value, indent + 2)}",
+            )
+        }
+        2 => fail documentError(
+            "the list has {self.childCount(parentPath)} items, and `set` adds only the next one, `{parentPath}[{self.childCount(parentPath)}]`",
+            path,
+        )
+        // A scalar, or a map or a list in flow style: written again whole.
+        _ => {
+            let before = valueAt(self.root, parentPath).unwrapOr(Value.Null)
+            let addedValue = parse(value).unwrapOr(Value.Null)
+            let whole = match (before, at) {
+                (Value.Map(members), -1) => {
+                    var grown = members
+                    grown[key] = addedValue
+                    Value.Map(grown)
+                }
+                (Value.Array(items), _) if at == items.length() => Value.Array(
+                    items.concat([addedValue]),
+                )
+                (Value.Null, -1) => Value.Map([key: addedValue])
+                _ => fail documentError(
+                    "`{parentPath}` holds a value that cannot take this key or item",
+                    path,
+                )
+            }
+            self.replaced(parent, encode(whole).trimEnd())
+        }
+    }
+}
+
+/// `key: value`, the value on its line or indented on the next ones.
+fn entry(key: String, value: String): String {
+    if ownLines(value) { "{key}:\n  {indentedAfterFirst(value, 2)}" } else { "{key}: {value}" }
+}
+
+/// A path of keys and indices, written back.
+fn joined(parts: Array[(String, Int)]): String {
+    var text = ""
+    for (key, at) in parts {
+        if at == -1 {
+            text = if text.isEmpty() { key } else { "{text}.{key}" }
+        } else {
+            text = "{text}[{at}]"
+        }
+    }
+    text
+}
+
+/// The column of a collection's keys or items' `-`, from one of them, or
+/// two more than the collection's.
+fn Document.childIndent(self, parent: Int, parentPath: String): Int {
+    let depth = segments(parentPath).length() + 1
+    for (index, path) in self.paths.enumerate() {
+        let parts = segments(path)
+        if parts.length() == depth and joined(parts.slice(0, depth - 1).unwrapOr([])) == parentPath {
+            return self.number(index, 6)
+        }
+    }
+    self.number(parent, 6) + 2
+}
+
+/// How many items the list at a path has.
+fn Document.childCount(self, parentPath: String): Int {
+    match valueAt(self.root, parentPath) {
+        some(Value.Array(items)) => items.length()
+        _ => 0
+    }
+}
+
+/// The comment of a node: on the line its value ends on, or a block map's
+/// or list's on its key's, or else on the lines right above its key.
+fn Document.commentOf(self, index: Int): String? {
+    let kind = self.number(index, 0)
+    let after = if kind == 1 or kind == 2 { self.number(index, 5) } else { self.number(index, 2) }
+    if after >= 0 {
+        let line = self.source.slice(after, self.lineEnd(after)).unwrapOr("")
+        match line.find("#") {
+            some(at) => return some(line.slice(at + 1, line.length()).unwrapOr("").trim())
+            none => {}
+        }
+    }
+    let afterKey = self.number(index, 5)
+    let start = if afterKey >= 0 { afterKey } else { self.number(index, 1) }
+    var above: Array[String] = []
+    let lines = self.source.slice(0, start).unwrapOr("").lines()
+    var at = lines.length() - 2
+    for at >= 0 and lines[at].trim().startsWith("#") {
+        above.push(lines[at].trim().trimStart("#").trim())
+        at -= 1
+    }
+    above.reverse()
+    if above.isEmpty() { none } else { some(above.join("\n")) }
 }

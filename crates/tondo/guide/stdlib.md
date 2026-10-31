@@ -122,6 +122,34 @@ fn main(): !toml.TomlError {
 
 TOML has no null: a `none` field is left out when written.
 
+A field's annotations hold in every format. `@name("user_id")` gives it
+another key, `@ignore` leaves it out, and it must be optional, and
+`@omitNone` leaves it out when it is `none`, where JSON and YAML would write
+`null`; on a type, `@omitNone` does it for all its optional fields. Reading
+gives `none` for a field that is missing, with or without them.
+`json.encode(value, htmlSafe: true)` escapes `<`, `>` and `&`, for JSON put
+inside a `<script>`.
+
+A YAML key `<<` merges the maps of its anchors into its own. To change a
+config file a person wrote, `yaml.load` keeps its text: `set` changes or
+adds a value and leaves the comments, the order and the styles as they were.
+
+```tondo
+import std.console
+import std.yaml
+
+fn main(): !yaml.YamlError {
+    var doc = yaml.load("# The service.\nport: 8080   # where it listens\n")?
+    console.println("{doc.find("port").andThen((node) { node.comment })}")
+    doc.set("port", 9090)?
+    doc.set("limits.memory", "512Mi")?
+    console.print(doc.text())
+}
+```
+
+`doc.find(path)` also gives the value's line and column, and
+`doc.writeTo(out)` writes the text to a stream without copying it.
+
 XML writes a record as an element and each field as a child, unless
 `@xml.Attribute` or `@xml.Text` make it an attribute or the element's text;
 `@xml.Name` names an element. An `Array` is elements of one name, with no
@@ -196,8 +224,17 @@ fn main() {
 ```
 
 - `Bool` fields are flags, `T?` optional, `Array[T]` repeated, enums
-  without data a choice; `cli.parse` ends with 2 and the usage on a wrong
-  line, `cli.parseArgs(args)` gives the error instead.
+  without data a choice, `time.Duration` written `30s` or `1m30s`;
+  `cli.parse` ends with 2 and the usage on a wrong line,
+  `cli.parseArgs(args)` gives the error instead.
+- `@cli.Option(env: ["DD_API_KEY", "DATADOG_API_KEY"])` reads the first of
+  those variables that is set when the option is missing; the help shows
+  them.
+- A command's options also work after its subcommands: `app run --verbose`
+  as `app --verbose run`.
+- An `Array[String]` field with `@cli.Rest` gets what the command does not
+  read, as written, to pass to another program: what follows `--`, options
+  it does not declare and extra arguments.
 - `cli.markup("[bold red]x[/]")` styles a block and returns to the style
   before; interpolated values are text, and a wrong style is a compile
   error. No codes off a terminal or with `NO_COLOR`.
