@@ -72,6 +72,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1503", "private-type-in-public-api", "A public signature shows a type that is not public."),
     ("E1504", "invalid-method-owner", "This module cannot declare an inherent method of that type."),
     ("E1505", "member-name-conflict", "A field, method or variant breaks the uniqueness of its type's members."),
+    ("E1506", "redundant-private-field", "A field is `priv` in a type that is not `pub`, which only its module sees."),
     ("E1605", "non-send-transfer", "A value that is not `Send` enters a task or goes through a channel."),
     ("E1609", "loan-to-task", "`spawn` is given an argument or receiver lent with `ref`, `mut` or `var`."),
     ("E1611", "invalid-spawn-operand", "`spawn` is not followed by a call."),

@@ -1,0 +1,12 @@
+// A `priv` field in a type that is not `pub` changes nothing: only its
+// module sees the type.
+type Secret = {
+    priv key: String
+}
+
+fn main() {
+    let secret = Secret { key: "k" }
+    _ = secret.key
+}
+
+// expect-error: E1506 `priv` changes nothing in a type that is not `pub`, which only its module sees: remove it from `key`, or make `Secret` `pub`

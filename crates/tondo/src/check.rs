@@ -3783,7 +3783,24 @@ impl<'a> Checker<'a> {
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), foreign: true, .. }) => {
                     AdtKind::Record(self.c_fields(fields))
                 }
-                ast::Item::Type(ast::TypeDecl { name, body: ast::TypeBody::Record(fields), context, .. }) => {
+                ast::Item::Type(ast::TypeDecl {
+                    name,
+                    body: ast::TypeBody::Record(fields),
+                    context,
+                    public,
+                    annotation,
+                    ..
+                }) => {
+                    // Its module alone sees a private type, and so its fields.
+                    if !public && !annotation {
+                        for field in fields.iter().filter(|field| field.private) {
+                            let message = format!(
+                                "`priv` changes nothing in a type that is not `pub`, which only its module sees: remove it from `{}`, or make `{}` `pub`",
+                                field.name.name, name.name
+                            );
+                            self.diags.error("E1506", field.name.span, message);
+                        }
+                    }
                     self.wires.insert(name.name.clone(), fields.iter().map(wire).collect());
                     AdtKind::Record(self.field_decls(fields, *context))
                 }

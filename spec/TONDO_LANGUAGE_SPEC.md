@@ -1275,7 +1275,7 @@ un cambio incompatible de fuente. Si el record ya no era externamente construibl
 campo privado puede ser compatible bajo las condiciones siguientes.
 
 Un campo `priv` no puede aparecer en un tipo privado porque sería redundante; es
-un error semántico y el diagnóstico propone quitar el modificador. El formatter
+un error semántico, `E1506`, y el diagnóstico propone quitar el modificador. El formatter
 solo opera sobre la fuente válida resultante, no convierte esa prohibición en una
 regla de estilo distinta.
 
@@ -8721,6 +8721,7 @@ oculten un diagnóstico independiente.
 | `E1503` | `private-type-in-public-api` | Firma pública expone un tipo no exportado. |
 | `E1504` | `invalid-method-owner` | El módulo no puede declarar el método inherente para ese owner. |
 | `E1505` | `member-name-conflict` | Campo, método o variante viola las reglas de unicidad del owner. |
+| `E1506` | `redundant-private-field` | Un campo `priv` en un tipo que no es `pub` (7.6). |
 
 #### Async y concurrencia estructurada
 
