@@ -232,9 +232,9 @@ pub fn Zone.at(
 /// `DateTime.inZone`: the date and time the clocks of `place` show at that
 /// moment, with their offset then.
 fn inZone(date: __time.DateTime, place: Zone): ZonedDateTime {
-    let since = sinceEpoch(date)
-    let offset = __time.seconds(timeNative.zoneOffset(place.id, floorSeconds(since)))
-    let local = __time.utc(since + offset)
+    let elapsed = sinceEpoch(date)
+    let offset = __time.seconds(timeNative.zoneOffset(place.id, floorSeconds(elapsed)))
+    let local = __time.utc(elapsed + offset)
     ZonedDateTime {
         year: local.year
         month: local.month
@@ -249,8 +249,8 @@ fn inZone(date: __time.DateTime, place: Zone): ZonedDateTime {
 }
 
 /// The whole seconds of a time since 1970, rounded down.
-fn floorSeconds(since: __time.Duration): Int {
-    let nanos = since.nanoseconds()
+fn floorSeconds(elapsed: __time.Duration): Int {
+    let nanos = elapsed.nanoseconds()
     let seconds = nanos / 1000000000
     if nanos < 0 and nanos % 1000000000 != 0 { seconds - 1 } else { seconds }
 }
@@ -373,5 +373,329 @@ impl serialization.Decode for ZonedDateTime {
 impl __reflect.Reflect for __time.Duration {
     fn reflectShow(self, nested: Bool): String {
         "{self}"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The calendar
+// ---------------------------------------------------------------------------
+
+/// A day of the week, Monday first, as ISO 8601 counts them.
+pub enum Weekday {
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+    Sunday
+}
+
+impl Display for Weekday {
+    fn display(self): String {
+        match self {
+            Weekday.Monday => "Monday"
+            Weekday.Tuesday => "Tuesday"
+            Weekday.Wednesday => "Wednesday"
+            Weekday.Thursday => "Thursday"
+            Weekday.Friday => "Friday"
+            Weekday.Saturday => "Saturday"
+            Weekday.Sunday => "Sunday"
+        }
+    }
+}
+
+/// A week of ISO 8601: its number, from 1 to 53, and the year it is of,
+/// which for the days near January 1 may be the year before theirs or the
+/// one after. `Display` writes it as ISO 8601 does: `2026-W44`.
+pub type IsoWeek = {
+    year: Int
+    week: Int
+}
+
+impl Display for IsoWeek {
+    fn display(self): String {
+        "{self.year}-W{"{self.week}".padStart(2, "0")}"
+    }
+}
+
+/// The day of the week of a date, as days since 1970.
+fn weekdayOf(date: Int): Weekday {
+    [
+        Weekday.Monday,
+        Weekday.Tuesday,
+        Weekday.Wednesday,
+        Weekday.Thursday,
+        Weekday.Friday,
+        Weekday.Saturday,
+        Weekday.Sunday,
+    ][__text.weekday(date)]
+}
+
+/// The year, the month and the day `months` months after a date, on the
+/// last day of the month when it is shorter.
+fn monthsLater(year: Int, month: Int, day: Int, months: Int): (Int, Int, Int) {
+    let total = year * 12 + month - 1 + months
+    let later = if total >= 0 { total / 12 } else { (total - 11) / 12 }
+    let laterMonth = total - later * 12 + 1
+    let last = __text.daysIn(later, laterMonth)
+    (later, laterMonth, if day < last { day } else { last })
+}
+
+/// `DateTime.add`: the moment `delta` later, or earlier when it is
+/// negative.
+fn add(date: __time.DateTime, delta: __time.Duration): __time.DateTime {
+    __time.utc(sinceEpoch(date) + delta)
+}
+
+/// `DateTime.since`: how long after `earlier` it is, negative when it is
+/// before.
+fn since(date: __time.DateTime, earlier: __time.DateTime): __time.Duration {
+    sinceEpoch(date) - sinceEpoch(earlier)
+}
+
+/// `DateTime.addDays`: the same time `days` days later.
+fn addDays(date: __time.DateTime, days: Int): __time.DateTime {
+    add(date, __time.seconds(days * 86400))
+}
+
+/// `DateTime.addMonths`: the same day and time `months` months later, or on
+/// the last day of that month when it is shorter.
+fn addMonths(date: __time.DateTime, months: Int): __time.DateTime {
+    let (year, month, day) = monthsLater(date.year, date.month, date.day, months)
+    date with { year: year, month: month, day: day }
+}
+
+/// `DateTime.addYears`: as `addMonths` of twelve times as many.
+fn addYears(date: __time.DateTime, years: Int): __time.DateTime {
+    addMonths(date, years * 12)
+}
+
+/// `DateTime.weekday`.
+fn weekday(date: __time.DateTime): Weekday {
+    weekdayOf(__text.days(date.year, date.month, date.day))
+}
+
+/// `DateTime.dayOfYear`: from 1, January 1, to 366.
+fn dayOfYear(date: __time.DateTime): Int {
+    __text.days(date.year, date.month, date.day) - __text.days(date.year, 1, 1) + 1
+}
+
+/// `DateTime.isoWeek`.
+fn isoWeek(date: __time.DateTime): IsoWeek {
+    let (year, week) = __text.isoWeek(__text.days(date.year, date.month, date.day))
+    IsoWeek { year, week }
+}
+
+/// The moment `delta` later, in the same zone, whose clocks may then show
+/// another offset.
+pub fn ZonedDateTime.add(self, delta: __time.Duration): ZonedDateTime {
+    inZone(add(self.utc(), delta), self.zone)
+}
+
+/// How long after `earlier` it is, negative when it is before.
+pub fn ZonedDateTime.since(self, earlier: ZonedDateTime): __time.Duration {
+    since(self.utc(), earlier.utc())
+}
+
+/// The same time of the zone's clocks `days` days later, as `Zone.at` takes
+/// it when the clocks change that day: a day may be 23 or 25 hours long.
+pub fn ZonedDateTime.addDays(self, days: Int): ZonedDateTime {
+    let later = __time.utc(
+        __time.seconds((__text.days(self.year, self.month, self.day) + days) * 86400),
+    )
+    self.onDay(later.year, later.month, later.day)
+}
+
+/// The same day and time of the zone's clocks `months` months later, or on
+/// the last day of that month when it is shorter.
+pub fn ZonedDateTime.addMonths(self, months: Int): ZonedDateTime {
+    let (year, month, day) = monthsLater(self.year, self.month, self.day, months)
+    self.onDay(year, month, day)
+}
+
+/// As `addMonths` of twelve times as many.
+pub fn ZonedDateTime.addYears(self, years: Int): ZonedDateTime {
+    self.addMonths(years * 12)
+}
+
+/// The day of the week its clocks show.
+pub fn ZonedDateTime.weekday(self): Weekday {
+    weekdayOf(__text.days(self.year, self.month, self.day))
+}
+
+/// The day of the year its clocks show: from 1, January 1, to 366.
+pub fn ZonedDateTime.dayOfYear(self): Int {
+    __text.days(self.year, self.month, self.day) - __text.days(self.year, 1, 1) + 1
+}
+
+/// The week of ISO 8601 of the day its clocks show.
+pub fn ZonedDateTime.isoWeek(self): IsoWeek {
+    let (year, week) = __text.isoWeek(__text.days(self.year, self.month, self.day))
+    IsoWeek { year, week }
+}
+
+/// The same time of the clocks on another day.
+fn ZonedDateTime.onDay(self, year: Int, month: Int, day: Int): ZonedDateTime {
+    match self.zone.at(year, month, day, self.hour, self.minute, self.second, self.nanosecond) {
+        ok(moved) => moved
+        err(_) => panic(
+            "{year}-{month}-{day} is past the years from 1678 to 2261 that a time holds",
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reflection
+// ---------------------------------------------------------------------------
+
+/// In reflection and templates, a date shows as RFC 3339, reads its fields
+/// and calls its methods: `{{ date.format("%d %B") }}`, `{{ date.year }}`.
+impl __reflect.Reflect for __time.DateTime {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "year" => __reflect.valueOf(self.year)
+            "month" => __reflect.valueOf(self.month)
+            "day" => __reflect.valueOf(self.day)
+            "hour" => __reflect.valueOf(self.hour)
+            "minute" => __reflect.valueOf(self.minute)
+            "second" => __reflect.valueOf(self.second)
+            "nanosecond" => __reflect.valueOf(self.nanosecond)
+            _ => fail __reflect.ReflectError.noField("time.DateTime", name, clockFields(false))
+        }
+    }
+
+    fn reflectCall(self, method: String, args: Array[__reflect.Value]): __reflect.Value !
+        __reflect.ReflectError {
+        match (method, args.length()) {
+            ("format", 1) => __reflect.valueOf(format(self, args[0].to()?))
+            ("format", 2) => __reflect.valueOf(format(self, args[0].to()?, args[1].to()?))
+            ("inZone", 1) => __reflect.valueOf(inZone(self, args[0].to()?))
+            ("sinceEpoch", 0) => __reflect.valueOf(sinceEpoch(self))
+            ("add", 1) => __reflect.valueOf(add(self, args[0].to()?))
+            ("since", 1) => __reflect.valueOf(since(self, args[0].to()?))
+            ("addDays", 1) => __reflect.valueOf(addDays(self, args[0].to()?))
+            ("addMonths", 1) => __reflect.valueOf(addMonths(self, args[0].to()?))
+            ("addYears", 1) => __reflect.valueOf(addYears(self, args[0].to()?))
+            ("weekday", 0) => __reflect.valueOf(weekday(self))
+            ("dayOfYear", 0) => __reflect.valueOf(dayOfYear(self))
+            ("isoWeek", 0) => __reflect.valueOf(isoWeek(self))
+            _ => fail calendarError(false, method, args.length())
+        }
+    }
+}
+
+/// In reflection and templates, as a `DateTime` is, with its offset and
+/// zone too.
+impl __reflect.Reflect for ZonedDateTime {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "year" => __reflect.valueOf(self.year)
+            "month" => __reflect.valueOf(self.month)
+            "day" => __reflect.valueOf(self.day)
+            "hour" => __reflect.valueOf(self.hour)
+            "minute" => __reflect.valueOf(self.minute)
+            "second" => __reflect.valueOf(self.second)
+            "nanosecond" => __reflect.valueOf(self.nanosecond)
+            "offset" => __reflect.valueOf(self.offset)
+            "zone" => __reflect.valueOf(self.zone)
+            _ => fail __reflect.ReflectError.noField("time.ZonedDateTime", name, clockFields(true))
+        }
+    }
+
+    fn reflectCall(self, method: String, args: Array[__reflect.Value]): __reflect.Value !
+        __reflect.ReflectError {
+        match (method, args.length()) {
+            ("format", 1) => __reflect.valueOf(self.format(args[0].to()?))
+            ("format", 2) => __reflect.valueOf(self.format(args[0].to()?, args[1].to()?))
+            ("utc", 0) => __reflect.valueOf(self.utc())
+            ("add", 1) => __reflect.valueOf(self.add(args[0].to()?))
+            ("since", 1) => __reflect.valueOf(self.since(args[0].to()?))
+            ("addDays", 1) => __reflect.valueOf(self.addDays(args[0].to()?))
+            ("addMonths", 1) => __reflect.valueOf(self.addMonths(args[0].to()?))
+            ("addYears", 1) => __reflect.valueOf(self.addYears(args[0].to()?))
+            ("weekday", 0) => __reflect.valueOf(self.weekday())
+            ("dayOfYear", 0) => __reflect.valueOf(self.dayOfYear())
+            ("isoWeek", 0) => __reflect.valueOf(self.isoWeek())
+            _ => fail calendarError(true, method, args.length())
+        }
+    }
+}
+
+/// The fields of a date, and of one in a zone.
+fn clockFields(zoned: Bool): Array[String] {
+    let fields = ["year", "month", "day", "hour", "minute", "second", "nanosecond"]
+    if zoned { fields.concat(["offset", "zone"]) } else { fields }
+}
+
+/// What is wrong with a call by reflection of a method of a date, or of
+/// one in a zone.
+fn calendarError(zoned: Bool, method: String, found: Int): __reflect.ReflectError {
+    let typeName = if zoned { "time.ZonedDateTime" } else { "time.DateTime" }
+    let own: Map[String, Int] = if zoned { ["utc": 0] } else { ["inZone": 1, "sinceEpoch": 0] }
+    var counts = ["format": 1]
+    for (name, count) in own {
+        counts[name] = count
+    }
+    let shared = [
+        "add": 1,
+        "since": 1,
+        "addDays": 1,
+        "addMonths": 1,
+        "addYears": 1,
+        "weekday": 0,
+        "dayOfYear": 0,
+        "isoWeek": 0,
+    ]
+    for (name, count) in shared {
+        counts[name] = count
+    }
+    match counts.get(method) {
+        some(expected) => __reflect.ReflectError.arguments(
+            typeName,
+            method,
+            expected,
+            found,
+            optional: if method == "format" { 1 } else { 0 },
+        )
+        none => __reflect.ReflectError.noMethod(typeName, method, counts.keys().collect())
+    }
+}
+
+/// A zone shows as its name.
+impl __reflect.Reflect for Zone {
+    fn reflectShow(self, nested: Bool): String {
+        self.id
+    }
+}
+
+/// A day of the week shows as its name in English; `format("%A")` writes
+/// it in a language.
+impl __reflect.Reflect for Weekday {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// A week shows as ISO 8601 writes it, and reads its year and number.
+impl __reflect.Reflect for IsoWeek {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "year" => __reflect.valueOf(self.year)
+            "week" => __reflect.valueOf(self.week)
+            _ => fail __reflect.ReflectError.noField("time.IsoWeek", name, ["year", "week"])
+        }
     }
 }

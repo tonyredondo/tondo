@@ -3569,3 +3569,14 @@ in compile time. A module that imports it only for its own types no
 longer brings it; `std.uuid`, `std.math` and the parts of `std.time` and
 `std.sync` had done so already without need.
 
+## 2026-10-31 — Dates that move along the calendar
+
+A month after January 31 is the last day of February, as .NET, Java and
+jiff answer, rather than March 3, as Go's `AddDate` normalizes it: a
+monthly date that drifts into the next month surprises everyone who meets
+it. `addDays` in a zone keeps the clock's time, so the day the clocks
+change is 23 or 25 hours long, while `add(time.hours(24))` is exact time;
+both are wanted, and the names say which is which. The week of ISO 8601 is
+a value of its own, `IsoWeek`, because its year is not the date's near
+January 1, and a week and its day read a date back with `%G-W%V-%u`.
+

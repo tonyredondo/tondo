@@ -23,6 +23,16 @@ pub enum Directive {
     DayOfYear,
     Weekday,
     WeekdayShort,
+    /// `%u`, 1 for Monday to 7, and `%w`, 0 for Sunday to 6.
+    WeekdayNumber,
+    WeekdayFromSunday,
+    /// `%U` and `%W`: the week of the year from its first Sunday or Monday.
+    WeekFromSunday,
+    WeekFromMonday,
+    /// `%V`, `%G` and `%g`: the week of ISO 8601 and the year it is of.
+    IsoWeek,
+    IsoYear,
+    IsoShortYear,
     Hour,
     Hour12,
     Meridiem,
@@ -37,7 +47,8 @@ pub enum Directive {
 }
 
 /// The directives there are, for messages.
-pub const DIRECTIVES: &str = "%Y %y %m %B %b %OB %d %e %j %A %a %H %I %p %M %S %3f %6f %9f %z %:z %Z %s %F %T %%";
+pub const DIRECTIVES: &str =
+    "%Y %y %m %B %b %OB %d %e %j %A %a %u %w %U %W %V %G %g %H %I %p %M %S %3f %6f %9f %z %:z %Z %s %F %T %%";
 
 /// The pieces of a pattern, or what is wrong with it.
 pub fn pieces(pattern: &str) -> Result<Vec<Piece>, String> {
@@ -81,6 +92,13 @@ pub fn pieces(pattern: &str) -> Result<Vec<Piece>, String> {
             "j" => D::DayOfYear,
             "A" => D::Weekday,
             "a" => D::WeekdayShort,
+            "u" => D::WeekdayNumber,
+            "w" => D::WeekdayFromSunday,
+            "U" => D::WeekFromSunday,
+            "W" => D::WeekFromMonday,
+            "V" => D::IsoWeek,
+            "G" => D::IsoYear,
+            "g" => D::IsoShortYear,
             "H" => D::Hour,
             "I" => D::Hour12,
             "p" => D::Meridiem,
@@ -106,12 +124,13 @@ pub fn pieces(pattern: &str) -> Result<Vec<Piece>, String> {
 pub fn parsing(pieces: &[Piece]) -> Result<(), String> {
     use Directive as D;
     let has = |wanted: &[Directive]| pieces.iter().any(|p| matches!(p, Piece::Directive(d, _) if wanted.contains(d)));
-    if has(&[D::Seconds]) {
+    // A week of ISO 8601 and its year name a date, with its day or Monday.
+    if has(&[D::Seconds]) || (has(&[D::IsoWeek]) && has(&[D::IsoYear, D::IsoShortYear])) {
         return Ok(());
     }
     let missing = if !has(&[D::Year, D::ShortYear]) {
         "the year: add `%Y`"
-    } else if has(&[D::DayOfYear]) {
+    } else if has(&[D::DayOfYear, D::WeekFromSunday, D::WeekFromMonday]) {
         return Ok(());
     } else if !has(&[D::Month, D::MonthName, D::MonthShort, D::MonthAlone]) {
         "the month: add `%m` or `%B`"

@@ -2088,6 +2088,9 @@ pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): Strin
   | `%d`, `%e` | el día, `05`, y con espacio, ` 5` |
   | `%j` | el día del año, `064` |
   | `%A`, `%a` | el día de la semana, `Thursday` y `Thu` |
+  | `%u`, `%w` | el número del día de la semana, de `1` el lunes a `7`, y de `0` el domingo a `6` |
+  | `%V`, `%G`, `%g` | la semana de ISO 8601, `44`, y su año, `2026` y `26`, que cerca del 1 de enero puede ser el de antes o el de después |
+  | `%U`, `%W` | la semana del año, `00` antes de su primer domingo o lunes |
   | `%H`, `%I`, `%p` | la hora, `14`, en doce horas, `02`, y `AM` o `PM` |
   | `%M`, `%S` | el minuto y el segundo |
   | `%3f`, `%6f`, `%9f` | la fracción del segundo en milisegundos, microsegundos o nanosegundos |
@@ -2112,16 +2115,65 @@ pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): Strin
     `5/3/2026` con `%d/%m/%Y`, y `%y` es un año de 1969 a 2068;
   - un nombre se lee en el idioma de `locale`, sin distinguir mayúsculas, largo
     o abreviado con cualquiera de sus directivas; el día de la semana se lee y
-    no se comprueba;
+    no se comprueba, salvo con una semana;
+  - una semana de ISO 8601 con su año, `%G-W%V-%u`, o una semana del año con
+    el año, `%Y %W %a`, nombra un día, el lunes si no se lee cuál;
   - `%z` y `%:z` leen `+0100`, `+01:00` y `Z`, y `%Z` solo `UTC` y `GMT`: las
     demás abreviaturas se repiten, y `CST` es de Estados Unidos, de China y de
     Cuba;
-  - el patrón lee el año, el mes y el día, o `%s`; la hora que no lee es cero.
+  - el patrón lee el año, el mes y el día, o el día del año, o una semana, o
+    `%s`; la hora que no lee es cero.
 
   Sin offset en el texto, `parseDateTime` lo lee en UTC y `parseZoned` en
   `zone`. Un texto de otra forma, o una fecha que no existe, es
   `TimeError.InvalidDateTime`. Un patrón literal con una directiva que no
   existe, o que no lee una fecha entera, es un error de compilación.
+
+**Calendario**
+
+~~~tondo pseudocode
+pub enum Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
+pub type IsoWeek = { year: Int, week: Int }
+
+pub fn DateTime.add(self, delta: Duration): DateTime
+pub fn DateTime.since(self, earlier: DateTime): Duration
+pub fn DateTime.addDays(self, days: Int): DateTime
+pub fn DateTime.addMonths(self, months: Int): DateTime
+pub fn DateTime.addYears(self, years: Int): DateTime
+pub fn DateTime.weekday(self): Weekday
+pub fn DateTime.dayOfYear(self): Int
+pub fn DateTime.isoWeek(self): IsoWeek
+// y los mismos de `ZonedDateTime`, con otro `ZonedDateTime` en `since`
+~~~
+
+~~~tondo
+let paid = time.parseDateTime("2026-01-31T10:00:00Z")?
+console.println("{paid.addMonths(1)}")          // 2026-02-28T10:00:00Z
+console.println("{paid.weekday()} {paid.isoWeek()}")   // Saturday 2026-W05
+let madrid = time.zone("Europe/Madrid")?
+let before = madrid.at(2026, 3, 28, hour: 12)?
+console.println("{before.addDays(1)}")          // 2026-03-29T12:00:00+02:00
+console.println("{before.addDays(1).since(before)}")   // 23h0m0s
+~~~
+
+- `add` da el momento `delta` después, o antes si es negativo, y `since` el
+  tiempo desde `earlier`, negativo si es anterior. En un `ZonedDateTime`,
+  `add` suma tiempo exacto y da la hora de su zona entonces, con su offset.
+- `addDays`, `addMonths` y `addYears` mueven la fecha en el calendario y
+  conservan la hora del reloj; un número negativo va hacia atrás. Un día que
+  el mes no tiene queda en su último día: el 31 de enero y un mes es el 28 de
+  febrero, o el 29, como en .NET, Java y jiff. `addYears` es `addMonths` de
+  doce veces más. En un `ZonedDateTime`, la hora del reloj se resuelve como
+  en `Zone.at`, así que un día del cambio de hora dura 23 o 25 horas. Una
+  fecha fuera de 1678–2261 es un pánico.
+- `weekday` es el día de la semana, `dayOfYear` el día del año desde 1, e
+  `isoWeek` la semana de ISO 8601: la de su jueves, contada desde la del
+  primer jueves del año, y ese año. `Display` de `Weekday` es su nombre en
+  inglés, y el de `IsoWeek`, `2026-W44`. En un `ZonedDateTime` son los del
+  día que marcan sus relojes.
+- `DateTime`, `ZonedDateTime`, `Zone`, `Weekday` e `IsoWeek` implementan
+  `Reflect`: una plantilla cargada lee sus campos y llama sus métodos,
+  `{{ date.format("%d %B") }}`.
 
 Los calendarios distintos del gregoriano quedan para una versión posterior.
 

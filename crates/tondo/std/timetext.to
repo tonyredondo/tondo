@@ -23,6 +23,26 @@ pub fn days(year: Int, month: Int, day: Int): Int {
     era * 146097 + doe - 719468
 }
 
+/// The day of the week of a date, as days from 1970-01-01: 0 for Monday
+/// to 6 for Sunday.
+pub fn weekday(date: Int): Int {
+    ((date + 3) % 7 + 7) % 7
+}
+
+/// The year and the number of the week of ISO 8601 a date is in: the week
+/// of its Thursday, counted from the week of the year's first Thursday.
+pub fn isoWeek(date: Int): (Int, Int) {
+    let thursday = date - weekday(date) + 3
+    let year = civil(thursday * 86400)[0]
+    (year, (thursday - days(year, 1, 1)) / 7 + 1)
+}
+
+/// The date of a day of a week of ISO 8601, 0 for Monday.
+fn ofIsoWeek(year: Int, week: Int, day: Int): Int {
+    let fourth = days(year, 1, 4)
+    fourth - weekday(fourth) + (week - 1) * 7 + day
+}
+
 pub fn daysIn(year: Int, month: Int): Int {
     let leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
     if month == 2 {
@@ -201,6 +221,13 @@ fn pieces(pattern: String): Array[Piece] {
                 "j",
                 "A",
                 "a",
+                "u",
+                "w",
+                "U",
+                "W",
+                "V",
+                "G",
+                "g",
                 "H",
                 "I",
                 "p",
@@ -241,7 +268,7 @@ pub fn write(pattern: String, locale: String, fields: Array[Int], zone: String):
             if piece.padded { "{value}".padStart(width, fill) } else { "{value}" }
         }
         let name = (index: Int) { names[index] }
-        let weekday = (date % 7 + 11) % 7
+        let fromSunday = (date % 7 + 11) % 7
         out.push(
             match piece.text {
                 "Y" => number(year, 4, "0")
@@ -253,8 +280,15 @@ pub fn write(pattern: String, locale: String, fields: Array[Int], zone: String):
                 "d" => number(day, 2, "0")
                 "e" => number(day, 2, " ")
                 "j" => number(date - days(year, 1, 1) + 1, 3, "0")
-                "A" => name(36 + weekday)
-                "a" => name(43 + weekday)
+                "A" => name(36 + fromSunday)
+                "a" => name(43 + fromSunday)
+                "u" => "{(fromSunday + 6) % 7 + 1}"
+                "w" => "{fromSunday}"
+                "U" => number((date - days(year, 1, 1) + 7 - fromSunday) / 7, 2, "0")
+                "W" => number((date - days(year, 1, 1) + 7 - (fromSunday + 6) % 7) / 7, 2, "0")
+                "V" => number(isoWeek(date).1, 2, "0")
+                "G" => number(isoWeek(date).0, 4, "0")
+                "g" => number(isoWeek(date).0 % 100, 2, "0")
                 "H" => number(hour, 2, "0")
                 "I" => number((hour + 11) % 12 + 1, 2, "0")
                 "p" => name(if hour >= 12 { 51 } else { 50 })
@@ -289,6 +323,10 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
     let chars = input.chars().collect()
     var at = 0
     var (year, month, day, ordinal) = (-1, -1, -1, -1)
+    // A date by its week: the ISO year and week, or a week of the year
+    // from its first Sunday (`%U`) or Monday (`%W`), and the day, 0 for
+    // Monday.
+    var (weekYear, week, sundays, mondays, dayOfWeek) = (-1, -1, -1, -1, 0)
     var (hour, minute, second, nanosecond, meridiem) = (0, 0, 0, 0, -1)
     var (zoned, offset) = (0, 0)
     var seconds: Int? = none
@@ -319,7 +357,18 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                 day = digits(ref chars, mut at, 1, 2)?.0
             }
             "j" => ordinal = digits(ref chars, mut at, 1, 3)?.0
-            key if key in ["A", "a"] => _ = longest(input, ref names, mut at, 36, 50)?
+            key if key in ["A", "a"] => dayOfWeek =
+                ((longest(input, ref names, mut at, 36, 50)? - 36) % 7 + 6) % 7
+            "u" => dayOfWeek = digits(ref chars, mut at, 1, 1)?.0 - 1
+            "w" => dayOfWeek = (digits(ref chars, mut at, 1, 1)?.0 + 6) % 7
+            "U" => sundays = digits(ref chars, mut at, 1, 2)?.0
+            "W" => mondays = digits(ref chars, mut at, 1, 2)?.0
+            "V" => week = digits(ref chars, mut at, 1, 2)?.0
+            "G" => weekYear = digits(ref chars, mut at, 1, 4)?.0
+            "g" => {
+                let short = digits(ref chars, mut at, 1, 2)?.0
+                weekYear = if short < 69 { 2000 + short } else { 1900 + short }
+            }
             key if key in ["H", "I"] => hour = digits(ref chars, mut at, 1, 2)?.0
             "p" => meridiem = longest(input, ref names, mut at, 50, 52)? - 50
             "M" => minute = digits(ref chars, mut at, 1, 2)?.0
@@ -394,6 +443,41 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
             return none
         }
         hour = hour % 12 + 12 * meridiem
+    }
+    if dayOfWeek < 0 or dayOfWeek > 6 {
+        return none
+    }
+    // A week and a day name a date, which takes the place of the others.
+    let byWeek = if week >= 0 {
+        if weekYear < 0 or week < 1 or week > 53 {
+            return none
+        }
+        some(ofIsoWeek(weekYear, week, dayOfWeek))
+    } else if sundays >= 0 or mondays >= 0 {
+        if year < 0 {
+            return none
+        }
+        let first = days(year, 1, 1)
+        // The first Sunday or Monday of the year starts its week 1.
+        let start = if sundays >= 0 {
+            first + (6 - weekday(first)) % 7
+        } else {
+            first + (7 - weekday(first)) % 7
+        }
+        let count = if sundays >= 0 { sundays } else { mondays }
+        let into = if sundays >= 0 { (dayOfWeek + 1) % 7 } else { dayOfWeek }
+        some(start + (count - 1) * 7 + into)
+    } else {
+        none
+    }
+    match byWeek {
+        some(date) => {
+            let fields = civil(date * 86400)
+            year = fields[0]
+            month = fields[1]
+            day = fields[2]
+        }
+        none => {}
     }
     if ordinal >= 0 {
         if year < 0 or ordinal < 1 {

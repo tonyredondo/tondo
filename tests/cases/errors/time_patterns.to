@@ -17,7 +17,7 @@ fn main() {
 }
 
 // expect-error: E1905 `%f` is not a directive: write `%3f`, `%6f` or `%9f` for the fraction of the second in milliseconds, microseconds or nanoseconds
-// expect-error: E1905 `%Q` is not a directive; they are %Y %y %m %B %b %OB %d %e %j %A %a %H %I %p %M %S %3f %6f %9f %z %:z %Z %s %F %T %%
+// expect-error: E1905 `%Q` is not a directive; they are %Y %y %m %B %b %OB %d %e %j %A %a %u %w %U %W %V %G %g %H %I %p %M %S %3f %6f %9f %z %:z %Z %s %F %T %%
 // expect-error: E1905 `xx` is not a language with names of months and days: write a BCP 47 tag of CLDR, such as `es`, `de` or `pt-BR`
 // expect-error: E1905 the pattern ends in `%`: write `%%` for a `%` itself
 // expect-error: E1905 the pattern does not read the year: add `%Y`, or `%s` for seconds since 1970

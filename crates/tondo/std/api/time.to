@@ -113,3 +113,28 @@ pub fn DateTime.inZone(self, place: Zone): ZonedDateTime
 /// As a pattern of `strftime` writes it, in UTC: `%Y-%m-%d %H:%M`, with
 /// the names of months and days of `locale`.
 pub fn DateTime.format(self, pattern: String, locale: String = "en"): String
+
+/// The moment `delta` later, or earlier when it is negative.
+pub fn DateTime.add(self, delta: Duration): DateTime
+
+/// How long after `earlier` it is, negative when it is before.
+pub fn DateTime.since(self, earlier: DateTime): Duration
+
+/// The same time `days` days later.
+pub fn DateTime.addDays(self, days: Int): DateTime
+
+/// The same day and time `months` months later, or on the last day of that
+/// month when it is shorter: January 31 and a month is February 28, or 29.
+pub fn DateTime.addMonths(self, months: Int): DateTime
+
+/// As `addMonths` of twelve times as many.
+pub fn DateTime.addYears(self, years: Int): DateTime
+
+/// The day of the week.
+pub fn DateTime.weekday(self): Weekday
+
+/// The day of the year: from 1, January 1, to 366.
+pub fn DateTime.dayOfYear(self): Int
+
+/// The week of ISO 8601, and the year it is of.
+pub fn DateTime.isoWeek(self): IsoWeek

@@ -78,7 +78,9 @@ impl Kind {
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
             (Kind::Reflect, "sql") => matches!(name, "Database" | "SqlError"),
-            (Kind::Reflect, "time") => name == "Duration",
+            (Kind::Reflect, "time") => {
+                matches!(name, "Duration" | "DateTime" | "ZonedDateTime" | "Zone" | "Weekday" | "IsoWeek")
+            }
             _ => false,
         }
     }

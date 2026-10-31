@@ -1,0 +1,69 @@
+// Dates move along the calendar keeping the clock's time, a month later
+// than January 31 being the end of February, and across a change of the
+// clocks in a zone; they say their weekday, day of the year and week of
+// ISO 8601, write and read weeks with strftime, and a loaded template
+// reads their fields and calls their methods.
+
+import std.console
+import std.template
+import std.time
+
+pub type Post = {
+    date: time.DateTime
+    local: time.ZonedDateTime
+}
+
+fn main(): !(time.TimeError | template.TemplateError) {
+    let date = time.parseDateTime("2024-01-31T10:30:00Z")?
+    console.println(
+        "{date.addMonths(1)} {date.addMonths(13)} {date.addMonths(-2)} {date.addYears(1)} {date.addDays(30)}",
+    )
+    console.println(
+        "{date.weekday()} {date.dayOfYear()} {date.isoWeek()} {date.add(time.hours(20))} {date.addDays(1).since(date)}",
+    )
+    for text in ["2021-01-03", "2020-12-31", "2026-12-31", "2027-01-01", "2024-12-30"] {
+        let day = time.parseDateTime(text)?
+        console.println("{text}: {day.isoWeek()} {day.format("%G-W%V-%u %a %w %U %W %g %j")}")
+    }
+    let madrid = time.zone("Europe/Madrid")?
+    let before = madrid.at(2026, 3, 28, hour: 12)?
+    console.println(
+        "{before} {before.addDays(1)} {before.add(time.hours(24))} {before.addDays(1).since(before)}",
+    )
+    console.println(
+        "{before.weekday()} {before.isoWeek()} {before.addMonths(1)} {before.dayOfYear()}",
+    )
+    let weeks = [
+        time.parseDateTime("2026-W44-3", pattern: "%G-W%V-%u")?,
+        time.parseDateTime("2026 43 Tue", pattern: "%Y %W %a")?,
+        time.parseDateTime("2026 43 2", pattern: "%Y %U %w")?,
+        time.parseDateTime("2026-W01", pattern: "%G-W%V")?,
+    ]
+    console.println("{weeks}")
+
+    var set = template.Set.text()
+    set.add(
+        "post",
+        "{{{{ date.format(\"%-d %B %Y\", \"es\") }}}} {{{{ date.year }}}} {{{{ date.weekday() }}}} {{{{ date.isoWeek().week }}}} {{{{ date.addMonths(1).format(\"%F\") }}}} | {{{{ local.zone }}}} {{{{ local.addDays(1) }}}}",
+    )?
+    set.add("wrong", "{{{{ date.format() }}}}")?
+    let post = Post { date, local: before }
+    console.println(set.render("post", post)?)
+    match set.render("wrong", post) {
+        ok(written) => console.println(written)
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: 2024-02-29T10:30:00Z 2025-02-28T10:30:00Z 2023-11-30T10:30:00Z 2025-01-31T10:30:00Z 2024-03-01T10:30:00Z
+// expect-stdout: Wednesday 31 2024-W05 2024-02-01T06:30:00Z 24h0m0s
+// expect-stdout: 2021-01-03: 2020-W53 2020-W53-7 Sun 0 01 00 20 003
+// expect-stdout: 2020-12-31: 2020-W53 2020-W53-4 Thu 4 52 52 20 366
+// expect-stdout: 2026-12-31: 2026-W53 2026-W53-4 Thu 4 52 52 26 365
+// expect-stdout: 2027-01-01: 2026-W53 2026-W53-5 Fri 5 00 00 26 001
+// expect-stdout: 2024-12-30: 2025-W01 2025-W01-1 Mon 1 52 53 25 365
+// expect-stdout: 2026-03-28T12:00:00+01:00 2026-03-29T12:00:00+02:00 2026-03-29T13:00:00+02:00 23h0m0s
+// expect-stdout: Saturday 2026-W13 2026-04-28T12:00:00+02:00 87
+// expect-stdout: [2026-10-28T00:00:00Z, 2026-10-27T00:00:00Z, 2026-10-27T00:00:00Z, 2025-12-29T00:00:00Z]
+// expect-stdout: 31 enero 2024 2024 Wednesday 5 2024-02-29 | Europe/Madrid 2026-03-29T12:00:00+02:00
+// expect-stdout: wrong:1:8: `time.DateTime.format` takes 1 to 2 argument(s), found 0

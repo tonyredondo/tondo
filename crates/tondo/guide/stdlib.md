@@ -16,7 +16,7 @@ std.embed      files of the package kept in the executable, read when it compile
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
 std.process    run programs and pipelines, capture output, signals
-std.time       Duration, sleep, now, dates, time zones, strftime formats
+std.time       Duration, sleep, now, dates and their calendar, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON
 std.toml       the same for TOML documents, with dates
 std.yaml       the same for YAML (a safe subset), one or many documents
@@ -121,6 +121,14 @@ fn main(): !toml.TomlError {
 ```
 
 TOML has no null: a `none` field is left out when written.
+
+A `DateTime` is in UTC and a `ZonedDateTime` is what a zone's clocks show.
+`addDays`, `addMonths` and `addYears` move along the calendar and keep the
+clock's time, a month later than January 31 being the end of February;
+`add(time.hours(3))` adds exact time and `later.since(earlier)` gives the
+`Duration` between. `weekday()`, `dayOfYear()` and `isoWeek()` say where in
+the calendar it is, and `format` writes it, `"%A %-d %B"` with the names of
+a `locale`, `"%G-W%V"` for the week.
 
 A field's annotations hold in every format. `@name("user_id")` gives it
 another key, `@ignore` leaves it out, and it must be optional, and
