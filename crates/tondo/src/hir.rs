@@ -1635,6 +1635,7 @@ pub const NATIVES: &[Native] = {
         yaml("outline", &[String], Object, "tondo_rt_yaml_outline"),
         yaml("outlinePaths", &[Object], Strings, "tondo_rt_yaml_outline_paths"),
         yaml("outlineNumbers", &[Object], Ints, "tondo_rt_yaml_outline_numbers"),
+        yaml("outlineProperties", &[Object], Strings, "tondo_rt_yaml_outline_properties"),
         yaml("outlineError", &[Object], String, "tondo_rt_yaml_outline_error"),
         msgpack("parse", &[Bytes], Object, "tondo_rt_msgpack_parse"),
         msgpack("next", &[Object], Int, "tondo_rt_msgpack_next"),

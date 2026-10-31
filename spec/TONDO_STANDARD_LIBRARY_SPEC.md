@@ -3929,10 +3929,15 @@ pub fn Value.asMap(self): Map[String, Value]?
 impl Display for Value                             // como documento YAML
 
 pub type Document                                  // un documento que conserva su texto
-pub type Node = { value: Value, line: Int, column: Int, comment: String? }
+pub type Node = { value: Value, line: Int, column: Int, comment: String?, kind: NodeKind,
+    style: NodeStyle, tag: String?, anchor: String? }
+pub enum NodeKind { Scalar, Sequence, Map }
+pub enum NodeStyle { Plain, SingleQuoted, DoubleQuoted, Literal, Folded, Block, Flow, Alias }
 pub fn Document.value(self): Value
 pub fn Document.find(self, path: String): Node?    // `jobs.build.steps[0]` (14.7); la raíz es `""`
 pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError
+pub fn Document.insert[T: serialization.Encode](mut self, path: String, index: Int, value: T): !YamlError
+pub fn Document.remove(mut self, path: String): !YamlError
 pub fn Document.text(self): String
 pub fn Document.writeTo(self, out: io.Writer): !io.IoError
 ~~~
@@ -3979,6 +3984,17 @@ pub fn Document.writeTo(self, out: io.Writer): !io.IoError
   van con ellos. Un mapa o una lista en estilo flow, `{...}` o `[...]`, que
   gana una clave o un elemento se escribe de nuevo en bloque. El tag propio
   del valor anterior se va con él.
+- Un `Node` dice también qué es (`kind`; un alias, lo que es el valor de su
+  ancla), cómo está escrito (`style`: un escalar plano, entre `'`, entre `"`,
+  literal `|` o plegado `>`; una secuencia o un mapa en bloque o en flow; o un
+  alias `*nombre`), y su tag y el nombre de su ancla como los tiene el texto.
+- `insert` pone un valor en la secuencia de un camino antes de su elemento
+  `index`, o al final si `index` es su longitud, como un elemento nuevo con
+  el sangrado de los demás y antes de las líneas de comentario que tenga
+  encima el elemento que desplaza. `remove` quita un valor de su mapa o su
+  secuencia con sus líneas y las de comentario justo encima; la raíz no se
+  quita. Una secuencia o un mapa en flow se escriben de nuevo, y uno que
+  queda vacío se escribe `{}` o `[]`. El resto del texto queda igual.
 - `text` da el texto con sus cambios y `writeTo` lo escribe en un stream sin
   copiarlo. El documento entero está en memoria, como texto y como el índice
   de sus nodos.

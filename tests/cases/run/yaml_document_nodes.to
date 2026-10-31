@@ -1,0 +1,80 @@
+// A node of a YAML document says what it is and how it is written, with
+// its tag and anchor; `insert` and `remove` change a sequence or a map and
+// leave the rest of the text as it was.
+
+import std.console
+import std.yaml
+
+fn show(doc: yaml.Document, path: String) {
+    match doc.find(path) {
+        some(node) => console.println("{path}: {node.kind} {node.style} {node.tag} {node.anchor}")
+        none => console.println("{path}: none")
+    }
+}
+
+fn main(): !yaml.YamlError {
+    let text = "# Steps.\nsteps:\n  # The first.\n  - one\n  - 'two'\n  - &three \"three\"\nflow: [1, 2]\nblock: |\n  text\nfold: >\n  folded\ntagged: !reference [a, b]\nmap: &m\n  k: v\nalias: *m\nempty:\n  only: 1\n"
+    var doc = yaml.load(text)?
+    for path in ["steps", "steps[0]", "steps[1]", "steps[2]", "flow", "block", "fold", "tagged", "map", "alias", "flow[0]"] {
+        show(doc, path)
+    }
+    doc.insert("steps", 0, "zero")?
+    doc.insert("steps", 2, ["x": 1, "y": 2])?
+    doc.insert("steps", 5, "last")?
+    doc.insert("flow", 1, 9)?
+    doc.remove("steps[1]")?
+    doc.remove("fold")?
+    doc.remove("empty.only")?
+    doc.remove("flow[0]")?
+    console.println(doc.text())
+    for bad in [("nothing", 0), ("steps", 9), ("block", 0)] {
+        match doc.insert(bad.0, bad.1, 1) {
+            ok(_) => console.println("inserted")
+            err(error) => console.println("{error}")
+        }
+    }
+    match doc.remove("") {
+        ok(_) => console.println("removed")
+        err(error) => console.println("{error}")
+    }
+    match doc.remove("missing") {
+        ok(_) => console.println("removed")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: steps: Sequence Block none none
+// expect-stdout: steps[0]: Scalar Plain none none
+// expect-stdout: steps[1]: Scalar SingleQuoted none none
+// expect-stdout: steps[2]: Scalar DoubleQuoted none some(three)
+// expect-stdout: flow: Sequence Flow none none
+// expect-stdout: block: Scalar Literal none none
+// expect-stdout: fold: Scalar Folded none none
+// expect-stdout: tagged: Sequence Flow some(!reference) none
+// expect-stdout: map: Map Block none some(m)
+// expect-stdout: alias: Map Alias none none
+// expect-stdout: flow[0]: Scalar Plain none none
+// expect-stdout: # Steps.
+// expect-stdout: steps:
+// expect-stdout:   - zero
+// expect-stdout:   - x: 1
+// expect-stdout:     y: 2
+// expect-stdout:   - 'two'
+// expect-stdout:   - &three "three"
+// expect-stdout:   - last
+// expect-stdout: flow:
+// expect-stdout:   - 9
+// expect-stdout:   - 2
+// expect-stdout: block: |
+// expect-stdout:   text
+// expect-stdout: tagged: !reference [a, b]
+// expect-stdout: map: &m
+// expect-stdout:   k: v
+// expect-stdout: alias: *m
+// expect-stdout: empty: {}
+// expect-stdout:
+// expect-stdout: there is no sequence at `nothing` to insert into at $.nothing
+// expect-stdout: the sequence has 5 items: insert takes an index from 0 to 5 at $.steps
+// expect-stdout: there is no sequence at `block` to insert into at $.block
+// expect-stdout: a document keeps its root: set it instead at $
+// expect-stdout: there is no value at `missing` in the text to remove at $.missing

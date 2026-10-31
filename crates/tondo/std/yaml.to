@@ -510,19 +510,72 @@ pub type Document = {
     priv source: String
     priv root: Value
     priv paths: Array[String]
-    /// Seven a node: kind, start, end, line, column, after its key's `:`
-    /// or -1, and indent; offsets in characters.
+    /// Eight a node: kind, start, end, line, column, after its key's `:`
+    /// or -1, indent and style; offsets in characters.
     priv numbers: Array[Int]
+    /// Two a node: its tag and its anchor, or empty.
+    priv properties: Array[String]
 }
 
 /// A value of a document and where it is: its line and column, counted
 /// from 1, and the comment on its line, or else on the lines right above
-/// it, without `#`.
+/// it, without `#`; what it is and how it is written, with its tag and the
+/// name of its anchor as the text has them.
 pub type Node = {
     value: Value
     line: Int
     column: Int
     comment: String?
+    kind: NodeKind
+    style: NodeStyle
+    tag: String?
+    anchor: String?
+}
+
+/// What a node is; an alias is what its anchor's value is.
+pub enum NodeKind {
+    Scalar
+    Sequence
+    Map
+}
+
+impl Display for NodeKind {
+    fn display(self): String {
+        match self {
+            NodeKind.Scalar => "Scalar"
+            NodeKind.Sequence => "Sequence"
+            NodeKind.Map => "Map"
+        }
+    }
+}
+
+/// How a node is written: a scalar plain, in `'...'`, in `"..."`, as a
+/// literal block `|` or a folded one `>`; a sequence or a map in block
+/// style, or in flow style, `[...]` and `{...}`; or as an alias, `*name`.
+pub enum NodeStyle {
+    Plain
+    SingleQuoted
+    DoubleQuoted
+    Literal
+    Folded
+    Block
+    Flow
+    Alias
+}
+
+impl Display for NodeStyle {
+    fn display(self): String {
+        match self {
+            NodeStyle.Plain => "Plain"
+            NodeStyle.SingleQuoted => "SingleQuoted"
+            NodeStyle.DoubleQuoted => "DoubleQuoted"
+            NodeStyle.Literal => "Literal"
+            NodeStyle.Folded => "Folded"
+            NodeStyle.Block => "Block"
+            NodeStyle.Flow => "Flow"
+            NodeStyle.Alias => "Alias"
+        }
+    }
 }
 
 /// The first document of YAML text, which `set` changes; the documents
@@ -540,6 +593,7 @@ pub fn load(text: String): Document ! YamlError {
         root
         paths: yamlnative.outlinePaths(outlined)
         numbers: yamlnative.outlineNumbers(outlined)
+        properties: yamlnative.outlineProperties(outlined)
     }
 }
 
@@ -556,12 +610,31 @@ pub fn Document.find(self, path: String): Node? {
     let written = joined(segments(path)?)
     let index = self.paths.findIndex((each) { each == written })?
     let value = valueAt(self.root, written)?
-    let at = index * 7
+    let style = match self.number(index, 7) {
+        0 => NodeStyle.Plain
+        1 => NodeStyle.SingleQuoted
+        2 => NodeStyle.DoubleQuoted
+        3 => NodeStyle.Literal
+        4 => NodeStyle.Folded
+        5 => NodeStyle.Block
+        6 => NodeStyle.Flow
+        _ => NodeStyle.Alias
+    }
+    let kind = match value.content() {
+        Value.Array(_) => NodeKind.Sequence
+        Value.Map(_) => NodeKind.Map
+        _ => NodeKind.Scalar
+    }
+    let (tag, anchor) = (self.properties[index * 2], self.properties[index * 2 + 1])
     some(Node {
         value
-        line: self.numbers[at + 3]
-        column: self.numbers[at + 4]
+        line: self.number(index, 3)
+        column: self.number(index, 4)
         comment: self.commentOf(index)
+        kind
+        style
+        tag: if tag.isEmpty() { none } else { some(tag) }
+        anchor: if anchor.isEmpty() { none } else { some(anchor) }
     })
 }
 
@@ -582,23 +655,153 @@ pub fn Document.writeTo(self, out: yamlio.Writer): !yamlio.IoError {
 /// style, `{...}` or `[...]`, that gets a key or an item is written again
 /// in block style.
 pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError {
-    let place = match segments(path) {
+    let place = canonical(path)?
+    let written = encode(value).trimEnd()
+    let changed = match self.paths.findIndex((each) { each == place }) {
+        some(index) => self.replaced(index, written)
+        none => self.added(place, written)?
+    }
+    self.reload(changed)?
+}
+
+/// Inserts a value in the sequence at a path before its item `index`, or
+/// after its last when `index` is its length, written as `encode` writes
+/// it; the rest of the text stays as it was. A sequence in flow style is
+/// written again.
+pub fn Document.insert[T: serialization.Encode](
+    mut self,
+    path: String,
+    index: Int,
+    value: T,
+): !YamlError {
+    let place = canonical(path)?
+    let items = match valueAt(self.root, place).map((found) { found.content() }) {
+        some(Value.Array(items)) => items
+        _ => fail documentError("there is no sequence at `{path}` to insert into", place)
+    }
+    if index < 0 or index > items.length() {
+        fail documentError(
+            "the sequence has {items.length()} items: insert takes an index from 0 to {items.length()}",
+            place,
+        )
+    }
+    if index == items.length() {
+        self.set("{place}[{index}]", value)?
+        return
+    }
+    let list = self.paths.findIndex((each) { each == place }).unwrapOr(0)
+    let item = self.paths.findIndex((each) { each == "{place}[{index}]" }).unwrapOr(0)
+    let indent = self.number(item, 6)
+    let line = self.lineStart(self.number(item, 1))
+    let written = encode(value).trimEnd()
+    let changed = if self.number(list, 0) == 2 and self.alone(line, indent) {
+        // Before the item, and the comment lines right above it.
+        let at = self.commentsAbove(line)
+        self.spliced(at, at, "{" ".repeat(indent)}- {indentedAfterFirst(written, indent + 2)}\n")
+    } else {
+        let inserted = items
+            .slice(0, index)
+            .unwrapOr([])
+            .concat([parse(written)?])
+            .concat(items.slice(index, items.length()).unwrapOr([]))
+        self.replaced(list, encode(Value.Array(inserted)).trimEnd())
+    }
+    self.reload(changed)?
+}
+
+/// Removes the value at a path from its map or sequence, with its lines
+/// and the comment lines right above them; the rest of the text stays as
+/// it was. A map or a sequence in flow style is written again, and one
+/// left empty is written `{}` or `[]`.
+pub fn Document.remove(mut self, path: String): !YamlError {
+    let place = canonical(path)?
+    let parts = segments(place).unwrapOr([])
+    if parts.isEmpty() {
+        fail documentError("a document keeps its root: set it instead", place)
+    }
+    let index = match self.paths.findIndex((each) { each == place }) {
+        some(found) => found
+        none => fail documentError("there is no value at `{path}` in the text to remove", place)
+    }
+    let parentPath = joined(parts.slice(0, parts.length() - 1).unwrapOr([]))
+    let parent = self.paths.findIndex((each) { each == parentPath }).unwrapOr(0)
+    let (key, at) = parts[parts.length() - 1]
+    let rest = match valueAt(self.root, parentPath).map((found) { found.content() }) {
+        some(Value.Map(members)) => {
+            var kept = members
+            _ = kept.remove(key)
+            Value.Map(kept)
+        }
+        some(Value.Array(items)) => Value.Array(
+            items.slice(0, at).unwrapOr([]).concat(items.slice(at + 1, items.length()).unwrapOr([])),
+        )
+        _ => Value.Null
+    }
+    let empty = match rest {
+        Value.Map(members) => members.isEmpty()
+        Value.Array(items) => items.isEmpty()
+        _ => true
+    }
+    let block = self.number(parent, 0) == 1 or self.number(parent, 0) == 2
+    let afterKey = self.number(index, 5)
+    let line = self.lineStart(if afterKey >= 0 { afterKey } else { self.number(index, 1) })
+    let changed = if block and not empty and self.alone(line, self.number(index, 6)) {
+        // The value's last line with its line break, if it has one.
+        let end = self.lineEnd(self.number(index, 2))
+        let through = if end < self.source.length() { end + 1 } else { end }
+        self.spliced(self.commentsAbove(line), through, "")
+    } else {
+        self.replaced(parent, encode(rest).trimEnd())
+    }
+    self.reload(changed)?
+}
+
+/// The document of a changed text.
+fn Document.reload(mut self, changed: String): !YamlError {
+    let next = load(changed)?
+    self.source = next.source
+    self.root = next.root
+    self.paths = next.paths
+    self.numbers = next.numbers
+    self.properties = next.properties
+}
+
+/// A path written as the outline writes paths.
+fn canonical(path: String): String ! YamlError {
+    match segments(path) {
         some(parts) => joined(parts)
         none => fail documentError(
             "`{path}` is not a path of keys and indices, as `jobs[\".setup\"].script[0]`",
             "",
         )
     }
-    let written = encode(value).trimEnd()
-    let changed = match self.paths.findIndex((each) { each == place }) {
-        some(index) => self.replaced(index, written)
-        none => self.added(place, written)?
+}
+
+/// Where the line of a position starts.
+fn Document.lineStart(self, position: Int): Int {
+    match self.source.slice(0, position).unwrapOr("").findLast("\n") {
+        some(at) => at + 1
+        none => 0
     }
-    let next = load(changed)?
-    self.source = next.source
-    self.root = next.root
-    self.paths = next.paths
-    self.numbers = next.numbers
+}
+
+/// Whether only spaces come before `column` on the line at `line`: its
+/// key or `-` starts the line.
+fn Document.alone(self, line: Int, column: Int): Bool {
+    self.source.slice(line, line + column).unwrapOr("x").trim().isEmpty()
+}
+
+/// Where the comment lines right above the line at `line` start.
+fn Document.commentsAbove(self, line: Int): Int {
+    var at = line
+    for at > 0 {
+        let above = self.lineStart(at - 1)
+        if not self.source.slice(above, at).unwrapOr("").trim().startsWith("#") {
+            break
+        }
+        at = above
+    }
+    at
 }
 
 /// An error of a document at a path of it.
@@ -643,7 +846,7 @@ fn segments(path: String): Array[(String, Int)]? {
 }
 
 fn Document.number(self, index: Int, field: Int): Int {
-    self.numbers[index * 7 + field]
+    self.numbers[index * 8 + field]
 }
 
 /// The text with `start..end` replaced.

@@ -840,6 +840,12 @@ struct Outlined {
     after_key: Option<usize>,
     /// The column its key, or its item's `-`, starts at.
     indent: usize,
+    /// How it is written: plain, `'...'`, `"..."`, `|`, `>`, a block map or
+    /// list, a flow one, or an alias, from 0.
+    style: i64,
+    /// Its tag and its anchor as written, or empty.
+    tag: String,
+    anchor: String,
 }
 
 /// The nodes of the first document of a text, or why it is not one.
@@ -866,6 +872,19 @@ fn properties_start(source: &str, mut start: usize) -> usize {
         }
         start = word;
     }
+}
+
+/// The tag and the anchor's name in what is written before a node.
+fn properties(written: &str) -> (String, String) {
+    let (mut tag, mut anchor) = (String::new(), String::new());
+    for word in written.split_whitespace() {
+        match word.strip_prefix('&') {
+            Some(name) => anchor = name.to_string(),
+            None if word.starts_with('!') => tag = word.to_string(),
+            None => {}
+        }
+    }
+    (tag, anchor)
 }
 
 fn outline(source: &str) -> Result<Vec<Outlined>, String> {
@@ -929,11 +948,22 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 } else {
                     (start, end)
                 };
+                let style = match event {
+                    Parsed::Scalar(_, ScalarStyle::Plain, ..) => 0,
+                    Parsed::Scalar(_, ScalarStyle::SingleQuoted, ..) => 1,
+                    Parsed::Scalar(_, ScalarStyle::DoubleQuoted, ..) => 2,
+                    Parsed::Scalar(_, ScalarStyle::Literal, ..) => 3,
+                    Parsed::Scalar(_, ScalarStyle::Folded, ..) => 4,
+                    _ => 7,
+                };
                 let first = properties_start(source, start);
                 let (path, after_key, indent) = place(&open, &nodes, first);
                 let (line, column) = (span.start.line(), span.start.col() + 1);
+                let (tag, anchor) = properties(&source[first..start]);
                 let start = if tagged { first } else { start };
-                nodes.push(Outlined { path, kind: 0, start, end, line, column, after_key, indent });
+                let outlined =
+                    Outlined { path, kind: 0, start, end, line, column, after_key, indent, style, tag, anchor };
+                nodes.push(outlined);
                 finished(&mut open, &mut nodes, end);
             }
             Parsed::MappingStart(..) | Parsed::SequenceStart(..) => {
@@ -949,8 +979,22 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 let (path, after_key, indent) = place(&open, &nodes, first);
                 let (line, column) = (span.start.line(), span.start.col() + 1);
                 let tagged = matches!(event, Parsed::MappingStart(_, Some(_)) | Parsed::SequenceStart(_, Some(_)));
+                let (tag, anchor) = properties(&source[first..start]);
                 let start = if tagged { first } else { start };
-                nodes.push(Outlined { path, kind, start, end: start, line, column, after_key, indent });
+                let style = if flow { 6 } else { 5 };
+                nodes.push(Outlined {
+                    path,
+                    kind,
+                    start,
+                    end: start,
+                    line,
+                    column,
+                    after_key,
+                    indent,
+                    style,
+                    tag,
+                    anchor,
+                });
                 let node = nodes.len() - 1;
                 open.push(if map { Opened::Map { node, key: None } } else { Opened::List { node, count: 0 } });
             }
@@ -1023,8 +1067,8 @@ pub extern "C" fn tondo_rt_yaml_outline_paths(object: *mut NativeObject) -> *mut
     crate::http::string_array(&paths)
 }
 
-/// Seven numbers a node: its kind, start, end, line, column, the end of its
-/// key's `:` or -1, and its indent.
+/// Eight numbers a node: its kind, start, end, line, column, the end of its
+/// key's `:` or -1, its indent and its style.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *mut crate::ArrayHeader {
     let numbers: Vec<i64> = native::get::<Outline>(object).map_or(Vec::new(), |o| {
@@ -1032,11 +1076,19 @@ pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *m
             .iter()
             .flat_map(|n| {
                 let after = n.after_key.map_or(-1, |a| a as i64);
-                [n.kind, n.start as i64, n.end as i64, n.line as i64, n.column as i64, after, n.indent as i64]
+                [n.kind, n.start as i64, n.end as i64, n.line as i64, n.column as i64, after, n.indent as i64, n.style]
             })
             .collect()
     });
     crate::files::ints(&numbers)
+}
+
+/// Two texts a node: its tag and its anchor, or empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_yaml_outline_properties(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+    let texts: Vec<String> = native::get::<Outline>(object)
+        .map_or(Vec::new(), |o| o.nodes.iter().flat_map(|n| [n.tag.clone(), n.anchor.clone()]).collect());
+    crate::http::string_array(&texts)
 }
 
 /// Why the text is not a document, or empty.

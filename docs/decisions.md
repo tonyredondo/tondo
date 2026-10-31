@@ -3828,3 +3828,15 @@ JSONPath and jq write a key in brackets, and `json.Value` gains the
 `find` it lacked. The runtime parses it once for all, and writes the paths
 of a document in the same form, so a path a user writes and the one the
 outline gives compare as text.
+
+## 2026-10-31 — What a YAML node is, and inserting and removing
+
+A tool that rewrites CI files, as ddtest does with GitLab's, must know
+whether a value is a literal block or a flow list to keep its look, and
+must add a step in the middle of a list or drop a job, which `set` could
+not. `Node` gains `kind`, `style`, `tag` and `anchor`, read from the text,
+since the parser gives anchors only as numbers, and `Document` gains
+`insert` and `remove`, which work on the lines of a block collection as
+`set` does and write a flow one again. An item inserted goes before the
+comment lines above the one it displaces, and a value removed takes those
+above it, since `find` gives them as its comment.

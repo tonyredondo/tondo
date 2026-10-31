@@ -166,7 +166,11 @@ fn main(): !yaml.YamlError {
 ```
 
 `doc.find(path)` also gives the value's line and column, and
-`doc.writeTo(out)` writes the text to a stream without copying it. A path,
+`doc.writeTo(out)` writes the text to a stream without copying it. A node
+also says its `kind`, its `style` (`Plain`, `Literal`, `Flow`…), its `tag`
+and its `anchor`; `doc.insert(path, index, value)` puts an item in a
+sequence and `doc.remove(path)` takes a value out, both leaving the rest
+of the text as it was. A path,
 there and in the `find` of every format's `Value`, has keys and indices,
 `items[0].name`, and a key with `.` in quotes: `jobs[".setup"].script`.
 
