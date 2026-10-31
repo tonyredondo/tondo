@@ -1,0 +1,56 @@
+// The parts of std.process (standard library 19.2) written in Tondo, which
+// a program that imports std.process links with: finding a program, and
+// signals to a process it did not start.
+
+import std.env as __env
+import std.fs as __fs
+import std.internal.process as processNative
+import std.process as __process
+
+/// The file a shell runs for `name`: `name` itself when it holds a `/`,
+/// or else the first file of that name in the directories of `PATH` that
+/// may be run; `none` without one.
+pub fn which(name: String): String? {
+    if name.contains("/") {
+        return if runnable(name) { some(name) } else { none }
+    }
+    for directory in __env.get("PATH").unwrapOr("").split(":") {
+        let candidate = if directory.isEmpty() { "./{name}" } else { "{directory}/{name}" }
+        if runnable(candidate) {
+            return some(candidate)
+        }
+    }
+    none
+}
+
+/// Whether a file may be run, followed through its links.
+fn runnable(path: String): Bool {
+    let real = match __fs.realPath(path) {
+        ok(real) => real
+        err(_) => return false
+    }
+    match __fs.metadata(real) {
+        ok(found) => found.kind == __fs.FileKind.File and found.permissions & 0o111 != 0
+        err(_) => false
+    }
+}
+
+/// Sends a signal to the process `pid`, one the program did not start:
+/// `ProcessError.NotFound` when there is none, `PermissionDenied` when
+/// the program may not signal it.
+pub fn signal(pid: Int, sent: __process.Signal): !__process.ProcessError {
+    let tag = match sent {
+        __process.Signal.Interrupt => 0
+        __process.Signal.Terminate => 1
+        __process.Signal.Hangup => 2
+        __process.Signal.User1 => 3
+        __process.Signal.User2 => 4
+        __process.Signal.Quit => 5
+        __process.Signal.Kill => 6
+    }
+    match processNative.kill(pid, tag) {
+        0 => {}
+        1 => fail __process.ProcessError.NotFound
+        _ => fail __process.ProcessError.PermissionDenied
+    }
+}

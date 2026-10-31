@@ -164,6 +164,79 @@ pub extern "C" fn tondo_rt_env_processors() -> i64 {
     std::thread::available_parallelism().map_or(1, |count| count.get() as i64)
 }
 
+/// The cores of the machine, each once however many threads it runs; what
+/// the program may run on when the system does not say.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_cores() -> i64 {
+    #[cfg(target_os = "macos")]
+    {
+        let mut count: i32 = 0;
+        let mut size = std::mem::size_of::<i32>();
+        let asked = unsafe {
+            libc::sysctlbyname(c"hw.physicalcpu".as_ptr(), (&raw mut count).cast(), &mut size, std::ptr::null_mut(), 0)
+        };
+        if asked == 0 && count > 0 {
+            return count as i64;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // A core is a pair of package and core numbers, which its threads
+        // share.
+        let mut cores = std::collections::HashSet::new();
+        for entry in std::fs::read_dir("/sys/devices/system/cpu").into_iter().flatten().flatten() {
+            let name = entry.file_name();
+            let numbered = name
+                .to_str()
+                .and_then(|n| n.strip_prefix("cpu"))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+            if !numbered {
+                continue;
+            }
+            let topology = entry.path().join("topology");
+            let read = |file: &str| std::fs::read_to_string(topology.join(file)).ok().map(|t| t.trim().to_string());
+            if let (Some(package), Some(core)) = (read("physical_package_id"), read("core_id")) {
+                cores.insert((package, core));
+            }
+        }
+        if !cores.is_empty() {
+            return cores.len() as i64;
+        }
+    }
+    tondo_rt_env_processors()
+}
+
+/// The user the program runs as: its id, its group's, its name and its
+/// home, as the system's accounts say; empty texts for what they lack.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_user() -> *mut ArrayHeader {
+    let (id, group) = unsafe { (libc::getuid(), libc::getgid()) };
+    let mut account: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    unsafe { libc::getpwuid_r(id, &mut account, buffer.as_mut_ptr(), buffer.len(), &mut found) };
+    let field = |text: *const libc::c_char| match text.is_null() {
+        true => String::new(),
+        false => unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy().into_owned(),
+    };
+    let (name, home) = match found.is_null() {
+        true => (String::new(), String::new()),
+        false => (field(account.pw_name), field(account.pw_dir)),
+    };
+    crate::http::string_array(&[id.to_string(), group.to_string(), name, home])
+}
+
+/// The system the program runs on, as `uname` says: its name, release and
+/// machine.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_system() -> *mut ArrayHeader {
+    let mut named: libc::utsname = unsafe { std::mem::zeroed() };
+    unsafe { libc::uname(&mut named) };
+    let field =
+        |text: &[libc::c_char]| unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) }.to_string_lossy().into_owned();
+    crate::http::string_array(&[field(&named.sysname), field(&named.release), field(&named.machine)])
+}
+
 /// The target the program was built for, as tondo names it:
 /// `x86_64-linux-gnu`, `aarch64-linux-musl`, `aarch64-macos`.
 #[unsafe(no_mangle)]

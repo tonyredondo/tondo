@@ -630,6 +630,8 @@ impl Rt {
                 FsFn::WriteBytesTo => ("tondo_rt_fs_write_bytes_to", &[I64, I64], &[I64]),
                 FsFn::Flush => ("tondo_rt_fs_flush", &[I64], &[I64]),
                 FsFn::Close => ("tondo_rt_fs_close", &[I64], &[I64]),
+                FsFn::Lock => ("tondo_rt_fs_lock", &[I64, I64], &[I64]),
+                FsFn::TryLock => ("tondo_rt_fs_try_lock", &[I64, I64, I64], &[I64]),
             },
             Rt::Io(function) => match function {
                 IoFn::Write => ("tondo_rt_io_write", &[I64, I64], &[I64]),
@@ -7091,7 +7093,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let (a, b) = match setting {
                     0 | 2 => (values[1], zero),
                     1 => (values[1], values[2]),
-                    3 | 7 => (zero, zero),
+                    3 | 7 | 8 => (zero, zero),
                     // An `Input` or `Output`: its tag and the pointer its
                     // payload holds, the same place in every variant.
                     _ => {
@@ -7247,6 +7249,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let _ = element;
                 self.e.fb.ins().store(flags(), pointer, address, payload.offset as i32);
                 Val::Memory(address)
+            }
+            TyKind::Bool => {
+                let word = word(self, 0);
+                Val::Scalar(self.e.fb.ins().ireduce(types::I8, word))
             }
             _ => Val::Scalar(word(self, 0)),
         }

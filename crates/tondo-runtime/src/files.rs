@@ -8,7 +8,7 @@ use super::{ArrayHeader, Str, str_bytes};
 use crate::http::{string_array, strings};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::ErrorKind;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -127,7 +127,8 @@ fn kind(file: std::fs::FileType) -> i64 {
 }
 
 /// `fs.metadata`: the kind, size, read-only flag, the seconds and
-/// nanoseconds of the last change since 1970 and the permissions.
+/// nanoseconds of the last change since 1970, the permissions, the inode,
+/// the hard links and the ids of the owner and the group.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_stat(path: *const Str) -> *mut NativeObject {
     let path = text(path).to_string();
@@ -145,7 +146,11 @@ pub unsafe extern "C" fn tondo_rt_files_stat(path: *const Str) -> *mut NativeObj
         };
         let readonly = metadata.permissions().readonly() as i64;
         let mode = (metadata.permissions().mode() & 0o7777) as i64;
-        Ok(Done { numbers: vec![kind(metadata.file_type()), size, readonly, seconds, nanos, mode], ..Done::default() })
+        let (inode, links) = (metadata.ino() as i64, metadata.nlink() as i64);
+        let (owner, group) = (metadata.uid() as i64, metadata.gid() as i64);
+        let numbers =
+            vec![kind(metadata.file_type()), size, readonly, seconds, nanos, mode, inode, links, owner, group];
+        Ok(Done { numbers, ..Done::default() })
     })
 }
 
@@ -233,6 +238,47 @@ pub unsafe extern "C" fn tondo_rt_files_symlink(target: *const Str, link: *const
     done(move || {
         io(std::os::unix::fs::symlink(target, link))?;
         Ok(Done::default())
+    })
+}
+
+/// `fs.createLink`: a hard link.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_files_link(target: *const Str, link: *const Str) -> *mut NativeObject {
+    let (target, link) = (text(target).to_string(), text(link).to_string());
+    done(move || {
+        io(std::fs::hard_link(target, link))?;
+        Ok(Done::default())
+    })
+}
+
+/// `fs.setModified`: the nanoseconds since 1970 of the last change of the
+/// content.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_files_set_modified(path: *const Str, nanos: i64) -> *mut NativeObject {
+    let path = text(path).to_string();
+    done(move || {
+        let since = std::time::Duration::from_nanos(nanos.unsigned_abs());
+        let at = if nanos >= 0 { std::time::UNIX_EPOCH + since } else { std::time::UNIX_EPOCH - since };
+        let file = io(std::fs::File::open(path))?;
+        io(file.set_times(std::fs::FileTimes::new().set_modified(at)))?;
+        Ok(Done::default())
+    })
+}
+
+/// `fs.space`: the bytes of the file system of the path, those free and
+/// those free that the program may use.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_files_space(path: *const Str) -> *mut NativeObject {
+    let path = text(path).to_string();
+    done(move || {
+        let named = std::ffi::CString::new(path).map_err(|_| INVALID_NAME)?;
+        let mut found: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(named.as_ptr(), &mut found) } != 0 {
+            return Err(failure(&std::io::Error::last_os_error()));
+        }
+        let unit = found.f_frsize as i64;
+        let numbers = vec![found.f_blocks as i64 * unit, found.f_bfree as i64 * unit, found.f_bavail as i64 * unit];
+        Ok(Done { numbers, ..Done::default() })
     })
 }
 

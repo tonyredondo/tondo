@@ -3485,3 +3485,24 @@ its breakpoints stay unverified with the reason, its tests show without a
 run button, and coverage names its files apart instead of counting them as
 code that never ran.
 
+## 2026-10-31 — Process groups, asked for
+
+The seventeenth lot starts with what ddtest asks of the system. It runs
+`go test`, which builds and runs a program for each package: cancelling
+`go test` alone leaves those running. `Command.group()` starts a command
+in a process group of its own, and `cancel` and `signal` then reach the
+group whole. Go asks for `Setpgid` and a negative pid, Rust for
+`process_group(0)` and libc; .NET's `Kill(entireProcessTree: true)` walks
+the tree instead, and misses what is born while it walks or was already
+orphaned. A group misses nothing, and on Windows the same `group()` will be
+a job object.
+
+It is asked for, not the default, because the terminal's Ctrl-C reaches
+the group in the foreground: a command in its own group no longer gets it,
+and the program decides, with `process.signals`. That is what a tool that
+runs tests wants, and not what an interactive program started by one does.
+
+`env.user()` and `env.system()` cannot change while a program runs, so a
+private context of `std.env` keeps them, computed the first time they are
+read: the standard library's own use of initial values computed once.
+

@@ -1060,6 +1060,10 @@ pub enum FsFn {
     WriteBytesTo,
     Flush,
     Close,
+    /// `lock(shared)` and `tryLock(shared)`: the file's lock, released
+    /// when it closes.
+    Lock,
+    TryLock,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1216,6 +1220,14 @@ pub const NATIVES: &[Native] = {
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
+    const fn process(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "process", name, receiver: None, params, result, symbol }
+    }
     const fn fuzz(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "fuzz", name, receiver: None, params, result, symbol }
     }
@@ -1323,6 +1335,12 @@ pub const NATIVES: &[Native] = {
         text("pluralRules", &[String], Strings, "tondo_rt_text_plural_rules"),
         // `std.internal.env`: what `std.env` writes in Tondo asks of the host.
         env("processors", &[], Int, "tondo_rt_env_processors"),
+        env("cores", &[], Int, "tondo_rt_env_cores"),
+        env("user", &[], Strings, "tondo_rt_env_user"),
+        env("system", &[], Strings, "tondo_rt_env_system"),
+        // `std.internal.process`: what `std.process` writes in Tondo asks
+        // of the host.
+        process("kill", &[Int, Int], Int, "tondo_rt_process_kill"),
         // `std.internal.sql`: SQLite, for `std.sql`.
         sql("open", &[String], Object, "tondo_rt_sqlite_open"),
         sql("failure", &[Object], String, "tondo_rt_sqlite_failure"),
@@ -1372,6 +1390,9 @@ pub const NATIVES: &[Native] = {
         fs("temporary", &[Bool], Object, "tondo_rt_files_temporary"),
         fs("setPermissions", &[String, Int], Object, "tondo_rt_files_set_permissions"),
         fs("symlink", &[String, String], Object, "tondo_rt_files_symlink"),
+        fs("link", &[String, String], Object, "tondo_rt_files_link"),
+        fs("setModified", &[String, Int], Object, "tondo_rt_files_set_modified"),
+        fs("space", &[String], Object, "tondo_rt_files_space"),
         fs("readSymlink", &[String], Object, "tondo_rt_files_read_symlink"),
         fs("realPath", &[String], Object, "tondo_rt_files_real_path"),
         fs("watch", &[Strings, Int], Object, "tondo_rt_files_watch"),

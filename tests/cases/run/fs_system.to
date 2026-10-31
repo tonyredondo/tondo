@@ -1,0 +1,43 @@
+// What a tool asks of files and of the system: hard links, the time of the
+// last change, the space of a disk, the lock of a file, the numbers of an
+// entry, and the user and the system the program runs as and on.
+
+import std.console
+import std.env
+import std.fs
+import std.time
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    defer {
+        _ = fs.remove(dir, recursive: true)
+    }
+    let path = "{dir}/data.txt"
+    fs.writeText(path, "hello")?
+    fs.createLink(path, "{dir}/again.txt")?
+    let found = fs.metadata(path)?
+    let again = fs.metadata("{dir}/again.txt")?
+    console.println("links {found.links}, same file {found.inode == again.inode}, mine {found.owner == env.user().id}")
+    fs.setModified(path, time.utc(time.seconds(1_000_000_000)))?
+    console.println("modified {fs.metadata(path)?.modified}")
+    let space = fs.space(dir)?
+    console.println("space {space.total > 0} {space.free <= space.total} {space.available <= space.free}")
+    var file = fs.open(path, fs.OpenMode.Read)?
+    file.lock()?
+    var other = fs.open(path, fs.OpenMode.Read)?
+    console.println("taken while locked: {other.tryLock()?}")
+    file.close()?
+    console.println("taken once closed: {other.tryLock(shared: true)?}")
+    other.close()?
+    let system = env.system()
+    console.println("{system.name == "Linux" or system.name == "Darwin"} {system.machine.isEmpty()} {env.user().id >= 0}")
+    console.println("{env.processors(physical: true) >= 1}")
+}
+
+// expect-stdout: links 2, same file true, mine true
+// expect-stdout: modified 2001-09-09T01:46:40Z
+// expect-stdout: space true true true
+// expect-stdout: taken while locked: false
+// expect-stdout: taken once closed: true
+// expect-stdout: true false true
+// expect-stdout: true

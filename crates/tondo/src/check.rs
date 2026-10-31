@@ -254,6 +254,9 @@ enum StdModule {
     /// `std.internal.env`: the host's side of what `std.env` writes in
     /// Tondo.
     InternalEnv,
+    /// `std.internal.process`: the host's side of what `std.process`
+    /// writes in Tondo.
+    InternalProcess,
     /// `std.internal.sql`: SQLite, for `std.sql`.
     InternalSql,
     /// `std.internal.image`: decoding, encoding and pixels, for `std.image`.
@@ -1772,6 +1775,7 @@ impl<'a> Checker<'a> {
             StdModule::Io => "io",
             StdModule::Text => "text",
             StdModule::Env => "env",
+            StdModule::Process => "process",
             StdModule::Sync => "sync",
             _ => return &[],
         })
@@ -3101,6 +3105,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "time"] => StdModule::InternalTime,
             ["std", "internal", "fs"] => StdModule::InternalFs,
             ["std", "internal", "env"] => StdModule::InternalEnv,
+            ["std", "internal", "process"] => StdModule::InternalProcess,
             ["std", "internal", "sql"] => StdModule::InternalSql,
             ["std", "internal", "image"] => StdModule::InternalImage,
             ["std", "internal", "context"] => StdModule::InternalContext,
@@ -3279,7 +3284,8 @@ impl<'a> Checker<'a> {
             self.types.define_adt(id, AdtKind::Enum(variants));
             self.types.shown.insert(error, Shown::ProcessError);
             let (id, signal) = self.types.declare_adt(format!("{prefix}.Signal"));
-            let variants = ["Interrupt", "Terminate", "Hangup", "User1", "User2"].map(|name| variant(name, None));
+            let variants =
+                ["Interrupt", "Terminate", "Hangup", "User1", "User2", "Quit", "Kill"].map(|name| variant(name, None));
             self.types.define_adt(id, AdtKind::Enum(variants.to_vec()));
             let process = self.types.handle(Handle::Process, Ty::UNIT);
             for handle in [Handle::Command, Handle::Pipeline] {
@@ -7090,6 +7096,7 @@ impl<'a> Checker<'a> {
             (_, "stdout") if plan => (P::Configure(5), vec![types.output], ty),
             (Handle::Command, "stderr") => (P::Configure(6), vec![types.output], ty),
             (_, "mergeStderr") if plan => (P::Configure(7), vec![], ty),
+            (_, "group") if plan => (P::Configure(8), vec![], ty),
             (_, "run") if plan => (P::Run, vec![], failing(self, types.status)),
             (_, "status") if plan => (P::Status, vec![], failing(self, types.status)),
             (_, "output") if plan => (P::Output, vec![], failing(self, types.result)),
@@ -7223,20 +7230,35 @@ impl<'a> Checker<'a> {
             "writeBytes" => (F::WriteBytesTo, vec![bytes], failing(self, Ty::UNIT)),
             "flush" => (F::Flush, vec![], failing(self, Ty::UNIT)),
             "close" => (F::Close, vec![], failing(self, Ty::UNIT)),
+            "lock" => (F::Lock, vec![Ty::BOOL], failing(self, Ty::UNIT)),
+            "tryLock" => (F::TryLock, vec![Ty::BOOL], failing(self, Ty::BOOL)),
             _ => return self.no_method(receiver.ty, method, span),
         };
+        // `shared` may be left out, for an exclusive lock.
+        let locking = matches!(function, F::Lock | F::TryLock);
+        if locking && let Some(arg) = args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name != "shared")) {
+            let message = format!("`{}` takes `shared`, not `{}`", method.name, arg.name.as_ref().unwrap().name);
+            self.diags.error("E1102", arg.value.span, message);
+            return Self::error_expr(span);
+        }
+        if locking && args.is_empty() {
+            let receiver = self.file_loan(cx, receiver, method);
+            let Some(receiver) = receiver else { return Self::error_expr(span) };
+            let unshared = Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span);
+            return Self::mk(
+                hir::ExprKind::Call(Callee::Std(StdFn::Fs(function)), Vec::new(), vec![receiver, unshared]),
+                result,
+                span,
+            );
+        }
         if args.len() != params.len() {
             return self.arity_error(span, params.len(), args.len());
         }
         let receiver = if function == F::Close {
             receiver
         } else {
-            let (ty, receiver_span) = (receiver.ty, receiver.span);
-            let operation = format!("`{}`", method.name);
-            let Some(place) = self.loan_place(cx, receiver, &operation, true) else {
-                return Self::error_expr(span);
-            };
-            Self::mk(hir::ExprKind::Loan(place), ty, receiver_span)
+            let Some(receiver) = self.file_loan(cx, receiver, method) else { return Self::error_expr(span) };
+            receiver
         };
         let mut values = vec![receiver];
         for (arg, ty) in args.iter().zip(params) {
@@ -7244,6 +7266,14 @@ impl<'a> Checker<'a> {
             values.push(self.coerce(value, ty));
         }
         Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Fs(function)), Vec::new(), values), result, span)
+    }
+
+    /// The file a method works on, lent to it.
+    fn file_loan(&mut self, cx: &mut FnCx, receiver: hir::Expr, method: &ast::Ident) -> Option<hir::Expr> {
+        let (ty, receiver_span) = (receiver.ty, receiver.span);
+        let operation = format!("`{}`", method.name);
+        let place = self.loan_place(cx, receiver, &operation, true)?;
+        Some(Self::mk(hir::ExprKind::Loan(place), ty, receiver_span))
     }
 
     /// `Ref(value)` (16.10): a new identity holding the value, copied when
@@ -14403,6 +14433,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalContext
                     | StdModule::InternalFs
                     | StdModule::InternalEnv
+                    | StdModule::InternalProcess
                     | StdModule::InternalSql
                     | StdModule::InternalImage),
                 )),
@@ -14465,6 +14496,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalContext => "context",
                     StdModule::InternalFs => "fs",
                     StdModule::InternalEnv => "env",
+                    StdModule::InternalProcess => "process",
                     StdModule::InternalSql => "sql",
                     StdModule::InternalImage => "image",
                     _ => "reflect",

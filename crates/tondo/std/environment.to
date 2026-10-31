@@ -58,9 +58,60 @@ fn userDirectory(variable: String, linux: String, macos: String): String? {
 }
 
 /// How many processors the program may run on at once, as its affinity
-/// and its cgroup's quota allow: at least 1.
-pub fn processors(): Int {
-    envNative.processors()
+/// and its cgroup's quota allow: at least 1. With `physical`, the cores of
+/// the machine, each once however many threads it runs.
+pub fn processors(physical: Bool = false): Int {
+    if physical { envNative.cores() } else { envNative.processors() }
+}
+
+/// The user the program runs as: its id, its group's, its name and its
+/// home, as the system's accounts say; a name or a home they do not have
+/// is empty.
+pub type User = {
+    id: Int
+    group: Int
+    name: String
+    home: String
+}
+
+/// The system the program runs on, as `uname` says: its name, `Linux` or
+/// `Darwin`, its release and the machine, as `x86_64` or `arm64`.
+pub type System = {
+    name: String
+    release: String
+    machine: String
+}
+
+/// What does not change while the program runs, read once, the first time
+/// it is asked for (language 11.16).
+context Host = {
+    user: User = readUser()
+    system: System = readSystem()
+}
+
+/// The user the program runs as.
+pub fn user(): User {
+    Host.user
+}
+
+/// The system the program runs on.
+pub fn system(): System {
+    Host.system
+}
+
+fn readUser(): User {
+    let fields = envNative.user()
+    User {
+        id: Int.parse(fields[0]).unwrapOr(-1)
+        group: Int.parse(fields[1]).unwrapOr(-1)
+        name: fields[2]
+        home: fields[3]
+    }
+}
+
+fn readSystem(): System {
+    let fields = envNative.system()
+    System { name: fields[0], release: fields[1], machine: fields[2] }
 }
 
 /// What the program was built from, read when it compiled.

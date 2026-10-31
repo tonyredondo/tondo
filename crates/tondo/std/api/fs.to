@@ -98,6 +98,14 @@ pub fn File.flush(var self): Unit ! FsError
 /// abandoned, it closes by itself and loses that error.
 pub fn File.close(self): Unit ! FsError
 
+/// Takes the file's lock, exclusive or `shared`, waiting for whoever has
+/// it, without holding a thread; closing the file lets it go. Unix's
+/// advisory lock (`flock`): it orders the programs that ask for it.
+pub fn File.lock(var self, shared: Bool = false): Unit ! FsError
+
+/// Takes the file's lock if it is free, without waiting: whether it did.
+pub fn File.tryLock(var self, shared: Bool = false): Bool ! FsError
+
 /// The file as a stream of `std.io`; it closes with the stream's last copy.
 pub fn File.writer(self): io.Writer
 

@@ -8,7 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -73,6 +73,9 @@ struct Stage {
     stdout: Option<Output>,
     stderr: Option<Output>,
     merge: bool,
+    /// `group()`: the stages run in a process group of their own, which
+    /// signals and `cancel` reach as a whole.
+    group: bool,
 }
 
 /// A `Command` (one stage) or a `Pipeline`.
@@ -102,6 +105,7 @@ fn stage(program: OsString, arguments: Vec<OsString>) -> Stage {
         stdout: None,
         stderr: None,
         merge: false,
+        group: false,
     }
 }
 
@@ -128,8 +132,9 @@ pub unsafe extern "C" fn tondo_rt_process_pipe(left: *mut PlanObject, right: *mu
 
 /// A copy of the plan changed by one setting: 0 `directory(a)`, 1
 /// `env(a, b)`, 2 `removeEnv(a)`, 3 `clearEnv()`, 4 `stdin`, 5 `stdout` and
-/// 6 `stderr` (with the tag of the `Input` or `Output` and its payload), and
-/// 7 `mergeStderr()`. `stdin` is the first stage's, `stdout` the last's.
+/// 6 `stderr` (with the tag of the `Input` or `Output` and its payload), 7
+/// `mergeStderr()` and 8 `group()`. `stdin` is the first stage's, `stdout`
+/// the last's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_configure(
     plan_object: *mut PlanObject,
@@ -151,7 +156,8 @@ pub unsafe extern "C" fn tondo_rt_process_configure(
         4 => stages[0].stdin = Some(unsafe { input(a as i64, b) }),
         5 => stages[last].stdout = Some(unsafe { output(a as i64, b) }),
         6 => stages[last].stderr = Some(unsafe { output(a as i64, b) }),
-        _ => stages.iter_mut().for_each(|s| s.merge = true),
+        7 => stages.iter_mut().for_each(|s| s.merge = true),
+        _ => stages.iter_mut().for_each(|s| s.group = true),
     }
     plan(stages)
 }
@@ -226,6 +232,8 @@ struct Captured {
 struct Running {
     children: Vec<Child>,
     pids: Vec<u32>,
+    /// The process group of its own, `group()`'s: its first stage's id.
+    group: Option<u32>,
     streams: [Option<Held>; 3],
     workers: Vec<JoinHandle<()>>,
     captured: Arc<Mutex<Captured>>,
@@ -364,6 +372,7 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     let mut running = Running {
         children: Vec::new(),
         pids: Vec::new(),
+        group: None,
         streams: [None, None, None],
         workers: Vec::new(),
         captured: Arc::new(Mutex::new(Captured { stderr: vec![Vec::new(); stages.len()], ..Captured::default() })),
@@ -379,6 +388,10 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
             let last = index + 1 == stages.len();
             let mut command = std::process::Command::new(&stage.program);
             command.args(&stage.arguments).env_clear();
+            // The first stage leads the group, and the others join it.
+            if stage.group {
+                command.process_group(running.group.map_or(0, |group| group as i32));
+            }
             if !stage.clear_env {
                 command.envs(environment.iter().map(|(k, v)| (k, v)));
             }
@@ -448,30 +461,38 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
             let child = command.spawn()?;
             super::diagnostics::PROCESSES_STARTED.add(1);
             running.pids.push(child.id());
+            if stage.group && running.group.is_none() {
+                running.group = Some(child.id());
+            }
             running.children.push(child);
             // `command` drops here, closing this side's copies of the pipes.
         }
         Ok(())
     })();
     if let Err(error) = started {
-        kill_all(&running.pids);
+        kill_all(&running.pids, running.group);
         let _ = finish(&mut running);
         return Err(error);
     }
-    LIVE.lock().unwrap_or_else(|e| e.into_inner()).extend(running.pids.iter().copied());
+    LIVE.lock().unwrap_or_else(|e| e.into_inner()).extend(running.pids.iter().map(|&pid| (pid, running.group)));
     Ok(running)
 }
 
 /// The children of processes that started and nobody waited for, which a
 /// panic cancels.
-static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static LIVE: Mutex<Vec<(u32, Option<u32>)>> = Mutex::new(Vec::new());
 
 /// How many processes the program started are running.
 pub(crate) fn running() -> usize {
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).len()
 }
 
-fn kill_all(pids: &[u32]) {
+/// Ends the processes, and every process of their group when they have
+/// one of their own: what they started too.
+fn kill_all(pids: &[u32], group: Option<u32>) {
+    if let Some(group) = group {
+        unsafe { kill(-(group as i32), SIGKILL) };
+    }
     for &pid in pids {
         unsafe { kill(pid as i32, SIGKILL) };
     }
@@ -479,8 +500,10 @@ fn kill_all(pids: &[u32]) {
 
 /// Cancels the processes still running when a panic ends the program.
 pub(crate) fn cancel_live() {
-    let pids = std::mem::take(&mut *LIVE.lock().unwrap_or_else(|e| e.into_inner()));
-    kill_all(&pids);
+    let live = std::mem::take(&mut *LIVE.lock().unwrap_or_else(|e| e.into_inner()));
+    for (pid, group) in live {
+        kill_all(&[pid], group);
+    }
 }
 
 /// Waits for every stage and the work around them; the statuses as
@@ -506,7 +529,7 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
     for worker in running.workers.drain(..) {
         let _ = worker.join();
     }
-    LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|pid| !running.pids.contains(pid));
+    LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !running.pids.contains(pid));
     running.statuses = Some(statuses.clone());
     statuses
 }
@@ -586,8 +609,8 @@ pub unsafe extern "C" fn tondo_rt_process_run(plan: *mut PlanObject, quiet: u8, 
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let pids = running.pids.clone();
-    let statuses = host_cancellable(move || finish(&mut running), || kill_all(&pids));
+    let (pids, group) = (running.pids.clone(), running.group);
+    let statuses = host_cancellable(move || finish(&mut running), || kill_all(&pids, group));
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -608,10 +631,12 @@ pub unsafe extern "C" fn tondo_rt_process_output(
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let pids = running.pids.clone();
+    let (pids, group) = (running.pids.clone(), running.group);
     let out = out as usize;
-    let (_, success) =
-        host_cancellable(move || unsafe { write_output(&mut running, layout, out as *mut i64) }, || kill_all(&pids));
+    let (_, success) = host_cancellable(
+        move || unsafe { write_output(&mut running, layout, out as *mut i64) },
+        || kill_all(&pids, group),
+    );
     if check != 0 && !success { FAILED } else { 0 }
 }
 
@@ -671,12 +696,32 @@ pub unsafe extern "C" fn tondo_rt_process_id(process: *mut ProcessObject) -> i64
 }
 
 /// `Process.signal`: sends the signal of `process.Signal`'s variant `tag`
-/// to each stage of the process.
+/// to each stage of the process, and to its whole group when it has one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, tag: i64) {
     let Some(&signal) = super::signals::SIGNALS.get(tag as usize) else { return };
-    for &pid in &Process(process).running().pids {
+    let running = Process(process);
+    let running = running.running();
+    if let Some(group) = running.group {
+        unsafe { libc::kill(-(group as i32), signal) };
+    }
+    for &pid in &running.pids {
         unsafe { libc::kill(pid as i32, signal) };
+    }
+}
+
+/// `process.signal(pid, signal)`, to a process the program did not start:
+/// 0, or 1 when there is none and 2 when the program may not signal it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_process_kill(pid: i64, tag: i64) -> i64 {
+    let Some(&signal) = super::signals::SIGNALS.get(tag as usize) else { return 1 };
+    let Ok(pid) = i32::try_from(pid) else { return 1 };
+    if pid <= 0 || unsafe { libc::kill(pid, signal) } == 0 {
+        return (pid <= 0) as i64;
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::EPERM) => 2,
+        _ => 1,
     }
 }
 
@@ -687,12 +732,16 @@ fn settle<R: Send + 'static>(
     cancel: bool,
     then: impl FnOnce(&mut Running) -> R + Send + 'static,
 ) -> R {
-    let pids = Process(process).running().pids.clone();
+    let (pids, group) = {
+        let running = Process(process);
+        let running = running.running();
+        (running.pids.clone(), running.group)
+    };
     if cancel {
-        kill_all(&pids);
+        kill_all(&pids, group);
     }
     let shared = Process(process);
-    host_cancellable(move || then(&mut shared.running()), || kill_all(&pids))
+    host_cancellable(move || then(&mut shared.running()), || kill_all(&pids, group))
 }
 
 /// `wait()` and `cancel()` (`cancel` 1): the overall status into `out`.
@@ -731,13 +780,14 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
     let mut gone = Running {
         children: std::mem::take(&mut running.children),
         pids: running.pids.clone(),
+        group: running.group,
         streams: [running.streams[0].take(), running.streams[1].take(), running.streams[2].take()],
         workers: std::mem::take(&mut running.workers),
         captured: running.captured.clone(),
         statuses: None,
         detached: true,
     };
-    LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|pid| !gone.pids.contains(pid));
+    LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !gone.pids.contains(pid));
     super::tasks::spawn_thread(None, move || {
         // The program's side of a piped input closes first.
         drop(std::mem::take(&mut gone.streams));

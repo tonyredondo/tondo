@@ -1,0 +1,31 @@
+// A command started with `group()` has a process group of its own, which
+// `cancel` ends whole: also what it started, which here holds the output
+// open, so the output ends at once. `which` finds a program as a shell
+// does, and `signal` reaches a process by its id; `Kill` is sent, never
+// received.
+
+import std.console
+import std.env
+import std.process
+
+fn main(): !process.ProcessError {
+    let started = process.shell("sleep 30 & echo started; wait").stdout(process.Output.Pipe).group().start()?
+    let output = started.stdout()
+    console.println("{output.readLine()}")
+    let status = started.cancel()?
+    console.println("cancelled: {status.success}, then {output.readLine()}")
+    console.println("{process.which("sh").isSome()} {process.which("no-such-program-here")}")
+    let caught = process.signals(process.Signal.User1, process.Signal.Kill)
+    process.signal(env.processId(), process.Signal.User1)?
+    console.println("{caught.receive() == some(process.Signal.User1)}")
+    match process.signal(999999999, process.Signal.Kill) {
+        ok(_) => console.println("sent")
+        err(failure) => console.println("{failure}")
+    }
+}
+
+// expect-stdout: ok(some(started))
+// expect-stdout: cancelled: false, then ok(none)
+// expect-stdout: true none
+// expect-stdout: true
+// expect-stdout: not found

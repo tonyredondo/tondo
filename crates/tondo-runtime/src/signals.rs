@@ -10,7 +10,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// The signals of `process.Signal`, in the order of its variants.
-pub(crate) const SIGNALS: [i32; 5] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGUSR1, libc::SIGUSR2];
+pub(crate) const SIGNALS: [i32; 7] =
+    [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGUSR1, libc::SIGUSR2, libc::SIGQUIT, libc::SIGKILL];
 
 /// The pipe's end the handler writes to.
 static PIPE: AtomicI32 = AtomicI32::new(-1);
@@ -105,7 +106,8 @@ pub unsafe extern "C" fn tondo_rt_process_signals(
     let mut mask = 0u32;
     for index in 0..count {
         let tag = unsafe { *element(wanted, stride as usize, index) } as usize;
-        if let Some(&signal) = SIGNALS.get(tag) {
+        // `Kill` ends a process before it can answer: it is never received.
+        if let Some(&signal) = SIGNALS.get(tag).filter(|&&signal| signal != libc::SIGKILL) {
             mask |= 1 << signal;
         }
     }

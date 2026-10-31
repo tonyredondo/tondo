@@ -20,6 +20,12 @@ pub enum Signal {
     Hangup
     User1
     User2
+    /// Ctrl-\: as `Interrupt`, but ending a program that does not listen
+    /// with a dump of its memory, by the system's default.
+    Quit
+    /// Ends a process at once, without letting it answer: it is sent and
+    /// never received, so `signals` leaves it out.
+    Kill
 }
 
 /// A channel of the signals named, which no longer cancel or end the
@@ -110,6 +116,12 @@ pub fn Command.stderr(self, output: Output): Command
 /// Sends standard error where standard output goes: `2>&1`.
 pub fn Command.mergeStderr(self): Command
 
+/// The command started in a process group of its own, which `cancel` and
+/// `signal` reach whole: also what it starts, as the test programs that
+/// `go test` builds. The terminal's Ctrl-C then reaches the program alone,
+/// which decides, with `signals`.
+pub fn Command.group(self): Command
+
 /// The pipeline's first stage reading its standard input from `input`.
 pub fn Pipeline.stdin(self, input: Input): Pipeline
 
@@ -119,6 +131,10 @@ pub fn Pipeline.stdout(self, output: Output): Pipeline
 /// Sends the standard error of every stage where its standard output
 /// goes: `|&`.
 pub fn Pipeline.mergeStderr(self): Pipeline
+
+/// The pipeline started in a process group of its own, as
+/// `Command.group` starts a command.
+pub fn Pipeline.group(self): Pipeline
 
 /// On a Command or a Pipeline: with the program's streams, waits.
 pub fn run(self): ExitStatus ! ProcessError
@@ -161,11 +177,13 @@ pub fn Process.output(self): ProcessOutput ! ProcessError
 /// succeed.
 pub fn Process.check(self): ProcessOutput ! ProcessError
 
-/// Ends every stage and waits for them.
+/// Ends every stage, and with `group()` every process they started, and
+/// waits for them.
 pub fn Process.cancel(self): ExitStatus ! ProcessError
 
 /// Lets it go on without waiting, also after the program ends.
 pub fn Process.detach(self)
 
-/// Sends the signal to every stage; `cancel` ends them and waits.
+/// Sends the signal to every stage, and with `group()` to every process
+/// they started; `cancel` ends them and waits.
 pub fn Process.signal(self, signal: Signal)

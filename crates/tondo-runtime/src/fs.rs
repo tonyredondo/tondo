@@ -270,6 +270,20 @@ pub unsafe extern "C" fn tondo_rt_fs_flush(file: *mut StreamObject) -> i64 {
     finish(run(file, |s| io(s.flush())), |_| ())
 }
 
+/// `file.lock(shared)`: waits for the file's lock, which its closing
+/// releases.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fs_lock(file: *mut StreamObject, shared: i64) -> i64 {
+    finish(run(file, move |s| io(s.lock(shared != 0, true))), |_| ())
+}
+
+/// `file.tryLock(shared)`: whether it took the lock, without waiting.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fs_try_lock(file: *mut StreamObject, shared: i64, out: *mut i64) -> i64 {
+    let out = out as usize;
+    finish(run(file, move |s| io(s.lock(shared != 0, false))), |taken| unsafe { *(out as *mut i64) = taken as i64 })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_close(file: *mut StreamObject) -> i64 {
     finish(run(file, |s| io(s.close())), |_| ())

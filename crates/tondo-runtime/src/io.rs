@@ -209,6 +209,11 @@ pub(crate) trait Host: Send {
     /// From now on a `Mode::Ready` host fails with `kind` where it would
     /// block; `None` lets it block again.
     fn give_up(&mut self, _kind: Option<ErrorKind>) {}
+    /// Takes the file's lock, shared or not, waiting for it or not: whether
+    /// it took it.
+    fn lock(&mut self, _shared: bool, _wait: bool) -> std::io::Result<bool> {
+        Err(ErrorKind::Unsupported.into())
+    }
 }
 
 /// What a `Mode::Ready` host waits for.
@@ -226,6 +231,20 @@ impl Host for std::fs::File {
     }
     fn back(&mut self, count: usize) -> std::io::Result<()> {
         self.seek(SeekFrom::Current(-(count as i64))).map(|_| ())
+    }
+    fn lock(&mut self, shared: bool, wait: bool) -> std::io::Result<bool> {
+        use std::fs::TryLockError;
+        let tried = match (shared, wait) {
+            (false, true) => return std::fs::File::lock(self).map(|_| true),
+            (true, true) => return self.lock_shared().map(|_| true),
+            (false, false) => self.try_lock(),
+            (true, false) => self.try_lock_shared(),
+        };
+        match tried {
+            Ok(()) => Ok(true),
+            Err(TryLockError::WouldBlock) => Ok(false),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
     }
 }
 
@@ -435,6 +454,10 @@ fn closed() -> std::io::Error {
 impl StreamState {
     fn host(&mut self) -> std::io::Result<&mut Box<dyn Host>> {
         self.host.as_mut().ok_or_else(closed)
+    }
+
+    pub(crate) fn lock(&mut self, shared: bool, wait: bool) -> std::io::Result<bool> {
+        self.host()?.lock(shared, wait)
     }
 
     pub(crate) fn flush(&mut self) -> std::io::Result<()> {

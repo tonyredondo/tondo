@@ -11,13 +11,27 @@ import std.time as __time
 
 /// An entry itself, without following links: its kind, size in bytes,
 /// read-only flag, last change of its content and Unix permissions, as
-/// `0o644`.
+/// `0o644`; its number in its file system, its hard links, and the ids of
+/// its owner and its group. A tree that is not the disk's has no numbers:
+/// 0, and one link.
 pub type Metadata = {
     kind: __fs.FileKind
     size: Int
     readOnly: Bool
     modified: __time.DateTime
     permissions: Int
+    inode: Int
+    links: Int
+    owner: Int
+    group: Int
+}
+
+/// The space of a file system: its bytes, those free, and those free that
+/// the program may use, which leaves out what the system keeps for itself.
+pub type Space = {
+    total: Int
+    free: Int
+    available: Int
 }
 
 /// An entry under the root of `walk`: its path, from the root, and kind.
@@ -50,6 +64,10 @@ pub fn metadata(path: String): Metadata ! __fs.FsError {
         readOnly: numbers[2] != 0
         modified: __time.utc(since)
         permissions: numbers[5]
+        inode: numbers[6]
+        links: numbers[7]
+        owner: numbers[8]
+        group: numbers[9]
     }
 }
 
@@ -150,6 +168,24 @@ pub fn setPermissions(path: String, permissions: Int): !__fs.FsError {
 /// may not exist; a relative one is read from the link's directory.
 pub fn createSymlink(target: String, link: String): !__fs.FsError {
     _ = done(fsNative.symlink(target, link))?
+}
+
+/// Makes `link` another name of the file `target`, a hard link: the same
+/// file, which lasts while either name does.
+pub fn createLink(target: String, link: String): !__fs.FsError {
+    _ = done(fsNative.link(target, link))?
+}
+
+/// Sets when the content of the entry last changed, as `make` and caches
+/// read it.
+pub fn setModified(path: String, time: __time.DateTime): !__fs.FsError {
+    _ = done(fsNative.setModified(path, time.sinceEpoch().nanoseconds()))?
+}
+
+/// The space of the file system that holds `path`.
+pub fn space(path: String): Space ! __fs.FsError {
+    let numbers = fsNative.numbers(done(fsNative.space(path))?)
+    Space { total: numbers[0], free: numbers[1], available: numbers[2] }
 }
 
 /// The target of a symbolic link, as it was written.
@@ -456,6 +492,10 @@ pub fn FileSystem.metadata(self, path: String): Metadata ! __fs.FsError {
             readOnly
             modified
             permissions: if readOnly { 0o555 } else { 0o755 }
+            inode: 0
+            links: 1
+            owner: 0
+            group: 0
         }
     }
     match self.tree {
@@ -471,6 +511,10 @@ pub fn FileSystem.metadata(self, path: String): Metadata ! __fs.FsError {
                     readOnly: false
                     modified: when
                     permissions: 0o644
+                    inode: 0
+                    links: 1
+                    owner: 0
+                    group: 0
                 }
                 _ if folder => directory(__time.utcNow(), false)
                 _ => fail __fs.FsError.NotFound
@@ -483,6 +527,10 @@ pub fn FileSystem.metadata(self, path: String): Metadata ! __fs.FsError {
                 readOnly: true
                 modified: __time.utc(__time.seconds(0))
                 permissions: 0o444
+                inode: 0
+                links: 1
+                owner: 0
+                group: 0
             }
             none if at.isEmpty() or keptDirectory(names, at) => directory(
                 __time.utc(__time.seconds(0)),

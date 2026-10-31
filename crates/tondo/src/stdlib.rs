@@ -46,6 +46,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("paths", include_str!("../std/paths.to")),
     ("texts", include_str!("../std/texts.to")),
     ("environment", include_str!("../std/environment.to")),
+    ("processes", include_str!("../std/processes.to")),
     ("pacing", include_str!("../std/pacing.to")),
     ("rules", include_str!("../std/rules.to")),
     ("validate", include_str!("../std/validate.to")),
@@ -75,6 +76,7 @@ pub(crate) const COMPANIONS: &[(&str, &[&str])] = &[
     ("io", &["streams"]),
     ("text", &["texts"]),
     ("env", &["environment"]),
+    ("process", &["processes"]),
     ("sync", &["pacing"]),
 ];
 

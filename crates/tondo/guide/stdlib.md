@@ -81,8 +81,14 @@ Ctrl-C, `kill` or `docker stop` cancel the program, with nothing to write:
 every wait ends, the tasks run their `defer`s, and it ends with 130 or 143;
 a second one ends it at once. `process.signals(process.Signal.Hangup)` gives
 a channel of the signals named instead, which no longer end the program, and
-`child.signal(process.Signal.Terminate)` sends one to a process it started.
+`child.signal(process.Signal.Terminate)` sends one to a process it started;
+`process.signal(pid, signal)` to any other. A command started with
+`.group()` has a process group of its own, so `cancel()` also ends what it
+started, as the tests `go test` runs; the terminal's Ctrl-C then reaches
+only the program. `process.which("git")` finds a program as a shell does.
 
+`env.user()` and `env.system()` say who and where the program runs, and
+`env.processors(physical: true)` counts the machine's cores.
 `env.configDirectory()` and `env.cacheDirectory()` are where a program keeps
 the user's settings and what it can make again, and `env.build()` what it
 was built from, for a `--version`: the `version` of `tondo.toml`, the git
@@ -406,9 +412,12 @@ and `archive.open(path)?.extract(into)` write and read zip and tar, which
 an archive whose paths would leave `into` cannot use.
 
 `path.matches(pattern, path)` is the glob of `fs.glob`: `*`, `?`, `[a-z]`,
-`{a,b}` and `**`. `fs.metadata` gives `modified` and `permissions`;
-`fs.setPermissions(path, 0o755)`, `fs.createSymlink`, `fs.readSymlink` and
-`fs.realPath` do the rest. `gzip.writer(out)` and `gzip.reader(input)`
+`{a,b}` and `**`. `fs.metadata` gives `modified`, `permissions`, `inode`,
+`links`, `owner` and `group`; `fs.setPermissions(path, 0o755)`,
+`fs.setModified`, `fs.createSymlink`, `fs.createLink` (a hard link),
+`fs.readSymlink`, `fs.realPath` and `fs.space` do the rest. `file.lock()`
+waits for a file's lock and `file.tryLock()` does not; closing the file lets
+it go. `gzip.writer(out)` and `gzip.reader(input)`
 compress a stream of `std.io`, and `std.zstd` has the same functions. Their
 `close()` closes them and lets go of the stream under them, which closes with
 its last copy: a file the writer alone holds closes with it, and

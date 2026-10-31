@@ -1143,7 +1143,12 @@ pub type Metadata = {
     readOnly: Bool
     modified: time.DateTime
     permissions: Int
+    inode: Int
+    links: Int
+    owner: Int
+    group: Int
 }
+pub type Space = { total: Int, free: Int, available: Int }
 pub type Entry = { path: String, kind: FileKind }
 pub enum ChangeKind { Created, Modified, Removed }
 pub type Change = { path: String, kind: ChangeKind }
@@ -1165,6 +1170,9 @@ pub fn createTemporaryDirectory(): String ! FsError
 pub fn createTemporaryFile(): String ! FsError
 pub fn setPermissions(path: String, permissions: Int): Unit ! FsError
 pub fn createSymlink(target: String, link: String): Unit ! FsError
+pub fn createLink(target: String, link: String): Unit ! FsError
+pub fn setModified(path: String, time: time.DateTime): Unit ! FsError
+pub fn space(path: String): Space ! FsError
 pub fn readSymlink(path: String): String ! FsError
 pub fn realPath(path: String): String ! FsError
 pub fn watch(paths: Array[String], settle: time.Duration? = none): Receiver[Array[Change]] ! FsError
@@ -1180,6 +1188,8 @@ pub fn File.write(var self, text: String): Unit ! FsError
 pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
 pub fn File.flush(var self): Unit ! FsError
 pub fn File.close(self): Unit ! FsError
+pub fn File.lock(var self, shared: Bool = false): Unit ! FsError
+pub fn File.tryLock(var self, shared: Bool = false): Bool ! FsError
 pub fn File.writer(self): io.Writer
 pub fn File.reader(self): io.Reader
 ```
@@ -1197,6 +1207,19 @@ pub fn File.reader(self): io.Reader
   `modified` es la última modificación del contenido según el host.
   `permissions` son los bits de modo de Unix, como `0o644`: leer, escribir y
   ejecutar para el dueño, su grupo y los demás; `setPermissions` los cambia.
+  `inode` es el número de la entrada en su sistema de archivos, que comparten
+  dos nombres del mismo archivo; `links`, cuántos nombres tiene; y `owner` y
+  `group`, los ids de su dueño y de su grupo. En un árbol que no es el disco
+  (`fs.memory()`, `embed.files`) son `0`, con un nombre.
+- `setModified` cambia la fecha de modificación del contenido, la que leen
+  `make` y las cachés. `space` da los bytes del sistema de archivos que tiene
+  el path: `total`, `free` y `available`, los libres que el programa puede
+  usar, sin los que el sistema guarda para sí.
+- `File.lock` toma el bloqueo del archivo, exclusivo o compartido con
+  `shared: true`, esperando a que quien lo tenga lo suelte, sin ocupar un
+  hilo; `tryLock` no espera y dice si lo tomó. Cerrar el archivo lo suelta. Es
+  el bloqueo aconsejado de Unix (`flock`): coordina a los programas que lo
+  piden, y no impide leer ni escribir a los que no.
 - `list` devuelve los nombres de las entradas, sin `.` ni `..`, ordenados por
   bytes.
 - `walk` da el árbol bajo `root`, sin `root`: cada directorio antes de su
@@ -1217,6 +1240,8 @@ pub fn File.reader(self): io.Reader
   los borra con `remove`.
 - `createSymlink` crea en `link` un enlace a `target`, que se guarda tal cual y
   puede no existir; uno relativo se lee desde el directorio del enlace.
+  `createLink` crea un enlace duro: otro nombre del mismo archivo, que dura
+  mientras dure alguno.
   `readSymlink` da el `target` de un enlace. `realPath` da el path absoluto y
   limpio de la misma entrada, con cada enlace resuelto, o `NotFound`.
 - `watch` vigila los paths, con todo lo que contienen los directorios, y envía
@@ -2135,7 +2160,9 @@ pub fn syncNative()
 pub fn hostname(): String
 pub fn processId(): Int
 pub fn executable(): String
-pub fn processors(): Int
+pub fn processors(physical: Bool = false): Int
+pub fn user(): User
+pub fn system(): System
 pub fn homeDirectory(): String?
 pub fn configDirectory(): String?
 pub fn cacheDirectory(): String?
@@ -2151,13 +2178,22 @@ pub type Build = {
 }
 pub type Dependency = { name: String, version: String }
 pub fn build(): Build
+pub type User = { id: Int, group: Int, name: String, home: String }
+pub type System = { name: String, release: String, machine: String }
 ~~~
 
 - `hostname` es el nombre de la máquina, como lo da el sistema; `processId`, el
   identificador del proceso del programa; y `executable`, el path absoluto de
   su ejecutable, con los enlaces simbólicos resueltos.
 - `processors` es cuántos procesadores puede usar el programa a la vez, con
-  su afinidad y la cuota de su cgroup: al menos 1.
+  su afinidad y la cuota de su cgroup: al menos 1. Con `physical: true`, los
+  núcleos de la máquina, cada uno una vez aunque ejecute varios hilos.
+- `user` es el usuario con que corre el programa: su id, el de su grupo, su
+  nombre y su home, como los dicen las cuentas del sistema, con un nombre o
+  un home vacíos si no los tienen. `system` es el sistema en que corre, como
+  lo dice `uname`: su nombre (`Linux`, `Darwin`), su versión y la máquina
+  (`x86_64`, `arm64`). Los dos se leen una vez, la primera que se piden: no
+  cambian mientras el programa corre.
 - `homeDirectory` es `$HOME`. `configDirectory` es donde los programas
   guardan la configuración del usuario: `$XDG_CONFIG_HOME` si es absoluto, o
   `~/.config`, en Linux, y `~/Library/Application Support` en macOS.
@@ -6511,9 +6547,11 @@ pub fn Command.stdin(self, input: Input): Command
 pub fn Command.stdout(self, output: Output): Command
 pub fn Command.stderr(self, output: Output): Command
 pub fn Command.mergeStderr(self): Command
+pub fn Command.group(self): Command
 pub fn Pipeline.stdin(self, input: Input): Pipeline
 pub fn Pipeline.stdout(self, output: Output): Pipeline
 pub fn Pipeline.mergeStderr(self): Pipeline
+pub fn Pipeline.group(self): Pipeline
 
 // En Command y en Pipeline:
 pub fn run(self): ExitStatus ! ProcessError
@@ -6534,8 +6572,10 @@ pub fn Process.cancel(self): ExitStatus ! ProcessError
 pub fn Process.detach(self)
 pub fn Process.signal(self, signal: Signal)
 
-pub enum Signal { Interrupt, Terminate, Hangup, User1, User2 }
+pub enum Signal { Interrupt, Terminate, Hangup, User1, User2, Quit, Kill }
 pub fn signals(wanted: ...Signal): Receiver[Signal]
+pub fn signal(pid: Int, sent: Signal): Unit ! ProcessError
+pub fn which(name: String): String?
 ~~~
 
 Planes:
@@ -6604,7 +6644,21 @@ Señales:
   como recargar su configuración con `Hangup`. Las que el canal no ha leído
   se juntan: dos iguales seguidas son una.
 - `Process.signal` envía una señal a los procesos de un hijo; `cancel` sigue
-  siendo la forma de terminarlo y esperarlo.
+  siendo la forma de terminarlo y esperarlo. `signal(pid, sent)` la envía a
+  un proceso que el programa no arrancó: `NotFound` si no existe y
+  `PermissionDenied` si el programa no puede enviársela. `Quit` es Ctrl-\
+  y `Kill` termina un proceso sin dejarle responder, así que nunca se recibe:
+  `signals` la ignora.
+- `group()` arranca el comando, o cada etapa de una pipeline, en un grupo de
+  procesos propio, del que la primera etapa es líder: `cancel` y `signal`
+  llegan al grupo entero, también a lo que lanzaron sus procesos, como los
+  binarios de test que lanza `go test`. Sin `group()` llegan solo a las
+  etapas, y lo que lanzaron sigue. El Ctrl-C de la terminal llega entonces
+  solo al programa, que decide con `signals`, así que un programa interactivo
+  arranca sin `group()`.
+- `which(name)` da el archivo que un shell ejecutaría para `name`: el propio
+  `name` si tiene un `/`, o el primero con ese nombre, que se pueda ejecutar,
+  en los directorios de `PATH`; `none` si no hay ninguno.
 
 ### 19.3 `std.ffi`
 
