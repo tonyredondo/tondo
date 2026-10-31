@@ -1,0 +1,41 @@
+// A failure that `FsError` has no variant for keeps the system's number of
+// the error, and shows the system's text of it.
+
+import std.console
+import std.fs
+
+fn describe(error: fs.FsError): String {
+    return match error {
+        // The text is the C library's, which differs between systems.
+        fs.FsError.Host(code) => "host {code > 0}: {"{error}".startsWith("os error {code}: ")}"
+        _ => "{error}"
+    }
+}
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    defer {
+        _ = fs.remove(dir, recursive: true)
+    }
+    // Two links that lead to each other.
+    fs.createSymlink("{dir}/b", "{dir}/a")?
+    fs.createSymlink("{dir}/a", "{dir}/b")?
+    match fs.readText("{dir}/a") {
+        ok(_) => console.println("read")
+        err(error) => console.println("read: {describe(error)}")
+    }
+    match fs.open("{dir}/a", fs.OpenMode.Read) {
+        ok(_) => console.println("opened")
+        err(error) => console.println("open: {describe(error)}")
+    }
+    match fs.readText("{dir}/missing") {
+        ok(_) => console.println("read")
+        err(error) => console.println("missing: {describe(error)}")
+    }
+    console.println("{fs.FsError.Host(0)}")
+}
+
+// expect-stdout: read: host true: true
+// expect-stdout: open: host true: true
+// expect-stdout: missing: not found
+// expect-stdout: host

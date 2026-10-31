@@ -334,6 +334,8 @@ enum Rt {
     PlanRelease,
     ProcessRelease,
     SbProcessError,
+    SbOsError,
+    FsHostError,
     StreamRelease,
     BufferRelease,
     PathJoin,
@@ -705,6 +707,8 @@ impl Rt {
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
             Rt::ProcessRelease => ("tondo_rt_process_release", &[I64], &[]),
             Rt::SbProcessError => ("tondo_rt_sb_process_error", &[I64, I64, I64], &[]),
+            Rt::SbOsError => ("tondo_rt_sb_os_error", &[I64, I64], &[]),
+            Rt::FsHostError => ("tondo_rt_fs_host_error", &[], &[I64]),
             Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
             Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
             Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64], &[I64]),
@@ -3315,8 +3319,33 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         if let TyKind::Adt(id) = *types.kind(types.repr(ty))
             && let AdtKind::Enum(variants) = &types.adt(id).kind
         {
-            // A standard library error: its variant name in words.
+            // A standard library error: its variant name in words, or the
+            // system's text of the error a variant holds the number of.
             let tag = self.tag(ty, value);
+            let host = variants.iter().position(
+                |v| matches!(&v.payload, crate::types::Payload::Tuple(items) if items.as_slice() == [Ty::INT]),
+            );
+            if let (Some(host), Val::Memory(address)) = (host, value) {
+                let (is_host, other, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
+                let matched = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, host as i64);
+                self.fb.ins().brif(matched, is_host, &[], other, &[]);
+                self.fb.switch_to_block(is_host);
+                let slot = self.cg.slot(ty, Proj::Variant(host as u32, 0));
+                let number = self.fb.ins().load(types::I64, flags(), address, slot.offset as i32);
+                self.call_rt(Rt::SbOsError, &[builder, number]);
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(other);
+                let mut text = self.string_ptr(&words(&variants[0].name));
+                for (index, variant) in variants.iter().enumerate().skip(1) {
+                    let this = self.string_ptr(&words(&variant.name));
+                    let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
+                    text = self.fb.ins().select(is_this, this, text);
+                }
+                self.call_rt(Rt::SbStr, &[builder, text]);
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(done);
+                return;
+            }
             let mut text = self.string_ptr(&words(&variants[0].name));
             for (index, variant) in variants.iter().enumerate().skip(1) {
                 let this = self.string_ptr(&words(&variant.name));
@@ -7085,6 +7114,25 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let variant = self.e.fb.ins().iadd_imm_s(status, -1);
         let variant = self.e.fb.ins().ireduce(types::I8, variant);
         self.e.fb.ins().store(flags(), variant, base, error.offset as i32);
+        // `FsError.Host` holds the system's number of the error, which the
+        // runtime kept for this thread.
+        let host = self
+            .e
+            .cg
+            .types()
+            .variants(error.ty)
+            .and_then(|variants| variants.iter().position(|payload| payload.as_slice() == [Ty::INT]));
+        if let Some(host) = host {
+            let (is_host, other) = (self.e.fb.create_block(), self.e.fb.create_block());
+            let matched = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, host as i64 + 1);
+            self.e.fb.ins().brif(matched, is_host, &[], other, &[]);
+            self.e.fb.switch_to_block(is_host);
+            let number = self.e.call_rt(Rt::FsHostError, &[]).unwrap();
+            let payload = self.e.cg.slot(error.ty, Proj::Variant(host as u32, 0));
+            self.e.fb.ins().store(flags(), number, base, (error.offset + payload.offset) as i32);
+            self.e.fb.ins().jump(other, &[]);
+            self.e.fb.switch_to_block(other);
+        }
         self.e.fb.ins().jump(done, &[]);
         self.e.fb.switch_to_block(good);
         if returns_value {

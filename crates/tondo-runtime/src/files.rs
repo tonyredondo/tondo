@@ -63,8 +63,23 @@ struct Done {
     watch: Option<Mutex<Watch>>,
 }
 
-/// The code of an error's `FsError`, as `fs.rs` gives it.
+/// The code of an error's `FsError`, as `fs.rs` gives it; for `Host`, the
+/// system's number of the error above its low byte.
 fn failure(error: &std::io::Error) -> i64 {
+    if !matches!(
+        error.kind(),
+        ErrorKind::NotFound
+            | ErrorKind::PermissionDenied
+            | ErrorKind::AlreadyExists
+            | ErrorKind::NotADirectory
+            | ErrorKind::IsADirectory
+            | ErrorKind::DirectoryNotEmpty
+            | ErrorKind::InvalidData
+            | ErrorKind::InvalidInput
+            | ErrorKind::InvalidFilename
+    ) {
+        return 8 | (error.raw_os_error().unwrap_or(0) as i64) << 8;
+    }
     1 + match error.kind() {
         ErrorKind::NotFound => 0,
         ErrorKind::PermissionDenied => 1,
@@ -100,7 +115,13 @@ fn texts(texts: Vec<String>) -> Done {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_files_failure(done: *mut NativeObject) -> i64 {
-    native::get::<Done>(done).map_or(8, |d| d.failure)
+    native::get::<Done>(done).map_or(8, |d| d.failure & 0xff)
+}
+
+/// The system's number of a `Host` failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_files_host_error(done: *mut NativeObject) -> i64 {
+    native::get::<Done>(done).map_or(0, |d| d.failure >> 8)
 }
 
 #[unsafe(no_mangle)]
@@ -198,15 +219,27 @@ pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str, depth: i64) -> *m
 }
 
 /// `fs.createTemporaryDirectory` and `fs.createTemporaryFile`: a new entry
-/// with a name no other has, which only its user can read.
+/// in `place`, or the system's temporary directory, named by `pattern` with
+/// its last `*`, or its end, made random so that no other has it, which only
+/// its user can read.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_files_temporary(directory: u8) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_files_temporary(
+    directory: u8,
+    place: *const Str,
+    pattern: *const Str,
+) -> *mut NativeObject {
+    let (place, pattern) = (text(place).to_string(), text(pattern).to_string());
     done(move || {
-        let base = std::env::temp_dir();
+        let base = if place.is_empty() { std::env::temp_dir() } else { PathBuf::from(place) };
+        let pattern = if pattern.is_empty() { "tondo-*".to_string() } else { pattern };
+        if pattern.contains('/') {
+            return Err(INVALID_NAME);
+        }
+        let (before, after) = pattern.rsplit_once('*').unwrap_or((&pattern, ""));
         loop {
             let random = super::codec::entropy(8);
             let name: String = random.iter().map(|b| format!("{b:02x}")).collect();
-            let path = base.join(format!("tondo-{name}"));
+            let path = base.join(format!("{before}{name}{after}"));
             let made = if directory != 0 {
                 std::fs::DirBuilder::new().mode(0o700).create(&path)
             } else {

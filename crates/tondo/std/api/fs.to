@@ -10,7 +10,10 @@ pub enum FsError {
     IsADirectory
     InvalidData
     InvalidName
-    Host
+    /// A failure the others do not name, with the system's number of it,
+    /// `errno`: it shows with the system's text of it, `os error 28: No
+    /// space left on device`, and `Host(0)` as `host`.
+    Host(Int)
 }
 
 /// What an entry is: a file, a directory, a symbolic link or something else.

@@ -16,7 +16,8 @@ fn host<R: Send + 'static>(job: impl FnOnce() -> R + Send + 'static) -> R {
 // Values and errors
 // ---------------------------------------------------------------------------
 
-/// The `FsError` variants, in declaration order.
+/// The `FsError` variants, in declaration order; `Host` with the
+/// system's number of the error.
 #[derive(Copy, Clone)]
 enum FsError {
     NotFound,
@@ -26,11 +27,50 @@ enum FsError {
     IsADirectory,
     InvalidData,
     InvalidName,
-    Host,
+    Host(i32),
+}
+
+std::thread_local! {
+    /// The number of the last `Host` error, which the compiled code reads
+    /// right after the call that failed, on the same thread.
+    static HOST_ERROR: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
 }
 
 fn code(error: FsError) -> i64 {
-    error as i64 + 1
+    match error {
+        FsError::NotFound => 1,
+        FsError::PermissionDenied => 2,
+        FsError::AlreadyExists => 3,
+        FsError::NotADirectory => 4,
+        FsError::IsADirectory => 5,
+        FsError::InvalidData => 6,
+        FsError::InvalidName => 7,
+        FsError::Host(number) => {
+            HOST_ERROR.set(number as i64);
+            8
+        }
+    }
+}
+
+/// `FsError.Host(number)` as it shows: its number and the system's text of
+/// it, as `os error 28: No space left on device`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_os_error(b: *mut super::Builder, number: i64) {
+    let text = match number {
+        0 => "host".to_string(),
+        number => {
+            let shown = std::io::Error::from_raw_os_error(number as i32).to_string();
+            let suffix = format!(" (os error {number})");
+            format!("os error {number}: {}", shown.strip_suffix(&suffix).unwrap_or(&shown))
+        }
+    };
+    unsafe { (*b).extend(text.as_bytes()) }
+}
+
+/// The system's number of the last `FsError.Host` of this thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_fs_host_error() -> i64 {
+    HOST_ERROR.get()
 }
 
 fn classify(error: &std::io::Error) -> FsError {
@@ -42,7 +82,7 @@ fn classify(error: &std::io::Error) -> FsError {
         ErrorKind::IsADirectory | ErrorKind::DirectoryNotEmpty => FsError::IsADirectory,
         ErrorKind::InvalidData => FsError::InvalidData,
         ErrorKind::InvalidInput | ErrorKind::InvalidFilename => FsError::InvalidName,
-        _ => FsError::Host,
+        _ => FsError::Host(error.raw_os_error().unwrap_or(0)),
     }
 }
 

@@ -3796,3 +3796,12 @@ the name it was run by and then becomes the real `go`: `env.invokedAs()`,
 `invokedAs` and `exec` give it both, and `splitWords` and `quoted` read and
 write the command lines it passes on, as a shell would, expanding nothing.
 
+## 2026-10-31 — The system's number in `FsError.Host`
+
+A tool that fails on a full disk, a loop of links or too many open files
+had only `host` to say why, and Go's `syscall.Errno` and Rust's
+`raw_os_error` give the number. `Host` keeps it, `Host(Int)`, and shows
+it with the C library's text of it, so the message a user reads names the
+cause; the named variants stay the ones a program decides on. The
+number is the system's, which differs between Linux and macOS, so it is
+for messages and for the rare program that compares it with one it knows.

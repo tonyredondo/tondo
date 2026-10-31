@@ -472,7 +472,10 @@ an archive whose paths would leave `into` cannot use.
 `{a,b}` and `**`. `fs.metadata` gives `modified`, `permissions`, `inode`,
 `links`, `owner` and `group`; `fs.setPermissions(path, 0o755)`,
 `fs.setModified`, `fs.createSymlink`, `fs.createLink` (a hard link),
-`fs.readSymlink`, `fs.realPath` and `fs.space` do the rest. `file.lock()`
+`fs.readSymlink`, `fs.realPath` and `fs.space` do the rest.
+`fs.createTemporaryFile(directory: dir, pattern: "report-*.json")` makes the
+`*` random. A failure `fs.FsError` has no name for is `Host(errno)`, shown
+as `os error 28: No space left on device`. `file.lock()`
 waits for a file's lock and `file.tryLock()` does not; closing the file lets
 it go. `gzip.writer(out)` and `gzip.reader(input)`
 compress a stream of `std.io`, and `std.zstd` has the same functions. Their

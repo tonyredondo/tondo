@@ -147,16 +147,23 @@ fn depth(rest: String): Int {
     if rest.contains("**") { -1 } else { levels }
 }
 
-/// A new empty directory in the system's temporary one, which only its user
-/// can read; the program removes it.
-pub fn createTemporaryDirectory(): String ! __fs.FsError {
-    fsNative.texts(done(fsNative.temporary(true))?)[0]
+/// A new empty directory in `directory`, or the system's temporary one,
+/// which only its user can read; the program removes it. Its name is
+/// `pattern` with its last `*` made random, `"build-*"`, or with random
+/// characters after it if it has none.
+pub fn createTemporaryDirectory(
+    directory: String? = none,
+    pattern: String = "",
+): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.temporary(true, directory.unwrapOr(""), pattern))?)[0]
 }
 
-/// A new empty file in the system's temporary directory, which only its
-/// user can read; the program removes it.
-pub fn createTemporaryFile(): String ! __fs.FsError {
-    fsNative.texts(done(fsNative.temporary(false))?)[0]
+/// A new empty file in `directory`, or the system's temporary one, which
+/// only its user can read; the program removes it. Its name is `pattern`
+/// with its last `*` made random, `"report-*.json"`, or with random
+/// characters after it if it has none.
+pub fn createTemporaryFile(directory: String? = none, pattern: String = ""): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.temporary(false, directory.unwrapOr(""), pattern))?)[0]
 }
 
 /// Sets the Unix permissions of the entry: `0o755` to run a script.
@@ -248,7 +255,7 @@ fn done(outcome: fsNative.Native): fsNative.Native ! __fs.FsError {
         5 => fail __fs.FsError.IsADirectory
         6 => fail __fs.FsError.InvalidData
         7 => fail __fs.FsError.InvalidName
-        _ => fail __fs.FsError.Host
+        _ => fail __fs.FsError.Host(fsNative.hostError(outcome))
     }
 }
 

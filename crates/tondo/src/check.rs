@@ -3218,7 +3218,16 @@ impl<'a> Checker<'a> {
                 "InvalidName",
                 "Host",
             ];
-            let error = declare_enum(self, "FsError", &errors);
+            // `Host` holds the system's number of the error.
+            let (id, error) = self.types.declare_adt(format!("{}.FsError", name.name));
+            let variants = errors
+                .iter()
+                .map(|&v| match v {
+                    "Host" => Variant { name: v.into(), payload: Payload::Tuple(vec![Ty::INT]) },
+                    _ => unit(v),
+                })
+                .collect();
+            self.types.define_adt(id, AdtKind::Enum(variants));
             self.types.shown.insert(error, Shown::Words);
             let kind = declare_enum(self, "FileKind", &["File", "Directory", "Symlink", "Other"]);
             let mode = declare_enum(self, "OpenMode", &["Read", "Write", "Append", "CreateNew", "ReadWrite"]);

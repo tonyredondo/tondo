@@ -1180,7 +1180,7 @@ pub enum FsError {
     IsADirectory
     InvalidData
     InvalidName
-    Host
+    Host(Int)
 }
 pub enum FileKind { File, Directory, Symlink, Other }
 pub type Metadata = {
@@ -1212,8 +1212,8 @@ pub fn list(path: String): Array[String] ! FsError
 pub fn walk(root: String): Array[Entry] ! FsError
 pub fn glob(pattern: String): Array[String] ! FsError
 pub fn createDirectory(path: String): Unit ! FsError
-pub fn createTemporaryDirectory(): String ! FsError
-pub fn createTemporaryFile(): String ! FsError
+pub fn createTemporaryDirectory(directory: String? = none, pattern: String = ""): String ! FsError
+pub fn createTemporaryFile(directory: String? = none, pattern: String = ""): String ! FsError
 pub fn setPermissions(path: String, permissions: Int): Unit ! FsError
 pub fn createSymlink(target: String, link: String): Unit ! FsError
 pub fn createLink(target: String, link: String): Unit ! FsError
@@ -1279,11 +1279,14 @@ pub fn File.reader(self): io.Reader
   como `walk`, desde la parte del patrón sin comodines: `content/**/*.md`
   recorre `content`. Un patrón relativo parte del directorio actual y da paths
   relativos.
-- `createTemporaryDirectory` crea, en el directorio temporal del sistema
-  (`TMPDIR`, o `/tmp`), un directorio vacío con un nombre que no tiene ningún
-  otro, y devuelve su path; `createTemporaryFile` crea así un archivo vacío.
-  Solo el usuario que los crea puede leerlos. No se borran solos: el programa
-  los borra con `remove`.
+- `createTemporaryDirectory` crea, en `directory` o en el directorio temporal
+  del sistema (`TMPDIR`, o `/tmp`), un directorio vacío con un nombre que no
+  tiene ningún otro, y devuelve su path; `createTemporaryFile` crea así un
+  archivo vacío. El nombre es `pattern` con su último `*` cambiado por
+  caracteres al azar, `"report-*.json"`, o con ellos al final si no tiene
+  `*`; sin `pattern`, `tondo-*`. Un `pattern` con `/` es `InvalidName`. Solo
+  el usuario que los crea puede leerlos. No se borran solos: el programa los
+  borra con `remove`.
 - `createSymlink` crea en `link` un enlace a `target`, que se guarda tal cual y
   puede no existir; uno relativo se lee desde el directorio del enlace.
   `createLink` crea un enlace duro: otro nombre del mismo archivo, que dura
@@ -1315,8 +1318,10 @@ pub fn File.reader(self): io.Reader
   `reader()` entregan el archivo como stream de `std.io` (10.3), por ejemplo
   para redirigir la consola a él; el archivo se cierra con la última copia del
   stream.
-- `FsError` no incluye paths ni contenido; `Host` reúne los fallos que el host
-  no permite distinguir.
+- `FsError` no incluye paths ni contenido; `Host` reúne los demás fallos, con
+  el número que el sistema les da, `errno`, o 0 si no da ninguno. `Display`
+  escribe su número y el texto del sistema: `os error 28: No space left on
+  device`; `Host(0)` es `host`.
 
 Un `FileSystem` es un árbol de archivos con las operaciones de `std.fs`, de los
 mismos nombres, sobre paths relativos a su cima con `/`: un directorio del
