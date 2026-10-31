@@ -19,7 +19,11 @@ pub type RateLimiter = {
 
 /// A limiter of `rate` each `per`, one second by default, with bursts of
 /// `burst`, or of `rate` without it.
-pub fn RateLimiter(rate: Int, per: __time.Duration = __time.seconds(1), burst: Int? = none): RateLimiter {
+pub fn RateLimiter(
+    rate: Int,
+    per: __time.Duration = __time.seconds(1),
+    burst: Int? = none,
+): RateLimiter {
     let positive = if rate < 1 { 1 } else { rate }
     let spaced = per.nanoseconds() / positive
     RateLimiter {

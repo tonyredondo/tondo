@@ -202,8 +202,10 @@ pub fn realPath(path: String): String ! __fs.FsError {
 /// changes in batches: once `settle` (100 ms without it) passes with no
 /// other change, each path that changed once, sorted. Watching ends when no
 /// copy of the receiver is left.
-pub fn watch(paths: Array[String], settle: __time.Duration? = none): Receiver[Array[Change]] !
-    __fs.FsError {
+pub fn watch(
+    paths: Array[String],
+    settle: __time.Duration? = none,
+): Receiver[Array[Change]] ! __fs.FsError {
     let quiet = settle.unwrapOr(__time.milliseconds(100))
     let watching = done(fsNative.watch(paths, quiet.nanoseconds()))?
     let (sender, receiver) = channel[Array[Change]](discardWhenAbandoned: true)

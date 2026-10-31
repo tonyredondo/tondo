@@ -89,8 +89,10 @@ impl __serialization.Encode for Html {
 }
 
 impl __serialization.Decode for Html {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Html !
-        __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Html ! __serialization.Error {
         Html { value: __serialization.Decode.decode[String](input, first)? }
     }
 }
@@ -315,7 +317,12 @@ pub fn Set.render[T: __reflect.Reflect](self, name: String, data: T): String ! T
 }
 
 /// Writes what the template `name` writes for `data` to `out`.
-pub fn Set.write[T: __reflect.Reflect](self, name: String, data: T, out: __io.Writer): !TemplateError {
+pub fn Set.write[T: __reflect.Reflect](
+    self,
+    name: String,
+    data: T,
+    out: __io.Writer,
+): !TemplateError {
     let written = self.render(name, data)?
     match out.write(written) {
         ok(_) => {}
@@ -483,7 +490,13 @@ fn quoted(names: Array[String]): String {
     names.map((name) { "`{name}`" }).join(", ")
 }
 
-fn Run.template(mut self, name: String, data: __reflect.Value, depth: Int, from: Scope?): !TemplateError {
+fn Run.template(
+    mut self,
+    name: String,
+    data: __reflect.Value,
+    depth: Int,
+    from: Scope?,
+): !TemplateError {
     let at = 0
     if depth > 64 {
         fail TemplateError {
@@ -795,8 +808,13 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
 
 /// The type all the values have, as the language asks of an array's items
 /// and a map's keys and values; `""` for none.
-fn Run.oneType(self, scope: Scope, values: Array[__reflect.Value], at: Int, what: String): String !
-    TemplateError {
+fn Run.oneType(
+    self,
+    scope: Scope,
+    values: Array[__reflect.Value],
+    at: Int,
+    what: String,
+): String ! TemplateError {
     let first = values.first().map((value) { value.typeName() }).unwrapOr("")
     match values.find((value) { value.typeName() != first }) {
         some(other) => {
@@ -856,16 +874,26 @@ fn Run.named(self, scope: Scope, name: String, at: Int): __reflect.Value ! Templ
     }
 }
 
-fn Run.field(self, scope: Scope, target: __reflect.Value, name: String, at: Int): __reflect.Value !
-    TemplateError {
+fn Run.field(
+    self,
+    scope: Scope,
+    target: __reflect.Value,
+    name: String,
+    at: Int,
+): __reflect.Value ! TemplateError {
     match target.get(name) {
         ok(value) => value
         err(error) => fail self.error(scope, at, "{error}")
     }
 }
 
-fn Run.index(self, scope: Scope, target: __reflect.Value, key: __reflect.Value, at: Int): __reflect.Value !
-    TemplateError {
+fn Run.index(
+    self,
+    scope: Scope,
+    target: __reflect.Value,
+    key: __reflect.Value,
+    at: Int,
+): __reflect.Value ! TemplateError {
     let kind = target.typeName()
     // A value of JSON, YAML or TOML reads its keys and items as fields.
     if kind in ["json.Value", "yaml.Value", "toml.Value"] {
@@ -946,8 +974,13 @@ fn Run.integer(self, scope: Scope, value: __reflect.Value, at: Int): Int ! Templ
 }
 
 /// A condition, which is a `Bool`.
-fn Run.truth(self, scope: Scope, value: __reflect.Value, at: Int, what: String): Bool !
-    TemplateError {
+fn Run.truth(
+    self,
+    scope: Scope,
+    value: __reflect.Value,
+    at: Int,
+    what: String,
+): Bool ! TemplateError {
     let kind = value.typeName()
     if kind == "Bool" {
         return value.to[Bool]().unwrapOr(false)
@@ -980,8 +1013,12 @@ fn Run.opened(self, scope: Scope, value: __reflect.Value, at: Int): __reflect.Va
 }
 
 /// What each round of a `for` binds.
-fn Run.rounds(self, scope: Scope, names: Array[String], items: Code): Array[Array[__reflect.Value]] !
-    TemplateError {
+fn Run.rounds(
+    self,
+    scope: Scope,
+    names: Array[String],
+    items: Code,
+): Array[Array[__reflect.Value]] ! TemplateError {
     let source = self.evaluate(scope, items)?
     let at = items.at.first().unwrapOr(0)
     let kind = source.typeName()
@@ -1116,8 +1153,13 @@ fn ordered(operator: String, order: Int): Bool {
 }
 
 /// A function: a `pub` method of a value given with `functions`.
-fn Run.call(self, scope: Scope, name: String, args: Array[__reflect.Value], at: Int): __reflect.Value !
-    TemplateError {
+fn Run.call(
+    self,
+    scope: Scope,
+    name: String,
+    args: Array[__reflect.Value],
+    at: Int,
+): __reflect.Value ! TemplateError {
     var known: Array[String] = []
     for helper in self.set.helpers {
         let methods = helper.typeInfo().methods().map((method) { method.name() })
@@ -1222,7 +1264,11 @@ fn textMethod(value: String, name: String, args: Array[__reflect.Value]): __refl
     some(result)
 }
 
-fn arrayMethod(items: Array[__reflect.Value], name: String, args: Array[__reflect.Value]): __reflect.Value? {
+fn arrayMethod(
+    items: Array[__reflect.Value],
+    name: String,
+    args: Array[__reflect.Value],
+): __reflect.Value? {
     let count = Int.parse(argument(args, 0)).unwrapOr(0)
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(items.length())
@@ -1273,7 +1319,11 @@ fn mapMethod(
     some(result)
 }
 
-fn optionMethod(inner: __reflect.Value?, name: String, args: Array[__reflect.Value]): __reflect.Value? {
+fn optionMethod(
+    inner: __reflect.Value?,
+    name: String,
+    args: Array[__reflect.Value],
+): __reflect.Value? {
     let result = match (name, args.length()) {
         ("isSome", 0) => __reflect.valueOf(inner.isSome())
         ("isNone", 0) => __reflect.valueOf(inner.isNone())
@@ -1284,8 +1334,14 @@ fn optionMethod(inner: __reflect.Value?, name: String, args: Array[__reflect.Val
 }
 
 /// What a value writes, with its format, at its place.
-fn Run.written(self, scope: Scope, value: __reflect.Value, format: Format?, place: Int, at: Int): String !
-    TemplateError {
+fn Run.written(
+    self,
+    scope: Scope,
+    value: __reflect.Value,
+    format: Format?,
+    place: Int,
+    at: Int,
+): String ! TemplateError {
     let kind = value.typeName()
     if not self.set.html {
         return self.shown(scope, value, format, at)?
@@ -1304,8 +1360,13 @@ fn Run.written(self, scope: Scope, value: __reflect.Value, format: Format?, plac
 }
 
 /// A value's text, with its format.
-fn Run.shown(self, scope: Scope, value: __reflect.Value, format: Format?, at: Int): String !
-    TemplateError {
+fn Run.shown(
+    self,
+    scope: Scope,
+    value: __reflect.Value,
+    format: Format?,
+    at: Int,
+): String ! TemplateError {
     let kind = value.typeName()
     if kind.endsWith("?") {
         fail self.error(

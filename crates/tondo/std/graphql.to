@@ -71,7 +71,12 @@ pub fn Schema.mutation[M: __reflect.Reflect](self, root: M): Schema {
 
 /// The GraphQL type of a Tondo type, registering the named types it
 /// needs; `root` names a root's object.
-fn described(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root: String = ""): String {
+fn described(
+    info: __reflect.TypeInfo,
+    input: Bool,
+    types: var Array[Named],
+    root: String = "",
+): String {
     let optional = info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Option)
     let inner = if optional { info.genericArguments().first().unwrapOr(info) } else { info }
     let base = match inner.kind() {
@@ -799,7 +804,12 @@ pub fn Schema.execute(
     __json.parse(text).unwrapOr(__json.Value.Null)
 }
 
-fn Schema.executed(self, document: String, variables: Map[String, __json.Value], operation: String?): String {
+fn Schema.executed(
+    self,
+    document: String,
+    variables: Map[String, __json.Value],
+    operation: String?,
+): String {
     let read = match parsed(document) {
         ok(found) => found
         err(problem) => return failedWith(problem.message, problem.line, problem.column)
@@ -916,7 +926,13 @@ fn Run.collected(self, typeName: String, selections: Array[Selection], into: var
 
 /// An object's selected fields as JSON; none when a field that cannot be
 /// null is.
-fn Run.selected(self, node: Node, typeName: String, selections: Array[Selection], path: String): String? {
+fn Run.selected(
+    self,
+    node: Node,
+    typeName: String,
+    selections: Array[Selection],
+    path: String,
+): String? {
     var fields: Array[Field] = []
     self.collected(typeName, selections, var fields)
     var written: Array[String] = []
@@ -1007,7 +1023,13 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
 }
 
 /// Calls the method of a field with its arguments; none when it failed.
-fn Run.called(self, target: __reflect.Value, member: Member, field: Field, path: String): __reflect.Value? {
+fn Run.called(
+    self,
+    target: __reflect.Value,
+    member: Member,
+    field: Field,
+    path: String,
+): __reflect.Value? {
     let info = target.typeInfo()
     let method = info.methods().find((m) { m.name() == member.name })?
     var args: Array[__reflect.Value] = []
@@ -1277,7 +1299,12 @@ fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
     )
 }
 
-fn inputValue(name: String, reference: String, docs: String?, kinds: Array[(String, String)]): __json.Value {
+fn inputValue(
+    name: String,
+    reference: String,
+    docs: String?,
+    kinds: Array[(String, String)],
+): __json.Value {
     jsonObject(
         [
             "name": jsonText(name),

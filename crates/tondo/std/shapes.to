@@ -62,7 +62,11 @@ pub fn record(members: Map[String, __reflect.Value]): __reflect.Value {
 
 /// A variant: its name, the members of a record payload, the items of a
 /// tuple's.
-pub fn variant(name: String, members: Map[String, __reflect.Value], items: Array[__reflect.Value]): __reflect.Value {
+pub fn variant(
+    name: String,
+    members: Map[String, __reflect.Value],
+    items: Array[__reflect.Value],
+): __reflect.Value {
     __reflect.valueOf(Shape { variant: some(name), members, items })
 }
 
@@ -226,8 +230,11 @@ fn externalVariant(info: __reflect.TypeInfo, name: String): String {
 }
 
 /// The value of a type that JSON writes, at `place` for messages.
-pub fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __reflect.Value !
-    String {
+pub fn fromJson(
+    info: __reflect.TypeInfo,
+    json: __json.Value,
+    place: String,
+): __reflect.Value ! String {
     let wrong = (expected: String) {
         "`{place}` is {__json.encode(json)}, and should be {expected}"
     }
@@ -343,11 +350,11 @@ pub fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __
     }
 }
 
-fn fieldsOf(fields: Array[__reflect.FieldInfo], json: __json.Value, place: String): Map[
-    String,
-    __reflect.Value,
-] !
-    String {
+fn fieldsOf(
+    fields: Array[__reflect.FieldInfo],
+    json: __json.Value,
+    place: String,
+): Map[String, __reflect.Value] ! String {
     var members: Map[String, __reflect.Value] = [:]
     for field in fields {
         let path = "{place}.{field.externalName()}"

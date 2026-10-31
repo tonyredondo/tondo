@@ -17,7 +17,13 @@ pub fn found(outcomes: Array[__serialization.Violation?]): Array[__serialization
 }
 
 /// `@validate.Length` of `count` characters or elements.
-pub fn length(path: String, count: Int, min: Int, max: Int?, unit: String): __serialization.Violation? {
+pub fn length(
+    path: String,
+    count: Int,
+    min: Int,
+    max: Int?,
+    unit: String,
+): __serialization.Violation? {
     let units = (bound: Int): String { if bound == 1 { unit } else { "{unit}s" } }
     if count < min {
         return some(broken(path, "must have at least {min} {units(min)}"))

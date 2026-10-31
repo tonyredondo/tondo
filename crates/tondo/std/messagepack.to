@@ -430,8 +430,10 @@ impl serialization.Encode for Value {
 }
 
 impl serialization.Decode for Value {
-    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value !
-        MessagePackError {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): Value ! MessagePackError {
         match first {
             serialization.Event.Null => Value.Nil
             serialization.Event.Bool(value) => Value.Bool(value)

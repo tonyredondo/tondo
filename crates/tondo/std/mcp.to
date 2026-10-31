@@ -55,7 +55,11 @@ impl Display for McpError {
 /// message a line, until the input ends; meanwhile the console's output
 /// goes to standard error, since standard output is the protocol's. Each
 /// request is answered in a task of its own.
-pub fn serve[T: __reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): !McpError {
+pub fn serve[T: __reflect.Reflect](
+    server: T,
+    name: String = "",
+    version: String = "0.1.0",
+): !McpError {
     let state = served(server, name, version)
     let protocol = __console.stdout()
     __console.setOutput(__console.stderr())
@@ -80,9 +84,11 @@ pub fn serve[T: __reflect.Reflect](server: T, name: String = "", version: String
 
 /// Serves the methods of `server` on a route of `std.http`: a message a
 /// `POST`, answered with JSON, without sessions.
-pub fn handler[T: __reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): fn(
-    __http.Request,
-): __http.Reply ! __http.Problem {
+pub fn handler[T: __reflect.Reflect](
+    server: T,
+    name: String = "",
+    version: String = "0.1.0",
+): fn(__http.Request): __http.Reply ! __http.Problem {
     let state = served(server, name, version)
     (request) {
         let text = request.text()?

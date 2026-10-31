@@ -127,7 +127,12 @@ pub fn Part.field(name: String, value: String): Part {
 }
 
 /// A file's bytes, sent under `fileName`.
-pub fn Part.bytes(name: String, bytes: Array[Byte], fileName: String, contentType: String = ""): Part {
+pub fn Part.bytes(
+    name: String,
+    bytes: Array[Byte],
+    fileName: String,
+    contentType: String = "",
+): Part {
     Part { name, source: Source.Data(bytes), fileName, contentType }
 }
 
@@ -1307,8 +1312,10 @@ impl __serialization.Encode for UploadedFile {
 }
 
 impl __serialization.Decode for UploadedFile {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): UploadedFile !
-        __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): UploadedFile ! __serialization.Error {
         input.beginMap(first, "UploadedFile")?
         var file = UploadedFile { name: "", fileName: "", contentType: "", bytes: [] }
         for {
@@ -2693,8 +2700,11 @@ pub fn mediaType(path: String): String {
 /// `client` sends the requests, with its hooks, so what a proxy sends is
 /// observed as any other request: `app.route("*", "/api/*", http.proxy(
 /// "http://backend:8080", strip: "/api"))`.
-pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply !
-    Problem {
+pub fn proxy(
+    target: String,
+    strip: String = "",
+    client: Client? = none,
+): fn(Request): Reply ! Problem {
     let sender = client.unwrapOr(Client.new(redirects: 0))
     let base = target.removeSuffix("/")
     (request): Reply ! Problem {
@@ -2802,8 +2812,13 @@ fn tlsParts(tls: Tls?): (String, String, String, Int) {
     }
 }
 
-fn bound(host: String, port: Int, tls: Tls?, socket: String?, limits: Limits?): httpNative.Native !
-    HttpError {
+fn bound(
+    host: String,
+    port: Int,
+    tls: Tls?,
+    socket: String?,
+    limits: Limits?,
+): httpNative.Native ! HttpError {
     let (certificate, key, clients, minimum) = tlsParts(tls)
     let allowed = limits.unwrapOr(Limits.standard())
     let (heads, bodies, replies) = (

@@ -42,8 +42,11 @@ pub fn remaining(): __time.Duration? {
 /// ISO 8601 in RFC 3339's form, `2026-10-22`, `2026-10-22T06:38:28Z` or
 /// `2026-10-22 08:38:28.5+02:00`, or the form of a `strftime` pattern, as
 /// a date and time in UTC; without an offset, the text is in UTC.
-pub fn parseDateTime(text: String, pattern: String? = none, locale: String = "en"): __time.DateTime !
-    __time.TimeError {
+pub fn parseDateTime(
+    text: String,
+    pattern: String? = none,
+    locale: String = "en",
+): __time.DateTime ! __time.TimeError {
     let fields = read(text, pattern, locale)?
     __time.utc(moment(fields) - __time.seconds(fields[8]))
 }
@@ -129,8 +132,10 @@ impl serialization.Encode for __time.DateTime {
 
 /// Read from RFC 3339.
 impl serialization.Decode for __time.DateTime {
-    fn decode[S: serialization.Source](input: S, first: serialization.Event): __time.DateTime !
-        serialization.Error {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): __time.DateTime ! serialization.Error {
         let text = match first {
             serialization.Event.DateTime(text) => text
             serialization.Event.Text(text) => text
@@ -337,8 +342,10 @@ impl serialization.Encode for ZonedDateTime {
 
 /// Read from RFC 3339, keeping its offset in a fixed zone.
 impl serialization.Decode for ZonedDateTime {
-    fn decode[S: serialization.Source](input: S, first: serialization.Event): ZonedDateTime !
-        serialization.Error {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): ZonedDateTime ! serialization.Error {
         let text = match first {
             serialization.Event.DateTime(text) => text
             serialization.Event.Text(text) => text
@@ -569,8 +576,11 @@ impl __reflect.Reflect for __time.DateTime {
         }
     }
 
-    fn reflectCall(self, method: String, args: Array[__reflect.Value]): __reflect.Value !
-        __reflect.ReflectError {
+    fn reflectCall(
+        self,
+        method: String,
+        args: Array[__reflect.Value],
+    ): __reflect.Value ! __reflect.ReflectError {
         match (method, args.length()) {
             ("format", 1) => __reflect.valueOf(format(self, args[0].to()?))
             ("format", 2) => __reflect.valueOf(format(self, args[0].to()?, args[1].to()?))
@@ -611,8 +621,11 @@ impl __reflect.Reflect for ZonedDateTime {
         }
     }
 
-    fn reflectCall(self, method: String, args: Array[__reflect.Value]): __reflect.Value !
-        __reflect.ReflectError {
+    fn reflectCall(
+        self,
+        method: String,
+        args: Array[__reflect.Value],
+    ): __reflect.Value ! __reflect.ReflectError {
         match (method, args.length()) {
             ("format", 1) => __reflect.valueOf(self.format(args[0].to()?))
             ("format", 2) => __reflect.valueOf(self.format(args[0].to()?, args[1].to()?))

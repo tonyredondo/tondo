@@ -56,7 +56,15 @@ pub fn daysIn(year: Int, month: Int): Int {
 
 /// Whether the fields name a date and time that exists, in the years whose
 /// times since 1970 fit in a `Duration`.
-pub fn exists(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, nanosecond: Int): Bool {
+pub fn exists(
+    year: Int,
+    month: Int,
+    day: Int,
+    hour: Int,
+    minute: Int,
+    second: Int,
+    nanosecond: Int,
+): Bool {
     year >= 1678 and
         year <= 2261 and
         month >= 1 and

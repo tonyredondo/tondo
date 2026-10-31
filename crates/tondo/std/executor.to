@@ -163,8 +163,11 @@ pub type ActorRef[M] = {
 /// An actor that starts with `state` and changes it with `handle`, one
 /// message at a time, keeping at most `capacity` messages waiting. An
 /// error of `handle` stops it, and `stop` gives that error.
-pub fn actor[S, M, E](state: S, capacity: Int, handle: fn(var S, M): !E): Actor[M, E] !
-    ExecutorError {
+pub fn actor[S, M, E](
+    state: S,
+    capacity: Int,
+    handle: fn(var S, M): !E,
+): Actor[M, E] ! ExecutorError {
     if capacity < 0 {
         fail ExecutorError.InvalidCapacity(capacity)
     }

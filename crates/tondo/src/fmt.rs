@@ -649,13 +649,14 @@ impl Formatter<'_> {
             let end = f.params.last().map_or(f.name.span, |p| p.span);
             params.push((Span::new(end.end, end.end), text("...")));
         }
-        head.push(self.list("(", params, ")"));
-        if let Some(result) = &f.result
-            && !is_unit(result)
-        {
-            head.push(text(": "));
-            head.push(self.result(result));
-        }
+        // The result is measured with the parameters, so that a signature
+        // too long for a line puts them one per line before it breaks its
+        // result at `!`.
+        let result = match &f.result {
+            Some(result) if !is_unit(result) => concat(vec![text(": "), self.result(result)]),
+            _ => concat(Vec::new()),
+        };
+        head.push(self.list_then("(", params, ")", result));
         match &f.body {
             Some(body) => concat(vec![group(concat(head)), text(" "), self.block(body)]),
             None => group(concat(head)),
@@ -1416,8 +1417,14 @@ impl Formatter<'_> {
     /// A delimited list (21.3): one line when it fits, otherwise one item
     /// per line with a trailing comma.
     fn list(&mut self, open: &str, items: Vec<(Span, Doc)>, close: &str) -> Doc {
+        self.list_then(open, items, close, concat(Vec::new()))
+    }
+
+    /// A list and what follows it on its last line, which must fit there
+    /// for the list to stay on one line.
+    fn list_then(&mut self, open: &str, items: Vec<(Span, Doc)>, close: &str, then: Doc) -> Doc {
         if items.is_empty() {
-            return text(format!("{open}{close}"));
+            return concat(vec![text(format!("{open}{close}")), then]);
         }
         let count = items.len();
         let (first, last) = (items[0].0.start, items[count - 1].0.end);
@@ -1437,7 +1444,7 @@ impl Formatter<'_> {
             }
         }
         (self.floor, self.ceiling) = outer;
-        group(concat(vec![text(open), indent(concat(body)), Doc::Softzero, text(close)]))
+        group(concat(vec![text(open), indent(concat(body)), Doc::Softzero, text(close), then]))
     }
 
     /// `{ a, b }` on one line, or one field per line without commas.
@@ -1584,6 +1591,12 @@ mod tests {
                 "@packed\n@align(8)\nextern type Header = {\n    @count(4)\n    name: Byte\n    next: Pointer[Header]?\n}\n\nextern type Handle\n",
             ),
             ("type Compare=extern fn(Int,Int,...):Int\n", "type Compare = extern fn(Int, Int, ...): Int\n"),
+            // A signature too long for a line breaks its parameters, not its
+            // result at `!`.
+            (
+                "pub fn createTemporaryDirectory(directory: String? = none, pattern: String = \"\"): String ! __fs.FsError {}\n",
+                "pub fn createTemporaryDirectory(\n    directory: String? = none,\n    pattern: String = \"\",\n): String ! __fs.FsError {}\n",
+            ),
             ("pub const  Limit:Int=1<<4\nconst Name=\"x\"\n", "pub const Limit: Int = 1 << 4\n\nconst Name = \"x\"\n"),
         ];
         for (input, output) in pairs {

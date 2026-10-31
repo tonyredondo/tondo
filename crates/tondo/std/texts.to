@@ -727,7 +727,11 @@ pub type Collator = {
 /// `und`, or a language without an order of its own, takes Unicode's. With
 /// `numeric`, digits compare as the numbers they write: `file2` goes
 /// before `file10`.
-pub fn collator(locale: String, strength: Strength = Strength.Tertiary, numeric: Bool = false): Collator {
+pub fn collator(
+    locale: String,
+    strength: Strength = Strength.Tertiary,
+    numeric: Bool = false,
+): Collator {
     let level = match strength {
         Strength.Primary => 0
         Strength.Secondary => 1

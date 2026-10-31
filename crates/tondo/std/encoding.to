@@ -36,8 +36,10 @@ pub fn base64Encode(bytes: Array[Byte], alphabet: Base64Alphabet = Base64Alphabe
 }
 
 /// The bytes a Base64 text writes, with or without its padding.
-pub fn base64Decode(input: String, alphabet: Base64Alphabet = Base64Alphabet.Standard): Array[Byte] !
-    EncodingError {
+pub fn base64Decode(
+    input: String,
+    alphabet: Base64Alphabet = Base64Alphabet.Standard,
+): Array[Byte] ! EncodingError {
     checked(input, codecNative.base64Check(input, isUrl(alphabet)))?
     codecNative.base64Decode(input, isUrl(alphabet))
 }

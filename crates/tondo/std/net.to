@@ -317,8 +317,11 @@ fn Stream.ended(self, direction: Int): Bool ! NetError {
 }
 
 /// Up to `max` bytes, as soon as some arrive, or `none` at the end.
-pub fn Stream.read(self, max: Int = 65536, timeout: __time.Duration? = none): Array[Byte]? !
-    NetError {
+pub fn Stream.read(
+    self,
+    max: Int = 65536,
+    timeout: __time.Duration? = none,
+): Array[Byte]? ! NetError {
     let bytes = netNative.read(self.native, max, millis(timeout))
     if self.ended(0)? {
         return none

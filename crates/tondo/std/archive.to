@@ -768,9 +768,14 @@ fn dosTime(date: Int, time: Int): __time.DateTime {
 }
 
 /// A local header (`central` false) or a central directory's record.
-fn zipHeader(entry: Entry, crc: Int, packedSize: Int, stored: Bool, offset: Int, central: Bool): Array[
-    Byte,
-] {
+fn zipHeader(
+    entry: Entry,
+    crc: Int,
+    packedSize: Int,
+    stored: Bool,
+    offset: Int,
+    central: Bool,
+): Array[Byte] {
     let name = entry.name.bytes()
     let m = entry.modified
     let time = m.hour * 2048 + m.minute * 32 + m.second / 2

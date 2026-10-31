@@ -419,8 +419,10 @@ impl __serialization.Encode for BigInt {
 }
 
 impl __serialization.Decode for BigInt {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): BigInt !
-        __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): BigInt ! __serialization.Error {
         let text = match first {
             __serialization.Event.Int(value) => return smallBig(value)
             __serialization.Event.Number(text) => text
@@ -848,8 +850,10 @@ impl __serialization.Encode for Decimal {
 }
 
 impl __serialization.Decode for Decimal {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Decimal !
-        __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Decimal ! __serialization.Error {
         let text = match first {
             __serialization.Event.Int(value) => return Decimal {
                 coefficient: smallBig(value)

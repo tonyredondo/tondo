@@ -546,8 +546,13 @@ fn members(
 }
 
 /// The value of a type that a text of the command line writes.
-fn typed(info: __reflect.TypeInfo, written: String, shown: String, path: String, usage: String): __reflect.Value !
-    CliError {
+fn typed(
+    info: __reflect.TypeInfo,
+    written: String,
+    shown: String,
+    path: String,
+    usage: String,
+): __reflect.Value ! CliError {
     match info.kind() {
         __reflect.TypeKind.Primitive(kind) => match __shapes.scalar(kind, written) {
             ok(value) => value
@@ -753,9 +758,11 @@ type Completed = {
 
 /// What completes each command; `shared` are the options of the commands
 /// around it, which it reads too.
-fn completedOf(info: __reflect.TypeInfo, path: Array[String], shared: Array[String]): Array[
-    Completed,
-] {
+fn completedOf(
+    info: __reflect.TypeInfo,
+    path: Array[String],
+    shared: Array[String],
+): Array[Completed] {
     var found: Array[Completed] = []
     match info.kind() {
         __reflect.TypeKind.Enum => {
@@ -785,9 +792,11 @@ fn completedOf(info: __reflect.TypeInfo, path: Array[String], shared: Array[Stri
     found
 }
 
-fn fieldsCompleted(fields: Array[__reflect.FieldInfo], path: Array[String], shared: Array[String]): Array[
-    Completed,
-] {
+fn fieldsCompleted(
+    fields: Array[__reflect.FieldInfo],
+    path: Array[String],
+    shared: Array[String],
+): Array[Completed] {
     let specs = specsOf(fields)
     var words: Array[String] = ["--help"]
     for spec in specs {

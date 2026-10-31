@@ -8,8 +8,12 @@ import std.timetext as __text
 /// What `parseDateTime` reads, kept in the zone it names: a text without an
 /// offset is the time on `zone`'s clocks; one with an offset keeps it, in
 /// `zone` if it had that offset then, or else in `fixedZone` of it.
-pub fn parseZoned(text: String, zone: __time.Zone, pattern: String? = none, locale: String = "en"): __time.ZonedDateTime !
-    __time.TimeError {
+pub fn parseZoned(
+    text: String,
+    zone: __time.Zone,
+    pattern: String? = none,
+    locale: String = "en",
+): __time.ZonedDateTime ! __time.TimeError {
     let fields = match __text.read(text, pattern, locale) {
         some(fields) => fields
         none => fail __time.TimeError.InvalidDateTime

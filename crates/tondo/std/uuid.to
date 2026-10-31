@@ -145,8 +145,10 @@ impl __serialization.Encode for Uuid {
 }
 
 impl __serialization.Decode for Uuid {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Uuid !
-        __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Uuid ! __serialization.Error {
         let read = match first {
             __serialization.Event.Text(text) => Uuid.parse(text)
             __serialization.Event.Untyped(text) => Uuid.parse(text.trim())

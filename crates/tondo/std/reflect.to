@@ -197,8 +197,11 @@ pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): 
 }
 
 /// Calls a `pub` method by name, which may change the value.
-pub fn callMut[R: Reflect, S: Reflect](target: mut S, method: String, args: ...Value): R !
-    ReflectError {
+pub fn callMut[R: Reflect, S: Reflect](
+    target: mut S,
+    method: String,
+    args: ...Value,
+): R ! ReflectError {
     match target.reflectCallMut(method, args) {
         ok(result) => result.to()?
         err(error) => fail at(error, method)
@@ -289,8 +292,13 @@ pub fn Value.set(mut self, path: String, new: Value): !ReflectError {
     self = self.replaced(segments(path), 0, new, path)?
 }
 
-fn Value.replaced(self, parts: Array[String], index: Int, new: Value, path: String): Value !
-    ReflectError {
+fn Value.replaced(
+    self,
+    parts: Array[String],
+    index: Int,
+    new: Value,
+    path: String,
+): Value ! ReflectError {
     let value = if index + 1 == parts.length() {
         new
     } else {
@@ -1465,7 +1473,12 @@ pub type ParameterInfo = {
 
 /// A parameter's description, as the code the compiler writes for a type
 /// makes it.
-pub fn ParameterInfo.of(index: Int, info: TypeInfo, mode: ParameterMode, name: String = ""): ParameterInfo {
+pub fn ParameterInfo.of(
+    index: Int,
+    info: TypeInfo,
+    mode: ParameterMode,
+    name: String = "",
+): ParameterInfo {
     ParameterInfo { index, info, passing: mode, parameterName: name, notes: [] }
 }
 

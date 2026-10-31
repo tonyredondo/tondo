@@ -839,7 +839,12 @@ impl __serialization.Source for Row {
 
 /// Reads a JSON column in place: its events after its first, which a
 /// record or a list began.
-fn Row.opened(self, text: String, first: __serialization.Event, expected: String): !__serialization.Error {
+fn Row.opened(
+    self,
+    text: String,
+    first: __serialization.Event,
+    expected: String,
+): !__serialization.Error {
     let parsed = match __json.parse(text) {
         ok(value) => value
         err(_) => fail __serialization.Source.mismatch(self, first, expected)
@@ -2065,7 +2070,13 @@ fn xored(bytes: Array[Byte], mask: Array[Byte]): Array[Byte] {
 /// Ends the authentication: an OK; a switch to another plugin; or, for
 /// `caching_sha2_password` the first time, the password itself, over TLS,
 /// or sealed with the server's RSA key.
-fn MySql.authenticate(self, password: String, plugin: String, nonce: Array[Byte], secure: Bool): !SqlError {
+fn MySql.authenticate(
+    self,
+    password: String,
+    plugin: String,
+    nonce: Array[Byte],
+    secure: Bool,
+): !SqlError {
     var current = plugin
     var scramble = nonce
     for {

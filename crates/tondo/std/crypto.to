@@ -99,18 +99,24 @@ fn unpadded(text: String): String {
 
 /// Keys of `length` bytes, at most 8160, derived from a secret with HKDF
 /// and SHA-256 (RFC 5869): one secret gives a key for each `info`.
-pub fn hkdf(secret: Array[Byte], salt: Array[Byte] = [], info: Array[Byte] = [], length: Int = 32): Array[
-    Byte,
-] {
+pub fn hkdf(
+    secret: Array[Byte],
+    salt: Array[Byte] = [],
+    info: Array[Byte] = [],
+    length: Int = 32,
+): Array[Byte] {
     codecNative.hkdf(secret, salt, info, length.clamp(0, 8160))
 }
 
 /// A key of `length` bytes derived from a password with PBKDF2 and
 /// HMAC-SHA-256, `iterations` times, at least once: the more, the slower to
 /// guess. `hashPassword` is the one to store passwords with.
-pub fn pbkdf2(password: Array[Byte], salt: Array[Byte], iterations: Int, length: Int = 32): Array[
-    Byte,
-] {
+pub fn pbkdf2(
+    password: Array[Byte],
+    salt: Array[Byte],
+    iterations: Int,
+    length: Int = 32,
+): Array[Byte] {
     codecNative.pbkdf2(password, salt, iterations.max(1), length.max(0))
 }
 
@@ -137,8 +143,10 @@ pub fn SecretKey.generate(cipher: Cipher = Cipher.Aes256Gcm): SecretKey {
 }
 
 /// The key of 32 bytes kept elsewhere, as `bytes()` gave them.
-pub fn SecretKey.fromBytes(bytes: Array[Byte], cipher: Cipher = Cipher.Aes256Gcm): SecretKey !
-    CryptoError {
+pub fn SecretKey.fromBytes(
+    bytes: Array[Byte],
+    cipher: Cipher = Cipher.Aes256Gcm,
+): SecretKey ! CryptoError {
     if bytes.length() != 32 {
         fail failure("a secret key has 32 bytes, not {bytes.length()}")
     }
@@ -159,8 +167,11 @@ pub fn SecretKey.seal(self, data: Array[Byte], context: Array[Byte] = []): Array
 }
 
 /// The data that `seal` sealed with this key and `context`.
-pub fn SecretKey.open(self, sealed: Array[Byte], context: Array[Byte] = []): Array[Byte] !
-    CryptoError {
+pub fn SecretKey.open(
+    self,
+    sealed: Array[Byte],
+    context: Array[Byte] = [],
+): Array[Byte] ! CryptoError {
     let refused = failure(
         "the data does not open: it was sealed with another key or context, or changed",
     )
