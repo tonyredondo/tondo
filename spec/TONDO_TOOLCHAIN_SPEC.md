@@ -228,8 +228,10 @@ La caché guarda también lo que un build puede volver a hacer: el runtime del
 compilador, y los ejecutables de `run`, de las pruebas y de los providers y
 generadores, en `run/`, `test/` y `meta/`, por el compilador y los archivos
 que el build lee: sus fuentes y manifiestos, providers, generadores y sus
-inputs, y los archivos que embebe (14.27 de la librería estándar). Al
-escribir su runtime, un compilador borra los de otras versiones, y una
+inputs, y los archivos que embebe (14.27 de la librería estándar). Usar su
+runtime lo marca; al escribirlo, un compilador borra los de otras versiones
+que ningún build ha usado en un día, así que dos versiones a la vez, como la
+del editor y la de la terminal, no se quitan el runtime la una a la otra. Una
 entrada de esos directorios que nadie usa en 30 días se borra.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.

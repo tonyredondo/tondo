@@ -29,26 +29,39 @@ const STATIC: [(&str, &[u8]); 4] = [
     ("rcrt1-static", include_bytes!(concat!(env!("OUT_DIR"), "/rcrt1-static.o.gz"))),
 ];
 
-/// The archive `name` of the compiler, in the cache.
+/// The archive `name` of the compiler, in the cache. Using it marks it,
+/// so that another compiler, of another version, does not take it away
+/// from a build that links with it.
 fn carried(name: &str, compressed: &[u8]) -> Result<PathBuf, String> {
     let dir = cache_dir().join("runtime");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let path = dir.join(format!("{name}-{RUNTIME_HASH}.a"));
-    if !path.exists() {
+    let now = std::time::SystemTime::now();
+    let used = std::fs::File::open(&path).and_then(|file| file.set_modified(now));
+    if used.is_err() {
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(compressed), &mut bytes)
             .map_err(|e| format!("the compiler's {name} is damaged: {e}"))?;
         write_atomic(&path, &bytes)?;
-        // Those of other compilers go: a compiler writes its own again.
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let file = entry.file_name();
-            let hash = file.to_str().and_then(|f| f.strip_prefix(name)?.strip_prefix('-')?.strip_suffix(".a"));
-            if hash.is_some_and(|h| h.len() == 16 && h != RUNTIME_HASH && h.bytes().all(|b| b.is_ascii_hexdigit())) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
+        forget_others(&dir, name, RUNTIME_HASH, now);
     }
     Ok(path)
+}
+
+/// Removes the archives `name` of other compilers that no build used in a
+/// day: one that another version, as an editor's, still uses stays.
+fn forget_others(dir: &Path, name: &str, own: &str, now: std::time::SystemTime) {
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let file = entry.file_name();
+        let hash = file.to_str().and_then(|f| f.strip_prefix(name)?.strip_prefix('-')?.strip_suffix(".a"));
+        let other = hash.is_some_and(|h| h.len() == 16 && h != own && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        let modified = entry.metadata().and_then(|m| m.modified()).ok();
+        let unused = modified.is_some_and(|modified| now.duration_since(modified).unwrap_or_default() > DAY);
+        if other && unused {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// The cache entry `key` of `kind` (`run`, `test` or `meta`), which holds
@@ -1115,6 +1128,26 @@ mod tests {
         std::fs::File::open(dir.join("recent")).unwrap().set_modified(now - Duration::from_secs(40 * 86400)).unwrap();
         super::sweep(&dir, now);
         assert!(dir.join("recent").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A runtime of another compiler that a build used today stays, as one
+    /// of the editor's while the terminal's builds; an unused one goes.
+    #[test]
+    fn keeps_the_runtimes_other_compilers_use() {
+        let dir = std::env::temp_dir().join(format!("tondo-runtimes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = SystemTime::now();
+        let runtime = |hash: &str| dir.join(format!("libtondo_runtime-{hash}.a"));
+        for (hash, hours) in [("00000000000000aa", 2), ("00000000000000bb", 30), ("00000000000000cc", 30)] {
+            std::fs::write(runtime(hash), b"").unwrap();
+            let file = std::fs::File::open(runtime(hash)).unwrap();
+            file.set_modified(now - Duration::from_secs(hours * 60 * 60)).unwrap();
+        }
+        super::forget_others(&dir, "libtondo_runtime", "00000000000000cc", now);
+        assert!(runtime("00000000000000aa").exists(), "used two hours ago");
+        assert!(!runtime("00000000000000bb").exists(), "unused for a day");
+        assert!(runtime("00000000000000cc").exists(), "its own");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
