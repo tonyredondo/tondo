@@ -39,6 +39,22 @@ fn main(): !url.UrlError {
         ok(_) => console.println("unexpected")
         err(error) => console.println("{error}")
     }
+    // A path keeps how it was written while `path` is what that decodes to,
+    // and another module builds a URL with a literal of the public fields.
+    let files = url.parse("https://example.com/files/a%2Fb/c%20d?x=1")?
+    let elsewhere = files with { path: "/other/e f" }
+    let made = url.Url {
+        scheme: "https"
+        user: ""
+        password: none
+        host: "example.com"
+        port: none
+        path: "/a/b"
+        query: ""
+        fragment: ""
+    }
+    console.println("{files.path} {files} {files.escapedPath()}")
+    console.println("{elsewhere} {made} {url.parse("/a b")? == url.parse("/a%20b")?}")
     rfcExamples()?
 }
 
@@ -107,4 +123,6 @@ fn rfcExamples(): !url.UrlError {
 // expect-stdout: `99999` is not a port, which is a number from 0 to 65535 (at 19)
 // expect-stdout: `1http` is not a scheme, which is a letter then letters, digits, `+`, `-` or `.`; a relative path with a `:` starts with `./` (at 0)
 // expect-stdout: a `%` is followed by two hexadecimal digits: write `%25` for a `%` itself (at 2)
+// expect-stdout: /files/a/b/c d https://example.com/files/a%2Fb/c%20d?x=1 /files/a%2Fb/c%20d
+// expect-stdout: https://example.com/other/e%20f?x=1 https://example.com/a/b true
 // expect-stdout: 37 cases, 0 wrong

@@ -23,6 +23,9 @@ pub type Url = {
     query: String
     /// Decoded, without `#`.
     fragment: String
+    /// The path as it was written when encoding `path` writes it otherwise,
+    /// as `/a%2Fb`; empty when it does not.
+    priv written: String = ""
 }
 
 /// Why a text is not a URL: what to fix, and where, in characters.
@@ -132,6 +135,10 @@ pub fn parse(text: String): Url ! UrlError {
         parsed.host = hostPort.removePrefix("[").removeSuffix("]")
     }
     parsed.path = decoded(rest, at)?
+    // Kept when it is a valid encoding that encoding the path changes.
+    if encoded(parsed.path, ":@/") != rest and encoded(rest, ":@/%") == rest {
+        parsed.written = rest
+    }
     parsed
 }
 
@@ -302,7 +309,7 @@ impl Display for Url {
                 none => {}
             }
         }
-        out.push(encoded(self.path, ":@/"))
+        out.push(self.escapedPath())
         if not self.query.isEmpty() {
             out.push("?{self.query}")
         }
@@ -310,6 +317,15 @@ impl Display for Url {
             out.push("#{encoded(self.fragment, ":@/?")}")
         }
         out.join("")
+    }
+}
+
+/// The path as the URL writes it: as `parse` read it, `/a%2Fb`, while
+/// `path` is what that decodes to, and otherwise `path` encoded.
+pub fn Url.escapedPath(self): String {
+    match decoded(self.written, 0) {
+        ok(path) if not self.written.isEmpty() and path == self.path => self.written
+        _ => encoded(self.path, ":@/")
     }
 }
 
