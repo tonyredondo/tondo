@@ -363,10 +363,12 @@ pub(crate) fn describe(address: usize) -> Option<Described> {
         let inlined = Inlined { of: Some(of), record: unsafe { u32_at(of.table.blob, site + 20) } };
         return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty, inlined });
     }
-    if let Some((file, line, function, inlined)) = located(address) {
+    // The instruction before a return address is the call: one that ends a
+    // function returns to the first byte of the next.
+    if let Some((file, line, function, inlined)) = located(address.saturating_sub(1)) {
         return Some(Described { function, at: Some((file, line)), ty: None, inlined });
     }
-    let (table, _, index) = find(address).or_else(|| find(address + 1))?;
+    let (table, _, index) = find(address)?;
     let function = Of::new(table, index).function;
     Some(Described { function, at: None, ty: None, inlined: Inlined { of: None, record: u32::MAX } })
 }

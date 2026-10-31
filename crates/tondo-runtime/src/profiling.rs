@@ -202,11 +202,13 @@ fn named(address: usize) -> Vec<(String, String, i64)> {
         let outer = described.inlined.map(|(function, file, line, _)| (function.into(), file.into(), line as i64));
         return std::iter::once((described.function.to_string(), file.to_string(), line)).chain(outer).collect();
     }
-    if let Some(name) = super::symbols::name(address) {
+    // A return address names the call before it.
+    let call = address.saturating_sub(1);
+    if let Some(name) = super::symbols::name(call) {
         return vec![(demangled(name), String::new(), 0)];
     }
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
-    if unsafe { libc::dladdr(address as *const libc::c_void, &mut info) } != 0 && !info.dli_sname.is_null() {
+    if unsafe { libc::dladdr(call as *const libc::c_void, &mut info) } != 0 && !info.dli_sname.is_null() {
         let symbol = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) }.to_string_lossy();
         return vec![(demangled(&symbol), String::new(), 0)];
     }

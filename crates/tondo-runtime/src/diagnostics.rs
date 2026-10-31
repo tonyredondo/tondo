@@ -873,7 +873,8 @@ fn frame(address: usize) -> String {
             None => format!("{{\"function\":{function}}}"),
         };
     }
-    match loaded(address) {
+    // A return address names the call before it.
+    match loaded(address.saturating_sub(1)) {
         Some((image, offset)) => format!("{{\"image\":{},\"offset\":{offset}}}", quoted(&image)),
         None => "{}".into(),
     }

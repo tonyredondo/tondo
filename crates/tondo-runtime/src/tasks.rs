@@ -1570,7 +1570,8 @@ pub(crate) fn answer_where(pc: usize, fp: usize) {
     runner.task.store(current(), Ordering::Relaxed);
     let bounds = stack_bounds().unwrap_or((0, 0));
     let mut count = 0;
-    for (slot, address) in runner.answer.iter().zip(std::iter::once(pc).chain(super::trace::walk(fp, bounds))) {
+    // The place it runs at is kept one past it, as a return address is.
+    for (slot, address) in runner.answer.iter().zip(std::iter::once(pc + 1).chain(super::trace::walk(fp, bounds))) {
         slot.store(address, Ordering::Relaxed);
         count += 1;
     }

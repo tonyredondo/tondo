@@ -50,10 +50,9 @@ fn main() {
     _ = runSecond()
     let late = cpu.stop()
     let waited = profile.blocking().since(waitedEarly)
-    // Each task's samples start at its `spawn`.
-    console.println(
-        "{early.folded().contains("spawn first")} {early.folded().contains("spawn second")}",
-    )
+    // Each task's samples start at its `spawn`, and no frame of the early
+    // period is named after `second`, which follows `fib` in the program.
+    console.println("{early.folded().contains("spawn first")} {early.folded().contains("second")}")
     console.println(
         "{late.folded().contains("spawn second")} {late.folded().contains("spawn first")}",
     )

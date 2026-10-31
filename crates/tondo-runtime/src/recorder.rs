@@ -210,12 +210,13 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     }
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
     // In C, which may keep no frame pointers, the trace goes on from where
-    // the program called it.
+    // the program called it. The place it stopped at is kept one past it,
+    // as the return addresses after it are, which name the call before.
     let stack = match crate::tasks::c_frame() {
         Some((called, from)) if !crate::trace::compiled(pc) => {
-            Stack::of([pc, from].into_iter().chain(crate::trace::walk(called, bounds)))
+            Stack::of([pc + 1, from].into_iter().chain(crate::trace::walk(called, bounds)))
         }
-        _ => Stack::of(std::iter::once(pc).chain(crate::trace::walk(fp, bounds))),
+        _ => Stack::of(std::iter::once(pc + 1).chain(crate::trace::walk(fp, bounds))),
     };
     let ring = ring();
     if ring.is_empty() {
