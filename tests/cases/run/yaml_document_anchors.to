@@ -1,0 +1,26 @@
+// A value set in place of an anchored item of a list, or of an anchored
+// root, of several lines: the anchor stays, and the value starts on the
+// line after it, where its item's `-` puts its indent.
+
+import std.console
+import std.yaml
+
+fn main(): !yaml.YamlError {
+    var anchored = yaml.load("list:\n  - &a [1, 2]\nagain: *a\n")?
+    anchored.set("list[0]", [3, 4])?
+    console.println(anchored.text().trimEnd())
+    console.println("{anchored.value().get("again") == anchored.value().find("list").andThen((list) { list.at(0) })}")
+    var root = yaml.load("&r [1, 2]\n")?
+    root.set("", [3, 4])?
+    console.println(root.text().trimEnd())
+}
+
+// expect-stdout: list:
+// expect-stdout:   - &a
+// expect-stdout:     - 3
+// expect-stdout:     - 4
+// expect-stdout: again: *a
+// expect-stdout: true
+// expect-stdout: &r
+// expect-stdout: - 3
+// expect-stdout: - 4

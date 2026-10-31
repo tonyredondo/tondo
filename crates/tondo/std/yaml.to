@@ -661,7 +661,15 @@ fn Document.replaced(self, index: Int, written: String): String {
     } else {
         indent + 2
     }
-    self.spliced(start, end, indentedAfterFirst(written, width))
+    // After an anchor the value keeps, a value of several lines starts on
+    // the next line.
+    let before = self.source.slice(0, start).unwrapOr("").trimEnd()
+    let anchored = before.words().last().unwrapOr("").startsWith("&")
+    let rendered = indentedAfterFirst(written, width)
+    if anchored and ownLines(written) {
+        return self.spliced(before.length(), end, "\n{" ".repeat(width)}{rendered}")
+    }
+    self.spliced(start, end, rendered)
 }
 
 /// The end of the line a position is on.

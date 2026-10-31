@@ -787,6 +787,19 @@ enum Opened {
     List { node: usize, count: usize },
 }
 
+/// Where the tag and the anchor before a node at `start` start, as in
+/// `- &a [1, 2]`: its item's `-` is before them.
+fn properties_start(source: &str, mut start: usize) -> usize {
+    loop {
+        let before = source[..start].trim_end();
+        let word = before.rfind(char::is_whitespace).map_or(0, |at| at + 1);
+        if !before[word..].starts_with(['!', '&']) {
+            return start;
+        }
+        start = word;
+    }
+}
+
 fn outline(source: &str) -> Result<Vec<Outlined>, String> {
     let bytes = source.as_bytes();
     let mut nodes: Vec<Outlined> = Vec::new();
@@ -847,7 +860,7 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 } else {
                     (start, end)
                 };
-                let (path, after_key, indent) = place(&open, &nodes, start);
+                let (path, after_key, indent) = place(&open, &nodes, properties_start(source, start));
                 let (line, column) = (span.start.line(), span.start.col() + 1);
                 nodes.push(Outlined { path, kind: 0, start, end, line, column, after_key, indent });
                 finished(&mut open, &mut nodes, end);
@@ -861,7 +874,7 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                     (true, true) => 3,
                     (false, true) => 4,
                 };
-                let (path, after_key, indent) = place(&open, &nodes, start);
+                let (path, after_key, indent) = place(&open, &nodes, properties_start(source, start));
                 let (line, column) = (span.start.line(), span.start.col() + 1);
                 nodes.push(Outlined { path, kind, start, end: start, line, column, after_key, indent });
                 let node = nodes.len() - 1;
