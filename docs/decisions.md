@@ -3607,3 +3607,15 @@ apply in is then fixed and written down. `colors` answers Hugo's `.Colors`
 with the most frequent exact color of each group of similar ones, so a flat
 red is `#ff0000` and not an average its edges blurred.
 
+## 2026-10-31 — Profiles of each period
+
+A continuous profiler sends a profile of each minute: Datadog's does, as
+Go's delta profiles. The totals that grow from when sampling began, what
+was allocated and waited, subtract: `later.since(earlier)` gives the
+minute, by stack and labels, and keeps what is alive now as it is.
+The processor time does not keep totals: labels by span would make them
+grow without end in a process that runs for days, so `cpu.period()` hands
+over what was sampled and goes on. Each profile says how often it samples,
+`every`, with today's rates as the defaults, since Datadog samples the
+processor each 10 ms and a busy server may want fewer samples of memory.
+

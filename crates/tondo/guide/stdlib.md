@@ -578,7 +578,11 @@ shows where the time goes.
 
 A program profiles itself with `std.profile`, as a continuous profiler
 does: `let cpu = profile.startCpu()`, then `cpu.stop().pprof()`, the bytes
-of a pprof file; `profile.startMemory()` and `profile.memory()`;
+of a pprof file, or `cpu.period()` each minute as sampling goes on;
+`profile.memory().since(last)` sends what was allocated since the last
+one; `startCpu(every: time.milliseconds(10))` and the `every` of the
+others set how often they sample; `profile.startMemory()` and
+`profile.memory()`;
 `profile.tasks()`; `profile.startBlocking()` and `profile.blocking()`, where
 tasks wait for others; `profile.startContention()` and
 `profile.contention()`, where locks others waited for are let go.

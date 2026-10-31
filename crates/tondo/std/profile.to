@@ -4,6 +4,7 @@
 // are; and labels that divide them, as by endpoint.
 
 import std.internal.codec as native
+import std.time as __time
 
 /// A profile: in pprof's format, for a file or a service, and as folded
 /// stacks.
@@ -17,9 +18,10 @@ pub type CpuProfile = {
 }
 
 /// Begins a profile of where the program's threads spend their processor
-/// time, sampled each millisecond, until `stop`; one at a time.
-pub fn startCpu(): CpuProfile {
-    if not native.profileCpuStart() {
+/// time, sampled each `every` of it, from 1 ms to 1 s, until `stop`; one at
+/// a time. Datadog's profiler samples each 10 ms.
+pub fn startCpu(every: __time.Duration = __time.milliseconds(1)): CpuProfile {
+    if not native.profileCpuStart(every.nanoseconds()) {
         panic(
             "a profile of the processor time is being made already: stop it first, as `let cpu = profile.startCpu()` and then `cpu.stop()`",
         )
@@ -27,15 +29,21 @@ pub fn startCpu(): CpuProfile {
     CpuProfile { started: true }
 }
 
-/// What was sampled since `startCpu`.
+/// What was sampled since `startCpu`, or since the last `period`.
 pub fn CpuProfile.stop(self): Profile {
     Profile { native: native.profileCpuStop() }
 }
 
+/// What was sampled since `startCpu` or the last `period`, as sampling
+/// goes on: a profiler that sends one each minute calls it each minute.
+pub fn CpuProfile.period(self): Profile {
+    Profile { native: native.profileCpuPeriod() }
+}
+
 /// Samples what the program allocates from now on, about one allocation
-/// in each 512 KiB, which `memory` reports.
-pub fn startMemory() {
-    native.profileMemoryStart()
+/// in each `every` bytes, which `memory` reports.
+pub fn startMemory(every: Int = 512 * 1024) {
+    native.profileMemoryStart(every)
 }
 
 /// The memory alive now and what the program allocated, by the stack that
@@ -56,9 +64,9 @@ pub fn tasks(): Profile {
 
 /// Begins sampling where tasks wait for others: channels, `select`, joins
 /// and groups, and the locks, semaphores and barriers of `std.sync`; one
-/// wait for each 100 µs waited on average, and every longer one.
-pub fn startBlocking() {
-    native.waitsStart(0)
+/// wait for each `every` waited on average, and every longer one.
+pub fn startBlocking(every: __time.Duration = __time.microseconds(100)) {
+    native.waitsStart(0, every.nanoseconds())
 }
 
 /// How many waits for other tasks and how long, by the stack that waited,
@@ -72,8 +80,8 @@ pub fn blocking(): Profile {
 
 /// Begins sampling the locks of `std.sync` that tasks waited for, as
 /// `startBlocking` samples waits.
-pub fn startContention() {
-    native.waitsStart(1)
+pub fn startContention(every: __time.Duration = __time.microseconds(100)) {
+    native.waitsStart(1, every.nanoseconds())
 }
 
 /// Where locks others waited for were let go, and how long they waited,
@@ -98,6 +106,21 @@ pub fn Profile.pprof(self): Array[Byte] {
 /// the outermost joined by `;`, and how much it took.
 pub fn Profile.folded(self): String {
     native.profileFolded(self.native)
+}
+
+/// What happened between `earlier` and this profile, of the same kind: what
+/// adds up from when sampling began, as allocations and waits, less what
+/// `earlier` had, by stack and labels; what is alive now, as the memory in
+/// use, as it is; over the time between them. The profile of a period, as
+/// Datadog and Go's delta profiles send: `memory.since(last)`.
+pub fn Profile.since(self, earlier: Profile): Profile {
+    let (kind, before) = (native.profileKind(self.native), native.profileKind(earlier.native))
+    if kind != before {
+        panic(
+            "`since` takes a profile of the same kind, and this is of `{kind}` and the earlier one of `{before}`",
+        )
+    }
+    Profile { native: native.profileSince(self.native, earlier.native) }
 }
 
 /// Runs `body` with `labels`, which the samples of its processor time carry,

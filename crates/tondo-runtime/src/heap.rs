@@ -8,8 +8,14 @@
 use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
+/// The mean number of bytes between two samples, which
+/// `profile.startMemory(every:)` sets.
+pub(crate) static RATE: AtomicU64 = AtomicU64::new(512 * 1024);
+
 /// The mean number of bytes between two samples.
-pub(crate) const RATE: u64 = 512 * 1024;
+pub(crate) fn rate() -> u64 {
+    RATE.load(Ordering::Relaxed)
+}
 
 thread_local! {
     /// Bytes this thread allocates before its next sample, 0 before its
@@ -78,7 +84,7 @@ fn allocated_by(frames: &[usize; FRAMES], size: usize) {
         return;
     }
     let table = unsafe { std::slice::from_raw_parts(table, STACKS) };
-    let weight = 1.0 / (1.0 - (-(size as f64) / RATE as f64).exp());
+    let weight = 1.0 / (1.0 - (-(size as f64) / rate() as f64).exp());
     let hash = frames.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &f| (h ^ f as u64).wrapping_mul(0x100_0000_01b3)) | 2;
     let add = |cell: &AtomicU64, amount: f64| {
         let mut old = cell.load(Ordering::Relaxed);
@@ -183,7 +189,7 @@ fn interval() -> i64 {
         x ^= x << 17;
         seed.set(x);
         let uniform = ((x >> 11) as f64 + 1.0) / (1u64 << 53) as f64;
-        (-uniform.ln() * RATE as f64).max(1.0) as i64
+        (-uniform.ln() * rate() as f64).max(1.0) as i64
     })
 }
 

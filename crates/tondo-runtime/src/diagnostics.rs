@@ -783,7 +783,7 @@ fn memory(frames: &mut Frames) -> String {
     let (samples, dropped) = super::heap::alive();
     let (allocated, unstacked) = super::heap::allocations();
     let mut out =
-        format!("{{\"rate\":{},\"dropped\":{dropped},\"unstacked\":{unstacked},\"samples\":[", super::heap::RATE);
+        format!("{{\"rate\":{},\"dropped\":{dropped},\"unstacked\":{unstacked},\"samples\":[", super::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
@@ -1008,7 +1008,7 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
             contexts[index]
         );
     }
-    let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", super::heap::RATE);
+    let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", super::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));

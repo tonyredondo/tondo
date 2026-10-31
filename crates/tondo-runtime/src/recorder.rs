@@ -301,7 +301,11 @@ pub(crate) fn stop() {
     ON.store(false, Ordering::SeqCst);
 }
 
-/// Samples the threads every millisecond of processor time, without
+/// Microseconds of processor time between two samples of the threads,
+/// which `profile.startCpu(every:)` sets before they start.
+pub(crate) static CPU_EVERY: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1000);
+
+/// Samples the threads every `CPU_EVERY` of processor time, without
 /// recording events.
 pub(crate) fn sample_threads() {
     install();
@@ -318,11 +322,11 @@ pub(crate) fn sample_threads() {
         let _ = crate::tasks::try_spawn_thread(Some(64 * 1024), || {
             while SAMPLING.load(Ordering::Relaxed) {
                 crate::tasks::signal_workers(libc::SIGPROF);
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                std::thread::sleep(std::time::Duration::from_micros(CPU_EVERY.load(Ordering::Relaxed) as u64));
             }
         });
     } else {
-        timer(1000);
+        timer(CPU_EVERY.load(Ordering::Relaxed));
     }
 }
 
@@ -334,7 +338,7 @@ pub(crate) fn stop_sampling() {
 /// Raises `SIGPROF` every `micros` of the process's processor time, or
 /// never with 0.
 fn timer(micros: i64) {
-    let every = libc::timeval { tv_sec: 0, tv_usec: micros as _ };
+    let every = libc::timeval { tv_sec: (micros / 1_000_000) as _, tv_usec: (micros % 1_000_000) as _ };
     let timer = libc::itimerval { it_interval: every, it_value: every };
     unsafe { libc::setitimer(libc::ITIMER_PROF, &timer, std::ptr::null_mut()) };
 }

@@ -61,7 +61,7 @@ pub(crate) fn start() {
 /// a profile `std.profile` makes, or none.
 fn drain() {
     let (taken, _) = super::recorder::take_samples();
-    if let Some((samples, _)) = SESSION.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+    if let Some((samples, ..)) = SESSION.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         samples.extend(taken.iter().copied());
     }
     if COLLECTING.load(Ordering::Acquire) {
@@ -118,7 +118,7 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
     let mut out = format!("{{\"node\":{node},\"bench\":{bench},");
     if settings.memory {
         let allocated = ALLOCATED.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default();
-        let _ = write!(out, "\"kind\":\"memory\",\"rate\":{},\"allocated\":[", super::heap::RATE);
+        let _ = write!(out, "\"kind\":\"memory\",\"rate\":{},\"allocated\":[", super::heap::rate());
         for (index, (stack, (objects, bytes))) in allocated.iter().enumerate() {
             let comma = if index == 0 { "" } else { "," };
             let _ = write!(
@@ -150,8 +150,9 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
 // std.profile: profiles a program makes of itself
 // ---------------------------------------------------------------------------
 
-/// The samples of `profile.startCpu`, while it runs, and when it began.
-static SESSION: Mutex<Option<(Vec<Sample>, std::time::Instant)>> = Mutex::new(None);
+/// The samples of `profile.startCpu`, while it runs, when it or its last
+/// period began, and the nanoseconds of processor time between samples.
+static SESSION: Mutex<Option<(Vec<Sample>, std::time::Instant, i64)>> = Mutex::new(None);
 /// The thread that empties the ring of samples into what collects them.
 static DRAINING: std::sync::Once = std::sync::Once::new();
 
@@ -168,10 +169,28 @@ fn keep_draining() {
     });
 }
 
-/// A profile `std.profile` made: in pprof's format, and as folded stacks.
+/// A profile `std.profile` made: in pprof's format, as folded stacks, and
+/// what it was made of, which `since` subtracts.
 struct Made {
     pprof: Vec<u8>,
     folded: String,
+    kept: Kept,
+}
+
+#[derive(Clone, Default)]
+struct Kept {
+    /// `cpu`, `memory`, `tasks`, `blocking` or `contention`.
+    name: String,
+    kinds: Vec<(String, String)>,
+    period: (String, String, i64),
+    default: Option<String>,
+    samples: Vec<Weighed>,
+    /// Which values add up from when sampling began, as allocations and
+    /// waits do, and not what is alive now.
+    cumulative: Vec<bool>,
+    /// When it ends, in nanoseconds since 1970, and how long it covers.
+    end: i64,
+    duration: i64,
 }
 
 /// The function, file and line of an address: the program's from its
@@ -251,20 +270,40 @@ fn modern(bytes: &[u8]) -> String {
     parts.join("::")
 }
 
-/// A profile of `kind`s from stacks, each with its values and labels,
-/// that took `duration` nanoseconds.
+/// A profile of `kind`s from stacks, each with its values and labels, of
+/// which those `cumulative` says add up from when sampling began, that took
+/// `duration` nanoseconds until now.
 fn made(
+    name: &str,
     kinds: &[(&str, &str)],
     period: (&str, &str, i64),
     default: Option<&str>,
     samples: &[Weighed],
+    cumulative: &[bool],
     duration: i64,
 ) -> Made {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    made_from(Kept {
+        name: name.to_string(),
+        kinds: kinds.iter().map(|(k, u)| (k.to_string(), u.to_string())).collect(),
+        period: (period.0.to_string(), period.1.to_string(), period.2),
+        default: default.map(str::to_string),
+        samples: samples.to_vec(),
+        cumulative: cumulative.to_vec(),
+        end: now.as_nanos() as i64,
+        duration,
+    })
+}
+
+fn made_from(kept: Kept) -> Made {
     let program = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-    let mut builder = super::pprof::Builder::new(&program, kinds, (period.0, period.1), period.2);
-    if let Some(default) = default {
+    let kinds: Vec<(&str, &str)> = kept.kinds.iter().map(|(k, u)| (k.as_str(), u.as_str())).collect();
+    let mut builder =
+        super::pprof::Builder::new(&program, &kinds, (kept.period.0.as_str(), kept.period.1.as_str()), kept.period.2);
+    if let Some(default) = &kept.default {
         builder.default_type(default);
     }
+    let samples = &kept.samples;
     let mut names: HashMap<usize, Vec<(String, String, i64)>> = HashMap::new();
     let mut folded: HashMap<String, i64> = HashMap::new();
     for (stack, values, labels) in samples {
@@ -288,25 +327,93 @@ fn made(
             stack.iter().rev().flat_map(|address| names[address].iter().rev().map(|named| named.0.as_str())).collect();
         *folded.entry(line.join(";")).or_default() += values.last().copied().unwrap_or(0);
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let pprof = builder.finish(now.as_nanos() as i64 - duration, duration);
+    let pprof = builder.finish(kept.end - kept.duration, kept.duration);
     let mut lines: Vec<(String, i64)> = folded.into_iter().collect();
     lines.sort();
-    Made { pprof, folded: lines.iter().map(|(stack, count)| format!("{stack} {count}\n")).collect() }
+    Made { pprof, folded: lines.iter().map(|(stack, count)| format!("{stack} {count}\n")).collect(), kept }
+}
+
+/// A stack and its labels, in order.
+type Place = (Vec<usize>, Vec<(String, String)>);
+
+/// The values of each stack and its labels, added up.
+fn totals(samples: &[Weighed]) -> Vec<(Place, Vec<i64>)> {
+    let mut order: Vec<Place> = Vec::new();
+    let mut summed: HashMap<Place, Vec<i64>> = HashMap::new();
+    for (stack, values, labels) in samples {
+        let mut labels = labels.clone();
+        labels.sort();
+        let key = (stack.clone(), labels);
+        let entry = summed.entry(key.clone()).or_insert_with(|| {
+            order.push(key);
+            vec![0; values.len()]
+        });
+        for (total, value) in entry.iter_mut().zip(values) {
+            *total += value;
+        }
+    }
+    order
+        .into_iter()
+        .map(|key| {
+            let values = summed.remove(&key).unwrap_or_default();
+            (key, values)
+        })
+        .collect()
+}
+
+/// `Profile.since`: what `later` sampled after `earlier`, of the same kind:
+/// its values that add up less those of `earlier`, by stack and labels, and
+/// its others as they are, over the time between their ends.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_since(
+    later: *mut super::native::NativeObject,
+    earlier: *mut super::native::NativeObject,
+) -> *mut super::native::NativeObject {
+    let later = super::native::get::<Made>(later).map(|made| made.kept.clone()).unwrap_or_default();
+    let earlier = super::native::get::<Made>(earlier).map(|made| made.kept.clone()).unwrap_or_default();
+    let before: HashMap<_, _> = totals(&earlier.samples).into_iter().collect();
+    let samples = totals(&later.samples)
+        .into_iter()
+        .filter_map(|((stack, labels), mut values)| {
+            if let Some(old) = before.get(&(stack.clone(), labels.clone())) {
+                for ((value, old), &adds) in values.iter_mut().zip(old).zip(&later.cumulative) {
+                    if adds {
+                        *value = (*value - old).max(0);
+                    }
+                }
+            }
+            values.iter().any(|&value| value != 0).then_some((stack, values, labels))
+        })
+        .collect();
+    let duration = (later.end - earlier.end).max(0);
+    super::native::new(made_from(Kept { samples, duration, ..later }))
+}
+
+/// The kind of a profile, as `cpu` or `memory`, for `since` to check.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_kind(profile: *mut super::native::NativeObject) -> *mut crate::Str {
+    let kind = super::native::get::<Made>(profile).map_or("", |made| made.kept.name.as_str());
+    crate::str_new(kind.as_bytes())
 }
 
 /// A stack, its values, and its labels.
 type Weighed = (Vec<usize>, Vec<i64>, Vec<(String, String)>);
 
-/// `profile.startCpu()`: false when a profile of the processor time is
-/// being made already.
+/// `profile.startCpu(every:)`: false when a profile of the processor time
+/// is being made already. A trace or the tests' profiles that sample
+/// already keep their interval.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_cpu_start() -> u8 {
+pub extern "C" fn tondo_rt_profile_cpu_start(every: i64) -> u8 {
     let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     if session.is_some() {
         return 0;
     }
-    *session = Some((Vec::new(), std::time::Instant::now()));
+    if !super::recorder::on() && !on() {
+        let micros = (every / 1000).clamp(1000, 1_000_000);
+        super::recorder::CPU_EVERY.store(micros, Ordering::Relaxed);
+    }
+    let period = super::recorder::CPU_EVERY.load(Ordering::Relaxed) * 1000;
+    *session = Some((Vec::new(), std::time::Instant::now(), period));
     drop(session);
     let _ = super::recorder::take_samples();
     super::recorder::sample_threads();
@@ -314,18 +421,39 @@ pub extern "C" fn tondo_rt_profile_cpu_start() -> u8 {
     1
 }
 
-/// `CpuProfile.stop()`: what was sampled since `startCpu`.
+/// `CpuProfile.stop()`: what was sampled since `startCpu`, or since its
+/// last period.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_cpu_stop() -> *mut super::native::NativeObject {
     drain();
-    let Some((samples, started)) = SESSION.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-        return super::native::new(Made { pprof: Vec::new(), folded: String::new() });
+    let Some((samples, started, period)) = SESSION.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return super::native::new(made("cpu", &[], ("cpu", "nanoseconds", 0), None, &[], &[], 0));
     };
     // A trace or the tests' profiles go on sampling.
     if !super::recorder::on() && !on() {
         super::recorder::stop_sampling();
     }
-    let period = 1_000_000;
+    cpu_profile(&samples, started, period)
+}
+
+/// `CpuProfile.period()`: what was sampled since `startCpu` or the last
+/// period, as sampling goes on.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_cpu_period() -> *mut super::native::NativeObject {
+    drain();
+    let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((samples, started, period)) = session.as_mut() else {
+        return super::native::new(made("cpu", &[], ("cpu", "nanoseconds", 0), None, &[], &[], 0));
+    };
+    let (taken, began, period) = (std::mem::take(samples), *started, *period);
+    *started = std::time::Instant::now();
+    drop(session);
+    cpu_profile(&taken, began, period)
+}
+
+/// A profile of the processor time from its samples, each standing for
+/// `period` nanoseconds.
+fn cpu_profile(samples: &[Sample], started: std::time::Instant, period: i64) -> *mut super::native::NativeObject {
     let weighed: Vec<Weighed> = samples
         .iter()
         .map(|(_, thread, stack, set)| {
@@ -336,12 +464,14 @@ pub extern "C" fn tondo_rt_profile_cpu_stop() -> *mut super::native::NativeObjec
         .collect();
     let took = started.elapsed().as_nanos() as i64;
     let kinds = [("samples", "count"), ("cpu", "nanoseconds")];
-    super::native::new(made(&kinds, ("cpu", "nanoseconds", period), None, &weighed, took))
+    super::native::new(made("cpu", &kinds, ("cpu", "nanoseconds", period), None, &weighed, &[false, false], took))
 }
 
-/// `profile.startMemory()`: samples what the program allocates from now on.
+/// `profile.startMemory(every:)`: samples what the program allocates from
+/// now on, one allocation for about each `every` bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_memory_start() {
+pub extern "C" fn tondo_rt_profile_memory_start(every: i64) {
+    super::heap::RATE.store(every.max(1) as u64, Ordering::Relaxed);
     super::heap::prepare();
     super::diagnostics::hook(super::diagnostics::WATCHED);
 }
@@ -356,7 +486,7 @@ pub extern "C" fn tondo_rt_profile_memory_sampled() -> u8 {
 /// the samples.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_memory() -> *mut super::native::NativeObject {
-    let rate = super::heap::RATE as f64;
+    let rate = super::heap::rate() as f64;
     let mut weighed: Vec<Weighed> = Vec::new();
     for (size, stack) in super::heap::alive().0 {
         let weight = 1.0 / (1.0 - (-(size as f64) / rate).exp());
@@ -372,7 +502,16 @@ pub extern "C" fn tondo_rt_profile_memory() -> *mut super::native::NativeObject 
     }
     let kinds =
         [("alloc_objects", "count"), ("alloc_space", "bytes"), ("inuse_objects", "count"), ("inuse_space", "bytes")];
-    super::native::new(made(&kinds, ("space", "bytes", rate as i64), Some("inuse_space"), &weighed, 0))
+    let cumulative = [true, true, false, false];
+    super::native::new(made(
+        "memory",
+        &kinds,
+        ("space", "bytes", rate as i64),
+        Some("inuse_space"),
+        &weighed,
+        &cumulative,
+        0,
+    ))
 }
 
 /// Whether a function is the allocator's or its sampling's.
@@ -417,7 +556,7 @@ pub extern "C" fn tondo_rt_profile_tasks() -> *mut super::native::NativeObject {
         .into_iter()
         .map(|shot| (shot.stack, vec![1], vec![("state".to_string(), shot.state.to_string())]))
         .collect();
-    super::native::new(made(&[("tasks", "count")], ("tasks", "count", 1), None, &weighed, 0))
+    super::native::new(made("tasks", &[("tasks", "count")], ("tasks", "count", 1), None, &weighed, &[false], 0))
 }
 
 // ---------------------------------------------------------------------------
@@ -433,8 +572,9 @@ static CONTENTION: AtomicBool = AtomicBool::new(false);
 type Waits = HashMap<Vec<usize>, (f64, f64)>;
 /// Those of blocking, then those of contention; none until started.
 static WAITED: [Mutex<Option<Waits>>; 2] = [Mutex::new(None), Mutex::new(None)];
-/// The time waited that one sample stands for, on average.
-const WAIT_RATE: f64 = 100_000.0;
+/// The nanoseconds waited that one sample stands for, on average, of
+/// blocking and of contention, as `f64` bits.
+static WAIT_RATES: [AtomicU64; 2] = [AtomicU64::new(100_000f64.to_bits()), AtomicU64::new(100_000f64.to_bits())];
 
 /// When a wait for another task starts, if waits are sampled.
 pub(crate) fn blocking_since() -> Option<std::time::Instant> {
@@ -456,12 +596,12 @@ pub(crate) fn contended(delay: std::time::Duration) {
     }
 }
 
-/// Takes a wait of `delay` as a sample with the chance `delay / WAIT_RATE`,
+/// Takes a wait of `delay` as a sample with the chance `delay / rate`,
 /// and a longer one always, as the waits a sample stands for: its stack
 /// from the compiled code that waited.
 fn waited(kind: usize, delay: std::time::Duration) {
     let nanos = delay.as_nanos() as f64;
-    let chance = (nanos / WAIT_RATE).min(1.0);
+    let chance = (nanos / f64::from_bits(WAIT_RATES[kind].load(Ordering::Relaxed))).min(1.0);
     if chance < 1.0 && chance_roll() >= chance {
         return;
     }
@@ -487,10 +627,12 @@ fn chance_roll() -> f64 {
     })
 }
 
-/// `profile.startBlocking()` (0) and `profile.startContention()` (1).
+/// `profile.startBlocking(every:)` (0) and `profile.startContention(every:)`
+/// (1): one sample for each `every` nanoseconds waited, on average.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_waits_start(kind: i64) {
+pub extern "C" fn tondo_rt_profile_waits_start(kind: i64, every: i64) {
     let flag = if kind == 0 { &BLOCKING } else { &CONTENTION };
+    WAIT_RATES[kind.clamp(0, 1) as usize].store((every.max(1) as f64).to_bits(), Ordering::Relaxed);
     WAITED[kind.clamp(0, 1) as usize].lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new);
     flag.store(true, Ordering::Relaxed);
 }
@@ -511,7 +653,8 @@ pub extern "C" fn tondo_rt_profile_waits(kind: i64) -> *mut super::native::Nativ
         .map(|(stack, (count, nanos))| (stack, vec![count.round() as i64, nanos.round() as i64], Vec::new()))
         .collect();
     let kinds = [("contentions", "count"), ("delay", "nanoseconds")];
-    super::native::new(made(&kinds, ("contentions", "count", 1), Some("delay"), &weighed, 0))
+    let name = if kind == 0 { "blocking" } else { "contention" };
+    super::native::new(made(name, &kinds, ("contentions", "count", 1), Some("delay"), &weighed, &[true, true], 0))
 }
 
 /// `Profile.pprof()`.

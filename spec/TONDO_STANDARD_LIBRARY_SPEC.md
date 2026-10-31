@@ -5052,17 +5052,19 @@ La superficie es:
 pub type Profile
 pub type CpuProfile
 
-pub fn startCpu(): CpuProfile
+pub fn startCpu(every: time.Duration = time.milliseconds(1)): CpuProfile
 pub fn CpuProfile.stop(self): Profile
-pub fn startMemory()
+pub fn CpuProfile.period(self): Profile
+pub fn startMemory(every: Int = 512 * 1024)
 pub fn memory(): Profile
 pub fn tasks(): Profile
-pub fn startBlocking()
+pub fn startBlocking(every: time.Duration = time.microseconds(100))
 pub fn blocking(): Profile
-pub fn startContention()
+pub fn startContention(every: time.Duration = time.microseconds(100))
 pub fn contention(): Profile
 pub fn Profile.pprof(self): Array[Byte]
 pub fn Profile.folded(self): String
+pub fn Profile.since(self, earlier: Profile): Profile
 pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
 
 pub type Labels
@@ -5070,19 +5072,23 @@ pub fn setLabels(labels: Map[String, String]): Labels
 pub fn Labels.restore(self)
 ~~~
 
-- `startCpu` muestrea dónde están los hilos del programa cada milisegundo de
-  procesador, hasta `stop`; solo hay uno a la vez, y otro `startCpu` antes de
-  `stop` es un pánico que lo dice. Sus muestras llevan la etiqueta `thread` y
-  los labels de la tarea que corría.
+- `startCpu` muestrea dónde están los hilos del programa cada `every` de
+  procesador, de 1 ms a 1 s, hasta `stop`; solo hay uno a la vez, y otro
+  `startCpu` antes de `stop` es un pánico que lo dice. Si una traza o los
+  perfiles de las pruebas ya muestrean, sigue su intervalo, y el pprof dice
+  cuál. Sus muestras llevan la etiqueta `thread` y los labels de la tarea que
+  corría. `period` da lo muestreado desde `startCpu` o el `period` anterior
+  y sigue muestreando, y `stop` lo muestreado desde el último de los dos: un
+  profiler continuo llama a `period` en cada periodo.
 - `startMemory` muestrea desde entonces lo que el programa asigna, una
-  asignación por cada 512 KiB de media, como `TONDO_DIAGNOSTICS=1`; `memory`
+  asignación por cada `every` bytes de media, como `TONDO_DIAGNOSTICS=1`; `memory`
   da la memoria viva y lo que asignó cada pila, como `tondo profile
   --memory`. Sin muestreo, `memory` es un pánico que dice cómo encenderlo.
 - `tasks` da dónde está cada tarea, con la etiqueta `state`.
 - `startBlocking` muestrea desde entonces dónde esperan las tareas a otras:
   un canal, un `select`, un `join` o un grupo, y los locks, semáforos y
   barreras de `std.sync`; no las esperas de un `sleep` ni las de E/S. Toma
-  una espera por cada 100 µs esperados de media, y toda espera más larga.
+  una espera por cada `every` esperado de media, y toda espera más larga.
   `blocking` da cuántas esperas y cuánto tiempo desde cada pila, como el
   block profile de Go.
 - `startContention` muestrea los locks de `std.sync` que otras tareas
@@ -5094,6 +5100,13 @@ pub fn Labels.restore(self)
   función, el archivo y la línea de cada marco, los del runtime y los de C
   por su nombre; `folded`, una línea por pila, sus marcos desde el más externo
   unidos por `;` y cuánto tomó.
+- `since` da lo que pasó entre un perfil anterior y este, que deben ser del
+  mismo tipo, y si no es un pánico que nombra los dos: lo que se suma desde
+  que empezó el muestreo, las asignaciones de `memory` y las esperas de
+  `blocking` y `contention`, menos lo que tenía `earlier`, por pila y labels;
+  lo que es de ahora, como la memoria viva, tal cual; y el pprof dice el
+  inicio y la duración del periodo. Es el perfil delta que envían Datadog y
+  los profilers de Go cada minuto: `memory.since(last)`.
 - `withLabels` ejecuta `body` con esos labels, además de los que la tarea ya
   tenía, que los del mismo nombre reemplazan; las tareas que lanza los
   heredan. Los labels son un contexto de `std.profile` (11.16 del lenguaje):

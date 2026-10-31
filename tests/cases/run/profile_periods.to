@@ -1,0 +1,85 @@
+// A profiler sends a profile of each period: the processor time since the
+// last `period`, as sampling goes on, at the rate it asked for; and what
+// waits, allocations and other totals added since an earlier profile, by
+// `since`, which takes one of the same kind.
+import std.console
+import std.profile
+import std.time
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn first(): Int {
+    var total = 0
+    for _ in 0..300 {
+        total += fib(24)
+    }
+    total
+}
+
+fn second(): Int {
+    var total = 0
+    for _ in 0..300 {
+        total += fib(24)
+    }
+    total
+}
+
+// Each waits for its work, from a function of its own.
+fn runFirst(): Int {
+    let job = spawn first()
+    job.wait()
+}
+
+fn runSecond(): Int {
+    let job = spawn second()
+    job.wait()
+}
+
+fn main() {
+    // Every wait, sampled.
+    profile.startBlocking(every: time.nanoseconds(1))
+    let cpu = profile.startCpu(every: time.milliseconds(2))
+    _ = runFirst()
+    let early = cpu.period()
+    let waitedEarly = profile.blocking()
+    _ = runSecond()
+    let late = cpu.stop()
+    let waited = profile.blocking().since(waitedEarly)
+    // Each task's samples start at its `spawn`.
+    console.println(
+        "{early.folded().contains("spawn first")} {early.folded().contains("spawn second")}",
+    )
+    console.println(
+        "{late.folded().contains("spawn second")} {late.folded().contains("spawn first")}",
+    )
+    console.println(
+        "{waited.folded().contains("runSecond")} {waited.folded().contains("runFirst")}",
+    )
+    console.println(
+        "{waitedEarly.folded().contains("runFirst")} {waitedEarly.folded().contains("runSecond")}",
+    )
+
+    profile.startMemory(every: 4096)
+    let before = profile.memory()
+    var kept: Array[String] = []
+    for i in 0..500 {
+        kept.push("entry {i} ".repeat(64))
+    }
+    let after = profile.memory()
+    let grown = after.since(before)
+    console.println("{grown.pprof().length() > 20} {kept.length()}")
+    _ = grown.since(early)
+}
+
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: true 500
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: `since` takes a profile of the same kind, and this is of `memory` and the earlier one of `cpu`
