@@ -1,0 +1,26 @@
+// Inside a page's `<script>`, a value is written as JSON, as `std.json`
+// writes it: a variant with fields under its name, a field and a variant
+// by their `@name`.
+import std.console
+import std.template
+
+pub enum Shape {
+    @name("circle")
+    Circle { radius: Int }
+    Point
+}
+
+pub type Scene = {
+    @name("main_shape")
+    shape: Shape
+    others: Array[Shape]
+}
+
+fn main(): !template.TemplateError {
+    var page = template.Set.html()
+    page.add("page", r"""<script>const scene = {{ self }};</script>""")?
+    let scene = Scene { shape: Shape.Circle { radius: 2 }, others: [Shape.Point] }
+    console.println(page.render("page", scene)?)
+}
+
+// expect-stdout: <script>const scene = {"main_shape":{"circle":{"radius":2}},"others":["Point"]};</script>

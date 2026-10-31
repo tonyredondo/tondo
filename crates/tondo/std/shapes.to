@@ -208,7 +208,13 @@ pub fn jsonOf(value: __reflect.Value): String {
                 "{__json.encode(external)}:{jsonOf(field.value)}"
             },
         )
-        return "{{{members.join(",")}}}"
+        let object = "{{{members.join(",")}}}"
+        // A variant with fields is an object of one key, its name, as
+        // `std.json` writes it.
+        return match value.variant() {
+            some(name) => "{{{__json.encode(externalVariant(value.typeInfo(), name))}:{object}}}"
+            none => object
+        }
     }
     __json.encode("{value}")
 }
