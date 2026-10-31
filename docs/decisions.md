@@ -3805,3 +3805,15 @@ it with the C library's text of it, so the message a user reads names the
 cause; the named variants stay the ones a program decides on. The
 number is the system's, which differs between Linux and macOS, so it is
 for messages and for the rare program that compares it with one it knows.
+
+## 2026-10-31 — Tags of their own in YAML
+
+GitLab CI writes `!reference [.setup, script]`, CloudFormation `!Ref`, and
+`std.yaml` failed on any tag outside the core schema, so neither file could
+be read. `yaml.Value.Tagged(tag, value)` keeps the tag and writes it back,
+which a tool that edits such a file needs, while a type decoded from it
+reads the value, as it would without the tag, and the accessors of
+`yaml.Value` see through it. The tag reaches `yaml.Value` through `tag()`
+on `Source`, which other formats leave `none`, rather than as an event
+every `Decode` would have to skip. A tagged scalar is text: the tag, not
+the core schema, says what it means.

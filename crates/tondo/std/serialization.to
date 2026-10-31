@@ -154,6 +154,12 @@ pub trait Source {
         false
     }
 
+    /// The tag of its own the value just read has, in a format that has
+    /// them, as YAML's `!reference`; `none` without one.
+    fn tag(self): String? {
+        none
+    }
+
     /// The value whose first event was `first` as the JSON text it was
     /// read from, for `json.Raw`; `none` from another format.
     fn rawJson(self, first: Event): String? {
@@ -315,6 +321,10 @@ pub trait Sink {
 
     /// Before the key of a field with notes: the notes.
     fn field(self, notes: Array[Note]) {}
+
+    /// Before a value: a tag of its own, as YAML's `!reference`, for a
+    /// format that has them.
+    fn tag(self, name: String) {}
 
     /// A list of `count` values follows, then its end.
     fn beginList(self, count: Int)

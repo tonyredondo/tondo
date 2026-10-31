@@ -4,10 +4,10 @@
 //!
 //! Plain scalars resolve with the core schema: `null`, `~` and nothing are
 //! null, `true` and `false` booleans, and numbers integers or floats; any
-//! other scalar, and every quoted one, is text, dates included. Only the
-//! core tags are accepted, keys are text and unique, and an alias repeats
-//! its anchor's value, up to a limit that stops documents that expand
-//! without end.
+//! other scalar, and every quoted one, is text, dates included. A value
+//! with a tag of its own, as `!reference`, keeps it, and a scalar with one
+//! is text; keys are text and unique, and an alias repeats its anchor's
+//! value, up to a limit that stops documents that expand without end.
 
 use crate::native::{self, NativeObject};
 use crate::{Str, str_bytes, str_new};
@@ -46,6 +46,9 @@ struct Event {
     path: String,
     line: usize,
     column: usize,
+    /// On the first event of a value, the tag of its own it has, as
+    /// `!reference`.
+    tag: String,
 }
 
 struct Reader {
@@ -150,7 +153,16 @@ impl Builder {
             return Err(self.failure(format!("the document holds more than {LIMIT} values"), line, column));
         }
         let path = self.path();
-        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, path, line, column });
+        self.events.push(Event {
+            code,
+            text: String::new(),
+            int: 0,
+            float: 0.0,
+            path,
+            line,
+            column,
+            tag: String::new(),
+        });
         Ok(self.events.last_mut().unwrap())
     }
 
@@ -244,6 +256,7 @@ impl Builder {
                         }
                         let mut named = value[0].clone();
                         (named.code, named.text, named.path) = (KEY, key.clone(), format!("{path}.{key}"));
+                        named.tag.clear();
                         self.events.push(named);
                         self.events.extend(value);
                     }
@@ -277,16 +290,13 @@ impl Builder {
             return Err(self.failure("a key is text, not a list or a map", line, column));
         }
         if let Some(tag) = &tag
-            && (!tag.is_yaml_core_schema() || !matches!(tag.suffix.as_str(), "seq" | "map"))
+            && tag.is_yaml_core_schema()
+            && !matches!(tag.suffix.as_str(), "seq" | "map")
         {
-            return Err(self.failure(
-                format!("the tag `{}{}` is not a core tag", tag.handle, tag.suffix),
-                line,
-                column,
-            ));
+            return Err(self.failure(format!("the tag `!!{}` is not a core tag", tag.suffix), line, column));
         }
         let first = self.events.len();
-        self.push(if map { BEGIN_MAP } else { BEGIN_LIST }, line, column)?;
+        self.push(if map { BEGIN_MAP } else { BEGIN_LIST }, line, column)?.tag = own(tag.as_deref());
         if anchor > 0 {
             self.open.push((anchor, first, self.path(), self.frames.len()));
         }
@@ -308,12 +318,11 @@ impl Builder {
         column: usize,
     ) -> Result<(), Failure> {
         let kind = match tag {
+            // The tag decides what the text means, not the schema.
             Some(tag) if !tag.is_yaml_core_schema() => {
-                return Err(self.failure(
-                    format!("the tag `{}{}` is not a core tag", tag.handle, tag.suffix),
-                    line,
-                    column,
-                ));
+                self.push(TEXT, line, column)?.text = value.to_string();
+                self.events.last_mut().unwrap().tag = own(Some(tag));
+                return Ok(());
             }
             Some(tag) => tag.suffix.as_str(),
             None if style != ScalarStyle::Plain => "str",
@@ -432,6 +441,18 @@ fn merged(value: &[Event], map: &str) -> Option<Vec<(String, Vec<Event>)>> {
     Some(entries)
 }
 
+/// A tag of a value's own as it is written, `!reference`, or `!<...>` for a
+/// whole URI; empty for none, a core tag and `!`, which only says text.
+fn own(tag: Option<&saphyr_parser::Tag>) -> String {
+    match tag {
+        Some(tag) if tag.is_yaml_core_schema() => String::new(),
+        Some(tag) if tag.handle.is_empty() && tag.suffix == "!" => String::new(),
+        Some(tag) if tag.handle == "!" => format!("!{}", tag.suffix),
+        Some(tag) => format!("!<{}{}>", tag.handle, tag.suffix),
+        None => String::new(),
+    }
+}
+
 /// An event with its path from the node at `base` bytes of path on.
 fn relative(event: &Event, base: usize) -> Event {
     let mut event = event.clone();
@@ -546,6 +567,12 @@ pub extern "C" fn tondo_rt_yaml_text(object: *mut NativeObject) -> *mut Str {
     str_new(current(object, |event| event.text.clone(), String::new()).as_bytes())
 }
 
+/// The tag of its own the value just read has, or empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_yaml_tag(object: *mut NativeObject) -> *mut Str {
+    str_new(current(object, |event| event.tag.clone(), String::new()).as_bytes())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_yaml_int(object: *mut NativeObject) -> i64 {
     current(object, |event| event.int, 0)
@@ -612,9 +639,14 @@ enum Building {
     List(Vec<Yaml<'static>>),
 }
 
+/// The collections being built, each with its tag, the tag of the next
+/// value, and the tags written on collections, after which the emitter
+/// leaves a space at the end of the line.
 #[derive(Default)]
 struct Writer {
-    stack: Vec<Building>,
+    stack: Vec<(Building, Option<String>)>,
+    tag: Option<String>,
+    collections: Vec<String>,
     documents: Vec<Yaml<'static>>,
 }
 
@@ -624,7 +656,8 @@ fn writer(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Wr
 
 impl Writer {
     fn add(&mut self, value: Yaml<'static>) {
-        match self.stack.last_mut() {
+        let value = tagged(self.tag.take(), value);
+        match self.stack.last_mut().map(|(building, _)| building) {
             None => self.documents.push(value),
             Some(Building::Map(map, key)) => {
                 let key = key.take().unwrap_or_default();
@@ -633,6 +666,17 @@ impl Writer {
             Some(Building::List(items)) => items.push(value),
         }
     }
+}
+
+/// The value with its tag: `!name`, or `!<uri>`.
+fn tagged(tag: Option<String>, value: Yaml<'static>) -> Yaml<'static> {
+    let Some(tag) = tag else { return value };
+    let (handle, suffix) = match tag.strip_prefix('!') {
+        Some(rest) if !rest.starts_with('<') => ("!".to_string(), rest.to_string()),
+        Some(rest) => (String::new(), rest.to_string()),
+        None => ("!".to_string(), tag),
+    };
+    Yaml::Tagged(Cow::Owned(saphyr_parser::Tag { handle, suffix }), Box::new(value))
 }
 
 fn scalar(object: *mut NativeObject, value: Scalar<'static>) {
@@ -703,9 +747,17 @@ pub unsafe extern "C" fn tondo_rt_yaml_write_text(object: *mut NativeObject, val
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_write_key(object: *mut NativeObject, key: *const Str) {
     if let Some(mut writer) = writer(object)
-        && let Some(Building::Map(_, pending)) = writer.stack.last_mut()
+        && let Some((Building::Map(_, pending), _)) = writer.stack.last_mut()
     {
         *pending = Some(text(key));
+    }
+}
+
+/// The tag of the next value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_yaml_write_tag(object: *mut NativeObject, tag: *const Str) {
+    if let Some(mut writer) = writer(object) {
+        writer.tag = Some(text(tag));
     }
 }
 
@@ -714,19 +766,23 @@ pub unsafe extern "C" fn tondo_rt_yaml_write_key(object: *mut NativeObject, key:
 pub extern "C" fn tondo_rt_yaml_write_open(object: *mut NativeObject, map: u8) {
     if let Some(mut writer) = writer(object) {
         let building = if map != 0 { Building::Map(Mapping::new(), None) } else { Building::List(Vec::new()) };
-        writer.stack.push(building);
+        let tag = writer.tag.take();
+        writer.stack.push((building, tag));
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_yaml_write_close(object: *mut NativeObject) {
     let Some(mut writer) = writer(object) else { return };
-    let value = match writer.stack.pop() {
-        Some(Building::Map(map, _)) => Yaml::Mapping(map),
-        Some(Building::List(items)) => Yaml::Sequence(items),
+    let (value, tag) = match writer.stack.pop() {
+        Some((Building::Map(map, _), tag)) => (Yaml::Mapping(map), tag),
+        Some((Building::List(items), tag)) => (Yaml::Sequence(items), tag),
         None => return,
     };
-    writer.add(value);
+    if let Some(tag) = &tag {
+        writer.collections.push(tag.clone());
+    }
+    writer.add(tagged(tag, value));
 }
 
 /// The documents written, each after `---` when there are several.
@@ -741,6 +797,17 @@ pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject) -> *mut Str {
         emitter.multiline_strings(true);
         if emitter.dump(document).is_err() {
             continue;
+        }
+        // A tag before a collection's first line ends its line with a space.
+        if !writer.collections.is_empty() {
+            text = text
+                .split('\n')
+                .map(|line| match line.strip_suffix(' ') {
+                    Some(kept) if writer.collections.iter().any(|tag| kept.ends_with(tag.as_str())) => kept,
+                    _ => line,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
         }
         // The emitter starts every document with `---`, which one alone
         // does not need.
@@ -788,7 +855,8 @@ enum Opened {
 }
 
 /// Where the tag and the anchor before a node at `start` start, as in
-/// `- &a [1, 2]`: its item's `-` is before them.
+/// `- !point &a [1, 2]`: its item's `-` is before them, and a value set in
+/// place of a tagged node replaces its tag.
 fn properties_start(source: &str, mut start: usize) -> usize {
     loop {
         let before = source[..start].trim_end();
@@ -853,6 +921,7 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 // A block scalar starts at its `|` or `>` and ends with its
                 // last line, not the line breaks after it.
                 let block = matches!(event, Parsed::Scalar(_, ScalarStyle::Literal | ScalarStyle::Folded, ..));
+                let tagged = matches!(event, Parsed::Scalar(_, _, _, Some(_)));
                 let (start, end) = if block {
                     let indicator = source[..start].rfind(['|', '>']).unwrap_or(start);
                     let last = source[indicator..end].trim_end_matches(['\n', '\r', ' ', '\t']).len();
@@ -860,8 +929,10 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 } else {
                     (start, end)
                 };
-                let (path, after_key, indent) = place(&open, &nodes, properties_start(source, start));
+                let first = properties_start(source, start);
+                let (path, after_key, indent) = place(&open, &nodes, first);
                 let (line, column) = (span.start.line(), span.start.col() + 1);
+                let start = if tagged { first } else { start };
                 nodes.push(Outlined { path, kind: 0, start, end, line, column, after_key, indent });
                 finished(&mut open, &mut nodes, end);
             }
@@ -874,8 +945,11 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                     (true, true) => 3,
                     (false, true) => 4,
                 };
-                let (path, after_key, indent) = place(&open, &nodes, properties_start(source, start));
+                let first = properties_start(source, start);
+                let (path, after_key, indent) = place(&open, &nodes, first);
                 let (line, column) = (span.start.line(), span.start.col() + 1);
+                let tagged = matches!(event, Parsed::MappingStart(_, Some(_)) | Parsed::SequenceStart(_, Some(_)));
+                let start = if tagged { first } else { start };
                 nodes.push(Outlined { path, kind, start, end: start, line, column, after_key, indent });
                 let node = nodes.len() - 1;
                 open.push(if map { Opened::Map { node, key: None } } else { Opened::List { node, count: 0 } });

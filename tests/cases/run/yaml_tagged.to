@@ -1,0 +1,48 @@
+// A tag of a value's own, as GitLab's `!reference`, is kept by `yaml.Value`
+// and written back, while a type reads what the value holds.
+
+import std.console
+import std.yaml
+
+type Job = { script: Array[String], image: String }
+
+fn main(): !yaml.YamlError {
+    let text = "image: !env IMAGE\nscript: !reference [.setup, script]\nplain: ! 12\n"
+    let value = yaml.parse(text)?
+    match value.get("script") {
+        some(yaml.Value.Tagged(tag, inner)) => console.println("{tag}: {inner.asArray().unwrapOr([]).length()} items")
+        _ => console.println("no tag")
+    }
+    // The other methods read the value under the tag, and `!` alone says text.
+    console.println("{value.find("image").andThen((found) { found.asText() })} {value.get("plain").andThen((found) { found.asText() })}")
+    console.println(yaml.encode(value).trimEnd())
+    // A type reads what the value holds.
+    let job: Job = yaml.decode(text)?
+    console.println("{job.image} {job.script}")
+    // A tag on a map in a list goes and comes back.
+    let point = yaml.Value.Tagged("!point", yaml.Value.Map(["x": yaml.Value.Int(1)]))
+    let again = yaml.parse(yaml.encode(yaml.Value.Array([point])))?
+    console.println("{again.at(0) == some(point)}")
+    // A document with tags keeps them, and a value set in place of a tagged
+    // one replaces its tag, not its comment.
+    var document = yaml.load("{text}list: # shared\n  - !point [1, 2]\n")?
+    document.set("image", "alpine")?
+    document.set("list[0]", [3, 4])?
+    console.println(document.text().trimEnd())
+}
+
+// expect-stdout: !reference: 2 items
+// expect-stdout: some(IMAGE) some(12)
+// expect-stdout: image: !env IMAGE
+// expect-stdout: script: !reference
+// expect-stdout:   - ".setup"
+// expect-stdout:   - script
+// expect-stdout: plain: "12"
+// expect-stdout: IMAGE [.setup, script]
+// expect-stdout: true
+// expect-stdout: image: alpine
+// expect-stdout: script: !reference [.setup, script]
+// expect-stdout: plain: ! 12
+// expect-stdout: list: # shared
+// expect-stdout:   - - 3
+// expect-stdout:     - 4

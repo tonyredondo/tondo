@@ -3055,6 +3055,7 @@ pub trait Source {
     fn failure(self, kind: ErrorKind, message: String): Error
     // con implementación por defecto:
     fn rejectsUnknown(self): Bool
+    fn tag(self): String?                  // el tag propio del valor leído; `none`
     fn fields(self, notes: Array[Array[Note]])
     fn value(self): Event ! Error
     fn nextKey(self): String? ! Error
@@ -3086,6 +3087,7 @@ pub trait Sink {
     fn omitsNone(self): Bool
     fn record(self, name: String, notes: Array[Note])
     fn field(self, notes: Array[Note])
+    fn tag(self, name: String)             // antes de un valor; nada
 }
 
 pub trait Encode {
@@ -3894,6 +3896,7 @@ pub enum Value {
     Text(String)
     Array(Array[Value])
     Map(Map[String, Value])
+    Tagged(String, Value)
 }
 pub alias YamlError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
@@ -3932,9 +3935,16 @@ pub fn Document.writeTo(self, out: io.Writer): !io.IoError
   decimales, `0o` y `0x`, y floats finitos. Cualquier otro escalar, y todo escalar
   entre comillas, es texto: `yes`, `on` y las fechas también. Un entero que no
   cabe en `Int` es un `Number`.
-- Solo se aceptan los tags core (`!!str`, `!!int`, `!!float`, `!!bool`, `!!null`,
-  `!!seq`, `!!map`); un tag propio es un error. Las claves son texto y no se
-  repiten en un mapa. `.inf` y `.nan` son un error, y un float no finito se
+- Los tags core (`!!str`, `!!int`, `!!float`, `!!bool`, `!!null`, `!!seq`,
+  `!!map`) dan el tipo del valor; otro tag core es un error, y `!` solo dice
+  que un escalar es texto. Un valor con un tag propio, como el
+  `!reference [.setup, script]` de GitLab, es `Tagged(tag, valor)`: el tag como
+  se escribe, `!reference`, o `!<uri>` para un URI entero, y el valor, cuyos
+  escalares son texto. `get`, `find`, `asText` y los demás métodos leen el
+  valor bajo el tag; `encode` lo escribe con él, y un tipo que se decodifica
+  lee el valor. Lo da el `tag()` del `Source` de YAML, y el `tag(name)` del
+  `Sink` lo escribe; los demás formatos no tienen tags. Las claves son texto y
+  no se repiten en un mapa. `.inf` y `.nan` son un error, y un float no finito se
   escribe `null`.
 - Una clave `<<` es de merge: su valor, un mapa o una lista de mapas
   (normalmente alias), aporta las claves que el mapa no tiene, y en una lista
@@ -3960,7 +3970,8 @@ pub fn Document.writeTo(self, out: io.Writer): !io.IoError
   comentarios, su orden y sus estilos. El comentario de la línea de la clave
   se queda en ella; los de dentro de un mapa o una lista que se reemplaza se
   van con ellos. Un mapa o una lista en estilo flow, `{...}` o `[...]`, que
-  gana una clave o un elemento se escribe de nuevo en bloque.
+  gana una clave o un elemento se escribe de nuevo en bloque. El tag propio
+  del valor anterior se va con él.
 - `text` da el texto con sus cambios y `writeTo` lo escribe en un stream sin
   copiarlo. El documento entero está en memoria, como texto y como el índice
   de sus nodos.

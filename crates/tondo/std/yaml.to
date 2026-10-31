@@ -23,11 +23,23 @@ pub enum Value {
     Text(String)
     Array(Array[Value])
     Map(Map[String, Value])
+    /// A value with a tag of its own, as GitLab's `!reference [.setup,
+    /// script]`: the tag, and the value, whose scalars are text. The other
+    /// methods read the value, and writing keeps the tag.
+    Tagged(String, Value)
+}
+
+/// The value, without the tags of its own it has.
+fn Value.content(self): Value {
+    match self {
+        Value.Tagged(_, value) => value.content()
+        _ => self
+    }
 }
 
 /// Whether the value is null.
 pub fn Value.isNull(self): Bool {
-    match self {
+    match self.content() {
         Value.Null => true
         _ => false
     }
@@ -35,7 +47,7 @@ pub fn Value.isNull(self): Bool {
 
 /// The member `key` of a map.
 pub fn Value.get(self, key: String): Value? {
-    match self {
+    match self.content() {
         Value.Map(members) => members.get(key)
         _ => none
     }
@@ -43,7 +55,7 @@ pub fn Value.get(self, key: String): Value? {
 
 /// The element `index` of an array.
 pub fn Value.at(self, index: Int): Value? {
-    match self {
+    match self.content() {
         Value.Array(items) => items.get(index)
         _ => none
     }
@@ -60,7 +72,7 @@ pub fn Value.find(self, path: String): Value? {
 
 /// The string, or `none` when the value is not one.
 pub fn Value.asText(self): String? {
-    match self {
+    match self.content() {
         Value.Text(text) => text
         _ => none
     }
@@ -68,7 +80,7 @@ pub fn Value.asText(self): String? {
 
 /// The integer, or `none` when the value is not one.
 pub fn Value.asInt(self): Int? {
-    match self {
+    match self.content() {
         Value.Int(value) => value
         _ => none
     }
@@ -76,7 +88,7 @@ pub fn Value.asInt(self): Int? {
 
 /// A float, or an integer as a float.
 pub fn Value.asFloat(self): Float? {
-    match self {
+    match self.content() {
         Value.Float(value) => value
         Value.Int(value) => Float(value)
         _ => none
@@ -85,7 +97,7 @@ pub fn Value.asFloat(self): Float? {
 
 /// The boolean, or `none` when the value is not one.
 pub fn Value.asBool(self): Bool? {
-    match self {
+    match self.content() {
         Value.Bool(value) => value
         _ => none
     }
@@ -93,7 +105,7 @@ pub fn Value.asBool(self): Bool? {
 
 /// The elements, or `none` when the value is not an array.
 pub fn Value.asArray(self): Array[Value]? {
-    match self {
+    match self.content() {
         Value.Array(items) => items
         _ => none
     }
@@ -101,7 +113,7 @@ pub fn Value.asArray(self): Array[Value]? {
 
 /// The entries, or `none` when the value is not a map.
 pub fn Value.asMap(self): Map[String, Value]? {
-    match self {
+    match self.content() {
         Value.Map(members) => members
         _ => none
     }
@@ -120,14 +132,14 @@ impl Display for Value {
 /// shows as its text, or as YAML for the rest.
 impl __reflect.Reflect for Value {
     fn reflectShow(self, nested: Bool): String {
-        match self {
+        match self.content() {
             Value.Text(text) if not nested => text
             _ => "{self}"
         }
     }
 
     fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
-        match self {
+        match self.content() {
             Value.Map(members) => match members.get(name) {
                 some(found) => reflected(found)
                 none => fail __reflect.ReflectError.noField(
@@ -145,14 +157,14 @@ impl __reflect.Reflect for Value {
     }
 
     fn reflectElements(self): Array[__reflect.Value]? {
-        match self {
+        match self.content() {
             Value.Array(items) => some(items.map(reflected))
             _ => none
         }
     }
 
     fn reflectEntries(self): Array[(__reflect.Value, __reflect.Value)]? {
-        match self {
+        match self.content() {
             Value.Map(members) =>
                 some(members
                     .entries()
@@ -178,6 +190,7 @@ fn reflected(value: Value): __reflect.Value {
             }
             __reflect.valueOf(read)
         }
+        Value.Tagged(_, inner) => reflected(inner)
         _ => __reflect.valueOf(value)
     }
 }
@@ -324,6 +337,11 @@ impl serialization.Source for Reader {
     fn rejectsUnknown(self): Bool {
         self.rejectUnknown
     }
+
+    fn tag(self): String? {
+        let tag = yamlnative.tag(self.native)
+        if tag.isEmpty() { none } else { some(tag) }
+    }
 }
 
 fn Reader.error(self, kind: serialization.ErrorKind): YamlError {
@@ -388,6 +406,10 @@ impl serialization.Sink for Writer {
         yamlnative.writeKey(self.native, name)
     }
 
+    fn tag(self, name: String) {
+        yamlnative.writeTag(self.native, name)
+    }
+
     fn endMap(self) {
         yamlnative.writeClose(self.native)
     }
@@ -416,51 +438,64 @@ impl serialization.Encode for Value {
                 }
                 out.endMap()
             }
+            Value.Tagged(tag, value) => {
+                out.tag(tag)
+                serialization.Encode.encode(value, out)
+            }
         }
     }
 }
 
 impl serialization.Decode for Value {
     fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! YamlError {
-        match first {
-            serialization.Event.Null => Value.Null
-            serialization.Event.Bool(value) => Value.Bool(value)
-            serialization.Event.Int(value) => Value.Int(value)
-            serialization.Event.Float(value) => Value.Float(value)
-            serialization.Event.Number(digits) => match Int.parse(digits) {
-                ok(value) => Value.Int(value)
-                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
-            }
-            serialization.Event.Text(text) => Value.Text(text)
-            serialization.Event.Untyped(text) => Value.Text(text)
-            serialization.Event.DateTime(text) => Value.Text(text)
-            serialization.Event.Bytes(bytes) => Value.Text(yamlcodec.base64Encode(bytes, false))
-            serialization.Event.BeginList => {
-                var items: Array[Value] = []
-                for {
-                    let event = input.value()?
-                    match event {
-                        serialization.Event.EndList => break
-                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
-                    }
-                }
-                Value.Array(items)
-            }
-            serialization.Event.BeginMap => {
-                var members: Map[String, Value] = [:]
-                for {
-                    match input.nextKey()? {
-                        some(key) => {
-                            let event = input.value()?
-                            members[key] = serialization.Decode.decode[Value](input, event)?
-                        }
-                        none => break
-                    }
-                }
-                Value.Map(members)
-            }
-            _ => fail input.mismatch(first, "a YAML value")
+        // The tag belongs to `first`, the event just read.
+        match input.tag() {
+            some(tag) => Value.Tagged(tag, untagged(input, first)?)
+            none => untagged(input, first)?
         }
+    }
+}
+
+/// The value whose first event is `first`, without its tag.
+fn untagged[S: serialization.Source](input: S, first: serialization.Event): Value ! YamlError {
+    match first {
+        serialization.Event.Null => Value.Null
+        serialization.Event.Bool(value) => Value.Bool(value)
+        serialization.Event.Int(value) => Value.Int(value)
+        serialization.Event.Float(value) => Value.Float(value)
+        serialization.Event.Number(digits) => match Int.parse(digits) {
+            ok(value) => Value.Int(value)
+            err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+        }
+        serialization.Event.Text(text) => Value.Text(text)
+        serialization.Event.Untyped(text) => Value.Text(text)
+        serialization.Event.DateTime(text) => Value.Text(text)
+        serialization.Event.Bytes(bytes) => Value.Text(yamlcodec.base64Encode(bytes, false))
+        serialization.Event.BeginList => {
+            var items: Array[Value] = []
+            for {
+                let event = input.value()?
+                match event {
+                    serialization.Event.EndList => break
+                    _ => items.push(serialization.Decode.decode[Value](input, event)?)
+                }
+            }
+            Value.Array(items)
+        }
+        serialization.Event.BeginMap => {
+            var members: Map[String, Value] = [:]
+            for {
+                match input.nextKey()? {
+                    some(key) => {
+                        let event = input.value()?
+                        members[key] = serialization.Decode.decode[Value](input, event)?
+                    }
+                    none => break
+                }
+            }
+            Value.Map(members)
+        }
+        _ => fail input.mismatch(first, "a YAML value")
     }
 }
 
@@ -611,6 +646,18 @@ fn Document.spliced(self, start: Int, end: Int, replacement: String): String {
     "{self.source.slice(0, start).unwrapOr("")}{replacement}{self.source.slice(end, self.source.length()).unwrapOr("")}"
 }
 
+/// What follows a key's `:` on its line but the tag of its value, which a
+/// value set in its place replaces: an anchor and a comment.
+fn withoutTag(rest: String): String {
+    let at = rest.find("#").unwrapOr(rest.length())
+    let before = rest
+        .slice(0, at)
+        .unwrapOr("")
+        .split(" ")
+        .filter((word) { not word.startsWith("!") })
+    "{before.join(" ")}{rest.slice(at, rest.length()).unwrapOr("")}"
+}
+
 /// Each line but the first indented by `width` spaces.
 fn indentedAfterFirst(text: String, width: Int): String {
     let pad = " ".repeat(width)
@@ -641,12 +688,14 @@ fn Document.replaced(self, index: Int, written: String): String {
         // After the key's `:`, to the end of the old value's last line, and
         // the key line's comment before the value's lines or after it.
         let block = kind == 1 or kind == 2
-        let comment = self.source
-            .slice(
-                if block { afterKey } else { end },
-                self.lineEnd(if block { afterKey } else { end }),
-            )
-            .unwrapOr("")
+        let comment = withoutTag(
+            self.source
+                .slice(
+                    if block { afterKey } else { end },
+                    self.lineEnd(if block { afterKey } else { end }),
+                )
+                .unwrapOr(""),
+        )
         let rendered = if ownLines(written) {
             "{comment}\n{" ".repeat(indent + 2)}{indentedAfterFirst(written, indent + 2)}"
         } else {

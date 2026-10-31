@@ -144,7 +144,11 @@ a `String` a text that is no variant.
 `json.encode(value, htmlSafe: true)` escapes `<`, `>` and `&`, for JSON put
 inside a `<script>`.
 
-A YAML key `<<` merges the maps of its anchors into its own. To change a
+A YAML key `<<` merges the maps of its anchors into its own. A tag of a
+value's own, as GitLab's `!reference [.setup, script]`, is
+`yaml.Value.Tagged(tag, value)`: the other methods of `yaml.Value` read the
+value, a type decoded from it reads the value, and `encode` keeps the tag.
+To change a
 config file a person wrote, `yaml.load` keeps its text: `set` changes or
 adds a value and leaves the comments, the order and the styles as they were.
 

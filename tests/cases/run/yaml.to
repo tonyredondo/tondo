@@ -53,7 +53,7 @@ fn main(): !yaml.YamlError {
     console.println("{yaml.decodeAll[Int]("1\n---\n2\n")?}")
     report(yaml.parse("a: [1, 2\n"))
     report(yaml.decode[Config]("name: 1\nversion: x\n"))
-    report(yaml.parse("a: !custom 1\n"))
+    report(yaml.parse("a: !!set [1]\n"))
     report(yaml.parse("a: 1\na: 2\n"))
     report(yaml.parse("a: .inf\n"))
     report(yaml.parse("1\n---\n2\n"))
@@ -119,7 +119,7 @@ fn edges(): !yaml.YamlError {
 // expect-stdout: [1, 2]
 // expect-stdout: Syntax: while parsing a flow sequence, expected ',' or ']' at $.a[2] (line 2, column 1)
 // expect-stdout: Type: expected a string, found a number at $.name (line 1, column 7)
-// expect-stdout: Syntax: the tag `!custom` is not a core tag at $.a (line 1, column 12)
+// expect-stdout: Syntax: the tag `!!set` is not a core tag at $.a (line 1, column 10)
 // expect-stdout: Syntax: the key `a` appears twice in this map at $.a (line 2, column 1)
 // expect-stdout: Syntax: `.inf` is not a finite number at $.a (line 1, column 4)
 // expect-stdout: Syntax: the text holds 2 documents; `decodeAll` reads every one at $ (line 1, column 1)
