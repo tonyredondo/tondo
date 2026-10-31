@@ -3851,3 +3851,11 @@ with or without space between them, as Go's `json.Decoder` does, which
 second value there is a mistake. `values` is an iterator like `csv.rows`:
 a stream from a process gives each package as it is written, and an
 error ends it.
+
+## 2026-10-31 — MessagePack integers past `Int`
+
+MessagePack holds unsigned integers up to 2⁶⁴ − 1, as Datadog's agent
+protocol and Go's `uint64` fields write them, and `messagepack.Value` read
+those past `Int.max` as a `Float`, which lost their low digits. They read
+as `Value.UInt(UInt)` now, and are written back as the same integer; a
+type with a `UInt` field already read them exactly.

@@ -3729,6 +3729,7 @@ pub enum Value {
     Nil
     Bool(Bool)
     Int(Int)
+    UInt(UInt)              // un entero mayor que `Int.max`
     Float(Float)
     Text(String)
     Bytes(Array[Byte])

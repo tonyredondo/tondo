@@ -19,6 +19,8 @@ pub enum Value {
     Nil
     Bool(Bool)
     Int(Int)
+    /// An integer above `Int.max`, which MessagePack holds up to `UInt.max`.
+    UInt(UInt)
     Float(Float)
     Text(String)
     Bytes(Array[Byte])
@@ -90,6 +92,7 @@ pub fn Value.asFloat(self): Float? {
     match self {
         Value.Float(value) => value
         Value.Int(value) => Float(value)
+        Value.UInt(value) => Float(value)
         _ => none
     }
 }
@@ -415,6 +418,7 @@ impl serialization.Encode for Value {
             Value.Nil => out.null()
             Value.Bool(value) => out.bool(value)
             Value.Int(value) => out.int(value)
+            Value.UInt(value) => serialization.Encode.encode(value, out)
             Value.Float(value) => out.float(value)
             Value.Text(text) => out.text(text)
             Value.Bytes(bytes) => out.bytes(bytes)
@@ -450,7 +454,10 @@ impl serialization.Decode for Value {
             serialization.Event.Float(value) => Value.Float(value)
             serialization.Event.Number(digits) => match Int.parse(digits) {
                 ok(value) => Value.Int(value)
-                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+                err(_) => match UInt.parse(digits) {
+                    ok(value) => Value.UInt(value)
+                    err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+                }
             }
             serialization.Event.Text(text) => Value.Text(text)
             serialization.Event.Untyped(text) => Value.Text(text)
