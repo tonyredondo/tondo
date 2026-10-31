@@ -119,7 +119,12 @@ pub extern fn sample_visit_all(
     context: Pointer[ffi.Void]?,
 ): ffi.CInt
 
-pub extern fn sample_format(buffer: Pointer[ffi.CChar]?, size: ffi.CSize, format: ffi.CString?, ...): ffi.CInt
+pub extern fn sample_format(
+    buffer: Pointer[ffi.CChar]?,
+    size: ffi.CSize,
+    format: ffi.CString?,
+    ...,
+): ffi.CInt
 
 pub extern fn sample_area(record: Pointer[sample_record]?): ffi.CDouble
 
