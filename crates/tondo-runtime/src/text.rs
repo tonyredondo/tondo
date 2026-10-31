@@ -273,18 +273,287 @@ fn scalar(c: u32) -> char {
 }
 
 /// Which class a scalar is in: 0 decimal digit, 1 letter, 2 whitespace,
-/// 3 uppercase, 4 lowercase, 5 letter or digit.
+/// 3 uppercase, 4 lowercase, 5 letter or digit, 6 punctuation, 7 symbol,
+/// 8 mark, as their general categories say.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_char_is(c: u32, class: i64) -> u8 {
-    let c = scalar(c);
+    let scalar = scalar(c);
     (match class {
-        0 => c.is_ascii_digit(),
-        1 => c.is_alphabetic(),
-        2 => c.is_whitespace(),
-        3 => c.is_uppercase(),
-        4 => c.is_lowercase(),
-        _ => c.is_alphanumeric(),
+        0 => scalar.is_ascii_digit(),
+        1 => scalar.is_alphabetic(),
+        2 => scalar.is_whitespace(),
+        3 => scalar.is_uppercase(),
+        4 => scalar.is_lowercase(),
+        5 => scalar.is_alphanumeric(),
+        6 => (11..=17).contains(&tondo_rt_char_category(c)),
+        7 => (18..=21).contains(&tondo_rt_char_category(c)),
+        _ => (5..=7).contains(&tondo_rt_char_category(c)),
     }) as u8
+}
+
+/// The general category of a scalar, as `text.Category` orders them.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_char_category(c: u32) -> i64 {
+    use icu_properties::props::GeneralCategory as G;
+    match icu_properties::CodePointMapData::<G>::new().get(scalar(c)) {
+        G::UppercaseLetter => 0,
+        G::LowercaseLetter => 1,
+        G::TitlecaseLetter => 2,
+        G::ModifierLetter => 3,
+        G::OtherLetter => 4,
+        G::NonspacingMark => 5,
+        G::SpacingMark => 6,
+        G::EnclosingMark => 7,
+        G::DecimalNumber => 8,
+        G::LetterNumber => 9,
+        G::OtherNumber => 10,
+        G::ConnectorPunctuation => 11,
+        G::DashPunctuation => 12,
+        G::OpenPunctuation => 13,
+        G::ClosePunctuation => 14,
+        G::InitialPunctuation => 15,
+        G::FinalPunctuation => 16,
+        G::OtherPunctuation => 17,
+        G::MathSymbol => 18,
+        G::CurrencySymbol => 19,
+        G::ModifierSymbol => 20,
+        G::OtherSymbol => 21,
+        G::SpaceSeparator => 22,
+        G::LineSeparator => 23,
+        G::ParagraphSeparator => 24,
+        G::Control => 25,
+        G::Format => 26,
+        G::Surrogate => 27,
+        G::PrivateUse => 28,
+        G::Unassigned => 29,
+    }
+}
+
+/// The scripts of Unicode that have characters, by their long names, in
+/// the order of `text.Script`: alphabetical.
+const SCRIPTS: [&str; 178] = [
+    "Adlam",
+    "Ahom",
+    "Anatolian_Hieroglyphs",
+    "Arabic",
+    "Armenian",
+    "Avestan",
+    "Balinese",
+    "Bamum",
+    "Bassa_Vah",
+    "Batak",
+    "Bengali",
+    "Beria_Erfe",
+    "Bhaiksuki",
+    "Bopomofo",
+    "Brahmi",
+    "Braille",
+    "Buginese",
+    "Buhid",
+    "Canadian_Aboriginal",
+    "Carian",
+    "Caucasian_Albanian",
+    "Chakma",
+    "Cham",
+    "Cherokee",
+    "Chorasmian",
+    "Common",
+    "Coptic",
+    "Cuneiform",
+    "Cypriot",
+    "Cypro_Minoan",
+    "Cyrillic",
+    "Deseret",
+    "Devanagari",
+    "Dives_Akuru",
+    "Dogra",
+    "Duployan",
+    "Egyptian_Hieroglyphs",
+    "Elbasan",
+    "Elymaic",
+    "Ethiopic",
+    "Garay",
+    "Georgian",
+    "Glagolitic",
+    "Gothic",
+    "Grantha",
+    "Greek",
+    "Gujarati",
+    "Gunjala_Gondi",
+    "Gurmukhi",
+    "Gurung_Khema",
+    "Han",
+    "Hangul",
+    "Hanifi_Rohingya",
+    "Hanunoo",
+    "Hatran",
+    "Hebrew",
+    "Hiragana",
+    "Imperial_Aramaic",
+    "Inherited",
+    "Inscriptional_Pahlavi",
+    "Inscriptional_Parthian",
+    "Javanese",
+    "Jurchen",
+    "Kaithi",
+    "Kannada",
+    "Katakana",
+    "Kawi",
+    "Kayah_Li",
+    "Kharoshthi",
+    "Khitan_Small_Script",
+    "Khmer",
+    "Khojki",
+    "Khudawadi",
+    "Kirat_Rai",
+    "Lao",
+    "Latin",
+    "Lepcha",
+    "Limbu",
+    "Linear_A",
+    "Linear_B",
+    "Lisu",
+    "Lycian",
+    "Lydian",
+    "Mahajani",
+    "Makasar",
+    "Malayalam",
+    "Mandaic",
+    "Manichaean",
+    "Marchen",
+    "Masaram_Gondi",
+    "Medefaidrin",
+    "Meetei_Mayek",
+    "Mende_Kikakui",
+    "Meroitic_Cursive",
+    "Meroitic_Hieroglyphs",
+    "Miao",
+    "Modi",
+    "Mongolian",
+    "Mro",
+    "Multani",
+    "Myanmar",
+    "Nabataean",
+    "Nag_Mundari",
+    "Nandinagari",
+    "New_Tai_Lue",
+    "Newa",
+    "Nko",
+    "Nushu",
+    "Nyiakeng_Puachue_Hmong",
+    "Ogham",
+    "Ol_Chiki",
+    "Ol_Onal",
+    "Old_Hungarian",
+    "Old_Italic",
+    "Old_North_Arabian",
+    "Old_Permic",
+    "Old_Persian",
+    "Old_Sogdian",
+    "Old_South_Arabian",
+    "Old_Turkic",
+    "Old_Uyghur",
+    "Oriya",
+    "Osage",
+    "Osmanya",
+    "Pahawh_Hmong",
+    "Palmyrene",
+    "Pau_Cin_Hau",
+    "Phags_Pa",
+    "Phoenician",
+    "Proto_Cuneiform",
+    "Psalter_Pahlavi",
+    "Rejang",
+    "Runic",
+    "Samaritan",
+    "Saurashtra",
+    "Seal",
+    "Sharada",
+    "Shavian",
+    "Siddham",
+    "Sidetic",
+    "SignWriting",
+    "Sinhala",
+    "Sogdian",
+    "Sora_Sompeng",
+    "Soyombo",
+    "Sundanese",
+    "Sunuwar",
+    "Syloti_Nagri",
+    "Syriac",
+    "Tagalog",
+    "Tagbanwa",
+    "Tai_Le",
+    "Tai_Tham",
+    "Tai_Viet",
+    "Tai_Yo",
+    "Takri",
+    "Tamil",
+    "Tangsa",
+    "Tangut",
+    "Telugu",
+    "Thaana",
+    "Thai",
+    "Tibetan",
+    "Tifinagh",
+    "Tirhuta",
+    "Todhri",
+    "Tolong_Siki",
+    "Toto",
+    "Tulu_Tigalari",
+    "Ugaritic",
+    "Unknown",
+    "Vai",
+    "Vithkuqi",
+    "Wancho",
+    "Warang_Citi",
+    "Yezidi",
+    "Yi",
+    "Zanabazar_Square",
+];
+/// The script of a scalar, as `text.Script` orders them.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_char_script(c: u32) -> i64 {
+    use icu_properties::props::Script;
+    let script = icu_properties::CodePointMapData::<Script>::new().get(scalar(c));
+    let name = icu_properties::PropertyNamesLong::<Script>::new().get(script).unwrap_or("Unknown");
+    SCRIPTS.binary_search(&name).or_else(|_| SCRIPTS.binary_search(&"Unknown")).map_or(0, |at| at as i64)
+}
+
+/// `text.collator`: what compares texts as a language orders them, at a
+/// strength from 0, letters only, to 2, also case; with numbers by their
+/// value.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_text_collator(
+    locale: *const Str,
+    strength: i64,
+    numeric: u8,
+) -> *mut super::native::NativeObject {
+    use icu_collator::options::{CollatorOptions, Strength};
+    use icu_collator::preferences::CollationNumericOrdering;
+    let locale = icu_locale_core::Locale::try_from_str(text(locale)).unwrap_or(icu_locale_core::Locale::UNKNOWN);
+    let mut preferences = icu_collator::CollatorPreferences::from(&locale);
+    preferences.numeric_ordering =
+        Some(if numeric != 0 { CollationNumericOrdering::True } else { CollationNumericOrdering::False });
+    let mut options = CollatorOptions::default();
+    options.strength = Some(match strength {
+        0 => Strength::Primary,
+        1 => Strength::Secondary,
+        _ => Strength::Tertiary,
+    });
+    let collator = icu_collator::Collator::try_new(preferences, options)
+        .or_else(|_| icu_collator::Collator::try_new(Default::default(), options))
+        .expect("the root collation is compiled in");
+    super::native::new(collator)
+}
+
+/// `Collator.compare`: -1, 0 or 1.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_text_collate(object: *mut super::native::NativeObject, a: *const Str, b: *const Str) -> i64 {
+    match super::native::get::<icu_collator::CollatorBorrowed<'static>>(object) {
+        Some(collator) => collator.compare(text(a), text(b)) as i64,
+        None => text(a).cmp(text(b)) as i64,
+    }
 }
 
 /// The scalar in the other case when it is a single one, or the same.

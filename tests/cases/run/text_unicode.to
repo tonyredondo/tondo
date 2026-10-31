@@ -1,0 +1,84 @@
+// Characters say their general category and script, and their class as
+// punctuation, symbols or marks, which with NFD takes the accents away;
+// a collator orders texts as a language does, at a strength, and with
+// numbers by their value.
+
+import std.console
+import std.text
+
+fn sorted(words: Array[String], order: text.Collator): String {
+    words.sortedWith((a, b) { order.compare(a, b) }).join(" ")
+}
+
+fn main() {
+    for c in [
+        'a',
+        'A',
+        'ǅ',
+        '\u{301}',
+        '5',
+        'Ⅻ',
+        '.',
+        '«',
+        '+',
+        '€',
+        '©',
+        ' ',
+        '\n',
+        '字',
+        'ب',
+        'я',
+        'α',
+        '\u{378}',
+    ] {
+        console.println(
+            "{c.code()} {text.category(c)} {text.script(c)} {c.isPunctuation()} {c.isSymbol()} {c.isMark()}",
+        )
+    }
+    let plain = text
+        .normalize("Crème brûlée", text.Normalization.Nfd)
+        .chars()
+        .filter((c) { not c.isMark() })
+        .collect()
+        .map((c) { "{c}" })
+        .join("")
+    console.println(plain)
+
+    let words = ["zorro", "ñu", "nube", "árbol", "Ábaco", "abeja", "Zeta", "öl", "ost"]
+    console.println(sorted(words, text.collator("es")))
+    console.println(sorted(words, text.collator("sv")))
+    console.println(sorted(words, text.collator("und")))
+    console.println(sorted(["file10", "file2", "file1"], text.collator("en", numeric: true)))
+    console.println(sorted(["chico", "hola", "casa"], text.collator("cs")))
+    let loose = text.collator("es", strength: text.Strength.Primary)
+    let accents = text.collator("es", strength: text.Strength.Secondary)
+    console.println(
+        "{loose.compare("Árbol", "arbol")} {accents.compare("Árbol", "árbol")} {accents.compare("arbol", "árbol")} {text.collator("es").compare("Árbol", "arbol")}",
+    )
+}
+
+// expect-stdout: 97 LowercaseLetter Latin false false false
+// expect-stdout: 65 UppercaseLetter Latin false false false
+// expect-stdout: 453 TitlecaseLetter Latin false false false
+// expect-stdout: 769 NonspacingMark Inherited false false true
+// expect-stdout: 53 DecimalNumber Common false false false
+// expect-stdout: 8555 LetterNumber Latin false false false
+// expect-stdout: 46 OtherPunctuation Common true false false
+// expect-stdout: 171 InitialPunctuation Common true false false
+// expect-stdout: 43 MathSymbol Common false true false
+// expect-stdout: 8364 CurrencySymbol Common false true false
+// expect-stdout: 169 OtherSymbol Common false true false
+// expect-stdout: 32 SpaceSeparator Common false false false
+// expect-stdout: 10 Control Common false false false
+// expect-stdout: 23383 OtherLetter Han false false false
+// expect-stdout: 1576 OtherLetter Arabic false false false
+// expect-stdout: 1103 LowercaseLetter Cyrillic false false false
+// expect-stdout: 945 LowercaseLetter Greek false false false
+// expect-stdout: 888 Unassigned Unknown false false false
+// expect-stdout: Creme brulee
+// expect-stdout: Ábaco abeja árbol nube ñu öl ost Zeta zorro
+// expect-stdout: Ábaco abeja árbol ñu nube ost Zeta zorro öl
+// expect-stdout: Ábaco abeja árbol ñu nube öl ost Zeta zorro
+// expect-stdout: file1 file2 file10
+// expect-stdout: casa hola chico
+// expect-stdout: 0 0 -1 1

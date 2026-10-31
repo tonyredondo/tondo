@@ -44,6 +44,15 @@ fn main() {
 - `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them.
 - `std.format.Builder` builds long text piece by piece; `std.regex` matches
   patterns; `std.encoding` turns bytes into Base64, hexadecimal or URL text.
+- `c.isLetter()`, `isDigit`, `isWhitespace`, `isPunctuation`, `isSymbol`
+  and `isMark` follow Unicode; `text.category(c)` and `text.script(c)` give
+  the whole of it, as `Category.LowercaseLetter` and `Script.Han`.
+  `text.normalize(s, text.Normalization.Nfd)` and dropping the marks takes
+  the accents away: `café` is `cafe`.
+- `text.collator("es")` orders texts as a language does, `ñ` after `n`:
+  `names.sortedWith((a, b) { order.compare(a, b) })`. With
+  `strength: text.Strength.Primary` accents and case do not count, and with
+  `numeric: true` `file2` goes before `file10`.
 - Numbers for people go through `std.format`, which knows how each language
   writes them: `format.number(1234.5, "de")` is `1.234,5`,
   `format.currency(9.5, "EUR", "es")` is `9,50 €`, `format.percent(0.25)` is

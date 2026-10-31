@@ -3580,3 +3580,19 @@ both are wanted, and the names say which is which. The week of ISO 8601 is
 a value of its own, `IsoWeek`, because its year is not the date's near
 January 1, and a week and its day read a date back with `%G-W%V-%u`.
 
+## 2026-10-31 — Unicode's categories and each language's order
+
+The categories and scripts come from ICU4X's `icu_properties`, which the
+runtime already linked through URLs, so they cost 93 KB to a program that
+asks for them and nothing to one that does not. `Script` is an enum of the
+178 scripts that have characters, so a misspelt one is a compile error
+rather than a string that never matches.
+
+Collation is ICU4X's too: the Unicode Collation Algorithm with CLDR's
+orders, which is what Hugo's `collate` and every browser use. Its data for
+every language adds 1.36 MB to a program that makes a collator, the same
+for one language as for all, since the language arrives while it runs; a
+program without one carries none of it. Cutting the languages would need
+data generated for Tondo and would save about one megabyte, only to
+programs that sort text for people, so all of them stay.
+

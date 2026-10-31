@@ -347,6 +347,24 @@ pub fn Char.isAlphanumeric(self): Bool {
     textNative.charIs(self, 5)
 }
 
+/// Whether the scalar is punctuation, of any of its general categories:
+/// `.`, `-`, `(`, `«`, `¿`.
+pub fn Char.isPunctuation(self): Bool {
+    textNative.charIs(self, 6)
+}
+
+/// Whether the scalar is a symbol: of mathematics, `+`, of a currency, `€`,
+/// a modifier, `^`, or another, `©`.
+pub fn Char.isSymbol(self): Bool {
+    textNative.charIs(self, 7)
+}
+
+/// Whether the scalar is a mark that goes on the one before, as the accent
+/// that `text.normalize` with `Nfd` takes out of `é`.
+pub fn Char.isMark(self): Bool {
+    textNative.charIs(self, 8)
+}
+
 /// The uppercase scalar, when it is a single one.
 pub fn Char.toUpper(self): Char {
     textNative.charCase(self, true)

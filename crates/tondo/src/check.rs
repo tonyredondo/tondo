@@ -3370,7 +3370,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalNet
                     | StdModule::InternalFs
                     | StdModule::InternalSql
-                    | StdModule::InternalImage,
+                    | StdModule::InternalImage
+                    | StdModule::InternalText,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),

@@ -900,6 +900,52 @@ NFC y NFD componen y descomponen los caracteres; NFKC y NFKD, además,
 cambian los de compatibilidad por los que representan, como `ﬁ` por `fi`,
 para comparar o hacer slugs. La versión de Unicode es la de la edición.
 
+`std.text` también dice la categoría general y el script de un carácter, y
+compara textos en el orden de un idioma:
+
+~~~tondo
+import std.text
+
+text.category('é') == text.Category.LowercaseLetter
+text.script('字') == text.Script.Han
+let order = text.collator("es")
+let sorted = ["zorro", "ñu", "nube"].sortedWith((a, b) { order.compare(a, b) })   // nube ñu zorro
+~~~
+
+~~~tondo pseudocode
+pub enum Category { UppercaseLetter, LowercaseLetter, TitlecaseLetter, ModifierLetter, OtherLetter,
+    NonspacingMark, SpacingMark, EnclosingMark, DecimalNumber, LetterNumber, OtherNumber,
+    ConnectorPunctuation, DashPunctuation, OpenPunctuation, ClosePunctuation, InitialPunctuation,
+    FinalPunctuation, OtherPunctuation, MathSymbol, CurrencySymbol, ModifierSymbol, OtherSymbol,
+    SpaceSeparator, LineSeparator, ParagraphSeparator, Control, Format, Surrogate, PrivateUse, Unassigned }
+pub enum Script { Adlam, Ahom, …, Latin, …, Han, …, Common, Inherited, Unknown, … }
+pub fn category(c: Char): Category
+pub fn script(c: Char): Script
+
+pub enum Strength { Primary, Secondary, Tertiary }
+pub type Collator
+pub fn collator(locale: String, strength: Strength = Strength.Tertiary, numeric: Bool = false): Collator
+pub fn Collator.compare(self, a: String, b: String): Int
+~~~
+
+- `Category` son las treinta categorías generales de Unicode, con sus
+  nombres largos; `Script`, cada script que tiene caracteres, en orden
+  alfabético, con su nombre largo sin guiones bajos: `OldItalic`. `Common`
+  es el de los caracteres que comparten muchos, como los dígitos y la
+  puntuación; `Inherited`, el de las marcas que toman el del carácter de
+  antes; `Unknown`, el de los que no están asignados. `Display` escribe el
+  nombre de la variante.
+- `collator` compara como el algoritmo de collation de Unicode con el orden
+  de CLDR para `locale`, una etiqueta BCP 47: `es`, `sv`,
+  `de-u-co-phonebk`. `und`, o un idioma sin orden propio, toma el de
+  Unicode. `Primary` cuenta solo las letras, `a`, `á` y `A` son iguales;
+  `Secondary`, también los acentos; `Tertiary`, también las mayúsculas.
+  Con `numeric`, los dígitos se comparan por el número que escriben:
+  `file2` va antes que `file10`. `compare` da -1, 0 o 1, como pide
+  `sortedWith`.
+- Los datos de collation solo los lleva el ejecutable que usa `collator`, y
+  son de todos los idiomas, porque el idioma se elige al correr.
+
 ### 10.2 `String` y bytes
 
 Texto y datos binarios no se convierten implícitamente:
@@ -2793,8 +2839,9 @@ mayúsculas y minúsculas de Unicode: `"Straße"` y `"STRASSE"` son iguales.
 `trim`, `trimStart` y `trimEnd` quitan el espacio en blanco de Unicode, o con
 `characters` los escalares de ese texto: `"--a-b--".trim("-")` es `"a-b"`.
 
-`Char`: `isDigit`, `isLetter`, `isWhitespace`, `isUpper`, `isLower` e
-`isAlphanumeric` (`Bool`); `toUpper` y `toLower`, que cambian el escalar cuando
+`Char`: `isDigit`, `isLetter`, `isWhitespace`, `isUpper`, `isLower`,
+`isAlphanumeric`, `isPunctuation`, `isSymbol` e `isMark` (`Bool`), estos
+tres por las categorías generales de Unicode (10.1); `toUpper` y `toLower`, que cambian el escalar cuando
 su otra forma es uno solo; `code(): Int`, `Char.from(code: Int): Char?` y
 `compare`.
 

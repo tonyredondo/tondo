@@ -1,6 +1,7 @@
-// std.text (standard library 10.1): the normalization of Unicode text.
-// `TextError` is the compiler's, and the methods of `String` and `Char`
-// are in the prelude: `tondo api prelude`.
+// std.text (standard library 10.1): the normalization of Unicode text,
+// the categories and scripts of its characters, and the order of each
+// language. `TextError` is the compiler's, and the methods of `String` and
+// `Char` are in the prelude: `tondo api prelude`.
 
 import std.internal.text as textNative
 
@@ -32,4 +33,711 @@ fn code(form: Normalization): Int {
         Normalization.Nfkc => 2
         Normalization.Nfkd => 3
     }
+}
+
+// ---------------------------------------------------------------------------
+// Categories and scripts
+// ---------------------------------------------------------------------------
+
+/// The general category of a character in Unicode.
+pub enum Category {
+    UppercaseLetter
+    LowercaseLetter
+    TitlecaseLetter
+    ModifierLetter
+    OtherLetter
+    NonspacingMark
+    SpacingMark
+    EnclosingMark
+    DecimalNumber
+    LetterNumber
+    OtherNumber
+    ConnectorPunctuation
+    DashPunctuation
+    OpenPunctuation
+    ClosePunctuation
+    InitialPunctuation
+    FinalPunctuation
+    OtherPunctuation
+    MathSymbol
+    CurrencySymbol
+    ModifierSymbol
+    OtherSymbol
+    SpaceSeparator
+    LineSeparator
+    ParagraphSeparator
+    Control
+    Format
+    Surrogate
+    PrivateUse
+    Unassigned
+}
+
+/// A script of Unicode: `Latin`, `Han`, `Arabic`; `Common` for characters
+/// that many share, as digits and punctuation, `Inherited` for marks that
+/// take the script of the character before, and `Unknown` for unassigned
+/// ones.
+pub enum Script {
+    Adlam
+    Ahom
+    AnatolianHieroglyphs
+    Arabic
+    Armenian
+    Avestan
+    Balinese
+    Bamum
+    BassaVah
+    Batak
+    Bengali
+    BeriaErfe
+    Bhaiksuki
+    Bopomofo
+    Brahmi
+    Braille
+    Buginese
+    Buhid
+    CanadianAboriginal
+    Carian
+    CaucasianAlbanian
+    Chakma
+    Cham
+    Cherokee
+    Chorasmian
+    Common
+    Coptic
+    Cuneiform
+    Cypriot
+    CyproMinoan
+    Cyrillic
+    Deseret
+    Devanagari
+    DivesAkuru
+    Dogra
+    Duployan
+    EgyptianHieroglyphs
+    Elbasan
+    Elymaic
+    Ethiopic
+    Garay
+    Georgian
+    Glagolitic
+    Gothic
+    Grantha
+    Greek
+    Gujarati
+    GunjalaGondi
+    Gurmukhi
+    GurungKhema
+    Han
+    Hangul
+    HanifiRohingya
+    Hanunoo
+    Hatran
+    Hebrew
+    Hiragana
+    ImperialAramaic
+    Inherited
+    InscriptionalPahlavi
+    InscriptionalParthian
+    Javanese
+    Jurchen
+    Kaithi
+    Kannada
+    Katakana
+    Kawi
+    KayahLi
+    Kharoshthi
+    KhitanSmallScript
+    Khmer
+    Khojki
+    Khudawadi
+    KiratRai
+    Lao
+    Latin
+    Lepcha
+    Limbu
+    LinearA
+    LinearB
+    Lisu
+    Lycian
+    Lydian
+    Mahajani
+    Makasar
+    Malayalam
+    Mandaic
+    Manichaean
+    Marchen
+    MasaramGondi
+    Medefaidrin
+    MeeteiMayek
+    MendeKikakui
+    MeroiticCursive
+    MeroiticHieroglyphs
+    Miao
+    Modi
+    Mongolian
+    Mro
+    Multani
+    Myanmar
+    Nabataean
+    NagMundari
+    Nandinagari
+    NewTaiLue
+    Newa
+    Nko
+    Nushu
+    NyiakengPuachueHmong
+    Ogham
+    OlChiki
+    OlOnal
+    OldHungarian
+    OldItalic
+    OldNorthArabian
+    OldPermic
+    OldPersian
+    OldSogdian
+    OldSouthArabian
+    OldTurkic
+    OldUyghur
+    Oriya
+    Osage
+    Osmanya
+    PahawhHmong
+    Palmyrene
+    PauCinHau
+    PhagsPa
+    Phoenician
+    ProtoCuneiform
+    PsalterPahlavi
+    Rejang
+    Runic
+    Samaritan
+    Saurashtra
+    Seal
+    Sharada
+    Shavian
+    Siddham
+    Sidetic
+    SignWriting
+    Sinhala
+    Sogdian
+    SoraSompeng
+    Soyombo
+    Sundanese
+    Sunuwar
+    SylotiNagri
+    Syriac
+    Tagalog
+    Tagbanwa
+    TaiLe
+    TaiTham
+    TaiViet
+    TaiYo
+    Takri
+    Tamil
+    Tangsa
+    Tangut
+    Telugu
+    Thaana
+    Thai
+    Tibetan
+    Tifinagh
+    Tirhuta
+    Todhri
+    TolongSiki
+    Toto
+    TuluTigalari
+    Ugaritic
+    Unknown
+    Vai
+    Vithkuqi
+    Wancho
+    WarangCiti
+    Yezidi
+    Yi
+    ZanabazarSquare
+}
+
+/// Its name, as the enum writes it: `UppercaseLetter`.
+impl Display for Category {
+    fn display(self): String {
+        match self {
+            Category.UppercaseLetter => "UppercaseLetter"
+            Category.LowercaseLetter => "LowercaseLetter"
+            Category.TitlecaseLetter => "TitlecaseLetter"
+            Category.ModifierLetter => "ModifierLetter"
+            Category.OtherLetter => "OtherLetter"
+            Category.NonspacingMark => "NonspacingMark"
+            Category.SpacingMark => "SpacingMark"
+            Category.EnclosingMark => "EnclosingMark"
+            Category.DecimalNumber => "DecimalNumber"
+            Category.LetterNumber => "LetterNumber"
+            Category.OtherNumber => "OtherNumber"
+            Category.ConnectorPunctuation => "ConnectorPunctuation"
+            Category.DashPunctuation => "DashPunctuation"
+            Category.OpenPunctuation => "OpenPunctuation"
+            Category.ClosePunctuation => "ClosePunctuation"
+            Category.InitialPunctuation => "InitialPunctuation"
+            Category.FinalPunctuation => "FinalPunctuation"
+            Category.OtherPunctuation => "OtherPunctuation"
+            Category.MathSymbol => "MathSymbol"
+            Category.CurrencySymbol => "CurrencySymbol"
+            Category.ModifierSymbol => "ModifierSymbol"
+            Category.OtherSymbol => "OtherSymbol"
+            Category.SpaceSeparator => "SpaceSeparator"
+            Category.LineSeparator => "LineSeparator"
+            Category.ParagraphSeparator => "ParagraphSeparator"
+            Category.Control => "Control"
+            Category.Format => "Format"
+            Category.Surrogate => "Surrogate"
+            Category.PrivateUse => "PrivateUse"
+            Category.Unassigned => "Unassigned"
+        }
+    }
+}
+
+/// Its name, as the enum writes it: `Adlam`.
+impl Display for Script {
+    fn display(self): String {
+        match self {
+            Script.Adlam => "Adlam"
+            Script.Ahom => "Ahom"
+            Script.AnatolianHieroglyphs => "AnatolianHieroglyphs"
+            Script.Arabic => "Arabic"
+            Script.Armenian => "Armenian"
+            Script.Avestan => "Avestan"
+            Script.Balinese => "Balinese"
+            Script.Bamum => "Bamum"
+            Script.BassaVah => "BassaVah"
+            Script.Batak => "Batak"
+            Script.Bengali => "Bengali"
+            Script.BeriaErfe => "BeriaErfe"
+            Script.Bhaiksuki => "Bhaiksuki"
+            Script.Bopomofo => "Bopomofo"
+            Script.Brahmi => "Brahmi"
+            Script.Braille => "Braille"
+            Script.Buginese => "Buginese"
+            Script.Buhid => "Buhid"
+            Script.CanadianAboriginal => "CanadianAboriginal"
+            Script.Carian => "Carian"
+            Script.CaucasianAlbanian => "CaucasianAlbanian"
+            Script.Chakma => "Chakma"
+            Script.Cham => "Cham"
+            Script.Cherokee => "Cherokee"
+            Script.Chorasmian => "Chorasmian"
+            Script.Common => "Common"
+            Script.Coptic => "Coptic"
+            Script.Cuneiform => "Cuneiform"
+            Script.Cypriot => "Cypriot"
+            Script.CyproMinoan => "CyproMinoan"
+            Script.Cyrillic => "Cyrillic"
+            Script.Deseret => "Deseret"
+            Script.Devanagari => "Devanagari"
+            Script.DivesAkuru => "DivesAkuru"
+            Script.Dogra => "Dogra"
+            Script.Duployan => "Duployan"
+            Script.EgyptianHieroglyphs => "EgyptianHieroglyphs"
+            Script.Elbasan => "Elbasan"
+            Script.Elymaic => "Elymaic"
+            Script.Ethiopic => "Ethiopic"
+            Script.Garay => "Garay"
+            Script.Georgian => "Georgian"
+            Script.Glagolitic => "Glagolitic"
+            Script.Gothic => "Gothic"
+            Script.Grantha => "Grantha"
+            Script.Greek => "Greek"
+            Script.Gujarati => "Gujarati"
+            Script.GunjalaGondi => "GunjalaGondi"
+            Script.Gurmukhi => "Gurmukhi"
+            Script.GurungKhema => "GurungKhema"
+            Script.Han => "Han"
+            Script.Hangul => "Hangul"
+            Script.HanifiRohingya => "HanifiRohingya"
+            Script.Hanunoo => "Hanunoo"
+            Script.Hatran => "Hatran"
+            Script.Hebrew => "Hebrew"
+            Script.Hiragana => "Hiragana"
+            Script.ImperialAramaic => "ImperialAramaic"
+            Script.Inherited => "Inherited"
+            Script.InscriptionalPahlavi => "InscriptionalPahlavi"
+            Script.InscriptionalParthian => "InscriptionalParthian"
+            Script.Javanese => "Javanese"
+            Script.Jurchen => "Jurchen"
+            Script.Kaithi => "Kaithi"
+            Script.Kannada => "Kannada"
+            Script.Katakana => "Katakana"
+            Script.Kawi => "Kawi"
+            Script.KayahLi => "KayahLi"
+            Script.Kharoshthi => "Kharoshthi"
+            Script.KhitanSmallScript => "KhitanSmallScript"
+            Script.Khmer => "Khmer"
+            Script.Khojki => "Khojki"
+            Script.Khudawadi => "Khudawadi"
+            Script.KiratRai => "KiratRai"
+            Script.Lao => "Lao"
+            Script.Latin => "Latin"
+            Script.Lepcha => "Lepcha"
+            Script.Limbu => "Limbu"
+            Script.LinearA => "LinearA"
+            Script.LinearB => "LinearB"
+            Script.Lisu => "Lisu"
+            Script.Lycian => "Lycian"
+            Script.Lydian => "Lydian"
+            Script.Mahajani => "Mahajani"
+            Script.Makasar => "Makasar"
+            Script.Malayalam => "Malayalam"
+            Script.Mandaic => "Mandaic"
+            Script.Manichaean => "Manichaean"
+            Script.Marchen => "Marchen"
+            Script.MasaramGondi => "MasaramGondi"
+            Script.Medefaidrin => "Medefaidrin"
+            Script.MeeteiMayek => "MeeteiMayek"
+            Script.MendeKikakui => "MendeKikakui"
+            Script.MeroiticCursive => "MeroiticCursive"
+            Script.MeroiticHieroglyphs => "MeroiticHieroglyphs"
+            Script.Miao => "Miao"
+            Script.Modi => "Modi"
+            Script.Mongolian => "Mongolian"
+            Script.Mro => "Mro"
+            Script.Multani => "Multani"
+            Script.Myanmar => "Myanmar"
+            Script.Nabataean => "Nabataean"
+            Script.NagMundari => "NagMundari"
+            Script.Nandinagari => "Nandinagari"
+            Script.NewTaiLue => "NewTaiLue"
+            Script.Newa => "Newa"
+            Script.Nko => "Nko"
+            Script.Nushu => "Nushu"
+            Script.NyiakengPuachueHmong => "NyiakengPuachueHmong"
+            Script.Ogham => "Ogham"
+            Script.OlChiki => "OlChiki"
+            Script.OlOnal => "OlOnal"
+            Script.OldHungarian => "OldHungarian"
+            Script.OldItalic => "OldItalic"
+            Script.OldNorthArabian => "OldNorthArabian"
+            Script.OldPermic => "OldPermic"
+            Script.OldPersian => "OldPersian"
+            Script.OldSogdian => "OldSogdian"
+            Script.OldSouthArabian => "OldSouthArabian"
+            Script.OldTurkic => "OldTurkic"
+            Script.OldUyghur => "OldUyghur"
+            Script.Oriya => "Oriya"
+            Script.Osage => "Osage"
+            Script.Osmanya => "Osmanya"
+            Script.PahawhHmong => "PahawhHmong"
+            Script.Palmyrene => "Palmyrene"
+            Script.PauCinHau => "PauCinHau"
+            Script.PhagsPa => "PhagsPa"
+            Script.Phoenician => "Phoenician"
+            Script.ProtoCuneiform => "ProtoCuneiform"
+            Script.PsalterPahlavi => "PsalterPahlavi"
+            Script.Rejang => "Rejang"
+            Script.Runic => "Runic"
+            Script.Samaritan => "Samaritan"
+            Script.Saurashtra => "Saurashtra"
+            Script.Seal => "Seal"
+            Script.Sharada => "Sharada"
+            Script.Shavian => "Shavian"
+            Script.Siddham => "Siddham"
+            Script.Sidetic => "Sidetic"
+            Script.SignWriting => "SignWriting"
+            Script.Sinhala => "Sinhala"
+            Script.Sogdian => "Sogdian"
+            Script.SoraSompeng => "SoraSompeng"
+            Script.Soyombo => "Soyombo"
+            Script.Sundanese => "Sundanese"
+            Script.Sunuwar => "Sunuwar"
+            Script.SylotiNagri => "SylotiNagri"
+            Script.Syriac => "Syriac"
+            Script.Tagalog => "Tagalog"
+            Script.Tagbanwa => "Tagbanwa"
+            Script.TaiLe => "TaiLe"
+            Script.TaiTham => "TaiTham"
+            Script.TaiViet => "TaiViet"
+            Script.TaiYo => "TaiYo"
+            Script.Takri => "Takri"
+            Script.Tamil => "Tamil"
+            Script.Tangsa => "Tangsa"
+            Script.Tangut => "Tangut"
+            Script.Telugu => "Telugu"
+            Script.Thaana => "Thaana"
+            Script.Thai => "Thai"
+            Script.Tibetan => "Tibetan"
+            Script.Tifinagh => "Tifinagh"
+            Script.Tirhuta => "Tirhuta"
+            Script.Todhri => "Todhri"
+            Script.TolongSiki => "TolongSiki"
+            Script.Toto => "Toto"
+            Script.TuluTigalari => "TuluTigalari"
+            Script.Ugaritic => "Ugaritic"
+            Script.Unknown => "Unknown"
+            Script.Vai => "Vai"
+            Script.Vithkuqi => "Vithkuqi"
+            Script.Wancho => "Wancho"
+            Script.WarangCiti => "WarangCiti"
+            Script.Yezidi => "Yezidi"
+            Script.Yi => "Yi"
+            Script.ZanabazarSquare => "ZanabazarSquare"
+        }
+    }
+}
+
+/// The general category of a character: `text.category('a')` is
+/// `Category.LowercaseLetter`.
+pub fn category(c: Char): Category {
+    match textNative.category(c) {
+        0 => Category.UppercaseLetter
+        1 => Category.LowercaseLetter
+        2 => Category.TitlecaseLetter
+        3 => Category.ModifierLetter
+        4 => Category.OtherLetter
+        5 => Category.NonspacingMark
+        6 => Category.SpacingMark
+        7 => Category.EnclosingMark
+        8 => Category.DecimalNumber
+        9 => Category.LetterNumber
+        10 => Category.OtherNumber
+        11 => Category.ConnectorPunctuation
+        12 => Category.DashPunctuation
+        13 => Category.OpenPunctuation
+        14 => Category.ClosePunctuation
+        15 => Category.InitialPunctuation
+        16 => Category.FinalPunctuation
+        17 => Category.OtherPunctuation
+        18 => Category.MathSymbol
+        19 => Category.CurrencySymbol
+        20 => Category.ModifierSymbol
+        21 => Category.OtherSymbol
+        22 => Category.SpaceSeparator
+        23 => Category.LineSeparator
+        24 => Category.ParagraphSeparator
+        25 => Category.Control
+        26 => Category.Format
+        27 => Category.Surrogate
+        28 => Category.PrivateUse
+        _ => Category.Unassigned
+    }
+}
+
+/// The script of a character: `text.script('字')` is `Script.Han`.
+pub fn script(c: Char): Script {
+    match textNative.script(c) {
+        0 => Script.Adlam
+        1 => Script.Ahom
+        2 => Script.AnatolianHieroglyphs
+        3 => Script.Arabic
+        4 => Script.Armenian
+        5 => Script.Avestan
+        6 => Script.Balinese
+        7 => Script.Bamum
+        8 => Script.BassaVah
+        9 => Script.Batak
+        10 => Script.Bengali
+        11 => Script.BeriaErfe
+        12 => Script.Bhaiksuki
+        13 => Script.Bopomofo
+        14 => Script.Brahmi
+        15 => Script.Braille
+        16 => Script.Buginese
+        17 => Script.Buhid
+        18 => Script.CanadianAboriginal
+        19 => Script.Carian
+        20 => Script.CaucasianAlbanian
+        21 => Script.Chakma
+        22 => Script.Cham
+        23 => Script.Cherokee
+        24 => Script.Chorasmian
+        25 => Script.Common
+        26 => Script.Coptic
+        27 => Script.Cuneiform
+        28 => Script.Cypriot
+        29 => Script.CyproMinoan
+        30 => Script.Cyrillic
+        31 => Script.Deseret
+        32 => Script.Devanagari
+        33 => Script.DivesAkuru
+        34 => Script.Dogra
+        35 => Script.Duployan
+        36 => Script.EgyptianHieroglyphs
+        37 => Script.Elbasan
+        38 => Script.Elymaic
+        39 => Script.Ethiopic
+        40 => Script.Garay
+        41 => Script.Georgian
+        42 => Script.Glagolitic
+        43 => Script.Gothic
+        44 => Script.Grantha
+        45 => Script.Greek
+        46 => Script.Gujarati
+        47 => Script.GunjalaGondi
+        48 => Script.Gurmukhi
+        49 => Script.GurungKhema
+        50 => Script.Han
+        51 => Script.Hangul
+        52 => Script.HanifiRohingya
+        53 => Script.Hanunoo
+        54 => Script.Hatran
+        55 => Script.Hebrew
+        56 => Script.Hiragana
+        57 => Script.ImperialAramaic
+        58 => Script.Inherited
+        59 => Script.InscriptionalPahlavi
+        60 => Script.InscriptionalParthian
+        61 => Script.Javanese
+        62 => Script.Jurchen
+        63 => Script.Kaithi
+        64 => Script.Kannada
+        65 => Script.Katakana
+        66 => Script.Kawi
+        67 => Script.KayahLi
+        68 => Script.Kharoshthi
+        69 => Script.KhitanSmallScript
+        70 => Script.Khmer
+        71 => Script.Khojki
+        72 => Script.Khudawadi
+        73 => Script.KiratRai
+        74 => Script.Lao
+        75 => Script.Latin
+        76 => Script.Lepcha
+        77 => Script.Limbu
+        78 => Script.LinearA
+        79 => Script.LinearB
+        80 => Script.Lisu
+        81 => Script.Lycian
+        82 => Script.Lydian
+        83 => Script.Mahajani
+        84 => Script.Makasar
+        85 => Script.Malayalam
+        86 => Script.Mandaic
+        87 => Script.Manichaean
+        88 => Script.Marchen
+        89 => Script.MasaramGondi
+        90 => Script.Medefaidrin
+        91 => Script.MeeteiMayek
+        92 => Script.MendeKikakui
+        93 => Script.MeroiticCursive
+        94 => Script.MeroiticHieroglyphs
+        95 => Script.Miao
+        96 => Script.Modi
+        97 => Script.Mongolian
+        98 => Script.Mro
+        99 => Script.Multani
+        100 => Script.Myanmar
+        101 => Script.Nabataean
+        102 => Script.NagMundari
+        103 => Script.Nandinagari
+        104 => Script.NewTaiLue
+        105 => Script.Newa
+        106 => Script.Nko
+        107 => Script.Nushu
+        108 => Script.NyiakengPuachueHmong
+        109 => Script.Ogham
+        110 => Script.OlChiki
+        111 => Script.OlOnal
+        112 => Script.OldHungarian
+        113 => Script.OldItalic
+        114 => Script.OldNorthArabian
+        115 => Script.OldPermic
+        116 => Script.OldPersian
+        117 => Script.OldSogdian
+        118 => Script.OldSouthArabian
+        119 => Script.OldTurkic
+        120 => Script.OldUyghur
+        121 => Script.Oriya
+        122 => Script.Osage
+        123 => Script.Osmanya
+        124 => Script.PahawhHmong
+        125 => Script.Palmyrene
+        126 => Script.PauCinHau
+        127 => Script.PhagsPa
+        128 => Script.Phoenician
+        129 => Script.ProtoCuneiform
+        130 => Script.PsalterPahlavi
+        131 => Script.Rejang
+        132 => Script.Runic
+        133 => Script.Samaritan
+        134 => Script.Saurashtra
+        135 => Script.Seal
+        136 => Script.Sharada
+        137 => Script.Shavian
+        138 => Script.Siddham
+        139 => Script.Sidetic
+        140 => Script.SignWriting
+        141 => Script.Sinhala
+        142 => Script.Sogdian
+        143 => Script.SoraSompeng
+        144 => Script.Soyombo
+        145 => Script.Sundanese
+        146 => Script.Sunuwar
+        147 => Script.SylotiNagri
+        148 => Script.Syriac
+        149 => Script.Tagalog
+        150 => Script.Tagbanwa
+        151 => Script.TaiLe
+        152 => Script.TaiTham
+        153 => Script.TaiViet
+        154 => Script.TaiYo
+        155 => Script.Takri
+        156 => Script.Tamil
+        157 => Script.Tangsa
+        158 => Script.Tangut
+        159 => Script.Telugu
+        160 => Script.Thaana
+        161 => Script.Thai
+        162 => Script.Tibetan
+        163 => Script.Tifinagh
+        164 => Script.Tirhuta
+        165 => Script.Todhri
+        166 => Script.TolongSiki
+        167 => Script.Toto
+        168 => Script.TuluTigalari
+        169 => Script.Ugaritic
+        171 => Script.Vai
+        172 => Script.Vithkuqi
+        173 => Script.Wancho
+        174 => Script.WarangCiti
+        175 => Script.Yezidi
+        176 => Script.Yi
+        177 => Script.ZanabazarSquare
+        _ => Script.Unknown
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The order of a language
+// ---------------------------------------------------------------------------
+
+/// Which differences a collator counts: `Primary`, only the letters, so
+/// `a`, `á` and `A` are equal; `Secondary`, also the accents; `Tertiary`,
+/// also the case.
+pub enum Strength {
+    Primary
+    Secondary
+    Tertiary
+}
+
+/// Compares texts as a language orders them, as the Unicode Collation
+/// Algorithm and CLDR define it: `ñ` after `n` in Spanish, `ä` with `a` in
+/// German and after `z` in Swedish, `ch` after `h` in Czech.
+pub type Collator = {
+    priv native: textNative.Native
+}
+
+/// A collator for `locale`, a BCP 47 tag: `es`, `sv`, `de-u-co-phonebk`;
+/// `und`, or a language without an order of its own, takes Unicode's. With
+/// `numeric`, digits compare as the numbers they write: `file2` goes
+/// before `file10`.
+pub fn collator(locale: String, strength: Strength = Strength.Tertiary, numeric: Bool = false): Collator {
+    let level = match strength {
+        Strength.Primary => 0
+        Strength.Secondary => 1
+        Strength.Tertiary => 2
+    }
+    Collator { native: textNative.collator(locale, level, numeric) }
+}
+
+/// -1, 0 or 1 as `a` goes before `b`, with it or after it, as `sortedWith`
+/// takes: `names.sortedWith((a, b) { order.compare(a, b) })`.
+pub fn Collator.compare(self, a: String, b: String): Int {
+    textNative.collate(self.native, a, b)
 }

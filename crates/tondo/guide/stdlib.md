@@ -36,7 +36,7 @@ std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.acme       certificates of Let's Encrypt, obtained and renewed by a server itself
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function
-std.text       Unicode normalization: NFC, NFD, NFKC, NFKD
+std.text       Unicode normalization, categories and scripts, and the order of each language
 std.encoding   Base64, hexadecimal, URL text, HTML escaping
 std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
