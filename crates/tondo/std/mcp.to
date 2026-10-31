@@ -277,6 +277,8 @@ type Argument = {
     name: String
     info: __reflect.TypeInfo
     docs: String?
+    /// Whether it has a default, which a call that leaves it out gets.
+    defaulted: Bool = false
 }
 
 /// The arguments of a method, and whether they are the fields of its one
@@ -288,7 +290,12 @@ fn argumentsOf(method: __reflect.MethodInfo): (Array[Argument], Bool) {
         return (
             fields.map(
                 (field) {
-                    Argument { name: field.name(), info: field.typeInfo(), docs: field.docs() }
+                    Argument {
+                        name: field.name()
+                        info: field.typeInfo()
+                        docs: field.docs()
+                        defaulted: field.default().isSome()
+                    }
                 },
             ),
             true,
@@ -322,7 +329,7 @@ fn objectSchema(arguments: Array[Argument]): String {
         },
     )
     let required = arguments
-        .filter((argument) { not optional(argument.info) })
+        .filter((argument) { not optional(argument.info) and not argument.defaulted })
         .map((argument) { quote(argument.name) })
     "{{\"type\":\"object\",\"properties\":{{{properties.join(",")}}},\"required\":[{required.join(",")}]}}"
 }
@@ -367,7 +374,12 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
                 .fields()
                 .map(
                     (field) {
-                        Argument { name: field.name(), info: field.typeInfo(), docs: field.docs() }
+                        Argument {
+                            name: field.name()
+                            info: field.typeInfo()
+                            docs: field.docs()
+                            defaulted: field.default().isSome()
+                        }
                     },
                 )
             objectSchema(fields)

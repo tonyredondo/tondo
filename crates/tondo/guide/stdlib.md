@@ -217,8 +217,8 @@ pub type Build = {
     @cli.Argument
     source: String?
     /// Where to write it.
-    @cli.Option(short: "d", default: "public")
-    destination: String
+    @cli.Option(short: "d")
+    destination: String = "public"
     /// Writes the drafts too.
     drafts: Bool
 }
@@ -231,6 +231,8 @@ fn main() {
 }
 ```
 
+- A field's default is the option's when the line leaves it out, and the
+  help shows it; `@cli.Option(default: "1m")` writes one as the line would.
 - `Bool` fields are flags, `T?` optional, `Array[T]` repeated, enums
   without data a choice, `time.Duration` written `30s` or `1m30s`;
   `cli.parse` ends with 2 and the usage on a wrong line,

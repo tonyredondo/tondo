@@ -3390,7 +3390,10 @@ variante. Expone:
 Los descriptores secundarios exponen consultas, sin campos públicos:
 
 - `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
-  `docs(): String?`. Los ordinales conservan la posición declarada aunque se
+  `docs(): String?` y `default(): Value?`, el valor por defecto del campo (9.2
+  del lenguaje). `reflectFrom` de un record da su valor por defecto a un campo
+  que el valor reflejado no tiene, y construye uno cuyos campos privados lo
+  tienen todos. Los ordinales conservan la posición declarada aunque se
   omitan campos privados. La documentación son las líneas `///` justo antes del
   campo, sin los marcadores y saltando las anotaciones del programa que haya
   entre ellas y él. `TypeInfo.docs()`, `VariantInfo.docs()` y
@@ -5673,7 +5676,9 @@ pub fn secret(question: String): String
   escrito como lo lee `time.parseDuration` (`30s`, `1m30s`, `250ms`) o un enum
   sin datos (sus variantes en kebab-case), o `T?` y `Array[T]` de ellos. Un `Bool` es un
   flag: `--drafts` lo pone a `true`, y también `--drafts=false`. Un `T?` que
-  falta es `none`, un `Array[T]` está vacío, y otro sin defecto es obligatorio.
+  falta es `none`, un `Array[T]` está vacío, uno con valor por defecto (9.2 del
+  lenguaje) lo toma, que la ayuda muestra como lo escribe la línea de comandos,
+  y otro sin defecto es obligatorio.
   Un `Array[T]` se repite: `--section a --section b`.
 - Un enum es un conjunto de subcomandos: cada variante, en kebab-case, es uno, y
   su payload, un record o un único record entre paréntesis, da sus opciones;
@@ -5773,7 +5778,8 @@ pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String
 - Una herramienta se llama como su método, y su `///` es su descripción. Si el
   método recibe un solo record, sus campos son los argumentos de la
   herramienta, con su `///` como descripción; si no, lo son sus parámetros. Un
-  argumento `T?` es opcional. El esquema JSON sale de los tipos: textos,
+  argumento `T?` es opcional, y también un campo con valor por defecto (9.2 del
+  lenguaje), que lo toma cuando falta. El esquema JSON sale de los tipos: textos,
   `Bool`, enteros, floats, `Array[T]`, `Map[String, V]`, records como objetos y
   enums sin datos como `enum` de textos. Unos argumentos que rompen las reglas
   de `std.validate` de sus tipos dan un resultado de error que las dice, para

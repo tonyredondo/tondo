@@ -1,0 +1,57 @@
+// A field's default is its option's when the command line leaves it out,
+// as the help shows, and reflection gives it; a field without one stays
+// required.
+import std.cli
+import std.console
+import std.reflect
+
+enum Mode {
+    Fast
+    Slow
+}
+
+/// Serves files.
+type Serve = {
+    /// The port to listen on.
+    port: Int = 8080
+    /// How fast.
+    mode: Mode = Mode.Slow
+    /// Extra tags.
+    tags: Array[String] = ["web"]
+    /// A name with no default.
+    name: String
+}
+
+fn main() {
+    match cli.parseArgs[Serve](["--name", "x"]) {
+        ok(serve) => console.println(
+            "{serve.port} {serve.mode == Mode.Slow} {serve.tags} {serve.name}",
+        )
+        err(error) => console.println("{error}")
+    }
+    match cli.parseArgs[Serve](["--name", "x", "--port", "9", "--mode", "fast", "--tags", "a"]) {
+        ok(serve) => console.println("{serve.port} {serve.mode == Mode.Fast} {serve.tags}")
+        err(error) => console.println("{error}")
+    }
+    console.println(cli.help[Serve]())
+    let fields = reflect.typeInfo[Serve]().fields()
+    console.println("{fields.map((field) { "{field.name()}={field.default()}" })}")
+    let made = reflect.valueOf(["name": "y"]).to[Serve]().expect("made")
+    console.println("{made.port} {made.name}")
+}
+
+// expect-stdout: 8080 true [web] x
+// expect-stdout: 9 true [a]
+// expect-stdout: Serves files.
+// expect-stdout: 
+// expect-stdout: Usage: cli_defaults [options]
+// expect-stdout: 
+// expect-stdout: Options:
+// expect-stdout:       --port <port>     The port to listen on. [default: 8080]
+// expect-stdout:       --mode <mode>     How fast. [fast, slow] [default: slow]
+// expect-stdout:       --tags <tags>...  Extra tags. [default: web]
+// expect-stdout:       --name <name>     A name with no default.
+// expect-stdout:   -h, --help            Shows this help.
+// expect-stdout: 
+// expect-stdout: [port=some(8080), mode=some(Slow), tags=some(["web"]), name=none]
+// expect-stdout: 8080 y

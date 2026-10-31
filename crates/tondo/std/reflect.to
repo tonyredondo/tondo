@@ -1213,6 +1213,7 @@ pub type FieldInfo = {
     priv text: String?
     priv info: TypeInfo
     priv notes: Array[Value]
+    priv fallback: Value? = none
 }
 
 /// A field's description, as the code the compiler writes for a type
@@ -1225,6 +1226,18 @@ pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): 
 /// writes for a type gives them.
 pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo {
     self with { notes: annotations }
+}
+
+/// The description with the field's default (language 9.2), as the code
+/// the compiler writes for a type gives it.
+pub fn FieldInfo.defaulted(self, value: Value): FieldInfo {
+    self with { fallback: some(value) }
+}
+
+/// The field's default (language 9.2), the value a literal or a decoding
+/// that leaves it out gives it, if it has one.
+pub fn FieldInfo.default(self): Value? {
+    self.fallback
 }
 
 /// The field's annotation of type `A` (language 27.13), if it has it.

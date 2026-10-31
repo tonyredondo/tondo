@@ -3713,3 +3713,14 @@ gives it that, and the empty value only to a field without one. The
 compiler hands the defaults it checked to the reload as constants, so
 nothing runs while every task waits.
 
+## 2026-10-31 — Defaults that the command line and tools see
+
+`std.cli` took an option's default as text, `@cli.Option(default:
+"8080")`, written again beside a field that could now hold it typed. A
+field's default reaches reflection as `field.default()`, and `std.cli`
+gives it to a missing option, after the variables of the environment and
+the text of `@cli.Option`, and shows it in the help as the line would write
+it; `std.mcp` no longer requires such a field of a model, and a reflected
+value without the field gets it. The text form stays for values a type
+cannot hold as a constant.
+

@@ -1000,8 +1000,12 @@ impl Generator<'_> {
                         (false, None) => notes(1, ordinal, 0, ""),
                         (false, Some(variant)) => notes(3, variant, ordinal, ""),
                     };
+                    let defaulted = f.default.as_ref().map_or(String::new(), |default| {
+                        let text = self.sources.slice(default.span);
+                        format!(".defaulted({r}.valueOf[{}]({text}))", self.text(&f.ty))
+                    });
                     format!(
-                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}",
+                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}",
                         f.name.name,
                         info(&self.text(&f.ty))
                     )
@@ -1128,11 +1132,19 @@ impl Generator<'_> {
     }
 
     /// The fields of a record literal from the fields of `__value`.
+    /// The fields of a record literal from a reflected value's; one it
+    /// leaves out has its default, and a private one, which reflection does
+    /// not show, always.
     fn converted(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
         let mut out = String::new();
-        for field in fields {
+        for field in fields.iter().filter(|f| !f.private) {
             let name = &field.name.name;
-            if matches!(field.ty.kind, ast::TypeKind::Optional(_)) {
+            if let Some(default) = &field.default {
+                let default = self.sources.slice(default.span);
+                out.push_str(&format!(
+                    "{indent}{name}: match __value.optional({name:?})? {{\n{indent}    some(__found) => __found.to()?\n{indent}    none => {default}\n{indent}}}\n"
+                ));
+            } else if matches!(field.ty.kind, ast::TypeKind::Optional(_)) {
                 out.push_str(&format!(
                     "{indent}{name}: match __value.optional({name:?})? {{\n{indent}    some(__found) => __found.to()?\n{indent}    none => none\n{indent}}}\n"
                 ));
@@ -1174,7 +1186,7 @@ impl Generator<'_> {
             if parts.is_empty() { name.clone() } else { format!("{name} {{{{ {} }}}}", self.shown(&parts, true)) };
         out.push_str(&format!("    fn reflectShow(self, __nested: Bool): String {{\n        \"{text}\"\n    }}\n\n"));
         out.push_str(&format!("    fn reflectFrom(__value: {r}.Value): {} ! {r}.ReflectError {{\n", self.target()));
-        if fields.iter().any(|f| f.private) {
+        if fields.iter().any(|f| f.private && f.default.is_none()) {
             out.push_str(&format!("        fail {r}.ReflectError.privateFields({name:?}, __value)\n"));
         } else {
             out.push_str(&format!("        {name} {{\n{}        }}\n", self.converted(fields, "            ")));

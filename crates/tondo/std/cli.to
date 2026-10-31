@@ -157,6 +157,9 @@ type Spec = {
     docs: String
     short: String?
     default: String?
+    /// The field's own default (language 9.2), which a missing value gives
+    /// as it is, after the text of `default`.
+    fallback: __reflect.Value?
     env: Array[String]
     hidden: Bool
     positional: Bool
@@ -188,6 +191,7 @@ fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
                     some(found) => found.default
                     none => option.default
                 }
+                fallback: field.default()
                 env: option.env
                 hidden: option.hidden
                 positional: argument.isSome()
@@ -504,6 +508,10 @@ fn members(
                 none => {}
             }
         }
+        // The field's default, as it is.
+        if texts.isEmpty() and spec.fallback.isSome() {
+            continue
+        }
         let shown = if spec.positional { "<{spec.name}>" } else { "--{spec.name}" }
         match arityOf(spec) {
             Arity.Flag => {
@@ -700,6 +708,19 @@ fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
     "{written}\nOptions:\n{lined(rows)}"
 }
 
+/// A field's default as the command line writes it: a variant in
+/// kebab-case, and the elements of a list one after another.
+fn asTyped(value: __reflect.Value): String {
+    match value.typeInfo().kind() {
+        __reflect.TypeKind.Enum => kebab(value.variant().unwrapOr("{value}"))
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) => value
+            .elements()
+            .map((item) { asTyped(item) })
+            .join(", ")
+        _ => "{value}"
+    }
+}
+
 /// A field's help: its documentation, its choices, default and variable.
 fn details(spec: Spec): String {
     var written = firstLine(some(spec.docs))
@@ -708,9 +729,10 @@ fn details(spec: Spec): String {
         written =
             "{written} [{values.variants().map((variant) { kebab(variant.name()) }).join(", ")}]"
     }
-    match spec.default {
-        some(value) => written = "{written} [default: {value}]"
-        none => {}
+    match (spec.default, spec.fallback) {
+        (some(value), _) => written = "{written} [default: {value}]"
+        (none, some(value)) => written = "{written} [default: {asTyped(value)}]"
+        (none, none) => {}
     }
     if not spec.env.isEmpty() {
         written = "{written} [env: {spec.env.join(", ")}]"
