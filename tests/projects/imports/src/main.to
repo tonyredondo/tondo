@@ -14,3 +14,4 @@ fn main() {
 // expect-error: E1501 `hidden` is private to module `imports.a`; declare it `pub` to use it here
 // expect-error: E1001 module `imports.a` declares no `nothing`
 // expect-error: E1804 top-level statements belong in the root file of the program
+// expect-warning: W1001 `a2` is imported but never used: remove the import

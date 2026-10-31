@@ -1,0 +1,12 @@
+// A file that does not parse whole says why, and no more: the code it
+// lost may be what uses its imports.
+
+import std.console
+import std.json
+
+fn main() {
+    let x = json.encode([1, 2]
+    console.println(x)
+}
+
+// expect-error: E0004 expected `)`, found identifier `console`

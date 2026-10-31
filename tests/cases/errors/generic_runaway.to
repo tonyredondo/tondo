@@ -11,3 +11,4 @@ fn main() {
 }
 
 // expect-error: E1112 `grow` is instantiated with ever larger type arguments
+// expect-warning: W1002 `n` is never used: write `_` instead, or `_n` to hold its value until the block ends

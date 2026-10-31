@@ -17,3 +17,5 @@ fn main() {
 }
 
 // expect-error: E1403 a `ref` loan overlaps an exclusive loan of the same call; copy the value it observes into a binding first
+// expect-warning: W1003 the parameter `seen` is never used: write `_` instead, or `_seen` to hold its value until the function ends
+// expect-warning: W1003 the parameter `changed` is never used: write `_` instead, or `_changed` to hold its value until the function ends

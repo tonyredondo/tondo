@@ -36,3 +36,4 @@ fn main() {
 // expect-error: E1202 `Bool` is not a member of `Int | String`
 // expect-error: E1102 a tuple cannot be a union member: wrap it in a newtype
 // expect-error: E1105 `A` does not; `match` on its members
+// expect-warning: W1004 `String` should be `string`: functions, fields, bindings and modules are `camelCase`, with acronyms written as words

@@ -39,3 +39,5 @@ fn main() {
 // expect-error: E1411 passing it as `var` changes `fixed`, which is not declared with `var`
 // expect-error: E1102 this parameter is a `var` loan: write `var numbers`
 // expect-error: E1403 two exclusive loans of one call overlap
+// expect-warning: W1003 the parameter `a` is never used: write `_` instead, or `_a` to hold its value until the function ends
+// expect-warning: W1003 the parameter `b` is never used: write `_` instead, or `_b` to hold its value until the function ends

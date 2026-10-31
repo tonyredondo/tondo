@@ -12,3 +12,4 @@ fn f(s: Shape): Int {
 fn main() {}
 
 // expect-error: E1202
+// expect-warning: W1004 `None` should be `none`: functions, fields, bindings and modules are `camelCase`, with acronyms written as words

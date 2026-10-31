@@ -1,6 +1,7 @@
 // An error is reported once: the names a pattern binds from a value that
-// is already wrong, or from a pattern that does not fit, are known, and a
-// `fail` the function cannot make still ends it.
+// is already wrong, or from a pattern that does not fit, are known, a
+// `fail` the function cannot make still ends it, and a binding used only
+// in a call that could not be checked is not called unused.
 
 import std.console
 
@@ -18,6 +19,10 @@ fn infallible(): Int {
     fail "no"
 }
 
+fn sorted(words: Array[String], order: Int): Array[String] {
+    words.sortWith((a, b) { a.length() - b.length() + order })
+}
+
 fn main() {
     match needs(Holder { run: (): Int { 1 } }) {
         ok(held) => console.println("{held.run()}")
@@ -28,8 +33,13 @@ fn main() {
         _ => {}
     }
     console.println("{infallible()}")
+    for x in 0..4 {
+        console.println("{Byte.wrapping(x)} {sorted(["a"], 1)}")
+    }
 }
 
 // expect-error: E1105 `Holder` does not implement `Ordered`, which `needs` requires of `T`
 // expect-error: E1202 a `Shape.Circle` pattern cannot match a value of type `Int`
 // expect-error: E1302 `infallible` cannot fail, but this propagates `String`: declare its result as `Int ! String`
+// expect-error: E1001 `Array[String]` has no method `sortWith`
+// expect-error: E1001 `Byte` has no operation named `wrapping`

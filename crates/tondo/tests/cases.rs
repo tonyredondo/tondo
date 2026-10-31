@@ -10,6 +10,7 @@
 //!   diagnostic, whose message contains `text` when given; every error is
 //!   one of these, since one that follows from another is a cascade;
 //! - `// expect-warning: <code> [text]` — compilation reports this warning;
+//!   a case that fails to compile reports no other;
 //! - `// expect-platform: <os or arch>...` — the case runs only there, as
 //!   `linux` or `aarch64`;
 //! - `// expect-env: <NAME>=<value>` — the executable runs with it set.
@@ -122,6 +123,16 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .collect();
     if !unexpected.is_empty() {
         return Err(format!("errors the case does not expect:\n{}\n\n{diagnostics}", unexpected.join("\n")));
+    }
+    if !expect.errors.is_empty() {
+        let unexpected: Vec<&str> = diagnostics
+            .lines()
+            .filter(|line| line.starts_with("warning["))
+            .filter(|line| !expect.warnings.iter().any(|expected| matches(line, "warning", expected)))
+            .collect();
+        if !unexpected.is_empty() {
+            return Err(format!("warnings the case does not expect:\n{}\n\n{diagnostics}", unexpected.join("\n")));
+        }
     }
     if !expect.errors.is_empty() {
         return if build.status.success() { Err("compiled, but errors were expected".into()) } else { Ok(()) };

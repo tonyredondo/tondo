@@ -12,3 +12,4 @@ fn main() {
 // expect-error: E1102 a GET request has no body, which `item` would be read from: take it from the path or the query, or take `http.Request`
 // expect-error: E1102 a handler reads one body, as `first`; `second` would be read from it too: put both in one type
 // expect-error: E1102 the path parameter `on` is a `String` or an `Int`, not `Bool`; take `http.Request` to read it
+// expect-warning: W1003 the parameter `second` is never used: write `_` instead, or `_second` to hold its value until the function ends

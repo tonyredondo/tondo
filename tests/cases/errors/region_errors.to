@@ -18,3 +18,7 @@ fn main() {
 // expect-error: E1403 two exclusive loans of one call overlap
 // expect-error: E1411 a `var` loan takes a whole place, and a region keeps its length: take the parameter as `mut Array[Int]`
 // expect-error: E1411 lending a region of it as `mut` changes `fixed`, which is not declared with `var`
+// expect-warning: W1003 the parameter `left` is never used: write `_` instead, or `_left` to hold its value until the function ends
+// expect-warning: W1003 the parameter `right` is never used: write `_` instead, or `_right` to hold its value until the function ends
+// expect-warning: W1003 the parameter `values` is never used: write `_` instead, or `_values` to hold its value until the function ends
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends

@@ -20,3 +20,5 @@ fn main() {
 // expect-error: E1410 a defer block cannot leave its scope
 // expect-error: E1410 a deferred call cannot borrow
 // expect-error: E1410 a defer block cannot register another `defer`
+// expect-warning: W1003 the parameter `text` is never used: write `_` instead, or `_text` to hold its value until the function ends
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends

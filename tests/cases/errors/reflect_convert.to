@@ -15,3 +15,6 @@ fn main() {
 // expect-warning: W1012
 // expect-error: E2110 `reflect.convert` cannot convert here: `User` has no field `phone`: add it to `User`, or declare `Badge.phone` as `String?` so that it becomes `none`
 // expect-error: E2110 `reflect.convert` cannot convert here: `Account` has private fields, so only a `Account` converts to it
+// expect-warning: W1002 `card` is never used: write `_` instead, or `_card` to hold its value until the block ends
+// expect-warning: W1002 `badge` is never used: write `_` instead, or `_badge` to hold its value until the block ends
+// expect-warning: W1002 `account` is never used: write `_` instead, or `_account` to hold its value until the block ends

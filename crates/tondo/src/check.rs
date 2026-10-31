@@ -984,6 +984,9 @@ struct FnCx {
     /// Whether this is a declared function's body, which gathers
     /// `undeclared` rather than reporting each `?`.
     gathers: bool,
+    /// How many errors there were when the body began: one in it may have
+    /// left uses of its bindings unchecked.
+    errors_before: usize,
     /// One entry per enclosing loop: whether a `break` targets it.
     loops: Vec<bool>,
     /// The current path has unconditionally left the enclosing block.
@@ -5939,12 +5942,17 @@ impl<'a> Checker<'a> {
 
     /// A context for a body whose declared result is `result`. A `T ! E`
     /// result makes the body fallible: it is written in terms of `T` (9.8).
+    fn error_count(&self) -> usize {
+        self.diags.list.iter().filter(|d| d.severity == crate::diag::Severity::Error).count()
+    }
+
     fn new_cx(&self, result: Ty) -> FnCx {
         let (success, error) = match self.types.kind(result) {
             TyKind::Result(ok, err) => (*ok, Some(*err)),
             _ => (result, None),
         };
         FnCx {
+            errors_before: self.error_count(),
             withs: Vec::new(),
             locals: Vec::new(),
             local_defs: HashMap::new(),
@@ -8259,8 +8267,13 @@ impl<'a> Checker<'a> {
     }
 
     /// Warns of the bindings and parameters a body never reads (`W1002`,
-    /// `W1003`); `self` and names that start with `_` are exempt.
+    /// `W1003`); `self` and names that start with `_` are exempt. A body
+    /// with an error has none: the error may be where a binding is used,
+    /// in code the checker could not follow.
     fn unused(&mut self, cx: &FnCx, params: &[LocalId]) {
+        if self.error_count() > cx.errors_before {
+            return;
+        }
         for &local in &cx.named {
             let hir::Local { name, span, .. } = &cx.locals[local.0 as usize];
             if cx.reads.contains(&local) || name == "self" || !name.starts_with(char::is_alphabetic) {

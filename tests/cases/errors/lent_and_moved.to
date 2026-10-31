@@ -17,3 +17,5 @@ fn generic[T: ~Copy](value: T): T {
 
 // expect-error: E1406 `sender` moves into this call, which also lends it and would use it after the move: pass `sender.copy()` instead
 // expect-error: E1406 `value` moves into this call, which also lends it and would use it after the move, or remove `~Copy` from its type parameter
+// expect-warning: W1003 the parameter `seen` is never used: write `_` instead, or `_seen` to hold its value until the function ends
+// expect-warning: W1002 `receiver` is never used: write `_` instead, or `_receiver` to hold its value until the block ends

@@ -223,7 +223,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                 let message = "only a root script, whose code is at the top level, starts with `#!`: remove this line";
                 linker.diags.error("E1805", shebang, message);
             }
-            let Module { items, statements, imports: written, .. } = file;
+            let Module { items, statements, imports: written, malformed, .. } = file;
             for mut item in items {
                 linker.item(&mut item);
                 merged.items.push(item);
@@ -240,7 +240,24 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
             for import in written.iter().filter(|i| i.path[0].name == *package) {
                 import.path[1..].iter().for_each(|segment| linker.convention(segment, Case::Camel));
             }
-            for import in written.iter().filter(|i| !linker.used.contains(i.alias_name())) {
+            // An import that is an error, one that names no module, is not
+            // also unused.
+            let standard = crate::api::standard_modules();
+            let failed = |import: &crate::ast::Import| {
+                let named = import.path.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+                let unknown = matches!(import.path.as_slice(), [std, rest @ ..] if std.name == "std"
+                    && rest.first().is_some_and(|first| first.name != "internal")
+                    && !standard.contains(&named));
+                unknown
+                    || linker
+                        .diags
+                        .list
+                        .iter()
+                        .any(|d| d.severity == crate::diag::Severity::Error && d.span == Some(import.span))
+            };
+            let unused: Vec<&crate::ast::Import> =
+                written.iter().filter(|i| !malformed && !linker.used.contains(i.alias_name()) && !failed(i)).collect();
+            for import in unused {
                 let message = format!("`{}` is imported but never used: remove the import", import.alias_name());
                 linker.diags.warning("W1001", import.span, message);
                 if import.line != import.span {

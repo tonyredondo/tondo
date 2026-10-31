@@ -25,6 +25,9 @@ pub struct Module {
     pub bound: bool,
     /// The `#!` line the file starts with.
     pub shebang: Option<Span>,
+    /// Whether the file did not parse whole: code it lost may use what it
+    /// imports.
+    pub malformed: bool,
     /// Checked as a library, without `main`: an example of documentation
     /// that declares none (21.6), or a library for C.
     pub library: bool,

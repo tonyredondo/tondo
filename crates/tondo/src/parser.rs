@@ -12,9 +12,11 @@ pub fn parse_file(file: &SourceFile, diags: &mut Diagnostics) -> Module {
 /// The module and the spans of the expressions written in parentheses,
 /// which the formatter keeps.
 pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module, Vec<Span>) {
+    let before = diags.list.len();
     let tokens = lexer::lex(file, None, diags);
     let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
-    let module = parser.module();
+    let mut module = parser.module();
+    module.malformed = parser.diags.list[before..].iter().any(|d| d.severity == crate::diag::Severity::Error);
     (module, parser.parens)
 }
 

@@ -64,3 +64,4 @@ fn main() {
 // expect-error: E1411 `push` can change the length of `row`, a `mut` binding that keeps its extent; bind it as `var row`
 // expect-error: E1411 lending its elements as `mut` or `var` changes `pairs`
 // expect-error: E1403 `self.items` is lent to the `mut` or `var` bindings of the loop until it ends
+// expect-warning: W1002 `value` is never used: write `_` instead, or `_value` to hold its value until the block ends

@@ -3,3 +3,4 @@ let x = 1
 fn main() {}
 
 // expect-error: E1802
+// expect-warning: W1002 `x` is never used: write `_` instead, or `_x` to hold its value until the block ends

@@ -59,3 +59,4 @@ fn main() {
 // expect-error: E1001 `summarize` comes from the trait `Summary`; call `Summary.summarize(value, ...)`
 // expect-error: E1105 `Int` does not implement `Summary`, which `render` requires of `T`
 // expect-error: E1105 `Item` does not implement `Display`: add `impl Display for Item
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends

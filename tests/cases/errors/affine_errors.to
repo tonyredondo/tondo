@@ -59,3 +59,4 @@ fn main() {}
 // expect-error: E1105 `T` does not implement `Copy` (type parameters are `Copy` unless declared `~Copy`), which `copies` requires of `T`
 // expect-error: E1115 `~Copy` drops the `Copy` that parameters of functions, methods and impls assume; remove it here
 // expect-error: E1108 this closure gives a capture away, so it can be called once and cannot become `fn(): Int`
+// expect-warning: W1002 `taken` is never used: write `_` instead, or `_taken` to hold its value until the block ends

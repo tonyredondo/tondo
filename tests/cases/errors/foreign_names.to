@@ -33,3 +33,4 @@ fn main() {
 // expect-error: E1001 use `expect(message)`
 // expect-error: E1102 `length` is a method: call it, `value.length()`
 // expect-error: E1102 `{}` is an empty block; an empty map is `[:]`
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends
