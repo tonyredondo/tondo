@@ -3,7 +3,9 @@
 
 import std.template
 
-pub type Page = { title: String }
+pub type Page = {
+    title: String
+}
 
 fn main() {
     _ = template.html[Page](r"{{ if title }}")
@@ -11,6 +13,8 @@ fn main() {
     _ = template.html[Page](r"<a {{ title }}>")
     _ = template.text[Page](r"{{ title:.2f }}")
     _ = template.text[Page](r"{{ for x in }}{{ end }}")
+    _ = template.text[Page](r"{{ title = 1 }}")
+    _ = template.text[Page](r"{{ let n = 1 }}{{ n += 1 }}")
 }
 
 // expect-error: E1906 this `{{ if }}` does not end: close it with `{{ end }}`
@@ -18,3 +22,5 @@ fn main() {
 // expect-error: E1906 a value cannot write the name of an element or an attribute: write the name, and the value in quotes, as `title="{{ title }}"`
 // expect-error: E1906 `.2f` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`
 // expect-error: E1906 write `{{ for item in items }}`
+// expect-error: E1906 `title` is no variable of this template: declare it first, `{{ var title = ... }}`
+// expect-error: E1906 `n` cannot change: declare it with `{{ var n = ... }}` to change it

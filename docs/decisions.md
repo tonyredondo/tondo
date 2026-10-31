@@ -3859,3 +3859,18 @@ protocol and Go's `uint64` fields write them, and `messagepack.Value` read
 those past `Int.max` as a `Float`, which lost their low digits. They read
 as `Value.UInt(UInt)` now, and are written back as the same integer; a
 type with a `UInt` field already read them exactly.
+
+## 2026-11-01 — Variables, `if` as a value and `define` in templates
+
+Hugo's themes count and sum in loops with `$n := 0` and `$n = add $n 1`,
+choose a word with `cond`, and keep partials in the file that uses them
+with `define`, and a Tondo template could do none of it. `var` declares a
+variable that `=` and `+=` change, inside loops too, and only a `var`
+changes: the check is made when the template is read, from the blocks
+around the assignment, so a loaded template fails when added and a
+compiled one when compiled, rather than when written. An `if` with braces
+gives a value, as in code, and needs its `else`. `define` writes a
+template in the text of another; in a `Set` it joins the set by its name,
+as Go's does, and a compiled template finds it in the templates being
+written before it looks for a file. The syntax is the same in both kinds,
+since the parser is shared.

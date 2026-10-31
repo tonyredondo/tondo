@@ -1,0 +1,73 @@
+// A loaded template with variables that change, an `if` that gives a
+// value and a template defined in the text of another, and the errors
+// of each when the template is added.
+
+import std.console
+import std.template
+
+type Item = {
+    name: String
+    price: Int
+    sale: Bool
+}
+
+type Cart = {
+    items: Array[Item]
+}
+
+fn main(): !template.TemplateError {
+    var site = template.Set.text()
+    site.add(
+        "cart.txt",
+        r"""
+{{ var total = 0 }}
+{{ var count = 0 }}
+{{ for item in items }}
+{{ total += item.price }}
+{{ count = count + 1 }}
+{{ include "line" item }}
+{{ end }}
+{{ count }} items, total {{ total }}{{ if total > 10 { " (free shipping)" } else if total > 5 { " (almost)" } else { "" } }}
+{{ define "line" }}- {{ name }}{{ if sale { " [sale]" } else { "" } }}: {{ price }}{{ end }}
+""",
+    )?
+    let cart = Cart {
+        items: [
+            Item { name: "pen", price: 3, sale: true },
+            Item { name: "book", price: 9, sale: false },
+        ]
+    }
+    console.print(site.render("cart.txt", cart)?)
+    console.println(site.render("line", cart.items[0])?)
+    let bad = [
+        r"{{ x = 1 }}",
+        r"{{ let x = 1 }}{{ x = 2 }}",
+        r"{{ for i in 0..2 }}{{ i = 3 }}{{ end }}",
+        r"{{ if true { 1 } }}",
+        r"""{{ if true }}{{ define "a" }}{{ end }}{{ end }}""",
+        r"{{ var }}",
+        r"""{{ define "a" }}{{ end }}{{ define "a" }}{{ end }}""",
+    ]
+    for source in bad {
+        match site.add("bad", source) {
+            ok(_) => console.println("added")
+            err(error) => console.println("{error}")
+        }
+    }
+    // A var set in a nested block keeps its value after it.
+    site.add("nested", r"{{ var seen = false }}{{ if true }}{{ seen = true }}{{ end }}{{ seen }}")?
+    console.println(site.render("nested", cart)?)
+}
+
+// expect-stdout: - pen [sale]: 3
+// expect-stdout: - book: 9
+// expect-stdout: 2 items, total 12 (free shipping)
+// expect-stdout: - pen [sale]: 3
+// expect-stdout: bad:1:4: `x` is no variable of this template: declare it first, `{{ var x = ... }}`
+// expect-stdout: bad:1:19: `x` cannot change: declare it with `{{ var x = ... }}` to change it
+// expect-stdout: bad:1:23: `i` cannot change: declare it with `{{ var i = ... }}` to change it
+// expect-stdout: bad:1:17: an `if` that gives a value needs an `else`: write `if c { a } else { b }`
+// expect-stdout: bad:1:14: a `define` names a template, alone, outside any block: write `{{ define "card" }}`
+// expect-stdout: bad:1:1: `var` needs more: write `{{ var name = value }}`
+// expect-stdout: bad:1:26: the template `a` is defined twice in this one
+// expect-stdout: true

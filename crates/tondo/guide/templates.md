@@ -31,16 +31,21 @@ fn main() {
 }
 ```
 
-- A name is a variable of `let`, `for` or `with`, else a field of the
+- A name is a variable of `let`, `var`, `for` or `with`, else a field of the
   data; `self` is the data. A misspelt field is a compile error that lists
   the fields.
 - A condition is a `Bool`, as in code: `{{ if not posts.isEmpty() }}`. An
   optional opens with `{{ with x = optional }}`; an empty `for` writes its
   `{{ else }}`. `{{ let n = posts.length() }}`, `{{ break }}`, `{{ continue }}`.
+- `{{ var total = 0 }}` is a variable that `{{ total += price }}` or
+  `{{ total = 0 }}` changes, until the end of its block, loops included;
+  only a `var` changes. An `if` gives a value as in code: `{{ if sale {
+  "offer" } else { "" } }}`.
 - `{{ price:.2 }}` writes with a format, as interpolation does, and strings
   interpolate: `{{ "{count} posts" }}`. Literals are Tondo's: `[1, 2]`,
   `["small": 320]`, `'c'`, each with one type.
-- A line that holds only blocks (`if`, `for`, `end`, `let`...) vanishes,
+- A line that holds only blocks (`if`, `for`, `end`, `let`, `var`, a
+  change...) vanishes,
   with its line break; `{{-` and `-}}` trim the space around an action. A
   file's last line break is not written.
 - A literal template is a raw string, `r"..."` or `r"""..."""`: in a plain
@@ -51,6 +56,9 @@ fn main() {
   writes another with that data, and `{{ include "card.html" title: title,
   size: 3 }}` with values by name, which it reads as `{{ title }}`. They
   are read next to it when compiling, so their names are known then.
+  `{{ define "card" }}...{{ end }}`, outside any block, writes a template of
+  its own in the text of another, which `include "card"` writes; in a
+  `Set` it is one of the set's.
 - A compiled template calls the functions and modules its file sees:
   `{{ slug(post.title) }}`, `{{ markdown.render(body) }}`.
 - HTML templates escape each value for where it goes: text, attributes,
@@ -124,5 +132,7 @@ fn main(): !template.TemplateError {
 {{ printf "%s/%s" .A .B }}             {{ "{a}/{b}" }}
 {{ define "main" }} / {{ block "main" . }}
                                        {{ extends "base" }} / {{ block "main" }}
+{{ define "card" }} (a partial)        {{ define "card" }}
+{{ $n := 0 }}  {{ $n = add $n 1 }}     {{ var n = 0 }}  {{ n += 1 }}
 {{/* note */}}                         {{// note }}
 ```

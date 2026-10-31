@@ -135,8 +135,17 @@ pub enum Node {
         body: Vec<Node>,
         otherwise: Option<Vec<Node>>,
     },
+    /// A `let`, or a `var` that `Assign` may change.
     Let {
         name: Range<usize>,
+        value: Range<usize>,
+        mutable: bool,
+    },
+    /// `name = value`, or `name += value` with the operator of `op`.
+    Assign {
+        at: usize,
+        name: Range<usize>,
+        op: Option<&'static str>,
         value: Range<usize>,
     },
     Block {
@@ -171,6 +180,17 @@ pub struct Template {
     pub extends: Option<(String, usize)>,
     pub quoted: Option<Range<usize>>,
     pub nodes: Vec<Node>,
+    /// The templates it defines, which `include` writes by their names.
+    pub defines: Vec<Define>,
+}
+
+/// `{{ define "card" }} ... {{ end }}`: a template of its own in the text
+/// of another.
+#[derive(Clone, Debug)]
+pub struct Define {
+    pub at: usize,
+    pub name: String,
+    pub nodes: Vec<Node>,
 }
 
 /// Whether a name in quotes has values in it, to compute as it writes.
@@ -199,8 +219,18 @@ pub fn parse(source: &str, html: bool) -> Result<Template, Error> {
     }
     standalone(source, &mut pieces);
     let pieces = trimmed(merged(pieces));
-    let mut reader =
-        Reader { source, pieces: pieces.into_iter(), loops: 0, depth: 0, extends: None, quoted: None, seen: false };
+    let mut reader = Reader {
+        source,
+        pieces: pieces.into_iter(),
+        loops: 0,
+        depth: 0,
+        extends: None,
+        quoted: None,
+        seen: false,
+        declared: Vec::new(),
+        pending: Vec::new(),
+        defines: Vec::new(),
+    };
     let (mut nodes, stop) = reader.nodes()?;
     match stop {
         Stop::Eof => {}
@@ -218,14 +248,22 @@ pub fn parse(source: &str, html: bool) -> Result<Template, Error> {
             );
         }
     }
+    let mut defines = reader.defines;
     if html {
         let mut state = Html::Text;
         places(&mut nodes, &mut state)?;
         if state != Html::Text {
             return error(source.len(), "the template ends inside a tag or a comment of HTML: close it");
         }
+        for define in &mut defines {
+            let mut state = Html::Text;
+            places(&mut define.nodes, &mut state)?;
+            if state != Html::Text {
+                return error(define.at, "this `define` ends inside a tag or a comment of HTML: close it in it");
+            }
+        }
     }
-    Ok(Template { extends: reader.extends, quoted: reader.quoted, nodes })
+    Ok(Template { extends: reader.extends, quoted: reader.quoted, nodes, defines })
 }
 
 /// Reads a template as a `template.Set` loads it, with each of its
@@ -236,7 +274,7 @@ pub fn load(source: &str, html: bool) -> Result<Template, Error> {
         for node in nodes {
             match node {
                 Node::Text(_) | Node::Break | Node::Continue => {}
-                Node::Write { value, .. } | Node::Let { value, .. } => {
+                Node::Write { value, .. } | Node::Let { value, .. } | Node::Assign { value, .. } => {
                     expression(source, value.clone())?;
                 }
                 Node::If { branches, otherwise, .. } => {
@@ -271,6 +309,9 @@ pub fn load(source: &str, html: bool) -> Result<Template, Error> {
         Ok(())
     }
     walk(source, &template.nodes)?;
+    for define in &template.defines {
+        walk(source, &define.nodes)?;
+    }
     Ok(template)
 }
 
@@ -349,7 +390,7 @@ fn closing(source: &str, from: usize) -> Option<usize> {
         return source[from..].find("}}").map(|at| from + at);
     }
     let bytes = source.as_bytes();
-    let mut quote = None;
+    let (mut quote, mut depth) = (None, 0usize);
     let mut at = from;
     while at < bytes.len() {
         match (quote, bytes[at]) {
@@ -357,6 +398,9 @@ fn closing(source: &str, from: usize) -> Option<usize> {
             (Some(open), byte) if byte == open => quote = None,
             (Some(_), _) => {}
             (None, byte @ (b'"' | b'\'')) => quote = Some(byte),
+            // The braces of an `if` that is an expression.
+            (None, b'{') => depth += 1,
+            (None, b'}') if depth > 0 => depth -= 1,
             (None, b'}') if bytes.get(at + 1) == Some(&b'}') => return Some(at),
             (None, _) => {}
         }
@@ -377,11 +421,52 @@ fn word(source: &str, range: Range<usize>) -> (&str, Range<usize>) {
 /// Whether an action writes nothing: a block, a binding or a comment.
 fn silent(source: &str, action: &Action) -> bool {
     let text = &source[action.content.clone()];
+    let first = word(source, action.content.clone()).0;
     text.starts_with("//")
+        || first == "if" && !braced(source, action.content.clone())
         || matches!(
-            word(source, action.content.clone()).0,
-            "if" | "else" | "end" | "for" | "with" | "let" | "block" | "extends" | "break" | "continue"
+            first,
+            "else" | "end" | "for" | "with" | "let" | "var" | "block" | "define" | "extends" | "break" | "continue"
         )
+        || assignment(source, action.content.clone()).is_some()
+}
+
+/// Whether an expression has braces outside its strings: an `if` that is
+/// an expression, `if a { b } else { c }`, rather than a block.
+fn braced(source: &str, range: Range<usize>) -> bool {
+    let bytes = source.as_bytes();
+    let mut quote = None;
+    let mut at = range.start;
+    while at < range.end {
+        match (quote, bytes[at]) {
+            (Some(_), b'\\') => at += 1,
+            (Some(open), byte) if byte == open => quote = None,
+            (Some(_), _) => {}
+            (None, byte @ (b'"' | b'\'')) => quote = Some(byte),
+            (None, b'{') => return true,
+            (None, _) => {}
+        }
+        at += 1;
+    }
+    false
+}
+
+/// `name = value`, or `name += value` and the other operators before `=`:
+/// the name, the operator and the value.
+fn assignment(source: &str, range: Range<usize>) -> Option<(Range<usize>, Option<&'static str>, Range<usize>)> {
+    let (name, rest) = word(source, range.clone());
+    if !is_name(name) || matches!(name, "if" | "not" | "true" | "false") {
+        return None;
+    }
+    let text = &source[rest.clone()];
+    let op = ["+", "-", "*", "/", "%"].into_iter().find(|op| text.starts_with(&format!("{op}=")));
+    let skip = op.map_or(1, |_| 2);
+    if !text.starts_with('=') && op.is_none() || text[skip..].starts_with('=') {
+        return None;
+    }
+    let value = &text[skip..];
+    let start = rest.start + skip + (value.len() - value.trim_start().len());
+    Some((range.start..range.start + name.len(), op, start.min(rest.end)..rest.end))
 }
 
 /// Empties the lines whose actions all write nothing and whose text is
@@ -477,10 +562,35 @@ struct Reader<'a> {
     /// Whether something but space came already, which `extends` must not
     /// follow.
     seen: bool,
+    /// The names each block in which the reading is binds, and whether
+    /// each is a `var`; and those the next block binds, as a `for` does.
+    declared: Vec<Vec<(String, bool)>>,
+    pending: Vec<(String, bool)>,
+    defines: Vec<Define>,
 }
 
 impl Reader<'_> {
+    /// The parts of a block, whose bindings end with it.
     fn nodes(&mut self) -> Result<(Vec<Node>, Stop), Error> {
+        self.declared.push(std::mem::take(&mut self.pending));
+        let read = self.parts();
+        self.declared.pop();
+        read
+    }
+
+    /// Whether the innermost binding of a name is a `var`, if it has one.
+    fn mutable(&self, name: &str) -> Option<bool> {
+        self.declared.iter().rev().flat_map(|names| names.iter().rev()).find(|(n, _)| n == name).map(|(_, var)| *var)
+    }
+
+    fn declare(&mut self, name: &Range<usize>, mutable: bool) {
+        let name = self.source[name.clone()].to_string();
+        if let Some(names) = self.declared.last_mut() {
+            names.push((name, mutable));
+        }
+    }
+
+    fn parts(&mut self) -> Result<(Vec<Node>, Stop), Error> {
         let mut nodes = Vec::new();
         while let Some(piece) = self.pieces.next() {
             let action = match piece {
@@ -518,16 +628,38 @@ impl Reader<'_> {
                     ("if", condition) if !condition.is_empty() => return Ok((nodes, Stop::ElseIf(condition, at))),
                     _ => return error(rest.start, "write `{{ else }}` or `{{ else if condition }}`"),
                 },
+                "if" if braced(self.source, content.clone()) => nodes.push(write(self.source, content)?),
                 "if" if !empty => nodes.push(self.conditional(rest, at)?),
                 "for" if !empty => nodes.push(self.repeated(rest, at)?),
                 "with" if !empty => {
                     let (name, value) = self.binding(rest, "with")?;
+                    self.pending = vec![(self.source[name.clone()].to_string(), false)];
                     let (body, otherwise) = self.body(at, "with", true)?;
                     nodes.push(Node::With { at, name, value, body, otherwise });
                 }
-                "let" if !empty => {
-                    let (name, value) = self.binding(rest, "let")?;
-                    nodes.push(Node::Let { name, value });
+                "let" | "var" if !empty => {
+                    let (name, value) = self.binding(rest, first)?;
+                    let mutable = first == "var";
+                    self.declare(&name, mutable);
+                    nodes.push(Node::Let { name, value, mutable });
+                }
+                "define" => {
+                    let (name, more) = self.named(rest, "define")?;
+                    if more.is_some() || self.depth > 0 {
+                        return error(
+                            at,
+                            "a `define` names a template, alone, outside any block: write `{{ define \"card\" }}`",
+                        );
+                    }
+                    if self.defines.iter().any(|define| define.name == name) {
+                        return error(at, format!("the template `{name}` is defined twice in this one"));
+                    }
+                    // A defined template sees only its own data and bindings.
+                    let declared = std::mem::take(&mut self.declared);
+                    let (nodes, _) = self.body(at, "define", false)?;
+                    self.declared = declared;
+                    self.defines.push(Define { at, name, nodes });
+                    continue;
                 }
                 "block" => {
                     let (name, _) = self.named(rest, "block")?;
@@ -550,16 +682,48 @@ impl Reader<'_> {
                     }
                     nodes.push(if first == "break" { Node::Break } else { Node::Continue });
                 }
-                "if" | "for" | "with" | "let" => {
+                "if" | "for" | "with" | "let" | "var" => {
                     let example = match first {
                         "if" => "{{ if condition }}",
                         "for" => "{{ for item in items }}",
                         "with" => "{{ with value = optional }}",
+                        "var" => "{{ var name = value }}",
                         _ => "{{ let name = value }}",
                     };
                     return error(at, format!("`{first}` needs more: write `{example}`"));
                 }
-                _ => nodes.push(write(self.source, content)?),
+                _ => match assignment(self.source, content.clone()) {
+                    Some((name, op, value)) => {
+                        let written = &self.source[name.clone()];
+                        match self.mutable(written) {
+                            Some(true) if !value.is_empty() => {}
+                            Some(true) => {
+                                return error(
+                                    at,
+                                    format!("write the value to give `{written}`: `{{{{ {written} = value }}}}`"),
+                                );
+                            }
+                            Some(false) => {
+                                return error(
+                                    name.start,
+                                    format!(
+                                        "`{written}` cannot change: declare it with `{{{{ var {written} = ... }}}}` to change it"
+                                    ),
+                                );
+                            }
+                            None => {
+                                return error(
+                                    name.start,
+                                    format!(
+                                        "`{written}` is no variable of this template: declare it first, `{{{{ var {written} = ... }}}}`"
+                                    ),
+                                );
+                            }
+                        }
+                        nodes.push(Node::Assign { at, name, op, value });
+                    }
+                    None => nodes.push(write(self.source, content)?),
+                },
             }
             self.seen |= !extends;
         }
@@ -598,6 +762,8 @@ impl Reader<'_> {
         else {
             return error(header.start, "write `{{ for item in items }}`");
         };
+        let names = self::pattern(self.source, pattern.clone())?;
+        self.pending = names.into_iter().map(|name| (name, false)).collect();
         self.loops += 1;
         let parts = self.body(at, "for", true);
         self.loops -= 1;
@@ -630,7 +796,11 @@ impl Reader<'_> {
 
     /// `name = value` of `with` and `let`.
     fn binding(&self, rest: Range<usize>, what: &str) -> Result<(Range<usize>, Range<usize>), Error> {
-        let example = if what == "with" { "{{ with value = optional }}" } else { "{{ let name = value }}" };
+        let example = match what {
+            "with" => "{{ with value = optional }}",
+            "var" => "{{ var name = value }}",
+            _ => "{{ let name = value }}",
+        };
         match split(self.source, rest.clone(), Split::Assign) {
             Some((name, value)) if is_name(&self.source[name.clone()]) && !value.is_empty() => Ok((name, value)),
             _ => error(rest.start, format!("write `{example}`")),
@@ -688,6 +858,7 @@ impl Reader<'_> {
         let text = &self.source[rest.clone()];
         let example = match what {
             "block" => "{{ block \"content\" }}",
+            "define" => "{{ define \"card\" }}",
             "extends" => "{{ extends \"base.html\" }}",
             _ => "{{ include \"card.html\" post }}",
         };
@@ -947,7 +1118,7 @@ fn places(nodes: &mut [Node], state: &mut Html) -> Result<(), Error> {
             Node::Include { at, .. } if !matches!(state, Html::Text | Html::Raw(_)) => {
                 return error(*at, "an `include` goes in the text of the HTML, not in a tag");
             }
-            Node::Include { .. } | Node::Let { .. } | Node::Break | Node::Continue => {}
+            Node::Include { .. } | Node::Let { .. } | Node::Assign { .. } | Node::Break | Node::Continue => {}
         }
     }
     Ok(())
@@ -1183,6 +1354,12 @@ pub enum Op {
     /// operations are skipped, and it stays.
     And(usize),
     Or(usize),
+    /// The `Bool` of an `if` that is an expression, which it takes off the
+    /// stack: when false, this many operations are skipped, those of the
+    /// value it gives when true.
+    Unless(usize),
+    /// After the value of a true `if`: those of its `else` are skipped.
+    Skip(usize),
 }
 
 /// The code of an expression, with where each operation is, in bytes of
@@ -1234,8 +1411,10 @@ enum Part {
     Value(Range<usize>, Option<Range<usize>>),
 }
 
-const SYMBOLS: [&str; 21] =
-    ["..=", "..", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!", ":"];
+const SYMBOLS: [&str; 23] = [
+    "..=", "..", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!", ":",
+    "{", "}",
+];
 
 fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Error> {
     let mut out = Vec::new();
@@ -1661,6 +1840,7 @@ impl Expression<'_> {
             }
             Token::Char(value) => self.emit(Op::Char(value), at),
             Token::Name(name) if name == "true" || name == "false" => self.emit(Op::Bool(name == "true"), at),
+            Token::Name(name) if name == "if" => self.choice(at)?,
             Token::Name(name) if matches!(name.as_str(), "and" | "or" | "not" | "in") => {
                 return error(at, format!("expected a value before `{name}`"));
             }
@@ -1680,6 +1860,41 @@ impl Expression<'_> {
             }
             Token::Symbol("[") => self.collection(at)?,
             Token::Symbol(symbol) => return error(at, format!("expected a value, found `{symbol}`")),
+        }
+        Ok(())
+    }
+
+    /// `if condition { value } else { value }`, after its `if`; the `else`
+    /// may be another `if`.
+    fn choice(&mut self, at: usize) -> Result<(), Error> {
+        self.or()?;
+        let unless = self.code.ops.len();
+        self.emit(Op::Unless(0), at);
+        self.braced_value()?;
+        let skip = self.code.ops.len();
+        self.emit(Op::Skip(0), at);
+        self.code.ops[unless] = Op::Unless(self.code.ops.len() - unless - 1);
+        let other = self.at();
+        if !self.keyword("else") {
+            return error(other, "an `if` that gives a value needs an `else`: write `if c { a } else { b }`");
+        }
+        if self.keyword("if") {
+            self.choice(other)?;
+        } else {
+            self.braced_value()?;
+        }
+        self.code.ops[skip] = Op::Skip(self.code.ops.len() - skip - 1);
+        Ok(())
+    }
+
+    /// `{ value }` of an `if` that gives a value.
+    fn braced_value(&mut self) -> Result<(), Error> {
+        if !self.eat("{") {
+            return error(self.at(), "write the value of the branch in braces: `if c { a } else { b }`");
+        }
+        self.or()?;
+        if !self.eat("}") {
+            return error(self.at(), "expected `}` after the value of the branch");
         }
         Ok(())
     }

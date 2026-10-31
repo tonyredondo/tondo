@@ -7,8 +7,9 @@ use super::{Str, str_bytes, str_new};
 use std::fmt::Write;
 use std::ops::Range;
 
-/// A template read: `{"extends": ..., "nodes": [...], "error": null, "at":
-/// 0}`, or the error and where it is.
+/// A template read: `{"extends": ..., "nodes": [...], "defines": [{"name":
+/// ..., "nodes": [...]}], "error": null, "at": 0}`, or the error and where
+/// it is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -> *mut Str {
     let source = String::from_utf8_lossy(unsafe { str_bytes(source) });
@@ -16,6 +17,14 @@ pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -
     let read = syntax::parse(&source, html != 0).and_then(|template| {
         let mut nodes = String::new();
         list(&mut nodes, &source, &template.nodes)?;
+        let mut defines = String::from("[");
+        for (index, define) in template.defines.iter().enumerate() {
+            let _ =
+                write!(defines, "{}{{\"name\":{},\"nodes\":", if index > 0 { "," } else { "" }, quote(&define.name));
+            list(&mut defines, &source, &define.nodes)?;
+            defines.push('}');
+        }
+        defines.push(']');
         // A name with values in it is computed as it writes.
         let mut computed = String::new();
         let extends = match (template.extends, template.quoted) {
@@ -28,14 +37,14 @@ pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -
         if computed.is_empty() {
             computed.push_str("null");
         }
-        Ok((extends, computed, nodes))
+        Ok((extends, computed, nodes, defines))
     });
     match read {
-        Ok((extends, computed, nodes)) => {
+        Ok((extends, computed, nodes, defines)) => {
             let extends = extends.map_or("null".to_string(), |name| quote(&name));
             let _ = write!(
                 out,
-                "{{\"extends\":{extends},\"computed\":{computed},\"nodes\":{nodes},\"error\":null,\"at\":0}}"
+                "{{\"extends\":{extends},\"computed\":{computed},\"nodes\":{nodes},\"defines\":{defines},\"error\":null,\"at\":0}}"
             );
         }
         Err(error) => {
@@ -115,8 +124,18 @@ fn node(out: &mut String, source: &str, node: &Node) -> Result<(), syntax::Error
             optional(out, source, otherwise)?;
             out.push_str("}}");
         }
-        Node::Let { name, value } => {
+        Node::Let { name, value, .. } => {
             let _ = write!(out, "{{\"Let\":{{\"name\":{},\"value\":", quote(&source[name.clone()]));
+            code(out, source, value)?;
+            out.push_str("}}");
+        }
+        Node::Assign { at, name, op, value } => {
+            let op = op.map_or("null".to_string(), quote);
+            let _ = write!(
+                out,
+                "{{\"Assign\":{{\"name\":{},\"op\":{op},\"at\":{at},\"value\":",
+                quote(&source[name.clone()])
+            );
             code(out, source, value)?;
             out.push_str("}}");
         }
@@ -214,6 +233,8 @@ fn code(out: &mut String, source: &str, range: &Range<usize>) -> Result<(), synt
             Op::Range(inclusive) => write!(out, "{{\"Range\":{inclusive}}}"),
             Op::And(skip) => write!(out, "{{\"And\":{skip}}}"),
             Op::Or(skip) => write!(out, "{{\"Or\":{skip}}}"),
+            Op::Unless(skip) => write!(out, "{{\"Unless\":{skip}}}"),
+            Op::Skip(skip) => write!(out, "{{\"Skip\":{skip}}}"),
         };
     }
     let at: Vec<String> = at.iter().map(usize::to_string).collect();

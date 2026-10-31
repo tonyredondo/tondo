@@ -8,8 +8,8 @@
 //! sources, so that an error in it points at its line.
 
 use crate::ast::{
-    ArmBody, Block, Expr, ExprKind, ForHeader, Ident, MatchArm, Pattern, PatternKind, Stmt, StmtKind, StrSegment,
-    UnaryOp,
+    ArmBody, BinOp, Block, Expr, ExprKind, ForHeader, Ident, MatchArm, Pattern, PatternKind, Stmt, StmtKind,
+    StrSegment, UnaryOp,
 };
 use crate::diag::Diagnostics;
 use crate::lexer::{StrPart, Tok};
@@ -46,6 +46,7 @@ pub fn compile(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mu
                     files: &mut files,
                     html: call.html,
                     stack: Vec::new(),
+                    defining: Vec::new(),
                     next: 0,
                     module: module_name.clone(),
                 };
@@ -154,8 +155,10 @@ struct Translator<'a> {
     /// The templates read, by their paths.
     files: &'a mut HashMap<PathBuf, Loaded>,
     html: bool,
-    /// The templates being written, the outermost first.
-    stack: Vec<usize>,
+    /// The templates being written, the outermost first, and the defined
+    /// ones, by their file and name.
+    stack: Vec<Loaded>,
+    defining: Vec<(usize, String)>,
     /// Numbers the bindings the code needs of its own.
     next: usize,
     module: String,
@@ -234,6 +237,18 @@ impl Translator<'_> {
         }
     }
 
+    /// The template `name` that `{{ define }}` writes in the template with
+    /// the `include`, or in one that is writing it, and the parts of it.
+    fn defined(&self, loaded: Loaded, name: &str) -> Option<(Loaded, Vec<Node>)> {
+        std::iter::once(loaded).chain(self.stack.iter().rev().copied()).find_map(|from| {
+            let text = &self.sources.file(from.file).text[from.start..];
+            // A template that does not read says why where it is written.
+            let template = syntax::parse(text, self.html).ok()?;
+            let define = template.defines.into_iter().find(|define| define.name == name)?;
+            Some((from, define.nodes))
+        })
+    }
+
     /// The template named `name` in one of `loaded`'s directory.
     fn named(&mut self, loaded: Loaded, name: &str, at: usize) -> Option<Loaded> {
         let span = self.span(loaded, &(at..at));
@@ -250,7 +265,7 @@ impl Translator<'_> {
     /// The code that writes a template: that of the template it extends,
     /// if any, with the blocks it redefines.
     fn template(&mut self, loaded: Loaded, span: Span) -> Option<Block> {
-        if self.stack.contains(&loaded.file) {
+        if self.stack.iter().any(|written| written.file == loaded.file) {
             let message = "this template includes itself, so writing it would never end";
             self.diags.error("E1906", span, message);
             return None;
@@ -280,7 +295,7 @@ impl Translator<'_> {
             }
         }
         let (base, template) = chain.pop()?;
-        self.stack.push(loaded.file);
+        self.stack.push(loaded);
         let stmts = self.nodes(base, &template.nodes, &blocks);
         self.stack.pop();
         Some(Block { stmts: stmts?, tail: None, span })
@@ -414,15 +429,28 @@ impl Translator<'_> {
                     span,
                 }])
             }
-            Node::Let { name, value } => {
+            Node::Let { name, value, mutable } => {
                 let span = self.span(loaded, name);
                 let binding =
                     Pattern { kind: PatternKind::Binding(Ident { name: self.text(loaded, name), span }), span };
                 let value = self.expression(loaded, value)?;
                 Some(vec![Stmt {
-                    kind: StmtKind::Let { mutable: false, pattern: binding, ty: None, value: Some(value) },
+                    kind: StmtKind::Let { mutable: *mutable, pattern: binding, ty: None, value: Some(value) },
                     span,
                 }])
+            }
+            Node::Assign { name, op, value, .. } => {
+                let span = self.span(loaded, name);
+                let target = Expr { kind: ExprKind::Path(vec![Ident { name: self.text(loaded, name), span }]), span };
+                let op = op.map(|op| match op {
+                    "+" => BinOp::Add,
+                    "-" => BinOp::Sub,
+                    "*" => BinOp::Mul,
+                    "/" => BinOp::Div,
+                    _ => BinOp::Rem,
+                });
+                let value = self.expression(loaded, value)?;
+                Some(vec![Stmt { kind: StmtKind::Assign { target, op, value }, span }])
             }
             Node::Block { at, name, body } => {
                 let span = place(*at);
@@ -440,7 +468,6 @@ impl Translator<'_> {
                     self.diags.error("E1906", span, message);
                     return None;
                 };
-                let included = self.named(loaded, name, *at)?;
                 let data = match data {
                     Some(range) => Some(Box::new(self.expression(loaded, range)?)),
                     None => None,
@@ -450,7 +477,24 @@ impl Translator<'_> {
                     let name = Ident { name: key.clone(), span: self.span(loaded, range) };
                     values.push((name, self.expression(loaded, range)?));
                 }
-                let body = Box::new(self.template(included, span)?);
+                let body = match self.defined(loaded, name) {
+                    Some((from, nodes)) => {
+                        if self.defining.contains(&(from.file, name.clone())) {
+                            let message = "this template includes itself, so writing it would never end";
+                            self.diags.error("E1906", span, message);
+                            return None;
+                        }
+                        self.defining.push((from.file, name.clone()));
+                        let body = self.block(from, &nodes, &HashMap::new(), span);
+                        self.defining.pop();
+                        body?
+                    }
+                    None => {
+                        let included = self.named(loaded, name, *at)?;
+                        self.template(included, span)?
+                    }
+                };
+                let body = Box::new(body);
                 let include = Expr { kind: ExprKind::TemplateInclude { data, named: values, body }, span };
                 Some(vec![append(StrSegment::Expr(include, None), span)])
             }

@@ -1,0 +1,42 @@
+// A compiled template with the same variables, `if` and `define` as a
+// loaded one.
+
+import std.console
+import std.template
+
+type Item = {
+    name: String
+    price: Int
+    sale: Bool
+}
+
+type Cart = {
+    items: Array[Item]
+}
+
+fn main() {
+    let page = template.text[Cart](
+        r"""
+{{ var total = 0 }}
+{{ var count = 0 }}
+{{ for item in items }}
+{{ total += item.price }}
+{{ count = count + 1 }}
+{{ include "line" item }}
+{{ end }}
+{{ count }} items, total {{ total }}{{ if total > 10 { " (free shipping)" } else if total > 5 { " (almost)" } else { "" } }}
+{{ define "line" }}- {{ name }}{{ if sale { " [sale]" } else { "" } }}: {{ price }}{{ end }}
+""",
+    )
+    let cart = Cart {
+        items: [
+            Item { name: "pen", price: 3, sale: true },
+            Item { name: "book", price: 9, sale: false },
+        ]
+    }
+    console.print(page.render(cart))
+}
+
+// expect-stdout: - pen [sale]: 3
+// expect-stdout: - book: 9
+// expect-stdout: 2 items, total 12 (free shipping)

@@ -5573,12 +5573,24 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 - `{{ with x = opcional }} … {{ else }} … {{ end }}` liga el valor de un `T?`
   que lo tiene.
 - `{{ let x = expresión }}`: un nombre hasta el final del bloque en que está.
+  `{{ var x = expresión }}` es uno que cambia: `{{ x = expresión }}` le da
+  otro valor, y `{{ x += expresión }}`, con `-=`, `*=`, `/=` o `%=`, el de la
+  operación, también dentro de los bloques que lo siguen, `for` incluido.
+  Solo cambia un `var` de la misma plantilla: cambiar otro nombre es un error
+  al leerla, que dice que lo declare con `var`.
 - `{{ block "nombre" }} … {{ end }}`: una parte con nombre y su contenido por
   defecto. `{{ extends "base.html" }}`, como primera acción, hace de la
   plantilla la de `base.html` con los bloques que ella define; fuera de ellos
   solo puede haber espacio. En un `Set`, el nombre puede llevar valores,
   `{{ extends "{section}/baseof.html" }}`, que se calculan con el dato al
   escribir; en una plantilla compilada es `E1906`.
+- `{{ define "card" }} … {{ end }}`, fuera de todo bloque, escribe en el texto
+  de una plantilla otra con nombre, que no se escribe donde está e
+  `include` escribe por ese nombre; no ve los nombres de la plantilla que la
+  define. En un `Set` es una plantilla más del conjunto, que reemplaza a una
+  del mismo nombre; en una compilada, `include` busca su nombre en las
+  plantillas que la plantilla que lo escribe y las que la incluyen definen,
+  y si no, un archivo. Una plantilla no define dos veces un nombre.
 - `{{ include "card.html" expresión }}` escribe otra plantilla con ese dato;
   sin él, con `self`. `{{ include "card.html" title: t, size: 3 }}` le da
   valores por nombre, que lee como nombres: `{{ title }}`; ve solo esos, y
@@ -5588,7 +5600,8 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 - `{{// comentario }}` no escribe nada.
 - `{{-` quita el espacio en blanco de antes, y `-}}` el de después. Una línea
   que solo tiene acciones que no escriben (`if`, `else`, `end`, `for`, `with`,
-  `let`, `block`, `extends`, comentarios) desaparece entera, con su salto de
+  `let`, `var`, un cambio de un `var`, `block`, `define`, `extends`,
+  comentarios) desaparece entera, con su salto de
   línea, así que los bloques no dejan líneas vacías. El último salto de línea
   de una plantilla no se escribe.
 
@@ -5599,8 +5612,9 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   claves y los valores, como en el lenguaje; strings con valores dentro,
   `"{title} ({count:>3})"`, que se escriben como las acciones; nombres, campos (`post.title`),
   índices (`tags[0]`, `counts["a"]`), llamadas, métodos, `not`, aritmética,
-  comparaciones, `in`, `and`, `or` y rangos.
-- Un nombre es una variable de `let`, `for` o `with`; si no, un campo del dato
+  comparaciones, `in`, `and`, `or`, rangos e `if` que da un valor,
+  `if oferta { "oferta" } else { "" }`, con su `else`.
+- Un nombre es una variable de `let`, `var`, `for` o `with`; si no, un campo del dato
   de la plantilla, y `self` es el dato entero; si no, una función.
 
 **Compiladas**

@@ -245,7 +245,8 @@ pub fn Set.text(): Set {
     Set { html: false, templates: [:], helpers: [] }
 }
 
-/// Adds the template `source` as `name`, replacing one of that name.
+/// Adds the template `source` as `name`, replacing one of that name, and
+/// each template it defines with `define`, by its name.
 pub fn Set.add(mut self, name: String, source: String): !TemplateError {
     let parsed = match __json.parse(textNative.template(source, self.html)) {
         ok(read) => parsedOf(read)
@@ -266,6 +267,15 @@ pub fn Set.add(mut self, name: String, source: String): !TemplateError {
         extends: parsed.extends
         computed: parsed.computed
         nodes: parsed.nodes
+    }
+    for defined in parsed.defines {
+        self.templates[defined.name] = Loaded {
+            name: defined.name
+            source
+            extends: none
+            computed: none
+            nodes: defined.nodes
+        }
     }
 }
 
@@ -345,8 +355,15 @@ type Parsed = {
     extends: String?
     computed: Code?
     nodes: Array[Node]
+    defines: Array[Definition]
     error: String?
     at: Int
+}
+
+/// A template that another defines, `{{ define "card" }}`.
+type Definition = {
+    name: String
+    nodes: Array[Node]
 }
 
 /// A part of a template.
@@ -357,6 +374,8 @@ enum Node {
     For { names: Array[String], items: Code, body: Array[Node], otherwise: Array[Node]? }
     With { name: String, value: Code, body: Array[Node], otherwise: Array[Node]? }
     Let { name: String, value: Code }
+    /// `name = value`, or `name += value` with the operator of `op`.
+    Assign { name: String, op: String?, value: Code, at: Int }
     Block { name: String, body: Array[Node] }
     /// Another template, named or computed, with its datum or values by name.
     Include { name: String, computed: Code?, data: Code?, named: Array[NamedValue], at: Int }
@@ -404,6 +423,10 @@ enum Op {
     Range(Bool)
     And(Int)
     Or(Int)
+    /// The condition of an `if` that gives a value: when false, this many
+    /// operations are skipped.
+    Unless(Int)
+    Skip(Int)
 }
 
 /// The format of a value written (language 19.6).
@@ -631,6 +654,22 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
             let last = scope.bindings.length() - 1
             scope.bindings[last][name] = found
         }
+        Node.Assign { name, op, value, at } => {
+            // Reading the template found the `var` this changes.
+            var found = self.evaluate(scope, value)?
+            var level = scope.bindings.length() - 1
+            for level > 0 and not scope.bindings[level].contains(name) {
+                level -= 1
+            }
+            match op {
+                some(operator) => {
+                    let current = scope.bindings[level].get(name).unwrapOr(found)
+                    found = self.binary(scope, operator, current, found, at)?
+                }
+                none => {}
+            }
+            scope.bindings[level][name] = found
+        }
         Node.Block { name, body } => {
             match scope.blocks.get(name) {
                 some(defined) => {
@@ -800,6 +839,12 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
                     _ = stack.pop()
                 }
             }
+            Op.Unless(skip) => {
+                if not self.truth(scope, popped(var stack), at, "`if`")? {
+                    index += skip
+                }
+            }
+            Op.Skip(skip) => index += skip
         }
         index += 1
     }
@@ -1460,6 +1505,18 @@ fn parsedOf(value: __json.Value): Parsed {
             false => some(codeOf(value.field("computed")))
         }
         nodes: nodesOf(value.field("nodes"))
+        defines: value
+            .field("defines")
+            .asArray()
+            .unwrapOr([])
+            .map(
+                (each) {
+                    Definition {
+                        name: each.field("name").asText().unwrapOr("")
+                        nodes: nodesOf(each.field("nodes"))
+                    }
+                },
+            )
         error: value.field("error").asText()
         at: value.field("at").asInt().unwrapOr(0)
     }
@@ -1522,6 +1579,12 @@ fn nodeOf(value: __json.Value): Node {
             otherwise: optionalNodes(field("otherwise"))
         }
         "Let" => Node.Let { name: named("name"), value: codeOf(field("value")) }
+        "Assign" => Node.Assign {
+            name: named("name")
+            op: field("op").asText()
+            value: codeOf(field("value"))
+            at: field("at").asInt().unwrapOr(0)
+        }
         "Block" => Node.Block { name: named("name"), body: nodesOf(field("body")) }
         "Include" => Node.Include {
             name: field("name").asText().unwrapOr("")
@@ -1582,6 +1645,8 @@ fn opOf(value: __json.Value): Op {
         "Binary" => Op.Binary(payload.asText().unwrapOr(""))
         "Range" => Op.Range(payload.asBool().unwrapOr(false))
         "And" => Op.And(payload.asInt().unwrapOr(0))
+        "Unless" => Op.Unless(payload.asInt().unwrapOr(0))
+        "Skip" => Op.Skip(payload.asInt().unwrapOr(0))
         _ => Op.Or(payload.asInt().unwrapOr(0))
     }
 }
