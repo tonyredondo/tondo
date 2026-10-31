@@ -3724,3 +3724,15 @@ it; `std.mcp` no longer requires such a field of a model, and a reflected
 value without the field gets it. The text form stays for values a type
 cannot hold as a constant.
 
+## 2026-10-31 — `@name` outside the formats too
+
+`@name` names a field or a variant outside the program, and the formats of
+`std.serialization` honoured it, but `std.mcp`, `std.graphql` and a
+template's `json` read and wrote values through reflection, which only
+knew the program's names: a type that a file reads with `user_id` showed
+`userId` to a model or a GraphQL client. Reflection now gives
+`externalName()` beside `name()`, and those libraries name fields and
+variants with it, in their schemas, the values they read and the ones they
+write, while the program goes on with its own names. GraphQL's habit of
+upper-case enum values is then `@name("ADMIN")`.
+

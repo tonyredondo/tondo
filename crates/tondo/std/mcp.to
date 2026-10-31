@@ -291,7 +291,7 @@ fn argumentsOf(method: __reflect.MethodInfo): (Array[Argument], Bool) {
             fields.map(
                 (field) {
                     Argument {
-                        name: field.name()
+                        name: field.externalName()
                         info: field.typeInfo()
                         docs: field.docs()
                         defaulted: field.default().isSome()
@@ -375,7 +375,7 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
                 .map(
                     (field) {
                         Argument {
-                            name: field.name()
+                            name: field.externalName()
                             info: field.typeInfo()
                             docs: field.docs()
                             defaulted: field.default().isSome()
@@ -387,7 +387,7 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
         __reflect.TypeKind.Enum if info
             .variants()
             .all((v) { v.payloadKind() == __reflect.VariantPayloadKind.Unit }) => {
-            "{{\"type\":\"string\",\"enum\":[{info.variants().map((v) { quote(v.name()) }).join(",")}]}}"
+            "{{\"type\":\"string\",\"enum\":[{info.variants().map((v) { quote(v.externalName()) }).join(",")}]}}"
         }
         __reflect.TypeKind.Newtype => match info.underlying() {
             some(underlying) => schemaOf(underlying, depth + 1)

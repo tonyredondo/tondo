@@ -176,7 +176,7 @@ pub fn jsonOf(value: __reflect.Value): String {
         return "[{value.elements().map(jsonOf).join(",")}]"
     }
     let fields = value.fields()
-    match value.variant() {
+    match value.variant().map((name) { externalVariant(value.typeInfo(), name) }) {
         some(name) if fields.isEmpty() and value.elements().isEmpty() => return __json.encode(name)
         some(name) if fields.isEmpty() => {
             let items = value.elements()
@@ -190,10 +190,33 @@ pub fn jsonOf(value: __reflect.Value): String {
         _ => {}
     }
     if not fields.isEmpty() {
-        let members = fields.map((field) { "{__json.encode(field.name)}:{jsonOf(field.value)}" })
+        let declared = match value.variant() {
+            some(name) => value
+                .typeInfo()
+                .variants()
+                .find((v) { v.name() == name })
+                .map((v) { v.fields() })
+                .unwrapOr([])
+            none => value.typeInfo().fields()
+        }
+        let members = fields.map(
+            (field) {
+                let external = declared
+                    .find((f) { f.name() == field.name })
+                    .map((f) { f.externalName() })
+                    .unwrapOr(field.name)
+                "{__json.encode(external)}:{jsonOf(field.value)}"
+            },
+        )
         return "{{{members.join(",")}}}"
     }
     __json.encode("{value}")
+}
+
+/// The name outside the program of the variant `name` of an enum: its
+/// `@name`, or its own (language 9.4).
+fn externalVariant(info: __reflect.TypeInfo, name: String): String {
+    info.variants().find((v) { v.name() == name }).map((v) { v.externalName() }).unwrapOr(name)
 }
 
 /// The value of a type that JSON writes, at `place` for messages.
@@ -260,14 +283,20 @@ pub fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __
             record(fieldsOf(info.fields(), json, place)?)
         }
         __reflect.TypeKind.Enum => {
+            // By the name outside the program, `@name`'s.
             match json.asText() {
-                some(name) => match info.variants().find((v) { v.name() == name }) {
-                    some(_) => return variant(name, [:], [])
+                some(name) => match info.variants().find((v) { v.externalName() == name }) {
+                    some(found) => return variant(found.name(), [:], [])
                     none => {}
                 }
                 none => {}
             }
-            for (name, payload) in json.asObject().unwrapOr([:]) {
+            for (external, payload) in json.asObject().unwrapOr([:]) {
+                let name = info
+                    .variants()
+                    .find((v) { v.externalName() == external })
+                    .map((v) { v.name() })
+                    .unwrapOr(external)
                 match info.variants().find((v) { v.name() == name }) {
                     some(found) if found.payloadKind() == __reflect.VariantPayloadKind.Record => {
                         return variant(
@@ -298,7 +327,7 @@ pub fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __
                     _ => {}
                 }
             }
-            fail wrong("one of {info.variants().map((v) { v.name() }).join(", ")}")
+            fail wrong("one of {info.variants().map((v) { v.externalName() }).join(", ")}")
         }
         __reflect.TypeKind.Newtype => match info.underlying() {
             some(underlying) => fromJson(underlying, json, place)?
@@ -315,11 +344,13 @@ fn fieldsOf(fields: Array[__reflect.FieldInfo], json: __json.Value, place: Strin
     String {
     var members: Map[String, __reflect.Value] = [:]
     for field in fields {
-        let path = "{place}.{field.name()}"
-        match json.get(field.name()) {
+        let path = "{place}.{field.externalName()}"
+        match json.get(field.externalName()) {
             some(value) => members[field.name()] = fromJson(field.typeInfo(), value, path)?
+            // An optional field is `none`, and one with a default has it.
             none if field.typeInfo().kind() ==
-                __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => {}
+                __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) or
+                field.default().isSome() => {}
             none => fail "`{path}` is missing"
         }
     }

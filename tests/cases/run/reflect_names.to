@@ -1,0 +1,26 @@
+// A field's and a variant's name outside the program is their `@name`, or
+// their own; `name()` stays the program's.
+import std.console
+import std.reflect
+
+enum Status {
+    @name("in_progress")
+    InProgress
+    Done
+}
+
+type Job = {
+    @name("job_id")
+    id: Int
+    status: Status
+}
+
+fn main() {
+    let job = reflect.typeInfo[Job]()
+    console.println("{job.fields().map((f) { "{f.name()}={f.externalName()}" })}")
+    let status = reflect.typeInfo[Status]()
+    console.println("{status.variants().map((v) { "{v.name()}={v.externalName()}" })}")
+}
+
+// expect-stdout: [id=job_id, status=status]
+// expect-stdout: [InProgress=in_progress, Done=Done]

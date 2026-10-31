@@ -1214,6 +1214,7 @@ pub type FieldInfo = {
     priv info: TypeInfo
     priv notes: Array[Value]
     priv fallback: Value? = none
+    priv external: String? = none
 }
 
 /// A field's description, as the code the compiler writes for a type
@@ -1226,6 +1227,18 @@ pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): 
 /// writes for a type gives them.
 pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo {
     self with { notes: annotations }
+}
+
+/// The description with the field's `@name` (language 9.2), as the code
+/// the compiler writes for a type gives it.
+pub fn FieldInfo.externallyNamed(self, name: String): FieldInfo {
+    self with { external: some(name) }
+}
+
+/// The field's name outside the program, which formats write and read: its
+/// `@name("text")`, or its own name.
+pub fn FieldInfo.externalName(self): String {
+    self.external.unwrapOr(self.fieldName)
 }
 
 /// The description with the field's default (language 9.2), as the code
@@ -1279,6 +1292,7 @@ pub type VariantInfo = {
     priv named: Array[FieldInfo]
     priv notes: Array[Value]
     priv text: String?
+    priv external: String? = none
 }
 
 /// A variant's description, as the code the compiler writes for a type
@@ -1299,6 +1313,18 @@ pub fn VariantInfo.of(
         notes: []
         text: none
     }
+}
+
+/// The description with the variant's `@name` (language 9.4), as the code
+/// the compiler writes for a type gives it.
+pub fn VariantInfo.externallyNamed(self, name: String): VariantInfo {
+    self with { external: some(name) }
+}
+
+/// The variant's name outside the program, which formats write and read:
+/// its `@name("text")`, or its own name.
+pub fn VariantInfo.externalName(self): String {
+    self.external.unwrapOr(self.variantName)
 }
 
 /// The description with the variant's annotations, as the code the

@@ -44,7 +44,11 @@ enum Kind {
 /// its type as GraphQL writes it (`[User!]!`), its arguments, and whether
 /// a method gives it.
 type Member = {
+    /// Its name in the schema: a field's `@name`, or its own.
     name: String
+    /// The field it reads, by its name in the program; a method's is its
+    /// name.
+    source: String = ""
     docs: String?
     reference: String
     arguments: Array[Member]
@@ -102,7 +106,7 @@ fn described(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], roo
                         kind: Kind.Enum
                         docs: inner.docs()
                         fields: []
-                        values: inner.variants().map((v) { v.name() })
+                        values: inner.variants().map((v) { v.externalName() })
                         origin: inner.qualifiedName()
                     },
                 )
@@ -179,7 +183,8 @@ fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root
     for field in info.fields().filter((f) { f.typeInfo().kind() != __reflect.TypeKind.Opaque }) {
         fields.push(
             Member {
-                name: field.name()
+                name: field.externalName()
+                source: field.name()
                 docs: field.docs()
                 reference: described(field.typeInfo(), input, var types)
                 arguments: []
@@ -985,7 +990,7 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
             let got = if member.method {
                 self.called(value, member, field, path)
             } else {
-                match value.get(member.name) {
+                match value.get(if member.source.isEmpty() { member.name } else { member.source }) {
                     ok(found) => some(found)
                     err(problem) => {
                         self.failed("{problem}", field, path)
@@ -1087,8 +1092,7 @@ fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path
                     self.selected(Node.Data(value), inner, field.selections, path)
                 }
             }
-            some(named) if named.kind == Kind.Enum =>
-                some(__json.encode(value.variant().unwrapOr("{value}")))
+            some(named) if named.kind == Kind.Enum => some(__shapes.jsonOf(value))
             some(_) if inner == "JSON" => some(__shapes.jsonOf(value))
             some(_) => some(__json.encode("{value}"))
             none if inner == "ID" => some(__json.encode("{value}"))

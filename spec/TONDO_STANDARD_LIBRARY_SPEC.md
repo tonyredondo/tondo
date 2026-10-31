@@ -3389,9 +3389,12 @@ variante. Expone:
 
 Los descriptores secundarios exponen consultas, sin campos públicos:
 
-- `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
-  `docs(): String?` y `default(): Value?`, el valor por defecto del campo (9.2
-  del lenguaje). `reflectFrom` de un record da su valor por defecto a un campo
+- `FieldInfo`: `name(): String`, `externalName(): String`, `typeInfo():
+  TypeInfo`, `ordinal(): Int`, `docs(): String?` y `default(): Value?`, el
+  valor por defecto del campo (9.2 del lenguaje). `externalName()` es el
+  nombre fuera del programa, el de `@name("texto")` o el suyo, que también da
+  `VariantInfo.externalName()` (9.4 del lenguaje); `name()` es siempre el del
+  programa. `reflectFrom` de un record da su valor por defecto a un campo
   que el valor reflejado no tiene, y construye uno cuyos campos privados lo
   tienen todos. Los ordinales conservan la posición declarada aunque se
   omitan campos privados. La documentación son las líneas `///` justo antes del
@@ -5779,7 +5782,9 @@ pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String
   método recibe un solo record, sus campos son los argumentos de la
   herramienta, con su `///` como descripción; si no, lo son sus parámetros. Un
   argumento `T?` es opcional, y también un campo con valor por defecto (9.2 del
-  lenguaje), que lo toma cuando falta. El esquema JSON sale de los tipos: textos,
+  lenguaje), que lo toma cuando falta. Un campo o una variante con `@name` se
+  llama así en los esquemas, los argumentos y los resultados, como en
+  `std.json`. El esquema JSON sale de los tipos: textos,
   `Bool`, enteros, floats, `Array[T]`, `Map[String, V]`, records como objetos y
   enums sin datos como `enum` de textos. Unos argumentos que rompen las reglas
   de `std.validate` de sus tipos dan un resultado de error que las dice, para
@@ -6359,7 +6364,10 @@ pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
   aunque Tondo lo tenga de 64 bits, `Float` es `Float`, `String` y `Char`
   son `String`, `Bool` es `Boolean`; `time.DateTime`, `math.Decimal` y
   `math.BigInt` son escalares con su texto, y `uuid.Uuid` es `ID`. Otro tipo
-  es el escalar `JSON`. Los `///` son las descripciones.
+  es el escalar `JSON`. Los `///` son las descripciones. Un campo o una
+  variante con `@name("texto")` se llama así en el esquema, como en
+  `std.json`: `@name("ADMIN")` da a un enum los valores en mayúsculas que
+  acostumbra GraphQL.
 - Un argumento es opcional si su tipo lo es: el valor por defecto de un
   parámetro no se ve. Un valor de entrada se lee como lee `std.mcp` sus
   argumentos, y uno que no encaja es un error del campo.

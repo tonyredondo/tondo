@@ -1,7 +1,8 @@
 // std.graphql: a schema from the program's types, with their docs; queries
 // with arguments, fragments, directives and variables; mutations with input
 // objects; errors with their path, null propagated to the nearest field
-// that may be null; and introspection.
+// that may be null; and introspection. `@name` names a field or a variant
+// in the schema.
 
 import std.console
 import std.graphql
@@ -10,7 +11,9 @@ import std.sync
 
 /// What a user may do.
 pub enum Role {
+    @name("ADMIN")
     Admin
+    @name("MEMBER")
     Member
 }
 
@@ -33,6 +36,7 @@ pub fn User.posts(self, first: Int?): Array[Post] {
 
 pub type Post = {
     title: String
+    @name("score")
     stars: Int
 }
 
@@ -88,7 +92,7 @@ fn main() {
     run(
         r"""query Named($id: Int!) { user(id: $id) { ...who } } fragment who on User { id name __typename }""",
     )
-    run(r"""mutation { addUser(user: {name: "Bo", role: Member}) { id name role } }""")
+    run(r"""mutation { addUser(user: {name: "Bo", role: MEMBER}) { id name role } }""")
     run(r"""{ all { name ...@include(if: false) { email } } nope: failing }""")
     run(r"""{ user(id: 1) { missing } }""")
     run(r"""{ user(id: 1) { name """)
@@ -102,6 +106,7 @@ fn main() {
             ),
         ),
     )
+    run(r"""{ user(id: 1) { posts(first: 1) { score } } }""")
 }
 
 // expect-stdout: "The queries of the API."
@@ -125,13 +130,13 @@ fn main() {
 // expect-stdout:
 // expect-stdout: "What a user may do."
 // expect-stdout: enum Role {
-// expect-stdout:   Admin
-// expect-stdout:   Member
+// expect-stdout:   ADMIN
+// expect-stdout:   MEMBER
 // expect-stdout: }
 // expect-stdout:
 // expect-stdout: type Post {
 // expect-stdout:   title: String!
-// expect-stdout:   stars: Int!
+// expect-stdout:   score: Int!
 // expect-stdout: }
 // expect-stdout:
 // expect-stdout: type Mutation {
@@ -143,12 +148,13 @@ fn main() {
 // expect-stdout:   name: String!
 // expect-stdout:   role: Role!
 // expect-stdout: }
-// expect-stdout: {"data":{"user":{"name":"Ada","email":"ada@example.com","role":"Admin","posts":[{"title":"Hello from Ada"}]}}}
+// expect-stdout: {"data":{"user":{"name":"Ada","email":"ada@example.com","role":"ADMIN","posts":[{"title":"Hello from Ada"}]}}}
 // expect-stdout: {"errors":[{"message":"the variable `$id` of type `Int!` is not given","locations":[{"line":1,"column":1}]}]}
-// expect-stdout: {"data":{"addUser":{"id":2,"name":"Bo","role":"Member"}}}
+// expect-stdout: {"data":{"addUser":{"id":2,"name":"Bo","role":"MEMBER"}}}
 // expect-stdout: {"data":null,"errors":[{"message":"not today","locations":[{"line":1,"column":49}],"path":["nope"]}]}
 // expect-stdout: {"data":{"user":null},"errors":[{"message":"`User` has no field `missing`; its fields: id, name, email, role, posts","locations":[{"line":1,"column":17}],"path":["user","missing"]}]}
 // expect-stdout: {"errors":[{"message":"a selection has no closing `}`","locations":[{"line":1,"column":22}]}]}
 // expect-stdout: {"data":{"__schema":{"queryType":{"name":"Query"},"types":[{"name":"Query","kind":"OBJECT"},{"name":"User","kind":"OBJECT"},{"name":"Role","kind":"ENUM"},{"name":"Post","kind":"OBJECT"},{"name":"Mutation","kind":"OBJECT"},{"name":"NewUser","kind":"INPUT_OBJECT"},{"name":"String","kind":"SCALAR"},{"name":"Int","kind":"SCALAR"},{"name":"Float","kind":"SCALAR"},{"name":"Boolean","kind":"SCALAR"},{"name":"ID","kind":"SCALAR"}]}}}
 // expect-stdout: {"data":{"__type":{"fields":[{"name":"id","type":{"kind":"NON_NULL","name":null,"ofType":{"name":"Int"}}},{"name":"name","type":{"kind":"NON_NULL","name":null,"ofType":{"name":"String"}}},{"name":"email","type":{"kind":"SCALAR","name":"String","ofType":null}},{"name":"role","type":{"kind":"NON_NULL","name":null,"ofType":{"name":"Role"}}},{"name":"posts","type":{"kind":"NON_NULL","name":null,"ofType":{"name":null}}}]}}}
 // expect-stdout: {"data":{"user":{"name":"Ada"}}}
+// expect-stdout: {"data":{"user":{"posts":[{"score":3}]}}}

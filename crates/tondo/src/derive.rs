@@ -1004,8 +1004,10 @@ impl Generator<'_> {
                         let text = self.sources.slice(default.span);
                         format!(".defaulted({r}.valueOf[{}]({text}))", self.text(&f.ty))
                     });
+                    let named =
+                        named(&f.annotations).map_or(String::new(), |name| format!(".externallyNamed({name:?})"));
                     format!(
-                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}",
+                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}{named}",
                         f.name.name,
                         info(&self.text(&f.ty))
                     )
@@ -1044,8 +1046,10 @@ impl Generator<'_> {
                             }
                         };
                         let annotated = if v.uses.is_empty() { String::new() } else { notes(2, ordinal, 0, "") };
+                        let external = self::named(&v.annotations)
+                            .map_or(String::new(), |name| format!(".externallyNamed({name:?})"));
                         format!(
-                            "{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named}){annotated}{}",
+                            "{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named}){annotated}{}{external}",
                             documented(docs(self.sources, v.name.span))
                         )
                     })
