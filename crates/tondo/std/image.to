@@ -5,6 +5,7 @@
 
 import std.fs as __fs
 import std.internal.image as imageNative
+import std.time as __time
 
 /// A format of image.
 pub enum Format {
@@ -189,6 +190,46 @@ pub fn info(bytes: Array[Byte]): Info ! ImageError {
         _ => Format.WebP
     }
     Info { format, width: found[1], height: found[2] }
+}
+
+/// What a photo's EXIF says: when it was taken, in UTC, from its clock at
+/// the offset the photo gives, or as UTC without one; where, in degrees,
+/// south and west below zero; its camera; how it is turned, 1 upright to
+/// 8 as EXIF numbers it, which `read` applies; and every tag by its name,
+/// as text: `tags["FNumber"]` is `f/2.8`.
+pub type Exif = {
+    date: __time.DateTime?
+    latitude: Float?
+    longitude: Float?
+    camera: String?
+    orientation: Int
+    tags: Map[String, String]
+}
+
+/// The EXIF of a JPEG, PNG, WebP, TIFF or HEIF image, as Hugo's `.Exif`;
+/// `none` when it has none.
+pub fn exif(bytes: Array[Byte]): Exif? {
+    let texts = imageNative.exif(bytes)
+    if texts.length() < 5 {
+        return none
+    }
+    let given = (index: Int): String? {
+        if texts[index].isEmpty() { none } else { some(texts[index]) }
+    }
+    var tags: Map[String, String] = [:]
+    var at = 5
+    for at + 1 < texts.length() {
+        tags[texts[at]] = texts[at + 1]
+        at += 2
+    }
+    some(Exif {
+        date: given(0).andThen((written) { __time.parseDateTime(written).ok() })
+        latitude: given(1).andThen((written) { Float.parse(written).ok() })
+        longitude: given(2).andThen((written) { Float.parse(written).ok() })
+        camera: given(3)
+        orientation: Int.parse(texts[4]).unwrapOr(1)
+        tags
+    })
 }
 
 /// An image of one color.

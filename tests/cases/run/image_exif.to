@@ -1,0 +1,34 @@
+// The EXIF of a photo: when it was taken, at its offset, where, with what
+// camera and how it is turned, and each tag as text.
+
+import std.console
+import std.fs
+import std.image
+
+fn main(): !fs.FsError {
+    let found = image.exif(fs.readBytes("image_exif.jpg")?)
+    match found {
+        some(exif) => {
+            console.println("{exif.date} {exif.camera} {exif.orientation}")
+            console.println(
+                "{exif.latitude.map((l) { (l * 10000.0).round() })} {exif.longitude.map((l) { (l * 10000.0).round() })}",
+            )
+            console.println(
+                "{exif.tags.get("FNumber")} {exif.tags.get("PhotographicSensitivity")} {exif.tags.get("Make")}",
+            )
+        }
+        none => console.println("none")
+    }
+    console.println(
+        "{image.exif(image.blank(2, 2, image.Color.rgb(0, 0, 0)).encode(image.Format.Png).unwrapOr([])).isNone()}",
+    )
+    console.println("{image.exif([]).isNone()}")
+    console.println("{image.exif(fs.readBytes("image_turned.jpg")?).map((e) { e.orientation })}")
+}
+
+// expect-stdout: some(2024-05-17T12:30:00Z) some(Canon EOS R5) 1
+// expect-stdout: some(404170.0) some(-37033.0)
+// expect-stdout: some(f/2.8) some(400) some(Canon)
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: some(6)

@@ -6300,6 +6300,9 @@ pub type Image
 pub fn read(bytes: Array[Byte]): Image ! ImageError
 pub fn open(path: String): Image ! ImageError
 pub fn info(bytes: Array[Byte]): Info ! ImageError
+pub type Exif = { date: time.DateTime?, latitude: Float?, longitude: Float?, camera: String?,
+    orientation: Int, tags: Map[String, String] }
+pub fn exif(bytes: Array[Byte]): Exif?
 pub fn blank(width: Int, height: Int, color: Color): Image
 pub fn fromPixels(width: Int, height: Int, pixels: Array[Byte]): Image ! ImageError
 pub fn Image.width(self): Int
@@ -6366,8 +6369,14 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
 - `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP con
   pérdida a esa `quality`, con alfa, o sin pérdida con `quality: 100`; `save` elige el formato por la extensión del path (`.png`, `.jpg`
   o `.jpeg`, `.gif`, `.webp`) y otra es un error que las nombra.
-
-### 14.39 `std.acme`
+- `exif` lee el EXIF de una imagen JPEG, PNG, WebP, TIFF o HEIF, como el
+  `.Exif` de Hugo, o `none` si no lo tiene: `date`, el momento de la foto en
+  UTC, desde `DateTimeOriginal` (o `DateTime`) en el offset de
+  `OffsetTimeOriginal` (u `OffsetTime`), o como UTC sin él; `latitude` y
+  `longitude` en grados, el sur y el oeste negativos; `camera`, la marca y el
+  modelo sin repetir la marca; `orientation`, de 1 (derecha) a 8 como la
+  numera EXIF, que `read` aplica; y `tags`, cada etiqueta de la imagen
+  principal por su nombre con su valor como texto, salvo `MakerNote`.
 
 `std.acme` da a un servidor los certificados de una autoridad ACME (RFC
 8555), como Let's Encrypt, que obtiene y renueva solo mientras corre. La

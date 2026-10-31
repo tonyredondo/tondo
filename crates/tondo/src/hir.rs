@@ -1426,6 +1426,7 @@ pub const NATIVES: &[Native] = {
         image("read", &[Bytes], Object, "tondo_rt_image_read"),
         image("failure", &[Object], String, "tondo_rt_image_failure"),
         image("info", &[Bytes], Ints, "tondo_rt_image_info"),
+        image("exif", &[Bytes], Strings, "tondo_rt_image_exif"),
         image("size", &[Object], Ints, "tondo_rt_image_size"),
         image("blank", &[Int, Int, Int], Object, "tondo_rt_image_blank"),
         image("pixels", &[Object], Bytes, "tondo_rt_image_pixels"),

@@ -3885,3 +3885,14 @@ builds SQLite, through `libwebp-sys`; only programs that import
 `std.image` link it. `encode` and `save` take the `quality` of JPEG for WebP too,
 85 unless given, and `quality: 100` keeps it without loss, so WebP is
 lossy by default, as in Hugo.
+
+## 2026-11-01 — A photo's EXIF
+
+Hugo's galleries sort photos by `.Exif.Date` and put them on maps with
+`.Exif.Lat` and `.Exif.Long`, and `std.image` read the EXIF only to turn
+an image. `image.exif(bytes)` gives the date, the place, the camera, the
+orientation and every tag as text, from `kamadak-exif`, a reader in pure
+Rust, without decoding the pixels. EXIF dates are a camera's clock with
+no zone unless the photo gives its offset, so `date` uses the offset when
+there is one and reads the clock as UTC when not, which keeps photos in
+the order they were taken without guessing the zone.

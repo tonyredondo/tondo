@@ -513,7 +513,9 @@ fn main(): !image.ImageError {
 An image never changes: each operation gives a new one. `crop`, `rotate`
 by multiples of 90, `flipHorizontal`, `grayscale`, `blur`, `overlay` for a
 watermark, and `pixel` for a color; `image.blank(w, h, image.Color.hex("#ffffff")?)`
-makes one. `save` picks the format by the extension, and `quality`, 85
+makes one. `image.exif(bytes)` gives a photo's `date`, `latitude`,
+`longitude`, `camera`, `orientation` and every tag as text, or `none`.
+`save` picks the format by the extension, and `quality`, 85
 unless given, is that of JPEG and WebP; WebP at `quality: 100` has no
 loss.
 

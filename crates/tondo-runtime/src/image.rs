@@ -231,6 +231,72 @@ fn lossy_webp(image: &DynamicImage, quality: i64) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// `exif`: what an image's EXIF says, as texts: when it was taken, in UTC
+/// as RFC 3339, its latitude and longitude, its camera and orientation,
+/// each empty when it lacks it, and then each tag's name and value; none
+/// when it has no EXIF.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_image_exif(data: *mut ArrayHeader) -> *mut ArrayHeader {
+    let data = bytes(data);
+    let texts = crate::io::host(true, move || exif_texts(&data)).unwrap_or_default();
+    crate::http::string_array(&texts)
+}
+
+fn exif_texts(data: &[u8]) -> Option<Vec<String>> {
+    use exif::{In, Tag, Value};
+    let found = exif::Reader::new().read_from_container(&mut Cursor::new(data)).ok()?;
+    let field = |tag| found.get_field(tag, In::PRIMARY);
+    let text = |tag| match field(tag).map(|f| &f.value) {
+        Some(Value::Ascii(parts)) => {
+            let text = String::from_utf8_lossy(parts.first()?).trim().to_string();
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    };
+    // A camera's clock, at its offset when the photo says it, else as UTC.
+    let date = text(Tag::DateTimeOriginal).or_else(|| text(Tag::DateTime)).and_then(|written| {
+        let clock = jiff::civil::DateTime::strptime("%Y:%m:%d %H:%M:%S", &written).ok()?;
+        let offset = match text(Tag::OffsetTimeOriginal).or_else(|| text(Tag::OffsetTime)) {
+            Some(offset) => jiff::fmt::temporal::DateTimeParser::new().parse_time_zone(&offset).ok()?,
+            None => jiff::tz::TimeZone::UTC,
+        };
+        Some(clock.to_zoned(offset).ok()?.timestamp().to_string())
+    });
+    // Degrees, minutes and seconds, south and west below zero.
+    let degrees = |tag, reference, negative: &str| -> Option<f64> {
+        let Value::Rational(parts) = &field(tag)?.value else { return None };
+        let value = parts.iter().zip([1.0, 60.0, 3600.0]).map(|(part, unit)| part.to_f64() / unit).sum::<f64>();
+        Some(if text(reference).as_deref() == Some(negative) { -value } else { value })
+    };
+    let latitude = degrees(Tag::GPSLatitude, Tag::GPSLatitudeRef, "S");
+    let longitude = degrees(Tag::GPSLongitude, Tag::GPSLongitudeRef, "W");
+    // The model often names the make already.
+    let camera = match (text(Tag::Make), text(Tag::Model)) {
+        (Some(make), Some(model)) if model.starts_with(&make) => Some(model),
+        (Some(make), Some(model)) => Some(format!("{make} {model}")),
+        (make, model) => make.or(model),
+    };
+    let orientation = field(Tag::Orientation).and_then(|f| f.value.get_uint(0)).filter(|o| (1..=8).contains(o));
+    let mut texts = vec![
+        date.unwrap_or_default(),
+        latitude.map_or(String::new(), |l| l.to_string()),
+        longitude.map_or(String::new(), |l| l.to_string()),
+        camera.unwrap_or_default(),
+        orientation.unwrap_or(1).to_string(),
+    ];
+    for each in found.fields().filter(|f| f.ifd_num == In::PRIMARY && f.tag != Tag::MakerNote) {
+        texts.push(each.tag.to_string());
+        texts.push(match &each.value {
+            // Text as it is, without the quotes the crate shows it in.
+            Value::Ascii(parts) => {
+                parts.iter().map(|part| String::from_utf8_lossy(part).trim().to_string()).collect::<Vec<_>>().join(", ")
+            }
+            _ => each.display_value().with_unit(&found).to_string(),
+        });
+    }
+    Some(texts)
+}
+
 /// `pixels`: the red, green, blue and alpha bytes of each pixel, row by row
 /// from the top left.
 #[unsafe(no_mangle)]
