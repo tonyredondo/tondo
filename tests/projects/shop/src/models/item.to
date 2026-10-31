@@ -1,5 +1,16 @@
 pub type Item = { name: String, price: Int }
 
+/// An order other modules build, its `priv` note left to its default.
+pub type Order = {
+    item: Item
+    quantity: Int = 1
+    priv note: String = "no note"
+}
+
+pub fn Order.describe(self): String {
+    "{self.quantity} {self.item.name}, {self.note}"
+}
+
 pub enum Color {
     Red
     Blue

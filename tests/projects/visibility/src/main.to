@@ -21,12 +21,15 @@ fn main() {
     }
     let fine = user.verified()
     let bad = user.check()
+    let _settings = accounts.Settings { name: "s" }
+    let _chosen = accounts.Settings { name: "s", level: 3 }
 }
 
 // expect-error: E1503 `pub fn accounts.leak` exposes `accounts.Hidden`, which is private
 // expect-error: E1114 `impl Display for accounts.Plain` implements a trait for a type, neither of which this module declares
 // expect-error: E1501 field `secret` of `accounts.User` is private to its module
 // expect-error: E1502 `accounts.User` has private fields, so only its module can build it with a literal
+// expect-error: E1501 field `level` of `accounts.Settings` is private to its module: leave it out, and it has its default value
 // expect-error: E1501 `accounts.User` has private fields; end the pattern with `..`
 // expect-error: E1501 `accounts.User.check` is private to its module; declare it `pub` to use it here
 // expect-error: E1504 `accounts.Plain` is declared in another module, which alone declares its methods

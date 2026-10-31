@@ -1,0 +1,19 @@
+// A field's default is a constant of its type; a literal still gives each
+// field that has none.
+fn compute(): Int {
+    4
+}
+
+type Bad = {
+    count: Int = compute()
+    label: String = 3
+    name: String
+}
+
+fn main() {
+    let _bad = Bad {}
+}
+
+// expect-error: E1102 a field's default value is a constant: a literal, `none`, `[]`, or a variant, tuple or record of constants
+// expect-error: E1102 expected `String`, found `Int`
+// expect-error: E1102 this value is missing the field `name: String`

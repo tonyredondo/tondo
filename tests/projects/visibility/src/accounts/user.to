@@ -5,6 +5,12 @@ pub type User = {
 
 pub type Plain = { value: Int }
 
+/// Built outside its module, since its `priv` field has a default.
+pub type Settings = {
+    name: String
+    priv level: Int = 2
+}
+
 type Hidden = { value: Int }
 
 pub fn User.new(name: String): User {

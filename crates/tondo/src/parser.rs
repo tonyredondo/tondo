@@ -763,7 +763,9 @@ impl Parser<'_> {
         } else {
             self.expect(Tok::Eq)?;
             if self.at(&Tok::LBrace) {
-                TypeBody::Record(self.record_body(Defaults::Never)?)
+                // A field may have a default, which a literal may leave out;
+                // not one of C, whose memory is all its fields.
+                TypeBody::Record(self.record_body(if foreign { Defaults::Never } else { Defaults::Optional })?)
             } else {
                 TypeBody::Newtype(self.type_expr()?)
             }
@@ -830,7 +832,8 @@ impl Parser<'_> {
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines; with
-    /// `defaults`, a context's, each `= value` (11.16).
+    /// `defaults`, each `= value`: always a context's (11.16), as a record's
+    /// or an annotation's may.
     fn record_body(&mut self, defaults: Defaults) -> PResult<Vec<FieldDecl>> {
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();

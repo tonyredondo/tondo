@@ -7,6 +7,7 @@ fn main() {
     console.println(models.describe(pen))
     let items = [pen, models.Item { name: "ink", price: 5 }]
     console.println("{prices.total(items)} {label(models.Color.Red)}")
+    console.println(models.Order { item: pen }.describe())
 }
 
 fn label(color: models.Color): String {
@@ -18,3 +19,4 @@ fn label(color: models.Color): String {
 
 // expect-stdout: pen: $3
 // expect-stdout: 8 red
+// expect-stdout: 1 pen, no note

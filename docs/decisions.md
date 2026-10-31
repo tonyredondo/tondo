@@ -3630,3 +3630,17 @@ handler, which reads them as text, JSON or parts, as Gin's middleware puts
 the body back. A route added twice or a parameter that is not a whole
 segment were silently accepted and never answered: now they are errors, at
 compile time for a literal path.
+
+## 2026-10-31 — Defaults for a record's fields
+
+Gin's and Hugo's configurations, and dd-trace-go's options, are records of
+many fields of which a program sets a few: without defaults, Tondo had a
+constructor for each, or every field written in each literal and an
+`Option` for each one a file may leave out. A field now declares its
+default, a constant as a parameter's, which a literal that leaves it out
+takes and decoding too when the input lacks it, so one record serves the
+code and the file. Being constants, they run no code where nothing is
+written, as the specification's records promise. A record whose `priv`
+fields all have defaults is built outside its module with the rest, which
+keeps state a module owns, such as a URL's raw path, out of the hands of
+those who build it.

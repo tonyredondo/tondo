@@ -188,9 +188,9 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 .iter()
                 .all(|ty| context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| qualifies[i])))
                 && (kind != Kind::Serialization
-                    || fields(file, &d.name)
-                        .iter()
-                        .all(|f| !ignored(f) || matches!(f.ty.kind, ast::TypeKind::Optional(_))));
+                    || fields(file, &d.name).iter().all(|f| {
+                        !ignored(f) || f.default.is_some() || matches!(f.ty.kind, ast::TypeKind::Optional(_))
+                    }));
             if !ok {
                 qualifies[index] = false;
                 changed = true;
@@ -718,16 +718,19 @@ impl Generator<'_> {
         out
     }
 
-    /// The fields of a record literal from the `__field_name` locals.
+    /// The fields of a record literal from the `__field_name` locals; one
+    /// the input leaves out has its default.
     fn fields(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
         let mut out = String::new();
         for field in fields {
             let name = &field.name.name;
+            let default = field.default.as_ref().map(|default| self.sources.slice(default.span).to_string());
             let value = if ignored(field) {
-                "none".to_string()
-            } else if self.text(&field.ty).ends_with('?') {
+                default.unwrap_or_else(|| "none".to_string())
+            } else if default.is_some() || self.text(&field.ty).ends_with('?') {
+                let default = default.unwrap_or_else(|| "none".to_string());
                 format!(
-                    "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => none\n{indent}}}"
+                    "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => {default}\n{indent}}}"
                 )
             } else {
                 format!("input.required(__field_{name}, {:?})?", wire(field))

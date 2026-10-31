@@ -64,6 +64,26 @@ Values are copied on assignment (collections and strings share storage until
 changed). A record with a `priv` field cannot be built outside its module:
 give it a constructor function.
 
+A field may have a default, a constant, which a literal that leaves the
+field out takes, and decoding too when the input lacks it. Outside its
+module, a literal leaves out the `priv` fields, so a record whose `priv`
+fields all have defaults can still be built there:
+
+```tondo
+import std.console
+
+pub type Options = {
+    host: String
+    port: Int = 8080
+    tags: Array[String] = []
+    proxy: String? = none
+    priv retries: Int = 3
+}
+
+let options = Options { host: "localhost", port: 9000 }
+console.println("{options.host}:{options.port} {options.retries}")
+```
+
 ## Enums
 
 ```tondo

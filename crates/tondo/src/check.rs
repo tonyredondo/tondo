@@ -90,6 +90,8 @@ fn check_with<'a>(
         contexts: Vec::new(),
         initial_reads: None,
         annotation_decls: HashMap::new(),
+        defaulted: Vec::new(),
+        field_defaults: HashMap::new(),
         annotation_defaults: HashMap::new(),
         annotation_values: Vec::new(),
         context_of: HashMap::new(),
@@ -576,6 +578,21 @@ fn constant(value: &mut hir::Expr) -> bool {
     constant_parts(value).is_some_and(|parts| parts.into_iter().all(constant))
 }
 
+/// What has field defaults: a record, or a generic one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Defaulted {
+    Record(Ty),
+    Template(TemplateId),
+}
+
+/// Whether a declaration is a record whose fields may have defaults, not a
+/// context's or an annotation's, which have their own.
+fn has_field_defaults(decl: &ast::TypeDecl) -> bool {
+    !decl.context
+        && !decl.annotation
+        && matches!(&decl.body, ast::TypeBody::Record(fields) if fields.iter().any(|f| f.default.is_some()))
+}
+
 /// The components of a constant; `None` for a value that is not one.
 fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
     use hir::ExprKind as K;
@@ -848,6 +865,12 @@ struct Checker<'a> {
     /// The annotations the program declares (27.13), by their types, and
     /// the values of their fields a use may leave out.
     annotation_decls: HashMap<Ty, &'a ast::TypeDecl>,
+    /// The records with fields that have defaults not computed yet, with
+    /// their types and the parameters of a generic one.
+    defaulted: Vec<(Defaulted, Ty, &'a ast::TypeDecl, Vec<Ty>)>,
+    /// The default of each field of a record, a constant, by its type or by
+    /// its template; a literal may leave out the fields that have one.
+    field_defaults: HashMap<Defaulted, Vec<Option<hir::Expr>>>,
     annotation_defaults: HashMap<Ty, Vec<Option<hir::Expr>>>,
     /// The program's annotations of each thing they annotate.
     annotation_values: Vec<(Annotated, Vec<hir::Expr>)>,
@@ -1244,6 +1267,7 @@ impl<'a> Checker<'a> {
             self.const_value(id, span);
         }
         self.annotation_declarations();
+        self.record_defaults();
         self.annotation_uses(&module.items, &bodies);
 
         for item in &module.items {
@@ -3596,6 +3620,11 @@ impl<'a> Checker<'a> {
                 self.annotation_decls.insert(ty, decl);
             }
             if let ast::Item::Type(decl) = item
+                && has_field_defaults(decl)
+            {
+                self.defaulted.push((Defaulted::Record(ty), ty, decl, Vec::new()));
+            }
+            if let ast::Item::Type(decl) = item
                 && decl.foreign
             {
                 let layout = self.c_layout(decl);
@@ -3622,6 +3651,11 @@ impl<'a> Checker<'a> {
             self.types.define_template(template, kind);
             // Productivity is checked on the instance with its own parameters.
             let ty = self.types.instantiate(template, params.clone());
+            if let ast::Item::Type(decl) = item
+                && has_field_defaults(decl)
+            {
+                self.defaulted.push((Defaulted::Template(template), ty, decl, params.clone()));
+            }
             if let TyKind::Adt(id) = *self.types.kind(ty) {
                 declared.push((item, name, id));
             }
@@ -3812,6 +3846,60 @@ impl<'a> Checker<'a> {
             return false;
         }
         true
+    }
+
+    /// The defaults of the fields of records: constants, as a parameter's,
+    /// checked where the record is declared, with its type parameters.
+    fn record_defaults(&mut self) {
+        while let Some(&(key, ..)) = self.defaulted.first() {
+            self.record_default(key);
+        }
+    }
+
+    /// The defaults of the fields of a record, when first needed: a default
+    /// may be a literal of another record that leaves out fields of its own.
+    fn record_default(&mut self, key: Defaulted) {
+        let Some(index) = self.defaulted.iter().position(|d| d.0 == key) else { return };
+        let (_, ty, decl, params) = self.defaulted.remove(index);
+        let ast::TypeBody::Record(declared) = &decl.body else { return };
+        let module = std::mem::replace(&mut self.module, decl.module);
+        self.enter_generics(&decl.generics, &params);
+        let fields = self.record_fields(ty, decl.span).unwrap_or_default();
+        let mut cx = self.new_cx(Ty::UNIT);
+        let mut defaults = Vec::new();
+        for (field, (_, field_ty)) in declared.iter().zip(fields) {
+            let default = field.default.as_ref().map(|default| {
+                let value = self.expr(&mut cx, default, Some(field_ty));
+                let mut value = self.coerce(value, field_ty);
+                if !self.types.has_error(value.ty) && !constant(&mut value) {
+                    let message = "a field's default value is a constant: a literal, `none`, `[]`, or a variant, tuple or record of constants";
+                    self.diags.error("E1102", default.span, message);
+                }
+                value
+            });
+            defaults.push(default);
+        }
+        self.field_defaults.insert(key, defaults);
+        self.leave_generics(&decl.generics);
+        self.module = module;
+    }
+
+    /// The field defaults of a record type, its generic ones instantiated.
+    fn defaults_of(&mut self, ty: Ty) -> Option<Vec<Option<hir::Expr>>> {
+        self.record_default(Defaulted::Record(ty));
+        if let Some(defaults) = self.field_defaults.get(&Defaulted::Record(ty)) {
+            return Some(defaults.clone());
+        }
+        let (template, args) = self.types.instance_of(ty)?;
+        let args = args.to_vec();
+        self.record_default(Defaulted::Template(template));
+        let mut defaults = self.field_defaults.get(&Defaulted::Template(template))?.clone();
+        let params = self.types.template(template).params.clone();
+        let map: HashMap<Ty, Ty> = params.into_iter().zip(args).collect();
+        for default in defaults.iter_mut().flatten() {
+            self.instantiate(default, &map);
+        }
+        Some(defaults)
     }
 
     /// Each annotation the program declares (27.13): its fields of types
@@ -4324,6 +4412,7 @@ impl<'a> Checker<'a> {
                         self.diags.error("E1616", annotation.span, message);
                     }
                     ("name", Some(_)) => {}
+                    ("ignore", None) if field.default.is_some() => {}
                     ("ignore" | "omitNone", None)
                         if matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Error) => {}
                     ("omitNone", None) => {
@@ -4337,7 +4426,7 @@ impl<'a> Checker<'a> {
                     }
                     ("ignore", None) => {
                         let message = format!(
-                            "an ignored field is optional, since decoding leaves it `none`: write `{}: {}?`",
+                            "decoding leaves out an ignored field, so it has a default value or is optional: write `{}: {}?`",
                             field.name.name,
                             self.types.display(ty)
                         );
@@ -10545,23 +10634,42 @@ impl<'a> Checker<'a> {
         let Some(fields) = self.record_fields(ty, name.span) else {
             return Self::error_expr(span);
         };
-        if self.hidden_fields(ty).is_some() {
-            let message = format!(
-                "{} has private fields, so only its module can build it with a literal; call a function of that module",
-                self.display(ty)
-            );
-            self.diags.error("E1502", name.span, message);
+        // Outside its module, a literal leaves out the private fields, which
+        // then need defaults.
+        if let Some(hidden) = self.hidden_fields(ty).map(<[bool]>::to_vec) {
+            let defaults = self.defaults_of(ty).unwrap_or_default();
+            let written = inits.iter().find(|i| self.field_index(ty, &i.name.name).is_some_and(|k| hidden[k]));
+            if hidden.iter().enumerate().any(|(k, &private)| private && !defaults.get(k).is_some_and(Option::is_some)) {
+                let message = format!(
+                    "{} has private fields, so only its module can build it with a literal; call a function of that module",
+                    self.display(ty)
+                );
+                self.diags.error("E1502", name.span, message);
+            } else if let Some(init) = written {
+                let message = format!(
+                    "field `{}` of {} is private to its module: leave it out, and it has its default value",
+                    init.name.name,
+                    self.display(ty)
+                );
+                self.diags.error("E1501", init.name.span, message);
+            }
         }
         self.index_fields(Some(name.name.clone()), inits.iter().map(|i| (&i.name, i.value.is_none())));
         let (ty, mut values, mut seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
         if self.types.c_layout(ty).is_some_and(|l| l.union) {
             return self.union_literal(cx, ty, values, span);
         }
-        // An annotation's field a literal leaves out has its value (27.13).
-        if let Some(defaults) = self.annotation_defaults.get(&ty) {
-            for (index, default) in defaults.iter().enumerate() {
-                if let (false, Some(default)) = (seen[index], default) {
-                    values.push((index as u32, default.clone()));
+        // A field a literal leaves out has its default: an annotation's
+        // (27.13), or a record's.
+        let defaults = match self.annotation_defaults.get(&ty) {
+            Some(defaults) => Some(defaults.clone()),
+            None => self.defaults_of(ty),
+        };
+        if let Some(defaults) = defaults {
+            for (index, default) in defaults.into_iter().enumerate() {
+                if let (false, Some(mut default)) = (seen[index], default) {
+                    default.span = span;
+                    values.push((index as u32, default));
                     seen[index] = true;
                 }
             }

@@ -1,0 +1,67 @@
+// A field's default fills a literal that leaves it out, in a generic record
+// too, and decoding when the input lacks it. A script's statements are its
+// module's, so they read its `priv` fields.
+import std.console
+import std.json
+
+enum Mode {
+    Fast
+    Slow
+}
+
+const Limit: Int = 7
+
+pub type Options = {
+    name: String
+    retries: Int = 3
+    tags: Array[String] = []
+    limit: Int? = none
+    mode: Mode = Mode.Fast
+    max: Int = Limit
+    priv scale: Float = 1.5
+}
+
+type Pair[T] = {
+    first: T
+    rest: Array[T] = []
+}
+
+/// A default that is a literal of a record declared after it, which leaves
+/// out fields of its own.
+type Frame = {
+    origin: Point = Point {}
+    size: Point = Point { x: 2 }
+}
+
+type Point = {
+    x: Int = 0
+    y: Int = 0
+}
+
+type Wire = {
+    host: String
+    port: Int = 8080
+    @ignore
+    cache: Array[String] = []
+}
+
+let options = Options { name: "a" }
+console.println("{options.retries} {options.tags} {options.limit} {options.mode == Mode.Fast} {options.max} {options.scale}")
+let given = Options { name: "b", retries: 5, limit: some(2) }
+console.println("{given.retries} {given.limit}")
+let pair = Pair { first: 1 }
+let named: Pair[String] = Pair { first: "x" }
+console.println("{pair.rest} {named.first} {named.rest}")
+let frame = Frame {}
+console.println("{frame.origin.x} {frame.size.x} {frame.size.y}")
+let wire = json.decode[Wire]("{{\"host\": \"h\"}}").expect("decoded")
+console.println("{wire.port} {wire.cache}")
+let sent = json.decode[Wire]("{{\"host\": \"h\", \"port\": 1}}").expect("decoded")
+console.println(json.encode(sent))
+
+// expect-stdout: 3 [] none true 7 1.5
+// expect-stdout: 5 some(2)
+// expect-stdout: [] x []
+// expect-stdout: 0 2 0
+// expect-stdout: 8080 []
+// expect-stdout: {"host":"h","port":1}

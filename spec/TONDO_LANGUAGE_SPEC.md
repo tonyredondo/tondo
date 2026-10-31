@@ -1264,11 +1264,14 @@ En este ejemplo:
 - Código externo no puede construir un literal `User` completo porque no puede proporcionar el campo privado.
 - El módulo debe ofrecer una función pública de construcción si desea permitir la creación externa.
 
-Un record público es **externamente construible** exactamente cuando todos sus
-campos son públicos. Esta propiedad booleana forma parte de su interfaz compilada,
+Un record público es **externamente construible** exactamente cuando cada campo
+privado tiene valor por defecto (9.2), en particular cuando no tiene ninguno.
+Desde otro módulo, su literal omite los campos privados, que toman ese valor, y
+nombrar uno es `E1501`; si un campo privado no tiene valor por defecto, el
+literal es `E1502`. Esta propiedad booleana forma parte de su interfaz compilada,
 aunque los campos privados que la causan permanezcan ocultos. Añadir el primer
-campo privado retira la construcción literal externa y es un cambio incompatible
-de fuente. Si el record ya no era externamente construible, añadir o cambiar otro
+campo privado sin valor por defecto retira la construcción literal externa y es
+un cambio incompatible de fuente. Si el record ya no era externamente construible, añadir o cambiar otro
 campo privado puede ser compatible bajo las condiciones siguientes.
 
 Un campo `priv` no puede aparecer en un tipo privado porque sería redundante; es
@@ -1938,7 +1941,32 @@ let user = User {
 }
 ~~~
 
-Todos los campos deben inicializarse exactamente una vez. No existen:
+Un campo puede declarar un valor por defecto, que el literal usa cuando no lo
+nombra:
+
+~~~tondo
+pub type ServerConfig = {
+    host: String
+    port: Int = 8080
+    tags: Array[String] = []
+    timeout: Duration? = none
+}
+
+let config = ServerConfig { host: "localhost" }
+~~~
+
+El valor por defecto es una constante, como el de un parámetro (11.3): un
+literal, `none`, `[]`, `[:]`, una `const`, o una variante, tuple o record cuyos
+componentes también lo son; otra expresión es `E1102`. Se comprueba contra el
+tipo del campo donde se declara el record, en el scope de su módulo y con sus
+parámetros de tipo, y en un record genérico se instancia con los argumentos del
+literal. El literal que omite el campo escribe ese valor como si lo nombrara. Al
+decodificar un record (14.6 de la librería estándar), un campo ausente toma su
+valor por defecto. Los valores iniciales de los campos de un contexto (11.16) y
+de una anotación (27.13) siguen sus propias reglas.
+
+Todos los campos deben inicializarse exactamente una vez, en el literal o con
+su valor por defecto. No existen:
 
 - Campos sin inicializar.
 - Inicializadores de campos ejecutados ocultamente.
@@ -1975,7 +2003,8 @@ type Account = {
 ~~~
 
 `@name("text")` da el nombre del campo fuera del programa e `@ignore` lo omite;
-un campo ignorado es opcional, porque al decodificarse queda `none`. Otra
+un campo ignorado tiene valor por defecto o es opcional, porque al decodificarse
+toma ese valor o queda `none`. Otra
 anotación en minúscula es error; los campos de un contexto admiten en su lugar
 `@log` y `@label` (11.16). Un campo también lleva las anotaciones que declara
 el programa, que se escriben con la mayúscula de su tipo (27.13).
@@ -8554,7 +8583,7 @@ oculten un diagnóstico independiente.
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
 | `E1501` | `inaccessible-symbol` | Símbolo o campo existe, pero no es visible desde el módulo actual. |
-| `E1502` | `invalid-public-construction` | Construcción pública intenta nombrar o fijar estado privado. |
+| `E1502` | `invalid-public-construction` | Construcción pública de un record con un campo privado sin valor por defecto. |
 | `E1503` | `private-type-in-public-api` | Firma pública expone un tipo no exportado. |
 | `E1504` | `invalid-method-owner` | El módulo no puede declarar el método inherente para ese owner. |
 | `E1505` | `member-name-conflict` | Campo, método o variante viola las reglas de unicidad del owner. |

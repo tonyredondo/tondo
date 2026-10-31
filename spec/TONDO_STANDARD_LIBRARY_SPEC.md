@@ -3005,8 +3005,8 @@ Cada formato ofrece dos rutas:
   se conoce al compilar.
 
 Las anotaciones de campo `@name("wire")` e `@ignore` (9.2 del lenguaje) eligen
-el nombre de un campo fuera del programa u omiten un campo opcional, en todos
-los formatos. Un formato ofrece además lectura y escritura por eventos, que
+el nombre de un campo fuera del programa u omiten un campo opcional o con
+valor por defecto, en todos los formatos. Un formato ofrece además lectura y escritura por eventos, que
 comparten parser y emisor con las demás rutas.
 
 ### 14.7 `std.serialization`
@@ -3099,10 +3099,12 @@ pub trait Decode {
   alguna, falla con `Invalid` y una `Violation` por cada regla rota, con el
   nombre de su campo y lo que pide, de `invalid`.
 - Un record es un mapa con sus campos en orden de declaración; `@name("texto")`
-  cambia la clave de un campo y `@ignore` lo omite, y debe ser opcional. `none`
-  es `Null`; un formato sin null (`omitsNone`) omite el campo, y un campo
-  opcional ausente se decodifica como `none`. Un campo obligatorio ausente da
-  `Missing`; uno desconocido se ignora salvo que el `Source` lo rechace.
+  cambia la clave de un campo y `@ignore` lo omite, y debe tener valor por
+  defecto o ser opcional. `none` es `Null`; un formato sin null (`omitsNone`)
+  omite el campo, y un campo ausente toma su valor por defecto (9.2 del
+  lenguaje) o, si es opcional, se decodifica como `none`. Un campo obligatorio
+  ausente da `Missing`; uno desconocido se ignora salvo que el `Source` lo
+  rechace.
 - `@omitNone` en un campo opcional lo omite en todo formato cuando es `none`,
   en vez de escribir `Null`; en un record, omite así todos sus campos
   opcionales. En un campo que no es opcional es `E1102`. Decodificar no
