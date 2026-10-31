@@ -138,7 +138,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-pub(crate) const PRELUDE_TYPES: [&str; 48] = [
+pub(crate) const PRELUDE_TYPES: [&str; 49] = [
     "NumericConversionError",
     "ByteOrder",
     "Bool",
@@ -187,6 +187,7 @@ pub(crate) const PRELUDE_TYPES: [&str; 48] = [
     "Display",
     "Panic",
     "Failure",
+    "Contexts",
 ];
 
 enum TypeName {
@@ -3399,7 +3400,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalFs
                     | StdModule::InternalSql
                     | StdModule::InternalImage
-                    | StdModule::InternalText,
+                    | StdModule::InternalText
+                    | StdModule::InternalContext,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -8571,6 +8573,28 @@ impl<'a> Checker<'a> {
                 let fields = changed.fold(0u64, |set, index| set | 1 << index.min(63));
                 cx.withs.push((context, fields, stmt.span));
                 Some(hir::Stmt::ContextSet { context, value, fields, span: stmt.span })
+            }
+            // `with captured` gives back the contexts of a `Contexts`.
+            ast::StmtKind::Activate(captured) => {
+                let contexts = match self.type_names.get("Contexts") {
+                    Some(&TypeName::Nominal(ty)) => ty,
+                    _ => return None,
+                };
+                let value = self.expr(cx, captured, Some(contexts));
+                if value.ty != contexts {
+                    if !self.types.has_error(value.ty) {
+                        let message = format!(
+                            "`with` takes a context's fields, as `with Trace {{ span }}`, or contexts that `Contexts.current()` captured, as `with captured`; this is {}",
+                            self.display(value.ty)
+                        );
+                        self.diags.error("E1617", captured.span, message);
+                    }
+                    return None;
+                }
+                let Some(&ModuleName::Fn(activate)) = self.names.get("prelude.activateContexts") else { return None };
+                let activate =
+                    Self::mk(hir::ExprKind::Call(Callee::Fn(activate), Vec::new(), vec![value]), Ty::INT, stmt.span);
+                Some(hir::Stmt::ContextsActivate { activate, span: stmt.span })
             }
             ast::StmtKind::Let { mutable, pattern, ty, value } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));

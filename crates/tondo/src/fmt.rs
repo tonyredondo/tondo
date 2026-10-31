@@ -919,6 +919,7 @@ impl Formatter<'_> {
                 let fields = fields.iter().map(|f| self.field_init(f)).collect();
                 concat(vec![text(format!("with {} ", path_text(path))), self.record_body(fields)])
             }
+            StmtKind::Activate(captured) => concat(vec![text("with "), self.expr(captured)]),
             StmtKind::Return(None) => text("return"),
             StmtKind::Return(Some(value)) => concat(vec![text("return "), self.expr(value)]),
             StmtKind::Fail(value) => concat(vec![text("fail "), self.expr(value)]),

@@ -1316,14 +1316,24 @@ impl Parser<'_> {
             Tok::Kw(Kw::For) => self.for_statement()?,
             // `with Context { ... }` changes a context; `value with { ... }`
             // is an expression that starts with the value (11.16).
+            // `with saved` gives back the contexts a `Contexts` captured.
             Tok::Kw(Kw::With) if matches!(self.nth(1), Tok::Ident(_)) => {
                 self.bump();
-                let mut path = vec![self.ident()?];
-                while self.eat(&Tok::Dot) {
-                    path.push(self.ident()?);
+                // A path and `{`: a context's fields.
+                let mut ahead = 1;
+                while self.nth(ahead) == &Tok::Dot && matches!(self.nth(ahead + 1), Tok::Ident(_)) {
+                    ahead += 2;
                 }
-                let fields = self.field_inits()?;
-                StmtKind::With { path, fields }
+                if self.nth(ahead) == &Tok::LBrace {
+                    let mut path = vec![self.ident()?];
+                    while self.eat(&Tok::Dot) {
+                        path.push(self.ident()?);
+                    }
+                    let fields = self.field_inits()?;
+                    StmtKind::With { path, fields }
+                } else {
+                    StmtKind::Activate(self.expression()?)
+                }
             }
             Tok::Kw(Kw::Defer) => {
                 self.bump();

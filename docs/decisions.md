@@ -3675,3 +3675,17 @@ cause, the standard library's too, which implement no reflection. A `?`
 that would propagate another error into a `Failure` is an error that
 proposes `.context`, rather than a silent conversion.
 
+## 2026-10-31 — Contexts captured and given back
+
+dd-trace-go hands a span to the code that runs next by returning a context,
+and its queues carry the context of each message to the worker that
+handles it. Tondo's contexts follow tasks and blocks, which covers a request
+but neither of those: a worker handles each message in its own task, and a
+function's `with` ends with it. `Contexts.current()` captures every context
+as a value, and `with captured` gives them back until the block ends: the
+queue keeps one with each message, and a function that starts a span
+returns the contexts its caller activates. One value for all of them keeps
+a library that adds a context working with queues that know nothing of it;
+it shares the task's table, which never changes, so capturing copies
+nothing.
+

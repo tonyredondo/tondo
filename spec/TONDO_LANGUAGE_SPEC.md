@@ -4089,6 +4089,46 @@ Un cierre se ejecuta con el contexto de la tarea y del punto donde se llama, no
 donde se creó: una función guardada y llamada después por otra tarea ve el
 contexto de esa tarea.
 
+**Capturar.** `Contexts.current()` da los contextos de la tarea en ese punto,
+con los cambios de los `with` que valen allí, como un valor del tipo `Contexts`
+del prelude, que es `Copy` y `Send`. `with captured`, con una expresión de tipo
+`Contexts`, da a la tarea todos esos contextos desde la sentencia siguiente
+hasta el final del bloque y al salir vuelve a los de antes, como un `with` de
+campos. Así una cola o un actor, que atiende en su tarea el trabajo de otras,
+guarda los contextos con cada mensaje y lo atiende con ellos:
+
+~~~tondo pseudocode
+fn enqueue(job: Job) {
+    jobs.send((job, Contexts.current()))
+}
+
+fn work() {
+    for (job, contexts) in jobs {
+        with contexts
+        job.run()
+    }
+}
+~~~
+
+Una función no cambia los contextos de quien la llama, pero puede darle los
+que tendría, que quien la llama activa:
+
+~~~tondo pseudocode
+fn startSpan(name: String): Contexts {
+    with Trace { span: some(tracer.start(name)) }
+    Contexts.current()
+}
+
+fn query(sql: String): Rows ! SqlError {
+    with startSpan("db.query")
+    database.query(sql)
+}
+~~~
+
+`with` seguido de un nombre y `{` cambia campos; seguido de otra expresión,
+activa contextos, y una que no es `Contexts` es `E1617`. Capturar comparte la
+tabla de la tarea sin copiarla.
+
 **Inmutabilidad.** El contexto de una tarea es un valor: cada `with` crea uno
 nuevo, y nada cambia un contexto que otra tarea o un bloque exterior ya tiene.
 Los campos son valores de Tondo; un estado compartido que cambia se pone a

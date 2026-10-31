@@ -550,6 +550,9 @@ pub enum StmtKind {
         path: Vec<Ident>,
         fields: Vec<FieldInit>,
     },
+    /// `with captured`: the contexts a `Contexts` captured, until the end
+    /// of the block (11.16).
+    Activate(Expr),
     Expr(Expr),
 }
 

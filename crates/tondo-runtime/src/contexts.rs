@@ -459,6 +459,37 @@ pub unsafe extern "C" fn tondo_rt_context_restore(saved: *mut Table) {
     }
 }
 
+/// The contexts of a task as they were where `Contexts.current()` read
+/// them (11.16): a share of its table, which never changes.
+struct Captured(Held);
+
+// A table never changes once made, and its count is atomic.
+unsafe impl Send for Captured {}
+unsafe impl Sync for Captured {}
+
+/// The running task's contexts, for `with` to give them back elsewhere,
+/// in this task or another.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_contexts_capture() -> *mut super::native::NativeObject {
+    super::native::new(Captured(inherited()))
+}
+
+/// `with captured`: the running task has the captured contexts until the
+/// block ends, which gives `tondo_rt_context_restore` the table returned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_contexts_activate(object: *mut super::native::NativeObject) -> *mut Table {
+    let Some(held) = current() else { return std::ptr::null_mut() };
+    let table = super::native::get::<Captured>(object).map_or(std::ptr::null_mut(), |captured| captured.0.0);
+    if !table.is_null() {
+        unsafe { (*table).count.fetch_add(1, Ordering::Relaxed) };
+    }
+    let saved = std::mem::replace(&mut held.0, table);
+    if labelled() {
+        super::labels::refresh();
+    }
+    saved
+}
+
 /// The instant deadlines count from, which a task's inherited one is kept
 /// as nanoseconds since, `u64::MAX` for none.
 fn base() -> Instant {

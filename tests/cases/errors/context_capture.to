@@ -1,0 +1,13 @@
+// `with` takes a context's fields, or contexts that `Contexts.current()`
+// captured.
+context Request = {
+    id: String = ""
+}
+
+fn main() {
+    let saved = "not contexts"
+    with saved
+    _ = Request.id
+}
+
+// expect-error: E1617 `with` takes a context's fields, as `with Trace { span }`, or contexts that `Contexts.current()` captured, as `with captured`; this is `String`

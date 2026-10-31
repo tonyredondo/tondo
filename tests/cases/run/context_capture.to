@@ -1,0 +1,52 @@
+// `Contexts.current()` captures the contexts where it is called, and
+// `with captured` gives them back until the block ends: a queue keeps them
+// with each message, another task handles it with them, and a function
+// hands its caller the contexts it would have.
+import std.console
+
+context Request = {
+    id: String = "none"
+}
+
+fn tagged(): Contexts {
+    with Request { id: "from callee" }
+    Contexts.current()
+}
+
+fn readIn(saved: Contexts): String {
+    with saved
+    Request.id
+}
+
+fn main() {
+    var queue: Array[(String, Contexts)] = []
+    {
+        with Request { id: "r1" }
+        queue.push(("first", Contexts.current()))
+    }
+    {
+        with Request { id: "r2" }
+        queue.push(("second", Contexts.current()))
+    }
+    console.println("outside: {Request.id}")
+    for (name, saved) in queue {
+        with saved
+        console.println("{name}: {Request.id}")
+    }
+    console.println("after: {Request.id}")
+    let worker = spawn readIn(queue[1].1)
+    console.println("task: {worker.wait()}")
+    {
+        with tagged()
+        console.println("activated: {Request.id}")
+    }
+    console.println("end: {Request.id}")
+}
+
+// expect-stdout: outside: none
+// expect-stdout: first: r1
+// expect-stdout: second: r2
+// expect-stdout: after: none
+// expect-stdout: task: r2
+// expect-stdout: activated: from callee
+// expect-stdout: end: none

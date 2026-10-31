@@ -190,6 +190,12 @@ fn main() {
 - A task takes the context of the point where it is spawned. A value set
   at the start of `main` is the whole program's, as a tracer or a
   configuration: there are no mutable globals.
+- `Contexts.current()` captures every context as it is there, a `Copy` and
+  `Send` value; `with captured` gives them back to the end of the block, in
+  this task or another. A queue keeps them with each message, and its worker
+  handles each with its sender's. A function cannot change its caller's
+  contexts, but it can return the ones it would have, which the caller
+  activates: `with tracer.startSpan("db.query")`.
 - An initial value that is not a constant, as a compiled pattern, a pool
   or a `sync.Map`, is computed once, when the program first reads it, and
   every task then shares it: `words: Regex = Regex.compile(r"\w+")?`. This

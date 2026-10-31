@@ -222,6 +222,7 @@ impl Mono<'_> {
             Stmt::Lend { place, .. } => self.place(place, map),
             Stmt::LockSync { handle, .. } => self.expr(handle, map),
             Stmt::ContextSet { value, .. } => self.expr(value, map),
+            Stmt::ContextsActivate { activate, .. } => self.expr(activate, map),
             Stmt::AwaitChange(..) => {}
             Stmt::Destructure(pattern, value) => {
                 self.pattern(pattern, map);

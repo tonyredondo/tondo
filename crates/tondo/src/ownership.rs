@@ -200,6 +200,7 @@ impl Checker<'_> {
             // The state stays in the shared cell; `inner` is a loan of it.
             Stmt::LockSync { handle, .. } => self.consume(handle, flow),
             Stmt::ContextSet { value, .. } => self.consume(value, flow),
+            Stmt::ContextsActivate { activate, .. } => self.consume(activate, flow),
             Stmt::AwaitChange(..) => Some(flow),
             Stmt::Expr(value) => self.consume(value, flow),
             Stmt::Return(value) => {

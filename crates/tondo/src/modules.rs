@@ -868,6 +868,7 @@ impl Linker<'_> {
                 self.path(path, Position::Any);
                 fields.iter_mut().filter_map(|f| f.value.as_mut()).for_each(|v| self.expr(v));
             }
+            StmtKind::Activate(captured) => self.expr(captured),
         }
     }
 

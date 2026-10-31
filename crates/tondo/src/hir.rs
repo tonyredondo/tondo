@@ -251,6 +251,13 @@ pub enum Stmt {
         fields: u64,
         span: Span,
     },
+    /// `with captured`: `activate` gives the task the contexts a
+    /// `Contexts` captured and returns its table, which the end of the
+    /// block restores (11.16).
+    ContextsActivate {
+        activate: Expr,
+        span: Span,
+    },
     /// Takes the lock of a `std.sync` value for the rest of the block:
     /// `guard` holds it and is released when the block ends, and `inner`
     /// is a loan of the state it protects (14.4.4).
@@ -1716,6 +1723,24 @@ pub const NATIVES: &[Native] = {
             result: String,
             symbol: "tondo_rt_context_logged",
         },
+        // The running task's contexts, captured, and given back by `with`
+        // until the block ends, which restores the table returned.
+        Native {
+            module: "context",
+            name: "capture",
+            receiver: None,
+            params: &[],
+            result: Object,
+            symbol: "tondo_rt_contexts_capture",
+        },
+        Native {
+            module: "context",
+            name: "activate",
+            receiver: None,
+            params: &[Object],
+            result: Int,
+            symbol: "tondo_rt_contexts_activate",
+        },
     ]
 };
 
@@ -1854,6 +1879,7 @@ fn written_block(block: &Block, out: &mut Vec<LocalId>) {
             Stmt::Lend { place, .. } => out.push(place.local),
             Stmt::LockSync { handle, .. } => written(handle, out),
             Stmt::ContextSet { value, .. } => written(value, out),
+            Stmt::ContextsActivate { activate, .. } => written(activate, out),
             Stmt::Return(value) => value.iter().for_each(|value| written(value, out)),
             Stmt::AwaitChange(..) | Stmt::Break | Stmt::Continue => {}
             Stmt::Loop { condition, body } => {

@@ -1606,6 +1606,12 @@ impl Builder<'_> {
                 self.assign(Place::local(saved), set, *span);
                 self.scopes.last_mut().unwrap().push(Exit::Restore(saved));
             }
+            hir::Stmt::ContextsActivate { activate, span } => {
+                let saved = self.new_local(Ty::int(crate::types::IntTy::U64));
+                let table = self.expr(activate);
+                self.assign(Place::local(saved), Rvalue::Use(table), *span);
+                self.scopes.last_mut().unwrap().push(Exit::Restore(saved));
+            }
             hir::Stmt::LockSync { guard, inner, handle, mode, span } => {
                 let handle = self.expr(handle);
                 let guard = self.bind(*guard);
@@ -2573,6 +2579,7 @@ fn stmt_span(stmt: &hir::Stmt) -> Span {
         | hir::Stmt::AssignSlice { span, .. }
         | hir::Stmt::LockSync { span, .. }
         | hir::Stmt::ContextSet { span, .. }
+        | hir::Stmt::ContextsActivate { span, .. }
         | hir::Stmt::AwaitChange(_, span) => *span,
         hir::Stmt::Defer { closure, .. } => closure.span,
         hir::Stmt::Loop { condition: Some(condition), .. } => condition.span,
@@ -2591,7 +2598,7 @@ fn stmt_kind(stmt: &hir::Stmt) -> &'static str {
         hir::Stmt::Defer { .. } => "defer",
         hir::Stmt::Lend { .. } => "lend",
         hir::Stmt::LockSync { .. } | hir::Stmt::AwaitChange(..) => "lock",
-        hir::Stmt::ContextSet { .. } => "with",
+        hir::Stmt::ContextSet { .. } | hir::Stmt::ContextsActivate { .. } => "with",
         hir::Stmt::Expr(_) => "expr",
         hir::Stmt::Return(_) => "return",
         hir::Stmt::Fail(_) => "fail",

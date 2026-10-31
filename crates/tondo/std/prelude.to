@@ -3,6 +3,7 @@
 // order and add values.
 
 import std.formats as __formats
+import std.internal.context as contextNative
 import std.internal.math as mathNative
 import std.internal.reflect as reflectNative
 import std.internal.text as textNative
@@ -558,6 +559,30 @@ pub fn Option[T].context(self, message: String): T ! Failure {
         some(value) => value
         none => fail Failure { message }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Contexts
+// ---------------------------------------------------------------------------
+
+/// The contexts of the running task as they are (language 11.16), which
+/// `with captured` gives back until its block ends, in this task or
+/// another: what a queue keeps with each message, so that the task that
+/// handles it does so with the contexts of the one that sent it.
+pub type Contexts = {
+    priv native: contextNative.Native
+}
+
+/// The contexts where it is called, with every change of the `with`s that
+/// hold there.
+pub fn Contexts.current(): Contexts {
+    Contexts { native: contextNative.capture() }
+}
+
+/// What `with captured` calls: the task's table, which the end of the
+/// block restores.
+fn activateContexts(captured: Contexts): Int {
+    contextNative.activate(captured.native)
 }
 
 // ---------------------------------------------------------------------------
