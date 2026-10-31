@@ -2,6 +2,7 @@
 // after it, so it finishes; without it, SIGKILL at once. `grace` also
 // bounds how long output a descendant keeps open is waited for.
 // `invokedAs` gives a child its `argv[0]`, which `env.invokedAs()` reads,
+// as `env.args()` its arguments, in a static executable too,
 // and `exec` turns the program into another, or fails.
 import std.console
 import std.env
@@ -11,7 +12,7 @@ import std.time
 fn main(): !process.ProcessError {
     match env.get("PROBE_ROLE") {
         some("name") => {
-            console.println("invoked as {env.invokedAs()}")
+            console.println("invoked as {env.invokedAs()} with {env.args()}")
             return
         }
         some("exec") => {
@@ -25,7 +26,12 @@ fn main(): !process.ProcessError {
         _ => {}
     }
     let me = env.executable()
-    let named = process.command(me).env("PROBE_ROLE", "name").invokedAs("custom-name").output()?
+    let named =
+        process
+            .command(me, "one", "two words")
+            .env("PROBE_ROLE", "name")
+            .invokedAs("custom-name")
+            .output()?
     console.print(named.text()?)
     let replaced = process.command(me).env("PROBE_ROLE", "exec").output()?
     console.print(replaced.text()?)
@@ -49,7 +55,7 @@ fn main(): !process.ProcessError {
     console.print(held.text()?)
 }
 
-// expect-stdout: invoked as custom-name
+// expect-stdout: invoked as custom-name with [one, two words]
 // expect-stdout: exec failed: not found
 // expect-stdout: replaced by sh
 // expect-stdout: ready

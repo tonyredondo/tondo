@@ -906,7 +906,7 @@ fn uptime_ms() -> u128 {
 
 fn info() -> String {
     let program = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-    let arguments: Vec<String> = std::env::args_os().skip(1).map(|a| quoted(&a.to_string_lossy())).collect();
+    let arguments: Vec<String> = super::env::arguments().iter().skip(1).map(|a| quoted(&a.to_string_lossy())).collect();
     format!(
         "{{\"pid\":{},\"program\":{},\"arguments\":[{}],\"uptime_ms\":{}}}",
         std::process::id(),

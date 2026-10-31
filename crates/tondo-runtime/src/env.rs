@@ -61,12 +61,32 @@ fn check(name: &[u8], value: &[u8], location: *const Str) -> bool {
 /// `env.args()`: without the program's name.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_args() -> *mut ArrayHeader {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let args: Vec<OsString> = arguments().iter().skip(1).cloned().collect();
     let array = tondo_rt_array_new(8, args.len());
     for (index, arg) in args.iter().enumerate() {
         unsafe { *(element(array, 8, index) as *mut *mut Str) = text(arg.as_bytes()) };
     }
     array
+}
+
+/// The program's arguments, its name first, as `main` was given them:
+/// Rust's own reach a program only through its `main`, which a static
+/// executable that the toolchain links does not run. A library, which C
+/// runs, has the ones its process has.
+static ARGUMENTS: std::sync::OnceLock<Vec<OsString>> = std::sync::OnceLock::new();
+
+/// Keeps the arguments the program's `main` was given.
+pub(crate) unsafe fn keep_arguments(argc: i32, argv: *const *const u8) {
+    let kept = (0..argc.max(0) as usize)
+        .map(|index| unsafe { *argv.add(index) })
+        .take_while(|arg| !arg.is_null())
+        .map(|arg| OsString::from_vec(unsafe { std::ffi::CStr::from_ptr(arg.cast()) }.to_bytes().to_vec()))
+        .collect();
+    let _ = ARGUMENTS.set(kept);
+}
+
+pub(crate) fn arguments() -> &'static [OsString] {
+    ARGUMENTS.get_or_init(|| std::env::args_os().collect())
 }
 
 /// `env.get(name)`: null for none.
@@ -161,7 +181,7 @@ pub extern "C" fn tondo_rt_env_executable() -> *mut Str {
 /// given: a link's own name, not its target's.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_invoked_as() -> *mut Str {
-    let invoked = std::env::args_os().next().unwrap_or_default();
+    let invoked = arguments().first().cloned().unwrap_or_default();
     text(invoked.as_bytes())
 }
 

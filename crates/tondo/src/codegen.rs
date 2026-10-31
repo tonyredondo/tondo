@@ -694,7 +694,7 @@ impl Rt {
             Rt::CStringFree => ("tondo_rt_c_string_free", &[I64], &[]),
             Rt::CVariadic => ("tondo_rt_c_variadic", &[I64, I64], &[]),
             Rt::Callback => ("tondo_rt_callback", &[I64, I64, I64], &[]),
-            Rt::Main => ("tondo_rt_main", &[I64], &[I32]),
+            Rt::Main => ("tondo_rt_main", &[I64, I32, I64], &[I32]),
             Rt::Live => ("tondo_rt_live", &[I64], &[]),
             Rt::LiveTransfer => ("tondo_rt_live_transfer", &[I64, I64, I64], &[I64]),
             Rt::LiveFree => ("tondo_rt_live_free", &[I64], &[]),
@@ -2881,7 +2881,10 @@ impl Codegen<'_> {
         }
         let entry = e.cg.module.declare_func_in_func(entry, e.fb.func);
         let entry = e.fb.ins().func_addr(POINTER, entry);
-        let status = e.call_rt(Rt::Main, &[entry]).expect("an exit status");
+        // The arguments, which the runtime keeps: a static executable gives
+        // them to nothing else.
+        let (argc, argv) = (e.fb.block_params(block)[0], e.fb.block_params(block)[1]);
+        let status = e.call_rt(Rt::Main, &[entry, argc, argv]).expect("an exit status");
         e.fb.ins().return_(&[status]);
         e.fb.seal_all_blocks();
         let config = e.cg.module.isa().frontend_config();

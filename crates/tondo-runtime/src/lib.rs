@@ -2898,7 +2898,12 @@ pub(crate) fn start_library(start: unsafe extern "C" fn()) {
 /// the process exit status. A library has neither.
 #[cfg(tondo_staticlib)]
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_main(tondo_main: unsafe extern "C" fn() -> i32) -> i32 {
+pub unsafe extern "C" fn tondo_rt_main(
+    tondo_main: unsafe extern "C" fn() -> i32,
+    argc: i32,
+    argv: *const *const u8,
+) -> i32 {
+    unsafe { env::keep_arguments(argc, argv) };
     meta::start();
     diagnostics::start();
     signals::start();
