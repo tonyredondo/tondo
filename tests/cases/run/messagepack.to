@@ -80,7 +80,7 @@ fn vectors() {
 // expect-stdout: de0001a161c0 {"a":null}
 // expect-stdout: d6ff00000000 "1970-01-01T00:00:00Z"
 // expect-stdout: c70cff000000000000000000000001 "1970-01-01T00:00:01Z"
-// expect-stdout: cf8000000000000000 9223372036854776000
+// expect-stdout: cf8000000000000000 9223372036854775808
 // expect-stdout: 132 88a2696407a3626967d3fffffffde78ee600a46e616d65a5636166c3a9a47461677392a161a162a673686170657393a5456d70747981a6436972636c65cb3ff800000000000081a7506f6c79676f6e82a46e616d65a3747269a6706f696e74739182a17801a17902a464617461c4026869a26174d7ff773594006adb1400a46e6f7465c0
 // expect-stdout: {"id":7,"big":-9000000000,"name":"café","tags":["a","b"],"shapes":["Empty",{"Circle":1.5},{"Polygon":{"name":"tri","points":[{"x":1,"y":2}]}}],"data":"aGk=","at":"2026-10-23T08:00:00.5Z","note":null}
 // expect-stdout: {"id":7,"big":-9000000000,"name":"café","tags":["a","b"],"shapes":["Empty",{"Circle":1.5},{"Polygon":{"name":"tri","points":[{"x":1,"y":2}]}}],"data":"aGk=","at":"2026-10-23T08:00:00.5Z","note":null}
