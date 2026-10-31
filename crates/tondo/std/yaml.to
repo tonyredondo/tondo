@@ -61,13 +61,11 @@ pub fn Value.at(self, index: Int): Value? {
     }
 }
 
-/// The value at a dotted path of keys, as `server.port`.
+/// The value at a path of keys and indices, as `server.port`,
+/// `items[0].name` or `jobs[".setup"].script`, with a key that holds `.`,
+/// `[`, `]` or `"` in quotes; `""` is the value itself.
 pub fn Value.find(self, path: String): Value? {
-    var found = self
-    for key in path.split(".") {
-        found = found.get(key)?
-    }
-    found
+    valueAt(self, path)
 }
 
 /// The string, or `none` when the value is not one.
@@ -550,12 +548,14 @@ pub fn Document.value(self): Value {
     self.root
 }
 
-/// The node at a path of keys and indices, as `jobs.build.steps[0]`, the
-/// root at `""`; `none` when there is none. A key that a merge key `<<`
-/// brings is in `value()`, and is not a node of the text.
+/// The node at a path of keys and indices, as `jobs.build.steps[0]` or
+/// `jobs[".setup"].script`, the root at `""`; `none` when there is none. A
+/// key that a merge key `<<` brings is in `value()`, and is not a node of
+/// the text.
 pub fn Document.find(self, path: String): Node? {
-    let index = self.paths.findIndex((each) { each == path })?
-    let value = valueAt(self.root, path)?
+    let written = joined(segments(path)?)
+    let index = self.paths.findIndex((each) { each == written })?
+    let value = valueAt(self.root, written)?
     let at = index * 7
     some(Node {
         value
@@ -582,10 +582,17 @@ pub fn Document.writeTo(self, out: yamlio.Writer): !yamlio.IoError {
 /// style, `{...}` or `[...]`, that gets a key or an item is written again
 /// in block style.
 pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError {
+    let place = match segments(path) {
+        some(parts) => joined(parts)
+        none => fail documentError(
+            "`{path}` is not a path of keys and indices, as `jobs[\".setup\"].script[0]`",
+            "",
+        )
+    }
     let written = encode(value).trimEnd()
-    let changed = match self.paths.findIndex((each) { each == path }) {
+    let changed = match self.paths.findIndex((each) { each == place }) {
         some(index) => self.replaced(index, written)
-        none => self.added(path, written)?
+        none => self.added(place, written)?
     }
     let next = load(changed)?
     self.source = next.source
@@ -609,7 +616,7 @@ fn documentError(message: String, path: String): YamlError {
 /// The value at a path of keys and indices.
 fn valueAt(root: Value, path: String): Value? {
     var found = root
-    for part in segments(path) {
+    for part in segments(path)? {
         found = match part {
             (key, -1) => found.get(key)?
             (_, index) => found.at(index)?
@@ -619,19 +626,17 @@ fn valueAt(root: Value, path: String): Value? {
 }
 
 /// The keys and indices of a path: a key with -1, an index with its key
-/// empty.
-fn segments(path: String): Array[(String, Int)] {
+/// empty; `none` for text that is not a path.
+fn segments(path: String): Array[(String, Int)]? {
     var parts: Array[(String, Int)] = []
-    if path.isEmpty() {
-        return parts
-    }
-    for dotted in path.split(".") {
-        let pieces = dotted.split("[")
-        if not pieces[0].isEmpty() {
-            parts.push((pieces[0], -1))
-        }
-        for piece in pieces.slice(1, pieces.length()).unwrapOr([]) {
-            parts.push(("", Int.parse(piece.trimEnd("]")).unwrapOr(-2)))
+    for step in yamlcodec.pathSteps(path) {
+        let rest = step.slice(1, step.length()).unwrapOr("")
+        if step.startsWith(".") {
+            parts.push((rest, -1))
+        } else if step.startsWith("[") {
+            parts.push(("", Int.parse(rest).unwrapOr(-2)))
+        } else {
+            return none
         }
     }
     parts
@@ -732,7 +737,7 @@ fn Document.lineEnd(self, position: Int): Int {
 
 /// The text with a key or an item at `path` that it does not have.
 fn Document.added(self, path: String, written: String): String ! YamlError {
-    let parts = segments(path)
+    let parts = segments(path).unwrapOr([])
     // The longest part of the path the document has.
     var known = parts.length() - 1
     for known > 0 and
@@ -806,17 +811,19 @@ fn Document.added(self, path: String, written: String): String ! YamlError {
     }
 }
 
-/// `key: value`, the value on its line or indented on the next ones.
+/// `key: value`, the value on its line or indented on the next ones, and
+/// the key quoted if YAML needs it.
 fn entry(key: String, value: String): String {
-    if ownLines(value) { "{key}:\n  {indentedAfterFirst(value, 2)}" } else { "{key}: {value}" }
+    let name = encode(key).trimEnd()
+    if ownLines(value) { "{name}:\n  {indentedAfterFirst(value, 2)}" } else { "{name}: {value}" }
 }
 
-/// A path of keys and indices, written back.
+/// A path of keys and indices, written back as the outline writes them.
 fn joined(parts: Array[(String, Int)]): String {
     var text = ""
     for (key, at) in parts {
         if at == -1 {
-            text = if text.isEmpty() { key } else { "{text}.{key}" }
+            text = yamlcodec.pathKey(text, key)
         } else {
             text = "{text}[{at}]"
         }
@@ -827,9 +834,9 @@ fn joined(parts: Array[(String, Int)]): String {
 /// The column of a collection's keys or items' `-`, from one of them, or
 /// two more than the collection's.
 fn Document.childIndent(self, parent: Int, parentPath: String): Int {
-    let depth = segments(parentPath).length() + 1
+    let depth = segments(parentPath).unwrapOr([]).length() + 1
     for (index, path) in self.paths.enumerate() {
-        let parts = segments(path)
+        let parts = segments(path).unwrapOr([])
         if parts.length() == depth and joined(parts.slice(0, depth - 1).unwrapOr([])) == parentPath {
             return self.number(index, 6)
         }

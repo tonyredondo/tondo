@@ -92,6 +92,23 @@ pub fn Value.at(self, index: Int): Value? {
     }
 }
 
+/// The value at a path of keys and indices, as `server.port`,
+/// `items[0].name` or `jobs[".setup"].script`, with a key that holds `.`,
+/// `[`, `]` or `"` in quotes; `""` is the value itself.
+pub fn Value.find(self, path: String): Value? {
+    var found = self
+    for step in jsoncodec.pathSteps(path) {
+        found = if step.startsWith(".") {
+            found.get(step.slice(1, step.length()).unwrapOr(""))?
+        } else if step.startsWith("[") {
+            found.at(Int.parse(step.slice(1, step.length()).unwrapOr("")).ok()?)?
+        } else {
+            return none
+        }
+    }
+    found
+}
+
 /// The member `key` of an object, or `Null`: `document["key"]`.
 pub fn Value.field(self, key: String): Value {
     match self.get(key) {

@@ -360,3 +360,96 @@ pub unsafe extern "C" fn tondo_rt_csv_fields(record: *const Str, separator: u32)
     }
     array
 }
+
+// ---------------------------------------------------------------------------
+// Paths of keys and indices, for `find` in `std.json`, `std.toml` and
+// `std.yaml`
+// ---------------------------------------------------------------------------
+
+/// A step of a path.
+pub(crate) enum Step {
+    Key(String),
+    Index(usize),
+}
+
+/// The steps of a path as `jobs[".setup"].script[0]`: keys after `.`, or
+/// in `["..."]` with `\` before a `"` or a `\` they hold, and indices in
+/// `[...]`; none for `""`, and `None` for text that is not a path.
+pub(crate) fn path_steps(path: &str) -> Option<Vec<Step>> {
+    let mut steps = Vec::new();
+    let mut rest = path;
+    while !rest.is_empty() {
+        if let Some(inner) = rest.strip_prefix('[') {
+            if let Some(quoted) = inner.strip_prefix('"') {
+                let mut key = String::new();
+                let mut chars = quoted.char_indices();
+                let end = loop {
+                    match chars.next()? {
+                        (at, '"') => break at,
+                        (_, '\\') => key.push(chars.next()?.1),
+                        (_, c) => key.push(c),
+                    }
+                };
+                steps.push(Step::Key(key));
+                rest = quoted[end + 1..].strip_prefix(']')?;
+            } else {
+                let end = inner.find(']')?;
+                if end == 0 || !inner[..end].bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                steps.push(Step::Index(inner[..end].parse().ok()?));
+                rest = &inner[end + 1..];
+            }
+        } else {
+            let end = rest.find(['.', '[']).unwrap_or(rest.len());
+            if end == 0 || rest[..end].contains([']', '"']) {
+                return None;
+            }
+            steps.push(Step::Key(rest[..end].to_string()));
+            rest = &rest[end..];
+        }
+        if let Some(after) = rest.strip_prefix('.') {
+            if after.is_empty() || after.starts_with(['.', '[']) {
+                return None;
+            }
+            rest = after;
+        }
+    }
+    Some(steps)
+}
+
+/// The path of `key` in the value at `parent`: after a `.`, or quoted when
+/// it is empty or holds what a path is written with.
+pub(crate) fn path_key(parent: &str, key: &str) -> String {
+    if key.is_empty() || key.contains(['.', '[', ']', '"']) {
+        format!("{parent}[\"{}\"]", key.replace('\\', "\\\\").replace('"', "\\\""))
+    } else if parent.is_empty() {
+        key.to_string()
+    } else {
+        format!("{parent}.{key}")
+    }
+}
+
+/// The steps of a path: `.key` for a key, `[n` for an index; one `!` when
+/// it is not a path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_path_steps(path: *const Str) -> *mut ArrayHeader {
+    let path = String::from_utf8_lossy(text(path));
+    let steps: Vec<String> = match path_steps(&path) {
+        Some(steps) => steps
+            .into_iter()
+            .map(|step| match step {
+                Step::Key(key) => format!(".{key}"),
+                Step::Index(index) => format!("[{index}"),
+            })
+            .collect(),
+        None => vec!["!".to_string()],
+    };
+    crate::http::string_array(&steps)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_path_key(parent: *const Str, key: *const Str) -> *mut Str {
+    let (parent, key) = (String::from_utf8_lossy(text(parent)), String::from_utf8_lossy(text(key)));
+    str_new(path_key(&parent, &key).as_bytes())
+}

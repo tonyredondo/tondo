@@ -877,7 +877,7 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
         match open.last() {
             Some(Opened::Map { node, key: Some((key, after, indent)) }) => {
                 let parent = &nodes[*node].path;
-                let path = if parent.is_empty() { key.clone() } else { format!("{parent}.{key}") };
+                let path = crate::codec::path_key(parent, key);
                 (path, Some(*after), *indent)
             }
             Some(Opened::List { node, count }) => {

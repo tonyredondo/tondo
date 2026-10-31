@@ -166,7 +166,9 @@ fn main(): !yaml.YamlError {
 ```
 
 `doc.find(path)` also gives the value's line and column, and
-`doc.writeTo(out)` writes the text to a stream without copying it.
+`doc.writeTo(out)` writes the text to a stream without copying it. A path,
+there and in the `find` of every format's `Value`, has keys and indices,
+`items[0].name`, and a key with `.` in quotes: `jobs[".setup"].script`.
 
 XML writes a record as an element and each field as a child, unless
 `@xml.Attribute` or `@xml.Text` make it an attribute or the element's text;

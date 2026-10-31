@@ -1,0 +1,49 @@
+// `find` of every format, and of a YAML document, reads one path of keys
+// and indices, with a key that holds `.` in quotes.
+
+import std.cbor
+import std.console
+import std.json
+import std.messagepack
+import std.toml
+import std.yaml
+
+fn main(): !(yaml.YamlError | json.JsonError | toml.TomlError | cbor.CborError | messagepack.MessagePackError) {
+    let ci = yaml.parse(".setup:\n  script: [a, b]\njobs:\n  - name: build\n    \"a.b\": 1\n")?
+    console.println("{ci.find("[\".setup\"].script[1]")} {ci.find("jobs[0].name")} {ci.find("jobs[0][\"a.b\"]")}")
+    console.println("{ci.find("jobs[1]")} {ci.find("jobs..x")} {ci.find("jobs[x]")} {ci.find("") == some(ci)}")
+    let data = json.parse("{{\"items\": [{{\"name\": \"x\"}}], \"say \\\"hi\\\"\": 2}}")?
+    console.println("{data.find("items[0].name")} {data.find("[\"say \\\"hi\\\"\"]")}")
+    console.println("{toml.parse("[server]\nports = [80, 443]\n")?.find("server.ports[1]")}")
+    console.println("{cbor.parse(cbor.encode(["a.b": [1, 2]]))?.find("[\"a.b\"][1]")}")
+    console.println("{messagepack.parse(messagepack.encode(["k": [3]]))?.find("k[0]")}")
+    // A document finds and sets values by the same paths.
+    var doc = yaml.load(".setup:\n  script: [a]\njobs:\n  build: {{}}\n")?
+    console.println("{doc.find("[\".setup\"].script").map((node) { node.line })}")
+    doc.set("[\".setup\"].image", "alpine")?
+    doc.set("jobs[\"deploy.prod\"]", "yes")?
+    doc.set("jobs.build[\"key: odd\"]", 1)?
+    console.println(doc.text().trimEnd())
+    console.println("{doc.find("jobs[\"deploy.prod\"]").map((node) { node.value })}")
+    match doc.set("jobs[", 1) {
+        ok(_) => console.println("set")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: some(b) some(build) some(1)
+// expect-stdout: none none none true
+// expect-stdout: some("x") some(2)
+// expect-stdout: some(443)
+// expect-stdout: some(2)
+// expect-stdout: some(3)
+// expect-stdout: some(2)
+// expect-stdout: .setup:
+// expect-stdout:   script: [a]
+// expect-stdout:   image: alpine
+// expect-stdout: jobs:
+// expect-stdout:   build:
+// expect-stdout:     "key: odd": 1
+// expect-stdout:   deploy.prod: "yes"
+// expect-stdout: some("yes")
+// expect-stdout: `jobs[` is not a path of keys and indices, as `jobs[".setup"].script[0]` at $

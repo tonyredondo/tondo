@@ -3817,3 +3817,14 @@ reads the value, as it would without the tag, and the accessors of
 on `Source`, which other formats leave `none`, rather than as an event
 every `Decode` would have to skip. A tagged scalar is text: the tag, not
 the core schema, says what it means.
+
+## 2026-10-31 — One path of keys and indices for every format
+
+GitLab CI names jobs `.setup`, and `find` split its path at every dot, so
+such a key could not be reached, nor could an item of a list but through
+`yaml.Document`. Every `find`, of each format's `Value` and of
+`yaml.Document`, now reads the same path, `jobs[".setup"].script[0]`, as
+JSONPath and jq write a key in brackets, and `json.Value` gains the
+`find` it lacked. The runtime parses it once for all, and writes the paths
+of a document in the same form, so a path a user writes and the one the
+outline gives compare as text.

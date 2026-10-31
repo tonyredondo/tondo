@@ -3174,6 +3174,12 @@ pub trait Decode {
   nombre.
 - Un `Sink` que no puede representar un valor lo informa al terminar el
   documento, con `Unsupported`.
+- El `find(path)` del `Value` de cada formato, y el de `yaml.Document`, lee
+  un camino de claves e índices: `server.port`, `items[0].name`,
+  `jobs[".setup"].script`. Una clave va tras `.`, o entre `["` y `"]` si está
+  vacía o tiene `.`, `[`, `]` o `"`, con `\` antes de un `"` o un `\` suyos;
+  un índice, entre `[` y `]`. `""` es el valor entero, y un texto que no es
+  un camino no encuentra nada.
 
 ### 14.8 `std.reflect`
 
@@ -3610,6 +3616,7 @@ pub fn raw(text: String): Raw ! JsonError
 
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?      // `items[0].name` (14.7)
 pub fn Value.field(self, key: String): Value
 pub fn Value.item(self, index: Int): Value
 pub fn Value.asText(self): String?
@@ -3746,7 +3753,7 @@ pub fn Writer.flush(self): Unit ! MessagePackError
 pub fn Value.isNil(self): Bool
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
-pub fn Value.find(self, path: String): Value?
+pub fn Value.find(self, path: String): Value?      // `items[0].name` (14.7)
 pub fn Value.asText(self): String?
 pub fn Value.asInt(self): Int?
 pub fn Value.asFloat(self): Float?
@@ -3912,7 +3919,7 @@ pub fn load(text: String): Document ! YamlError
 pub fn Value.isNull(self): Bool
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
-pub fn Value.find(self, path: String): Value?      // claves con puntos: `server.port`
+pub fn Value.find(self, path: String): Value?      // `jobs[".setup"].script` (14.7)
 pub fn Value.asText(self): String?
 pub fn Value.asInt(self): Int?
 pub fn Value.asFloat(self): Float?                 // también de un entero
@@ -3924,7 +3931,7 @@ impl Display for Value                             // como documento YAML
 pub type Document                                  // un documento que conserva su texto
 pub type Node = { value: Value, line: Int, column: Int, comment: String? }
 pub fn Document.value(self): Value
-pub fn Document.find(self, path: String): Node?    // `jobs.build.steps[0]`; la raíz es `""`
+pub fn Document.find(self, path: String): Node?    // `jobs.build.steps[0]` (14.7); la raíz es `""`
 pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError
 pub fn Document.text(self): String
 pub fn Document.writeTo(self, out: io.Writer): !io.IoError
@@ -4015,7 +4022,7 @@ pub fn parse(text: String): Value ! TomlError
 
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
-pub fn Value.find(self, path: String): Value?      // claves con puntos: `server.port`
+pub fn Value.find(self, path: String): Value?      // `jobs[".setup"].script` (14.7)
 pub fn Value.asText(self): String?
 pub fn Value.asInt(self): Int?
 pub fn Value.asFloat(self): Float?                 // también de un entero

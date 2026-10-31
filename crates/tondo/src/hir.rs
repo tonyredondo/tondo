@@ -1500,6 +1500,8 @@ pub const NATIVES: &[Native] = {
         codec("counterNext", &[Object], Int, "tondo_rt_counter_next"),
         codec("csvCheck", &[String, Char], Int, "tondo_rt_csv_check"),
         codec("csvFields", &[String, Char], Strings, "tondo_rt_csv_fields"),
+        codec("pathSteps", &[String], Strings, "tondo_rt_path_steps"),
+        codec("pathKey", &[String, String], String, "tondo_rt_path_key"),
         codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),
         codec("randomBytes", &[Int, Int, Int], Bytes, "tondo_rt_random_bytes"),
         codec("metric", &[String, Int], Int, "tondo_rt_metric"),

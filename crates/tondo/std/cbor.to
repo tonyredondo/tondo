@@ -3,6 +3,7 @@
 // `std.serialization`, on top of the runtime's decoder and encoder.
 
 import std.internal.cbor as cbornative
+import std.internal.codec as cborcodec
 import std.json as cborjson
 import std.serialization
 
@@ -49,11 +50,19 @@ pub fn Value.at(self, index: Int): Value? {
     }
 }
 
-/// The value at a dotted path of keys, as `user.name`.
+/// The value at a path of keys and indices, as `server.port`,
+/// `items[0].name` or `jobs[".setup"].script`, with a key that holds `.`,
+/// `[`, `]` or `"` in quotes; `""` is the value itself.
 pub fn Value.find(self, path: String): Value? {
     var found = self
-    for key in path.split(".") {
-        found = found.get(key)?
+    for step in cborcodec.pathSteps(path) {
+        found = if step.startsWith(".") {
+            found.get(step.slice(1, step.length()).unwrapOr(""))?
+        } else if step.startsWith("[") {
+            found.at(Int.parse(step.slice(1, step.length()).unwrapOr("")).ok()?)?
+        } else {
+            return none
+        }
     }
     found
 }
