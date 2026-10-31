@@ -8,7 +8,7 @@ mod routes;
 
 use crate::ast::{self, BinOp, UnaryOp};
 use crate::diag::Diagnostics;
-use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
+use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId, constant_parts};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
@@ -593,20 +593,6 @@ fn has_field_defaults(decl: &ast::TypeDecl) -> bool {
     !decl.context
         && !decl.annotation
         && matches!(&decl.body, ast::TypeBody::Record(fields) if fields.iter().any(|f| f.default.is_some()))
-}
-
-/// The components of a constant; `None` for a value that is not one.
-fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
-    use hir::ExprKind as K;
-    Some(match &mut value.kind {
-        K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Bytes(_) | K::Unit => Vec::new(),
-        K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) => vec![inner],
-        K::Binary(_, left, right) => vec![left, right],
-        K::Aggregate(items) | K::Array(items) | K::Set(items) => items.iter_mut().collect(),
-        K::Record(fields) | K::Variant(_, fields) => fields.iter_mut().map(|(_, v)| v).collect(),
-        K::Map(entries) => entries.iter_mut().flat_map(|(k, v)| [k, v]).collect(),
-        _ => return None,
-    })
 }
 
 /// The literal an expression is, if it is one.
@@ -1403,7 +1389,21 @@ impl<'a> Checker<'a> {
             c_api,
             tests: std::mem::take(&mut self.test_nodes),
             contexts,
+            field_defaults: self.exported_defaults(),
         })
+    }
+
+    /// The field defaults of the program's records, for live builds to
+    /// give a new field of a value alive.
+    fn exported_defaults(&mut self) -> hir::FieldDefaults {
+        let mut exported = hir::FieldDefaults::default();
+        for (key, defaults) in std::mem::take(&mut self.field_defaults) {
+            match key {
+                Defaulted::Record(ty) => exported.records.insert(ty, defaults),
+                Defaulted::Template(template) => exported.templates.insert(template, defaults),
+            };
+        }
+        exported
     }
 
     fn test_class(node: &ast::TestNode) -> ast::SourceClass {
@@ -4565,10 +4565,7 @@ impl<'a> Checker<'a> {
 
     /// A default value for a call whose type arguments are `map`.
     fn instantiate(&mut self, value: &mut hir::Expr, map: &HashMap<Ty, Ty>) {
-        value.ty = self.types.subst(value.ty, map);
-        for part in constant_parts(value).unwrap_or_default() {
-            self.instantiate(part, map);
-        }
+        hir::instantiate_constant(&mut self.types, value, map);
     }
 
     fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>, outer: FnScope) -> Signature {

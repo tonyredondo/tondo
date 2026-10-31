@@ -24,8 +24,20 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
 /// The same, with more functions that are not generic built as if called:
 /// a test build's own, which coverage counts even when nothing calls them.
 pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main, traits, impls, externs, mut exports, c_api, tests, contexts, .. } =
-        program;
+    let Program {
+        mut types,
+        functions,
+        main,
+        traits,
+        impls,
+        externs,
+        mut exports,
+        c_api,
+        tests,
+        contexts,
+        field_defaults,
+        ..
+    } = program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -106,7 +118,20 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
     }
     let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main, traits, impls, display, externs, exports, c_api, tests, contexts })
+    Some(Program {
+        types,
+        functions,
+        main,
+        traits,
+        impls,
+        display,
+        externs,
+        exports,
+        c_api,
+        tests,
+        contexts,
+        field_defaults,
+    })
 }
 
 /// The trait whose method interpolation uses (see the checker).

@@ -654,27 +654,27 @@ runs: after an edit, `tondo reload app` puts the new code in, keeping the
 program's state, and says which functions changed. `tondo run app.to
 --watch` does it whenever a file is saved. Calls that start afterwards run
 the new code, closures made before included, and a call already running
-moves to it at its next statement, with its values: a loop in `main` goes
-on with the new body. Where the new code needs a binding the old one does
-not have there, the call stays on the old code until it reaches another
+moves to it at its next statement, with its values: a loop in `main` goes on
+with the new body. Where the new code needs a binding the old one does not
+have there, the call stays on the old code until it reaches another
 statement, and reload says which lines and why. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
 move, their parameters included, and what goes back to their callers, a
-result or a value lent, converts back, field by field, a new field
-starting empty (0, `""`, `[]`, `none`) and a number of another numeric
-type converting as `T(x)` does, and a field, a variant or a type renamed
-keeping its values; reload says what it did to them. Closures follow too,
-when another closure comes before them or what they capture changes shape.
-What a `Ref`, a channel or a `Mutex` holds converts once, in place, while
-every task stops at a statement: a task waiting for a channel, a lock or a
-line starts that statement again with the new code. Reload refuses, and
-`--watch` starts the program again, when a statement may still use what
-they hold with the old code after a wait it cannot end, as reading a file,
-or when a task holds the lock; write such a wait in a `let` statement of its
-own. A value kept in a task or a `std.sync` collection does not convert.
-Old code is never freed, and a call that moves leaves its old frame below
-it: each reload takes a little memory, and each move one frame of stack,
-which only reloading in the middle of very deep recursion notices.
-Under `tondo debug --live app.to`, `reload` works where the program
-stopped: edit the function, reload, continue; or `restart`, which runs the
-stopped function again from its first line, with its new code.
+result or a value lent, converts back, field by field, a new field starting
+with its default or empty (0, `""`, `[]`, `none`) and a number of another
+numeric type converting as `T(x)` does, and a field, a variant or a type
+renamed keeping its values; reload says what it did to them. Closures follow
+too, when another closure comes before them or what they capture changes
+shape. What a `Ref`, a channel or a `Mutex` holds converts once, in place,
+while every task stops at a statement: a task waiting for a channel, a lock
+or a line starts that statement again with the new code. Reload refuses, and
+`--watch` starts the program again, when a statement may still use what they
+hold with the old code after a wait it cannot end, as reading a file, or
+when a task holds the lock; write such a wait in a `let` statement of its
+own. A value kept in a task or a `std.sync` collection does not convert. Old
+code is never freed, and a call that moves leaves its old frame below it:
+each reload takes a little memory, and each move one frame of stack, which
+only reloading in the middle of very deep recursion notices. Under `tondo
+debug --live app.to`, `reload` works where the program stopped: edit the
+function, reload, continue; or `restart`, which runs the stopped function
+again from its first line, with its new code.

@@ -2,7 +2,7 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::source::Span;
-use crate::types::{CursorKind, Ty, Types};
+use crate::types::{CursorKind, TemplateId, Ty, Types};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +32,66 @@ pub struct Program {
     pub tests: Vec<TestNodeInfo>,
     /// The functions of each context (11.16), by the context's index.
     pub contexts: Vec<ContextFns>,
+    /// The constant defaults of records' fields (9.2), which a live build
+    /// gives a new field of a value alive.
+    pub field_defaults: FieldDefaults,
+}
+
+/// The default of each field of a record, by its type, or by its template
+/// for a generic one, whose instances replace its parameters.
+#[derive(Clone, Default)]
+pub struct FieldDefaults {
+    pub records: HashMap<Ty, Vec<Option<Expr>>>,
+    pub templates: HashMap<TemplateId, Vec<Option<Expr>>>,
+}
+
+impl FieldDefaults {
+    /// Whether the field at `index` of the record type `ty` has a default.
+    pub fn has(&self, types: &Types, ty: Ty, index: usize) -> bool {
+        let defaults = match self.records.get(&ty) {
+            Some(defaults) => Some(defaults),
+            None => types.instance_of(ty).and_then(|(template, _)| self.templates.get(&template)),
+        };
+        defaults.and_then(|defaults| defaults.get(index)).is_some_and(Option::is_some)
+    }
+
+    /// The defaults of the fields of the record type `ty`.
+    pub fn of(&self, types: &mut Types, ty: Ty) -> Option<Vec<Option<Expr>>> {
+        if let Some(defaults) = self.records.get(&ty) {
+            return Some(defaults.clone());
+        }
+        let (template, args) = types.instance_of(ty)?;
+        let args = args.to_vec();
+        let mut defaults = self.templates.get(&template)?.clone();
+        let params = types.template(template).params.clone();
+        let map: HashMap<Ty, Ty> = params.into_iter().zip(args).collect();
+        for default in defaults.iter_mut().flatten() {
+            instantiate_constant(types, default, &map);
+        }
+        Some(defaults)
+    }
+}
+
+/// The components of a constant; `None` for a value that is not one.
+pub fn constant_parts(value: &mut Expr) -> Option<Vec<&mut Expr>> {
+    use ExprKind as K;
+    Some(match &mut value.kind {
+        K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Bytes(_) | K::Unit => Vec::new(),
+        K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) => vec![inner],
+        K::Binary(_, left, right) => vec![left, right],
+        K::Aggregate(items) | K::Array(items) | K::Set(items) => items.iter_mut().collect(),
+        K::Record(fields) | K::Variant(_, fields) => fields.iter_mut().map(|(_, v)| v).collect(),
+        K::Map(entries) => entries.iter_mut().flat_map(|(k, v)| [k, v]).collect(),
+        _ => return None,
+    })
+}
+
+/// A constant of generic types with the arguments `map` gives them.
+pub fn instantiate_constant(types: &mut Types, value: &mut Expr, map: &HashMap<Ty, Ty>) {
+    value.ty = types.subst(value.ty, map);
+    for part in constant_parts(value).unwrap_or_default() {
+        instantiate_constant(types, part, map);
+    }
 }
 
 /// What the runtime calls of a context (11.16): the maker of its initial

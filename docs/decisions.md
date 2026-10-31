@@ -3703,3 +3703,13 @@ generator, the debugger and live builds read it; a string's entry goes when
 it is freed or a builder takes its block, so no new string at the same
 address meets an old position.
 
+## 2026-10-31 — A live build's new fields start with their defaults
+
+When a reload adds a field to a type whose values are alive, they got the
+empty value of its type, and a field with none, as an enum, kept the frame
+on the old code. A field's default says what a value that does not give it
+has, which is what a value made before the field existed is: the reload now
+gives it that, and the empty value only to a field without one. The
+compiler hands the defaults it checked to the reload as constants, so
+nothing runs while every task waits.
+

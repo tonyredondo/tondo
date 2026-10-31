@@ -323,7 +323,8 @@ for {
 "#;
 
 /// A type of another shape converts the values a running frame holds, by
-/// field name, as the frame moves to the new code; new fields start empty.
+/// field name, as the frame moves to the new code; new fields start with
+/// their defaults or empty.
 #[test]
 fn values_a_running_frame_holds_convert() {
     let dir = dir("live_holder");
@@ -344,10 +345,22 @@ fn values_a_running_frame_holds_convert() {
     edit(&file, "State { count: state.count + 1,", "State { mode: Mode.Slow, count: state.count + 1,");
     let (done, said) = reload(&dir, &server.pid());
     assert!(
-        done && said.contains("`State.mode` is new and `Mode` has no empty value to start with: make it `Mode?`"),
+        done && said.contains(
+            "`State.mode` is new and `Mode` has no empty value to start with: give it a default, `mode: Mode = ...`, or make it `Mode?`"
+        ),
         "{said}"
     );
     assert_eq!(server.answer("c"), "c 3 ++");
+    // With a default, the values alive start with it.
+    edit(&file, "type State = { mode: Mode,", "type State = { mode: Mode = Mode.Slow,");
+    edit(
+        &file,
+        "\"{line} {state.count} {state.label}\"",
+        "\"{line} {state.count} {state.label} {state.mode == Mode.Slow}\"",
+    );
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("d"), "d 4 +++ true");
     server.stop();
 }
 
@@ -444,6 +457,16 @@ fn values_kept_in_a_ref_convert_in_place() {
     let (done, said) = reload(&dir, &server.pid());
     assert!(done && said.contains("`State.more` is new: values alive get false"), "{said}");
     assert_eq!(server.answer("b"), "v2 b 0 false 2");
+    // A new field with a default starts with it.
+    edit(&file, "more: Bool }", "more: Bool, limit: Int = 10 }");
+    edit(
+        &file,
+        "\"v2 {line} {shared.value.count} {shared.value.more}",
+        "\"v3 {line} {shared.value.count} {shared.value.more} {shared.value.limit}",
+    );
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State.limit` is new: values alive get its default"), "{said}");
+    assert_eq!(server.answer("c"), "v3 c 0 false 10 3");
     server.stop();
 }
 

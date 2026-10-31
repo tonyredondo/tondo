@@ -73,7 +73,14 @@ pub(super) fn add(
             }
         }
     }
-    let mut plan = Plan { types: &program.types, checked: HashMap::new(), notes: Vec::new(), latest, current: true };
+    let mut plan = Plan {
+        types: &program.types,
+        defaults: &program.field_defaults,
+        checked: HashMap::new(),
+        notes: Vec::new(),
+        latest,
+        current: true,
+    };
     let pairs: Vec<(String, Ty, Ty)> = pairs
         .into_iter()
         .filter(|(key, old, new)| match plan.check(*old, *new) {
@@ -283,6 +290,7 @@ impl<'a> Rebuild<'a> {
 /// Which old types convert to the new ones, and what converting does.
 struct Plan<'a> {
     types: &'a Types,
+    defaults: &'a crate::hir::FieldDefaults,
     checked: HashMap<(Ty, Ty), Result<(), String>>,
     notes: Vec<String>,
     /// The shapes of the running program's types as the last reload left
@@ -327,7 +335,7 @@ impl Plan<'_> {
                 let name = types.display(new);
                 let shape = self.latest.get(&super::adt_name(types, a)).and_then(Value::as_str);
                 let current = std::mem::replace(&mut self.current, shape == Some(super::adt_shape(types, a).as_str()));
-                let checked = self.check_adts(a, b, &name);
+                let checked = self.check_adts(a, b, new, &name);
                 self.current = current;
                 checked
             }
@@ -353,9 +361,15 @@ impl Plan<'_> {
 
     /// Whether a nominal type converts to another, by its fields, variants
     /// or what it wraps.
-    fn check_adts(&mut self, a: crate::types::AdtId, b: crate::types::AdtId, name: &str) -> Result<(), String> {
+    fn check_adts(
+        &mut self,
+        a: crate::types::AdtId,
+        b: crate::types::AdtId,
+        new: Ty,
+        name: &str,
+    ) -> Result<(), String> {
         match (self.types.adt(a).kind.clone(), self.types.adt(b).kind.clone()) {
-            (AdtKind::Record(from), AdtKind::Record(to)) => self.fields(name, &from, &to),
+            (AdtKind::Record(from), AdtKind::Record(to)) => self.fields(name, &from, &to, Some(new)),
             (AdtKind::Newtype(from), AdtKind::Newtype(to)) => match self.fits(from, to) {
                 true => Ok(()),
                 false => Err(format!("`{name}` wraps another type now")),
@@ -387,21 +401,26 @@ impl Plan<'_> {
 
     /// A record's fields, by name: those of the same type or of a type that
     /// converts keep their values, and the new ones, and those of another
-    /// type, get the empty value of their type.
-    fn fields(&mut self, name: &str, from: &[Field], to: &[Field]) -> Result<(), String> {
+    /// type, get their defaults, a record's, or the empty value of their
+    /// type.
+    fn fields(&mut self, name: &str, from: &[Field], to: &[Field], record: Option<Ty>) -> Result<(), String> {
         // What a closure captures is its own business; the types of the
         // values it captures are not.
         let notes = std::mem::take(&mut self.notes);
-        let checked = self.record_fields(name, from, to);
+        let checked = self.record_fields(name, from, to, record);
         let made = std::mem::replace(&mut self.notes, notes);
         self.notes.extend(made.into_iter().filter(|note| !note.starts_with("`closure")));
         checked
     }
 
-    fn record_fields(&mut self, name: &str, from: &[Field], to: &[Field]) -> Result<(), String> {
+    fn record_fields(&mut self, name: &str, from: &[Field], to: &[Field], record: Option<Ty>) -> Result<(), String> {
         let found = sources(from, to, &mut |a, b| self.fits(a, b));
-        for (field, source) in to.iter().zip(&found) {
-            let empty = empty_text(self.types, field.ty);
+        for (index, (field, source)) in to.iter().zip(&found).enumerate() {
+            let defaulted = record.is_some_and(|record| self.defaults.has(self.types, record, index));
+            let empty = match defaulted {
+                true => Some("its default".to_string()),
+                false => empty_text(self.types, field.ty),
+            };
             match source.map(|i| &from[i]) {
                 Some(old) if old.name != field.name => {
                     self.note(format!("`{name}.{}` is `{}` now", old.name, field.name))
@@ -434,8 +453,8 @@ impl Plan<'_> {
                     None => {
                         let shown = self.types.display(field.ty);
                         return Err(format!(
-                            "`{name}.{}` is new and `{shown}` has no empty value to start with: make it `{shown}?`",
-                            field.name
+                            "`{name}.{}` is new and `{shown}` has no empty value to start with: give it a default, `{}: {shown} = ...`, or make it `{shown}?`",
+                            field.name, field.name
                         ));
                     }
                 },
@@ -456,7 +475,7 @@ impl Plan<'_> {
             (Payload::Tuple(a), Payload::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| self.fits(x, y))
             }
-            (Payload::Record(a), Payload::Record(b)) => self.fields(name, a, b).is_ok(),
+            (Payload::Record(a), Payload::Record(b)) => self.fields(name, a, b, None).is_ok(),
             _ => false,
         }
     }
@@ -651,16 +670,31 @@ impl Generate<'_> {
         expr(kind, ty)
     }
 
-    /// The new record's fields from the old one's, by name or renamed.
-    fn fields(&mut self, read: &dyn Fn(usize) -> Expr, from: &[Field], to: &[Field]) -> Vec<(u32, Expr)> {
+    /// The new record's fields from the old one's, by name or renamed; a
+    /// new one, or one of a type it does not convert to, has its default,
+    /// a record's, or its type's empty value.
+    fn fields(
+        &mut self,
+        read: &dyn Fn(usize) -> Expr,
+        from: &[Field],
+        to: &[Field],
+        record: Option<Ty>,
+    ) -> Vec<(u32, Expr)> {
         let found = sources(from, to, &mut |a, b| self.fits(a, b));
+        let defaults = record.and_then(|record| {
+            let Program { field_defaults, types, .. } = &mut *self.program;
+            field_defaults.of(types, record)
+        });
         to.iter()
             .zip(found)
             .enumerate()
             .map(|(index, (field, source))| {
-                let value = match source {
-                    Some(old) => self.value(read(old), from[old].ty, field.ty),
-                    None => self.empty(field.ty),
+                let default = defaults.as_ref().and_then(|defaults| defaults.get(index).cloned().flatten());
+                let value = match (source, default) {
+                    (Some(old), Some(default)) if !self.fits(from[old].ty, field.ty) => default,
+                    (Some(old), _) => self.value(read(old), from[old].ty, field.ty),
+                    (None, Some(default)) => default,
+                    (None, None) => self.empty(field.ty),
                 };
                 (index as u32, value)
             })
@@ -676,7 +710,7 @@ impl Generate<'_> {
             (TyKind::Adt(a), TyKind::Adt(b)) => match (types.adt(a).kind.clone(), types.adt(b).kind.clone()) {
                 (AdtKind::Record(old_fields), AdtKind::Record(new_fields)) => {
                     let read = |index: usize| field(&old, index, old_fields[index].ty);
-                    let fields = self.fields(&read, &old_fields, &new_fields);
+                    let fields = self.fields(&read, &old_fields, &new_fields, Some(to));
                     expr(ExprKind::Record(fields), to)
                 }
                 (AdtKind::Newtype(inner), AdtKind::Newtype(target)) => {
@@ -814,7 +848,7 @@ impl Generate<'_> {
                         && self.record_fits(&variant.payload, targets) =>
                 {
                     let Payload::Record(fields) = &variant.payload else { unreachable!() };
-                    let values = self.fields(&read, fields, targets);
+                    let values = self.fields(&read, fields, targets, None);
                     self.some(expr(ExprKind::Variant(t as u32, values), to))
                 }
                 _ => expr(ExprKind::Variant(0, Vec::new()), option),
