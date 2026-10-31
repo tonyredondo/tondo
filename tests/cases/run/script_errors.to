@@ -22,4 +22,4 @@ console.println("not reached {second}")
 
 // expect-stdout: 42
 // expect-exit: 1
-// expect-stderr: error: text.TextError.InvalidData
+// expect-stderr: error: invalid data

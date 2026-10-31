@@ -1,0 +1,21 @@
+// A function that fails with `Failure` says what it was doing with
+// `.context`; `Failure` is the prelude's.
+import std.fs
+
+type Failure = {
+    reason: String
+}
+
+fn load(path: String): String ! Failure {
+    let text = fs.readText(path)?
+    let first = text.lines().first()?
+    first
+}
+
+fn main() {
+    _ = load("x")
+}
+
+// expect-error: E1005 `Failure` is a type of the prelude, which every module sees, and cannot be redeclared
+// expect-error: E1301 `?` would propagate `fs.FsError` but the function fails with `Failure`: say what it was doing with `.context("...")?`, which keeps the error as the cause
+// expect-error: E1301 `?` on an option needs the function to return an option; this one fails with `Failure`, so say what is missing with `.context("...")?`

@@ -3660,3 +3660,18 @@ a reader expects. A tuple is a list, as JSON and YAML write pairs. The
 compiler writes each union's code where its members are known, since a
 union is no type an implementation in Tondo could name.
 
+## 2026-10-31 — Failure: what the program was doing
+
+dd-trace-go and ddtest wrap errors with what they were doing, as Go's
+`fmt.Errorf("...: %w", err)`, and look for a cause by its type, as
+`errors.As`. Tondo's typed errors are right at an API's border, where a
+caller matches each case; inside a program they made every function
+declare a union of what its calls fail with, only to print it. `Failure`,
+in the prelude, is a message with the error that caused it:
+`.context("reading {path}")?` on a result or an option, and
+`failure.find[E]()` through the chain. It is written in Tondo, with the
+cause kept as the runtime keeps any value for reflection, so any error is a
+cause, the standard library's too, which implement no reflection. A `?`
+that would propagate another error into a `Failure` is an error that
+proposes `.context`, rather than a silent conversion.
+

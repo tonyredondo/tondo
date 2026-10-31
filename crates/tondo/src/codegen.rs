@@ -3643,6 +3643,17 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             let call = call_body(self.cg, &mut self.fb, id, &args);
             return self.fb.inst_results(call)[0];
         }
+        // A standard error, a duration or a date: the text interpolation
+        // gives it.
+        if display && self.cg.types().shown.contains_key(&ty) {
+            let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+            let slot = self.fb.create_sized_stack_slot(data);
+            let builder = self.fb.ins().stack_addr(POINTER, slot, 0);
+            let room = self.fb.ins().iconst(types::I64, 32);
+            self.call_rt(Rt::SbStart, &[builder, room]);
+            self.append_display(builder, ty, value);
+            return self.call_rt(Rt::SbFinish, &[builder]).unwrap();
+        }
         let types = self.cg.types();
         let repr = types.repr(ty);
         if repr == Ty::STRING

@@ -1,0 +1,55 @@
+// `.context` turns an error or a missing value into a `Failure` that says
+// what the program was doing, with the error as its cause; `find` gives a
+// cause by its type through the chain.
+import std.console
+import std.fs
+import std.json
+
+type Config = {
+    port: Int
+}
+
+enum Quiet {
+    Gone
+}
+
+fn load(path: String): Config ! Failure {
+    let text = fs.readText(path).context("reading {path}")?
+    json.decode[Config](text).context("decoding {path}")?
+}
+
+fn start(path: String): Int ! Failure {
+    let config = load(path).context("starting the server")?
+    config.port
+}
+
+fn main() {
+    match start("/nonexistent/app.json") {
+        ok(port) => console.println("{port}")
+        err(failure) => {
+            console.println("{failure}")
+            console.println(
+                "{failure.find[fs.FsError]() == some(fs.FsError.NotFound)} {failure.find[json.JsonError]().isSome()}",
+            )
+            console.println(failure.message)
+        }
+    }
+    let ports = ["web": 80]
+    match ports.get("api").context("no port for `api`") {
+        ok(port) => console.println("{port}")
+        err(failure) => console.println("{failure} {failure.find[fs.FsError]().isNone()}")
+    }
+    let quiet: Int ! Quiet = err(Quiet.Gone)
+    match quiet.context("waiting") {
+        ok(_) => {}
+        err(failure) => console.println("{failure} {failure.find[Quiet]() == some(Quiet.Gone)}")
+    }
+    console.println("{Failure { message: "nothing to do" }}")
+}
+
+// expect-stdout: starting the server: reading /nonexistent/app.json: not found
+// expect-stdout: true false
+// expect-stdout: starting the server
+// expect-stdout: no port for `api` true
+// expect-stdout: waiting: Quiet.Gone true
+// expect-stdout: nothing to do

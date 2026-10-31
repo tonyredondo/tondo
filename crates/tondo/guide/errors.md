@@ -60,6 +60,38 @@ fn main() {
   `process.exit(code)` ends it with another status. Any other function
   declares what it propagates, which `E1301` writes for it.
 
+## What the program was doing: `Failure`
+
+Typed errors are for callers that tell them apart. Inside a program, it is
+often enough to say what failed and keep the cause: `.context("...")` turns
+any error, or a missing value, into the prelude's `Failure`.
+
+```tondo
+import std.console
+import std.fs
+import std.json
+
+type Config = { port: Int }
+
+fn load(path: String): Config ! Failure {
+    let text = fs.readText(path).context("reading {path}")?
+    json.decode[Config](text).context("decoding {path}")?
+}
+
+fn main() {
+    match load("/missing/app.json").context("starting") {
+        ok(config) => console.println("{config.port}")
+        err(failure) => {
+            console.println("{failure}")      // starting: reading /missing/app.json: not found
+            console.println("{failure.find[fs.FsError]() == some(fs.FsError.NotFound)}")
+        }
+    }
+}
+```
+
+`failure.find[E]()` gives the nearest cause of type `E` through the chain,
+as Go's `errors.As`; `Failure { message: "..." }` is one with no cause.
+
 ## Optional values
 
 ```tondo

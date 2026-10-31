@@ -157,7 +157,7 @@ fn legacy(): Array[String] {
 }
 
 /// A request that failed: its code of JSON-RPC and why.
-type Failure = {
+type RpcFailure = {
     code: Int
     message: String
 }
@@ -226,7 +226,7 @@ fn completed(result: String, method: String): String {
     "{result.slice(0, result.length() - 1).unwrapOr("{{")},{extra}}}"
 }
 
-fn handle(state: Served, method: String, params: __json.Value): String ! Failure {
+fn handle(state: Served, method: String, params: __json.Value): String ! RpcFailure {
     let info = "{{\"name\":{quote(state.name)},\"version\":{quote(state.version)}}}"
     var capabilities = "\"tools\":{{}}"
     if not state.resources.isEmpty() {
@@ -263,7 +263,7 @@ fn handle(state: Served, method: String, params: __json.Value): String ! Failure
         "resources/read" => read(state, params.field("uri").asText().unwrapOr(""))?
         "prompts/list" => "{{\"prompts\":[{state.prompts.map(promptOf).join(",")}]}}"
         "prompts/get" => prompt(state, params)?
-        _ => fail Failure { code: -32601, message: "`{method}` is not a method of this server" }
+        _ => fail RpcFailure { code: -32601, message: "`{method}` is not a method of this server" }
     }
 }
 
@@ -411,11 +411,11 @@ fn outputOf(method: __reflect.MethodInfo): String? {
     }
 }
 
-fn call(state: Served, params: __json.Value): String ! Failure {
+fn call(state: Served, params: __json.Value): String ! RpcFailure {
     let name = params.field("name").asText().unwrapOr("")
     let method = match state.tools.find((method) { method.name() == name }) {
         some(method) => method
-        none => fail Failure {
+        none => fail RpcFailure {
             code: -32602
             message: "unknown tool `{name}`: tools/list names them"
         }
@@ -423,7 +423,7 @@ fn call(state: Served, params: __json.Value): String ! Failure {
     let given = params.field("arguments")
     let args = match valuesOf(method, given) {
         ok(args) => args
-        err(problem) => fail Failure {
+        err(problem) => fail RpcFailure {
             code: -32602
             message: "the arguments of `{name}`: {problem}"
         }
@@ -548,7 +548,7 @@ fn matched(template: String, uri: String): Map[String, String]? {
     if at.isEmpty() { some(found) } else { none }
 }
 
-fn read(state: Served, uri: String): String ! Failure {
+fn read(state: Served, uri: String): String ! RpcFailure {
     for method in state.resources {
         let resource = resourceOf(method)
         let parts = match matched(resource.uri, uri) {
@@ -561,15 +561,15 @@ fn read(state: Served, uri: String): String ! Failure {
             .map((param) { __reflect.valueOf(parts.get(param.name()).unwrapOr("")) })
         let value = match recover { state.target.call(method.name(), ...args) } {
             ok(ok(value)) => value
-            ok(err(problem)) => fail Failure { code: -32603, message: "{problem}" }
-            err(crash) => fail Failure {
+            ok(err(problem)) => fail RpcFailure { code: -32603, message: "{problem}" }
+            err(crash) => fail RpcFailure {
                 code: -32603
                 message: "`{method.name()}` panicked: {crash.message}"
             }
         }
         let content = match (method.function().outcome().kind(), value.variant()) {
             (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), some("err")) => {
-                fail Failure {
+                fail RpcFailure {
                     code: -32603
                     message: "{value.elements().first().map((e) { "{e}" }).unwrapOr("")}"
                 }
@@ -587,7 +587,7 @@ fn read(state: Served, uri: String): String ! Failure {
         }
         return "{{\"contents\":[{{\"uri\":{quote(uri)},\"mimeType\":{quote(resource.mime)},{body}}}]}}"
     }
-    fail Failure { code: -32002, message: "no resource `{uri}`: resources/list names them" }
+    fail RpcFailure { code: -32002, message: "no resource `{uri}`: resources/list names them" }
 }
 
 fn promptOf(method: __reflect.MethodInfo): String {
@@ -602,11 +602,11 @@ fn promptOf(method: __reflect.MethodInfo): String {
     "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"arguments\":[{arguments.join(",")}]}}"
 }
 
-fn prompt(state: Served, params: __json.Value): String ! Failure {
+fn prompt(state: Served, params: __json.Value): String ! RpcFailure {
     let name = params.field("name").asText().unwrapOr("")
     let method = match state.prompts.find((method) { method.name() == name }) {
         some(method) => method
-        none => fail Failure {
+        none => fail RpcFailure {
             code: -32602
             message: "unknown prompt `{name}`: prompts/list names them"
         }
@@ -616,7 +616,7 @@ fn prompt(state: Served, params: __json.Value): String ! Failure {
     for param in method.function().parameters() {
         match __shapes.fromJson(param.typeInfo(), given.field(param.name()), param.name()) {
             ok(value) => args.push(value)
-            err(problem) => fail Failure {
+            err(problem) => fail RpcFailure {
                 code: -32602
                 message: "the arguments of `{name}`: {problem}"
             }
@@ -624,8 +624,11 @@ fn prompt(state: Served, params: __json.Value): String ! Failure {
     }
     let text = match recover { state.target.call(name, ...args) } {
         ok(ok(value)) => "{value}"
-        ok(err(problem)) => fail Failure { code: -32603, message: "{problem}" }
-        err(crash) => fail Failure { code: -32603, message: "`{name}` panicked: {crash.message}" }
+        ok(err(problem)) => fail RpcFailure { code: -32603, message: "{problem}" }
+        err(crash) => fail RpcFailure {
+            code: -32603
+            message: "`{name}` panicked: {crash.message}"
+        }
     }
     "{{\"description\":{quote(method.docs().unwrapOr(""))},\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":{quote(text)}}}}}]}}"
 }

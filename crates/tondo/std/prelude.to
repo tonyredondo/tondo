@@ -538,6 +538,59 @@ pub fn Result[T, E].expect(self, message: String): T {
     }
 }
 
+/// The value, or a `Failure` that says what the program was doing, with the
+/// error as its cause: `fs.readText(path).context("reading {path}")?`.
+pub fn Result[T, E].context(self, message: String): T ! Failure {
+    match self {
+        ok(value) => value
+        err(error) => fail Failure {
+            message
+            cause: some(reflectNative.box(error))
+            shown: reflectNative.describe(error)
+        }
+    }
+}
+
+/// The value, or a `Failure` that says what is missing:
+/// `users.get(id).context("no user {id}")?`.
+pub fn Option[T].context(self, message: String): T ! Failure {
+    match self {
+        some(value) => value
+        none => fail Failure { message }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Failure
+// ---------------------------------------------------------------------------
+
+/// An error that says what the program was doing when it happened, with
+/// the error that caused it (language 15.10): `reading config.yaml: no
+/// such file`. `Failure { message: "..." }` is one with no cause.
+pub type Failure = {
+    message: String
+    priv cause: reflectNative.Box? = none
+    priv shown: String = ""
+}
+
+impl Display for Failure {
+    fn display(self): String {
+        if self.shown.isEmpty() { self.message } else { "{self.message}: {self.shown}" }
+    }
+}
+
+/// The nearest cause of type `E` among the failure's, through the failures
+/// that cause it: `failure.find[fs.FsError]()`.
+pub fn Failure.find[E](self): E? {
+    match self.cause {
+        some(cause) if reflectNative.is[E](cause) => some(reflectNative.unbox[E](cause))
+        some(cause) if reflectNative.is[Failure](cause) => reflectNative.unbox[Failure](cause).find[
+            E,
+        ]()
+        _ => none
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Array
 // ---------------------------------------------------------------------------

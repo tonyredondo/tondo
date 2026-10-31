@@ -5853,6 +5853,57 @@ pub fn Panic.resume(self): Never
 impl Display for Panic          // el informe de 15.7
 ~~~
 
+### 15.10 Contexto de un error: `Failure`
+
+Los errores tipados de 15.4 son la frontera de una API: quien llama los
+distingue con un `match` exhaustivo. Dentro de un programa, a menudo basta
+saber qué hacía cuando falló y conservar la causa. `Failure`, del prelude, es
+ese error: un mensaje y, si la tiene, la causa.
+
+~~~tondo
+fn loadConfig(path: String): Config ! Failure {
+    let text = fs.readText(path).context("reading {path}")?
+    json.decode[Config](text).context("decoding {path}")?
+}
+
+match loadConfig("app.json").context("starting the server") {
+    ok(config) => serve(config)
+    err(failure) => {
+        console.eprintln("{failure}")   // starting the server: reading app.json: not found
+        if failure.find[fs.FsError]() == some(fs.FsError.NotFound) {
+            serve(Config.defaults())
+        }
+    }
+}
+~~~
+
+~~~tondo pseudocode
+pub type Failure = {
+    message: String
+    // la causa, privada, con valor por defecto
+}
+impl Display for Failure        // "mensaje: causa", o el mensaje sin causa
+pub fn Result[T, E].context(self, message: String): T ! Failure
+pub fn Option[T].context(self, message: String): T ! Failure
+pub fn Failure.find[E](self): E?
+~~~
+
+- `result.context(message)` da el valor de `ok`, o un `Failure` con el
+  mensaje y el error como causa. El error puede ser de cualquier tipo; se
+  muestra con su `Display` o, si no lo tiene, como lo describe un pánico. Un
+  `Failure` como causa encadena: cada uno muestra el suyo detrás de su
+  mensaje.
+- `option.context(message)` da el valor, o un `Failure` sin causa que dice lo
+  que falta.
+- `Failure { message: "..." }` construye uno sin causa, en cualquier módulo,
+  porque la causa es un campo privado con valor por defecto (9.2).
+- `failure.find[E]()` da la causa más cercana de tipo exactamente `E`,
+  recorriendo los `Failure` que la causan, o `none`. Una causa que es una
+  unión se busca con la unión.
+- Un `?` que propagaría otro error, o un `none`, en una función que falla con
+  `Failure` es `E1301`, que propone `.context("...")?`.
+- `Failure` es un nombre del prelude: un programa no declara otro (`E1005`).
+
 ---
 
 ## 16. Mutabilidad, préstamos, memoria y concurrencia

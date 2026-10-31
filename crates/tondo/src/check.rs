@@ -138,7 +138,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-pub(crate) const PRELUDE_TYPES: [&str; 47] = [
+pub(crate) const PRELUDE_TYPES: [&str; 48] = [
     "NumericConversionError",
     "ByteOrder",
     "Bool",
@@ -186,6 +186,7 @@ pub(crate) const PRELUDE_TYPES: [&str; 47] = [
     "Share",
     "Display",
     "Panic",
+    "Failure",
 ];
 
 enum TypeName {
@@ -11910,10 +11911,16 @@ impl<'a> Checker<'a> {
         match self.types.kind(value.ty).clone() {
             TyKind::Option(payload) => {
                 if !matches!(self.types.kind(cx.result), TyKind::Option(_)) {
-                    let message = format!(
-                        "`?` on an option needs the function to return an option, but it returns {}",
-                        self.display(cx.result)
-                    );
+                    // A function that fails with `Failure` says what is missing.
+                    let message = match cx.error {
+                        Some(error) if Some(error) == self.failure_type() => {
+                            "`?` on an option needs the function to return an option; this one fails with `Failure`, so say what is missing with `.context(\"...\")?`".to_string()
+                        }
+                        _ => format!(
+                            "`?` on an option needs the function to return an option, but it returns {}",
+                            self.display(cx.result)
+                        ),
+                    };
                     self.diags.error("E1301", span, message);
                 }
                 Self::mk(hir::ExprKind::Try(Box::new(value)), payload, span)
@@ -11930,7 +11937,13 @@ impl<'a> Checker<'a> {
                     let produced = self.types.members(error).map_or(vec![error], <[Ty]>::to_vec);
                     let declared = self.types.members(channel).map_or(vec![channel], <[Ty]>::to_vec);
                     let missing: Vec<Ty> = produced.iter().copied().filter(|t| !declared.contains(t)).collect();
-                    if !missing.is_empty() {
+                    if !missing.is_empty() && Some(channel) == self.failure_type() {
+                        let message = format!(
+                            "`?` would propagate {} but the function fails with `Failure`: say what it was doing with `.context(\"...\")?`, which keeps the error as the cause",
+                            self.display(error)
+                        );
+                        self.diags.error("E1301", span, message);
+                    } else if !missing.is_empty() {
                         let missing_text: Vec<String> = missing.iter().map(|&t| self.display(t)).collect();
                         let widened = self.types.union(&[channel, error]);
                         let result = self.types.intern(TyKind::Result(cx.result, widened));
@@ -11960,6 +11973,14 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1301", span, message);
                 Self::error_expr(span)
             }
+        }
+    }
+
+    /// The prelude's `Failure` (15.10).
+    fn failure_type(&self) -> Option<Ty> {
+        match self.type_names.get("Failure") {
+            Some(&TypeName::Nominal(ty)) => Some(ty),
+            _ => None,
         }
     }
 
