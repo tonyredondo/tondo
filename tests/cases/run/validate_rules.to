@@ -1,0 +1,55 @@
+// A type's own rules, `validate.Rules`, between fields or on each element:
+// reading checks them after the fields' rules, and `validate.check` under
+// the value's path.
+import std.console
+import std.json
+import std.validate
+
+type Booking = {
+    @validate.Length(min: 1)
+    name: String
+    start: Int
+    end: Int
+    tags: Array[String]
+}
+
+impl validate.Rules for Booking {
+    fn violations(self): Array[validate.Violation] {
+        var found: Array[validate.Violation] = []
+        if self.end <= self.start {
+            found.push(validate.Violation { path: "end", message: "must be after start" })
+        }
+        for (index, tag) in self.tags.enumerate() {
+            if tag.isEmpty() {
+                found.push(
+                    validate.Violation { path: "tags[{index}]", message: "must not be empty" },
+                )
+            }
+        }
+        found
+    }
+}
+
+type Trip = {
+    bookings: Array[Booking]
+}
+
+fn main() {
+    match json.decode[Booking](r"""{"name": "", "start": 5, "end": 3, "tags": ["a", ""]}""") {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error}")
+    }
+    match json.decode[Booking](r"""{"name": "x", "start": 1, "end": 3, "tags": []}""") {
+        ok(booking) => console.println("read {booking.end}")
+        err(error) => console.println("{error}")
+    }
+    let trip = Trip { bookings: [Booking { name: "x", start: 4, end: 2, tags: [] }] }
+    match validate.check(trip) {
+        ok(_) => console.println("valid")
+        err(invalid) => console.println("{invalid}")
+    }
+}
+
+// expect-stdout: name: must have at least 1 character; end: must be after start; tags[1]: must not be empty at $ (line 1, column 54)
+// expect-stdout: read 3
+// expect-stdout: bookings[0].end: must be after start

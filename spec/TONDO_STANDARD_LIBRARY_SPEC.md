@@ -3198,6 +3198,7 @@ pub fn Value.elements(self): Array[Value]
 pub fn Value.entries(self): Array[(Value, Value)]
 pub fn Value.variant(self): String?
 pub fn Value.optional(self, name: String): Value? ! ReflectError
+pub fn Value.brokenRules(self): Array[(String, String)]   // de validate.Rules: caminos y mensajes
 impl Display for Value
 
 pub trait Reflect {
@@ -3212,6 +3213,7 @@ pub trait Reflect {
     fn reflectShow(self, nested: Bool): String
     fn reflectFrom(value: Value): Self ! ReflectError
     fn reflectDescription(): TypeDescription
+    fn reflectRules(self): Array[(String, String)]          // ninguna, si no se implementa
 }
 
 pub enum ReflectErrorKind {
@@ -5944,6 +5946,7 @@ pub annotation Matches = { pattern: String }
 pub annotation Email = {}
 pub alias Violation = serialization.Violation      // { path: String, message: String }
 pub type Invalid = { violations: Array[Violation] }
+pub trait Rules { fn violations(self): Array[Violation] }
 pub fn check[T: reflect.Reflect](value: T): !Invalid
 pub fn checkAs(value: reflect.Value, info: reflect.TypeInfo): !Invalid
 ~~~
@@ -5963,6 +5966,13 @@ pub fn checkAs(value: reflect.Value, info: reflect.TypeInfo): !Invalid
   en el programa, y también los de sus campos; `checkAs`, un valor de
   reflexión como del tipo que describe `info`, para el código que lee valores
   por reflexión antes de hacerlos, como `std.mcp`.
+- Un record o un newtype que implementa `Rules` tiene reglas propias, las que
+  las anotaciones de sus campos no dicen: entre campos, sobre cada elemento de
+  una lista o cualquier otra. `violations` da las que rompe, con caminos desde
+  el valor (`"end"`, `"tags[1]"`). El `Decode` derivado las comprueba después
+  de las de sus campos, junto con ellas, y `check` y `checkAs` también, bajo
+  el camino del valor; la reflexión las lleva (`Value.brokenRules()`), sin que
+  el programa haga nada más.
 - `Request.json[T]()` responde `422` con cada violación en `errors`, como
   extensión de RFC 9457; `cli.parse` termina con 2 y las dice; una
   herramienta de `std.mcp` devuelve el error al modelo, que corrige su

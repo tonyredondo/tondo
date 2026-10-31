@@ -66,6 +66,14 @@ impl __reflect.Reflect for Email {
 /// A rule a value breaks: the path of its field and what the rule asks.
 pub alias Violation = __serialization.Violation
 
+/// Rules of a type of its own, which its fields' annotations cannot say:
+/// between its fields, on each element of a list, or any other. The code
+/// the compiler writes for `Decode` checks them after the fields' rules,
+/// and so does `check`. A path names a field from the value: `"end"`.
+pub trait Rules {
+    fn violations(self): Array[Violation]
+}
+
 /// The rules a value breaks.
 pub type Invalid = {
     violations: Array[Violation]
@@ -138,6 +146,17 @@ fn violationsOf(value: __reflect.Value, info: __reflect.TypeInfo, at: String): A
             }
         }
         _ => {}
+    }
+    // The type's own rules, `Rules`, under the value's path.
+    if info.kind() == __reflect.TypeKind.Record or info.kind() == __reflect.TypeKind.Newtype {
+        for (path, message) in value.brokenRules() {
+            let joined = match (at.isEmpty(), path.isEmpty()) {
+                (true, _) => path
+                (false, true) => at
+                (false, false) => "{at}.{path}"
+            }
+            found.push(Violation { path: joined, message })
+        }
     }
     found
 }

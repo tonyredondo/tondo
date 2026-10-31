@@ -217,6 +217,28 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
         .collect();
     let module_name = kind.module();
     let fallback = format!("__{module_name}");
+    // The types that implement `validate.Rules`, in any file of their
+    // module, by module and name.
+    let ruled: std::collections::HashSet<(usize, String)> = modules
+        .iter()
+        .enumerate()
+        .flat_map(|(index, module)| module.files.iter().map(move |(file, _)| (index, file)))
+        .flat_map(|(index, file)| {
+            file.items.iter().filter_map(move |item| match item {
+                ast::Item::Impl(i)
+                    if matches!(&i.trait_ref.kind, ast::TypeKind::Path { segments, .. } if segments.last().is_some_and(|s| s.name == "Rules")) =>
+                {
+                    match &i.target.kind {
+                        ast::TypeKind::Path { segments, .. } if segments.len() == 1 => {
+                            Some((index, segments[0].name.clone()))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+        })
+        .collect();
     for (module_index, module) in modules.iter_mut().enumerate() {
         for (file_index, (file, _)) in module.files.iter_mut().enumerate() {
             let mut text = String::new();
@@ -243,7 +265,8 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 let noted = NOTED.iter().filter_map(|&format| Some((format, alias_of(file, format)?))).collect();
                 let displayed = implemented("Display");
                 let validate = alias_of(file, "validate");
-                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed, validate };
+                let ruled = ruled.contains(&(d.module, d.name.clone()));
+                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed, validate, ruled };
                 for &name in kind.traits() {
                     if implemented(name) {
                         continue;
@@ -273,6 +296,15 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 file.imports.push(ast::Import {
                     path: vec![ident("std"), ident("rules")],
                     alias: Some(ident("__rules")),
+                    span,
+                    line: span,
+                });
+            }
+            // A type's own rules, when its file does not import them.
+            if text.contains("__validate.") && alias_of(file, "validate").is_none() {
+                file.imports.push(ast::Import {
+                    path: vec![ident("std"), ident("validate")],
+                    alias: Some(ident("__validate")),
                     span,
                     line: span,
                 });
@@ -545,6 +577,9 @@ struct Generator<'a> {
     /// The alias of `std.validate` in the type's file, whose rules `Decode`
     /// checks (standard library 14.35).
     validate: Option<String>,
+    /// Whether the type implements `validate.Rules`, which `Decode` checks
+    /// after its fields' rules, and reflection gives.
+    ruled: bool,
     sources: &'a SourceMap,
     declared: &'a Declared,
 }
@@ -836,7 +871,7 @@ impl Generator<'_> {
                     out.push_str(&format!("        input.beginMap(first, {name:?})?\n"));
                     out.push_str(&self.read_fields(fields, "        "));
                     let checks = self.rules(fields, "            ");
-                    if checks.is_empty() {
+                    if checks.is_empty() && !self.ruled {
                         out.push_str(&format!(
                             "        {name} {{\n{}        }}\n",
                             self.fields(fields, "            ")
@@ -846,10 +881,22 @@ impl Generator<'_> {
                             "        let __value = {name} {{\n{}        }}\n",
                             self.fields(fields, "            ")
                         ));
-                        out.push_str(&format!("        let __violations = __rules.found([\n{checks}        ])\n"));
+                        out.push_str(&format!(
+                            "        let __violations = __rules.found([\n{checks}        ]){}\n",
+                            self.own_rules()
+                        ));
                         out.push_str("        if not __violations.isEmpty() {\n            fail input.invalid(__violations)\n        }\n");
                         out.push_str("        __value\n");
                     }
+                }
+                ast::TypeBody::Newtype(inner) if self.ruled => {
+                    out.push_str(&format!(
+                        "        let __value = {name}({s}.Decode.decode[{}](input, first)?)\n",
+                        self.text(inner)
+                    ));
+                    out.push_str(&format!("        let __violations = __rules.found([]){}\n", self.own_rules()));
+                    out.push_str("        if not __violations.isEmpty() {\n            fail input.invalid(__violations)\n        }\n");
+                    out.push_str("        __value\n");
                 }
                 ast::TypeBody::Newtype(inner) => {
                     out.push_str(&format!("        {name}({s}.Decode.decode[{}](input, first)?)\n", self.text(inner)));
@@ -972,8 +1019,26 @@ impl Generator<'_> {
         }
         out.push_str(&self.reflect_methods(methods));
         out.push_str(&self.reflect_description(item, methods));
+        // Its own rules, which `validate.check` reads.
+        if self.ruled {
+            out.push_str(&format!(
+                "    fn reflectRules(self): Array[(String, String)] {{\n        {}.Rules.violations(self).map((__v) {{ (__v.path, __v.message) }})\n    }}\n\n",
+                self.validating()
+            ));
+        }
         out.push_str("}\n\n");
         out
+    }
+
+    /// The type's own rules after its fields', `validate.Rules`.
+    fn own_rules(&self) -> String {
+        if self.ruled { format!(".concat({}.Rules.violations(__value))", self.validating()) } else { String::new() }
+    }
+
+    /// The alias of `std.validate` in the type's file, or the one its
+    /// derived code imports.
+    fn validating(&self) -> &str {
+        self.validate.as_deref().unwrap_or("__validate")
     }
 
     /// `reflectDescription`: the kind, generic arguments, visible fields

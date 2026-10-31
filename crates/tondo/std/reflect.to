@@ -53,6 +53,7 @@ enum Op {
     CallMut(String, Array[Value])
     Show(Bool)
     Info
+    Rules
 }
 
 /// What the code of a type answers.
@@ -64,6 +65,7 @@ enum Reply {
     Text(String?)
     Changed(Value, Value)
     Info(TypeInfo)
+    Broken(Array[(String, String)])
 }
 
 /// The operations reflection has on a type. The compiler implements it for
@@ -123,6 +125,12 @@ pub trait Reflect {
     fn reflectDescription(): TypeDescription {
         TypeDescription.of(TypeKind.Opaque)
     }
+
+    /// The rules of its own the value breaks, as `validate.Rules` gives
+    /// them: each path and message.
+    fn reflectRules(self): Array[(String, String)] {
+        []
+    }
 }
 
 /// The name of the type of a value.
@@ -150,6 +158,7 @@ fn dispatch[T: Reflect](box: reflectNative.Box, op: Op): Reply ! ReflectError {
         }
         Op.Show(nested) => Reply.Text(some(value.reflectShow(nested)))
         Op.Info => Reply.Info(typeInfo[T]())
+        Op.Rules => Reply.Broken(value.reflectRules())
     }
 }
 
@@ -208,6 +217,15 @@ pub fn convert[T: Reflect, S: Reflect](value: S): T {
 
 fn Value.run(self, op: Op): Reply ! ReflectError {
     self.ops(self.box, op)
+}
+
+/// The rules of its type's own, `validate.Rules`, that the value breaks:
+/// each path, from the value, and what the rule asks.
+pub fn Value.brokenRules(self): Array[(String, String)] {
+    match self.run(Op.Rules) {
+        ok(Reply.Broken(broken)) => broken
+        _ => []
+    }
 }
 
 /// The segments of a path.

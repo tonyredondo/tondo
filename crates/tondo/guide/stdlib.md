@@ -395,6 +395,10 @@ fn main() {
   checks a value the program made.
 - Whether a field is required is its type, `T` or `T?`, and a closed set of
   values is an enum; a rule on a field it does not fit is `E1908`.
+- Rules the fields' annotations cannot say, between fields or on each
+  element, go in `impl validate.Rules for Booking { fn violations(self):
+  Array[validate.Violation] { ... } }`, with paths as `"end"`; reading and
+  `validate.check` check them after the fields' rules.
 
 ## Secrets, passwords and signatures
 

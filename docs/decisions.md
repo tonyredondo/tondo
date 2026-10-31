@@ -3750,3 +3750,13 @@ that repeat. A multipart form reads into a type as a URL-encoded one does,
 its files into `UploadedFile` fields in memory, as Gin binds them; the
 streams of `uploads` stay for files that do not fit.
 
+## 2026-10-31 — A type's own rules
+
+Gin's validator writes rules between fields, on each element and of its
+own; `std.validate` had five annotations, and every new kind of rule would
+have been another. A type that implements `validate.Rules` says the rules
+its fields cannot, in Tondo, with paths from the value; reading checks them
+after the fields' rules and reports them together, and `check` too, since
+reflection carries them. The annotations stay for the rules a field says by
+itself, which the compiler checks fit its type.
+
