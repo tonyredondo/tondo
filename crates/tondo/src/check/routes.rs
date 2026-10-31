@@ -220,6 +220,9 @@ impl Checker<'_> {
                 let mut extracted = Vec::new();
                 let mut body: Option<String> = None;
                 let mut fails = false;
+                // A parameter it cannot read has its error; the call would
+                // only add one more.
+                let mut unread = false;
                 for (name, &ty) in typed.iter().zip(&callable.params) {
                     let request_value = || s.path(&["·request"]);
                     let n = name.name.as_str();
@@ -246,6 +249,7 @@ impl Checker<'_> {
                                     self.display(ty)
                                 );
                                 self.diags.error("E1102", name.span, message);
+                                unread = true;
                                 continue;
                             }
                         }
@@ -268,6 +272,7 @@ impl Checker<'_> {
                                 "a {verb} request has no body, which `{n}` would be read from: take it from the path or the query, or take `http.Request`"
                             );
                             self.diags.error("E1102", name.span, message);
+                            unread = true;
                             continue;
                         }
                         if let Some(first) = &body {
@@ -275,6 +280,7 @@ impl Checker<'_> {
                                 "a handler reads one body, as `{first}`; `{n}` would be read from it too: put both in one type"
                             );
                             self.diags.error("E1102", name.span, message);
+                            unread = true;
                             continue;
                         }
                         body = Some(n.to_string());
@@ -286,6 +292,9 @@ impl Checker<'_> {
                         s.try_(s.method(request_value(), "json", Vec::new()))
                     };
                     extracted.push(read);
+                }
+                if unread {
+                    return Self::error_expr(span);
                 }
                 // The call, with its failure as a problem.
                 let mut value = s.call(s.path(&[local_name.as_str()]), extracted);

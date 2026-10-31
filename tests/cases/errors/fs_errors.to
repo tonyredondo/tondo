@@ -21,6 +21,7 @@ fn main() {
 // expect-error: E1001 module `fs` has no function `readFile`; use `fs.readText`
 // expect-error: E1102 missing argument `mode`, of type `fs.OpenMode`
 // expect-error: E1102 an integer literal is not a `Byte`: write `Byte(1u8)`
+// expect-error: E1102 an integer literal is not a `Byte`: write `Byte(2u8)`
 // expect-error: E1102 a standard function takes positional arguments; remove the name
 // expect-error: E1001 module `fs` has no function `removeAll`; use `fs.remove(path, recursive: true)`
 // expect-error: E1411 `readLine` changes `file`, which is not declared with `var`: declare it as `var file`

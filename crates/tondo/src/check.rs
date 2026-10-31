@@ -55,6 +55,7 @@ fn check_with<'a>(
         sources,
         names: HashMap::new(),
         type_names: HashMap::new(),
+        misnamed: HashSet::new(),
         aliases: Vec::new(),
         signatures: Vec::new(),
         methods: HashMap::new(),
@@ -773,6 +774,10 @@ struct Checker<'a> {
     sources: &'a SourceMap,
     names: HashMap<String, ModuleName>,
     type_names: HashMap<String, TypeName>,
+    /// The names of the prelude's types that the program declared again, an
+    /// error already (E1005): its uses of them are the prelude's, and what
+    /// they lack is no news.
+    misnamed: HashSet<String>,
     aliases: Vec<AliasEntry>,
     signatures: Vec<Signature>,
     /// Inherent operations by owner type and name (11.5). A generic owner
@@ -1255,7 +1260,9 @@ impl<'a> Checker<'a> {
         let testing = module.test_package.is_some();
         for statement in &module.statements {
             if let ast::StmtKind::Let { pattern, .. } = &statement.kind {
-                bound_names(pattern, &mut self.script_bindings);
+                let mut names = Vec::new();
+                bound_idents(pattern, &mut names);
+                self.script_bindings.extend(names.into_iter().map(|name| name.name.clone()));
             }
         }
         self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty()) + u32::from(testing);
@@ -3447,6 +3454,7 @@ impl<'a> Checker<'a> {
             self.diags.error("E1005", name.span, message);
             // The rest of the program checks against it, rather than
             // failing at each use.
+            self.misnamed.insert(name.name.clone());
             self.type_names.insert(name.name.clone(), value);
         } else if self.type_names.insert(name.name.clone(), value).is_some() {
             let message = format!("type `{}` is declared more than once", name.name);
@@ -8502,9 +8510,10 @@ impl<'a> Checker<'a> {
             ast::StmtKind::Fail(value) => {
                 let declared = cx.error;
                 let value = self.expr(cx, value, declared);
+                // It ends the function, even where it cannot.
+                cx.diverged = true;
                 let error = self.error_channel(cx, value.ty, stmt.span, "E1302")?;
                 let value = self.coerce(value, error);
-                cx.diverged = true;
                 Some(hir::Stmt::Fail(value))
             }
             ast::StmtKind::Break | ast::StmtKind::Continue => {
@@ -10380,7 +10389,7 @@ impl<'a> Checker<'a> {
             let owner = self.index_type_name(ty).map(|e| format!("{e}.{}", path.last().unwrap().name));
             self.index_fields(owner, inits.iter().map(|i| (&i.name, i.value.is_none())));
             let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
-            self.report_missing(&fields, &seen, span);
+            self.report_missing(&fields, &seen, inits, span);
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
         let name = path.last().expect("a path has a name");
@@ -10456,7 +10465,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        self.report_missing(&fields, &seen, span);
+        self.report_missing(&fields, &seen, inits, span);
         Self::mk(hir::ExprKind::Record(values), ty, span)
     }
 
@@ -10510,15 +10519,23 @@ impl<'a> Checker<'a> {
         (concrete, values, seen)
     }
 
-    fn report_missing(&mut self, fields: &[(String, Ty)], seen: &[bool], span: Span) {
-        let missing: Vec<&str> = fields.iter().zip(seen).filter(|(_, s)| !**s).map(|((n, _), _)| n.as_str()).collect();
+    /// The fields a literal leaves out, but for one that a misspelled field
+    /// of it was already told to be, as `emial` for `email`.
+    fn report_missing(&mut self, fields: &[(String, Ty)], seen: &[bool], inits: &[ast::FieldInit], span: Span) {
+        let names = || fields.iter().map(|(n, _)| n.as_str());
+        let meant: Vec<&str> = inits
+            .iter()
+            .filter(|init| !names().any(|n| n == init.name.name))
+            .filter_map(|init| closest(&init.name.name, names()))
+            .collect();
+        let missing: Vec<(&String, &Ty)> = fields
+            .iter()
+            .zip(seen)
+            .filter(|((n, _), s)| !**s && !meant.contains(&n.as_str()))
+            .map(|((n, t), _)| (n, t))
+            .collect();
         if !missing.is_empty() {
-            let typed: Vec<String> = fields
-                .iter()
-                .zip(seen)
-                .filter(|(_, s)| !**s)
-                .map(|((n, t), _)| format!("{n}: {}", self.types.display(*t)))
-                .collect();
+            let typed: Vec<String> = missing.iter().map(|(n, t)| format!("{n}: {}", self.types.display(**t))).collect();
             let what = if missing.len() == 1 { "the field" } else { "the fields" };
             let message = format!("this value is missing {what} {}", listed(&typed));
             self.diags.error("E1102", span, message);
@@ -11073,8 +11090,37 @@ impl<'a> Checker<'a> {
     }
 
     /// Checks a pattern against a value of type `ty`, declaring its bindings
-    /// in the current scope.
+    /// in the current scope. Those of a pattern that does not fit, or of a
+    /// value already wrong, are declared as wrong too, so that their uses
+    /// add no errors of their own.
     fn pattern(&mut self, cx: &mut FnCx, p: &ast::Pattern, ty: Ty, context: PatternContext) -> hir::Pattern {
+        let simple =
+            matches!(p.kind, ast::PatternKind::Binding(_) | ast::PatternKind::Loan(..) | ast::PatternKind::Wildcard);
+        if matches!(self.types.kind(ty), TyKind::Error) && !simple {
+            self.declare_failed(cx, p);
+            return Self::wild(ty, p.span);
+        }
+        let before = self.diags.list.len();
+        let checked = self.checked_pattern(cx, p, ty, context);
+        let failed = self.diags.list[before..].iter().any(|d| d.severity == crate::diag::Severity::Error);
+        if failed && matches!(checked.kind, hir::PatKind::Wildcard) {
+            self.declare_failed(cx, p);
+        }
+        checked
+    }
+
+    /// Declares the bindings of a pattern that failed, as wrong.
+    fn declare_failed(&mut self, cx: &mut FnCx, p: &ast::Pattern) {
+        let mut names = Vec::new();
+        bound_idents(p, &mut names);
+        for name in names {
+            if name.name != "_" && self.lookup(cx, &name.name).is_none() {
+                self.declare(cx, name, Ty::ERROR, false);
+            }
+        }
+    }
+
+    fn checked_pattern(&mut self, cx: &mut FnCx, p: &ast::Pattern, ty: Ty, context: PatternContext) -> hir::Pattern {
         let span = p.span;
         if let Some(members) = self.types.members(ty).map(<[Ty]>::to_vec)
             && !matches!(p.kind, ast::PatternKind::Wildcard)
@@ -15034,7 +15080,13 @@ impl<'a> Checker<'a> {
                     missing.as_str(),
                     "`reflect.Reflect`" | "`serialization.Encode`" | "`serialization.Decode`"
                 );
-                let why = match automatic.then(|| self.lacking_field(actual, param, &inference.map)).flatten() {
+                let lacking = automatic.then(|| self.lacking_field(actual, param, &inference.map)).flatten();
+                // A type named like the prelude's has its error already.
+                let misnamed = |ty: Ty| self.misnamed.contains(&self.types.display(ty));
+                if misnamed(actual) || lacking.as_ref().is_some_and(|(_, ty)| misnamed(*ty)) {
+                    return Self::error_expr(span);
+                }
+                let why = match lacking {
                     Some((field, ty)) => format!(
                         "; the compiler implements it for records whose fields all implement it, and its field `{field}` is {}, which does not",
                         self.display(ty)
@@ -16026,10 +16078,27 @@ fn listed(items: &[String]) -> String {
 }
 
 /// The names a pattern binds.
-fn bound_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
+fn bound_idents<'p>(pattern: &'p ast::Pattern, names: &mut Vec<&'p ast::Ident>) {
     match &pattern.kind {
-        ast::PatternKind::Binding(name) | ast::PatternKind::Loan(_, name) => names.push(name.name.clone()),
-        ast::PatternKind::Tuple(parts) => parts.iter().for_each(|part| bound_names(part, names)),
+        ast::PatternKind::Binding(name) | ast::PatternKind::Loan(_, name) => names.push(name),
+        ast::PatternKind::Tuple(parts) | ast::PatternKind::Constructor { args: parts, .. } => {
+            parts.iter().for_each(|part| bound_idents(part, names))
+        }
+        ast::PatternKind::Array { items, rest } => {
+            items.iter().for_each(|item| bound_idents(item, names));
+            if let Some(Some((_, name))) = rest {
+                names.push(name);
+            }
+        }
+        ast::PatternKind::Record { fields, .. } => {
+            for field in fields {
+                match &field.pattern {
+                    Some(inner) => bound_idents(inner, names),
+                    None => names.push(&field.name),
+                }
+            }
+        }
+        ast::PatternKind::Member { inner, .. } => bound_idents(inner, names),
         _ => {}
     }
 }

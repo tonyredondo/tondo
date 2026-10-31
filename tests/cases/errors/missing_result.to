@@ -4,4 +4,6 @@ fn value(flag: Bool): Int {
     }
 }
 
+fn main() {}
+
 // expect-error: E1102

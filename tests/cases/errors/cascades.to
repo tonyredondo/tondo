@@ -1,0 +1,35 @@
+// An error is reported once: the names a pattern binds from a value that
+// is already wrong, or from a pattern that does not fit, are known, and a
+// `fail` the function cannot make still ends it.
+
+import std.console
+
+pub type Holder = { run: fn(): Int }
+
+pub enum Shape {
+    Circle(Float)
+}
+
+fn needs[T: Ordered](value: T): T ! String {
+    value
+}
+
+fn infallible(): Int {
+    fail "no"
+}
+
+fn main() {
+    match needs(Holder { run: (): Int { 1 } }) {
+        ok(held) => console.println("{held.run()}")
+        err(error) => console.println("{error}")
+    }
+    match 3 {
+        Shape.Circle(radius) => console.println("{radius * 2.0}")
+        _ => {}
+    }
+    console.println("{infallible()}")
+}
+
+// expect-error: E1105 `Holder` does not implement `Ordered`, which `needs` requires of `T`
+// expect-error: E1202 a `Shape.Circle` pattern cannot match a value of type `Int`
+// expect-error: E1302 `infallible` cannot fail, but this propagates `String`: declare its result as `Int ! String`

@@ -7,7 +7,8 @@
 //! - `// expect-panic: <code>` — a language panic such as `P0005`;
 //! - `// expect-crash` — a signal ends the process, as a fault does;
 //! - `// expect-error: <code> [text]` — compilation fails with this
-//!   diagnostic, whose message contains `text` when given;
+//!   diagnostic, whose message contains `text` when given; every error is
+//!   one of these, since one that follows from another is a cascade;
 //! - `// expect-warning: <code> [text]` — compilation reports this warning;
 //! - `// expect-platform: <os or arch>...` — the case runs only there, as
 //!   `linux` or `aarch64`;
@@ -103,14 +104,24 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .output()
         .unwrap();
     let diagnostics = String::from_utf8_lossy(&build.stderr);
+    let matches = |line: &str, severity: &str, expected: &str| {
+        let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
+        line.strip_prefix(&format!("{severity}[{code}]: ")).is_some_and(|m| m.contains(text))
+    };
     let expected = expect.errors.iter().map(|e| ("error", e)).chain(expect.warnings.iter().map(|w| ("warning", w)));
     for (severity, expected) in expected {
-        let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
-        let header = format!("{severity}[{code}]: ");
-        let found = diagnostics.lines().any(|line| line.strip_prefix(&header).is_some_and(|m| m.contains(text)));
-        if !found {
-            return Err(format!("missing {header}{text} in diagnostics:\n{diagnostics}"));
+        if !diagnostics.lines().any(|line| matches(line, severity, expected)) {
+            let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
+            return Err(format!("missing {severity}[{code}]: {text} in diagnostics:\n{diagnostics}"));
         }
+    }
+    let unexpected: Vec<&str> = diagnostics
+        .lines()
+        .filter(|line| line.starts_with("error["))
+        .filter(|line| !expect.errors.iter().any(|expected| matches(line, "error", expected)))
+        .collect();
+    if !unexpected.is_empty() {
+        return Err(format!("errors the case does not expect:\n{}\n\n{diagnostics}", unexpected.join("\n")));
     }
     if !expect.errors.is_empty() {
         return if build.status.success() { Err("compiled, but errors were expected".into()) } else { Ok(()) };
