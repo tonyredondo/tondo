@@ -304,6 +304,9 @@ pub(crate) struct Task {
     /// innermost last: the one that holds, the nearest, and the index of the
     /// block that set it.
     pub(crate) withins: Vec<(Instant, usize)>,
+    /// The `within` entered in a `defer` of the cancelled task, whose waits
+    /// go on until its deadline (11.15): its level among `withins`.
+    pub(crate) grace: Option<usize>,
     /// Its deadline passed in a wait: it unwinds to the block of it.
     pub(crate) expired: bool,
     /// The deadline of the block that spawned it, which it reads and does
@@ -2214,6 +2217,7 @@ fn new_task(
         own_labels: std::sync::atomic::AtomicU32::new(own_labels()),
         context: super::contexts::inherited(),
         withins: Vec::new(),
+        grace: None,
         expired: false,
         inherited: AtomicU64::new(if detached { u64::MAX } else { super::contexts::deadline_nanos() }),
         recovers: Vec::new(),
@@ -2411,7 +2415,7 @@ impl Wait {
             }
         }
         lock(&task.waiting_lock);
-        let stopped = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire) || task.expired;
+        let stopped = halted(task);
         let fired = if stopped && self.claim(CANCELLED) {
             unlock(&task.waiting_lock);
             CANCELLED
@@ -2586,11 +2590,30 @@ pub(crate) unsafe fn channel_commit(
 
 /// Whether the current task is cancelled.
 pub(crate) fn cancelled() -> bool {
-    let task = current();
-    !task.is_null()
-        && unsafe {
-            (*task).cancelled.load(Ordering::Acquire) || (*task).alarm.load(Ordering::Acquire) || (*task).expired
-        }
+    unsafe { current().as_ref() }.is_some_and(halted)
+}
+
+/// Whether a task's waits end at once: it is cancelled, but for those of a
+/// `within` its cleanup entered, or a deadline of its passed (11.15).
+fn halted(task: &Task) -> bool {
+    let cancelled = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire);
+    (cancelled && task.grace.is_none()) || task.expired
+}
+
+/// A `within` starts at `level` among the task's: in a `defer` of a
+/// cancelled task, its waits go on until its deadline.
+pub(crate) fn within_starts(task: &mut Task, level: usize) {
+    let cancelled = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire);
+    if cancelled && task.deferring > 0 && task.grace.is_none() {
+        task.grace = Some(level);
+    }
+}
+
+/// The `within` at `level` ended, and the grace it gave with it.
+pub(crate) fn within_ends(task: &mut Task, level: usize) {
+    if task.grace.is_some_and(|graced| graced >= level) {
+        task.grace = None;
+    }
 }
 
 /// Whether an operation that may wait ends at once without being done: in
@@ -2638,7 +2661,7 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
     }
     let Some(task) = (unsafe { current().as_ref() }) else { return 0 };
     // In a `defer`, only after a wait that ended at once.
-    if task.cancelled.load(Ordering::Acquire) && (task.deferring == 0 || task.cut) {
+    if task.cancelled.load(Ordering::Acquire) && task.grace.is_none() && (task.deferring == 0 || task.cut) {
         return 1;
     }
     // A panic unwinds to a `recover` (language 15.9).

@@ -632,6 +632,7 @@ pub extern "C" fn tondo_rt_within_catch() -> u8 {
     let Some(task) = task() else { return 0 };
     settle(task);
     let level = task.withins.len().saturating_sub(1);
+    crate::tasks::within_ends(task, level);
     task.withins.pop();
     match task.paused.last() {
         Some(Some(record)) if record.deadline == Some(level) => {

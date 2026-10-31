@@ -1,0 +1,32 @@
+// In the `defer`s of a cancelled task a wait ends at once, and with it the
+// `defer`; one inside a `within` goes on until its deadline.
+import std.console
+import std.time
+
+fn work(log: Sender[String], never: Receiver[Int]) {
+    let early = log.copy()
+    defer {
+        _ =
+            within time.seconds(5) {
+                time.sleep(time.milliseconds(20))
+                log.send("flushed within its time")
+            }
+    }
+    defer {
+        time.sleep(time.milliseconds(20))
+        early.send("not reached: a wait ends at once")
+    }
+    _ = never.receive()
+}
+
+fn main() {
+    let (log, logged) = channel[String](4)
+    let (_keep, never) = channel[Int](1)
+    let job = spawn work(log, never)
+    job.cancel()
+    for line in logged {
+        console.println(line)
+    }
+}
+
+// expect-stdout: flushed within its time

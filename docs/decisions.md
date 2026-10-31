@@ -3771,3 +3771,15 @@ as for a client gone. Both count from the last byte rather than in total,
 as Go's `ReadTimeout` does not, so a large upload over a slow link ends
 while a stalled one does not hold the server.
 
+## 2026-10-31 — Time to finish after SIGTERM
+
+dd-trace-go flushes its last traces when the process stops, with an HTTP
+request that waits, and in Tondo every wait in the `defer`s of a cancelled
+task ended at once, so the request never left. A global grace period would
+have given every task time it did not ask for. Instead a `within` entered
+in such a `defer`, or in a function it calls, lets its waits go on until
+its deadline: the library that needs time says how much, in its own
+`stop()`, and a program only writes `defer tracer.stop()`. Its deadline
+still bounds it, so a flush that hangs does not keep the process from
+ending.
+

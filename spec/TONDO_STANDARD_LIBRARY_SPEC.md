@@ -6957,7 +6957,9 @@ Señales:
 - `Interrupt` (Ctrl-C) y `Terminate` (`kill`, `docker stop`, Kubernetes)
   cancelan el programa sin que escriba nada (20.10 del lenguaje): un servidor
   deja de aceptar, sus tareas ejecutan sus `defer` y termina con `130` o
-  `143`.
+  `143`. Un `defer` que necesita esperar, como para enviar lo que le queda,
+  lo hace dentro de un `within`, que le da hasta su plazo (11.15 y 11.17 del
+  lenguaje).
 - `signals(...)` entrega en un canal las señales pedidas que llegan, en vez de
   su efecto: ya no cancelan ni terminan el programa, que decide qué hacer,
   como recargar su configuración con `Hangup`. Las que el canal no ha leído

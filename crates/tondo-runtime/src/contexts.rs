@@ -527,6 +527,7 @@ pub extern "C" fn tondo_rt_within_enter(limit: i64) {
         _ => (at, level),
     };
     task.withins.push(held);
+    crate::tasks::within_starts(task, level);
 }
 
 /// The block of a `within` ends: a deadline of its that passed with no
@@ -535,6 +536,7 @@ pub extern "C" fn tondo_rt_within_enter(limit: i64) {
 pub extern "C" fn tondo_rt_within_leave() {
     let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
     let level = task.withins.len().saturating_sub(1);
+    crate::tasks::within_ends(task, level);
     if task.withins.pop().is_some_and(|(_, owner)| owner == level) && task.expired {
         task.expired = false;
         crate::tasks::attend(false);

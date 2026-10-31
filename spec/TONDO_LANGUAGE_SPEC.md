@@ -3962,7 +3962,11 @@ toman un lock libre, envían a un canal con sitio y reciben un valor que ya
 está, así que el estado compartido queda como debe. Una espera que sí
 necesita termina al instante, salvo la de sus propias tareas, que se
 cancelan y se esperan, y con ella termina ese `defer`; los siguientes se
-ejecutan. Cuando `cancel()` regresa, la tarea ya terminó.
+ejecutan. Las esperas de un `within` en el que entra un `defer` de la
+tarea cancelada, o una función que llama, siguen hasta su plazo (11.17):
+así una limpieza que necesita esperar, como el último envío de un tracer al
+recibir `SIGTERM`, dice cuánto tiempo tiene. Cuando `cancel()` regresa, la
+tarea ya terminó.
 
 ### 11.16 Contextos
 
@@ -4204,6 +4208,26 @@ fn profile(id: Int): Profile ! (HttpError | time.TimedOut) {
 - `time.TimedOut` no es un pánico: `recover` no lo detiene, ni `within` detiene
   pánicos. Una cancelación de la tarea entera dentro del bloque sigue siendo una
   cancelación, no un `TimedOut`.
+- En un `defer` de una tarea cancelada, donde una espera termina al instante
+  (11.15), un `within` da a sus esperas hasta su plazo: una librería que
+  necesita esperar al terminar, como para enviar lo que le queda, lo escribe
+  en la función que el programa llama en su `defer`, y quien la llama no
+  hace nada más. Al vencer el plazo, el bloque se cancela como cualquier otro
+  y vale `err(time.TimedOut)`.
+
+  ~~~tondo pseudocode
+  fn Tracer.stop(self) {
+      _ = within time.seconds(5) {
+          self.flush()
+      }
+  }
+
+  fn main() {
+      let tracer = Tracer.start()
+      defer tracer.stop()      // al recibir SIGTERM también envía lo que queda
+      serve()
+  }
+  ~~~
 
 `within` solo es una palabra del lenguaje al principio de una expresión,
 seguido de una expresión y un bloque (5.5). La expresión del plazo se lee como

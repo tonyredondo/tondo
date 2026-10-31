@@ -209,7 +209,11 @@ fn main() {
 
 `within limit { ... }` gives a block a deadline: when it passes, the
 block's next wait ends, its `defer`s run and its tasks are cancelled, and
-the result is `err(time.TimedOut)`.
+the result is `err(time.TimedOut)`. In the `defer`s of a cancelled task,
+as on SIGTERM, a wait ends at once, but one inside a `within` goes on until
+its deadline: a library's `stop()` that sends what it has left wraps the
+send in `within time.seconds(5) { ... }`, and `defer tracer.stop()` is all
+its caller writes.
 
 ```tondo
 import std.console

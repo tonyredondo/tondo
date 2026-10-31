@@ -1,0 +1,37 @@
+// On SIGTERM the program's `defer`s run, and one that needs to wait does so
+// inside a `within`, until its deadline: a flush that ends in time sends,
+// one that does not ends with `TimedOut`; the program ends with 143.
+import std.console
+import std.env
+import std.process
+import std.time
+
+fn flush() {
+    _ =
+        within time.seconds(5) {
+            time.sleep(time.milliseconds(20))
+            console.println("flushed after SIGTERM")
+        }
+}
+
+fn hang() {
+    match within time.milliseconds(100) {
+        time.sleep(time.seconds(30))
+        console.println("not reached")
+    } {
+        ok(_) => {}
+        err(_) => console.println("the second flush ran out of time")
+    }
+}
+
+fn main() {
+    defer flush()
+    defer hang()
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    time.sleep(time.seconds(30))
+    console.println("still running after SIGTERM")
+}
+
+// expect-stdout: the second flush ran out of time
+// expect-stdout: flushed after SIGTERM
+// expect-exit: 143
