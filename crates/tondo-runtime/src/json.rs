@@ -91,6 +91,8 @@ struct Reader {
     error: Option<(String, usize)>,
     /// Whether a later key that repeats an earlier one is an error.
     duplicates: bool,
+    /// Whether values may follow the first, as `go list -json` writes them.
+    several: bool,
     /// Where the value of the last event started.
     start: usize,
 }
@@ -123,6 +125,7 @@ impl Reader {
             root_seen: false,
             error: None,
             duplicates,
+            several: false,
             start: 0,
         }
     }
@@ -247,12 +250,20 @@ impl Reader {
         }
         self.compact();
         self.skip_space();
+        // Several values may be none.
+        if self.several && !self.root_seen && self.peek().is_none() {
+            self.done = true;
+            return END;
+        }
         // Close containers, and separate and key their members.
         let (array, expect_key, started) = match self.frames.last() {
             Some(Frame::Array { started, .. }) => (true, false, *started),
             Some(Frame::Object { expect_key, started, .. }) => (false, *expect_key, *started),
             None if self.root_seen => {
                 if self.peek().is_some() {
+                    if self.several {
+                        return self.value();
+                    }
                     return self.fail("unexpected data after the value");
                 }
                 self.done = true;
@@ -556,6 +567,12 @@ pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, duplicates: u8) -> *mut ReaderObject {
     reader_object(Reader::new(Vec::new(), Some(Source(retain(stream))), duplicates != 0))
+}
+
+/// Lets values follow the first one, with or without space between them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_several(object: *mut ReaderObject) {
+    reader(object).several = true;
 }
 
 fn reader_object(reader: Reader) -> *mut ReaderObject {

@@ -142,7 +142,10 @@ other members by their names, then floats, then `String`, then a format's
 `Value`. `Int | Float` reads `3` as an `Int`, and `Status | String` reads as
 a `String` a text that is no variant.
 `json.encode(value, htmlSafe: true)` escapes `<`, `>` and `&`, for JSON put
-inside a `<script>`.
+inside a `<script>`. Text with several values one after another, as `go list
+-json` writes, is `json.parseAll(text)` or `json.decodeAll[T](text)`, and
+`for each in json.values[T](stream) { let value = each? }` reads them as they
+arrive.
 
 A YAML key `<<` merges the maps of its anchors into its own. A tag of a
 value's own, as GitLab's `!reference [.setup, script]`, is

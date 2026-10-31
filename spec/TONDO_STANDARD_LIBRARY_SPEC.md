@@ -3609,6 +3609,10 @@ pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFie
 pub fn encodeTo[T: Encode](value: T, stream: io.Writer, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Unit ! JsonError
 pub fn decodeFrom[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
 pub fn parse(text: String): Value ! JsonError
+pub fn parseAll(text: String): Array[Value] ! JsonError
+pub fn decodeAll[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Array[T] ! JsonError
+pub fn values[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Values[T]
+pub type Values[T]                         // Iterator[T ! JsonError]
 pub fn toValue[T: Encode](value: T): Value
 pub fn fromValue[T: Decode](value: Value): T ! JsonError
 pub fn number(text: String): Number ! JsonError
@@ -3694,6 +3698,10 @@ Lectura y escritura por eventos:
   documento y devuelve los fallos de escritura. Solo la parte en curso del
   documento está en memoria, salvo con `canonical`, que ordena las claves al
   final. `decodeFrom` y `encodeTo` son `decode` y `encode` sobre ellos.
+- `parseAll` y `decodeAll` leen un texto con varios valores seguidos, con
+  espacio entre ellos o sin él, como los escribe `go list -json`; un texto
+  vacío no tiene ninguno. `values` lee así un stream, y da cada valor cuando
+  se le pide y llega; tras un error no da más.
 
 Un `JsonError` da su clase, un mensaje, el camino del valor (`$.users[2].age`)
 y la línea y columna; su `Display` es

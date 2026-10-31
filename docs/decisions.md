@@ -3840,3 +3840,14 @@ since the parser gives anchors only as numbers, and `Document` gains
 `set` does and write a flow one again. An item inserted goes before the
 comment lines above the one it displaces, and a value removed takes those
 above it, since `find` gives them as its comment.
+
+## 2026-10-31 — Several JSON values in one text or stream
+
+`go list -json`, `docker inspect` piped through jq and JSON Lines logs
+write one value after another, and `std.json` rejected anything after the
+first. The reader gains a mode that reads the next value where one ends,
+with or without space between them, as Go's `json.Decoder` does, which
+`parseAll`, `decodeAll` and `values` use; `decode` stays strict, since a
+second value there is a mistake. `values` is an iterator like `csv.rows`:
+a stream from a process gives each package as it is written, and an
+error ends it.

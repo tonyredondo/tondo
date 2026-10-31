@@ -1,0 +1,40 @@
+// JSON text with several values one after another, as `go list -json`
+// writes it, read whole or from a stream as the values arrive.
+
+import std.console
+import std.io
+import std.json
+
+type Package = {
+    name: String
+    deps: Array[String] = []
+}
+
+fn main(): !json.JsonError {
+    console.println("{json.parseAll("1 2\n[3]{{\"a\": true}}\"x\"")?}")
+    console.println("{json.parseAll("")?.length()} {json.parseAll("  \n")?.length()}")
+    let packages =
+        json.decodeAll[Package]("{{\"name\": \"a\"}}\n{{\"name\": \"b\", \"deps\": [\"a\"]}}\n")?
+    console.println("{packages.map((p) { p.name })}")
+    match json.decodeAll[Package]("{{\"name\": \"a\"}} {{\"deps\": []}}") {
+        ok(_) => console.println("decoded")
+        err(error) => console.println("{error}")
+    }
+    console.println("{json.decode[Int]("1 2")}")
+    let stream = io.reader("{{\"name\": \"x\"}}{{\"name\": \"y\"}} {{bad")
+    for each in json.values[Package](stream) {
+        match each {
+            ok(package) => console.println("package {package.name}")
+            err(error) => console.println("error {error}")
+        }
+    }
+}
+
+// expect-stdout: [1, 2, [3], {"a":true}, "x"]
+// expect-stdout: 0 0
+// expect-stdout: [a, b]
+// expect-stdout: missing field `name` at $ (line 1, column 27)
+// expect-stdout: err(unexpected data after the value at $ (line 1, column 3))
+// expect-stdout: package x
+// expect-stdout: package y
+// expect-stdout: error expected a key in quotes at $ (line 1, column 29)

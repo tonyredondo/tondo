@@ -735,6 +735,71 @@ pub fn parse(text: String): Value ! JsonError {
     decode[Value](text)
 }
 
+/// The values of JSON text that holds several, one after another with or
+/// without space between them, as `go list -json` writes them.
+pub fn parseAll(text: String): Array[Value] ! JsonError {
+    decodeAll[Value](text)
+}
+
+/// Values of `T` from JSON text that holds several, one after another.
+pub fn decodeAll[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Array[T] ! JsonError {
+    let input = reader(text, unknownFields, allowDuplicateKeys)
+    input.native.several()
+    var found: Array[T] = []
+    for {
+        match serialization.Source.next(input)? {
+            some(first) => found.push(serialization.Decode.decode[T](input, first)?)
+            none => break
+        }
+    }
+    found
+}
+
+/// The values of `T` in a stream that holds several, one after another,
+/// each read as it is asked for and as it arrives: `for each in
+/// json.values[Package](output) { let package = each? }`. After an error
+/// there are no more.
+pub type Values[T] = {
+    priv input: Reader
+    priv done: Bool
+}
+
+/// The values of `T` in a stream that holds several, one after another,
+/// each read as it is asked for.
+pub fn values[T: serialization.Decode](
+    stream: jsonio.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Values[T] {
+    let input = readerFrom(stream, unknownFields, allowDuplicateKeys)
+    input.native.several()
+    Values { input, done: false }
+}
+
+impl[T: serialization.Decode] Iterator[T ! JsonError] for Values[T] {
+    fn next(mut self): (T ! JsonError)? {
+        if self.done {
+            return none
+        }
+        let read = match serialization.Source.next(self.input) {
+            ok(some(first)) => serialization.Decode.decode[T](self.input, first)
+            ok(none) => {
+                self.done = true
+                return none
+            }
+            err(error) => err(error)
+        }
+        if read.isErr() {
+            self.done = true
+        }
+        some(read)
+    }
+}
+
 /// A value as a `Value`.
 pub fn toValue[T: serialization.Encode](value: T): Value {
     match parse(encode(value)) {
