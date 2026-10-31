@@ -3596,3 +3596,14 @@ program without one carries none of it. Cutting the languages would need
 data generated for Tondo and would save about one megabyte, only to
 programs that sort text for people, so all of them stay.
 
+## 2026-10-31 — Image filters in Hugo's scales
+
+Hugo's `images.Filter` takes brightness and contrast from -100 to 100,
+saturation to 500 and hue in degrees, through the gift library; `adjust`
+takes the same numbers with the same formulas, so a theme's filters port
+by copying them. They are one call with named values rather than one
+method each, because a site adjusts several at once and the order they
+apply in is then fixed and written down. `colors` answers Hugo's `.Colors`
+with the most frequent exact color of each group of similar ones, so a flat
+red is `#ff0000` and not an average its edges blurred.
+

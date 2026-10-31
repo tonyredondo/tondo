@@ -1,0 +1,65 @@
+// An image gives its pixels and is made of them, adjusts its colors in the
+// scales of Hugo's filters, inverts, tones, sharpens, pixelates and fades,
+// and says the colors that cover most of it.
+
+import std.console
+import std.image
+
+fn show(name: String, picture: image.Image) {
+    let pixels = picture.pixels()
+    var first: Array[Int] = []
+    for index in 0..8 {
+        first.push(Int(pixels[index]))
+    }
+    console.println("{name}: {picture.width()}x{picture.height()} {first}")
+}
+
+fn main(): !image.ImageError {
+    var bytes: Array[Byte] = []
+    for y in 0..2 {
+        for x in 0..4 {
+            bytes.extend(
+                [
+                    Byte(x * 60).unwrapOr(Byte(0u8)),
+                    Byte(y * 120).unwrapOr(Byte(0u8)),
+                    Byte(200u8),
+                    Byte(255u8),
+                ],
+            )
+        }
+    }
+    let base = image.fromPixels(4, 2, bytes)?
+    show("base", base)
+    show("bright", base.adjust(brightness: 20.0))
+    show("contrast", base.adjust(contrast: 50.0))
+    show("gamma", base.adjust(gamma: 2.0))
+    show("gray", base.adjust(saturation: -100.0))
+    show("hue", base.adjust(hue: 120.0))
+    show("invert", base.invert())
+    show("sepia", base.sepia())
+    show("sharpen", base.sharpen(sigma: 1.0, amount: 2.0))
+    show("pixelate", base.pixelate(2))
+    show("opacity", base.opacity(0.5))
+    let flag = image
+        .blank(10, 10, image.Color.rgb(255, 0, 0))
+        .overlay(image.blank(3, 10, image.Color.rgb(0, 0, 255)), 0, 0)
+    console.println("{flag.colors(5)} {flag.resize(width: 200).colors(1)}")
+    match image.fromPixels(2, 2, [Byte(1u8)]) {
+        ok(_) => console.println("made")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: base: 4x2 [0, 0, 200, 255, 60, 0, 200, 255]
+// expect-stdout: bright: 4x2 [51, 51, 251, 255, 111, 51, 251, 255]
+// expect-stdout: contrast: 4x2 [0, 0, 255, 255, 0, 0, 255, 255]
+// expect-stdout: gamma: 4x2 [0, 0, 226, 255, 124, 0, 226, 255]
+// expect-stdout: gray: 4x2 [100, 100, 100, 255, 100, 100, 100, 255]
+// expect-stdout: hue: 4x2 [200, 0, 0, 255, 200, 60, 0, 255]
+// expect-stdout: invert: 4x2 [255, 255, 55, 255, 195, 255, 55, 255]
+// expect-stdout: sepia: 4x2 [38, 34, 26, 255, 61, 55, 43, 255]
+// expect-stdout: sharpen: 4x2 [0, 0, 200, 255, 54, 0, 200, 255]
+// expect-stdout: pixelate: 4x2 [30, 60, 200, 255, 30, 60, 200, 255]
+// expect-stdout: opacity: 4x2 [0, 0, 200, 128, 60, 0, 200, 128]
+// expect-stdout: [#ff0000, #0000ff] [#ff0000]
+// expect-stdout: 2 by 2 pixels take 16 bytes, four a pixel

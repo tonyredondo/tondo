@@ -196,6 +196,17 @@ pub fn blank(width: Int, height: Int, color: Color): Image {
     made(imageNative.blank(width.max(0), height.max(0), packed(color)))
 }
 
+/// The image of `pixels`: four bytes each, red, green, blue and alpha, row
+/// by row from the top left, as `Image.pixels` gives them.
+pub fn fromPixels(width: Int, height: Int, pixels: Array[Byte]): Image ! ImageError {
+    let native = imageNative.fromPixels(width, height, pixels)
+    let why = imageNative.failure(native)
+    if not why.isEmpty() {
+        fail ImageError { message: why }
+    }
+    made(native)
+}
+
 /// Its width in pixels.
 pub fn Image.width(self): Int {
     self.columns
@@ -332,6 +343,63 @@ pub fn Image.blur(self, sigma: Float): Image {
 /// watermark or a badge.
 pub fn Image.overlay(self, top: Image, x: Int, y: Int): Image {
     made(imageNative.overlay(self.native, top.native, x, y))
+}
+
+/// Its pixels: four bytes each, red, green, blue and alpha, row by row
+/// from the top left, to change in place and make an image again with
+/// `image.fromPixels`.
+pub fn Image.pixels(self): Array[Byte] {
+    imageNative.pixels(self.native)
+}
+
+/// The image with its colors adjusted in the scales of Hugo's filters:
+/// `brightness` and `contrast` from -100 to 100, `saturation` from -100 to
+/// 500, `gamma` over 0, where 1 changes nothing and more lightens, and `hue`
+/// turned by degrees from -180 to 180; they apply in that order, and what
+/// is not given does not change.
+pub fn Image.adjust(
+    self,
+    brightness: Float = 0.0,
+    contrast: Float = 0.0,
+    saturation: Float = 0.0,
+    gamma: Float = 1.0,
+    hue: Float = 0.0,
+): Image {
+    made(imageNative.adjust(self.native, brightness, contrast, saturation, gamma, hue))
+}
+
+/// The image in its opposite colors, as a negative.
+pub fn Image.invert(self): Image {
+    made(imageNative.tone(self.native, 0, 0.0, 0.0))
+}
+
+/// The image toned in sepia, by `amount` percent.
+pub fn Image.sepia(self, amount: Float = 100.0): Image {
+    made(imageNative.tone(self.native, 1, amount, 0.0))
+}
+
+/// The image sharpened: its difference from a blur of `sigma` pixels, as
+/// `blur` takes, added `amount` times.
+pub fn Image.sharpen(self, sigma: Float = 1.0, amount: Float = 1.0): Image {
+    made(imageNative.tone(self.native, 2, amount, sigma))
+}
+
+/// The image in squares of `size` pixels, each of their average color.
+pub fn Image.pixelate(self, size: Int): Image {
+    made(imageNative.tone(self.native, 3, Float(size), 0.0))
+}
+
+/// The image with its alpha multiplied by `alpha`, from 0, transparent, to
+/// 1, as it is.
+pub fn Image.opacity(self, alpha: Float): Image {
+    made(imageNative.tone(self.native, 4, alpha, 0.0))
+}
+
+/// Up to `count` colors that cover most of the image, the most first, each
+/// far enough from the others to tell apart: for a background or a
+/// placeholder while it loads.
+pub fn Image.colors(self, count: Int = 3): Array[Color] {
+    imageNative.colors(self.native, count).map(colorOf)
 }
 
 /// The color of the pixel at (`x`, `y`), from the top left; `none`

@@ -6132,6 +6132,7 @@ pub fn read(bytes: Array[Byte]): Image ! ImageError
 pub fn open(path: String): Image ! ImageError
 pub fn info(bytes: Array[Byte]): Info ! ImageError
 pub fn blank(width: Int, height: Int, color: Color): Image
+pub fn fromPixels(width: Int, height: Int, pixels: Array[Byte]): Image ! ImageError
 pub fn Image.width(self): Int
 pub fn Image.height(self): Int
 pub fn Image.format(self): Format?
@@ -6147,6 +6148,15 @@ pub fn Image.grayscale(self): Image
 pub fn Image.blur(self, sigma: Float): Image
 pub fn Image.overlay(self, top: Image, x: Int, y: Int): Image
 pub fn Image.pixel(self, x: Int, y: Int): Color?
+pub fn Image.pixels(self): Array[Byte]
+pub fn Image.adjust(self, brightness: Float = 0.0, contrast: Float = 0.0, saturation: Float = 0.0,
+    gamma: Float = 1.0, hue: Float = 0.0): Image
+pub fn Image.invert(self): Image
+pub fn Image.sepia(self, amount: Float = 100.0): Image
+pub fn Image.sharpen(self, sigma: Float = 1.0, amount: Float = 1.0): Image
+pub fn Image.pixelate(self, size: Int): Image
+pub fn Image.opacity(self, alpha: Float): Image
+pub fn Image.colors(self, count: Int = 3): Array[Color]
 pub fn Image.encode(self, format: Format, quality: Int = 85): Array[Byte] ! ImageError
 pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
 ~~~
@@ -6168,6 +6178,22 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
   negativo; otro ángulo es un pánico. `overlay` dibuja otra imagen encima,
   mezclada por su alfa. `pixel` da el color de un pixel, o `none` fuera de la
   imagen.
+- `pixels` da los píxeles, cuatro bytes cada uno, rojo, verde, azul y alfa,
+  por filas desde arriba a la izquierda, y `fromPixels` hace una imagen de
+  ellos; si no son `width * height * 4`, es un `ImageError` que dice
+  cuántos hacen falta.
+- `adjust` cambia los colores en las escalas de los filtros de Hugo:
+  `brightness` y `contrast` de -100 a 100, `saturation` de -100 a 500,
+  `gamma` mayor que 0, donde 1 no cambia nada y más aclara, y `hue` gira el
+  tono de -180 a 180 grados. Se aplican en ese orden, y lo que no se da no
+  cambia. `invert` da el negativo, `sepia` tiñe en sepia por `amount` por
+  ciento, `sharpen` suma `amount` veces la diferencia con un desenfoque de
+  `sigma`, `pixelate` pinta cuadrados de `size` píxeles de su color medio y
+  `opacity` multiplica el alfa. El alfa no cambia salvo en `opacity`.
+- `colors` da hasta `count` colores que cubren la mayor parte de la imagen,
+  el que más primero, cada uno lo bastante distinto de los otros: para un
+  fondo o un hueco mientras carga. Los píxeles casi transparentes no
+  cuentan.
 - `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP sin
   pérdida; `save` elige el formato por la extensión del path (`.png`, `.jpg`
   o `.jpeg`, `.gif`, `.webp`) y otra es un error que las nombra.

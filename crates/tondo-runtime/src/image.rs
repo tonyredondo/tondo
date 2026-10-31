@@ -212,3 +212,237 @@ pub extern "C" fn tondo_rt_image_encode(object: *mut NativeObject, format: i64, 
     });
     byte_array(&written.unwrap_or_default())
 }
+
+/// `pixels`: the red, green, blue and alpha bytes of each pixel, row by row
+/// from the top left.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_image_pixels(object: *mut NativeObject) -> *mut ArrayHeader {
+    byte_array(&with(object, |image| image.to_rgba8().into_raw()).unwrap_or_default())
+}
+
+/// `fromPixels`: an image of `width` by `height` of those bytes, four a
+/// pixel; failed when they are not as many.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_image_from_pixels(
+    width: i64,
+    height: i64,
+    data: *mut ArrayHeader,
+) -> *mut NativeObject {
+    let data = bytes(data);
+    let (wide, high) = (width.max(0) as u32, height.max(0) as u32);
+    match RgbaImage::from_raw(wide, high, data) {
+        Some(image) if width >= 0 && height >= 0 => native::new(Picture::Ready(DynamicImage::ImageRgba8(image), -1)),
+        _ => native::new(Picture::Failed(format!(
+            "{width} by {height} pixels take {} bytes, four a pixel",
+            width.max(0) * height.max(0) * 4
+        ))),
+    }
+}
+
+/// Each pixel's channels, from 0 to 1, changed by `change`, alpha kept.
+fn each_pixel(image: &DynamicImage, change: impl Fn([f32; 3]) -> [f32; 3]) -> DynamicImage {
+    let mut pixels = image.to_rgba8();
+    for pixel in pixels.pixels_mut() {
+        let [r, g, b, a] = pixel.0;
+        let changed = change([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]);
+        let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        pixel.0 = [byte(changed[0]), byte(changed[1]), byte(changed[2]), a];
+    }
+    DynamicImage::ImageRgba8(pixels)
+}
+
+/// Hue, saturation and lightness, each from 0 to 1, of a color.
+fn hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
+    let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+    let lightness = (high + low) / 2.0;
+    if high == low {
+        return [0.0, 0.0, lightness];
+    }
+    let spread = high - low;
+    let saturation = if lightness > 0.5 { spread / (2.0 - high - low) } else { spread / (high + low) };
+    let hue = if high == r {
+        (g - b) / spread + if g < b { 6.0 } else { 0.0 }
+    } else if high == g {
+        (b - r) / spread + 2.0
+    } else {
+        (r - g) / spread + 4.0
+    };
+    [hue / 6.0, saturation, lightness]
+}
+
+fn rgb([hue, saturation, lightness]: [f32; 3]) -> [f32; 3] {
+    if saturation == 0.0 {
+        return [lightness; 3];
+    }
+    let q =
+        if lightness < 0.5 { lightness * (1.0 + saturation) } else { lightness + saturation - lightness * saturation };
+    let p = 2.0 * lightness - q;
+    let channel = |t: f32| {
+        let t = t.rem_euclid(1.0);
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    [channel(hue + 1.0 / 3.0), channel(hue), channel(hue - 1.0 / 3.0)]
+}
+
+/// `adjust`: brightness and contrast from -100 to 100, saturation from -100
+/// to 500, a gamma over 0 and a hue in degrees, in Hugo's scales, applied in
+/// that order: brightness, contrast, gamma, saturation, hue.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_image_adjust(
+    object: *mut NativeObject,
+    brightness: f64,
+    contrast: f64,
+    saturation: f64,
+    gamma: f64,
+    hue: f64,
+) -> *mut NativeObject {
+    let shift = brightness.clamp(-100.0, 100.0) as f32 / 100.0;
+    let percent = contrast.clamp(-100.0, 100.0) as f32;
+    let stretch = if percent <= 0.0 { 1.0 + percent / 100.0 } else { 100.0 / (100.0 - percent).max(1e-3) };
+    let exponent = 1.0 / gamma.max(1e-5) as f32;
+    let saturated = 1.0 + saturation.clamp(-100.0, 500.0) as f32 / 100.0;
+    let turn = hue.clamp(-180.0, 180.0) as f32 / 360.0;
+    let changed = with(object, move |image| {
+        each_pixel(image, |channels| {
+            let level = |x: f32| (((x + shift).clamp(0.0, 1.0) - 0.5) * stretch + 0.5).clamp(0.0, 1.0).powf(exponent);
+            let leveled = channels.map(level);
+            if saturated == 1.0 && turn == 0.0 {
+                return leveled;
+            }
+            let [h, s, l] = hsl(leveled);
+            rgb([(h + turn).rem_euclid(1.0), (s * saturated).min(1.0), l])
+        })
+    });
+    made(changed, -1)
+}
+
+/// The tones of an image: `operation` 0 inverts it, 1 makes it sepia by
+/// `amount` percent, 2 sharpens it by `amount` over a blur of `sigma`, 3
+/// pixelates it in squares of `amount` pixels and 4 multiplies its alpha by
+/// `amount`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_image_tone(
+    object: *mut NativeObject,
+    operation: i64,
+    amount: f64,
+    sigma: f64,
+) -> *mut NativeObject {
+    let amount = amount as f32;
+    let changed = with(object, move |image| match operation {
+        0 => each_pixel(image, |channels| channels.map(|x| 1.0 - x)),
+        1 => {
+            let k = amount.clamp(0.0, 100.0) / 100.0;
+            each_pixel(image, |[r, g, b]| {
+                [
+                    r * (1.0 - 0.607 * k) + g * 0.769 * k + b * 0.189 * k,
+                    r * 0.349 * k + g * (1.0 - 0.314 * k) + b * 0.168 * k,
+                    r * 0.272 * k + g * 0.534 * k + b * (1.0 - 0.869 * k),
+                ]
+            })
+        }
+        2 => {
+            let original = image.to_rgba8();
+            let blurred = image::imageops::blur(&original, sigma.max(0.1) as f32);
+            let mut sharp = original.clone();
+            for (pixel, soft) in sharp.pixels_mut().zip(blurred.pixels()) {
+                for channel in 0..3 {
+                    let (x, y) = (pixel.0[channel] as f32, soft.0[channel] as f32);
+                    pixel.0[channel] = (x + (x - y) * amount).clamp(0.0, 255.0).round() as u8;
+                }
+            }
+            DynamicImage::ImageRgba8(sharp)
+        }
+        3 => {
+            let size = (amount.round() as u32).max(1);
+            let mut pixels = image.to_rgba8();
+            let (width, height) = pixels.dimensions();
+            for top in (0..height).step_by(size as usize) {
+                for left in (0..width).step_by(size as usize) {
+                    let (right, bottom) = ((left + size).min(width), (top + size).min(height));
+                    let mut sum = [0u64; 4];
+                    for y in top..bottom {
+                        for x in left..right {
+                            for (total, value) in sum.iter_mut().zip(pixels.get_pixel(x, y).0) {
+                                *total += value as u64;
+                            }
+                        }
+                    }
+                    let count = ((right - left) * (bottom - top)) as u64;
+                    let average = Rgba(sum.map(|total| (total / count) as u8));
+                    for y in top..bottom {
+                        for x in left..right {
+                            pixels.put_pixel(x, y, average);
+                        }
+                    }
+                }
+            }
+            DynamicImage::ImageRgba8(pixels)
+        }
+        _ => {
+            let mut pixels = image.to_rgba8();
+            let factor = amount.clamp(0.0, 1.0);
+            for pixel in pixels.pixels_mut() {
+                pixel.0[3] = (pixel.0[3] as f32 * factor).round() as u8;
+            }
+            DynamicImage::ImageRgba8(pixels)
+        }
+    });
+    made(changed, -1)
+}
+
+/// `colors`: up to `count` colors that cover most of an image, as
+/// `0xRRGGBBAA`, the most of it first: its pixels, on a small copy, in
+/// buckets of similar colors, each given by its most frequent color when it
+/// is far enough from those given before.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_image_colors(object: *mut NativeObject, count: i64) -> *mut ArrayHeader {
+    let found = with(object, move |image| {
+        // Fewer pixels to count, none of them mixed from others.
+        let small = if image.width() > 64 || image.height() > 64 {
+            image.resize(64, 64, FilterType::Nearest).to_rgba8()
+        } else {
+            image.to_rgba8()
+        };
+        let mut exact: std::collections::HashMap<[u8; 3], u64> = std::collections::HashMap::new();
+        for pixel in small.pixels().filter(|pixel| pixel.0[3] >= 128) {
+            let [r, g, b, _] = pixel.0;
+            *exact.entry([r, g, b]).or_default() += 1;
+        }
+        // Each bucket's pixels, and its most frequent color.
+        let mut buckets: std::collections::HashMap<[u8; 3], (u64, u64, [u8; 3])> = std::collections::HashMap::new();
+        for (color, seen) in exact {
+            let (total, best, chosen) = buckets.entry(color.map(|c| c >> 4)).or_default();
+            *total += seen;
+            if seen > *best || (seen == *best && color < *chosen) {
+                (*best, *chosen) = (seen, color);
+            }
+        }
+        let mut ranked: Vec<(u64, [u8; 3])> = buckets.into_values().map(|(total, _, color)| (total, color)).collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut chosen: Vec<[u8; 3]> = Vec::new();
+        for (_, color) in ranked {
+            let near = |other: &[u8; 3]| {
+                other.iter().zip(color).map(|(&a, b)| (a as i64 - b as i64).pow(2)).sum::<i64>() < 48 * 48
+            };
+            if !chosen.iter().any(near) {
+                chosen.push(color);
+            }
+            if chosen.len() as i64 >= count {
+                break;
+            }
+        }
+        chosen
+            .iter()
+            .map(|&[r, g, b]| (r as i64) << 24 | (g as i64) << 16 | (b as i64) << 8 | 255)
+            .collect::<Vec<i64>>()
+    });
+    ints(&found.unwrap_or_default())
+}

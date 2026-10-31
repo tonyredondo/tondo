@@ -11,7 +11,7 @@ std.cli        the command line read into types, with help; styles, tables, prog
 std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all kinds
 std.fs         read and write files, walk, glob, watch, metadata, links, temporaries, trees
 std.archive    zip, tar, tar.gz and tar.zst: read, write, extract
-std.image      PNG, JPEG, GIF, WebP: resize, fit, fill, crop, rotate, write
+std.image      PNG, JPEG, GIF, WebP: resize, fit, fill, crop, rotate, colors, pixels, write
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
@@ -121,14 +121,6 @@ fn main(): !toml.TomlError {
 ```
 
 TOML has no null: a `none` field is left out when written.
-
-A `DateTime` is in UTC and a `ZonedDateTime` is what a zone's clocks show.
-`addDays`, `addMonths` and `addYears` move along the calendar and keep the
-clock's time, a month later than January 31 being the end of February;
-`add(time.hours(3))` adds exact time and `later.since(earlier)` gives the
-`Duration` between. `weekday()`, `dayOfYear()` and `isoWeek()` say where in
-the calendar it is, and `format` writes it, `"%A %-d %B"` with the names of
-a `locale`, `"%G-W%V"` for the week.
 
 A field's annotations hold in every format. `@name("user_id")` gives it
 another key, `@ignore` leaves it out, and it must be optional, and
@@ -487,6 +479,13 @@ by multiples of 90, `flipHorizontal`, `grayscale`, `blur`, `overlay` for a
 watermark, and `pixel` for a color; `image.blank(w, h, image.Color.hex("#ffffff")?)`
 makes one. `save` picks the format by the extension.
 
+`adjust(brightness: 10.0, contrast: 20.0, saturation: -30.0, gamma: 1.2,
+hue: 30.0)` changes the colors in the scales of Hugo's filters, and
+`invert`, `sepia`, `sharpen`, `pixelate` and `opacity` do what they say.
+`colors(3)` gives the colors that cover most of it, the most first.
+`pixels()` gives the bytes, red, green, blue and alpha of each pixel, and
+`image.fromPixels(width, height, bytes)` makes an image of them.
+
 ## Dates in time zones
 
 `time.DateTime` is always UTC; a `time.ZonedDateTime` is what the clocks of
@@ -513,6 +512,12 @@ directive that does not exist is a compile error. Names come from CLDR in
 the language `locale` gives, never the system's. Zones come from the
 system's tz database, and those it lacks from the copy in `tondo`;
 `TONDO_ZONES=builtin` uses that copy always.
+
+`addDays`, `addMonths` and `addYears` move along the calendar and keep the
+clock's time, a month later than January 31 being the end of February;
+`add(time.hours(3))` adds exact time and `later.since(earlier)` gives the
+`Duration` between. `weekday()`, `dayOfYear()` and `isoWeek()` say where in
+the calendar it is, and `"%G-W%V"` writes the week.
 
 ## Time, logging and CSV
 
