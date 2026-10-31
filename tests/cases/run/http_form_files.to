@@ -1,0 +1,49 @@
+// `formAs` reads a multipart form into a type: its texts as the fields of a
+// URL-encoded one, and each file into a field of type `UploadedFile`, also
+// an optional one or a list of one or more; a missing field is a 400.
+import std.console
+import std.http
+
+type Profile = {
+    name: String
+    age: Int
+    avatar: http.UploadedFile
+    extras: Array[http.UploadedFile]
+    note: http.UploadedFile?
+}
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.post(
+        "/profile",
+        (request) {
+            let profile = request.formAs[Profile]()?
+            let avatar = profile.avatar
+            let extras = profile.extras.map((file) { file.fileName })
+            http.Reply.text(
+                "{profile.name} {profile.age} {avatar.name} {avatar.fileName} {avatar.contentType} {avatar.bytes.length()} {extras} {profile.note.isNone()}",
+            )
+        },
+    )
+    let client = app.client()
+    let body = http.Body.multipart(
+        [
+            http.Part.field("name", "Ada"),
+            http.Part.field("age", "36"),
+            http.Part.bytes("avatar", "png".bytes(), "me.png", "image/png"),
+            http.Part.bytes("extras", "a".bytes(), "a.txt", "text/plain"),
+        ],
+    )
+    console.println(client.post("/profile", body: body)?.text()?)
+    let missing = http.Body.multipart([http.Part.field("name", "Bo")])
+    match client.post("/profile", body: missing) {
+        ok(response) => console.println(response.text()?)
+        err(http.HttpError.Status(response)) => console.println(
+            "{response.status()} {response.text()?}",
+        )
+        err(error) => fail error
+    }
+}
+
+// expect-stdout: Ada 36 avatar me.png image/png 3 [a.txt] true
+// expect-stdout: 400 {"status":400,"detail":"the form: missing field `age` at $"}

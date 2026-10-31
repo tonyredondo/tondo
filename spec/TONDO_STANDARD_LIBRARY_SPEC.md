@@ -4774,6 +4774,7 @@ pub type Upload                                             // name, fileName, c
 pub fn Upload.text(self): String ! Problem
 pub fn Upload.bytes(self): Array[Byte] ! Problem
 pub fn Upload.saveTo(self, path: String): Int ! Problem
+pub type UploadedFile = { name: String, fileName: String, contentType: String, bytes: Array[Byte] }
 
 pub type Reply
 pub fn Reply.text(text: String, status: Int = 200): Reply
@@ -4786,13 +4787,18 @@ pub fn Reply.events(events: Receiver[Event]): Reply
 pub fn Reply.redirect(url: String, status: Int = 302): Reply
 pub fn Reply.empty(status: Int = 204): Reply
 pub fn Reply.notFound(): Reply
+pub fn Reply.problem(problem: Problem): Reply
 pub fn Reply.header(self, name: String, value: String): Reply
+pub fn Reply.addHeader(self, name: String, value: String): Reply
+pub fn Reply.withStatus(self, status: Int): Reply
+pub fn Reply.withBody(self, bytes: Array[Byte]): Reply
 pub fn Reply.cookie(self, name: String, value: String, maxAge: time.Duration? = none,
     path: String = "/", domain: String = "", secure: Bool = false, httpOnly: Bool = true,
     sameSite: SameSite = SameSite.Lax): Reply
 pub enum SameSite { Lax, Strict, None }
 pub fn Reply.status(self): Int
 pub fn Reply.headers(self): Map[String, String]
+pub fn Reply.body(self): Array[Byte]?
 
 pub type App
 pub fn App.new(): App
@@ -4848,6 +4854,11 @@ pub alias TlsVersion = net.TlsVersion
   que no se lee, es `400` con el nombre del parámetro; un valor que rompe las
   reglas de su tipo, `422` como en `json`. `headerValues` da cada valor de una
   cabecera repetida, en orden.
+- `formAs[T]()` lee también un formulario `multipart/form-data`: sus partes de
+  texto como los campos de uno URL-encoded, y cada fichero en el campo de su
+  nombre de tipo `UploadedFile`, `UploadedFile?` o `Array[UploadedFile]`, en
+  memoria, dentro del límite del cuerpo; `uploads` lee las partes una a una,
+  para ficheros que no caben en memoria.
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
   cuyo último puede ser `*nombre`, el resto del path. Un parámetro ocupa su
   segmento entero y se nombra como un binding: `/files/:name.:ext` es un error
@@ -4920,9 +4931,9 @@ pub alias TlsVersion = net.TlsVersion
   `json`, `form`, `formAs`, `uploads`, `body` o `saveTo`; leerlo otra vez es
   un pánico que dice cómo pasarlo: un middleware que lo lee lo da con
   `next(request.withBody(bytes))`, y el handler lo lee de nuevo de esos
-  bytes, también por partes. `form` y `formAs` leen un formulario
-  URL-encoded: un cuerpo `multipart/...` responde `415` y se lee por partes
-  con `uploads`.
+  bytes, también por partes. `form` lee un formulario URL-encoded: un cuerpo
+  `multipart/...` responde `415` y se lee con `formAs` o por partes con
+  `uploads`.
 - El middleware rodea las rutas de su app y la respuesta a los paths sin ruta;
   el primero añadido es el exterior. `mount` añade las rutas de otra app bajo
   un prefijo, con el middleware de esa app solo alrededor de ellas.
@@ -4952,6 +4963,17 @@ pub alias TlsVersion = net.TlsVersion
   handler de una ruta.
 - `Reply.headers()` son las cabeceras puestas hasta ahí, en minúsculas y con
   los valores de una repetida unidos por `, `, para que un middleware las lea.
+- `header` pone una cabecera en lugar de los valores que tenía, sin mirar
+  mayúsculas: una respuesta no lleva dos `Content-Type`. `addHeader` añade
+  otro valor detrás de los que tiene, como piden `Set-Cookie`, `Vary` y
+  `Link`, y `cookie` lo usa.
+- Un middleware lee y cambia lo que responde `next`: `status()`, `headers()` y
+  `body()`, el cuerpo cuando la respuesta lo tiene en memoria (un texto, HTML,
+  JSON, bytes, una redirección o un problema) y `none` para un stream, un
+  archivo, eventos o un WebSocket; `withStatus` y `withBody` dan otra con ese
+  estado o ese cuerpo, con sus cabeceras. Un handler que falla con un
+  `Problem` da `err` a `next`, y `Reply.problem(problem)` es la respuesta que
+  el servidor daría, para añadirle cabeceras.
 - `App.compress` comprime las respuestas que el cliente acepta comprimidas, con
   zstd o gzip según prefiera su `Accept-Encoding` (zstd si empatan): texto,
   JSON, JavaScript, XML y SVG de `minimum` bytes o más, y los streams de esos

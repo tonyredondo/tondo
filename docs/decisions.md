@@ -3736,3 +3736,17 @@ variants with it, in their schemas, the values they read and the ones they
 write, while the program goes on with its own names. GraphQL's habit of
 upper-case enum values is then `@name("ADMIN")`.
 
+## 2026-10-31 — Replies a middleware changes, and forms with files
+
+Gin's middleware writes a response's status and body after the handler,
+logs its size and renders errors with its own headers; Tondo's middleware
+saw the status and the headers but could not change the first, nor read
+the body, and a handler's problem reached it as an error it could not add
+headers to. A reply now gives its body when it holds it and takes another
+status or body, and `Reply.problem` is the reply the server gives for a
+problem. `header` replaces a header, as Go's `Set` does, since two
+`Content-Type`s were never meant; `addHeader` adds a value for the headers
+that repeat. A multipart form reads into a type as a URL-encoded one does,
+its files into `UploadedFile` fields in memory, as Gin binds them; the
+streams of `uploads` stay for files that do not fit.
+

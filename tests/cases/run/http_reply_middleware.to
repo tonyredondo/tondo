@@ -1,0 +1,50 @@
+// A middleware reads and changes what `next` answers: its status, headers
+// and body; a handler's problem becomes the reply the server would send, to
+// which it adds headers. `header` replaces a header, and `addHeader`, as a
+// cookie, adds a value.
+import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.use(
+        (request, next) {
+            let reply = match next(request) {
+                ok(reply) => reply
+                err(problem) => http.Reply.problem(problem)
+            }
+            let size = reply.body().map((bytes) { bytes.length() }).unwrapOr(-1)
+            reply
+                .header("x-size", "{size}")
+                .header("X-Size", "{size}")
+                .header("Content-Type", "text/plain")
+        },
+    )
+    app.get("/ok", (_) { http.Reply.text("hello") })
+    app.get("/teapot", (_) { http.Reply.text("short").withStatus(418).withBody("changed".bytes()) })
+    app.get(
+        "/fail",
+        (_) {
+            fail http.Problem.new(403, "no")
+        },
+    )
+    app.get("/cookies", (_) { http.Reply.empty().cookie("a", "1").cookie("b", "2") })
+    let client = app.client()
+    for path in ["/ok", "/teapot", "/fail", "/cookies"] {
+        let response = match client.get(path) {
+            ok(response) => response
+            err(http.HttpError.Status(response)) => response
+            err(error) => fail error
+        }
+        let headers = "{response.headerValues("x-size")} {response.headerValues("content-type")}"
+        let cookies = response.headerValues("set-cookie").length()
+        console.println(
+            "{path} {response.status()} {headers} {cookies} [{response.text().unwrapOr("")}]",
+        )
+    }
+}
+
+// expect-stdout: /ok 200 [5] [text/plain] 0 [hello]
+// expect-stdout: /teapot 418 [7] [text/plain] 0 [changed]
+// expect-stdout: /fail 403 [28] [text/plain] 0 [{"status":403,"detail":"no"}]
+// expect-stdout: /cookies 204 [0] [text/plain] 2 []

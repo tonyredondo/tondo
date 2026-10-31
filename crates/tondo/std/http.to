@@ -1255,10 +1255,83 @@ pub fn Request.queryAs[T: __serialization.Decode](self): T ! Problem {
     readInto[T](pairsOf(self.queryText), "the query")?
 }
 
-/// The fields of a URL-encoded form body read into a `T`, as `queryAs`
-/// reads the query.
+/// The fields of a form body read into a `T`, as `queryAs` reads the
+/// query: a URL-encoded one, or a multipart one, whose files go to fields
+/// of type `UploadedFile`, in memory.
 pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
-    readInto[T](pairsOf(self.formText()?), "the form")?
+    let kind = self.header("content-type").unwrapOr("").toLower()
+    if not kind.startsWith("multipart/") {
+        return readInto[T](pairsOf(self.formText()?), "the form")?
+    }
+    var given: Array[(String, Given)] = []
+    for read in self.uploads() {
+        let part = read?
+        if part.fileName().isEmpty() {
+            given.push((part.name(), Given.Text(part.text()?)))
+        } else {
+            let file = UploadedFile {
+                name: part.name()
+                fileName: part.fileName()
+                contentType: part.contentType()
+                bytes: part.bytes()?
+            }
+            given.push((part.name(), Given.File(file)))
+        }
+    }
+    readGiven[T](given, "the form")?
+}
+
+/// A file of a multipart form, in memory, as `Request.formAs` gives it to
+/// a field of its type: its field's name, the file's name and content type
+/// the client gave, and its bytes.
+pub type UploadedFile = {
+    name: String
+    fileName: String
+    contentType: String
+    bytes: Array[Byte]
+}
+
+impl __serialization.Encode for UploadedFile {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.beginMap(4)
+        out.key("name")
+        out.text(self.name)
+        out.key("fileName")
+        out.text(self.fileName)
+        out.key("contentType")
+        out.text(self.contentType)
+        out.key("bytes")
+        __serialization.Encode.encode(__serialization.Bytes(self.bytes), out)
+        out.endMap()
+    }
+}
+
+impl __serialization.Decode for UploadedFile {
+    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): UploadedFile !
+        __serialization.Error {
+        input.beginMap(first, "UploadedFile")?
+        var file = UploadedFile { name: "", fileName: "", contentType: "", bytes: [] }
+        for {
+            match input.nextKey()? {
+                some("bytes") => {
+                    let bytes =
+                        __serialization.Decode.decode[__serialization.Bytes](input, input.value()?)?
+                    file.bytes = bytes.value
+                }
+                some(key) => {
+                    let text = __serialization.Decode.decode[String](input, input.value()?)?
+                    match key {
+                        "name" => file.name = text
+                        "fileName" => file.fileName = text
+                        "contentType" => file.contentType = text
+                        _ => {}
+                    }
+                }
+                none => break
+            }
+        }
+        file
+    }
 }
 
 /// The text of a URL-encoded form; a multipart one is read by its parts.
@@ -1289,6 +1362,16 @@ fn pairsOf(text: String): Array[(String, String)] {
 }
 
 fn readInto[T: __serialization.Decode](pairs: Array[(String, String)], what: String): T ! Problem {
+    readGiven[T](pairs.map((pair) { (pair.0, Given.Text(pair.1)) }), what)?
+}
+
+/// A value of a form: a text, or a file of a multipart one.
+enum Given {
+    Text(String)
+    File(UploadedFile)
+}
+
+fn readGiven[T: __serialization.Decode](pairs: Array[(String, Given)], what: String): T ! Problem {
     match __serialization.Decode.decode[T](Fields.of(pairs), __serialization.Event.BeginMap) {
         ok(value) => value
         err(error) if error.kind == __serialization.ErrorKind.Invalid => fail Problem.invalid(
@@ -1306,9 +1389,9 @@ type Fields = {
     current: __sync.Mutex[String]
 }
 
-fn Fields.of(pairs: Array[(String, String)]): Fields {
+fn Fields.of(pairs: Array[(String, Given)]): Fields {
     var names: Array[String] = []
-    var values: Map[String, Array[String]] = [:]
+    var values: Map[String, Array[Given]] = [:]
     for (name, value) in pairs {
         match values.get(name) {
             some(found) => values[name] = found.concat([value])
@@ -1323,11 +1406,11 @@ fn Fields.of(pairs: Array[(String, String)]): Fields {
         events.push(__serialization.Event.Key(name))
         let given = values.get(name).unwrapOr([])
         if given.length() == 1 {
-            events.push(__serialization.Event.Untyped(given[0]))
+            events.extend(eventsOf(given[0]))
         } else {
             events.push(__serialization.Event.BeginList)
             for value in given {
-                events.push(__serialization.Event.Untyped(value))
+                events.extend(eventsOf(value))
             }
             events.push(__serialization.Event.EndList)
         }
@@ -1335,6 +1418,25 @@ fn Fields.of(pairs: Array[(String, String)]): Fields {
     events.push(__serialization.Event.EndMap)
     events.reverse()
     Fields { events: __sync.Mutex(events), current: __sync.Mutex("") }
+}
+
+/// A value as events: an untyped text, or a file as a map of its parts.
+fn eventsOf(value: Given): Array[__serialization.Event] {
+    match value {
+        Given.Text(text) => [__serialization.Event.Untyped(text)]
+        Given.File(file) => [
+            __serialization.Event.BeginMap,
+            __serialization.Event.Key("name"),
+            __serialization.Event.Untyped(file.name),
+            __serialization.Event.Key("fileName"),
+            __serialization.Event.Untyped(file.fileName),
+            __serialization.Event.Key("contentType"),
+            __serialization.Event.Untyped(file.contentType),
+            __serialization.Event.Key("bytes"),
+            __serialization.Event.Bytes(file.bytes),
+            __serialization.Event.EndMap,
+        ]
+    }
 }
 
 /// A name as a parameter and a field compare: without case, `_` or `-`.
@@ -1348,13 +1450,20 @@ impl __serialization.Source for Fields {
     }
 
     fn skip(self, first: __serialization.Event): !__serialization.Error {
-        if first == __serialization.Event.BeginList {
-            for {
-                match self.next()? {
-                    some(__serialization.Event.EndList) => return
-                    none => return
-                    _ => {}
-                }
+        var depth = if first == __serialization.Event.BeginList or
+            first == __serialization.Event.BeginMap {
+            1
+        } else {
+            0
+        }
+        for depth > 0 {
+            match self.next()? {
+                some(__serialization.Event.BeginList) => depth += 1
+                some(__serialization.Event.BeginMap) => depth += 1
+                some(__serialization.Event.EndList) => depth -= 1
+                some(__serialization.Event.EndMap) => depth -= 1
+                none => return
+                _ => {}
             }
         }
     }
@@ -1397,13 +1506,34 @@ impl __serialization.Source for Fields {
         }
     }
 
-    /// A list: the values of a name that repeats, or its one value.
+    /// A list: the values of a name that repeats, or its one value, a text
+    /// or a file's map, which the list's end then follows.
     fn beginList(self, first: __serialization.Event, name: String): !__serialization.Error {
         match first {
             __serialization.Event.BeginList => {}
             __serialization.Event.Untyped(_) => self.events.update(
                 (events) {
                     events.push(__serialization.Event.EndList)
+                    events.push(first)
+                },
+            )
+            __serialization.Event.BeginMap => self.events.update(
+                (events) {
+                    // The map's end, among the events served from the end.
+                    var at = events.length() - 1
+                    var depth = 1
+                    for at >= 0 {
+                        if events[at] == __serialization.Event.BeginMap {
+                            depth += 1
+                        } else if events[at] == __serialization.Event.EndMap {
+                            depth -= 1
+                            if depth == 0 {
+                                break
+                            }
+                        }
+                        at -= 1
+                    }
+                    events.insert(at.max(0), __serialization.Event.EndList)
                     events.push(first)
                 },
             )
@@ -1826,12 +1956,59 @@ pub fn Reply.notFound(): Reply {
     problemReply(Problem.notFound())
 }
 
-/// The same reply with one more header.
+/// The same reply with the header `name` set to `value`, in place of the
+/// values it had, whatever their case.
 pub fn Reply.header(self, name: String, value: String): Reply {
+    let lower = name.toLower()
+    var headers: Array[String] = []
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index].toLower() != lower {
+            headers.push(self.headerList[index])
+            headers.push(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    headers.push(name)
+    headers.push(value)
+    self with { headerList: headers }
+}
+
+/// The same reply with one more value of the header `name`, after the ones
+/// it has: what `Set-Cookie`, `Vary` and `Link` take.
+pub fn Reply.addHeader(self, name: String, value: String): Reply {
     var headers = self.headerList
     headers.push(name)
     headers.push(value)
-    Reply { code: self.code, headerList: headers, payload: self.payload }
+    self with { headerList: headers }
+}
+
+/// The same reply with another status code.
+pub fn Reply.withStatus(self, status: Int): Reply {
+    self with { code: status }
+}
+
+/// The body, when the reply holds it: that of text, HTML, JSON, bytes, a
+/// redirect or a problem; `none` for a stream, a file, events or a
+/// WebSocket, which are sent as they come.
+pub fn Reply.body(self): Array[Byte]? {
+    match self.payload {
+        Payload.Data(bytes) => some(bytes)
+        _ => none
+    }
+}
+
+/// The same reply with this body in place of the one it had; its status
+/// and headers stay, its content type too.
+pub fn Reply.withBody(self, bytes: Array[Byte]): Reply {
+    self with { payload: Payload.Data(bytes) }
+}
+
+/// The reply the server gives for a problem, `application/problem+json`
+/// (RFC 9457): for a middleware that adds its headers to a handler's
+/// failure, `Reply.problem(problem).header(...)`.
+pub fn Reply.problem(problem: Problem): Reply {
+    problemReply(problem)
 }
 
 /// When a browser sends a cookie from another site's page: `Lax` with the
@@ -1878,7 +2055,7 @@ pub fn Reply.cookie(
         SameSite.None => "None"
     }
     parts.push("SameSite={site}")
-    self.header("set-cookie", parts.join("; "))
+    self.addHeader("set-cookie", parts.join("; "))
 }
 
 /// The reply's status code.
@@ -2550,7 +2727,7 @@ pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Req
             }
             if name == "set-cookie" {
                 for cookie in response.headerValues(name) {
-                    reply = reply.header(name, cookie)
+                    reply = reply.addHeader(name, cookie)
                 }
             } else {
                 reply = reply.header(name, value)

@@ -109,9 +109,18 @@ fn find(id: Int): User? {
   `request.formAs[T]()` a form: `page_size` fills `pageSize`, and a name
   that repeats fills a list. A field that may be missing is optional, as
   `tags: Array[String]?`; a missing or unreadable one is a 400 that names
-  the parameter. A multipart body is read by its parts, `request.uploads()`.
+  the parameter. A multipart form reads the same way, each file into a
+  field of type `http.UploadedFile`, in memory; `request.uploads()` reads
+  its parts one by one, for files too large for memory.
 - A body is read once, as it arrives: a middleware that reads it gives it
   on with `next(request.withBody(bytes))`, and the handler reads it again.
+- A middleware reads and changes the reply: `reply.status()`,
+  `reply.headers()` and `reply.body()` (in memory: text, JSON, bytes;
+  `none` for a stream or a file), `reply.withStatus(code)` and
+  `reply.withBody(bytes)`. A handler's failure is `err(problem)`, which
+  `http.Reply.problem(problem)` turns into the reply the server would send,
+  to add headers to it. `header` replaces a header; `addHeader` adds a value,
+  as `Set-Cookie` and `Vary` take.
 - A parameter takes a whole segment, `/files/:file`; a route added twice
   is a panic, and `/foo/` is `/foo`.
 - Each client is limited: by default a body over 10 MiB is 413, a head over
