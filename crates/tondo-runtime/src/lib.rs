@@ -2842,10 +2842,18 @@ pub fn check_leaks() -> Option<usize> {
     // the channels of signals.
     contexts::end();
     signals::end();
-    // Garbage cycles are not leaks: the collector frees them.
-    cycles::collect_all();
-    let live = LIVE_OBJECTS.live();
-    (live != 0).then_some(live)
+    // Garbage cycles are not leaks: the collector frees them. A thread of
+    // the runtime may still be letting go of an object, as a read of a
+    // stream that a reply had and a client closed: it gets a second.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        cycles::collect_all();
+        let live = LIVE_OBJECTS.live();
+        if live == 0 || std::time::Instant::now() >= deadline {
+            return (live != 0).then_some(live);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 // ---------------------------------------------------------------------------
