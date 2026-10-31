@@ -76,6 +76,7 @@ pub extern "C" fn tondo_rt_env_args() -> *mut ArrayHeader {
 static ARGUMENTS: std::sync::OnceLock<Vec<OsString>> = std::sync::OnceLock::new();
 
 /// Keeps the arguments the program's `main` was given.
+#[cfg(tondo_staticlib)]
 pub(crate) unsafe fn keep_arguments(argc: i32, argv: *const *const u8) {
     let kept = (0..argc.max(0) as usize)
         .map(|index| unsafe { *argv.add(index) })
