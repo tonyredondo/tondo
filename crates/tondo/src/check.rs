@@ -10677,7 +10677,9 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         };
         // Outside its module, a literal leaves out the private fields, which
-        // then need defaults.
+        // then need defaults; one that cannot is refused, and nothing more
+        // is said of its fields.
+        let mut refused = false;
         if let Some(hidden) = self.hidden_fields(ty).map(<[bool]>::to_vec) {
             let defaults = self.defaults_of(ty).unwrap_or_default();
             let written = inits.iter().find(|i| self.field_index(ty, &i.name.name).is_some_and(|k| hidden[k]));
@@ -10687,6 +10689,7 @@ impl<'a> Checker<'a> {
                     self.display(ty)
                 );
                 self.diags.error("E1502", name.span, message);
+                refused = true;
             } else if let Some(init) = written {
                 let message = format!(
                     "field `{}` of {} is private to its module: leave it out, and it has its default value",
@@ -10716,7 +10719,9 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        self.report_missing(&fields, &seen, inits, span);
+        if !refused {
+            self.report_missing(&fields, &seen, inits, span);
+        }
         Self::mk(hir::ExprKind::Record(values), ty, span)
     }
 
