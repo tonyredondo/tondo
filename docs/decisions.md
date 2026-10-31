@@ -3689,3 +3689,17 @@ a library that adds a context working with queues that know nothing of it;
 it shares the task's table, which never changes, so capturing copies
 nothing.
 
+## 2026-10-31 — Indexing text without a cursor
+
+Hugo's code walks text by index, as Go's byte indexes do, and in Tondo each
+`text[i]` counted characters from the start: 1.2 million of them took 38
+seconds. A cursor type would have made such code rewrite every loop.
+Instead the runtime remembers, for a few long strings at a time, whether
+they are ASCII, how many characters they have and the last character it
+found with its byte: an ASCII string is indexed directly, and another walks
+from the last position, so a loop takes a step each and the 38 seconds are
+a fraction of one. The header of a string stays as it is, since the code
+generator, the debugger and live builds read it; a string's entry goes when
+it is freed or a builder takes its block, so no new string at the same
+address meets an old position.
+

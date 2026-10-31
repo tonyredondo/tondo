@@ -199,6 +199,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Mixed values in formats** | A union is written as the member it holds and read as the first member that reads the value, so `Map[String, Int | String | Array[String]]` is a JSON object of mixed values; tuples are lists; `@name("in_progress")` names an enum's variant in every format | Done |
 | **Failure** | `Failure` in the prelude: `fs.readText(path).context("reading {path}")?` on a result or an option says what the program was doing and keeps the error as the cause, shown as `reading app.json: not found`; `failure.find[fs.FsError]()` finds a cause by its type through the chain | Done |
 | **Captured contexts** | `Contexts.current()` captures every context where it is called, and `with captured` gives them back to the end of the block, in the same task or another: queues and actors handle each message with its sender's contexts, and a function hands its caller the span it started | Done |
+| **Fast text indexes** | `text[i]`, `length()` and slices of a long string remember where its characters are: an ASCII string is indexed directly, and another walks from the last index read, so a loop over the indices is linear | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:

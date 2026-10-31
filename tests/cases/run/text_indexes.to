@@ -1,0 +1,48 @@
+// Indexes, lengths and slices of long strings agree with their characters,
+// read forwards, backwards and out of order, in ASCII text and in another,
+// and after the string grows in place.
+import std.console
+
+fn check(text: String): Int {
+    let chars = text.chars().collect()
+    var wrong = 0
+    var i = 0
+    for i < text.length() {
+        if text[i] != chars[i] {
+            wrong += 1
+        }
+        i += 1
+    }
+    var j = text.length() - 1
+    for j >= 0 {
+        if text[j] != chars[j] {
+            wrong += 1
+        }
+        j -= 3
+    }
+    for k in [5, text.length() - 2, 1, text.length() / 2, 0, 77] {
+        if text[k] != chars[k] or text[k - text.length()] != chars[k] {
+            wrong += 1
+        }
+    }
+    if text.get(text.length()) != none or text.length() != chars.length() {
+        wrong += 1
+    }
+    wrong
+}
+
+fn main() {
+    let ascii = "abcdefghij".repeat(300)
+    let mixed = "abcdéfghi🙂".repeat(300)
+    console.println("{check(ascii)} {check(mixed)}")
+    console.println("{mixed[3:7]} {mixed[2990:]} {mixed.slice(9, 12)} {mixed[12:4:-3]}")
+    var grown = "añ🙂x".repeat(40)
+    console.println("{grown[150]} {grown.length()}")
+    grown = "{grown}ñé"
+    console.println("{grown[160]} {grown[-1]} {grown.length()} {check(grown)}")
+}
+
+// expect-stdout: 0 0
+// expect-stdout: défg abcdéfghi🙂 ok(🙂ab) c🙂g
+// expect-stdout: 🙂 160
+// expect-stdout: ñ é 162 0

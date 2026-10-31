@@ -40,7 +40,9 @@ fn main() {
   `{price:.2}`, not `{price:.2f}`. A format chosen while the program runs
   goes through `format.apply(value, spec)`, which gives `String ! FormatError`.
 - `text[i]` is the character at `i` and panics out of range; `text.get(i)`
-  gives a `Char?`, and `slice(start, end)` a `String ! TextError`.
+  gives a `Char?`, and `slice(start, end)` a `String ! TextError`. In an
+  ASCII string an index is a byte; in another, a loop over the indices takes
+  a step each, so walking a long text by index is linear, as Go's is.
 - `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them.
 - `std.format.Builder` builds long text piece by piece; `std.regex` matches
   patterns; `std.encoding` turns bytes into Base64, hexadecimal or URL text.

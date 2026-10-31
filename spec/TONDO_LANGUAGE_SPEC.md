@@ -7525,7 +7525,11 @@ let first: Char = text[0]
 let last: Char = text[-1]
 ~~~
 
-La indexación puede ser O(n) debido a UTF-8. Tondo no promete O(1).
+La indexación puede ser O(n) debido a UTF-8. Tondo no promete O(1), pero un
+string ASCII se indexa en tiempo constante, y en otro largo un índice cercano al
+último que se leyó cuesta lo que los separa: un recorrido por índices avanza un
+paso cada vez. El runtime lo recuerda de unos pocos strings largos a la vez, y
+lo olvida cuando el string se libera. `length()` y el slicing usan lo mismo.
 
 El índice debe tener tipo `Int` y admite las mismas posiciones negativas que `Array`.
 

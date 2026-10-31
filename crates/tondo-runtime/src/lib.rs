@@ -148,11 +148,118 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         1 => {
             fence(Ordering::Acquire);
             LIVE_OBJECTS.gone();
+            forget_positions(s);
             unsafe { dealloc(s as *mut u8, str_layout((*s).cap)) }
         }
         0 => runtime_fault("string released after it was freed"),
         _ => {}
     }
+}
+
+/// Where the scalars of the long strings a program indexes are (19.2), a
+/// string in each slot: its address and length, whether it is ASCII, its
+/// length in scalars, and the last scalar found and its byte. An index in
+/// an ASCII string is its byte; in another, the walk starts at the last
+/// one found, so a loop over the indices takes a step each. A slot holds a
+/// string only while it lives: freeing it, or taking its block to build
+/// another, empties its slot first.
+struct Positions {
+    text: usize,
+    len: usize,
+    ascii: bool,
+    count: usize,
+    index: usize,
+    offset: usize,
+}
+
+const POSITION_SLOTS: usize = 16;
+/// The address each slot holds, which freeing a string checks with a load.
+static POSITIONED: [AtomicUsize; POSITION_SLOTS] = [const { AtomicUsize::new(0) }; POSITION_SLOTS];
+static POSITIONS: [Mutex<Option<Positions>>; POSITION_SLOTS] = [const { Mutex::new(None) }; POSITION_SLOTS];
+/// Strings shorter than this are walked from their start.
+const POSITIONED_FROM: usize = 64;
+
+fn position_slot(s: *const Str) -> usize {
+    (s as usize >> 4) % POSITION_SLOTS
+}
+
+/// Empties the slot of a string whose block is freed or taken.
+fn forget_positions(s: *const Str) {
+    let slot = position_slot(s);
+    if POSITIONED[slot].load(Ordering::Relaxed) == s as usize {
+        let mut positions = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
+        if positions.as_ref().is_some_and(|p| p.text == s as usize) {
+            *positions = None;
+            POSITIONED[slot].store(0, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The number of scalars of some bytes: every scalar has exactly one byte
+/// that is not a continuation byte.
+fn scalars(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&b| (b as i8) >= -0x40).count()
+}
+
+/// The byte where the scalar at `index` starts, or `None` past the end.
+unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize> {
+    let text = unsafe { str_text(s) };
+    let bytes = text.as_bytes();
+    if bytes.len() < POSITIONED_FROM {
+        return text.char_indices().nth(index).map(|(offset, _)| offset);
+    }
+    let slot = position_slot(s);
+    let mut held = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
+    if !held.as_ref().is_some_and(|p| p.text == s as usize && p.len == bytes.len()) {
+        let ascii = bytes.is_ascii();
+        let count = if ascii { bytes.len() } else { scalars(bytes) };
+        *held = Some(Positions { text: s as usize, len: bytes.len(), ascii, count, index: 0, offset: 0 });
+        POSITIONED[slot].store(s as usize, Ordering::Relaxed);
+    }
+    let positions = held.as_mut().expect("a string's positions");
+    if index >= positions.count {
+        return None;
+    }
+    if positions.ascii {
+        return Some(index);
+    }
+    // From the nearest of the start, the end and the last one found.
+    let (mut at, mut offset) = (positions.index, positions.offset);
+    if index < at.abs_diff(index) {
+        (at, offset) = (0, 0);
+    }
+    if positions.count - index < at.abs_diff(index) {
+        (at, offset) = (positions.count, bytes.len());
+    }
+    while at < index {
+        offset += 1;
+        while offset < bytes.len() && (bytes[offset] as i8) < -0x40 {
+            offset += 1;
+        }
+        at += 1;
+    }
+    while at > index {
+        offset -= 1;
+        while (bytes[offset] as i8) < -0x40 {
+            offset -= 1;
+        }
+        at -= 1;
+    }
+    (positions.index, positions.offset) = (index, offset);
+    Some(offset)
+}
+
+/// The number of scalars, from the string's slot when it has one.
+unsafe fn scalar_count(s: *const Str) -> usize {
+    let bytes = unsafe { str_bytes(s) };
+    let slot = position_slot(s);
+    if bytes.len() >= POSITIONED_FROM && POSITIONED[slot].load(Ordering::Relaxed) == s as usize {
+        let held = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(positions) = held.as_ref().filter(|p| p.text == s as usize && p.len == bytes.len()) {
+            return positions.count;
+        }
+    }
+    scalars(bytes)
 }
 
 /// Drops a reference to an object and returns the count it had. The last
@@ -186,20 +293,25 @@ pub(crate) unsafe fn str_text<'a>(s: *const Str) -> &'a str {
 /// The number of Unicode scalar values (19.2).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_length(s: *const Str) -> i64 {
-    // Every scalar has exactly one byte that is not a continuation byte.
-    unsafe { str_bytes(s) }.iter().filter(|&&b| (b as i8) >= -0x40).count() as i64
+    unsafe { scalar_count(s) as i64 }
 }
 
 /// The scalar at `index`, counting from the end when negative, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_get(s: *const Str, index: i64) -> i64 {
     let text = unsafe { str_text(s) };
-    let found = if index >= 0 {
-        text.chars().nth(index as usize)
+    let index = if index >= 0 {
+        index as usize
     } else {
-        index.checked_neg().and_then(|back| text.chars().nth_back(back as usize - 1))
+        match (unsafe { scalar_count(s) } as i64).checked_add(index) {
+            Some(from_start) if from_start >= 0 => from_start as usize,
+            _ => return -1,
+        }
     };
-    found.map_or(-1, |c| c as i64)
+    match unsafe { scalar_offset(s, index) } {
+        Some(offset) => text[offset..].chars().next().map_or(-1, |c| c as i64),
+        None => -1,
+    }
 }
 
 /// `text[index]`: the scalar at `index`, panicking with `P0001` outside.
@@ -228,8 +340,14 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
 ) -> *mut Str {
     unsafe {
         let text = str_text(s);
+        let (first, count) = slice_range(scalar_count(s), start, has_start, end, has_end, step, location);
+        // A run of scalars is the bytes between where they start.
+        if step == 1 {
+            let from = scalar_offset(s, first as usize).unwrap_or(text.len());
+            let to = scalar_offset(s, first as usize + count).unwrap_or(text.len());
+            return str_new(&text.as_bytes()[from..to]);
+        }
         let chars: Vec<char> = text.chars().collect();
-        let (first, count) = slice_range(chars.len(), start, has_start, end, has_end, step, location);
         let selected: String = (0..count as i64).map(|k| chars[(first + k * step) as usize]).collect();
         str_new(selected.as_bytes())
     }
@@ -2132,6 +2250,8 @@ unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
 pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: usize) -> u8 {
     unsafe {
         if (*s).rc.load(Ordering::Acquire) == 1 {
+            // Its block becomes the builder's, which may move it.
+            forget_positions(s);
             // The block may hold more than the string: room it grows into.
             let len = (*s).len;
             (*s).cap = (*s).cap.max(meta::usable(s as *const u8, str_layout((*s).cap).size()) - HEADER);
