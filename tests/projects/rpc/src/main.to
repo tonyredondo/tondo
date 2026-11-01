@@ -1,7 +1,8 @@
 // A gRPC server and its client in one program: each kind of call, the
 // metadata and the deadline a method sees, a failure with details, another
-// error as `Internal`, a method that panics, the server's headers and
-// trailers, a deadline that passes and a server that is not there.
+// error as `Internal`, a method that panics, a stream that fails, the
+// server's headers and trailers, a deadline that passes and a server that
+// is not there.
 
 import rpc.api.greeter
 import std.console
@@ -38,6 +39,9 @@ impl greeter.Greeter for Greetings {
     fn repeat(self, request: greeter.HelloRequest, out: Sender[greeter.HelloReply]): !grpc.Status {
         for index in 0..request.times {
             out.send(greeter.HelloReply { message: "{index}: {request.name}" })
+        }
+        if request.name == "?" {
+            fail grpc.Status { code: grpc.Code.InvalidArgument, message: "who?" }
         }
     }
 
@@ -92,6 +96,13 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
     for each in client.repeat(greeter.HelloRequest { name: "Lin", times: 3 }) {
         console.println(each?.message)
     }
+    // A stream that fails ends with its failure.
+    for each in client.repeat(greeter.HelloRequest { name: "?", times: 1 }) {
+        match each {
+            ok(reply) => console.println(reply.message)
+            err(status) => console.println("{status}")
+        }
+    }
     let upload = client.collect()
     for name in ["a", "b", "c"] {
         upload.send(greeter.HelloRequest { name })?
@@ -127,6 +138,8 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
 // expect-stdout: 0: Lin
 // expect-stdout: 1: Lin
 // expect-stdout: 2: Lin
+// expect-stdout: 0: ?
+// expect-stdout: InvalidArgument: who?
 // expect-stdout: a+b+c
 // expect-stdout: echo x
 // expect-stdout: echo y

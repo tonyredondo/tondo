@@ -514,20 +514,27 @@ enum Source {
 /// message = each? }`. A failure ends it.
 pub type Stream[T] = {
     priv source: Source
+    priv ended: Bool = false
 }
 
 impl[T: __protobuf.Message] Iterator[T ! Status] for Stream[T] {
     fn next(mut self): (T ! Status)? {
-        match self.source {
-            Source.Server(exchange) => match exchange.receive[T]() {
-                ok(some(message)) => some(ok(message))
-                ok(none) => none
-                err(status) => some(err(status))
+        if self.ended {
+            return none
+        }
+        let outcome = match self.source {
+            Source.Server(exchange) => exchange.receive[T]()
+            Source.Client(native) => received[T](native)
+        }
+        match outcome {
+            ok(some(message)) => some(ok(message))
+            ok(none) => {
+                self.ended = true
+                none
             }
-            Source.Client(native) => match received[T](native) {
-                ok(some(message)) => some(ok(message))
-                ok(none) => none
-                err(status) => some(err(status))
+            err(status) => {
+                self.ended = true
+                some(err(status))
             }
         }
     }
