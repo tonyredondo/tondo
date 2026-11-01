@@ -6636,7 +6636,8 @@ pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
 
 ### 14.41 `std.grpc`
 
-`std.grpc` sirve y llama servicios de gRPC sobre HTTP/2. Cada `service` de un
+`std.grpc` sirve y llama servicios de gRPC sobre HTTP/2, y los sirve también
+a gRPC-Web y a Connect. Cada `service` de un
 archivo `.proto` (14.12) da un trait con sus llamadas, una función que hace
 de un valor que lo implementa el `Service` que `App.grpc` sirve, y un
 cliente. Los mensajes son los de `std.protobuf`, y una llamada que falla da
@@ -6705,7 +6706,7 @@ pub fn setHeader(name: String, value: String)
 pub fn setTrailer(name: String, value: String)
 
 pub type Service = { name: String, methods: Array[Method], files: Array[protobuf.FileDescriptor] = [] }
-pub type Method = { name: String, handler: fn(ServerCall): !Status }
+pub type Method = { name: String, handler: fn(ServerCall): !Status, noSideEffects: Bool = false }
 pub type ServerCall
 pub fn ServerCall.receive[T: protobuf.Message](self): T? ! Status
 pub fn ServerCall.send[T: protobuf.Message](self, message: T): !Status
@@ -6786,10 +6787,32 @@ pub fn Duplex.trailers(self): Map[String, String]
   cada trozo que el cliente envía puede llevar su relleno, y cada frame de
   la respuesta va en Base64 por separado, con el suyo. Una página de otro
   origen necesita además `App.cors`.
+- **Connect.** Las mismas rutas responden también al protocolo de Connect,
+  sobre HTTP/1.1 o HTTP/2, con sus mensajes en bytes de protobuf o en el JSON
+  de proto3 (14.12). Una llamada unaria es una petición y una respuesta de
+  HTTP: `Content-Type` `application/proto` o `application/json`, el mensaje
+  solo, sin frame, comprimido según `Content-Encoding`, y el plazo en
+  `Connect-Timeout-Ms`. La respuesta es el mensaje, comprimido con gzip si el
+  servicio comprime y la petición lo acepta en `Accept-Encoding`; un fallo
+  es su JSON, `{"code": "not_found", "message": ..., "details": [{"type":
+  ..., "value": ...}]}`, con el estado de HTTP de su código (400, 401, 403,
+  404, 409, 429, 499, 500, 501, 503 o 504). Las cabeceras de la llamada van
+  como cabeceras y sus trailers como cabeceras `trailer-<nombre>`. Un método
+  con `option idempotency_level = NO_SIDE_EFFECTS` tiene `noSideEffects` y
+  responde también a `GET`, con el mensaje en la query: `message`, en Base64
+  para URLs con `base64=1`, `encoding` (`proto` o `json`) y `compression`.
+  Un stream usa `application/connect+proto` o `application/connect+json`,
+  con frames como los de gRPC, comprimidos según `Connect-Content-Encoding`,
+  y termina con un frame marcado `0x02` cuyo contenido es JSON: `error`, si
+  falló, y `metadata`, sus trailers. Un JSON con campos que el mensaje no
+  tiene se lee sin ellos, como lo leen los servidores de Connect.
 - **Datos de la llamada.** `grpc.call()` da, en el método y en lo que este
   llama, el método, la metadata de la petición sin las cabeceras de HTTP y de
-  gRPC (`content-type`, `te`, `user-agent`, `grpc-timeout`, `grpc-encoding`,
-  `grpc-accept-encoding`, `x-grpc-web`, `x-user-agent`), la dirección del cliente y el tiempo que quedaba;
+  gRPC, gRPC-Web y Connect (`content-type`, `content-length`, `te`,
+  `user-agent`, `grpc-timeout`, `grpc-encoding`, `grpc-accept-encoding`,
+  `x-grpc-web`, `x-user-agent`, `content-encoding`, `accept-encoding`,
+  `connect-protocol-version`, `connect-timeout-ms`,
+  `connect-content-encoding`, `connect-accept-encoding`), la dirección del cliente y el tiempo que quedaba;
   fuera de un método, una `Call` vacía. `setHeader` pone metadata en las
   cabeceras de la respuesta, antes del primer mensaje, y `setTrailer` en sus
   trailers, con el status. Los valores de los nombres que acaban en `-bin`

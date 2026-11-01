@@ -1451,8 +1451,13 @@ impl Translator<'_> {
                 ),
             };
             let _ = writeln!(calls, "    {signature}");
+            // Connect calls a method without side effects with a `GET`.
+            let safe = method.options.iter().any(|(name, value)| {
+                name == "idempotency_level" && matches!(value, Token::Name(v) if v == "NO_SIDE_EFFECTS")
+            });
+            let safe = if safe { ", noSideEffects: true" } else { "" };
             methods.push(format!(
-                "            grpc.Method {{ name: {:?}, handler: (call) {{ {handler} }} }},",
+                "            grpc.Method {{ name: {:?}, handler: (call) {{ {handler} }}{safe} }},",
                 method.name
             ));
             let _ = write!(

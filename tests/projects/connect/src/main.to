@@ -1,0 +1,193 @@
+// Connect, as its clients send it, to the routes of a gRPC service: a
+// unary call as plain HTTP, its message alone in bytes or JSON, compressed
+// or not; its failure as JSON with the HTTP status of its code; a `GET` of
+// a method without side effects; and streams, whose last message is JSON
+// with the failure and the trailers.
+
+import connect.api.greeter
+import std.console
+import std.encoding
+import std.grpc
+import std.gzip
+import std.http
+import std.protobuf
+
+type Greetings = {}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        grpc.setHeader("x-header", "h")
+        grpc.setTrailer("x-trailer", "t")
+        if request.name.isEmpty() {
+            fail grpc.Status {
+                code: grpc.Code.InvalidArgument
+                message: "a name is needed"
+                details: [protobuf.pack(greeter.HelloReply { message: "why" })]
+            }
+        }
+        greeter.HelloReply { message: "hello {request.name}" }
+    }
+
+    fn lookup(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply { message: "found {request.name}" }
+    }
+
+    fn repeat(self, request: greeter.HelloRequest, out: Sender[greeter.HelloReply]): !grpc.Status {
+        for at in 0..Int(request.times) {
+            out.send(greeter.HelloReply { message: "{request.name} {at}" })
+        }
+        if request.times > 2 {
+            grpc.setTrailer("x-trailer", "t")
+            fail grpc.Status { code: grpc.Code.OutOfRange, message: "too many" }
+        }
+    }
+
+    fn collect(self, input: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        var names: Array[String] = []
+        for each in input {
+            names.push(each?.name)
+        }
+        greeter.HelloReply { message: names.join(" ") }
+    }
+}
+
+/// An envelope of Connect's streams: its flags, its length and its bytes.
+fn enveloped(flags: Byte, bytes: Array[Byte]): Array[Byte] {
+    let head: Array[Byte] = [flags]
+    head.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+}
+
+/// A stream's envelopes: each message's text, then the JSON that ends it.
+fn shown(body: Array[Byte]): String {
+    var parts: Array[String] = []
+    var at = 0
+    for at + 5 <= body.length() {
+        let length = Int(UInt32.fromBytes(body, at: at + 1))
+        let bytes = body.drop(at + 5).take(length)
+        if body[at] == 2 {
+            parts.push(String.fromBytes(bytes).unwrapOr("?"))
+        } else {
+            match protobuf.decode[greeter.HelloReply](bytes) {
+                ok(reply) => parts.push(reply.message)
+                err(error) => parts.push("{error}")
+            }
+        }
+        at += 5 + length
+    }
+    parts.join(" | ")
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    var app = http.App.new()
+    app.grpc(greeter.greeter(Greetings {}))
+    let server = app.start()?
+    let web = http.Client.new()
+    let base = "http://{server.address()}/demo.v1.Greeter"
+    let request = protobuf.encode(greeter.HelloRequest { name: "proto" })
+    let hello =
+        web.post(
+            "{base}/SayHello",
+            body: some(http.Body.bytes(request, contentType: "application/proto")),
+            headers: ["connect-protocol-version": "1"],
+        )?
+    let reply = protobuf.decode[greeter.HelloReply](hello.bytes()?).unwrapOr(greeter.HelloReply {})
+    console.println(
+        "{hello.status()} {hello.header("content-type").unwrapOr("-")} {reply.message} {hello.header("x-header").unwrapOr("-")} {hello.header("trailer-x-trailer").unwrapOr("-")}",
+    )
+    let json =
+        web.post(
+            "{base}/SayHello",
+            body: some(http.Body.text(
+                "{{\"name\": \"json\", \"unknown\": 1}}",
+                contentType: "application/json",
+            )),
+        )?
+    console.println("{json.header("content-type").unwrapOr("-")} {json.text()?}")
+    let zipped =
+        web.post(
+            "{base}/SayHello",
+            body: some(http.Body.bytes(gzip.compress(request), contentType: "application/proto")),
+            headers: ["content-encoding": "gzip"],
+        )?
+    console.println(
+        protobuf.decode[greeter.HelloReply](zipped.bytes()?).unwrapOr(greeter.HelloReply {}).message,
+    )
+    match web.post(
+        "{base}/SayHello",
+        body: some(http.Body.text("{{}}", contentType: "application/json")),
+    ) {
+        ok(response) => console.println("{response.status()}")
+        err(http.HttpError.Status(response)) => {
+            console.println(
+                "{response.status()} {response.header("content-type").unwrapOr("-")} {response.text()?}",
+            )
+        }
+        err(error) => console.println("{error}")
+    }
+    // A `GET`, which a method without side effects takes, and which the
+    // others do not.
+    let message = encoding.base64Encode(request, alphabet: encoding.Base64Alphabet.Url)
+    let asked = web.get("{base}/Lookup?connect=v1&encoding=proto&base64=1&message={message}")?
+    console.println(
+        protobuf.decode[greeter.HelloReply](asked.bytes()?).unwrapOr(greeter.HelloReply {}).message,
+    )
+    let query = "%7B%22name%22%3A%22query%22%7D"
+    let typed = web.get("{base}/Lookup?connect=v1&encoding=json&message={query}")?
+    console.println(typed.text()?)
+    match web.get("{base}/SayHello?connect=v1&encoding=json&message={query}") {
+        ok(response) => console.println("{response.status()}")
+        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(error) => console.println("{error}")
+    }
+    // Streams, whose last message ends them with JSON.
+    let stream = "application/connect+proto"
+    let ticks =
+        web.post(
+            "{base}/Repeat",
+            body: some(http.Body.bytes(
+                enveloped(0, protobuf.encode(greeter.HelloRequest { name: "tick", times: 2 })),
+                contentType: stream,
+            )),
+        )?
+    console.println("{ticks.header("content-type").unwrapOr("-")} {shown(ticks.bytes()?)}")
+    let failed =
+        web.post(
+            "{base}/Repeat",
+            body: some(http.Body.bytes(
+                enveloped(0, protobuf.encode(greeter.HelloRequest { name: "tock", times: 3 })),
+                contentType: stream,
+            )),
+        )?
+    console.println("{failed.status()} {shown(failed.bytes()?)}")
+    let names = enveloped(0, protobuf.encode(greeter.HelloRequest { name: "a" })).concat(
+        enveloped(0, protobuf.encode(greeter.HelloRequest { name: "b" })),
+    )
+    let collected =
+        web.post("{base}/Collect", body: some(http.Body.bytes(names, contentType: stream)))?
+    console.println(shown(collected.bytes()?))
+    let jsonStream =
+        web.post(
+            "{base}/Repeat",
+            body: some(http.Body.bytes(
+                enveloped(0, "{{\"name\":\"j\",\"times\":1}}".bytes()),
+                contentType: "application/connect+json",
+            )),
+        )?
+    let body = jsonStream.bytes()?
+    console.println(
+        "{String.fromBytes(body.drop(5).take(Int(UInt32.fromBytes(body, at: 1)))).unwrapOr("?")} {body.length()}",
+    )
+    server.stop()
+}
+
+// expect-stdout: 200 application/proto hello proto h t
+// expect-stdout: application/json {"message":"hello json"}
+// expect-stdout: hello proto
+// expect-stdout: 400 application/json {"code":"invalid_argument","message":"a name is needed","details":[{"type":"demo.v1.HelloReply","value":"CgN3aHk"}]}
+// expect-stdout: found proto
+// expect-stdout: {"message":"found query"}
+// expect-stdout: 405
+// expect-stdout: application/connect+proto tick 0 | tick 1 | {}
+// expect-stdout: 200 tock 0 | tock 1 | tock 2 | {"error":{"code":"out_of_range","message":"too many"},"metadata":{"x-trailer":["t"]}}
+// expect-stdout: a b | {}
+// expect-stdout: {"message":"j 0"} 29

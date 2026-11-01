@@ -10,6 +10,7 @@ import std.gzip as __gzip
 import std.http as __http
 import std.internal.grpc as grpcNative
 import std.io as __io
+import std.json as __json
 import std.protobuf as __protobuf
 import std.reflect as __reflect
 import std.sync as __sync
@@ -38,6 +39,41 @@ pub enum Code {
     Unavailable
     DataLoss
     Unauthenticated
+}
+
+/// The code's name in Connect, as `not_found`.
+fn Code.connectName(self): String {
+    if self == Code.Cancelled {
+        return "canceled"
+    }
+    var name = ""
+    for letter in "{self}".chars() {
+        if letter.isUpper() and not name.isEmpty() {
+            name = "{name}_"
+        }
+        name = "{name}{letter.toLower()}"
+    }
+    name
+}
+
+/// The HTTP status of a failed unary call of Connect with the code.
+fn Code.httpStatus(self): Int {
+    match self {
+        Code.Cancelled => 499
+        Code.InvalidArgument => 400
+        Code.DeadlineExceeded => 504
+        Code.NotFound => 404
+        Code.AlreadyExists => 409
+        Code.PermissionDenied => 403
+        Code.ResourceExhausted => 429
+        Code.FailedPrecondition => 400
+        Code.Aborted => 409
+        Code.OutOfRange => 400
+        Code.Unimplemented => 501
+        Code.Unavailable => 503
+        Code.Unauthenticated => 401
+        _ => 500
+    }
 }
 
 /// The code's number.
@@ -250,10 +286,12 @@ pub type Service = {
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
 
-/// A method of a service: its name and what serves it.
+/// A method of a service: its name, what serves it, and whether it has no
+/// side effects, which lets Connect call it with a `GET`.
 pub type Method = {
     name: String
     handler: fn(ServerCall): !Status
+    noSideEffects: Bool = false
 }
 
 /// Whether a message was received or sent by the side that sees it.
@@ -305,6 +343,12 @@ impl __http.GrpcService for Service {
                     path,
                     (request) { serve(request, path, handler, layers, watchers, compressing)? },
                 )
+                if method.noSideEffects {
+                    app.get(
+                        path,
+                        (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                    )
+                }
             }
         }
     }
@@ -320,20 +364,31 @@ pub type ServerCall = {
     /// Whether it sends its messages compressed with gzip.
     priv compressed: Bool
     priv wire: Wire
+    /// Whether its messages are proto3's JSON, as Connect may send them.
+    priv json: Bool
 }
 
-/// How a call travels: as gRPC, whose status goes in HTTP trailers, or as
+/// How a call travels: as gRPC, whose status goes in HTTP trailers; as
 /// gRPC-Web, which browsers send and whose status ends the body, in bytes
-/// or in Base64 text.
+/// or in Base64 text; or as Connect, whose unary calls are a request and a
+/// reply of plain HTTP and whose streams end with a message of JSON.
 enum Wire {
     Grpc
     Web
     WebText
+    Connect
+    ConnectStream
 }
 
-/// The wire of a request's content type.
-fn Wire.of(contentType: String): Wire {
-    if contentType.startsWith("application/grpc-web-text") {
+/// The wire of a request, by its content type; a `GET` is Connect's.
+fn Wire.of(method: String, contentType: String): Wire {
+    if method == "GET" or
+        contentType.startsWith("application/proto") or
+        contentType.startsWith("application/json") {
+        Wire.Connect
+    } else if contentType.startsWith("application/connect+") {
+        Wire.ConnectStream
+    } else if contentType.startsWith("application/grpc-web-text") {
         Wire.WebText
     } else if contentType.startsWith("application/grpc-web") {
         Wire.Web
@@ -343,11 +398,24 @@ fn Wire.of(contentType: String): Wire {
 }
 
 /// The content type of a reply.
-fn Wire.contentType(self): String {
+fn Wire.contentType(self, json: Bool): String {
+    let codec = if json { "json" } else { "proto" }
     match self {
         Wire.Grpc => "application/grpc"
         Wire.Web => "application/grpc-web+proto"
         Wire.WebText => "application/grpc-web-text+proto"
+        Wire.Connect => "application/{codec}"
+        Wire.ConnectStream => "application/connect+{codec}"
+    }
+}
+
+/// The headers that say how the messages are compressed and how the
+/// other side reads them.
+fn Wire.encodings(self): (String, String) {
+    match self {
+        Wire.Connect => ("content-encoding", "accept-encoding")
+        Wire.ConnectStream => ("connect-content-encoding", "connect-accept-encoding")
+        _ => ("grpc-encoding", "grpc-accept-encoding")
     }
 }
 
@@ -361,7 +429,8 @@ fn Wire.written(self, bytes: Array[Byte]): Array[Byte] {
 }
 
 /// Serves a call: runs its method in a task of its own, whose messages go
-/// out as it sends them and whose status follows as trailers.
+/// out as it sends them and whose status follows as trailers; a unary call
+/// of Connect is answered once the method ends.
 fn serve(
     request: __http.Request,
     path: String,
@@ -375,41 +444,79 @@ fn serve(
     let trailers = __http.Trailers.new()
     let ready = grpcNative.signal()
     var metadata = request.headers()
-    let wire = Wire.of(metadata.get("content-type").unwrapOr(""))
-    let timeout = timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
-    let encoding = metadata.get("grpc-encoding").unwrapOr("identity")
-    let accepted = metadata
-        .get("grpc-accept-encoding")
-        .unwrapOr("")
-        .split(",")
-        .map((name) { name.trim() })
+    let contentType = metadata.get("content-type").unwrapOr("")
+    let asked = request.method() == "GET"
+    let wire = Wire.of(request.method(), contentType)
+    let json = if asked {
+        request.query("encoding") == some("json")
+    } else {
+        contentType.startsWith("application/json") or
+            contentType.startsWith("application/connect+json")
+    }
+    let timeout = match wire {
+        Wire.Connect => connectTimeout(metadata.get("connect-timeout-ms"))
+        Wire.ConnectStream => connectTimeout(metadata.get("connect-timeout-ms"))
+        _ => timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
+    }
+    let (encodingHeader, acceptHeader) = wire.encodings()
+    let encoding = if asked {
+        request.query("compression").unwrapOr("identity")
+    } else {
+        metadata.get(encodingHeader).unwrapOr("identity")
+    }
+    let accepted = metadata.get(acceptHeader).unwrapOr("").split(",").map((name) { name.trim() })
     let compressed = compressing and accepted.contains("gzip")
-    headers.set("grpc-accept-encoding", "gzip")
-    if compressed {
-        headers.set("grpc-encoding", "gzip")
+    // A unary reply of Connect says how it is compressed when it is sent.
+    if wire != Wire.Connect {
+        headers.set(acceptHeader, "gzip")
+        if compressed {
+            headers.set(encodingHeader, "gzip")
+        }
     }
     for name in [
         "content-type",
+        "content-length",
         "te",
+        "user-agent",
         "grpc-timeout",
         "grpc-encoding",
         "grpc-accept-encoding",
-        "user-agent",
         "x-grpc-web",
         "x-user-agent",
+        "content-encoding",
+        "accept-encoding",
+        "connect-protocol-version",
+        "connect-timeout-ms",
+        "connect-content-encoding",
+        "connect-accept-encoding",
     ] {
         _ = metadata.remove(name)
     }
     let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
-    let frames = grpcNative.frames(request.body(), encoding, wire == Wire.WebText)
-    let server = ServerCall { frames, output, ready, watchers, compressed, wire }
+    let frames = if wire == Wire.Connect {
+        // Connect's unary request is the message alone.
+        let body = if asked { connectQuery(request)? } else { request.bytes()? }
+        let flags: Byte = if encoding == "identity" { 0 } else { 1 }
+        grpcNative.framesOf(enveloped(flags, body), encoding)
+    } else {
+        grpcNative.frames(request.body(), encoding, wire == Wire.WebText)
+    }
+    let server = ServerCall { frames, output, ready, watchers, compressed, wire, json }
+    let (done, outcome) = channel[Status](capacity: 1, discardWhenAbandoned: true)
     with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
-    spawn detached run(server, handler, layers, timeout, trailers)
+    spawn detached run(server, handler, layers, timeout, trailers, done)
+    if wire == Wire.Connect {
+        let body = reader.readBytes().unwrapOr([])
+        let status = outcome
+            .receive()
+            .unwrapOr(Status { code: Code.Internal, message: "the method ended without a status" })
+        return connectReply(body, status, json, headers, trailers)
+    }
     // The headers go once the method sends its first message, or ends.
     _ = grpcNative.signalWait(ready)
     var reply = __http.Reply.stream(
         reader,
-        contentType: wire.contentType(),
+        contentType: wire.contentType(json),
         trailers: if wire == Wire.Grpc { some(trailers) } else { none },
     )
     for (name, value) in headers.all() {
@@ -424,6 +531,7 @@ fn run(
     layers: Array[fn(Call, fn(): !Status): !Status],
     timeout: __time.Duration?,
     trailers: __http.Trailers,
+    done: Sender[Status],
 ) {
     // A client that goes cancels the method, as it would a handler.
     grpcNative.follow(server.output)
@@ -434,33 +542,41 @@ fn run(
         ok(status) => status
         err(failure) => panicked(who, failure.message)
     }
-    trailers.set("grpc-status", "{outcome.code.number()}")
-    if not outcome.message.isEmpty() {
-        trailers.set("grpc-message", percentEncoded(outcome.message))
-    }
-    if not outcome.details.isEmpty() {
-        let rpc = RpcStatus {
-            code: Int32.wrapping(outcome.code.number())
-            message: outcome.message
-            details: outcome.details
-        }
-        trailers.set(
-            "grpc-status-details-bin",
-            __encoding.base64Encode(__protobuf.encode(rpc)).trimEnd("="),
-        )
-    }
     server.start()
-    if server.wire != Wire.Grpc {
-        // gRPC-Web's trailers are a frame of their own at the end of the
-        // body, flagged with 0x80, as HTTP/1 writes headers.
-        var block = ""
-        for (name, value) in trailers.all() {
-            block = "{block}{name.toLower()}: {value}\r\n"
+    match server.wire {
+        Wire.Connect => done.send(outcome)
+        Wire.ConnectStream => {
+            // Connect's stream ends with a message of JSON flagged 0x02,
+            // with the failure and the trailers.
+            let end = __json.encode(connectEnd(outcome, trailers)).bytes()
+            _ = server.output.writeBytes(enveloped(2, end))
         }
-        let flag: Array[Byte] = [0x80]
-        let bytes = block.bytes()
-        let frame = flag.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
-        _ = server.output.writeBytes(server.wire.written(frame))
+        _ => {
+            trailers.set("grpc-status", "{outcome.code.number()}")
+            if not outcome.message.isEmpty() {
+                trailers.set("grpc-message", percentEncoded(outcome.message))
+            }
+            if not outcome.details.isEmpty() {
+                let rpc = RpcStatus {
+                    code: Int32.wrapping(outcome.code.number())
+                    message: outcome.message
+                    details: outcome.details
+                }
+                trailers.set(
+                    "grpc-status-details-bin",
+                    __encoding.base64Encode(__protobuf.encode(rpc)).trimEnd("="),
+                )
+            }
+            if server.wire != Wire.Grpc {
+                // gRPC-Web's trailers are a frame of their own at the end
+                // of the body, flagged 0x80, as HTTP/1 writes headers.
+                var block = ""
+                for (name, value) in trailers.all() {
+                    block = "{block}{name.toLower()}: {value}\r\n"
+                }
+                _ = server.output.writeBytes(server.wire.written(enveloped(0x80, block.bytes())))
+            }
+        }
     }
     _ = server.output.close()
 }
@@ -543,7 +659,7 @@ fn watched[T: __reflect.Reflect](
 /// The next message of the call, or `none` after the client's last.
 pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? ! Status {
     match grpcNative.readFrame(self.frames) {
-        1 => match __protobuf.decode[T](grpcNative.frame(self.frames)) {
+        1 => match messageOf[T](grpcNative.frame(self.frames), self.json) {
             ok(message) => {
                 watched(self.watchers, Incoming.call, Direction.Received, message)
                 some(message)
@@ -567,19 +683,146 @@ pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? !
 pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message: T): !Status {
     self.start()
     watched(self.watchers, Incoming.call, Direction.Sent, message)
-    let bytes = __protobuf.encode(message)
-    match self.output.writeBytes(self.wire.written(framed(bytes, self.compressed))) {
+    let bytes = if self.json {
+        match __protobuf.toJson(message) {
+            ok(text) => text.bytes()
+            err(error) => fail Status { code: Code.Internal, message: "{error}" }
+        }
+    } else {
+        __protobuf.encode(message)
+    }
+    let frame = if self.compressed {
+        enveloped(1, __gzip.compress(bytes))
+    } else {
+        enveloped(0, bytes)
+    }
+    match self.output.writeBytes(self.wire.written(frame)) {
         ok(_) => {}
         err(error) => fail Status { code: Code.Cancelled, message: "the client is gone: {error}" }
     }
 }
 
-/// A message as gRPC frames it: whether it is compressed, its length and
-/// its bytes.
-fn framed(bytes: Array[Byte], compressed: Bool): Array[Byte] {
-    let message = if compressed { __gzip.compress(bytes) } else { bytes }
-    let flag: Array[Byte] = [if compressed { 1 } else { 0 }]
-    flag.concat(UInt32.wrapping(message.length()).toBytes()).concat(message)
+/// A message of a request, from its bytes or its JSON, or what is wrong.
+fn messageOf[T: __protobuf.Message](bytes: Array[Byte], json: Bool): T ! String {
+    if not json {
+        return __protobuf.decode[T](bytes).mapErr((error) { "{error}" })?
+    }
+    let text = String.fromBytes(bytes).mapErr((error) { "{error}" })?
+    __protobuf.fromJson[T](text, ignoreUnknown: true).mapErr((error) { "{error}" })?
+}
+
+/// A frame as gRPC, gRPC-Web and Connect write them: its flags, its
+/// length and its bytes.
+fn enveloped(flags: Byte, bytes: Array[Byte]): Array[Byte] {
+    let head: Array[Byte] = [flags]
+    head.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Connect
+// ---------------------------------------------------------------------------
+
+/// The message of a `GET`, in its query: `message`, in Base64 for the URL
+/// with `base64=1`.
+fn connectQuery(request: __http.Request): Array[Byte] ! __http.Problem {
+    let message = request.query("message").unwrapOr("")
+    if request.query("base64") != some("1") {
+        return message.bytes()
+    }
+    match __encoding.base64Decode(message, alphabet: __encoding.Base64Alphabet.Url) {
+        ok(bytes) => bytes
+        err(error) => fail __http.Problem.badRequest("the query's message is not Base64: {error}")
+    }
+}
+
+/// The time `Connect-Timeout-Ms` gives.
+fn connectTimeout(text: String?): __time.Duration? {
+    let milliseconds = Int.parse(text?).ok()?
+    some(__time.milliseconds(milliseconds))
+}
+
+/// A unary call's reply: the method's message, or its failure as JSON with
+/// the HTTP status of its code, with its metadata as headers and its
+/// trailers as headers named `trailer-`.
+fn connectReply(
+    body: Array[Byte],
+    status: Status,
+    json: Bool,
+    headers: __http.Trailers,
+    trailers: __http.Trailers,
+): __http.Reply {
+    let length = if body.length() >= 5 { Int(UInt32.fromBytes(body, at: 1)) } else { -1 }
+    let failure = if status.code != Code.Ok {
+        some(status)
+    } else if length < 0 or body.length() != 5 + length {
+        some(Status { code: Code.Internal, message: "a unary call answers one message" })
+    } else {
+        none
+    }
+    var reply = match failure {
+        some(failed) => __http.Reply.bytes(
+            __json.encode(connectError(failed)).bytes(),
+            contentType: "application/json",
+            status: failed.code.httpStatus(),
+        )
+        none => {
+            let message = __http.Reply.bytes(
+                body.drop(5),
+                contentType: Wire.Connect.contentType(json),
+            )
+            if body[0] == 1 { message.header("content-encoding", "gzip") } else { message }
+        }
+    }
+    for (name, value) in headers.all() {
+        reply = reply.header(name, value)
+    }
+    for (name, value) in trailers.all() {
+        reply = reply.header("trailer-{name}", value)
+    }
+    reply
+}
+
+/// A failure as Connect writes it: its code's name, its message and its
+/// details, each with its type's name and its bytes in Base64.
+fn connectError(status: Status): __json.Value {
+    var error: Map[String, __json.Value] = ["code": __json.Value.Text(status.code.connectName())]
+    if not status.message.isEmpty() {
+        error["message"] = __json.Value.Text(status.message)
+    }
+    if not status.details.isEmpty() {
+        error["details"] = __json.Value.Array(
+            status.details.map(
+                (detail) {
+                    let fields: Map[String, __json.Value] = [
+                        "type": __json.Value.Text(detail.typeUrl.split("/").last().unwrapOr("")),
+                        "value": __json.Value.Text(
+                            __encoding.base64Encode(detail.value).trimEnd("="),
+                        ),
+                    ]
+                    __json.Value.Object(fields)
+                },
+            ),
+        )
+    }
+    __json.Value.Object(error)
+}
+
+/// The JSON that ends a stream: its failure, if it failed, and its
+/// trailers, each name with its values.
+fn connectEnd(status: Status, trailers: __http.Trailers): __json.Value {
+    var end: Map[String, __json.Value] = [:]
+    if status.code != Code.Ok {
+        end["error"] = connectError(status)
+    }
+    let all = trailers.all()
+    if not all.isEmpty() {
+        var metadata: Map[String, __json.Value] = [:]
+        for (name, value) in all {
+            metadata[name] = __json.Value.Array([__json.Value.Text(value)])
+        }
+        end["metadata"] = __json.Value.Object(metadata)
+    }
+    __json.Value.Object(end)
 }
 
 /// A unary method: one request, one reply.
@@ -1215,6 +1458,29 @@ impl __protobuf.Message for HealthRequest {
     fn protobufName(): String {
         "grpc.health.v1.HealthCheckRequest"
     }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        if not self.service.isEmpty() {
+            out.field("service", "service")
+            out.string(self.service)
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthRequest ! __protobuf.ProtobufError {
+        var request = HealthRequest {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "service" => request.service = input.string(field, "$.service")?
+                _ => input.unknown(key, "$")?
+            }
+        }
+        request
+    }
 }
 
 impl __reflect.Reflect for HealthRequest {
@@ -1261,6 +1527,48 @@ impl __protobuf.Message for HealthReply {
     fn protobufName(): String {
         "grpc.health.v1.HealthCheckResponse"
     }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        let name = match self.status {
+            ServingStatus.Unknown => ""
+            ServingStatus.Serving => "SERVING"
+            ServingStatus.NotServing => "NOT_SERVING"
+            ServingStatus.ServiceUnknown => "SERVICE_UNKNOWN"
+        }
+        if not name.isEmpty() {
+            out.field("status", "status")
+            out.string(name)
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthReply ! __protobuf.ProtobufError {
+        var reply = HealthReply {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "status" => reply.status = match field {
+                    __json.Value.Text(name) => match name {
+                        "SERVING" => ServingStatus.Serving
+                        "NOT_SERVING" => ServingStatus.NotServing
+                        "SERVICE_UNKNOWN" => ServingStatus.ServiceUnknown
+                        _ => ServingStatus.Unknown
+                    }
+                    _ => match input.int32(field, "$.status")? {
+                        1 => ServingStatus.Serving
+                        2 => ServingStatus.NotServing
+                        3 => ServingStatus.ServiceUnknown
+                        _ => ServingStatus.Unknown
+                    }
+                }
+                _ => input.unknown(key, "$")?
+            }
+        }
+        reply
+    }
 }
 
 impl __reflect.Reflect for HealthReply {
@@ -1284,6 +1592,21 @@ impl __protobuf.Message for HealthListRequest {
 
     fn protobufName(): String {
         "grpc.health.v1.HealthListRequest"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthListRequest ! __protobuf.ProtobufError {
+        for (key, _) in input.fields(document, "$")? {
+            input.unknown(key, "$")?
+        }
+        HealthListRequest {}
     }
 }
 
@@ -1322,6 +1645,39 @@ impl __protobuf.Message for HealthList {
 
     fn protobufName(): String {
         "grpc.health.v1.HealthListResponse"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        if not self.statuses.isEmpty() {
+            out.field("statuses", "statuses")
+            out.begin()
+            for (service, status) in self.statuses {
+                out.key(service)
+                out.message(HealthReply { status })?
+            }
+            out.end()
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthList ! __protobuf.ProtobufError {
+        var list = HealthList {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "statuses" => {
+                    for (service, status) in input.entries(field, "$.statuses")? {
+                        list.statuses[service] =
+                            input.message[HealthReply](status, "$.statuses.{service}")?.status
+                    }
+                }
+                _ => input.unknown(key, "$")?
+            }
+        }
+        list
     }
 }
 

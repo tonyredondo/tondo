@@ -4102,3 +4102,17 @@ calls a service with no proxy and no other declaration; the text form,
 Base64 for clients that cannot read bytes as they arrive, decodes each
 padded piece a client sends. Only the server speaks it: a Tondo client has
 HTTP/2 and speaks gRPC.
+
+## 2026-11-01 — Connect on the same routes
+
+Connect is a protocol of the same calls that plain HTTP clients can speak:
+a unary call is a `POST` of the message alone, in protobuf or proto3's
+JSON, and its reply is the message or a JSON error with the HTTP status of
+its code, so `curl` and a browser's `fetch` call a service without a
+library. Its streams carry gRPC's frames and end with a JSON message
+instead of trailers. A Tondo server answers it on the same routes as gRPC
+and gRPC-Web, by the request's content type, with the same methods; a
+method marked `NO_SIDE_EFFECTS` also takes a `GET`, which caches and CDNs
+can keep. Reading JSON ignores fields the message lacks, as Connect's own
+servers do, so a newer client can call an older server. Only the server
+speaks it, as with gRPC-Web: a Tondo client has HTTP/2 and speaks gRPC.

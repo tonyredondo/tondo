@@ -649,7 +649,8 @@ pub unsafe extern "C" fn tondo_rt_grpc_close(object: *mut NativeObject, code: i6
 /// and not yet a whole frame, and the message read last or why reading
 /// failed.
 struct Frames {
-    source: crate::http::Source,
+    /// `None` for frames given whole.
+    source: Option<crate::http::Source>,
     buffer: BytesMut,
     message: Bytes,
     error: String,
@@ -670,12 +671,27 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
 ) -> *mut NativeObject {
     unsafe { crate::tasks::tondo_rt_handle_retain(input as *mut u8) };
     let frames = Frames {
-        source: crate::http::Source(input),
+        source: Some(crate::http::Source(input)),
         buffer: BytesMut::new(),
         message: Bytes::new(),
         error: String::new(),
         encoding: text(encoding),
         text: (text_body != 0).then(Vec::new),
+    };
+    native::new(Mutex::new(frames))
+}
+
+/// Frames given whole, compressed with `encoding`, as the message of a
+/// unary call of Connect.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_grpc_frames_of(bytes: *mut ArrayHeader, encoding: *const Str) -> *mut NativeObject {
+    let frames = Frames {
+        source: None,
+        buffer: BytesMut::from(&unsafe { array_bytes(bytes) }[..]),
+        message: Bytes::new(),
+        error: String::new(),
+        encoding: text(encoding),
+        text: None,
     };
     native::new(Mutex::new(frames))
 }
@@ -736,7 +752,10 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
                 }
             }
         }
-        let read = crate::io::run(frames.source.0, |s| s.read(64 * 1024));
+        let read = match &frames.source {
+            Some(source) => crate::io::run(source.0, |s| s.read(64 * 1024)),
+            None => Ok(None),
+        };
         match read {
             Ok(Some(chunk)) => {
                 let Some(text) = frames.text.as_mut() else {
