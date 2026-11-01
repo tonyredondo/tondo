@@ -1,0 +1,102 @@
+// The bytes protoc writes for a proto2 message with every scalar type,
+// repeated numbers packed and not, a group and a default, read field by
+// field and written back the same; and the errors of bytes that are not
+// such a message.
+
+import std.console
+import std.protobuf
+
+pub type Grp = {
+    @protobuf.Field(19)
+    g: Int32 = 0
+}
+
+@protobuf.Name("t.All")
+pub type All = {
+    @protobuf.Field(1)
+    i32: Int32
+    @protobuf.Field(2)
+    i64: Int = 0
+    @protobuf.Field(3)
+    u32: UInt32 = 0
+    @protobuf.Field(4)
+    u64: UInt = 0
+    @protobuf.Field(5, encoding: protobuf.Encoding.ZigZag)
+    s32: Int32 = 0
+    @protobuf.Field(6, encoding: protobuf.Encoding.ZigZag)
+    s64: Int = 0
+    @protobuf.Field(7, encoding: protobuf.Encoding.Fixed)
+    f32: UInt32 = 0
+    @protobuf.Field(8, encoding: protobuf.Encoding.Fixed)
+    f64: UInt = 0
+    @protobuf.Field(9, encoding: protobuf.Encoding.Fixed)
+    sf32: Int32 = 0
+    @protobuf.Field(10, encoding: protobuf.Encoding.Fixed)
+    sf64: Int = 0
+    @protobuf.Field(11)
+    b: Bool = false
+    @protobuf.Field(12)
+    fl: Float32 = 0.0
+    @protobuf.Field(13)
+    db: Float = 0.0
+    @protobuf.Field(14)
+    s: String = ""
+    @protobuf.Field(15)
+    by: Array[Byte] = []
+    @protobuf.Field(16, packed: false)
+    unpacked: Array[Int32] = []
+    @protobuf.Field(17)
+    packed: Array[Int32] = []
+    @protobuf.Field(18, encoding: protobuf.Encoding.Group)
+    grp: Grp? = none
+    @protobuf.Field(20)
+    withDefault: Int32 = 5
+}
+
+fn bytes(text: String): Array[Byte] {
+    var out: Array[Byte] = []
+    var at = 0
+    for at + 1 < text.length() {
+        out.push(
+            Byte(Int.parse(text.slice(at, at + 2).unwrapOr("00"), radix: 16).unwrapOr(0)).unwrapOr(
+                0,
+            ),
+        )
+        at += 2
+    }
+    out
+}
+
+fn hex(data: Array[Byte]): String {
+    data.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+}
+
+fn main(): !protobuf.ProtobufError {
+    // As protoc writes it, from proto2: every scalar, both kinds of repeated
+    // numbers and a group.
+    let written =
+        "08f9ffffffffffffffff011080ccbbbcdeffffffff011880d0acf30e20ffffffffffffffffff01280330053dffffffff4107000000000000004df8ffffff51f7ffffffffffffff5801650000c03f6900000000000002c0720668c3a96c6c6f7a0201028001018001028a01020304930198012a9401"
+    let all = protobuf.decode[All](bytes(written))?
+    console.println(
+        "{all.i32} {all.i64} {all.u32} {all.u64} {all.s32} {all.s64} {all.f32} {all.f64} {all.sf32} {all.sf64}",
+    )
+    console.println(
+        "{all.b} {all.fl} {all.db} {all.s} {all.by} {all.unpacked} {all.packed} {all.grp.map((g) { g.g })} {all.withDefault}",
+    )
+    console.println("{hex(protobuf.encode(all)) == written}")
+    // A required field that is missing, and bytes that are not protobuf.
+    let inputs: Array[Array[Byte]] = [[], [0x08], [0x0a, 0x05, 0x01]]
+    for input in inputs {
+        match protobuf.decode[All](input) {
+            ok(_) => console.println("decoded")
+            err(error) => console.println("{error}")
+        }
+    }
+}
+
+// expect-stdout: -7 -9000000000 4000000000 18446744073709551615 -2 -3 4294967295 7 -8 -9
+// expect-stdout: true 1.5 -2.25 héllo [1, 2] [1, 2] [3, 4] some(42) 5
+// expect-stdout: true
+// expect-stdout: the required field `i32` is missing at $.i32
+// expect-stdout: a varint ends before its last byte at $.i32
+// expect-stdout: expected a varint, found a length-delimited value at $.i32

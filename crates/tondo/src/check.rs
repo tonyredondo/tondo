@@ -245,6 +245,7 @@ enum StdModule {
     InternalToml,
     InternalYaml,
     InternalMsgpack,
+    InternalProtobuf,
     InternalCbor,
     InternalNet,
     /// `std.internal.fuzz`: the runtime's side of `testing.fuzz`.
@@ -3134,6 +3135,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "toml"] => StdModule::InternalToml,
             ["std", "internal", "yaml"] => StdModule::InternalYaml,
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
+            ["std", "internal", "protobuf"] => StdModule::InternalProtobuf,
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
@@ -3148,11 +3150,6 @@ impl<'a> Checker<'a> {
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
-                // Modules the standard library specifies and does not have yet.
-                if name == "protobuf" {
-                    self.diags.unsupported(import.span, &format!("module `std.{name}`"));
-                    return;
-                }
                 let modules = crate::api::standard_modules();
                 let names = modules.iter().filter_map(|m| m.strip_prefix("std."));
                 let message = match closest(&name, names) {
@@ -3258,6 +3255,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalToml
                 | StdModule::InternalYaml
                 | StdModule::InternalMsgpack
+                | StdModule::InternalProtobuf
                 | StdModule::InternalCbor
                 | StdModule::InternalNet
                 | StdModule::InternalFs
@@ -3404,6 +3402,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
+                    | StdModule::InternalProtobuf
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFs
@@ -14829,6 +14828,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
+                    | StdModule::InternalProtobuf
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFuzz
@@ -14892,6 +14892,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalToml => "toml",
                     StdModule::InternalYaml => "yaml",
                     StdModule::InternalMsgpack => "msgpack",
+                    StdModule::InternalProtobuf => "protobuf",
                     StdModule::InternalCbor => "cbor",
                     StdModule::InternalNet => "net",
                     StdModule::InternalFuzz => "fuzz",

@@ -48,6 +48,7 @@ mod poll;
 mod pprof;
 mod process;
 mod profiling;
+mod protobuf;
 mod recorder;
 mod reflect;
 mod regex;

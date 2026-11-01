@@ -154,6 +154,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A rule of `std.validate` is on a field it does not apply to, its `min` is above its `max`, an integer has a fraction as its bound, or its pattern does not compile.",
     ),
     ("E1909", "invalid-pattern", "The literal pattern of `Regex.compile` is not in the dialect of `std.regex`."),
+    (
+        "E1910",
+        "invalid-protobuf-message",
+        "A protobuf message has a field without a number, a number used twice or outside 1 to 536870911, a type or encoding protobuf cannot write, or a protobuf enum a variant without a number.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

@@ -3928,3 +3928,22 @@ expressions and in patterns, and one out of range is a compile error.
 other language writes, was E1001. `Array.contains` and `Deque.contains`
 ask what `in` asks, for an `Equatable` element, and a `Set` template has
 the array's too.
+
+## 2026-11-01 — Protobuf as a format with a trait of its own
+
+gRPC needs protobuf, and the earlier design generated codecs from `.proto`
+files only. Protobuf is now a format like XML, whose records carry their
+field numbers as annotations, so a program can declare a message without
+a `.proto`, and the `.proto` reader, next, writes such records. It does
+not ride on `std.serialization`, though: that protocol's events say what a
+value is as it goes, and protobuf's bytes do not, since a length-delimited
+field may be text, bytes, a message or packed numbers. So the compiler
+implements a trait of its own, `Message`, field by field with each field's
+exact protobuf type, on a native writer and reader of the wire format; the
+same records still get `Encode` and `Decode` for JSON and the rest. The
+numbers come only from the annotations, never from field order. An enum
+is open with an `Unrecognized(Int32)` variant, a name many protos do not
+use themselves as they use `UNKNOWN`. A field with a default is skipped
+while it has it, which is proto3's implicit presence and the approved
+reading of proto2's `[default = v]`; a field with neither default nor `?`
+is proto2's `required`.

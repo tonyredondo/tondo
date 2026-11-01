@@ -8765,6 +8765,7 @@ oculten un diagnóstico independiente.
 | `E1907` | `invalid-markup` | El markup literal de `cli.markup` tiene un estilo que no existe, que no se cierra o que cierra otro que no está abierto, o que da un valor (biblioteca estándar 14.32). |
 | `E1908` | `invalid-validation-rule` | Una regla de `std.validate` está en un campo al que no se aplica, su `min` supera a su `max`, un entero tiene una fracción como límite o su patrón no compila (biblioteca estándar 14.35). |
 | `E1909` | `invalid-pattern` | El patrón literal de `Regex.compile` no está en el dialecto de `std.regex` (biblioteca estándar 14.16). |
+| `E1910` | `invalid-protobuf-message` | Un mensaje de protobuf tiene un campo sin número, un número repetido o fuera de 1 a 536870911, un tipo o una codificación que protobuf no escribe, o un enum de protobuf una variante sin número (biblioteca estándar 14.12). |
 
 #### Testing
 

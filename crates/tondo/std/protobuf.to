@@ -1,0 +1,762 @@
+// std.protobuf (standard library 14.12): Protocol Buffers, the binary
+// format of gRPC. A record whose fields carry numbers is a message and an
+// enum whose variants carry numbers is a protobuf enum: the compiler writes
+// their `Message` and `Enum` implementations from those annotations, field
+// by field, on the runtime's writer and reader of the wire format.
+
+import std.internal.protobuf as pbNative
+import std.io as __io
+import std.json as __json
+import std.serialization
+import std.time as __time
+
+// ---------------------------------------------------------------------------
+// Annotations
+// ---------------------------------------------------------------------------
+
+/// The number of a field of a message, or of a variant of a `oneof`:
+/// `@protobuf.Field(1)`. `encoding` chooses among the ways protobuf writes
+/// the field's type, and `packed: false` writes a repeated number with a
+/// tag each, as proto2 does.
+pub annotation Field = {
+    number: Int
+    encoding: Encoding = Encoding.Default
+    packed: Bool = true
+}
+
+/// How a field is written, where protobuf has several ways for its type.
+pub enum Encoding {
+    /// As its type says: an integer as a varint, int32 to uint64.
+    Default
+    /// A signed integer as a zigzag varint: sint32 and sint64.
+    ZigZag
+    /// An integer in 4 or 8 bytes, by its width: fixed32, fixed64, sfixed32
+    /// and sfixed64.
+    Fixed
+    /// A message as a group of proto2.
+    Group
+    /// An optional value as a wrapper of `google.protobuf`, as `Int32Value`.
+    Wrapper
+    /// A `json.Value` as a `google.protobuf.Struct`, an object, or a
+    /// `ListValue`, an array, rather than as a `Value`.
+    Struct
+    List
+}
+
+/// The number of a variant of a protobuf enum: `@protobuf.Value(1)`.
+pub annotation Value = {
+    number: Int
+}
+
+/// The full name of a message, which `Any` and gRPC use:
+/// `@protobuf.Name("users.v1.User")`; without it, the type's own name.
+pub annotation Name = {
+    name: String
+}
+
+/// Keeps the fields a message does not know in a field of type
+/// `UnknownFields`, which writing puts back.
+pub annotation Unknown = {}
+
+/// The fields of a message that its type does not know, as they were read.
+pub type UnknownFields = {
+    priv bytes: Array[Byte] = []
+}
+
+/// Whether there are none.
+pub fn UnknownFields.isEmpty(self): Bool {
+    self.bytes.isEmpty()
+}
+
+// ---------------------------------------------------------------------------
+// Messages and enums
+// ---------------------------------------------------------------------------
+
+/// A message: the compiler implements it for a record whose fields carry
+/// `@protobuf.Field`.
+pub trait Message {
+    fn writeTo(self, out: Writer)
+
+    fn readFrom(input: Reader): Self ! ProtobufError
+
+    /// Its full name, as `users.v1.User`.
+    fn protobufName(): String
+}
+
+/// A protobuf enum: the compiler implements it for an enum whose variants
+/// carry `@protobuf.Value`. One with an `Unrecognized(Int32)` variant is
+/// open, and keeps a number it does not know there.
+pub trait Enum {
+    fn number(self): Int32
+
+    fn fromNumber(number: Int32): Self?
+}
+
+/// A failure to read protobuf, with the path of the field and the byte it
+/// starts at, as `column`: the error of every format.
+pub alias ProtobufError = serialization.Error
+
+/// The bytes of a message: its fields in the order of their numbers, map
+/// entries in their order, or with `deterministic` sorted by key, so that
+/// equal messages give equal bytes.
+pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte] {
+    let out = Writer { native: pbNative.writer(deterministic) }
+    value.writeTo(out)
+    pbNative.finish(out.native)
+}
+
+/// The message the bytes hold.
+pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError {
+    Message.readFrom[T](Reader { native: pbNative.reader(bytes) })
+}
+
+/// Writes the bytes of a message to a stream.
+pub fn encodeTo[T: Message](value: T, out: __io.Writer, deterministic: Bool = false): !__io.IoError {
+    out.writeBytes(encode(value, deterministic))?
+}
+
+/// The message a stream holds, read to its end.
+pub fn decodeFrom[T: Message](input: __io.Reader): T ! ProtobufError {
+    match input.readBytes() {
+        ok(bytes) => decode[T](bytes)?
+        err(error) => fail serialization.Error {
+            kind: serialization.ErrorKind.Io
+            message: "{error}"
+            path: "$"
+            line: 0
+            column: 0
+            violations: []
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// Writes the fields of messages, each after the tag of its number; the
+/// number 0 writes a value with no tag, as an element of a packed field.
+pub type Writer = {
+    priv native: pbNative.Native
+}
+
+/// Whether map entries go sorted by key.
+pub fn Writer.deterministic(self): Bool {
+    pbNative.deterministic(self.native)
+}
+
+/// An int32, as a varint; a negative one in ten bytes, as protobuf writes it.
+pub fn Writer.int32(self, number: Int, value: Int32) {
+    pbNative.writeVarint(self.native, number, Int(value))
+}
+
+/// An int64, as a varint.
+pub fn Writer.int64(self, number: Int, value: Int) {
+    pbNative.writeVarint(self.native, number, value)
+}
+
+/// A uint32, as a varint.
+pub fn Writer.uint32(self, number: Int, value: UInt32) {
+    pbNative.writeVarint(self.native, number, Int(value))
+}
+
+/// A uint64, as a varint.
+pub fn Writer.uint64(self, number: Int, value: UInt) {
+    pbNative.writeVarint(self.native, number, Int.wrapping(value))
+}
+
+/// A sint32, as a zigzag varint.
+pub fn Writer.sint32(self, number: Int, value: Int32) {
+    pbNative.writeZigzag(self.native, number, Int(value))
+}
+
+/// A sint64, as a zigzag varint.
+pub fn Writer.sint64(self, number: Int, value: Int) {
+    pbNative.writeZigzag(self.native, number, value)
+}
+
+/// A fixed32, in 4 bytes.
+pub fn Writer.fixed32(self, number: Int, value: UInt32) {
+    pbNative.writeFixed32(self.native, number, Int(value))
+}
+
+/// An sfixed32, in 4 bytes.
+pub fn Writer.sfixed32(self, number: Int, value: Int32) {
+    pbNative.writeFixed32(self.native, number, Int(value))
+}
+
+/// A fixed64, in 8 bytes.
+pub fn Writer.fixed64(self, number: Int, value: UInt) {
+    pbNative.writeFixed64(self.native, number, Int.wrapping(value))
+}
+
+/// An sfixed64, in 8 bytes.
+pub fn Writer.sfixed64(self, number: Int, value: Int) {
+    pbNative.writeFixed64(self.native, number, value)
+}
+
+/// A bool, as a varint.
+pub fn Writer.bool(self, number: Int, value: Bool) {
+    pbNative.writeVarint(self.native, number, if value { 1 } else { 0 })
+}
+
+/// A float, in 4 bytes.
+pub fn Writer.float(self, number: Int, value: Float32) {
+    pbNative.writeFixed32(self.native, number, Int(value.bits()))
+}
+
+/// A double, in 8 bytes.
+pub fn Writer.double(self, number: Int, value: Float) {
+    pbNative.writeFixed64(self.native, number, Int.wrapping(value.bits()))
+}
+
+/// A string, as its UTF-8 bytes after their length.
+pub fn Writer.string(self, number: Int, value: String) {
+    pbNative.writeText(self.native, number, value)
+}
+
+/// Bytes, after their length.
+pub fn Writer.bytes(self, number: Int, value: Array[Byte]) {
+    pbNative.writeBytes(self.native, number, value)
+}
+
+/// A nested message, after its length.
+pub fn Writer.message[T: Message](self, number: Int, value: T) {
+    pbNative.begin(self.native, number)
+    value.writeTo(self)
+    pbNative.end(self.native)
+}
+
+/// A message as a group of proto2.
+pub fn Writer.group[T: Message](self, number: Int, value: T) {
+    pbNative.writeGroup(self.native, number, true)
+    value.writeTo(self)
+    pbNative.writeGroup(self.native, number, false)
+}
+
+/// The number of a protobuf enum's variant, as a varint.
+pub fn Writer.enumValue[T: Enum](self, number: Int, value: T) {
+    pbNative.writeVarint(self.native, number, Int(value.number()))
+}
+
+/// Opens a nested value of field `number`: a map entry, a packed field or a
+/// wrapper, which `end` closes.
+pub fn Writer.begin(self, number: Int) {
+    pbNative.begin(self.native, number)
+}
+
+/// Closes what `begin` opened, writing its length before it.
+pub fn Writer.end(self) {
+    pbNative.end(self.native)
+}
+
+/// A `google.protobuf.Timestamp`: seconds since 1970 and nanoseconds.
+pub fn Writer.timestamp(self, number: Int, value: __time.DateTime) {
+    // Seconds rounded down, so that the nanoseconds are never negative.
+    let nanoseconds = value.sinceEpoch().nanoseconds()
+    let truncated = nanoseconds / 1_000_000_000
+    let seconds = if nanoseconds < 0 and nanoseconds % 1_000_000_000 != 0 {
+        truncated - 1
+    } else {
+        truncated
+    }
+    let rest = nanoseconds - seconds * 1_000_000_000
+    self.begin(number)
+    if seconds != 0 {
+        self.int64(1, seconds)
+    }
+    if rest != 0 {
+        self.int32(2, Int32.wrapping(rest))
+    }
+    self.end()
+}
+
+/// A `google.protobuf.Duration`: seconds and nanoseconds of the same sign.
+pub fn Writer.duration(self, number: Int, value: __time.Duration) {
+    let nanoseconds = value.nanoseconds()
+    let (seconds, rest) = (nanoseconds / 1_000_000_000, nanoseconds % 1_000_000_000)
+    self.begin(number)
+    if seconds != 0 {
+        self.int64(1, seconds)
+    }
+    if rest != 0 {
+        self.int32(2, Int32.wrapping(rest))
+    }
+    self.end()
+}
+
+/// A `google.protobuf.Value`.
+pub fn Writer.jsonValue(self, number: Int, value: __json.Value) {
+    self.begin(number)
+    match value {
+        __json.Value.Null => self.int32(1, 0)
+        __json.Value.Number(digits) => self.double(2, digits.toFloat())
+        __json.Value.Text(text) => self.string(3, text)
+        __json.Value.Bool(flag) => self.bool(4, flag)
+        __json.Value.Object(_) => self.jsonStruct(5, value)
+        __json.Value.Array(_) => self.jsonList(6, value)
+    }
+    self.end()
+}
+
+/// A `google.protobuf.Struct`, from a JSON object; another value writes an
+/// empty one.
+pub fn Writer.jsonStruct(self, number: Int, value: __json.Value) {
+    self.begin(number)
+    for (key, member) in value.asObject().unwrapOr([:]) {
+        self.begin(1)
+        self.string(1, key)
+        self.jsonValue(2, member)
+        self.end()
+    }
+    self.end()
+}
+
+/// A `google.protobuf.ListValue`, from a JSON array.
+pub fn Writer.jsonList(self, number: Int, value: __json.Value) {
+    self.begin(number)
+    for item in value.asArray().unwrapOr([]) {
+        self.jsonValue(1, item)
+    }
+    self.end()
+}
+
+/// The fields a message kept without knowing them.
+pub fn Writer.unknown(self, fields: UnknownFields) {
+    pbNative.writeRaw(self.native, fields.bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/// Reads the fields of messages: `next` gives the number of each, and a
+/// method of its type its value; `name` says the field in an error.
+pub type Reader = {
+    priv native: pbNative.Native
+}
+
+/// The number of the next field, or 0 at the end of the message.
+pub fn Reader.next(self): Int ! ProtobufError {
+    let number = pbNative.next(self.native)
+    if number < 0 {
+        fail self.error("")
+    }
+    number
+}
+
+fn Reader.varint(self, name: String): Int ! ProtobufError {
+    let value = pbNative.readVarint(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+/// The int32 of the field read.
+pub fn Reader.int32(self, name: String): Int32 ! ProtobufError {
+    Int32.wrapping(self.varint(name)?)
+}
+
+/// The int64 of the field read.
+pub fn Reader.int64(self, name: String): Int ! ProtobufError {
+    self.varint(name)?
+}
+
+/// The uint32 of the field read.
+pub fn Reader.uint32(self, name: String): UInt32 ! ProtobufError {
+    UInt32.wrapping(self.varint(name)?)
+}
+
+/// The uint64 of the field read.
+pub fn Reader.uint64(self, name: String): UInt ! ProtobufError {
+    UInt.wrapping(self.varint(name)?)
+}
+
+/// The sint32 of the field read.
+pub fn Reader.sint32(self, name: String): Int32 ! ProtobufError {
+    Int32.wrapping(self.zigzag(name)?)
+}
+
+/// The sint64 of the field read.
+pub fn Reader.sint64(self, name: String): Int ! ProtobufError {
+    self.zigzag(name)?
+}
+
+fn Reader.zigzag(self, name: String): Int ! ProtobufError {
+    let value = pbNative.readZigzag(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+fn Reader.bits32(self, name: String): Int ! ProtobufError {
+    let value = pbNative.readFixed32(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+fn Reader.bits64(self, name: String): Int ! ProtobufError {
+    let value = pbNative.readFixed64(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+/// The fixed32 of the field read.
+pub fn Reader.fixed32(self, name: String): UInt32 ! ProtobufError {
+    UInt32.wrapping(self.bits32(name)?)
+}
+
+/// The sfixed32 of the field read.
+pub fn Reader.sfixed32(self, name: String): Int32 ! ProtobufError {
+    Int32.wrapping(self.bits32(name)?)
+}
+
+/// The fixed64 of the field read.
+pub fn Reader.fixed64(self, name: String): UInt ! ProtobufError {
+    UInt.wrapping(self.bits64(name)?)
+}
+
+/// The sfixed64 of the field read.
+pub fn Reader.sfixed64(self, name: String): Int ! ProtobufError {
+    self.bits64(name)?
+}
+
+/// The bool of the field read.
+pub fn Reader.bool(self, name: String): Bool ! ProtobufError {
+    self.varint(name)? != 0
+}
+
+/// The float of the field read.
+pub fn Reader.float(self, name: String): Float32 ! ProtobufError {
+    Float32.fromBits(UInt32.wrapping(self.bits32(name)?))
+}
+
+/// The double of the field read.
+pub fn Reader.double(self, name: String): Float ! ProtobufError {
+    Float.fromBits(UInt.wrapping(self.bits64(name)?))
+}
+
+/// The string of the field read, which must be UTF-8.
+pub fn Reader.string(self, name: String): String ! ProtobufError {
+    let value = pbNative.readText(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+/// The bytes of the field read.
+pub fn Reader.bytes(self, name: String): Array[Byte] ! ProtobufError {
+    let value = pbNative.readBytes(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+    value
+}
+
+/// The nested message of the field read.
+pub fn Reader.message[T: Message](self, name: String): T ! ProtobufError {
+    self.enter(name)?
+    match Message.readFrom[T](self) {
+        ok(value) => value
+        err(error) => fail within(error, name)
+    }
+}
+
+/// A message written as a group of proto2.
+pub fn Reader.group[T: Message](self, name: String): T ! ProtobufError {
+    self.message[T](name)?
+}
+
+/// The variant of an enum, or `none` for a number a closed enum does not
+/// have, which a message keeps among its unknown fields.
+pub fn Reader.enumValue[T: Enum](self, name: String): T? ! ProtobufError {
+    Enum.fromNumber[T](Int32.wrapping(self.varint(name)?))
+}
+
+/// Enters the field read: a nested message, a map entry or a wrapper,
+/// whose fields `next` reads until it gives 0.
+pub fn Reader.enter(self, name: String): !ProtobufError {
+    pbNative.enter(self.native, false)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+}
+
+/// Whether the field read is packed: then `enterPacked` and `more` read its
+/// elements; otherwise it holds one.
+pub fn Reader.isPacked(self): Bool {
+    pbNative.isPacked(self.native)
+}
+
+/// Enters a packed field, whose elements `more` and the readers of its type read.
+pub fn Reader.enterPacked(self, name: String): !ProtobufError {
+    pbNative.enter(self.native, true)
+    if pbNative.failed(self.native) {
+        fail self.error(name)
+    }
+}
+
+/// Whether a packed field has more elements.
+pub fn Reader.more(self): Bool {
+    pbNative.more(self.native)
+}
+
+/// Skips the value of the field read.
+pub fn Reader.skip(self): !ProtobufError {
+    pbNative.skip(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error("")
+    }
+}
+
+/// Keeps the field read, which the message does not know, among `fields`.
+pub fn Reader.keep(self, fields: UnknownFields): UnknownFields ! ProtobufError {
+    let raw = pbNative.raw(self.native)
+    if pbNative.failed(self.native) {
+        fail self.error("")
+    }
+    UnknownFields { bytes: fields.bytes.concat(raw) }
+}
+
+/// A missing field that the message requires.
+pub fn Reader.missing(self, name: String): ProtobufError {
+    serialization.Error {
+        kind: serialization.ErrorKind.Missing
+        message: "the required field `{name}` is missing"
+        path: if name.isEmpty() { "$" } else { "$.{name}" }
+        line: 0
+        column: 0
+        violations: []
+    }
+}
+
+/// The `google.protobuf.Timestamp` of the field read.
+pub fn Reader.timestamp(self, name: String): __time.DateTime ! ProtobufError {
+    let (seconds, nanoseconds) = self.secondsAndNanos(name)?
+    __time.utc(__time.nanoseconds(seconds * 1_000_000_000 + nanoseconds))
+}
+
+/// The `google.protobuf.Duration` of the field read.
+pub fn Reader.duration(self, name: String): __time.Duration ! ProtobufError {
+    let (seconds, nanoseconds) = self.secondsAndNanos(name)?
+    __time.nanoseconds(seconds * 1_000_000_000 + nanoseconds)
+}
+
+fn Reader.secondsAndNanos(self, name: String): (Int, Int) ! ProtobufError {
+    self.enter(name)?
+    var (seconds, nanoseconds) = (0, 0)
+    for {
+        match self.next()? {
+            0 => break
+            1 => seconds = self.int64(name)?
+            2 => nanoseconds = Int(self.int32(name)?)
+            _ => self.skip()?
+        }
+    }
+    (seconds, nanoseconds)
+}
+
+/// The `google.protobuf.Value` of the field read.
+pub fn Reader.jsonValue(self, name: String): __json.Value ! ProtobufError {
+    self.enter(name)?
+    var value = __json.Value.Null
+    for {
+        match self.next()? {
+            0 => break
+            1 => {
+                self.skip()?
+                value = __json.Value.Null
+            }
+            2 => value = __json.toValue(self.double(name)?)
+            3 => value = __json.Value.Text(self.string(name)?)
+            4 => value = __json.Value.Bool(self.bool(name)?)
+            5 => value = self.jsonStruct(name)?
+            6 => value = self.jsonList(name)?
+            _ => self.skip()?
+        }
+    }
+    value
+}
+
+/// The `google.protobuf.Struct` of the field read, as a JSON object.
+pub fn Reader.jsonStruct(self, name: String): __json.Value ! ProtobufError {
+    self.enter(name)?
+    var members: Map[String, __json.Value] = [:]
+    for {
+        match self.next()? {
+            0 => break
+            1 => {
+                self.enter(name)?
+                var (key, member) = ("", __json.Value.Null)
+                for {
+                    match self.next()? {
+                        0 => break
+                        1 => key = self.string(name)?
+                        2 => member = self.jsonValue(name)?
+                        _ => self.skip()?
+                    }
+                }
+                members[key] = member
+            }
+            _ => self.skip()?
+        }
+    }
+    __json.Value.Object(members)
+}
+
+/// The `google.protobuf.ListValue` of the field read, as a JSON array.
+pub fn Reader.jsonList(self, name: String): __json.Value ! ProtobufError {
+    self.enter(name)?
+    var items: Array[__json.Value] = []
+    for {
+        match self.next()? {
+            0 => break
+            1 => items.push(self.jsonValue(name)?)
+            _ => self.skip()?
+        }
+    }
+    __json.Value.Array(items)
+}
+
+fn Reader.error(self, name: String): ProtobufError {
+    serialization.Error {
+        kind: serialization.ErrorKind.Syntax
+        message: pbNative.error(self.native)
+        path: if name.isEmpty() { "$" } else { "$.{name}" }
+        line: 0
+        column: pbNative.offset(self.native)
+        violations: []
+    }
+}
+
+/// An error of a nested message, at the path of its field.
+fn within(error: ProtobufError, name: String): ProtobufError {
+    serialization.Error {
+        kind: error.kind
+        message: error.message
+        path: "$.{name}{error.path.removePrefix("$")}"
+        line: error.line
+        column: error.column
+        violations: error.violations
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What the code the compiler writes calls
+// ---------------------------------------------------------------------------
+
+/// The entries of a map field, sorted by key when the writer is
+/// deterministic.
+pub fn entries[K: Key + Ordered, V](map: Map[K, V], sorted: Bool): Array[(K, V)] {
+    var pairs: Array[(K, V)] = []
+    for (key, value) in map {
+        pairs.push((key, value))
+    }
+    if sorted { pairs.sortedBy((pair) { pair.0 }) } else { pairs }
+}
+
+/// A reader of no fields, for a message every field of which has its zero.
+pub fn emptyReader(): Reader {
+    Reader { native: pbNative.reader([]) }
+}
+
+/// The zero of a `Timestamp`, for a map entry without its value.
+pub fn epoch(): __time.DateTime {
+    __time.utc(__time.nanoseconds(0))
+}
+
+/// The zero of a `Duration`, for a map entry without its value.
+pub fn zeroDuration(): __time.Duration {
+    __time.nanoseconds(0)
+}
+
+/// The zero of a `Value`, for a map entry without its value.
+pub fn nullValue(): __json.Value {
+    __json.Value.Null
+}
+
+// ---------------------------------------------------------------------------
+// Messages of google.protobuf
+// ---------------------------------------------------------------------------
+
+/// `google.protobuf.Empty`, the message with no fields.
+pub type Empty = {}
+
+impl Message for Empty {
+    fn writeTo(self, out: Writer) {}
+
+    fn readFrom(input: Reader): Empty ! ProtobufError {
+        for input.next()? != 0 {
+            input.skip()?
+        }
+        Empty {}
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.Empty"
+    }
+}
+
+/// `google.protobuf.Any`: a message of any type, as its bytes and the URL
+/// of its type's name.
+pub type Any = {
+    typeUrl: String = ""
+    value: Array[Byte] = []
+}
+
+impl Message for Any {
+    fn writeTo(self, out: Writer) {
+        if not self.typeUrl.isEmpty() {
+            out.string(1, self.typeUrl)
+        }
+        if not self.value.isEmpty() {
+            out.bytes(2, self.value)
+        }
+    }
+
+    fn readFrom(input: Reader): Any ! ProtobufError {
+        var typeUrl = ""
+        var value: Array[Byte] = []
+        for {
+            match input.next()? {
+                0 => break
+                1 => typeUrl = input.string("typeUrl")?
+                2 => value = input.bytes("value")?
+                _ => input.skip()?
+            }
+        }
+        Any { typeUrl, value }
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.Any"
+    }
+}
+
+/// A message in an `Any`, named `type.googleapis.com/` and its full name.
+pub fn pack[T: Message](message: T): Any {
+    Any { typeUrl: "type.googleapis.com/{Message.protobufName[T]()}", value: encode(message) }
+}
+
+/// The message an `Any` holds, which must be a `T`.
+pub fn Any.unpack[T: Message](self): T ! ProtobufError {
+    let name = Message.protobufName[T]()
+    if not self.typeUrl.endsWith("/{name}") and self.typeUrl != name {
+        fail serialization.Error {
+            kind: serialization.ErrorKind.Type
+            message: "the `Any` holds `{self.typeUrl}`, not `{name}`"
+            path: "$"
+            line: 0
+            column: 0
+            violations: []
+        }
+    }
+    decode[T](self.value)?
+}

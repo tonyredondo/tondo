@@ -1270,6 +1270,14 @@ pub const NATIVES: &[Native] = {
     ) -> Native {
         Native { module: "msgpack", name, receiver: None, params, result, symbol }
     }
+    const fn protobuf(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "protobuf", name, receiver: None, params, result, symbol }
+    }
     const fn cbor(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "cbor", name, receiver: None, params, result, symbol }
     }
@@ -1639,6 +1647,36 @@ pub const NATIVES: &[Native] = {
         yaml("outlineNumbers", &[Object], Ints, "tondo_rt_yaml_outline_numbers"),
         yaml("outlineProperties", &[Object], Strings, "tondo_rt_yaml_outline_properties"),
         yaml("outlineError", &[Object], String, "tondo_rt_yaml_outline_error"),
+        protobuf("writer", &[Bool], Object, "tondo_rt_pb_writer"),
+        protobuf("deterministic", &[Object], Bool, "tondo_rt_pb_deterministic"),
+        protobuf("writeVarint", &[Object, Int, Int], Unit, "tondo_rt_pb_write_varint"),
+        protobuf("writeZigzag", &[Object, Int, Int], Unit, "tondo_rt_pb_write_zigzag"),
+        protobuf("writeFixed32", &[Object, Int, Int], Unit, "tondo_rt_pb_write_fixed32"),
+        protobuf("writeFixed64", &[Object, Int, Int], Unit, "tondo_rt_pb_write_fixed64"),
+        protobuf("writeBytes", &[Object, Int, Bytes], Unit, "tondo_rt_pb_write_bytes"),
+        protobuf("writeText", &[Object, Int, String], Unit, "tondo_rt_pb_write_text"),
+        protobuf("begin", &[Object, Int], Unit, "tondo_rt_pb_begin"),
+        protobuf("end", &[Object], Unit, "tondo_rt_pb_end"),
+        protobuf("writeGroup", &[Object, Int, Bool], Unit, "tondo_rt_pb_write_group"),
+        protobuf("writeRaw", &[Object, Bytes], Unit, "tondo_rt_pb_write_raw"),
+        protobuf("finish", &[Object], Bytes, "tondo_rt_pb_finish"),
+        protobuf("reader", &[Bytes], Object, "tondo_rt_pb_reader"),
+        protobuf("next", &[Object], Int, "tondo_rt_pb_next"),
+        protobuf("readVarint", &[Object], Int, "tondo_rt_pb_read_varint"),
+        protobuf("readZigzag", &[Object], Int, "tondo_rt_pb_read_zigzag"),
+        protobuf("readFixed32", &[Object], Int, "tondo_rt_pb_read_fixed32"),
+        protobuf("readFixed64", &[Object], Int, "tondo_rt_pb_read_fixed64"),
+        protobuf("readBytes", &[Object], Bytes, "tondo_rt_pb_read_bytes"),
+        protobuf("readText", &[Object], String, "tondo_rt_pb_read_text"),
+        protobuf("enter", &[Object, Bool], Unit, "tondo_rt_pb_enter"),
+        protobuf("isPacked", &[Object], Bool, "tondo_rt_pb_is_packed"),
+        protobuf("more", &[Object], Bool, "tondo_rt_pb_more"),
+        protobuf("skip", &[Object], Unit, "tondo_rt_pb_skip"),
+        protobuf("raw", &[Object], Bytes, "tondo_rt_pb_raw"),
+        protobuf("failed", &[Object], Bool, "tondo_rt_pb_failed"),
+        protobuf("fail", &[Object, String], Unit, "tondo_rt_pb_fail"),
+        protobuf("error", &[Object], String, "tondo_rt_pb_error"),
+        protobuf("offset", &[Object], Int, "tondo_rt_pb_offset"),
         msgpack("parse", &[Bytes], Object, "tondo_rt_msgpack_parse"),
         msgpack("next", &[Object], Int, "tondo_rt_msgpack_next"),
         msgpack("text", &[Object], String, "tondo_rt_msgpack_text"),

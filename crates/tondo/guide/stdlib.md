@@ -23,6 +23,7 @@ std.yaml       the same for YAML (a safe subset), one or many documents
 std.messagepack  the same for MessagePack bytes, and a writer in parts
 std.cbor       the same for CBOR (RFC 8949), deterministic if asked
 std.xml        the same for XML, with attributes and text by annotation; trees
+std.protobuf   Protocol Buffers from records whose fields carry numbers, proto2 and proto3
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
@@ -210,6 +211,39 @@ fn main(): !xml.XmlError {
     for item in root.children("item") {
         console.println("{feed.items[0].title} {item.attribute("id")} {item.text()}")
     }
+}
+```
+
+Protocol Buffers, the format of gRPC, is a record whose fields carry
+numbers, `@protobuf.Field(n)`, and an enum whose variants do,
+`@protobuf.Value(n)`, with `Unrecognized(Int32)` to keep numbers it does
+not know. A field with a default is not written while it has it, as
+proto3's zeros; one without a default or `?` is required, as proto2's.
+`encoding:` picks `ZigZag` (sint) or `Fixed` (fixed, sfixed) for an
+integer; a `oneof` is an enum whose variants carry `@protobuf.Field(n)`,
+held in a `T?` field without a number.
+
+```tondo
+import std.console
+import std.protobuf
+
+pub enum Status {
+    @protobuf.Value(0) Unspecified
+    @protobuf.Value(1) Active
+    Unrecognized(Int32)
+}
+
+@protobuf.Name("users.v1.User")
+pub type User = {
+    @protobuf.Field(1) name: String = ""
+    @protobuf.Field(2) scores: Array[Int32] = []
+    @protobuf.Field(3) status: Status = Status.Unspecified
+}
+
+fn main(): !protobuf.ProtobufError {
+    let bytes = protobuf.encode(User { name: "Ada", scores: [3, 4], status: Status.Active })
+    let user = protobuf.decode[User](bytes)?
+    console.println("{user.name} {bytes.length()} {protobuf.pack(user).typeUrl}")
 }
 ```
 

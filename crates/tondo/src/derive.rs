@@ -76,6 +76,7 @@ impl Kind {
             (Kind::Reflect, "template") => matches!(name, "Html" | "TemplateError"),
             (Kind::Serialization, "template") => name == "Html",
             (Kind::Serialization, "http") => name == "UploadedFile",
+            (Kind::Serialization, "protobuf") => matches!(name, "Any" | "Empty" | "UnknownFields"),
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
@@ -149,6 +150,7 @@ pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut
             derive_kind(kind, modules, sources, diags);
         }
     }
+    crate::protobuf::derive(modules, sources, diags);
 }
 
 fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {

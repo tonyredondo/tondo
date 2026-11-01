@@ -1,0 +1,120 @@
+// A message from annotated records and enums: numbers, packed repeated
+// fields, maps, an open enum, a nested message, a `oneof`, a Timestamp, a
+// wrapper and a `google.protobuf.Value`, and the fields it does not know,
+// kept and written back. protoc reads the bytes it writes as the same
+// message.
+
+import std.console
+import std.json
+import std.protobuf
+import std.time
+
+pub enum Status {
+    @protobuf.Value(0)
+    Unspecified
+    @protobuf.Value(1)
+    Active
+    @protobuf.Value(2)
+    Gone
+    Unrecognized(Int32)
+}
+
+pub enum Contact {
+    @protobuf.Field(7)
+    Email(String)
+    @protobuf.Field(8)
+    Phone(Phone)
+}
+
+pub type Phone = {
+    @protobuf.Field(1)
+    number: String = ""
+    @protobuf.Field(2, encoding: protobuf.Encoding.ZigZag)
+    extension: Int32 = 0
+}
+
+@protobuf.Name("users.v1.User")
+pub type User = {
+    @protobuf.Field(1)
+    name: String = ""
+    @protobuf.Field(2)
+    id: Int = 0
+    @protobuf.Field(3)
+    scores: Array[Int32] = []
+    @protobuf.Field(4)
+    tags: Map[String, Int32] = [:]
+    @protobuf.Field(5)
+    status: Status = Status.Unspecified
+    @protobuf.Field(6)
+    manager: User? = none
+    contact: Contact? = none
+    @protobuf.Field(9)
+    born: time.DateTime? = none
+    @protobuf.Field(10, encoding: protobuf.Encoding.Wrapper)
+    nickname: String? = none
+    @protobuf.Field(11)
+    extra: json.Value = json.Value.Null
+    @ignore
+    @protobuf.Unknown
+    unknown: protobuf.UnknownFields = protobuf.UnknownFields {}
+}
+
+fn hex(bytes: Array[Byte]): String {
+    bytes.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+}
+
+fn main(): !protobuf.ProtobufError {
+    let boss = User { name: "Grace", id: 1 }
+    let user = User {
+        name: "Ada"
+        id: 7
+        scores: [3, 270, -1]
+        tags: ["b": 2, "a": 1]
+        status: Status.Active
+        manager: some(boss)
+        contact: some(Contact.Phone(Phone { number: "555", extension: -3 }))
+        born: some(time.utc(time.seconds(1_000_000_000)))
+        nickname: some("")
+        extra: json.parse("{{\"k\": [1, true, null]}}").unwrapOr(json.Value.Null)
+    }
+    let bytes = protobuf.encode(user, deterministic: true)
+    console.println(hex(bytes))
+    let back = protobuf.decode[User](bytes)?
+    console.println(
+        "{back.name} {back.id} {back.scores} {back.tags} {back.manager.map((m) { m.name })} {back.nickname} {back.extra}",
+    )
+    match back.contact {
+        some(Contact.Phone(phone)) => console.println("phone {phone.number} {phone.extension}")
+        _ => console.println("no phone")
+    }
+    match back.status {
+        Status.Active => console.println("active")
+        _ => console.println("other")
+    }
+    console.println("{protobuf.encode(back, deterministic: true) == bytes}")
+    // An enum number this program does not know, and a field it does not.
+    let future = protobuf.decode[User]([0x28, 0x09, 0xa0, 0x06, 0x01])?
+    match future.status {
+        Status.Unrecognized(n) => console.println("unrecognized {n}")
+        _ => console.println("known")
+    }
+    console.println(hex(protobuf.encode(future)))
+    console.println(json.encode(Phone { number: "1", extension: 2 }))
+    console.println(json.encode(User { name: "Lin", status: Status.Gone }))
+    // A message in an `Any`, by its full name.
+    let packed = protobuf.pack(user)
+    console.println(
+        "{packed.typeUrl} {packed.unpack[User]()?.name} {packed.unpack[Phone]().isErr()}",
+    )
+}
+
+// expect-stdout: 0a0341646110071a0d038e02ffffffffffffffffff0122050a0161100122050a01621002280132090a054772616365100142070a0335353510054a06088094ebdc0352005a1e2a1c0a1a0a016b121532130a0911000000000000f03f0a0220010a020800
+// expect-stdout: Ada 7 [3, 270, -1] [a: 1, b: 2] some(Grace) some() {"k":[1,true,null]}
+// expect-stdout: phone 555 -3
+// expect-stdout: active
+// expect-stdout: true
+// expect-stdout: unrecognized 9
+// expect-stdout: 2809a00601
+// expect-stdout: {"number":"1","extension":2}
+// expect-stdout: {"name":"Lin","id":0,"scores":[],"tags":{},"status":"Gone","manager":null,"contact":null,"born":null,"nickname":null,"extra":null}
+// expect-stdout: type.googleapis.com/users.v1.User Ada true

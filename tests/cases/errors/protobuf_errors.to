@@ -1,0 +1,43 @@
+// What protobuf cannot write is E1910, with what to write instead.
+
+import std.protobuf
+
+pub enum Mood {
+    @protobuf.Value(0)
+    Calm
+    Angry
+}
+
+pub type Bad = {
+    @protobuf.Field(1)
+    a: Int32 = 0
+    b: String = ""
+    @protobuf.Field(1)
+    c: Int = 0
+    @protobuf.Field(0)
+    d: Int = 0
+    @protobuf.Field(19500)
+    e: Int = 0
+    @protobuf.Field(2)
+    f: Int8 = 0
+    @protobuf.Field(3, encoding: protobuf.Encoding.ZigZag)
+    g: UInt = 0
+    @protobuf.Field(4, encoding: protobuf.Encoding.Wrapper)
+    h: Int32 = 0
+    @protobuf.Field(5)
+    i: Map[Float, Int32] = [:]
+    @protobuf.Field(6)
+    j: Mood = Mood.Calm
+}
+
+fn main() {}
+
+// expect-error: E1910 the variant `Angry` of the protobuf enum `Mood` needs a number, `@protobuf.Value(n)`; only `Unrecognized(Int32)`, which keeps the numbers the enum does not know, has none
+// expect-error: E1910 the field `b` of the protobuf message `Bad` needs a number: write `@protobuf.Field(n)` before it, or `@ignore` with a default value
+// expect-error: E1910 the field `c` has the number 1, which `a` has already
+// expect-error: E1910 the field `d` has the number 0: a field number goes from 1 to 536870911, without 19000 to 19999, which protobuf keeps
+// expect-error: E1910 the field `e` has the number 19500: a field number goes from 1 to 536870911, without 19000 to 19999, which protobuf keeps
+// expect-error: E1910 the field `f`: protobuf has no type for `Int8`: a field holds an `Int32`, `Int`, `UInt32`, `UInt`, `Float32`, `Float`, `Bool`, `String` or `Array[Byte]`, a message, a protobuf enum, `time.DateTime`, `time.Duration` or `json.Value`; an enum whose variants carry `@protobuf.Value` is a protobuf enum, and one whose variants carry `@protobuf.Field` a `oneof`
+// expect-error: E1910 the field `g`: a `uint64` has no zigzag encoding
+// expect-error: E1910 the field `h`: `Encoding.Wrapper` goes with an optional value, `T?`
+// expect-error: E1910 the field `i`: the key of a map is an integer, `Bool` or `String`

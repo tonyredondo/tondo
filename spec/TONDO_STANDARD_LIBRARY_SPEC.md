@@ -1786,7 +1786,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.encoding` | Core | — | 0.1 | Encodings binario-texto, incluidos Base64 y hexadecimal, con APIs materializadas y streaming |
 | `std.json` | Core | — | 0.1 | JSON RFC 8259: encode/decode tipados, eventos, `Value` dinámico, JCS y `Raw` |
 | `std.messagepack` | Core | — | 0.1 | MessagePack tipado, streaming y árbol dinámico explícito |
-| `std.protobuf` | Core + Build-only | — | 0.1 | Wire format y código schema-first generado desde `.proto` |
+| `std.protobuf` | Core | — | 0.1 | Protocol Buffers: mensajes de records y enums anotados, proto2 y proto3, tipos de Google |
 | `std.yaml` | Core | — | 0.1 | YAML seguro, tipado y streaming sobre `std.serialization`, con límites explícitos |
 | `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
 | `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
@@ -1846,8 +1846,8 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.reflect` describe tipos y nunca es dependencia de los codecs tipados.
 - `std.meta` solo existe para programas del target `tondo-meta` y no concede
   capabilities de host.
-- `std.protobuf` ejecuta su compilador de schema en build time; su runtime
-  portable continúa siendo core.
+- `std.protobuf` es un formato binario con su propio trait, `Message`, que el
+  compilador implementa campo a campo con el tipo exacto de cada uno.
 - `std.encoding`, `std.yaml`, `std.toml` y `std.cbor` reutilizan `std.io` y
   `std.serialization`; no introducen otro facade universal ni árboles
   heterogéneos compartidos entre formatos.
@@ -3804,90 +3804,107 @@ impl Display for Value                     // como JSON
 
 ### 14.12 `std.protobuf`
 
-> **Aplazado.** Protobuf se diseñará junto con gRPC, que es para lo que la
-> mayoría lo usa, cuando `std.http` exponga lo que gRPC necesita: trailers de
-> HTTP/2, streaming en los dos sentidos y deadlines. Hasta entonces
-> `import std.protobuf` es un error que lo dice, y el texto que sigue es el
-> del proyecto anterior.
+`std.protobuf` lee y escribe [Protocol Buffers](https://protobuf.dev/programming-guides/encoding/),
+el formato binario de gRPC, en proto2 y proto3. Un record cuyos campos llevan
+número es un mensaje, y un enum cuyas variantes llevan número es un enum de
+protobuf; el compilador escribe su implementación de `Message` y de `Enum`
+desde esas anotaciones, campo a campo y con el tipo exacto de cada uno.
 
-[Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
-Un `.proto` entra al build como generator input y el programa estándar fijado
-produce tipos, codecs y metadata de schema ordinarios. La versión inicial
-soporta proto3, incluido `optional`, repeated, packed fields, maps,
-[enums abiertos](https://protobuf.dev/programming-guides/enum/), nested messages
-y `oneof`. Services y gRPC se difieren porque requieren contratos de networking
-separados.
+~~~tondo
+import std.protobuf
 
-El mapping de package y module es explícito en la declaración del generador. Dos
-schemas no pueden generar el mismo path, tipo o field identity. Los field
-numbers proceden solo del schema; nunca del orden de un record Tondo, un hash o
-reflection.
+@protobuf.Name("users.v1.User")
+pub type User = {
+    @protobuf.Field(1) name: String = ""
+    @protobuf.Field(2) id: Int = 0
+    @protobuf.Field(3, encoding: protobuf.Encoding.ZigZag) delta: Int32 = 0
+    @protobuf.Field(4) emails: Array[String] = []
+    @protobuf.Field(5) manager: User? = none
+}
 
-Los tipos generados:
-
-- distinguen presencia cuando el schema la distingue;
-- validan wire type, varints, longitudes, recursion y límites;
-- preservan unknown fields al decodificar y re-encodear salvo descarte
-  explícito;
-- representan `oneof` mediante un enum cerrado;
-- representan cada enum proto3 abierto mediante un tipo nominal que conserva
-  siempre su `Int32` wire, operaciones asociadas para los valores conocidos y
-  una proyección `known(): KnownEnum?` hacia un enum cerrado generado; un número
-  desconocido no se convierte en sentinel ni pierde su payload; y
-- no exponen almacenamiento wire mutable.
-
-El encoder ordinario produce bytes válidos y puede elegir un orden permitido.
-`encodeDeterministic` ordena fields por número y maps por la regla publicada
-para obtener estabilidad con el mismo schema, versión estándar y valor. Esa
-garantía no afirma una canonicalización universal de Protobuf ni convierte los
-bytes en identidad duradera entre toolchains distintos.
-
-La evolución se comprueba como tarea de build: reutilizar field numbers,
-cambiar wire-incompatible types o romper una reserva produce diagnostics
-asociados al schema. El runtime no descubre schemas, carga descriptors
-ambientales ni genera código en la primera petición.
-
-La declaración de build canónica usa `tondo.toml`:
-
-~~~toml
-[protobuf]
-version = 1
-[[protobuf.schema]]
-path = "proto/user.proto"
-module = "app.proto.user"
-package = "acme.user"
-baseline = "proto/baseline/user.proto"
-descriptor = "none"
+let bytes = protobuf.encode(user)
+let back = protobuf.decode[User](bytes)?
 ~~~
 
-La API runtime única es:
+La superficie es:
 
 ~~~tondo pseudocode
-pub fn decode[T: Decode[Protobuf]](input: Array[Byte], options: ProtoDecodeOptions): T ! ProtoError
-pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Array[Byte] ! ProtoError
-pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Array[Byte] ! ProtoError
-pub fn validate[T](input: Array[Byte], options: ProtoDecodeOptions): Unit ! ProtoError
-pub fn descriptor[T](): ProtoDescriptor[T]
-pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
-pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
-pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
-pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+pub annotation Field = { number: Int, encoding: Encoding = Encoding.Default, packed: Bool = true }
+pub enum Encoding { Default, ZigZag, Fixed, Group, Wrapper, Struct, List }
+pub annotation Value = { number: Int }
+pub annotation Name = { name: String }
+pub annotation Unknown = {}
+pub type UnknownFields
+pub fn UnknownFields.isEmpty(self): Bool
+
+pub trait Message {
+    fn writeTo(self, out: Writer)
+    fn readFrom(input: Reader): Self ! ProtobufError
+    fn protobufName(): String
+}
+pub trait Enum {
+    fn number(self): Int32
+    fn fromNumber(number: Int32): Self?
+}
+pub alias ProtobufError = serialization.Error
+
+pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte]
+pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
+pub fn encodeTo[T: Message](value: T, out: io.Writer, deterministic: Bool = false): Unit ! io.IoError
+pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
+
+pub type Empty = {}
+pub type Any = { typeUrl: String = "", value: Array[Byte] = [] }
+pub fn pack[T: Message](message: T): Any
+pub fn Any.unpack[T: Message](self): T ! ProtobufError
+
+pub type Writer       // lo que llama el código del compilador: int32, string, message...
+pub type Reader
 ~~~
 
-La implementación portable vive en `crates/tondo-stdlib/src/protobuf_api.rs`:
-el checker schema-first, el parser/reader y el writer usan límites y stacks
-explícitos, y `encode_static`/`decode_static` atraviesan
-`Encode[Protobuf]`/`Decode[Protobuf]` sin materializar `serialization.Value`.
-Los helpers Rust `encode`/`decode`, `ProtoValue` y `Raw<Protobuf>` son detalles
-internos de implementación y no forman una segunda API Tondo ni introducen un
-alias dinámico de `serialization.Value`. La conformance oficial
-e interoperabilidad independiente están cerradas por
-`STD-CODEC-CONF-001`, cuyo registro coordina `serde_json`, `rmpv` y `prost`,
-fragmentación, truncación, límites y preservación de unknown fields.
-
-El mapping generado, el descriptor explícito, la evolución contra baseline TOML,
-los eventos y los errores de wire/build están cerrados en el [contrato fuente de
-`std.protobuf`](./docs/contracts/stdlib-protobuf.md).
+- **Tipos.** Un campo es un `Int32` (int32), `Int` (int64), `UInt32` (uint32),
+  `UInt` (uint64), `Float32` (float), `Float` (double), `Bool`, `String` o
+  `Array[Byte]` (bytes); un mensaje; un enum de protobuf; `time.DateTime`
+  (`google.protobuf.Timestamp`); `time.Duration` (`google.protobuf.Duration`);
+  o `json.Value` (`google.protobuf.Value`). `encoding: ZigZag` escribe un
+  entero con signo como sint32 o sint64, y `Fixed` un entero en 4 u 8 bytes,
+  por su ancho: fixed32, fixed64, sfixed32 o sfixed64. `Group` escribe un
+  mensaje como grupo de proto2; `Wrapper`, un `T?` escalar como el envoltorio
+  de `google.protobuf` (`Int32Value`, `StringValue`...); `Struct` y `List`, un
+  `json.Value` como `Struct` o `ListValue`.
+- **Presencia.** Un campo con valor por defecto no se escribe mientras lo
+  tiene, como proto3 hace con sus ceros, y al leerlo toma ese valor si falta.
+  Uno opcional, `T?`, se escribe si tiene valor. Uno sin defecto ni `?` es
+  obligatorio, como el `required` de proto2: se escribe siempre, y si falta
+  al leer es `Missing`.
+- **Repetidos y mapas.** Un `Array[T]` es un campo `repeated`; uno de números
+  o de un enum se escribe empaquetado salvo con `packed: false`, y al leer se
+  aceptan las dos formas. Un `Map[K, V]` es un `map`, con clave entera, `Bool`
+  o `String`; `deterministic` escribe sus entradas ordenadas por clave, para
+  que mensajes iguales den bytes iguales.
+- **Enums.** Cada variante lleva su número, `@protobuf.Value(n)`. Un enum con
+  una variante `Unrecognized(Int32)` es abierto, como los de proto3, y guarda
+  ahí un número que no conoce. Uno sin ella es cerrado, como los de proto2, y
+  un número desconocido deja el campo como estaba.
+- **`oneof`.** Es un enum cuyas variantes llevan número, `@protobuf.Field(n)`,
+  y un valor cada una; el campo del mensaje es `T?` y no lleva número.
+- **Desconocidos.** Un campo `@protobuf.Unknown` de tipo `UnknownFields`
+  guarda los campos que el mensaje no conoce, que se escriben de nuevo tras
+  los suyos; sin él, se descartan. Con `@ignore`, los demás formatos lo
+  omiten.
+- **Nombre.** `@protobuf.Name("users.v1.User")` da el nombre completo del
+  mensaje, que usan `Any` y gRPC; sin ella, es el nombre del tipo. `pack`
+  guarda un mensaje en un `Any` con la URL `type.googleapis.com/` y ese
+  nombre, y `unpack` falla con `Type` si el `Any` guarda otro.
+- **Errores.** Un campo sin número, un número repetido o fuera de 1 a
+  536870911 (o en 19000 a 19999, que protobuf reserva), un tipo o una
+  codificación que protobuf no tiene, o una variante de un enum sin número
+  son `E1910`, que dice qué escribir. Leer falla con `Syntax` ante un varint,
+  una longitud, un tipo de cable o un UTF-8 que no valen, o mensajes anidados
+  más de 100 niveles; el error lleva la ruta del campo y, como `column`, el
+  byte donde empieza.
+- Un tipo de mensaje se escribe también en los demás formatos con su
+  `Encode` y su `Decode`, como cualquier record.
 
 ### 14.13 `std.yaml`
 
