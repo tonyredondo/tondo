@@ -4041,3 +4041,14 @@ server lets go of the reply, and so of the pipe the method writes to, and a
 pipe whose reader goes before its writer cancels the task that follows it.
 A streamed reply now reads its pipe without a thread, so that letting go of
 the reply lets go of the pipe at once rather than after the next write.
+
+## 2026-11-01 — Descriptors with the options of descriptor.proto
+
+A real `.proto` file has `go_package`, `java_package` or `deprecated`
+options, reserved numbers and `extend` blocks, which protoc writes into its
+descriptor, so the compiler's descriptor of such a file differed from
+protoc's. The parser now keeps them and the descriptor writes them in
+protoc's order, the options of `descriptor.proto` by their numbers. An
+option of the program's own, `(name)`, is still left out: writing it needs
+the extension that declares it and its values in protobuf's text format,
+and tools that read a server's reflection do not need it.

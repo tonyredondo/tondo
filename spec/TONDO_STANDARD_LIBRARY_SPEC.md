@@ -3948,10 +3948,11 @@ anotados de arriba:
   cliente, de `std.grpc` (14.41).
 - **Descriptores.** El módulo de cada `.proto` da `fileDescriptor()`, un
   `FileDescriptor`: su ruta, los nombres completos que declara (mensajes,
-  enums, servicios y sus llamadas), su `FileDescriptorProto` como lo escribe
-  protoc, sin las opciones salvo `packed` y `map_entry`, sin `reserved` ni
-  extensiones, y los de los archivos que importa; los de `google.protobuf`
-  describen sus mensajes. Con ellos la reflexión de `std.grpc` describe un
+  enums, servicios y sus llamadas, y extensiones), su `FileDescriptorProto`
+  como lo escribe protoc, con las opciones de `descriptor.proto`, los
+  `reserved`, los rangos de `extensions` y los campos de cada `extend`, y
+  los de los archivos que importa; las opciones propias, `(nombre)`, no se
+  escriben, y los de `google.protobuf` describen sus mensajes. Con ellos la reflexión de `std.grpc` describe un
   servidor.
 - Lo que un `.proto` dice mal, importa sin tenerlo o nombra sin declararlo es
   `E1911`, en su línea.

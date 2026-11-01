@@ -1,0 +1,3 @@
+syntax = "proto3";
+package users.v1;
+message Page { int32 size = 1; string token = 2; }

@@ -53,6 +53,19 @@ struct Field {
     json_name: Option<String>,
     /// A group's own message.
     group: Option<Box<Message>>,
+    /// Its options but `default` and `json_name`, for its descriptor.
+    options: Options,
+}
+
+/// Options as written: `deprecated = true`, `(my.option) = 3`.
+type Options = Vec<(String, Token)>;
+
+/// What a message or an enum reserves, or the numbers a message leaves to
+/// extensions: ranges with both ends, and names.
+#[derive(Default)]
+struct Reserved {
+    ranges: Vec<(i128, i128)>,
+    names: Vec<String>,
 }
 
 struct OneOf {
@@ -68,12 +81,22 @@ struct Message {
     oneofs: Vec<OneOf>,
     messages: Vec<Message>,
     enums: Vec<Enum>,
+    options: Options,
+    reserved: Reserved,
+    extension_ranges: Vec<(i128, i128)>,
+    /// The fields its `extend` blocks add to other messages, each after the
+    /// message it extends.
+    extensions: Vec<(String, Field)>,
 }
 
 struct Enum {
     name: String,
     span: Span,
     values: Vec<(String, i128, Span)>,
+    /// Each value's options.
+    value_options: Vec<Options>,
+    options: Options,
+    reserved: Reserved,
 }
 
 pub struct Method {
@@ -83,20 +106,27 @@ pub struct Method {
     pub client_streams: bool,
     pub server_streams: bool,
     pub span: Span,
+    options: Options,
 }
 
 pub struct Service {
     pub name: String,
     pub methods: Vec<Method>,
+    options: Options,
 }
 
 struct File {
     syntax: Syntax,
     package: String,
     imports: Vec<(String, Span)>,
+    /// The imports marked `public` and `weak`, by their index.
+    public: Vec<usize>,
+    weak: Vec<usize>,
     messages: Vec<Message>,
     enums: Vec<Enum>,
     services: Vec<Service>,
+    options: Options,
+    extensions: Vec<(String, Field)>,
 }
 
 struct Parser<'a> {
@@ -339,6 +369,69 @@ impl Parser<'_> {
         }
     }
 
+    /// `option name = value;`, after `option`.
+    fn option(&mut self) -> Parsed<(String, Token)> {
+        let name = self.option_name()?;
+        self.expect('=')?;
+        let value = self.constant()?;
+        self.expect(';')?;
+        Ok((name, value))
+    }
+
+    /// `reserved 2, 9 to 11, 40 to max;`, `reserved "old";` or the numbers
+    /// of `extensions`, after the word: each range with both ends.
+    fn reserved(&mut self, max: i128) -> Parsed<Reserved> {
+        let mut reserved = Reserved::default();
+        loop {
+            if let Some(Token::Text(_)) = self.peek() {
+                reserved.names.push(self.text()?);
+            } else {
+                let start = self.integer()?;
+                let end = if !self.word("to") {
+                    start
+                } else if self.word("max") {
+                    max
+                } else {
+                    self.integer()?
+                };
+                reserved.ranges.push((start, end));
+            }
+            if !self.eat(',') {
+                break;
+            }
+        }
+        self.field_options()?;
+        self.expect(';')?;
+        Ok(reserved)
+    }
+
+    /// `extend Name { fields }`, after `extend`: each field with the name
+    /// of the message it extends, as written.
+    fn extend(&mut self, syntax: Syntax) -> Parsed<Vec<(String, Field)>> {
+        let extendee = self.full_name()?;
+        let mut fields = Vec::new();
+        self.expect('{')?;
+        while !self.eat('}') {
+            if self.peek().is_none() {
+                return self.fail("this `extend` does not close: add `}`");
+            }
+            if self.eat(';') {
+                continue;
+            }
+            let label = if self.word("optional") {
+                Label::Optional
+            } else if self.word("required") {
+                Label::Required
+            } else if self.word("repeated") {
+                Label::Repeated
+            } else {
+                Label::None
+            };
+            fields.push((extendee.clone(), self.field(label, syntax)?));
+        }
+        Ok(fields)
+    }
+
     /// The name of an option: `packed`, `(my.option).field`.
     fn option_name(&mut self) -> Parsed<String> {
         let mut text = String::new();
@@ -380,9 +473,13 @@ impl Parser<'_> {
             syntax: Syntax::Proto2,
             package: String::new(),
             imports: Vec::new(),
+            public: Vec::new(),
+            weak: Vec::new(),
             messages: Vec::new(),
             enums: Vec::new(),
             services: Vec::new(),
+            options: Vec::new(),
+            extensions: Vec::new(),
         };
         while self.peek().is_some() {
             if self.eat(';') {
@@ -418,20 +515,22 @@ impl Parser<'_> {
                     self.expect(';')?;
                 }
                 "import" => {
-                    if !self.word("public") {
-                        self.word("weak");
+                    if self.word("public") {
+                        file.public.push(file.imports.len());
+                    } else if self.word("weak") {
+                        file.weak.push(file.imports.len());
                     }
                     let span = self.span();
                     file.imports.push((self.text()?, span));
                     self.expect(';')?;
                 }
-                "option" => self.skip_statement()?,
+                "option" => file.options.push(self.option()?),
                 "message" => file.messages.push(self.message(file.syntax)?),
                 "enum" => file.enums.push(self.enumeration()?),
                 "service" => file.services.push(self.service()?),
                 "extend" => {
-                    self.full_name()?;
-                    self.skip_braces()?;
+                    let syntax = file.syntax;
+                    file.extensions.extend(self.extend(syntax)?);
                 }
                 other => {
                     self.diags.error("E1911", span, format!("expected `message`, `enum`, `service`, `import`, `package`, `option` or `syntax`, found `{other}`"));
@@ -450,8 +549,18 @@ impl Parser<'_> {
 
     /// The `{ ... }` of a message of a name, or of a group.
     fn message_body(&mut self, name: String, span: Span, syntax: Syntax) -> Parsed<Message> {
-        let mut message =
-            Message { name, span, fields: Vec::new(), oneofs: Vec::new(), messages: Vec::new(), enums: Vec::new() };
+        let mut message = Message {
+            name,
+            span,
+            fields: Vec::new(),
+            oneofs: Vec::new(),
+            messages: Vec::new(),
+            enums: Vec::new(),
+            options: Vec::new(),
+            reserved: Reserved::default(),
+            extension_ranges: Vec::new(),
+            extensions: Vec::new(),
+        };
         self.expect('{')?;
         while !self.eat('}') {
             if self.peek().is_none() {
@@ -464,11 +573,14 @@ impl Parser<'_> {
             match self.name()?.as_str() {
                 "message" => message.messages.push(self.message(syntax)?),
                 "enum" => message.enums.push(self.enumeration()?),
-                "option" | "reserved" | "extensions" => self.skip_statement()?,
-                "extend" => {
-                    self.full_name()?;
-                    self.skip_braces()?;
+                "option" => message.options.push(self.option()?),
+                "reserved" => {
+                    let reserved = self.reserved(MAX_FIELD)?;
+                    message.reserved.ranges.extend(reserved.ranges);
+                    message.reserved.names.extend(reserved.names);
                 }
+                "extensions" => message.extension_ranges.extend(self.reserved(MAX_FIELD)?.ranges),
+                "extend" => message.extensions.extend(self.extend(syntax)?),
                 "oneof" => {
                     let name = self.name()?;
                     let mut oneof = OneOf { name, fields: Vec::new() };
@@ -513,6 +625,10 @@ impl Parser<'_> {
                         packed: None,
                         json_name,
                         group: None,
+                        options: options
+                            .into_iter()
+                            .filter(|(name, _)| name != "default" && name != "json_name")
+                            .collect(),
                     });
                 }
                 label @ ("optional" | "required" | "repeated") => {
@@ -541,7 +657,7 @@ impl Parser<'_> {
             let name = self.name()?;
             self.expect('=')?;
             let number = self.integer()?;
-            self.field_options()?;
+            let options = self.field_options()?;
             let group = self.message_body(name.clone(), span, syntax)?;
             return Ok(Field {
                 label,
@@ -555,6 +671,7 @@ impl Parser<'_> {
                 packed: None,
                 json_name: None,
                 group: Some(Box::new(group)),
+                options,
             });
         }
         let type_span = self.span();
@@ -581,6 +698,7 @@ impl Parser<'_> {
                 _ => None,
             },
             group: None,
+            options: options.iter().filter(|(name, _)| name != "default" && name != "json_name").cloned().collect(),
         })
     }
 
@@ -588,6 +706,9 @@ impl Parser<'_> {
         let span = self.span();
         let name = self.name()?;
         let mut values = Vec::new();
+        let mut value_options = Vec::new();
+        let mut options = Vec::new();
+        let mut reserved = Reserved::default();
         self.expect('{')?;
         while !self.eat('}') {
             if self.peek().is_none() {
@@ -596,24 +717,30 @@ impl Parser<'_> {
             if self.eat(';') {
                 continue;
             }
-            if self.word("option") || self.word("reserved") {
-                self.skip_statement()?;
+            if self.word("option") {
+                options.push(self.option()?);
+                continue;
+            }
+            if self.word("reserved") {
+                let more = self.reserved(i128::from(i32::MAX))?;
+                reserved.ranges.extend(more.ranges);
+                reserved.names.extend(more.names);
                 continue;
             }
             let span = self.span();
             let value = self.name()?;
             self.expect('=')?;
             let number = self.integer()?;
-            self.field_options()?;
+            value_options.push(self.field_options()?);
             self.expect(';')?;
             values.push((value, number, span));
         }
-        Ok(Enum { name, span, values })
+        Ok(Enum { name, span, values, value_options, options, reserved })
     }
 
     fn service(&mut self) -> Parsed<Service> {
         let name = self.name()?;
-        let mut service = Service { name, methods: Vec::new() };
+        let mut service = Service { name, methods: Vec::new(), options: Vec::new() };
         self.expect('{')?;
         while !self.eat('}') {
             if self.peek().is_none() {
@@ -623,7 +750,7 @@ impl Parser<'_> {
                 continue;
             }
             if self.word("option") {
-                self.skip_statement()?;
+                service.options.push(self.option()?);
                 continue;
             }
             if !self.word("rpc") {
@@ -642,16 +769,28 @@ impl Parser<'_> {
             let server_streams = self.word("stream");
             let output = self.full_name()?;
             self.expect(')')?;
-            if self.peek() == Some(&Token::Symbol('{')) {
-                self.skip_braces()?;
+            let mut options = Vec::new();
+            if self.eat('{') {
+                while !self.eat('}') {
+                    if self.eat(';') {
+                        continue;
+                    }
+                    if !self.word("option") {
+                        return self.fail("expected `option` or `}`");
+                    }
+                    options.push(self.option()?);
+                }
             } else {
                 self.expect(';')?;
             }
-            service.methods.push(Method { name, input, output, client_streams, server_streams, span });
+            service.methods.push(Method { name, input, output, client_streams, server_streams, span, options });
         }
         Ok(service)
     }
 }
+
+/// The largest number of a message's field, which `max` names.
+const MAX_FIELD: i128 = (1 << 29) - 1;
 
 // ---------------------------------------------------------------------------
 // Names
@@ -1430,6 +1569,16 @@ impl Describer<'_> {
         for service in &file.services {
             out.bytes(6, &describer.service(service, package));
         }
+        for (extendee, field) in &file.extensions {
+            out.bytes(7, &describer.extension(extendee, field, package));
+        }
+        describer.options(&mut out, 8, &file.options, FILE_OPTIONS);
+        for &index in &file.public {
+            out.int(10, index as i64);
+        }
+        for &index in &file.weak {
+            out.int(11, index as i64);
+        }
         if file.syntax == Syntax::Proto3 {
             out.text(12, "proto3");
         }
@@ -1459,7 +1608,7 @@ impl Describer<'_> {
                 }
                 None => None,
             };
-            out.bytes(2, &self.field(field, &full, index, optional));
+            out.bytes(2, &self.field(field, &full, index, optional, None));
         }
         // The types inside, in the order they are written: messages, and
         // those of its maps and groups.
@@ -1482,6 +1631,14 @@ impl Describer<'_> {
         for e in &message.enums {
             out.bytes(4, &self.enumeration(e, &full));
         }
+        // Extension ranges end after their last number, as reserved ones do.
+        for &(start, end) in &message.extension_ranges {
+            out.bytes(5, &range(start, end + 1));
+        }
+        for (extendee, field) in &message.extensions {
+            out.bytes(6, &self.extension(extendee, field, &full));
+        }
+        self.options(&mut out, 7, &message.options, MESSAGE_OPTIONS);
         for oneof in &message.oneofs {
             let mut decl = Wire::default();
             decl.text(1, &oneof.name);
@@ -1491,6 +1648,12 @@ impl Describer<'_> {
             let mut decl = Wire::default();
             decl.text(1, &name);
             out.bytes(8, &decl.0);
+        }
+        for &(start, end) in &message.reserved.ranges {
+            out.bytes(9, &range(start, end + 1));
+        }
+        for name in &message.reserved.names {
+            out.text(10, name);
         }
         out.0
     }
@@ -1515,8 +1678,9 @@ impl Describer<'_> {
                 packed: None,
                 json_name: None,
                 group: None,
+                options: Vec::new(),
             };
-            out.bytes(2, &self.field(&part, &full, None, false));
+            out.bytes(2, &self.field(&part, &full, None, false, None));
         }
         let mut options = Wire::default();
         options.int(7, 1);
@@ -1524,9 +1688,26 @@ impl Describer<'_> {
         out.0
     }
 
-    fn field(&self, field: &Field, scope: &str, oneof: Option<usize>, optional: bool) -> Vec<u8> {
+    /// A field of an `extend` block, named in its scope.
+    fn extension(&mut self, extendee: &str, field: &Field, scope: &str) -> Vec<u8> {
+        self.symbols.push(qualified(scope, &field.name));
+        let extended = self.full_name(extendee, scope).map_or_else(|| extendee.to_string(), |(name, _)| name);
+        self.field(field, scope, None, false, Some(&extended))
+    }
+
+    fn field(
+        &self,
+        field: &Field,
+        scope: &str,
+        oneof: Option<usize>,
+        optional: bool,
+        extendee: Option<&str>,
+    ) -> Vec<u8> {
         let mut out = Wire::default();
         out.text(1, &field.name);
+        if let Some(extendee) = extendee {
+            out.text(2, &format!(".{extendee}"));
+        }
         out.int(3, field.number as i64);
         let label = match (field.label, &field.map) {
             (_, Some(_)) | (Label::Repeated, _) => 3,
@@ -1554,11 +1735,7 @@ impl Describer<'_> {
         if let Some(default) = &field.default {
             out.text(7, &default_text(default, kind));
         }
-        if let Some(packed) = field.packed {
-            let mut options = Wire::default();
-            options.int(2, packed as i64);
-            out.bytes(8, &options.0);
-        }
+        self.options(&mut out, 8, &field.options, FIELD_OPTIONS);
         if let Some(index) = oneof {
             out.int(9, index as i64);
         }
@@ -1573,11 +1750,22 @@ impl Describer<'_> {
         self.symbols.push(qualified(scope, &e.name));
         let mut out = Wire::default();
         out.text(1, &e.name);
-        for (name, number, _) in &e.values {
+        for (index, (name, number, _)) in e.values.iter().enumerate() {
             let mut value = Wire::default();
             value.text(1, name);
             value.int(2, *number as i64);
+            if let Some(options) = e.value_options.get(index) {
+                self.options(&mut value, 3, options, ENUM_VALUE_OPTIONS);
+            }
             out.bytes(2, &value.0);
+        }
+        self.options(&mut out, 3, &e.options, ENUM_OPTIONS);
+        // An enum's reserved ranges include their end.
+        for &(start, end) in &e.reserved.ranges {
+            out.bytes(4, &range(start, end));
+        }
+        for name in &e.reserved.names {
+            out.text(5, name);
         }
         out.0
     }
@@ -1595,6 +1783,7 @@ impl Describer<'_> {
                 let name = self.full_name(written, package).map_or_else(|| written.clone(), |(name, _)| name);
                 described.text(number, &format!(".{name}"));
             }
+            self.options(&mut described, 4, &method.options, METHOD_OPTIONS);
             if method.client_streams {
                 described.int(5, 1);
             }
@@ -1603,7 +1792,36 @@ impl Describer<'_> {
             }
             out.bytes(2, &described.0);
         }
+        self.options(&mut out, 3, &service.options, SERVICE_OPTIONS);
         out.0
+    }
+
+    /// The options of `descriptor.proto` among some, as the message of
+    /// field `number`, in the order of their numbers; nothing when there
+    /// are none. Options of their own, `(name)`, are left out.
+    fn options(&self, out: &mut Wire, number: u32, written: &Options, known: &[(&str, u32, Value)]) {
+        let mut options: Vec<(u32, Vec<u8>)> = Vec::new();
+        for (name, token) in written {
+            let Some(&(_, field, value)) = known.iter().find(|(known, _, _)| known == name) else { continue };
+            let mut one = Wire::default();
+            match (value, token) {
+                (Value::Text, Token::Text(text)) => one.text(field, text),
+                (Value::Bool, Token::Name(word)) => one.int(field, (word == "true") as i64),
+                (Value::Enum(values), Token::Name(word)) => {
+                    let Some(&(_, at)) = values.iter().find(|(name, _)| name == word) else { continue };
+                    one.int(field, at);
+                }
+                (Value::Enum(_), Token::Int(at)) => one.int(field, *at as i64),
+                _ => continue,
+            }
+            options.push((field, one.0));
+        }
+        if options.is_empty() {
+            return;
+        }
+        options.sort_by_key(|(field, _)| *field);
+        let bytes: Vec<u8> = options.into_iter().flat_map(|(_, bytes)| bytes).collect();
+        out.bytes(number, &bytes);
     }
 
     /// The full name a type written in a scope names, and whether it is an
@@ -1628,6 +1846,75 @@ impl Describer<'_> {
         }
     }
 }
+
+/// `DescriptorProto.ReservedRange` and its kind: a start and an end.
+fn range(start: i128, end: i128) -> Vec<u8> {
+    let mut out = Wire::default();
+    out.int(1, start as i64);
+    out.int(2, end as i64);
+    out.0
+}
+
+/// What an option of `descriptor.proto` holds.
+#[derive(Clone, Copy)]
+enum Value {
+    Text,
+    Bool,
+    Enum(&'static [(&'static str, i64)]),
+}
+
+const FILE_OPTIONS: &[(&str, u32, Value)] = &[
+    ("java_package", 1, Value::Text),
+    ("java_outer_classname", 8, Value::Text),
+    ("optimize_for", 9, Value::Enum(&[("SPEED", 1), ("CODE_SIZE", 2), ("LITE_RUNTIME", 3)])),
+    ("java_multiple_files", 10, Value::Bool),
+    ("go_package", 11, Value::Text),
+    ("cc_generic_services", 16, Value::Bool),
+    ("java_generic_services", 17, Value::Bool),
+    ("py_generic_services", 18, Value::Bool),
+    ("java_generate_equals_and_hash", 20, Value::Bool),
+    ("deprecated", 23, Value::Bool),
+    ("java_string_check_utf8", 27, Value::Bool),
+    ("cc_enable_arenas", 31, Value::Bool),
+    ("objc_class_prefix", 36, Value::Text),
+    ("csharp_namespace", 37, Value::Text),
+    ("swift_prefix", 39, Value::Text),
+    ("php_class_prefix", 40, Value::Text),
+    ("php_namespace", 41, Value::Text),
+    ("php_metadata_namespace", 44, Value::Text),
+    ("ruby_package", 45, Value::Text),
+];
+
+const MESSAGE_OPTIONS: &[(&str, u32, Value)] = &[
+    ("message_set_wire_format", 1, Value::Bool),
+    ("no_standard_descriptor_accessor", 2, Value::Bool),
+    ("deprecated", 3, Value::Bool),
+    ("map_entry", 7, Value::Bool),
+    ("deprecated_legacy_json_field_conflicts", 11, Value::Bool),
+];
+
+const FIELD_OPTIONS: &[(&str, u32, Value)] = &[
+    ("ctype", 1, Value::Enum(&[("STRING", 0), ("CORD", 1), ("STRING_PIECE", 2)])),
+    ("packed", 2, Value::Bool),
+    ("deprecated", 3, Value::Bool),
+    ("lazy", 5, Value::Bool),
+    ("jstype", 6, Value::Enum(&[("JS_NORMAL", 0), ("JS_STRING", 1), ("JS_NUMBER", 2)])),
+    ("weak", 10, Value::Bool),
+    ("unverified_lazy", 15, Value::Bool),
+    ("debug_redact", 16, Value::Bool),
+    ("retention", 17, Value::Enum(&[("RETENTION_UNKNOWN", 0), ("RETENTION_RUNTIME", 1), ("RETENTION_SOURCE", 2)])),
+];
+
+const ENUM_OPTIONS: &[(&str, u32, Value)] = &[("allow_alias", 2, Value::Bool), ("deprecated", 3, Value::Bool)];
+
+const ENUM_VALUE_OPTIONS: &[(&str, u32, Value)] = &[("deprecated", 1, Value::Bool), ("debug_redact", 3, Value::Bool)];
+
+const SERVICE_OPTIONS: &[(&str, u32, Value)] = &[("deprecated", 33, Value::Bool)];
+
+const METHOD_OPTIONS: &[(&str, u32, Value)] = &[
+    ("deprecated", 33, Value::Bool),
+    ("idempotency_level", 34, Value::Enum(&[("IDEMPOTENCY_UNKNOWN", 0), ("NO_SIDE_EFFECTS", 1), ("IDEMPOTENT", 2)])),
+];
 
 /// A file's `protobuf.FileDescriptor` as Tondo writes it.
 fn descriptor_literal(name: &str, described: &Described, imports: &str) -> String {

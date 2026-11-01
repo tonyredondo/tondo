@@ -1,0 +1,41 @@
+// Options of descriptor.proto, reserved numbers and names, extension ranges,
+// extensions and a public import, which the descriptor writes as protoc does.
+syntax = "proto2";
+package edge.opts;
+option go_package = "example.com/edge/opts";
+option java_package = "com.example.edge";
+option java_multiple_files = true;
+option optimize_for = SPEED;
+option deprecated = false;
+import public "api/common.proto";
+
+message Base {
+  option deprecated = true;
+  optional int64 id = 1 [deprecated = true, jstype = JS_STRING];
+  optional string text = 2 [ctype = CORD];
+  repeated int32 counts = 3 [packed = true];
+  reserved 4, 9 to 11, 100 to max;
+  reserved "old", "older";
+  extensions 20 to 30;
+  extend Base { optional string inner_note = 25; }
+}
+
+extend Base { optional int64 note = 21; }
+
+enum Color {
+  option allow_alias = true;
+  RED = 1;
+  CRIMSON = 1 [deprecated = true];
+  BLUE = 2;
+  reserved 5, 7 to 9;
+  reserved "GREEN";
+}
+
+service Things {
+  option deprecated = true;
+  rpc Get(Base) returns (Base) {
+    option deprecated = true;
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Put(Base) returns (Base);
+}
