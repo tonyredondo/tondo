@@ -45,7 +45,7 @@ pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8)
 
 /// The bytes of Base64 text, with or without its padding, or the offset
 /// where it is wrong: its length when it ends in the middle of a byte.
-fn base64_decode(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
+pub(crate) fn base64_decode(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
     let alphabet = if url { URL } else { STANDARD };
     let end = input.iter().rposition(|&c| c != b'=').map_or(0, |i| i + 1);
     if input.len() - end > 2 || (input.len() > end && !input.len().is_multiple_of(4)) {

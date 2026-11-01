@@ -655,13 +655,18 @@ struct Frames {
     error: String,
     /// The request's `grpc-encoding`.
     encoding: String,
+    /// The Base64 text of a gRPC-Web body sent as text not yet decoded, or
+    /// `None` for a body of bytes.
+    text: Option<Vec<u8>>,
 }
 
-/// The frames of a request body's stream, compressed with `encoding`.
+/// The frames of a request body's stream, compressed with `encoding`, and
+/// in Base64 text with `text`, as `application/grpc-web-text` sends them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_grpc_frames(
     input: *mut crate::io::StreamObject,
     encoding: *const Str,
+    text_body: u8,
 ) -> *mut NativeObject {
     unsafe { crate::tasks::tondo_rt_handle_retain(input as *mut u8) };
     let frames = Frames {
@@ -670,8 +675,26 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
         message: Bytes::new(),
         error: String::new(),
         encoding: text(encoding),
+        text: (text_body != 0).then(Vec::new),
     };
     native::new(Mutex::new(frames))
+}
+
+/// The bytes of the whole groups of four characters of Base64 text, which
+/// leaves the rest for the next piece. A client may pad each piece it
+/// sends, so a group that ends in `=` ends a piece.
+fn decoded(text: &mut Vec<u8>) -> Result<Vec<u8>, usize> {
+    let whole = text.len() / 4 * 4;
+    let mut bytes = Vec::with_capacity(whole / 4 * 3);
+    let mut start = 0;
+    for group in (0..whole).step_by(4) {
+        if text[group + 3] == b'=' || group + 4 == whole {
+            bytes.extend(crate::codec::base64_decode(&text[start..group + 4], false).map_err(|at| start + at)?);
+            start = group + 4;
+        }
+    }
+    text.drain(..whole);
+    Ok(bytes)
 }
 
 /// Reads the next message: 1 when there is one, which `frame` gives, 0 at
@@ -715,7 +738,24 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
         }
         let read = crate::io::run(frames.source.0, |s| s.read(64 * 1024));
         match read {
-            Ok(Some(chunk)) => frames.buffer.extend_from_slice(&chunk),
+            Ok(Some(chunk)) => {
+                let Some(text) = frames.text.as_mut() else {
+                    frames.buffer.extend_from_slice(&chunk);
+                    continue;
+                };
+                text.extend_from_slice(&chunk);
+                match decoded(text) {
+                    Ok(bytes) => frames.buffer.extend_from_slice(&bytes),
+                    Err(at) => {
+                        frames.error = format!("the request's Base64 text is wrong near character {at} of its piece");
+                        return -1;
+                    }
+                }
+            }
+            Ok(None) if frames.text.as_ref().is_some_and(|text| !text.is_empty()) => {
+                frames.error = "the request's Base64 text ends in the middle of a group of four characters".into();
+                return -1;
+            }
             Ok(None) if frames.buffer.is_empty() => return 0,
             Ok(None) => {
                 frames.error = "the request ended inside a message".into();

@@ -6776,10 +6776,20 @@ pub fn Duplex.trailers(self): Map[String, String]
   también, por su 404. Si el cliente se va, antes de la respuesta o
   durante ella, la tarea del método se cancela (lenguaje 11.15): sus esperas
   terminan y corren sus `defer`, y el servidor sigue con las demás.
+- **gRPC-Web.** Las mismas rutas responden a gRPC-Web, el gRPC que envía un
+  navegador, también sobre HTTP/1.1: una petición con `Content-Type`
+  `application/grpc-web` o `application/grpc-web+proto` recibe
+  `application/grpc-web+proto`, con los mismos mensajes y, en lugar de
+  trailers de HTTP, un último frame con el bit `0x80` cuyo contenido son los
+  trailers, el status incluido, como líneas `nombre: valor` de HTTP/1. Con
+  `application/grpc-web-text`, la petición y la respuesta van en Base64:
+  cada trozo que el cliente envía puede llevar su relleno, y cada frame de
+  la respuesta va en Base64 por separado, con el suyo. Una página de otro
+  origen necesita además `App.cors`.
 - **Datos de la llamada.** `grpc.call()` da, en el método y en lo que este
   llama, el método, la metadata de la petición sin las cabeceras de HTTP y de
   gRPC (`content-type`, `te`, `user-agent`, `grpc-timeout`, `grpc-encoding`,
-  `grpc-accept-encoding`), la dirección del cliente y el tiempo que quedaba;
+  `grpc-accept-encoding`, `x-grpc-web`, `x-user-agent`), la dirección del cliente y el tiempo que quedaba;
   fuera de un método, una `Call` vacía. `setHeader` pone metadata en las
   cabeceras de la respuesta, antes del primer mensaje, y `setTrailer` en sus
   trailers, con el status. Los valores de los nombres que acaban en `-bin`

@@ -300,6 +300,8 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
 - `grpc.connect(target, compression: grpc.Compression.Gzip)` compresses
   what a client sends, and `service.compress()` what a service answers to
   a client that reads gzip; both always read it.
+- The same routes answer gRPC-Web, which browsers send, over HTTP/1.1 too,
+  as bytes or as Base64 text; a page of another origin needs `app.cors`.
 - A call in a `within` sends its deadline; the method runs within it, and
   the client gets its `within`'s `TimedOut` when it passes. A method whose
   client goes is cancelled: its waits end and its `defer` runs.

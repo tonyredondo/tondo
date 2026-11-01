@@ -1670,7 +1670,7 @@ pub const NATIVES: &[Native] = {
         grpc("detail", &[Object], String, "tondo_rt_grpc_detail"),
         grpc("headers", &[Object], Strings, "tondo_rt_grpc_headers"),
         grpc("trailers", &[Object], Strings, "tondo_rt_grpc_trailers"),
-        grpc("frames", &[IoReader, String], Object, "tondo_rt_grpc_frames"),
+        grpc("frames", &[IoReader, String, Bool], Object, "tondo_rt_grpc_frames"),
         grpc("readFrame", &[Object], Int, "tondo_rt_grpc_read_frame"),
         grpc("frame", &[Object], Bytes, "tondo_rt_grpc_frame"),
         grpc("frameError", &[Object], String, "tondo_rt_grpc_frame_error"),

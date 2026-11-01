@@ -319,6 +319,45 @@ pub type ServerCall = {
     priv watchers: Array[fn(Call, Direction, __reflect.Value)]
     /// Whether it sends its messages compressed with gzip.
     priv compressed: Bool
+    priv wire: Wire
+}
+
+/// How a call travels: as gRPC, whose status goes in HTTP trailers, or as
+/// gRPC-Web, which browsers send and whose status ends the body, in bytes
+/// or in Base64 text.
+enum Wire {
+    Grpc
+    Web
+    WebText
+}
+
+/// The wire of a request's content type.
+fn Wire.of(contentType: String): Wire {
+    if contentType.startsWith("application/grpc-web-text") {
+        Wire.WebText
+    } else if contentType.startsWith("application/grpc-web") {
+        Wire.Web
+    } else {
+        Wire.Grpc
+    }
+}
+
+/// The content type of a reply.
+fn Wire.contentType(self): String {
+    match self {
+        Wire.Grpc => "application/grpc"
+        Wire.Web => "application/grpc-web+proto"
+        Wire.WebText => "application/grpc-web-text+proto"
+    }
+}
+
+/// Bytes of the reply as the wire sends them: Base64 text for `WebText`,
+/// each piece padded, as gRPC-Web's clients read it.
+fn Wire.written(self, bytes: Array[Byte]): Array[Byte] {
+    match self {
+        Wire.WebText => __encoding.base64Encode(bytes).bytes()
+        _ => bytes
+    }
 }
 
 /// Serves a call: runs its method in a task of its own, whose messages go
@@ -336,6 +375,7 @@ fn serve(
     let trailers = __http.Trailers.new()
     let ready = grpcNative.signal()
     var metadata = request.headers()
+    let wire = Wire.of(metadata.get("content-type").unwrapOr(""))
     let timeout = timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
     let encoding = metadata.get("grpc-encoding").unwrapOr("identity")
     let accepted = metadata
@@ -355,20 +395,22 @@ fn serve(
         "grpc-encoding",
         "grpc-accept-encoding",
         "user-agent",
+        "x-grpc-web",
+        "x-user-agent",
     ] {
         _ = metadata.remove(name)
     }
     let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
-    let frames = grpcNative.frames(request.body(), encoding)
-    let server = ServerCall { frames, output, ready, watchers, compressed }
+    let frames = grpcNative.frames(request.body(), encoding, wire == Wire.WebText)
+    let server = ServerCall { frames, output, ready, watchers, compressed, wire }
     with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
     spawn detached run(server, handler, layers, timeout, trailers)
     // The headers go once the method sends its first message, or ends.
     _ = grpcNative.signalWait(ready)
     var reply = __http.Reply.stream(
         reader,
-        contentType: "application/grpc",
-        trailers: some(trailers),
+        contentType: wire.contentType(),
+        trailers: if wire == Wire.Grpc { some(trailers) } else { none },
     )
     for (name, value) in headers.all() {
         reply = reply.header(name, value)
@@ -408,6 +450,18 @@ fn run(
         )
     }
     server.start()
+    if server.wire != Wire.Grpc {
+        // gRPC-Web's trailers are a frame of their own at the end of the
+        // body, flagged with 0x80, as HTTP/1 writes headers.
+        var block = ""
+        for (name, value) in trailers.all() {
+            block = "{block}{name.toLower()}: {value}\r\n"
+        }
+        let flag: Array[Byte] = [0x80]
+        let bytes = block.bytes()
+        let frame = flag.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+        _ = server.output.writeBytes(server.wire.written(frame))
+    }
     _ = server.output.close()
 }
 
@@ -514,7 +568,7 @@ pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message:
     self.start()
     watched(self.watchers, Incoming.call, Direction.Sent, message)
     let bytes = __protobuf.encode(message)
-    match self.output.writeBytes(framed(bytes, self.compressed)) {
+    match self.output.writeBytes(self.wire.written(framed(bytes, self.compressed))) {
         ok(_) => {}
         err(error) => fail Status { code: Code.Cancelled, message: "the client is gone: {error}" }
     }

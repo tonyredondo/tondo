@@ -4090,3 +4090,15 @@ with cookies (`credentials`) it names the origin, since browsers refuse
 too, so that a cache does not give one page's reply to another, and it
 adds its headers to a `Problem` as well, so that a page reads the error
 instead of a CORS failure.
+
+## 2026-11-01 — gRPC-Web on the same routes
+
+A browser cannot speak gRPC: it gives a page neither HTTP/2 trailers nor
+always HTTP/2. gRPC-Web carries the same frames with the trailers as a
+last frame of the body, and other languages need a proxy, as Envoy, to
+translate it. A Tondo server reads the request's content type and answers
+gRPC-Web itself, on the same routes and with the same methods, so a page
+calls a service with no proxy and no other declaration; the text form,
+Base64 for clients that cannot read bytes as they arrive, decodes each
+padded piece a client sends. Only the server speaks it: a Tondo client has
+HTTP/2 and speaks gRPC.
