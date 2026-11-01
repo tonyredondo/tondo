@@ -494,7 +494,8 @@ struct Slot {
 enum Held {
     #[default]
     Waiting,
-    Made(Call),
+    /// Boxed, as a call is large where a lock is, as on macOS.
+    Made(Box<Call>),
     Taken,
     Closed(i64, String),
 }
@@ -524,8 +525,8 @@ pub unsafe extern "C" fn tondo_rt_grpc_open(
     let _replaced = {
         let mut held = lock(&slot.held);
         match *held {
-            Held::Taken => Some(call),
-            _ => match std::mem::replace(&mut *held, Held::Made(call)) {
+            Held::Taken => Some(Box::new(call)),
+            _ => match std::mem::replace(&mut *held, Held::Made(Box::new(call))) {
                 Held::Made(before) => Some(before),
                 _ => None,
             },
@@ -568,7 +569,7 @@ pub extern "C" fn tondo_rt_grpc_take(object: *mut NativeObject) -> *mut NativeOb
             {
                 let mut held = lock(&slot.held);
                 match std::mem::replace(&mut *held, Held::Taken) {
-                    Held::Made(call) => return call,
+                    Held::Made(call) => return *call,
                     Held::Closed(code, message) => return finished(code, message),
                     other => *held = other,
                 }
