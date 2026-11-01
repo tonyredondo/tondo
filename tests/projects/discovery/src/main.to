@@ -30,6 +30,16 @@ fn hex(bytes: Array[Byte]): String {
     bytes.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
 }
 
+/// The status a watch sees, and the next once it changes. The watch ends
+/// with the function, so that the server, when it stops, has no call left
+/// to wait for.
+fn watched(client: checks.HealthClient, health: grpc.Health) {
+    var watching = client.watch(checks.HealthCheckRequest { service: "demo.v1.Greeter" })
+    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
+    health.set("demo.v1.Greeter", grpc.ServingStatus.Serving)
+    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
+}
+
 fn main(): !(http.HttpError | grpc.Status) {
     let health = grpc.Health.new()
     let service = greeter.greeter(Greetings {})
@@ -52,10 +62,7 @@ fn main(): !(http.HttpError | grpc.Status) {
         listed.push("\"{name}\": {reply.status}")
     }
     console.println(listed.sorted().join(", "))
-    var watching = client.watch(checks.HealthCheckRequest { service: "demo.v1.Greeter" })
-    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
-    health.set("demo.v1.Greeter", grpc.ServingStatus.Serving)
-    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
+    watched(client, health)
 
     let asking = reflection.ServerReflectionClient.on(connection).serverReflectionInfo()
     let ask = (request: reflection.ServerReflectionRequestMessageRequest) {

@@ -4992,7 +4992,7 @@ pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Req
 pub type Server
 pub fn Server.address(self): String
 pub fn Server.url(self): String
-pub fn Server.stop(self)
+pub fn Server.stop(self, grace: time.Duration = time.seconds(30))
 pub alias Tls = net.Tls
 pub alias TlsVersion = net.TlsVersion
 ~~~
@@ -5170,10 +5170,12 @@ pub alias TlsVersion = net.TlsVersion
   los demás, y también lo que responden ellos, como un `401`, lleva esas
   cabeceras.
 - `listen` y `start` sirven HTTP/1.1 y HTTP/2; con `tls`, sobre TLS con ALPN.
-  `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
-  las peticiones en curso terminan, y una conexión que un cliente mantiene
-  abierta no toma más: termina las que tiene y se cierra, con un GOAWAY en
-  HTTP/2, y una petición que llega mientras tanto recibe `503`.
+  `Server.stop` deja de aceptar conexiones y drena las abiertas: cada una
+  no toma más peticiones, responde las que tiene, también las que llegaron
+  antes de saberlo, y se cierra, con un GOAWAY en HTTP/2, así que su cliente
+  conecta de nuevo. `stop` vuelve cuando se cerraron todas, o cuando pasa
+  `grace`: las que quedan, como un stream que no termina, se cierran como
+  están, y una petición que llega entonces recibe `503`.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
   agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
   bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera

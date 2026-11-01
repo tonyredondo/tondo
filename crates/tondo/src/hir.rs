@@ -1578,7 +1578,7 @@ pub const NATIVES: &[Native] = {
         http("requestStalled", &[Object], Bool, "tondo_rt_http_request_stalled"),
         http("serverAddress", &[Object], String, "tondo_rt_http_server_address"),
         http("next", &[Object], Object, "tondo_rt_http_next"),
-        http("serverStop", &[Object], Unit, "tondo_rt_http_server_stop"),
+        http("serverStop", &[Object, Int], Unit, "tondo_rt_http_server_stop"),
         http("requestOpen", &[Object], Bool, "tondo_rt_http_request_open"),
         http("requestHead", &[Object], String, "tondo_rt_http_request_head"),
         http("requestHeaders", &[Object], Strings, "tondo_rt_http_request_headers"),

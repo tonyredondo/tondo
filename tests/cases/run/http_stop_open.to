@@ -1,26 +1,64 @@
-// A server that stops lets go of the connections its clients keep open: a
-// request on one is answered, or fails, rather than wait for a server
-// that no longer answers.
+// A server that stops drains its connections: a request in flight is
+// answered before `stop` returns, a connection a client keeps open takes
+// no more and closes, so the client's next request is answered or fails
+// rather than wait, and a reply that never ends holds `stop` only until
+// its grace passes.
 
 import std.console
 import std.http
 import std.time
 
+fn stopThenSay(server: http.Server, stopped: Sender[Unit]) {
+    server.stop()
+    stopped.send(())
+}
+
 fn main(): !http.HttpError {
+    let (started, began) = channel[Unit](1)
+    let (release, released) = channel[Unit](1)
+    let (_events, quiet) = channel[http.Event](1)
     var app = http.App.new()
     app.get("/", (_) { http.Reply.text("here") })
+    app.get(
+        "/slow",
+        (_) {
+            started.send(())
+            _ = released.receive()
+            http.Reply.text("finished")
+        },
+    )
+    app.get("/endless", (_) { http.Reply.events(quiet) })
     let server = app.start()?
     let web = http.Client.new()
-    let url = "http://{server.address()}/"
-    console.println(web.get(url)?.text()?)
-    server.stop()
+    let base = "http://{server.address()}"
+    console.println(web.get("{base}/")?.text()?)
+    let slow = spawn web.get("{base}/slow")
+    _ = began.receive()
+    let (stopped, stopping) = channel[Unit](1)
+    spawn detached stopThenSay(server, stopped)
+    match stopping.receive(timeout: time.milliseconds(200)) {
+        some(_) => console.println("stopped before the reply")
+        none => console.println("waiting for the reply")
+    }
+    release.send(())
+    console.println(slow.wait()?.text()?)
+    _ = stopping.receive()
+    console.println("stopped")
     match within time.seconds(10) {
-        _ = web.get(url)
+        _ = web.get("{base}/")
     } {
         ok(_) => console.println("answered")
         err(_) => console.println("still waiting")
     }
+    let other = app.start()?
+    let open = web.get("{other.url()}/endless")?
+    other.stop(grace: time.milliseconds(100))
+    console.println("stopped with {open.status()} open")
 }
 
 // expect-stdout: here
+// expect-stdout: waiting for the reply
+// expect-stdout: finished
+// expect-stdout: stopped
 // expect-stdout: answered
+// expect-stdout: stopped with 200 open

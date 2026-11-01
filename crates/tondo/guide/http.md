@@ -150,7 +150,10 @@ fn find(id: Int): User? {
   standard error with the request's method and path, and the server goes on.
 - `app.mount("/admin", adminApp)` adds another app's routes with its own
   middleware. `app.start()` serves in a task of its own and gives a `Server`
-  with `url()` and `stop()`, for tests.
+  with `url()` and `stop()`, for tests. `stop()` drains: the requests that
+  arrived are answered and the connections close, for up to `grace` (30
+  seconds), so a reply that never ends, as a stream a client still holds,
+  keeps it waiting that long.
 - `app.files("/", Site)` serves the files of `const Site: fs.FileSystem =
   embed.files("public")`, kept in the executable, as it serves a directory
   of the disk; a folder answers with its `index.html` (`tondo guide stdlib`).

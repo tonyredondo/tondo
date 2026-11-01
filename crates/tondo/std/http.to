@@ -2821,10 +2821,12 @@ pub fn Server.url(self): String {
     if self.secure { "https://{address}" } else { "http://{address}" }
 }
 
-/// Stops taking connections and waits until the server stopped; requests
-/// in flight finish.
-pub fn Server.stop(self) {
-    httpNative.serverStop(self.native)
+/// Stops taking connections and waits until the server stopped: each
+/// connection open ends the requests it has, those that arrived too, and
+/// closes, with a GOAWAY on HTTP/2; after `grace`, those left close as
+/// they are.
+pub fn Server.stop(self, grace: __time.Duration = __time.seconds(30)) {
+    httpNative.serverStop(self.native, grace.milliseconds())
     _ = self.ended.receive()
 }
 

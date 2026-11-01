@@ -28,9 +28,40 @@ struct Server {
     failure: Failure,
     address: String,
     requests: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<Request>>>>,
-    stop: Option<watch::Sender<bool>>,
+    life: Option<Arc<Life>>,
     /// The file of a server on a Unix socket, which goes when it stops.
     socket: Option<String>,
+}
+
+/// Where a server is in its life, and how many connections it has open.
+struct Life {
+    phase: watch::Sender<Phase>,
+    open: watch::Sender<usize>,
+}
+
+/// Serving; after `stop`, draining, as its connections end the requests
+/// they have and close; and closed, once they all did or its grace passed.
+#[derive(Clone, Copy, PartialEq)]
+enum Phase {
+    Serving,
+    Draining,
+    Closed,
+}
+
+/// A connection the server counts while it is open.
+struct Counted(Arc<Life>);
+
+impl Counted {
+    fn new(life: Arc<Life>) -> Counted {
+        life.open.send_modify(|open| *open += 1);
+        Counted(life)
+    }
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.0.open.send_modify(|open| *open -= 1);
+    }
 }
 
 impl Drop for Server {
@@ -680,7 +711,7 @@ fn failed(message: String) -> *mut NativeObject {
         failure: Mutex::new(Some(("connect", message))),
         address: String::new(),
         requests: None,
-        stop: None,
+        life: None,
         socket: None,
     })
 }
@@ -694,13 +725,13 @@ fn started(
     limits: Limits,
 ) -> *mut NativeObject {
     let (sender, receiver) = mpsc::channel(1024);
-    let (stop, stopped) = watch::channel(false);
-    runtime().spawn(accept(listening, tls, sender, stopped, limits));
+    let life = Arc::new(Life { phase: watch::channel(Phase::Serving).0, open: watch::channel(0).0 });
+    runtime().spawn(accept(listening, tls, sender, life.clone(), limits));
     native::new(Server {
         failure: Mutex::new(None),
         address,
         requests: Some(Arc::new(tokio::sync::Mutex::new(receiver))),
-        stop: Some(stop),
+        life: Some(life),
         socket,
     })
 }
@@ -709,10 +740,11 @@ async fn accept(
     listener: Listening,
     tls: Option<tokio_rustls::TlsAcceptor>,
     sender: mpsc::Sender<Request>,
-    mut stopped: watch::Receiver<bool>,
+    life: Arc<Life>,
     limits: Limits,
 ) {
     use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+    let mut stopped = life.phase.subscribe();
     loop {
         let (stream, remote) = tokio::select! {
             accepted = listener.accept() => match accepted {
@@ -722,7 +754,9 @@ async fn accept(
             _ = stopped.changed() => return,
         };
         let (sender, tls, mut stopping) = (sender.clone(), tls.clone(), stopped.clone());
+        let counted = Counted::new(life.clone());
         tokio::spawn(async move {
+            let _counted = counted;
             let secure = tls.is_some();
             let (stream, client): (Box<dyn Connected>, _) = match tls {
                 Some(acceptor) => {
@@ -746,12 +780,20 @@ async fn accept(
             tokio::pin!(connection);
             // When the server stops, a connection kept open takes no more
             // requests: it ends those it has and closes, with a GOAWAY on
-            // HTTP/2, so that its client connects again.
+            // HTTP/2, so that its client connects again; once the server's
+            // grace passes, it closes as it is.
             tokio::select! {
                 _ = connection.as_mut() => {}
-                _ = async { _ = stopping.wait_for(|stopped| *stopped).await } => {
+                _ = async { _ = stopping.wait_for(|phase| *phase != Phase::Serving).await } => {
                     connection.as_mut().graceful_shutdown();
-                    let _ = connection.await;
+                    tokio::select! {
+                        _ = connection.as_mut() => {}
+                        _ = async {
+                            if stopping.wait_for(|phase| *phase == Phase::Closed).await.is_err() {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {}
+                    }
                 }
             }
         });
@@ -765,9 +807,9 @@ async fn handle(
     secure: bool,
     client: Arc<Vec<u8>>,
     limits: Limits,
-    stopped: watch::Receiver<bool>,
+    stopped: watch::Receiver<Phase>,
 ) -> Result<hyper::Response<Body>, Infallible> {
-    if *stopped.borrow() {
+    if *stopped.borrow() == Phase::Closed {
         return Ok(plain(503, "the server is stopping"));
     }
     super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
@@ -827,31 +869,53 @@ pub extern "C" fn tondo_rt_http_server_address(server: *mut NativeObject) -> *mu
     str_new(native::get::<Server>(server).map_or("", |s| s.address.as_str()).as_bytes())
 }
 
-/// The next request, or the mark that the server stopped.
+/// The next request, or the mark that the server stopped: after `stop`,
+/// once its connections ended the requests they had, or its grace passed.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_next(server: *mut NativeObject) -> *mut NativeObject {
     let Some(server) = native::get::<Server>(server) else { return native::new(Request::closed()) };
-    let (Some(requests), Some(stop)) = (server.requests.clone(), server.stop.as_ref()) else {
+    let (Some(requests), Some(life)) = (server.requests.clone(), server.life.clone()) else {
         return native::new(Request::closed());
     };
-    let mut stopped = stop.subscribe();
-    if *stopped.borrow() {
-        return native::new(Request::closed());
-    }
     let next = wait(async move {
-        tokio::select! {
-            request = async move { requests.lock().await.recv().await } => request,
-            _ = stopped.changed() => None,
+        let (mut phase, mut open) = (life.phase.subscribe(), life.open.subscribe());
+        let mut requests = requests.lock().await;
+        loop {
+            let now = *phase.borrow_and_update();
+            if now == Phase::Closed {
+                return None;
+            }
+            tokio::select! {
+                request = requests.recv() => return request,
+                _ = open.wait_for(|open| *open == 0), if now == Phase::Draining => return None,
+                changed = phase.changed() => if changed.is_err() { return None },
+            }
         }
     });
     native::new(next.flatten().unwrap_or_else(Request::closed))
 }
 
-/// Stops accepting connections; `next` gives the mark that it stopped.
+/// Stops accepting connections and drains those open: each ends the
+/// requests it has and closes, and after `grace` milliseconds those left
+/// close as they are.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject) {
-    if let Some(stop) = native::get::<Server>(server).and_then(|s| s.stop.as_ref()) {
-        let _ = stop.send(true);
+pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject, grace: i64) {
+    if let Some(life) = native::get::<Server>(server).and_then(|s| s.life.clone()) {
+        let draining = life.phase.send_if_modified(|phase| {
+            let serving = *phase == Phase::Serving;
+            if serving {
+                *phase = Phase::Draining;
+            }
+            serving
+        });
+        if draining {
+            runtime().spawn(async move {
+                let grace = std::time::Duration::from_millis(grace.max(0) as u64);
+                let mut open = life.open.subscribe();
+                let _ = tokio::time::timeout(grace, open.wait_for(|open| *open == 0)).await;
+                life.phase.send_replace(Phase::Closed);
+            });
+        }
     }
     if let Some(path) = native::get::<Server>(server).and_then(|s| s.socket.as_ref()) {
         let _ = std::fs::remove_file(path);

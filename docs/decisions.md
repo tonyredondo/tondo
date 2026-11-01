@@ -4133,3 +4133,16 @@ rather than wait, as gRPC does without wait-for-ready. The channel
 resolves its hosts again when a connection drops or an attempt fails;
 like gRPC's DNS resolver it does not poll, so servers added behind a name
 are found when a connection changes.
+
+## 2026-11-01 — A server that stops drains its connections
+
+`Server.stop` stopped taking connections and returned while the ones
+clients kept open were still taking requests, which it then answered
+`503`: the first call after a server stopped failed in 8 of 20 tries, and
+in a deploy that restarts servers one by one every restart would fail
+some calls. `stop` now drains, as gRPC's `GracefulStop` and Go's
+`Shutdown` do: each connection is told to take no more, with a GOAWAY on
+HTTP/2, answers what it has and closes, and `stop` returns once they all
+closed. A reply that never ends, as a stream a client still watches,
+would hold it for ever, so `grace`, 30 seconds by default as Kubernetes
+gives a pod, bounds the wait; then what is left closes as it is.
