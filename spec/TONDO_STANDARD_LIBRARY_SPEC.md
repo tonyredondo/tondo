@@ -6773,8 +6773,8 @@ pub fn Duplex.trailers(self): Map[String, String]
   balanceadores y los orquestadores: `app.grpc(health.service())`, y
   `health.set(servicio, estado)` cuando cambia. El servidor, `""`, empieza
   `Serving`. `Check` da el estado de un servicio, o `NotFound` si no lo
-  conoce; `Watch` da el estado, `ServiceUnknown` si no lo conoce, y luego
-  cada cambio.
+  conoce; `List` da el de todos; `Watch` da el estado, `ServiceUnknown` si
+  no lo conoce, y luego cada cambio.
 - **Reflexión.** `reflection(services)` es `grpc.reflection.v1` y `v1alpha`,
   que leen herramientas como grpcurl para llamar a un servidor sin sus
   `.proto`: `app.grpc(grpc.reflection([users, health.service()]))`. Lista

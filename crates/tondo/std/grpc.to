@@ -1016,8 +1016,8 @@ pub fn Health.set(self, service: String, status: ServingStatus) {
 }
 
 /// The service `grpc.health.v1.Health`: `Check` gives a status, or
-/// `NotFound` for a service it does not know, and `Watch` gives one, then
-/// each change.
+/// `NotFound` for a service it does not know, `List` gives them all, and
+/// `Watch` gives one, then each change.
 pub fn Health.service(self): Service {
     let statuses = self.statuses
     Service {
@@ -1029,6 +1029,15 @@ pub fn Health.service(self): Service {
                     unary[HealthRequest, HealthReply](
                         exchange,
                         (request) { checked(statuses, request.service)? },
+                    )?
+                }
+            },
+            Method {
+                name: "List"
+                handler: (exchange) {
+                    unary[HealthListRequest, HealthList](
+                        exchange,
+                        (_) { HealthList { statuses: statuses.get() } },
                     )?
                 }
             },
@@ -1158,7 +1167,99 @@ impl __reflect.Reflect for HealthReply {
     }
 }
 
-/// `grpc/health/v1/health.proto`, without `List`, as protoc describes it.
+/// `grpc.health.v1.HealthListRequest`, which asks for nothing.
+type HealthListRequest = {}
+
+impl __protobuf.Message for HealthListRequest {
+    fn writeTo(self, out: __protobuf.Writer) {}
+
+    fn readFrom(input: __protobuf.Reader): HealthListRequest ! __protobuf.ProtobufError {
+        for input.next()? != 0 {
+            input.skip()?
+        }
+        HealthListRequest {}
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListRequest"
+    }
+}
+
+impl __reflect.Reflect for HealthListRequest {
+    fn reflectShow(self, nested: Bool): String {
+        "HealthListRequest {{}}"
+    }
+}
+
+/// `grpc.health.v1.HealthListResponse`: each service's status.
+type HealthList = {
+    statuses: Map[String, ServingStatus] = [:]
+}
+
+impl __protobuf.Message for HealthList {
+    fn writeTo(self, out: __protobuf.Writer) {
+        for (service, status) in self.statuses {
+            out.message(1, HealthEntry { service, status })
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthList ! __protobuf.ProtobufError {
+        var list = HealthList {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => {
+                    let entry = input.message[HealthEntry]("statuses")?
+                    list.statuses[entry.service] = entry.status
+                }
+                _ => input.skip()?
+            }
+        }
+        list
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListResponse"
+    }
+}
+
+impl __reflect.Reflect for HealthList {
+    fn reflectShow(self, nested: Bool): String {
+        "HealthListResponse {{ {self.statuses.length()} statuses }}"
+    }
+}
+
+/// An entry of `HealthListResponse.statuses`: a service and its status.
+type HealthEntry = {
+    service: String = ""
+    status: ServingStatus = ServingStatus.Unknown
+}
+
+impl __protobuf.Message for HealthEntry {
+    fn writeTo(self, out: __protobuf.Writer) {
+        out.string(1, self.service)
+        out.message(2, HealthReply { status: self.status })
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthEntry ! __protobuf.ProtobufError {
+        var entry = HealthEntry {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => entry.service = input.string("key")?
+                2 => entry.status = input.message[HealthReply]("value")?.status
+                _ => input.skip()?
+            }
+        }
+        entry
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListResponse.StatusesEntry"
+    }
+}
+
+/// `grpc/health/v1/health.proto`, as protoc describes it.
 fn healthFile(): __protobuf.FileDescriptor {
     __protobuf.FileDescriptor {
         name: "grpc/health/v1/health.proto"
@@ -1166,13 +1267,16 @@ fn healthFile(): __protobuf.FileDescriptor {
             "grpc.health.v1.HealthCheckRequest",
             "grpc.health.v1.HealthCheckResponse",
             "grpc.health.v1.HealthCheckResponse.ServingStatus",
+            "grpc.health.v1.HealthListRequest",
+            "grpc.health.v1.HealthListResponse",
             "grpc.health.v1.Health",
             "grpc.health.v1.Health.Check",
+            "grpc.health.v1.Health.List",
             "grpc.health.v1.Health.Watch",
         ]
         bytes: __encoding
             .base64Decode(
-                "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADMq4BCgZIZWFsdGgSUAoFQ2hlY2sSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlElIKBVdhdGNoEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZTABYgZwcm90bzM=",
+                "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADIhMKEUhlYWx0aExpc3RSZXF1ZXN0IsQBChJIZWFsdGhMaXN0UmVzcG9uc2USTAoIc3RhdHVzZXMYASADKAsyMC5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2UuU3RhdHVzZXNFbnRyeVIIc3RhdHVzZXMaYAoNU3RhdHVzZXNFbnRyeRIQCgNrZXkYASABKAlSA2tleRI5CgV2YWx1ZRgCIAEoCzIjLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2VSBXZhbHVlOgI4ATL9AQoGSGVhbHRoElAKBUNoZWNrEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZRJNCgRMaXN0EiEuZ3JwYy5oZWFsdGgudjEuSGVhbHRoTGlzdFJlcXVlc3QaIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2USUgoFV2F0Y2gSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlMAFiBnByb3RvMw==",
             )
             .unwrapOr([])
     }
