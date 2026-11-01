@@ -6436,6 +6436,8 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
   numera EXIF, que `read` aplica; y `tags`, cada etiqueta de la imagen
   principal por su nombre con su valor como texto, salvo `MakerNote`.
 
+### 14.39 `std.acme`
+
 `std.acme` da a un servidor los certificados de una autoridad ACME (RFC
 8555), como Let's Encrypt, que obtiene y renueva solo mientras corre. La
 autoridad comprueba cada nombre con TLS-ALPN-01 (RFC 8737), que el propio
