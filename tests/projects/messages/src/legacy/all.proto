@@ -10,4 +10,5 @@ message All {
   repeated int32 unpacked = 16; repeated int32 packed = 17 [packed = true];
   optional group Grp = 18 { optional int32 g = 19; }
   optional int32 withDefault = 20 [default = 5];
+  optional double far = 21 [default = inf];
 }

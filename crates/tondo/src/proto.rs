@@ -1133,11 +1133,12 @@ impl Translator<'_> {
             }
             (Token::Int(value), "Float" | "Float32") => format!("{value}.0"),
             (Token::Int(value), _) => value.to_string(),
-            (Token::Float(text), _) => match text.as_str() {
-                "inf" => "Float.infinity".into(),
-                "-inf" => "-Float.infinity".into(),
-                "nan" => "Float.nan".into(),
-                _ => text.clone(),
+            (Token::Float(text), _) => text.clone(),
+            // `inf`, `-inf` and `nan` are names to the tokens.
+            (Token::Name(name), ty @ ("Float" | "Float32")) => match name.as_str() {
+                "inf" => format!("{ty}.infinity"),
+                "-inf" => format!("-{ty}.infinity"),
+                _ => format!("{ty}.nan"),
             },
             (Token::Name(name), "Bool") => name.clone(),
             (Token::Name(name), ty) => {
