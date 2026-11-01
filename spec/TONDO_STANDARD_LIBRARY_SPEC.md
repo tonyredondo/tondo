@@ -2875,6 +2875,7 @@ fn map[U](self, transform: fn(T): U): Array[U]
 fn filter(self, keep: fn(T): Bool): Array[T]
 fn flatMap[U](self, transform: fn(T): Array[U]): Array[U]
 fn reduce[A](self, initial: A, combine: fn(A, T): A): A
+fn contains(self, value: T): Bool                   // T: Equatable, `value in array`
 fn any(self, predicate: fn(T): Bool): Bool
 fn all(self, predicate: fn(T): Bool): Bool
 fn find(self, predicate: fn(T): Bool): T?
@@ -2909,6 +2910,7 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 `Map[K, V]`: `getOr(key, fallback): V`, `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
 `other`. `Set[T]`: `union`, `intersection`, `difference` e `isSubset`.
+`Deque[T]`: `contains(value: T): Bool`, con `T: Equatable`, como `Array`.
 
 `Range[T]` (10.16 del lenguaje) es el valor de `start..end` y `start..=end`,
 de enteros o `Char`: implementa `Iterator[T]`, tiene `contains(value: T): Bool`,
@@ -5657,8 +5659,8 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
     `find`, `replace`, `split`, `lines`, `words`, `trim`, `trimStart`,
     `trimEnd`, `toUpper`, `toLower`, `padStart`, `padEnd`, `repeat`,
     `removePrefix`, `removeSuffix`.
-  - `Array`: `length`, `isEmpty`, `first`, `last`, `get`, `take`, `drop`,
-    `reversed`, `enumerate`, `join`, `concat`.
+  - `Array`: `length`, `isEmpty`, `contains`, `first`, `last`, `get`, `take`,
+    `drop`, `reversed`, `enumerate`, `join`, `concat`.
   - `Map`: `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
     `entries`.
   - Opcionales: `isSome`, `isNone`, `unwrapOr`.

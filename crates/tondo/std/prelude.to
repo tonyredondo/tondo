@@ -671,6 +671,21 @@ pub fn Array[T].reduce[A](self, initial: A, combine: fn(A, T): A): A {
     total
 }
 
+/// Whether an element equals `value`, as `value in array`.
+pub fn Array[T: Equatable].contains(self, value: T): Bool {
+    value in self
+}
+
+/// Whether an element equals `value`.
+pub fn Deque[T: Equatable].contains(self, value: T): Bool {
+    for item in self {
+        if item == value {
+            return true
+        }
+    }
+    false
+}
+
 /// Whether some element passes the test; `false` for an empty array.
 pub fn Array[T].any(self, predicate: fn(T): Bool): Bool {
     for item in self {

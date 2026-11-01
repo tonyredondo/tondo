@@ -1,0 +1,32 @@
+// `contains` asks of an array or a deque what `in` asks, and a loaded
+// template asks it of an array too.
+
+import std.console
+import std.template
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+type Page = {
+    tags: Array[String]
+}
+
+fn main(): !template.TemplateError {
+    let names = ["ada", "lin"]
+    var queue = Deque.new[Int]()
+    queue.push(3)
+    let points = [Point { x: 1, y: 2 }]
+    console.println("{names.contains("ada")} {names.contains("bob")} {"lin" in names}")
+    console.println(
+        "{queue.contains(3)} {queue.contains(4)} {points.contains(Point { x: 1, y: 2 })}",
+    )
+    var site = template.Set.text()
+    site.add("page", r"""{{ tags.contains("go") }} {{ tags.contains("rust") }}""")?
+    console.println(site.render("page", Page { tags: ["go", "tondo"] })?)
+}
+
+// expect-stdout: true false true
+// expect-stdout: true false true
+// expect-stdout: true false

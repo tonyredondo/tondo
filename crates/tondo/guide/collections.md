@@ -11,7 +11,7 @@ fn main() {
     var numbers = [3, 1, 2]
     numbers.push(4)
     numbers.sort()
-    console.println("{numbers} {numbers.length()} {numbers[0]} {numbers.get(9)}")
+    console.println("{numbers} {numbers.length()} {numbers[0]} {numbers.get(9)} {numbers.contains(2)}")
 
     var ages: Map[String, Int] = [:]
     ages["ada"] = 36

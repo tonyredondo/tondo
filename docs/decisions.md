@@ -3920,3 +3920,11 @@ value the compiler sees, and the type keeps that boundary: a `Byte` still
 has no arithmetic, and a variable still converts with `Byte(n)`. So an
 unsuffixed literal from 0 to 255 is a `Byte` where one is expected, in
 expressions and in patterns, and one out of range is a compile error.
+
+## 2026-11-01 — `contains` on arrays
+
+`Map`, `Set` and `String` had `contains`, and `Array` and `Deque` only
+`value in array`, so `names.contains("ada")`, which a program from any
+other language writes, was E1001. `Array.contains` and `Deque.contains`
+ask what `in` asks, for an `Equatable` element, and a `Set` template has
+the array's too.

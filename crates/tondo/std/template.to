@@ -1318,6 +1318,7 @@ fn arrayMethod(
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(items.length())
         ("isEmpty", 0) => __reflect.valueOf(items.isEmpty())
+        ("contains", 1) => __reflect.valueOf(items.any((item) { same(item, args[0]) }))
         ("first", 0) => __reflect.valueOf(items.first())
         ("last", 0) => __reflect.valueOf(items.last())
         ("get", 1) => __reflect.valueOf(items.get(count))
