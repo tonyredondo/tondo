@@ -6724,8 +6724,9 @@ pub fn Service.compress(self): Service
 pub type Stream[T]                                          // Iterator[T ! Status]
 pub type Channel
 pub enum Compression { None, Gzip }
+pub enum Balancing { PickFirst, RoundRobin }
 pub fn connect(target: String, trust: String = "", certificate: String = "", key: String = "",
-    compression: Compression = Compression.None): Channel ! Status
+    compression: Compression = Compression.None, balancing: Balancing = Balancing.PickFirst): Channel ! Status
 pub fn Channel.unary[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status
 pub fn Channel.serverStream[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
 pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
@@ -6836,11 +6837,24 @@ pub fn Duplex.trailers(self): Map[String, String]
   las de `trust`, como el cliente de `std.http`; `certificate` y `key`
   presentan al cliente. El canal conecta con su primera llamada, vuelve a
   conectar si la conexión se cae y lleva sus llamadas a la vez sobre una
-  conexión de HTTP/2. Un destino de otro esquema da `InvalidArgument`, y uno
-  que no responde `Unavailable`. Una respuesta sin `grpc-status` toma el
+  conexión de HTTP/2 por dirección. Un destino de otro esquema da
+  `InvalidArgument`, y uno que no responde `Unavailable`. Una respuesta sin
+  `grpc-status` toma el
   código de su estado de HTTP, como lo traduce gRPC: 400 `Internal`, 401
   `Unauthenticated`, 403 `PermissionDenied`, 404 `Unimplemented`, 429, 502,
   503 y 504 `Unavailable`, y los demás `Unknown`.
+- **Balanceo.** Un destino puede nombrar varios servidores separados por
+  comas, `http://10.0.0.1:50051,10.0.0.2:50051`, y cada host se resuelve por
+  DNS en todas sus direcciones. `balancing` dice a cuál va cada llamada:
+  `PickFirst`, por omisión, las lleva todas a la primera dirección, en
+  orden, que conecta, hasta que su conexión cae; `RoundRobin` conecta con
+  todas y da cada llamada a la siguiente de las que responden. Una dirección
+  que no conecta espera antes de volver a intentarlo, como dice gRPC: 1 s,
+  1,6 veces más cada vez, hasta 2 minutos, con un 20 % al azar arriba o
+  abajo, y 20 s como máximo por intento; mientras todas esperan, una llamada
+  falla en el acto con `Unavailable`. El canal vuelve a resolver los hosts
+  cuando una conexión cae o un intento falla, así que sigue a un servicio
+  cuyas direcciones cambian.
 - **Streams.** `Stream[T]` da los mensajes según llegan, cada uno
   `T ! Status`; el fallo de la llamada es su último elemento. `Upload.send`
   envía y `finish` termina el envío y da la respuesta. `Duplex.send` y

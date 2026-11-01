@@ -1654,7 +1654,7 @@ pub const NATIVES: &[Native] = {
         yaml("outlineNumbers", &[Object], Ints, "tondo_rt_yaml_outline_numbers"),
         yaml("outlineProperties", &[Object], Strings, "tondo_rt_yaml_outline_properties"),
         yaml("outlineError", &[Object], String, "tondo_rt_yaml_outline_error"),
-        grpc("channel", &[String, String, String, String], Object, "tondo_rt_grpc_channel"),
+        grpc("channel", &[String, String, String, String, Int], Object, "tondo_rt_grpc_channel"),
         grpc("channelError", &[Object], String, "tondo_rt_grpc_channel_error"),
         grpc("start", &[Object, String, Strings, Bytes, Bool], Object, "tondo_rt_grpc_start"),
         grpc("slot", &[], Object, "tondo_rt_grpc_slot"),

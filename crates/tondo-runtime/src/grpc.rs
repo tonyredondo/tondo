@@ -13,8 +13,11 @@ use http_body_util::{BodyExt, StreamBody};
 use hyper::body::Frame;
 use hyper::client::conn::http2::SendRequest;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 type Body = UnsyncBoxBody<Bytes, std::io::Error>;
 
@@ -37,66 +40,266 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 // Channels
 // ---------------------------------------------------------------------------
 
-/// Where a channel connects, and its connection once it has one.
+/// How a channel spreads its calls over its target's addresses: all on the
+/// first that answers, or each on the next of those that answer.
+#[derive(Clone, Copy, PartialEq)]
+enum Balancing {
+    PickFirst,
+    RoundRobin,
+}
+
+/// gRPC's backoff between attempts to connect to an address, as its
+/// connection-backoff document says: 1 s, then 1.6 times longer each time
+/// up to 2 minutes, give or take a fifth, and 20 s for each attempt.
+const FIRST_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(120);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Where a channel connects: the hosts of its target with their ports,
+/// and what it knows of the addresses they resolve to.
 struct Channel {
-    /// `http` or `https`, the host, the port and `host:port`.
     secure: bool,
+    hosts: Vec<(String, u16)>,
+    /// The target without its scheme, for messages.
+    target: String,
+    tls: Option<Arc<rustls::ClientConfig>>,
+    balancing: Balancing,
+    pool: tokio::sync::Mutex<Pool>,
+}
+
+/// The addresses of a channel, and how many calls round robin gave out.
+struct Pool {
+    backends: Vec<Backend>,
+    /// Whether to resolve the hosts again before the next call: at first,
+    /// and once a connection dropped or could not be made.
+    stale: bool,
+    given: usize,
+}
+
+/// An address of a host of the target: its connection, and when it may be
+/// tried again after an attempt failed.
+struct Backend {
     host: String,
     port: u16,
-    authority: String,
+    address: SocketAddr,
+    sender: Option<SendRequest<Body>>,
+    connecting: bool,
+    retry: Option<Instant>,
+    backoff: Duration,
+}
+
+impl Backend {
+    /// `host:port`, as `:authority` and messages give it.
+    fn authority(&self) -> String {
+        match self.host.contains(':') {
+            true => format!("[{}]:{}", self.host, self.port),
+            false => format!("{}:{}", self.host, self.port),
+        }
+    }
+
+    /// Whether a call may try to connect to it now.
+    fn idle(&self, now: Instant) -> bool {
+        self.sender.is_none() && !self.connecting && self.retry.is_none_or(|at| at <= now)
+    }
+
+    /// Keeps what an attempt to connect gave: its connection, or when to
+    /// try again, and why it failed.
+    fn settle(&mut self, outcome: Result<SendRequest<Body>, String>) -> Option<String> {
+        self.connecting = false;
+        match outcome {
+            Ok(sender) => {
+                (self.sender, self.retry, self.backoff) = (Some(sender), None, FIRST_BACKOFF);
+                None
+            }
+            Err(problem) => {
+                let bytes = crate::codec::entropy(2);
+                let random = u16::from_le_bytes([bytes[0], bytes[1]]);
+                let jitter = 0.8 + 0.4 * f64::from(random) / f64::from(u16::MAX);
+                self.retry = Some(Instant::now() + self.backoff.mul_f64(jitter));
+                self.backoff = self.backoff.mul_f64(1.6).min(MAX_BACKOFF);
+                Some(problem)
+            }
+        }
+    }
+}
+
+/// An HTTP/2 connection to an address, over TLS with the host's name when
+/// the channel has TLS.
+async fn connect(
     tls: Option<Arc<rustls::ClientConfig>>,
-    sender: tokio::sync::Mutex<Option<SendRequest<Body>>>,
+    host: String,
+    address: SocketAddr,
+    authority: String,
+) -> Result<SendRequest<Body>, String> {
+    let attempt = async {
+        let tcp = tokio::net::TcpStream::connect(address)
+            .await
+            .map_err(|error| format!("cannot connect to {authority}: {error}"))?;
+        let _ = tcp.set_nodelay(true);
+        let Some(config) = tls else { return handshake(tcp, &authority).await };
+        let name = rustls_pki_types::ServerName::try_from(host.clone())
+            .map_err(|_| format!("`{host}` is not a name TLS checks"))?;
+        let stream = tokio_rustls::TlsConnector::from(config)
+            .connect(name, tcp)
+            .await
+            .map_err(|error| format!("TLS with {authority} failed: {error}"))?;
+        handshake(stream, &authority).await
+    };
+    match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
+        Ok(outcome) => outcome,
+        Err(_) => Err(format!("{authority} did not answer in {} s", CONNECT_TIMEOUT.as_secs())),
+    }
+}
+
+async fn handshake<S>(stream: S, authority: &str) -> Result<SendRequest<Body>, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (sender, connection) = hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+        .await
+        .map_err(|error| format!("HTTP/2 with {authority} failed: {error}"))?;
+    tokio::spawn(connection);
+    Ok(sender)
 }
 
 impl Channel {
-    /// The connection, made again when there is none or it closed.
-    async fn connection(&self) -> Result<SendRequest<Body>, String> {
-        let mut slot = self.sender.lock().await;
-        if let Some(sender) = slot.as_ref().filter(|s| !s.is_closed()) {
-            return Ok(sender.clone());
-        }
-        let tcp = tokio::net::TcpStream::connect((self.host.as_str(), self.port))
-            .await
-            .map_err(|error| format!("cannot connect to {}: {error}", self.authority))?;
-        let _ = tcp.set_nodelay(true);
-        let sender = match &self.tls {
-            Some(config) => {
-                let name = rustls_pki_types::ServerName::try_from(self.host.clone())
-                    .map_err(|_| format!("`{}` is not a name TLS checks", self.host))?;
-                let stream = tokio_rustls::TlsConnector::from(config.clone())
-                    .connect(name, tcp)
-                    .await
-                    .map_err(|error| format!("TLS with {} failed: {error}", self.authority))?;
-                let (sender, connection) =
-                    hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
-                        .await
-                        .map_err(|error| format!("HTTP/2 with {} failed: {error}", self.authority))?;
-                tokio::spawn(connection);
-                sender
+    /// A connection for a call, and its `host:port`, as the channel's
+    /// balancing picks it: with none, it connects to the addresses that
+    /// may be tried, all at once for round robin and in order for pick
+    /// first; an address whose attempt failed waits for its backoff.
+    async fn pick(self: &Arc<Self>) -> Result<(SendRequest<Body>, String), String> {
+        let mut guard = self.pool.lock().await;
+        let pool = &mut *guard;
+        for backend in &mut pool.backends {
+            if backend.sender.as_ref().is_some_and(SendRequest::is_closed) {
+                backend.sender = None;
+                pool.stale = true;
             }
-            None => {
-                let (sender, connection) =
-                    hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tcp))
-                        .await
-                        .map_err(|error| format!("HTTP/2 with {} failed: {error}", self.authority))?;
-                tokio::spawn(connection);
-                sender
+        }
+        if pool.stale {
+            self.resolve(pool).await?;
+        }
+        let now = Instant::now();
+        let mut problem = None;
+        if pool.backends.iter().all(|b| b.sender.is_none()) {
+            let idle: Vec<usize> = (0..pool.backends.len()).filter(|&i| pool.backends[i].idle(now)).collect();
+            let attempt = |b: &Backend| connect(self.tls.clone(), b.host.clone(), b.address, b.authority());
+            match self.balancing {
+                Balancing::PickFirst => {
+                    for at in idle {
+                        let outcome = attempt(&pool.backends[at]).await;
+                        problem = pool.backends[at].settle(outcome);
+                        if problem.is_none() {
+                            break;
+                        }
+                    }
+                }
+                Balancing::RoundRobin => {
+                    let outcomes = futures_util::future::join_all(idle.iter().map(|&at| attempt(&pool.backends[at])));
+                    for (at, outcome) in idle.iter().zip(outcomes.await) {
+                        problem = pool.backends[*at].settle(outcome).or(problem);
+                    }
+                }
+            }
+            pool.stale |= problem.is_some();
+        }
+        let ready: Vec<usize> = (0..pool.backends.len()).filter(|&i| pool.backends[i].sender.is_some()).collect();
+        let chosen = match (self.balancing, ready.len()) {
+            (_, 0) => return Err(problem.unwrap_or_else(|| self.waiting(pool, now))),
+            (Balancing::PickFirst, _) => ready[0],
+            (Balancing::RoundRobin, count) => {
+                pool.given = pool.given.wrapping_add(1);
+                self.reconnect(pool, now);
+                ready[(pool.given - 1) % count]
             }
         };
-        *slot = Some(sender.clone());
-        Ok(sender)
+        let backend = &pool.backends[chosen];
+        Ok((
+            backend.sender.clone().unwrap_or_else(|| unreachable!("a ready address has a connection")),
+            backend.authority(),
+        ))
+    }
+
+    /// Why no address answers while each waits for its backoff.
+    fn waiting(&self, pool: &Pool, now: Instant) -> String {
+        let next = pool.backends.iter().filter_map(|b| b.retry).min().map_or(0.0, |at| (at - now).as_secs_f64());
+        format!("no address of {} answers; the channel tries again in {next:.1} s", self.target)
+    }
+
+    /// Connects round robin's other addresses in the background, so that
+    /// the calls that follow have them.
+    fn reconnect(self: &Arc<Self>, pool: &mut Pool, now: Instant) {
+        for backend in pool.backends.iter_mut().filter(|b| b.idle(now)) {
+            backend.connecting = true;
+            let (channel, host, address) = (self.clone(), backend.host.clone(), backend.address);
+            let attempt = connect(self.tls.clone(), host.clone(), address, backend.authority());
+            tokio::spawn(async move {
+                let outcome = attempt.await;
+                let mut pool = channel.pool.lock().await;
+                if let Some(backend) = pool.backends.iter_mut().find(|b| b.address == address && b.host == host)
+                    && backend.settle(outcome).is_some()
+                {
+                    pool.stale = true;
+                }
+            });
+        }
+    }
+
+    /// Resolves the hosts again, keeping what it knows of the addresses
+    /// still there; a host that does not resolve now keeps its addresses.
+    async fn resolve(&self, pool: &mut Pool) -> Result<(), String> {
+        let mut known = std::mem::take(&mut pool.backends);
+        let mut problem = None;
+        for (host, port) in &self.hosts {
+            let same = |b: &Backend| b.host == *host && b.port == *port;
+            match tokio::net::lookup_host((host.as_str(), *port)).await {
+                Ok(addresses) => {
+                    for address in addresses {
+                        if pool.backends.iter().any(|b| same(b) && b.address == address) {
+                            continue;
+                        }
+                        pool.backends.push(match known.iter().position(|b| same(b) && b.address == address) {
+                            Some(at) => known.remove(at),
+                            None => Backend {
+                                host: host.clone(),
+                                port: *port,
+                                address,
+                                sender: None,
+                                connecting: false,
+                                retry: None,
+                                backoff: FIRST_BACKOFF,
+                            },
+                        });
+                    }
+                }
+                Err(error) => {
+                    problem = Some(format!("cannot resolve {host}: {error}"));
+                    let (kept, others) = known.into_iter().partition(|b| same(b));
+                    pool.backends.extend::<Vec<Backend>>(kept);
+                    known = others;
+                }
+            }
+        }
+        if pool.backends.is_empty() {
+            pool.stale = true;
+            return Err(problem.unwrap_or_else(|| format!("{} has no address", self.target)));
+        }
+        pool.stale = false;
+        Ok(())
     }
 }
 
 /// A channel to `target`, `http://host:port` or `https://host:port`, or
-/// why there is none; `trust`, `cert` and `key` are its TLS's, as the HTTP
-/// client's.
+/// several `host:port` after the scheme separated by commas, or why there
+/// is none; `trust`, `cert` and `key` are its TLS's, as the HTTP client's,
+/// and `balancing` 0 for pick first or 1 for round robin.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_grpc_channel(
     target: *const Str,
     trust: *const Str,
     cert: *const Str,
     key: *const Str,
+    balancing: i64,
 ) -> *mut NativeObject {
     let target = text(target);
     let made = (|| {
@@ -109,14 +312,20 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
                 ));
             }
         };
-        let authority = rest.trim_end_matches('/').to_string();
-        let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) if !host.ends_with(']') || host.starts_with('[') => {
-                let port = port.parse().map_err(|_| format!("`{port}` is not a port"))?;
-                (host.trim_start_matches('[').trim_end_matches(']').to_string(), port)
-            }
-            _ => (authority.clone(), if secure { 443 } else { 80 }),
-        };
+        let rest = rest.trim_end_matches('/');
+        let mut hosts = Vec::new();
+        for authority in rest.split(',').map(str::trim) {
+            hosts.push(match authority.rsplit_once(':') {
+                Some((host, port)) if !host.ends_with(']') || host.starts_with('[') => {
+                    let port = port.parse().map_err(|_| format!("`{port}` is not a port"))?;
+                    (host.trim_start_matches('[').trim_end_matches(']').to_string(), port)
+                }
+                _ => (authority.to_string(), if secure { 443 } else { 80 }),
+            });
+        }
+        if hosts.iter().any(|(host, _)| host.is_empty()) {
+            return Err(format!("`{target}` names no host: write `http://host:port`"));
+        }
         let tls = match secure {
             true => {
                 let mut config = crate::http::tls(&text(trust), &text(cert), &text(key), 0)?;
@@ -125,7 +334,10 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
             }
             false => None,
         };
-        Ok(Arc::new(Channel { secure, host, port, authority, tls, sender: tokio::sync::Mutex::new(None) }))
+        let balancing = if balancing == 1 { Balancing::RoundRobin } else { Balancing::PickFirst };
+        let pool = Pool { backends: Vec::new(), stale: true, given: 0 };
+        let target = rest.to_string();
+        Ok(Arc::new(Channel { secure, hosts, target, tls, balancing, pool: tokio::sync::Mutex::new(pool) }))
     })();
     native::new(made)
 }
@@ -256,23 +468,33 @@ fn code_of_http(status: u16) -> i64 {
 }
 
 /// Runs a call: sends its request, then gives what comes back as events.
-async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: Events) {
+async fn exchange(channel: Arc<Channel>, mut request: hyper::Request<Body>, events: Events) {
     let end = |code: i64, message: String| events.end(code, message, Vec::new());
-    let mut sender = match channel.connection().await {
-        Ok(sender) => sender,
-        Err(problem) => return end(UNAVAILABLE, problem),
-    };
-    if sender.ready().await.is_err() {
-        // The connection closed between calls: one more try on a new one.
-        *channel.sender.lock().await = None;
-        sender = match channel.connection().await {
-            Ok(sender) => sender,
+    // A connection that closed between calls is let go, and the call
+    // takes another.
+    let mut tries = 0;
+    let (mut sender, authority) = loop {
+        let (mut sender, authority) = match channel.pick().await {
+            Ok(picked) => picked,
             Err(problem) => return end(UNAVAILABLE, problem),
         };
+        tries += 1;
+        match sender.ready().await {
+            Ok(()) => break (sender, authority),
+            Err(error) if tries == 3 => {
+                return end(UNAVAILABLE, format!("the connection to {authority} closed: {error}"));
+            }
+            Err(_) => {}
+        }
+    };
+    let scheme = if channel.secure { "https" } else { "http" };
+    match format!("{scheme}://{authority}{}", request.uri().path()).parse() {
+        Ok(uri) => *request.uri_mut() = uri,
+        Err(error) => return end(INTERNAL, format!("the call's path is not valid: {error}")),
     }
     let response = match sender.send_request(request).await {
         Ok(response) => response,
-        Err(error) => return end(UNAVAILABLE, format!("the request to {} failed: {error}", channel.authority)),
+        Err(error) => return end(UNAVAILABLE, format!("the request to {authority} failed: {error}")),
     };
     let (head, mut body) = response.into_parts();
     if head.status != 200 {
@@ -344,8 +566,8 @@ fn begin(
         Ok(channel) => channel.clone(),
         Err(problem) => return Some(finished(UNAVAILABLE, problem.clone())),
     };
-    let scheme = if channel.secure { "https" } else { "http" };
-    let mut request = hyper::Request::post(format!("{scheme}://{}{}", channel.authority, text(path)))
+    // The address the call goes to gives the rest of its URI.
+    let mut request = hyper::Request::post(text(path))
         .header("content-type", "application/grpc+proto")
         .header("te", "trailers")
         .header("grpc-accept-encoding", "gzip")

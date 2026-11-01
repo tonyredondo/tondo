@@ -1,0 +1,88 @@
+// A channel to several servers: round robin gives each call to the next
+// of those that answer, pick first all of them to the first that answers;
+// an address that does not answer waits for its backoff, and a call while
+// every address waits fails at once.
+
+import balancing.api.greeter
+import std.console
+import std.grpc
+import std.http
+
+type Named = {
+    name: String
+}
+
+impl greeter.Greeter for Named {
+    fn sayHello(self, _: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply { message: self.name }
+    }
+
+    fn repeat(self, _: greeter.HelloRequest, _: Sender[greeter.HelloReply]): !grpc.Status {}
+
+    fn collect(self, _: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {}
+    }
+
+    fn chat(self, _: grpc.Stream[greeter.HelloRequest], _: Sender[greeter.HelloReply]): !grpc.Status {}
+}
+
+fn started(name: String): http.Server ! http.HttpError {
+    var app = http.App.new()
+    app.grpc(greeter.greeter(Named { name }))
+    app.start()?
+}
+
+/// Who answers each of `count` calls.
+fn answers(shared: grpc.Channel, count: Int): String {
+    let client = greeter.GreeterClient.on(shared)
+    var names: Array[String] = []
+    for _ in 0..count {
+        match client.sayHello(greeter.HelloRequest {}) {
+            ok(reply) => names.push(reply.message)
+            err(status) => names.push("{status.code}")
+        }
+    }
+    names.join(" ")
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    let a = started("a")?
+    let b = started("b")?
+    let c = started("c")?
+    // An address where nothing answers.
+    let gone = started("gone")?
+    let dead = gone.address()
+    gone.stop()
+    let all = "http://{a.address()},{b.address()},{c.address()}"
+    let robin = grpc.connect(all, balancing: grpc.Balancing.RoundRobin)?
+    console.println(answers(robin, 6))
+    console.println(answers(grpc.connect(all)?, 3))
+    console.println(answers(grpc.connect("http://{dead},{b.address()}")?, 2))
+    let skipping =
+        grpc.connect(
+            "http://{dead},{a.address()},{c.address()}",
+            balancing: grpc.Balancing.RoundRobin,
+        )?
+    console.println(answers(skipping, 4))
+    let nowhere = greeter.GreeterClient.on(grpc.connect("http://{dead}")?)
+    match nowhere.sayHello(greeter.HelloRequest {}) {
+        ok(_) => console.println("answered")
+        err(status) => console.println("{status.code}")
+    }
+    match nowhere.sayHello(greeter.HelloRequest {}) {
+        ok(_) => console.println("answered")
+        err(status) => console.println(
+            "{status.code} {status.message.startsWith("no address of {dead} answers; the channel tries again in")}",
+        )
+    }
+    a.stop()
+    b.stop()
+    c.stop()
+}
+
+// expect-stdout: a b c a b c
+// expect-stdout: a a a
+// expect-stdout: b b
+// expect-stdout: a c a c
+// expect-stdout: Unavailable
+// expect-stdout: Unavailable true

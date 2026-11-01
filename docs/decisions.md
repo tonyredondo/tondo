@@ -4116,3 +4116,20 @@ method marked `NO_SIDE_EFFECTS` also takes a `GET`, which caches and CDNs
 can keep. Reading JSON ignores fields the message lacks, as Connect's own
 servers do, so a newer client can call an older server. Only the server
 speaks it, as with gRPC-Web: a Tondo client has HTTP/2 and speaks gRPC.
+
+## 2026-11-01 — Client balancing, and targets with several servers
+
+A service of several servers is reached through a name with several
+addresses, as Kubernetes' headless services give, or through a list of
+them. A channel now keeps a connection per address and spreads its calls
+as gRPC's two common policies do: `PickFirst`, the default as in every
+gRPC library, keeps them on the first address that connects, and
+`RoundRobin` gives each to the next of those that answer. A target may
+list servers separated by commas, which needs no DNS and lets a test run
+several servers on one machine. An address that fails waits as gRPC's
+connection backoff says, so that a server that is down is not hammered,
+and a call while every address waits fails at once with `Unavailable`
+rather than wait, as gRPC does without wait-for-ready. The channel
+resolves its hosts again when a connection drops or an attempt fails;
+like gRPC's DNS resolver it does not poll, so servers added behind a name
+are found when a connection changes.
