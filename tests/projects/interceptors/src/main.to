@@ -1,7 +1,8 @@
 // gRPC's interceptors on both sides. The server's refuse a call without a
-// trace, give the method a context and see each status, a panic's too;
-// the client's add metadata from the caller's context, see a stream's
-// status once it ends, and refuse a call; observers see each message.
+// trace, give the method a context and see each status, a panic's too, and
+// one that panics says so; the client's add metadata from the caller's
+// context, see a stream's status once it ends, and refuse a call; observers
+// see each message.
 
 import interceptors.api.greeter
 import std.console
@@ -53,6 +54,15 @@ fn ended(method: String, outcome: !grpc.Status): String {
     }
 }
 
+/// A call whose server interceptor panics.
+fn panicking(client: greeter.GreeterClient): String {
+    with Trace { id: "panic" }
+    match client.sayHello(greeter.HelloRequest { name: "Ada" }) {
+        ok(reply) => reply.message
+        err(status) => "{status}"
+    }
+}
+
 fn main(): !(http.HttpError | grpc.Status) {
     let served: sync.Mutex[Array[String]] = sync.Mutex([])
     let names: sync.Mutex[Array[String]] = sync.Mutex([])
@@ -69,6 +79,9 @@ fn main(): !(http.HttpError | grpc.Status) {
                         code: grpc.Code.Unauthenticated
                         message: "no trace"
                     }
+                }
+                if id == "panic" {
+                    panic("the interceptor broke")
                 }
                 with Trace { id }
                 next()?
@@ -132,6 +145,7 @@ fn main(): !(http.HttpError | grpc.Status) {
         ok(reply) => console.println(reply.message)
         err(status) => console.println("{status}")
     }
+    console.println(panicking(client))
     for each in client.repeat(greeter.HelloRequest { name: "Lin", times: 2 }) {
         console.println(each?.message)
     }
@@ -163,7 +177,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     }
 
     // A stream's interceptor sees its end in a task of its own.
-    let calls = called.updateWhen((log) { log.length() == 5 }, (log) { log })
+    let calls = called.updateWhen((log) { log.length() == 6 }, (log) { log })
     console.println("client saw {calls.sorted().join(", ")}")
     console.println("server saw {served.get().sorted().join(", ")}")
     console.println("server received {names.get().sorted().join(", ")}; sent {replied.load()}")
@@ -174,12 +188,13 @@ fn main(): !(http.HttpError | grpc.Status) {
 // expect-stdout: Unauthenticated: no trace
 // expect-stdout: hello Ada in t1 /demo.v1.Greeter/SayHello
 // expect-stdout: Internal: the method panicked: the greeter broke
+// expect-stdout: Internal: an interceptor panicked: the interceptor broke
 // expect-stdout: 0 in t1 /demo.v1.Greeter/Repeat
 // expect-stdout: 1 in t1 /demo.v1.Greeter/Repeat
 // expect-stdout: echo x
 // expect-stdout: PermissionDenied: not from here
 // expect-stdout: PermissionDenied: not from here
-// expect-stdout: client saw /demo.v1.Greeter/Chat ok, /demo.v1.Greeter/Repeat ok, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello Unauthenticated, /demo.v1.Greeter/SayHello ok
+// expect-stdout: client saw /demo.v1.Greeter/Chat ok, /demo.v1.Greeter/Repeat ok, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello Unauthenticated, /demo.v1.Greeter/SayHello ok
 // expect-stdout: server saw /demo.v1.Greeter/Chat ok, /demo.v1.Greeter/Repeat ok, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello ok
 // expect-stdout: server received Ada, Lin, boom, x; sent 4
-// expect-stdout: client sent 5, received 4
+// expect-stdout: client sent 6, received 4

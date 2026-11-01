@@ -358,9 +358,12 @@ fn run(
 ) {
     // A client that goes cancels the method, as it would a handler.
     grpcNative.follow(server.output)
+    // With interceptors, a panic of the method is a status inside them,
+    // so one that reaches here is theirs.
+    let who = if layers.isEmpty() { "the method" } else { "an interceptor" }
     let outcome = match recover { served(server, handler, layers, timeout) } {
         ok(status) => status
-        err(failure) => panicked("the method", failure.message)
+        err(failure) => panicked(who, failure.message)
     }
     trailers.set("grpc-status", "{outcome.code.number()}")
     if not outcome.message.isEmpty() {

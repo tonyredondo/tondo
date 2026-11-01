@@ -6756,7 +6756,8 @@ pub fn Duplex.trailers(self): Map[String, String]
   el interceptor recibe la `Call` y `next`, que corre el método en la tarea
   de la llamada, así que puede rechazarla con `fail`, dar contextos al
   método con `with`, medirla o cambiar su status; un pánico del método le
-  llega como `Internal`. `Channel.onCall` envuelve cada llamada de un canal:
+  llega como `Internal`, y uno del interceptor responde `Internal` diciendo
+  que fue un interceptor. `Channel.onCall` envuelve cada llamada de un canal:
   `next(call)` la hace con la metadata y el plazo de la `Call` que recibe, y
   da su status cuando termina. En una llamada unaria los interceptores
   corren en la tarea de quien llama, y su fallo es el de la llamada; en un
