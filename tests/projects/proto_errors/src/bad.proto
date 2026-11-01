@@ -1,0 +1,8 @@
+// What a .proto file names that the package does not have.
+syntax = "proto3";
+import "missing/thing.proto";
+message A {
+  Unknown thing = 1;
+  google.protobuf.Duration fine = 2;
+  google.protobuf.Api api = 3;
+}

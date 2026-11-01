@@ -1,0 +1,10 @@
+// A `.proto` file that imports a file the package does not have and names
+// types none of its files declares is E1911, at its lines.
+
+import proto_errors.bad
+
+fn main() {}
+
+// expect-error: E1911 `missing/thing.proto` is no `.proto` file of this package: an import names one by its path from the source root, as `bad.proto`
+// expect-error: E1911 `Unknown` is no message or enum of this package's `.proto` files
+// expect-error: E1911 `google.protobuf.Api` is not supported yet: the types of `google.protobuf` this has are Timestamp, Duration, Struct, Value, ListValue, Empty, Any, FieldMask and the wrappers

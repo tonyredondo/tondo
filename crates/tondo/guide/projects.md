@@ -7,6 +7,7 @@ app/
   tondo.toml          [package] name = "app"
   src/main.to         module app: fn main()
   src/models/user.to  module app.models (every file of a directory is one module)
+  src/api/user.proto  module app.api.user (a `.proto` file is a module of its own)
   src/models/role.to  module app.models
   tests/api.to        an integration test root
 ```

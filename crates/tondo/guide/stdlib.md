@@ -221,7 +221,11 @@ not know. A field with a default is not written while it has it, as
 proto3's zeros; one without a default or `?` is required, as proto2's.
 `encoding:` picks `ZigZag` (sint) or `Fixed` (fixed, sfixed) for an
 integer; a `oneof` is an enum whose variants carry `@protobuf.Field(n)`,
-held in a `T?` field without a number.
+held in a `T?` field without a number. A `.proto` file among the sources is
+such a module: `src/api/user.proto` is `import app.api.user`, whose
+messages are records (`user_id` is `userId`, `Outer.Inner` is
+`OuterInner`) and whose enums drop their prefix (`STATUS_ACTIVE` of `Status`
+is `Status.Active`).
 
 ```tondo
 import std.console

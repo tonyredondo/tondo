@@ -341,6 +341,12 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 continue;
             }
             let (files, root_file) = project::sources(&package.dir, &package.name, Some(system))?;
+            // `.proto` files are modules of their own, whose source the
+            // compiler writes from them, all together.
+            let root_path = files.get(root_file).map(|f| f.path.clone());
+            let (protos, files): (Vec<_>, Vec<_>) =
+                files.into_iter().partition(|f| f.path.extension().is_some_and(|e| e == "proto"));
+            let root_file = files.iter().position(|f| Some(&f.path) == root_path.as_ref()).unwrap_or(0);
             let first = sources.len();
             let parsed_files = parse_files(files.iter().map(|f| f.path.as_path()), &mut sources, &mut diags)?;
             for (index, (file, parsed)) in files.iter().zip(parsed_files).enumerate() {
@@ -375,6 +381,39 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     root = position;
                 }
                 modules[position].files.push((parsed, is_root));
+            }
+            if !protos.is_empty() {
+                let source_root =
+                    if package.dir.join("src").is_dir() { package.dir.join("src") } else { package.dir.clone() };
+                let mut read = Vec::new();
+                for file in &protos {
+                    let Some(id) = load(&file.path, &mut sources, &mut diags)? else { continue };
+                    let relative = file.path.strip_prefix(&package.dir).unwrap_or(&file.path);
+                    sources.set_identity(id, relative.display().to_string(), file.module.join("."));
+                    if package_index > 0 {
+                        sources.set_dependency(id);
+                    } else {
+                        sources.set_own(id);
+                    }
+                    let from_root = file.path.strip_prefix(&source_root).unwrap_or(&file.path);
+                    let relative =
+                        from_root.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+                    read.push(crate::proto::ProtoSource { module: file.module.clone(), source: id, relative });
+                }
+                for (module, text) in crate::proto::translate(&read, &sources, &mut diags) {
+                    let name = format!("{}.proto.to", module.join("."));
+                    let id = sources.add(Path::new(&name), text);
+                    sources.set_identity(id, format!("<proto>/{name}"), module.join("."));
+                    let parsed = parser::parse_file(sources.file(id), &mut diags);
+                    match modules.iter_mut().find(|m| m.package == package_index && m.path == module) {
+                        Some(found) => found.files.push((parsed, false)),
+                        None => modules.push(modules::ModuleSource {
+                            path: module,
+                            package: package_index,
+                            files: vec![(parsed, false)],
+                        }),
+                    }
+                }
             }
         }
         let tested = packages[0].name.clone();

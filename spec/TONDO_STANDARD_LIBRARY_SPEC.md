@@ -3906,6 +3906,42 @@ pub type Reader
 - Un tipo de mensaje se escribe también en los demás formatos con su
   `Encode` y su `Decode`, como cualquier record.
 
+**Archivos `.proto`.** Un archivo `.proto` entre las fuentes de un paquete es
+un módulo, sin nada en el manifiesto: `src/api/user.proto` del paquete `app`
+se importa con `import app.api.user` (lenguaje 6.1). El compilador lee los
+`.proto` del paquete juntos y escribe para cada uno los records y enums
+anotados de arriba:
+
+- **Mensajes.** Un mensaje es un record con `@protobuf.Name` y su nombre
+  completo; uno anidado, `Outer.Inner`, es `OuterInner`, y uno que se llama
+  como un tipo del prelude lleva `Message` detrás. Un campo `user_id` es
+  `userId`, una palabra reservada lleva `_` detrás, y un `json_name` propio es
+  su `@name`. Cada mensaje guarda sus campos desconocidos en `unknownFields`.
+- **Campos de proto3.** Un escalar es `T` con su cero por defecto, `optional`
+  y un mensaje son `T?`, `repeated` es `Array[T]`, `map` es `Map[K, V]` y un
+  `oneof` es `T?` de un enum cuyo nombre es el del mensaje y el del `oneof`.
+- **Campos de proto2.** `required` es `T`, sin valor por defecto. `optional`
+  es `T?`, o `T = v` sin presencia con `[default = v]`, que no se escribe
+  mientras lo tiene. Los `repeated` de números van sin empaquetar salvo con
+  `[packed = true]`, y un `group` es un mensaje de su nombre escrito como
+  grupo, en un campo de su nombre en minúsculas.
+- **Enums.** Cada valor es una variante: `STATUS_ACTIVE` del enum `Status` es
+  `Active`, sin el nombre del enum delante, con `@name("STATUS_ACTIVE")` para
+  los demás formatos. Los de proto3 son abiertos y los de proto2 cerrados.
+  `Display` escribe el nombre del valor en el `.proto`.
+- **Tipos de Google.** `Timestamp`, `Duration`, `Struct`, `Value`,
+  `ListValue`, `Empty`, `Any`, `FieldMask` y los envoltorios son los tipos de
+  arriba; un `import` de `google/protobuf/` no necesita archivo.
+- **Imports y nombres.** Un `import` nombra otro `.proto` del paquete por su
+  ruta desde la raíz de las fuentes, y un tipo se busca como lo busca
+  `protoc`, del scope más interno hacia fuera; uno de otro archivo es un
+  tipo de su módulo.
+- **Fuera.** Las editions son un error que dice qué escribir. Los `extend`,
+  `option`, `reserved` y `extensions` no generan nada, y los campos de una
+  extensión viajan como desconocidos. Los `service` son de `std.grpc`.
+- Lo que un `.proto` dice mal, importa sin tenerlo o nombra sin declararlo es
+  `E1911`, en su línea.
+
 ### 14.13 `std.yaml`
 
 `std.yaml` lee y escribe un subset seguro y portable de

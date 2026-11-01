@@ -159,6 +159,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-protobuf-message",
         "A protobuf message has a field without a number, a number used twice or outside 1 to 536870911, a type or encoding protobuf cannot write, or a protobuf enum a variant without a number.",
     ),
+    (
+        "E1911",
+        "invalid-proto-file",
+        "A `.proto` file does not read as proto2 or proto3, imports a file the package does not have, or names a type that none of its files declares.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

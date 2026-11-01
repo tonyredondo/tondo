@@ -1,0 +1,13 @@
+// A proto2 message with every scalar type, a group and a default.
+syntax = "proto2";
+package t;
+message Inner { optional int32 a = 1; }
+message All {
+  required int32 i32 = 1; optional int64 i64 = 2; optional uint32 u32 = 3; optional uint64 u64 = 4;
+  optional sint32 s32 = 5; optional sint64 s64 = 6; optional fixed32 f32 = 7; optional fixed64 f64 = 8;
+  optional sfixed32 sf32 = 9; optional sfixed64 sf64 = 10; optional bool b = 11; optional float fl = 12;
+  optional double db = 13; optional string s = 14; optional bytes by = 15;
+  repeated int32 unpacked = 16; repeated int32 packed = 17 [packed = true];
+  optional group Grp = 18 { optional int32 g = 19; }
+  optional int32 withDefault = 20 [default = 5];
+}

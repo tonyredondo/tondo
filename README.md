@@ -202,14 +202,14 @@ Every milestone ends with programs that compile to native executables and run.
 | **Fast text indexes** | `text[i]`, `length()` and slices of a long string remember where its characters are: an ASCII string is indexed directly, and another walks from the last index read, so a loop over the indices is linear | Done |
 | **Middleware, forms and rules** | A middleware reads and changes a reply's status and body, and adds its headers to a handler's problem with `Reply.problem`; `header` replaces and `addHeader` adds; `formAs` reads multipart forms, their files into `UploadedFile` fields; `validate.Rules` gives a type rules of its own, between fields or on each element; `Limits.bodyTimeout` and `replyTimeout` bound a client that stalls | Done |
 | **Stopping well** | A `within` in a cancelled task's cleanup waits until its deadline, so a program flushes after SIGTERM; `Command.grace` cancels with `Terminate` and `Kill` only after it, and bounds output a descendant keeps open; `env.invokedAs()`, `invokedAs` and `exec` for programs with many names; `process.splitWords` and `quoted` for command lines | Done |
-| **Protobuf** | `std.protobuf`: records whose fields carry numbers are messages, proto2 and proto3: every scalar type, zigzag and fixed encodings, packed and unpacked repeated fields, maps written in order when deterministic, open and closed enums, `oneof`, groups, required fields, kept unknown fields, `Timestamp`, `Duration`, wrappers, `Struct`/`Value` as `json.Value`, `Any` with `pack`/`unpack`; checked against protoc | Done |
+| **Protobuf** | `std.protobuf`: records whose fields carry numbers are messages, proto2 and proto3: every scalar type, zigzag and fixed encodings, packed and unpacked repeated fields, maps written in order when deterministic, open and closed enums, `oneof`, groups, required fields, kept unknown fields, `Timestamp`, `Duration`, wrappers, `Struct`/`Value` as `json.Value`, `Any` with `pack`/`unpack`; a `.proto` file among the sources is a module of those types, proto2 and proto3, with no generator to run; checked against protoc | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **Protobuf and gRPC** | Types generated from `.proto` schemas, and gRPC clients and servers over HTTP/2 |
+| **gRPC** | Clients and servers over HTTP/2 from the services of `.proto` files |
 | **Windows** | Its calling convention, exceptions, network polling and executables |
 
 What the specifications define and Tondo does not do yet, found by

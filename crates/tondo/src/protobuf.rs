@@ -245,7 +245,7 @@ impl Generator<'_> {
                 ("json", "Value", "Default") => Ok(Kind::Json("Value")),
                 ("json", "Value", "Struct") => Ok(Kind::Json("Struct")),
                 ("json", "Value", "List") => Ok(Kind::Json("List")),
-                ("protobuf", "Any" | "Empty", "Default") => Ok(Kind::Message(self.text(ty.span), false)),
+                ("protobuf", "Any" | "Empty" | "FieldMask", "Default") => Ok(Kind::Message(self.text(ty.span), false)),
                 _ => Err(format!("protobuf has no type for `{}`: {FIELD_TYPES}", self.text(ty.span))),
             };
         }

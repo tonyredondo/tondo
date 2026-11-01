@@ -1,0 +1,20 @@
+// The messages of a users service: proto3, with a nested message and enum,
+// a oneof, a map, a type of another file and types of google.protobuf.
+syntax = "proto3";
+package users.v1;
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/struct.proto";
+import "api/common.proto";
+import "google/protobuf/field_mask.proto";
+enum Status { STATUS_UNSPECIFIED = 0; STATUS_ACTIVE = 1; STATUS_GONE = 2; }
+message Phone { string number = 1; sint32 extension = 2; }
+message User {
+  string name = 1; int64 id = 2; repeated int32 scores = 3; map<string, int32> tags = 4;
+  Status status = 5; User manager = 6;
+  oneof contact { string email = 7; Phone phone = 8; }
+  Page page = 12; repeated Address addresses = 13;
+  message Address { string city = 1; Kind kind = 2; enum Kind { KIND_UNSPECIFIED = 0; HOME = 1; } }
+  google.protobuf.Timestamp born = 9; google.protobuf.StringValue nickname = 10; google.protobuf.Value extra = 11;
+  google.protobuf.FieldMask mask = 14;
+}

@@ -3947,3 +3947,19 @@ use themselves as they use `UNKNOWN`. A field with a default is skipped
 while it has it, which is proto3's implicit presence and the approved
 reading of proto2's `[default = v]`; a field with neither default nor `?`
 is proto2's `required`.
+
+## 2026-11-01 — A `.proto` file is a module
+
+Services and libraries publish their `.proto` files, OTLP and Datadog's
+among them, and a program should use them as they are, with no generator
+to run or configure. A `.proto` file among the sources is a module of its
+own, named by its file, which the compiler writes from it as the
+annotated records and enums of `std.protobuf`; the files of a package are
+read together, since one names another's types by their full names, and
+an error is reported at its line of the `.proto`. A `.proto` file is a
+module rather than part of its directory's, as `.to` files are, because
+protobuf's own unit is the file and two files of one directory often hold
+types of the same names. Enum values drop the enum's name, as protoc's
+other languages do, and keep it as their `@name` for JSON; generated
+enums show that name. The well-known types are Tondo's own types, so a
+`Timestamp` is a `time.DateTime` everywhere.

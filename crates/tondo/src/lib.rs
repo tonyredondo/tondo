@@ -48,6 +48,7 @@ pub mod parser;
 pub mod pprof;
 pub mod profile;
 pub mod project;
+pub mod proto;
 pub mod protobuf;
 pub mod prove;
 // Its kinds of error are the runtime's; the compiler reads only their names.

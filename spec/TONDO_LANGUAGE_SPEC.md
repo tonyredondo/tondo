@@ -923,6 +923,10 @@ Una optimización puede fusionar o eliminar trabajo solo si conserva todos los r
 
 - Un archivo fuente termina en `.to`.
 - Todos los archivos de un mismo directorio fuente forman un módulo.
+- Un archivo `.proto` entre las fuentes es un módulo propio, con el nombre
+  del archivo tras su directorio: `src/api/user.proto` del paquete `app` es
+  `app.api.user`, cuyos tipos son los de sus mensajes y enums (biblioteca
+  estándar 14.12).
 - El path del módulo deriva de su posición dentro del paquete.
 - Un paquete contiene uno o más módulos.
 - La selección de raíces, dependencias y targets pertenece al manifiesto de herramientas, no a la sintaxis del lenguaje.
@@ -8766,6 +8770,7 @@ oculten un diagnóstico independiente.
 | `E1908` | `invalid-validation-rule` | Una regla de `std.validate` está en un campo al que no se aplica, su `min` supera a su `max`, un entero tiene una fracción como límite o su patrón no compila (biblioteca estándar 14.35). |
 | `E1909` | `invalid-pattern` | El patrón literal de `Regex.compile` no está en el dialecto de `std.regex` (biblioteca estándar 14.16). |
 | `E1910` | `invalid-protobuf-message` | Un mensaje de protobuf tiene un campo sin número, un número repetido o fuera de 1 a 536870911, un tipo o una codificación que protobuf no escribe, o un enum de protobuf una variante sin número (biblioteca estándar 14.12). |
+| `E1911` | `invalid-proto-file` | Un archivo `.proto` no se lee como proto2 o proto3, importa un archivo que el paquete no tiene o nombra un tipo que ninguno de sus archivos declara (biblioteca estándar 14.12). |
 
 #### Testing
 

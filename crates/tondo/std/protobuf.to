@@ -740,6 +740,36 @@ impl Message for Any {
     }
 }
 
+/// `google.protobuf.FieldMask`: the paths of the fields an update sets,
+/// as `user.display_name`.
+pub type FieldMask = {
+    paths: Array[String] = []
+}
+
+impl Message for FieldMask {
+    fn writeTo(self, out: Writer) {
+        for path in self.paths {
+            out.string(1, path)
+        }
+    }
+
+    fn readFrom(input: Reader): FieldMask ! ProtobufError {
+        var paths: Array[String] = []
+        for {
+            match input.next()? {
+                0 => break
+                1 => paths.push(input.string("paths")?)
+                _ => input.skip()?
+            }
+        }
+        FieldMask { paths }
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.FieldMask"
+    }
+}
+
 /// A message in an `Any`, named `type.googleapis.com/` and its full name.
 pub fn pack[T: Message](message: T): Any {
     Any { typeUrl: "type.googleapis.com/{Message.protobufName[T]()}", value: encode(message) }
@@ -759,4 +789,115 @@ pub fn Any.unpack[T: Message](self): T ! ProtobufError {
         }
     }
     decode[T](self.value)?
+}
+
+// ---------------------------------------------------------------------------
+// Other formats
+// ---------------------------------------------------------------------------
+
+/// In other formats, the message's fields: none.
+impl serialization.Encode for Empty {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(0)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for Empty {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): Empty ! serialization.Error {
+        input.beginMap(first, "Empty")?
+        for {
+            match input.nextKey()? {
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        Empty {}
+    }
+}
+
+/// In other formats, its `typeUrl` and its `value` as bytes.
+impl serialization.Encode for Any {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(2)
+        out.key("typeUrl")
+        out.text(self.typeUrl)
+        out.key("value")
+        serialization.Encode.encode(serialization.Bytes(self.value), out)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for Any {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): Any ! serialization.Error {
+        input.beginMap(first, "Any")?
+        var any = Any {}
+        for {
+            match input.nextKey()? {
+                some("typeUrl") => any.typeUrl =
+                    serialization.Decode.decode[String](input, input.value()?)?
+                some("value") => {
+                    any.value =
+                        serialization.Decode.decode[serialization.Bytes](input, input.value()?)?.value
+                }
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        any
+    }
+}
+
+/// In other formats, its paths.
+impl serialization.Encode for FieldMask {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(1)
+        out.key("paths")
+        serialization.Encode.encode(self.paths, out)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for FieldMask {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): FieldMask ! serialization.Error {
+        input.beginMap(first, "FieldMask")?
+        var mask = FieldMask {}
+        for {
+            match input.nextKey()? {
+                some("paths") => mask.paths =
+                    serialization.Decode.decode[Array[String]](input, input.value()?)?
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        mask
+    }
+}
+
+/// In other formats, the bytes of the fields, which `@ignore` usually
+/// leaves out.
+impl serialization.Encode for UnknownFields {
+    fn encode[S: serialization.Sink](self, out: S) {
+        serialization.Encode.encode(serialization.Bytes(self.bytes), out)
+    }
+}
+
+impl serialization.Decode for UnknownFields {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): UnknownFields ! serialization.Error {
+        UnknownFields {
+            bytes: serialization.Decode.decode[serialization.Bytes](input, first)?.value
+        }
+    }
 }

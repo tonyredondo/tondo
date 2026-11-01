@@ -70,11 +70,12 @@ pub struct ProjectFile {
     pub module: Vec<String>,
 }
 
-/// The sources of the package `name` in `dir`: the `.to` files under
-/// `src/` or, without it, those next to `tondo.toml` or `main.to`, those
-/// of another system than `system` left out (all with `None`). Test files,
-/// hidden entries, symlinks, `target/` and `vendor/` are skipped. Also
-/// returns the index of the root file: `main.to`, or else the first.
+/// The sources of the package `name` in `dir`: the `.to` and `.proto` files
+/// under `src/` or, without it, those next to `tondo.toml` or `main.to`,
+/// those of another system than `system` left out (all with `None`). Test
+/// files, hidden entries, symlinks, `target/` and `vendor/` are skipped. A
+/// `.proto` file is a module of its own, named by its file. Also returns the
+/// index of the root file: `main.to`, or else the first.
 pub fn sources(dir: &Path, name: &str, system: Option<System>) -> Result<(Vec<ProjectFile>, usize), String> {
     let source = dir.join("src");
     let mut paths = Vec::new();
@@ -105,6 +106,13 @@ pub fn sources(dir: &Path, name: &str, system: Option<System>) -> Result<(Vec<Pr
                 ));
             }
             module.push(part.to_string());
+        }
+        if path.extension().is_some_and(|e| e == "proto") {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if !is_identifier(stem) {
+                return Err(format!("{} cannot be a module: its name `{stem}` is not an identifier", path.display()));
+            }
+            module.push(stem.to_string());
         }
         files.push(ProjectFile { path, module });
     }
@@ -198,7 +206,7 @@ fn walk(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<(), Strin
             if recursive && name != "target" && name != "vendor" {
                 walk(&entry.path(), true, out)?;
             }
-        } else if name.ends_with(".to") && !name.ends_with("_test.to") {
+        } else if (name.ends_with(".to") && !name.ends_with("_test.to")) || name.ends_with(".proto") {
             out.push(entry.path());
         }
     }

@@ -1,0 +1,58 @@
+// `.proto` files are modules: their messages and enums are types, which
+// protobuf writes as protoc does, and which read what protoc writes.
+
+import messages.api.common
+import messages.api.user
+import messages.legacy.all
+import std.console
+import std.protobuf
+
+fn bytes(text: String): Array[Byte] {
+    var out: Array[Byte] = []
+    var at = 0
+    for at + 1 < text.length() {
+        out.push(
+            Byte(Int.parse(text.slice(at, at + 2).unwrapOr("00"), radix: 16).unwrapOr(0)).unwrapOr(
+                0,
+            ),
+        )
+        at += 2
+    }
+    out
+}
+
+fn hex(data: Array[Byte]): String {
+    data.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+}
+
+fn main(): !protobuf.ProtobufError {
+    let ada = user.User {
+        name: "Ada"
+        id: 7
+        status: user.Status.Active
+        contact: some(user.UserContact.Phone(user.Phone { number: "555", extension: -3 }))
+        page: some(common.Page { size: 10 })
+        addresses: [user.UserAddress { city: "Paris", kind: user.UserAddressKind.Home }]
+        mask: some(protobuf.FieldMask { paths: ["name"] })
+    }
+    // protoc reads these bytes as the same user.
+    let written = protobuf.encode(ada)
+    console.println(hex(written))
+    let back = protobuf.decode[user.User](written)?
+    console.println(
+        "{back.name} {back.status} {back.page.map((p) { p.size })} {back.addresses[0].kind} {back.mask.map((m) { m.paths })}",
+    )
+    // proto2 as protoc writes it, read and written back the same.
+    let legacy =
+        "08f9ffffffffffffffff011080ccbbbcdeffffffff011880d0acf30e20ffffffffffffffffff01280330053dffffffff4107000000000000004df8ffffff51f7ffffffffffffff5801650000c03f6900000000000002c0720668c3a96c6c6f7a0201028001018001028a01020304930198012a9401"
+    let value = protobuf.decode[all.All](bytes(legacy))?
+    console.println(
+        "{value.i32} {value.u64} {value.s} {value.packed} {value.grp.map((g) { g.g })} {value.withDefault}",
+    )
+    console.println("{hex(protobuf.encode(value)) == legacy}")
+}
+
+// expect-stdout: 0a03416461100728016202080a6a090a055061726973100172060a046e616d6542070a033535351005
+// expect-stdout: Ada STATUS_ACTIVE some(10) HOME some([name])
+// expect-stdout: -7 some(18446744073709551615) some(héllo) [3, 4] some(some(42)) 5
+// expect-stdout: true
