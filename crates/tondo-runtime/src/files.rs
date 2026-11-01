@@ -183,11 +183,23 @@ fn below(root: &str, relative: &str) -> String {
 /// The entries under a directory, each directory before its content and
 /// siblings sorted by bytes, without following links: their paths below
 /// `root` and their kinds.
-fn walk(root: &str, depth: Option<usize>, out: &mut Vec<(String, i64)>) -> Result<(), i64> {
-    fn visit(root: &str, relative: &str, depth: Option<usize>, out: &mut Vec<(String, i64)>) -> Result<(), i64> {
+/// The entries under `root`, `depth` levels deep or all; with `skip`, a
+/// directory below it that cannot be read is left out rather than failing.
+fn walk(root: &str, depth: Option<usize>, skip: bool, out: &mut Vec<(String, i64)>) -> Result<(), i64> {
+    fn visit(
+        root: &str,
+        relative: &str,
+        depth: Option<usize>,
+        skip: bool,
+        out: &mut Vec<(String, i64)>,
+    ) -> Result<(), i64> {
         let directory = if relative.is_empty() { root.to_string() } else { below(root, relative) };
         let mut entries = Vec::new();
-        for entry in io(std::fs::read_dir(if directory.is_empty() { "." } else { &directory }))? {
+        let listed = std::fs::read_dir(if directory.is_empty() { "." } else { &directory });
+        if listed.is_err() && skip && !relative.is_empty() {
+            return Ok(());
+        }
+        for entry in io(listed)? {
             let entry = io(entry)?;
             let name = entry.file_name().into_string().map_err(|_| INVALID_NAME)?;
             entries.push((name, kind(io(entry.file_type())?)));
@@ -197,22 +209,22 @@ fn walk(root: &str, depth: Option<usize>, out: &mut Vec<(String, i64)>) -> Resul
             let path = if relative.is_empty() { name } else { format!("{relative}/{name}") };
             out.push((path.clone(), kind));
             if kind == 1 && depth.is_none_or(|d| d > 1) {
-                visit(root, &path, depth.map(|d| d - 1), out)?;
+                visit(root, &path, depth.map(|d| d - 1), skip, out)?;
             }
         }
         Ok(())
     }
-    visit(root, "", depth, out)
+    visit(root, "", depth, skip, out)
 }
 
 /// `fs.walk`: the paths and the kinds, `depth` levels deep, or all of them
 /// when it is negative.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str, depth: i64) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str, depth: i64, skip: u8) -> *mut NativeObject {
     let root = text(root).to_string();
     done(move || {
         let mut entries = Vec::new();
-        walk(&root, usize::try_from(depth).ok(), &mut entries)?;
+        walk(&root, usize::try_from(depth).ok(), skip != 0, &mut entries)?;
         let (texts, numbers) = entries.into_iter().map(|(path, kind)| (below(&root, &path), kind)).unzip();
         Ok(Done { texts, numbers, ..Done::default() })
     })
@@ -363,10 +375,11 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 /// The entries under a directory, `depth` levels deep or all of them, with
-/// their stamps, into `out`.
+/// their stamps, into `out`; a directory below it that cannot be read is
+/// not watched, and the rest is.
 fn stamps(directory: &Path, depth: Option<usize>, out: &mut HashMap<PathBuf, Stamp>) {
     let mut entries = Vec::new();
-    if walk(&directory.to_string_lossy(), depth, &mut entries).is_ok() {
+    if walk(&directory.to_string_lossy(), depth, true, &mut entries).is_ok() {
         for (entry, _) in entries {
             let path = directory.join(entry);
             if let Some(found) = stamp(&path) {

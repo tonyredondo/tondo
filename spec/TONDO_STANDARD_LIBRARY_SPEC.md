@@ -1209,8 +1209,8 @@ pub fn appendText(path: String, text: String): Unit ! FsError
 pub fn exists(path: String): Bool
 pub fn metadata(path: String): Metadata ! FsError
 pub fn list(path: String): Array[String] ! FsError
-pub fn walk(root: String): Array[Entry] ! FsError
-pub fn glob(pattern: String): Array[String] ! FsError
+pub fn walk(root: String, enter: (fn(Entry): Bool)? = none, skipUnreadable: Bool = false): Array[Entry] ! FsError
+pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! FsError
 pub fn createDirectory(path: String): Unit ! FsError
 pub fn createTemporaryDirectory(directory: String? = none, pattern: String = ""): String ! FsError
 pub fn createTemporaryFile(directory: String? = none, pattern: String = ""): String ! FsError
@@ -1273,12 +1273,15 @@ pub fn File.reader(self): io.Reader
   `root` unido al camino de la entrada y limpio (`path.clean`), así que
   `walk(".")` da `posts/a.md`. Un enlace es una entrada `Symlink`, y lo que
   nombra no se recorre. Un directorio que no se puede leer hace fallar el
-  recorrido con su error.
+  recorrido con su error; con `skipUnreadable`, uno bajo `root` se deja
+  fuera, sin su contenido. `enter` decide si se entra en cada directorio,
+  que se da en cualquier caso: `(entry) { not entry.path.endsWith("/node_modules") }`.
 - `glob` da los paths que casan con el patrón (`path.matches`, 10.4), archivos y
   directorios, ordenados por bytes; un array vacío si no casa ninguno. Recorre,
   como `walk`, desde la parte del patrón sin comodines: `content/**/*.md`
   recorre `content`. Un patrón relativo parte del directorio actual y da paths
-  relativos.
+  relativos. `skipUnreadable` deja fuera, como en `walk`, los directorios que
+  no se pueden leer.
 - `createTemporaryDirectory` crea, en `directory` o en el directorio temporal
   del sistema (`TMPDIR`, o `/tmp`), un directorio vacío con un nombre que no
   tiene ningún otro, y devuelve su path; `createTemporaryFile` crea así un

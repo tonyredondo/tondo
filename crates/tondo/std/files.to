@@ -72,20 +72,57 @@ pub fn metadata(path: String): Metadata ! __fs.FsError {
 }
 
 /// The tree under `root`, without `root`: each directory before what it
-/// holds and siblings sorted by bytes, without following links.
-pub fn walk(root: String): Array[Entry] ! __fs.FsError {
-    let found = done(fsNative.walk(root, -1))?
-    let kinds = fsNative.numbers(found)
-    var entries: Array[Entry] = []
-    for (index, path) in fsNative.texts(found).enumerate() {
-        entries.push(Entry { path: path, kind: kind(kinds[index]) })
+/// holds and siblings sorted by bytes, without following links. `enter`
+/// says whether to go into each directory, which is listed either way:
+/// `(entry) { not entry.path.endsWith("/node_modules") }`. With
+/// `skipUnreadable`, a directory below `root` that cannot be read is left
+/// out rather than failing the walk.
+pub fn walk(
+    root: String,
+    enter: (fn(Entry): Bool)? = none,
+    skipUnreadable: Bool = false,
+): Array[Entry] ! __fs.FsError {
+    match enter {
+        some(deciding) => {
+            var found: Array[Entry] = []
+            walkInto(root, deciding, skipUnreadable, false, var found)?
+            found
+        }
+        none => entriesOf(done(fsNative.walk(root, -1, skipUnreadable))?)
     }
-    entries
+}
+
+/// The entries of a walk's result.
+fn entriesOf(found: fsNative.Native): Array[Entry] {
+    let kinds = fsNative.numbers(found)
+    var listed: Array[Entry] = []
+    for (index, path) in fsNative.texts(found).enumerate() {
+        listed.push(Entry { path: path, kind: kind(kinds[index]) })
+    }
+    listed
+}
+
+/// The entries of `directory` and, of those `enter` keeps, theirs; one
+/// below the root that cannot be read is skipped when `skip`.
+fn walkInto(
+    directory: String,
+    enter: fn(Entry): Bool,
+    skip: Bool,
+    inner: Bool,
+    found: var Array[Entry],
+): !__fs.FsError {
+    for entry in entriesOf(done(fsNative.walk(directory, 1, skip and inner))?) {
+        found.push(entry)
+        if entry.kind == __fs.FileKind.Directory and enter(entry) {
+            walkInto(entry.path, enter, skip, true, var found)?
+        }
+    }
 }
 
 /// The paths that match a pattern of `path.matches`, sorted by bytes:
-/// `content/**/*.md`.
-pub fn glob(pattern: String): Array[String] ! __fs.FsError {
+/// `content/**/*.md`. With `skipUnreadable`, a directory that cannot be
+/// read is left out rather than failing.
+pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! __fs.FsError {
     // The directory to walk: the components before the first with a
     // wildcard, which the pattern's are matched below.
     let parts = pattern.split("/")
@@ -102,7 +139,11 @@ pub fn glob(pattern: String): Array[String] ! __fs.FsError {
     }
     let rest = parts.slice(literal, parts.length()).unwrapOr([]).join("/")
     let directory = if base.isEmpty() and pattern.startsWith("/") { "/" } else { base }
-    let walked = fsNative.walk(if directory.isEmpty() { "." } else { directory }, depth(rest))
+    let walked = fsNative.walk(
+        if directory.isEmpty() { "." } else { directory },
+        depth(rest),
+        skipUnreadable,
+    )
     // No directory there: nothing matches.
     match fsNative.failure(walked) {
         code if code == 1 or code == 4 => return []

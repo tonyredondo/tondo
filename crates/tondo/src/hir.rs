@@ -1469,7 +1469,7 @@ pub const NATIVES: &[Native] = {
         fs("texts", &[Object], Strings, "tondo_rt_files_texts"),
         fs("numbers", &[Object], Ints, "tondo_rt_files_numbers"),
         fs("stat", &[String], Object, "tondo_rt_files_stat"),
-        fs("walk", &[String, Int], Object, "tondo_rt_files_walk"),
+        fs("walk", &[String, Int, Bool], Object, "tondo_rt_files_walk"),
         fs("hostError", &[Object], Int, "tondo_rt_files_host_error"),
         fs("temporary", &[Bool, String, String], Object, "tondo_rt_files_temporary"),
         fs("setPermissions", &[String, Int], Object, "tondo_rt_files_set_permissions"),

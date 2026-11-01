@@ -1,0 +1,43 @@
+// `fs.walk` with `enter`, which decides whether to go into each directory,
+// and `walk` and `glob` with `skipUnreadable`, which leave out a directory
+// that cannot be read. Root reads every directory, so the case says what
+// it expects of both.
+
+import std.console
+import std.env
+import std.fs
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    defer {
+        _ = fs.setPermissions("{dir}/locked", 0o755)
+        _ = fs.remove(dir, recursive: true)
+    }
+    for each in ["src/a.to", "src/deep/b.to", "node_modules/x/c.js", "locked/d.txt"] {
+        let path = "{dir}/{each}"
+        fs.createDirectory(path.slice(0, path.findLast("/").unwrapOr(0)).unwrapOr(dir))?
+        fs.writeText(path, "")?
+    }
+    let short = (entries: Array[fs.Entry]) {
+        entries.map((entry) { entry.path.removePrefix("{dir}/") })
+    }
+    let pruned = fs.walk(dir, enter: (entry) { not entry.path.endsWith("/node_modules") })?
+    console.println("{short(pruned)}")
+    fs.setPermissions("{dir}/locked", 0o000)?
+    let unreadable = env.user().id != 0
+    console.println("{fs.walk(dir).isErr() == unreadable}")
+    let skipped = short(fs.walk(dir, skipUnreadable: true)?)
+    console.println(
+        "{("locked/d.txt" in skipped) != unreadable} {skipped.filter((path) { path != "locked/d.txt" })}",
+    )
+    console.println("{fs.glob("{dir}/**/*.to", skipUnreadable: true)?.length()}")
+    console.println(
+        "{short(fs.walk(dir, enter: (entry) { entry.path.endsWith("/src") }, skipUnreadable: true)?)}",
+    )
+}
+
+// expect-stdout: [locked, locked/d.txt, node_modules, src, src/a.to, src/deep, src/deep/b.to]
+// expect-stdout: true
+// expect-stdout: true [locked, node_modules, node_modules/x, node_modules/x/c.js, src, src/a.to, src/deep, src/deep/b.to]
+// expect-stdout: 2
+// expect-stdout: [locked, node_modules, src, src/a.to, src/deep]

@@ -481,6 +481,9 @@ first layer that has a path. `app.files`, `set.addFiles` and
 and `archive.open(path)?.extract(into)` write and read zip and tar, which
 an archive whose paths would leave `into` cannot use.
 
+`fs.walk(root, enter: (entry) { not entry.path.endsWith("/node_modules") })`
+does not go into the directories `enter` refuses, and `skipUnreadable: true`,
+of `walk` and `glob`, leaves out those that cannot be read.
 `path.matches(pattern, path)` is the glob of `fs.glob`: `*`, `?`, `[a-z]`,
 `{a,b}` and `**`. `fs.metadata` gives `modified`, `permissions`, `inode`,
 `links`, `owner` and `group`; `fs.setPermissions(path, 0o755)`,

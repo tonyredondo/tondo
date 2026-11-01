@@ -3896,3 +3896,16 @@ Rust, without decoding the pixels. EXIF dates are a camera's clock with
 no zone unless the photo gives its offset, so `date` uses the offset when
 there is one and reads the clock as UTC when not, which keeps photos in
 the order they were taken without guessing the zone.
+
+## 2026-11-01 — Walks that prune and skip
+
+A tool that walks a project must not go into `node_modules` or `.git`,
+and one that walks a system must go on past a directory it may not read,
+and `fs.walk` did neither: it read everything and failed on the first
+directory it could not. `enter` decides, for each directory, whether the
+walk goes into it, as Go's `filepath.SkipDir` does, and lists it either
+way; `skipUnreadable` leaves out a directory below the root that cannot
+be read. Without `enter` the runtime still walks the whole tree at once;
+with it, the walk lists one directory at a time, since `enter` runs in
+the program. `fs.watch` now skips such a directory too, rather than
+watching nothing.
