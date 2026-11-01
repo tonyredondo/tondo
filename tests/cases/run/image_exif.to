@@ -2,11 +2,15 @@
 // camera and how it is turned, and each tag as text.
 
 import std.console
-import std.fs
+import std.embed
 import std.image
 
-fn main(): !fs.FsError {
-    let found = image.exif(fs.readBytes("image_exif.jpg")?)
+const Photo: Array[Byte] = embed.bytes("image_exif.jpg")
+
+const Turned: Array[Byte] = embed.bytes("image_turned.jpg")
+
+fn main() {
+    let found = image.exif(Photo)
     match found {
         some(exif) => {
             console.println("{exif.date} {exif.camera} {exif.orientation}")
@@ -23,7 +27,7 @@ fn main(): !fs.FsError {
         "{image.exif(image.blank(2, 2, image.Color.rgb(0, 0, 0)).encode(image.Format.Png).unwrapOr([])).isNone()}",
     )
     console.println("{image.exif([]).isNone()}")
-    console.println("{image.exif(fs.readBytes("image_turned.jpg")?).map((e) { e.orientation })}")
+    console.println("{image.exif(Turned).map((e) { e.orientation })}")
 }
 
 // expect-stdout: some(2024-05-17T12:30:00Z) some(Canon EOS R5) 1
