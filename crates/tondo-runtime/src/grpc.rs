@@ -20,6 +20,7 @@ type Body = UnsyncBoxBody<Bytes, std::io::Error>;
 
 /// The codes of gRPC's status that the transport gives itself.
 const CANCELLED: i64 = 1;
+const RESOURCE_EXHAUSTED: i64 = 8;
 const INTERNAL: i64 = 13;
 const UNAVAILABLE: i64 = 14;
 const UNKNOWN: i64 = 2;
@@ -199,6 +200,8 @@ struct Call {
     message: Mutex<Bytes>,
     status: Mutex<(i64, String, Vec<String>)>,
     ended: Arc<Ended>,
+    /// Whether it sends its messages compressed with gzip.
+    compressed: bool,
 }
 
 impl Drop for Call {
@@ -276,6 +279,7 @@ async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: 
         return end(code_of_http(head.status.as_u16()), format!("the server answered HTTP {}", head.status));
     }
     events.send(Event::Headers(pairs(&head.headers)));
+    let encoding = head.headers.get("grpc-encoding").and_then(|v| v.to_str().ok()).unwrap_or("identity").to_string();
     // A status in the headers is the whole answer.
     if let Some((code, message)) = status_of(&head.headers) {
         return events.end(code, message, pairs(&head.headers));
@@ -294,14 +298,23 @@ async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: 
                     if buffer.len() < 5 + length {
                         break;
                     }
-                    if buffer[0] != 0 {
-                        return end(
-                            INTERNAL,
-                            "the server compressed a message, which this client did not ask for".into(),
-                        );
-                    }
+                    let compressed = buffer[0] != 0;
                     buffer.advance(5);
-                    events.send(Event::Message(buffer.split_to(length).freeze()));
+                    let message = buffer.split_to(length).freeze();
+                    let message = match (compressed, encoding.as_str()) {
+                        (false, _) => message,
+                        (true, "gzip") => match gunzip(&message) {
+                            Ok(message) => Bytes::from(message),
+                            Err((code, problem)) => return end(code, format!("a message of the server {problem}")),
+                        },
+                        (true, other) => {
+                            let problem = format!(
+                                "the server compressed a message with `{other}`, which this client does not read"
+                            );
+                            return end(INTERNAL, problem);
+                        }
+                    };
+                    events.send(Event::Message(message));
                 }
             }
             Err(frame) => {
@@ -335,9 +348,13 @@ fn begin(
     let mut request = hyper::Request::post(format!("{scheme}://{}{}", channel.authority, text(path)))
         .header("content-type", "application/grpc+proto")
         .header("te", "trailers")
+        .header("grpc-accept-encoding", "gzip")
         .header("user-agent", concat!("grpc-tondo/", env!("CARGO_PKG_VERSION")));
+    // A call whose metadata says `grpc-encoding: gzip` compresses its messages.
+    let mut compressed = false;
     for pair in crate::http::strings(headers).chunks(2) {
         if let [name, value] = pair {
+            compressed |= name == "grpc-encoding" && value == "gzip";
             request = request.header(name.as_str(), value.as_str());
         }
     }
@@ -350,7 +367,7 @@ fn begin(
         Err(error) => return Some(finished(INTERNAL, format!("the call's metadata is not valid: {error}"))),
     };
     if single {
-        let _ = outgoing.try_send(framed(&unsafe { array_bytes(message) }));
+        let _ = outgoing.try_send(framed(&unsafe { array_bytes(message) }, compressed));
     }
     let (sender, incoming) = mpsc::unbounded_channel();
     let ended = Arc::new(Ended::default());
@@ -363,6 +380,7 @@ fn begin(
         message: Mutex::new(Bytes::new()),
         status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
         ended,
+        compressed,
     })
 }
 
@@ -379,16 +397,45 @@ fn finished(code: i64, message: String) -> Call {
         message: Mutex::new(Bytes::new()),
         status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
         ended,
+        compressed: false,
     }
 }
 
-/// A message as gRPC frames it: not compressed, after its length.
-fn framed(message: &[u8]) -> Bytes {
+/// A message as gRPC frames it: whether it is compressed, its length and
+/// its bytes.
+fn framed(message: &[u8], compressed: bool) -> Bytes {
+    let packed;
+    let message = if compressed {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let _ = std::io::Write::write_all(&mut encoder, message);
+        packed = encoder.finish().unwrap_or_default();
+        &packed[..]
+    } else {
+        message
+    };
     let mut framed = BytesMut::with_capacity(5 + message.len());
-    framed.extend_from_slice(&[0]);
+    framed.extend_from_slice(&[compressed as u8]);
     framed.extend_from_slice(&(message.len() as u32).to_be_bytes());
     framed.extend_from_slice(message);
     framed.freeze()
+}
+
+/// The most a compressed message may grow to, so that a small one cannot
+/// take all the memory.
+const MOST_DECOMPRESSED: u64 = 16 << 20;
+
+/// A message compressed with gzip, or the code and why it is not one.
+fn gunzip(message: &[u8]) -> Result<Vec<u8>, (i64, &'static str)> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let mut decoder = flate2::read::MultiGzDecoder::new(message).take(MOST_DECOMPRESSED + 1);
+    if decoder.read_to_end(&mut out).is_err() {
+        return Err((INTERNAL, "does not decompress"));
+    }
+    if out.len() as u64 > MOST_DECOMPRESSED {
+        return Err((RESOURCE_EXHAUSTED, "is over 16 MiB once decompressed"));
+    }
+    Ok(out)
 }
 
 /// Starts a call (`begin`).
@@ -413,7 +460,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_send(object: *mut NativeObject, message: 
     let message = unsafe { array_bytes(message) };
     let Some(call) = call(object) else { return 0 };
     let Some(sender) = lock(&call.outgoing).clone() else { return 0 };
-    matches!(wait_for(sender.send(framed(&message))), Some(Ok(()))) as u8
+    matches!(wait_for(sender.send(framed(&message, call.compressed))), Some(Ok(()))) as u8
 }
 
 /// Says the client sent all its messages.
@@ -606,24 +653,31 @@ struct Frames {
     buffer: BytesMut,
     message: Bytes,
     error: String,
+    /// The request's `grpc-encoding`.
+    encoding: String,
 }
 
-/// The frames of a request body's stream.
+/// The frames of a request body's stream, compressed with `encoding`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_grpc_frames(input: *mut crate::io::StreamObject) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_grpc_frames(
+    input: *mut crate::io::StreamObject,
+    encoding: *const Str,
+) -> *mut NativeObject {
     unsafe { crate::tasks::tondo_rt_handle_retain(input as *mut u8) };
     let frames = Frames {
         source: crate::http::Source(input),
         buffer: BytesMut::new(),
         message: Bytes::new(),
         error: String::new(),
+        encoding: text(encoding),
     };
     native::new(Mutex::new(frames))
 }
 
 /// Reads the next message: 1 when there is one, which `frame` gives, 0 at
-/// the end of the body, -1 when it is not gRPC's or -2 when it is
-/// compressed, which `frameError` says.
+/// the end of the body, -1 when it is not gRPC's, -2 when it is compressed
+/// as this server does not read, or -3 when it decompresses to too much,
+/// which `frameError` says.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
     let Some(frames) = native::get::<Mutex<Frames>>(object) else { return -1 };
@@ -632,14 +686,31 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
         if frames.buffer.len() >= 5 {
             let length =
                 u32::from_be_bytes([frames.buffer[1], frames.buffer[2], frames.buffer[3], frames.buffer[4]]) as usize;
-            if frames.buffer[0] != 0 {
-                frames.error = "the client compressed a message, which this server does not accept".into();
-                return -2;
-            }
             if frames.buffer.len() >= 5 + length {
+                let compressed = frames.buffer[0] != 0;
                 frames.buffer.advance(5);
-                frames.message = frames.buffer.split_to(length).freeze();
-                return 1;
+                let message = frames.buffer.split_to(length).freeze();
+                if !compressed {
+                    frames.message = message;
+                    return 1;
+                }
+                if frames.encoding != "gzip" {
+                    frames.error = format!(
+                        "the client compressed a message with `{}`, which this server does not read: send `grpc-encoding: gzip`",
+                        frames.encoding
+                    );
+                    return -2;
+                }
+                match gunzip(&message) {
+                    Ok(message) => {
+                        frames.message = Bytes::from(message);
+                        return 1;
+                    }
+                    Err((code, problem)) => {
+                        frames.error = format!("a message of the client {problem}");
+                        return if code == RESOURCE_EXHAUSTED { -3 } else { -1 };
+                    }
+                }
             }
         }
         let read = crate::io::run(frames.source.0, |s| s.read(64 * 1024));

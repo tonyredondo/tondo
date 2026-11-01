@@ -1,0 +1,75 @@
+// gRPC with gzip: a client that compresses what it sends, a service that
+// compresses what it answers to a client that reads gzip, a server that
+// does not compress and still reads it, and a message that would grow past
+// 16 MiB, which the server does not decompress.
+
+import compression.api.greeter
+import std.console
+import std.grpc
+import std.http
+
+type Greetings = {}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {
+            message: "{request.name.length()} {request.name.slice(0, 3).unwrapOr("")}"
+        }
+    }
+
+    fn repeat(self, _: greeter.HelloRequest, _: Sender[greeter.HelloReply]): !grpc.Status {}
+
+    fn collect(self, _: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {}
+    }
+
+    fn chat(
+        self,
+        input: grpc.Stream[greeter.HelloRequest],
+        out: Sender[greeter.HelloReply],
+    ): !grpc.Status {
+        for each in input {
+            out.send(greeter.HelloReply { message: "echo {each?.name}" })
+        }
+    }
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    var app = http.App.new()
+    app.grpc(greeter.greeter(Greetings {}).compress())
+    let server = app.start()?
+    let big = "abc".repeat(100000)
+    let gzipped = greeter.GreeterClient.on(
+        grpc.connect("http://{server.address()}", compression: grpc.Compression.Gzip)?,
+    )
+    console.println(gzipped.sayHello(greeter.HelloRequest { name: big })?.message)
+    let chat = gzipped.chat()
+    chat.send(greeter.HelloRequest { name: "x" })?
+    chat.closeSend()
+    for each in chat.replies() {
+        console.println(each?.message)
+    }
+    console.println("{chat.headers().get("grpc-encoding")}")
+    match gzipped.sayHello(greeter.HelloRequest { name: "a".repeat(17 << 20) }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    let plain = greeter.GreeterClient.connect("http://{server.address()}")?
+    console.println(plain.sayHello(greeter.HelloRequest { name: big })?.message)
+    server.stop()
+    var other = http.App.new()
+    other.grpc(greeter.greeter(Greetings {}))
+    let second = other.start()?
+    let toPlain = greeter.GreeterClient.on(
+        grpc.connect("http://{second.address()}", compression: grpc.Compression.Gzip)?,
+    )
+    console.println(toPlain.sayHello(greeter.HelloRequest { name: big })?.message)
+    second.stop()
+}
+
+// expect-stdout: 300000 abc
+// expect-stdout: echo x
+// expect-stdout: some(gzip)
+// expect-stdout: ResourceExhausted: a message of the client is over 16 MiB once decompressed
+// expect-stdout: 300000 abc
+// expect-stdout: 300000 abc

@@ -292,6 +292,9 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   answers `Internal`, and so does another error, with
   `result.mapErr(grpc.Status.from)?`; `details: [protobuf.pack(message)]`
   travel with a status.
+- `grpc.connect(target, compression: grpc.Compression.Gzip)` compresses
+  what a client sends, and `service.compress()` what a service answers to
+  a client that reads gzip; both always read it.
 - A call in a `within` sends its deadline; the method runs within it, and
   the client gets its `within`'s `TimedOut` when it passes. A method whose
   client goes is cancelled: its waits end and its `defer` runs.

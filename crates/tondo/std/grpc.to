@@ -6,6 +6,7 @@
 // peer and its deadline, `call()` gives in the method.
 
 import std.encoding as __encoding
+import std.gzip as __gzip
 import std.http as __http
 import std.internal.grpc as grpcNative
 import std.io as __io
@@ -244,6 +245,7 @@ pub type Service = {
     files: Array[__protobuf.FileDescriptor] = []
     /// Other names it answers to.
     priv also: Array[String] = []
+    priv compressing: Bool = false
     priv layers: Array[fn(Call, fn(): !Status): !Status] = []
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
@@ -284,6 +286,12 @@ pub fn Service.onMessage(self, observer: fn(Call, Direction, __reflect.Value)): 
     self with { watchers: self.watchers.concat([observer]) }
 }
 
+/// Compresses the messages the service sends with gzip, to each client
+/// that says it reads gzip. Every server reads compressed messages.
+pub fn Service.compress(self): Service {
+    self with { compressing: true }
+}
+
 impl __http.GrpcService for Service {
     fn serveOn(self, app: mut __http.App) {
         for name in [self.name].concat(self.also) {
@@ -292,7 +300,11 @@ impl __http.GrpcService for Service {
                 let handler = method.handler
                 let layers = self.layers
                 let watchers = self.watchers
-                app.post(path, (request) { serve(request, path, handler, layers, watchers)? })
+                let compressing = self.compressing
+                app.post(
+                    path,
+                    (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                )
             }
         }
     }
@@ -305,6 +317,8 @@ pub type ServerCall = {
     /// Set once the server's headers are to be sent.
     priv ready: grpcNative.Native
     priv watchers: Array[fn(Call, Direction, __reflect.Value)]
+    /// Whether it sends its messages compressed with gzip.
+    priv compressed: Bool
 }
 
 /// Serves a call: runs its method in a task of its own, whose messages go
@@ -315,6 +329,7 @@ fn serve(
     handler: fn(ServerCall): !Status,
     layers: Array[fn(Call, fn(): !Status): !Status],
     watchers: Array[fn(Call, Direction, __reflect.Value)],
+    compressing: Bool,
 ): __http.Reply ! __http.Problem {
     let (output, reader) = __io.pipe()
     let headers = __http.Trailers.new()
@@ -322,6 +337,17 @@ fn serve(
     let ready = grpcNative.signal()
     var metadata = request.headers()
     let timeout = timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
+    let encoding = metadata.get("grpc-encoding").unwrapOr("identity")
+    let accepted = metadata
+        .get("grpc-accept-encoding")
+        .unwrapOr("")
+        .split(",")
+        .map((name) { name.trim() })
+    let compressed = compressing and accepted.contains("gzip")
+    headers.set("grpc-accept-encoding", "gzip")
+    if compressed {
+        headers.set("grpc-encoding", "gzip")
+    }
     for name in [
         "content-type",
         "te",
@@ -333,7 +359,8 @@ fn serve(
         _ = metadata.remove(name)
     }
     let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
-    let server = ServerCall { frames: grpcNative.frames(request.body()), output, ready, watchers }
+    let frames = grpcNative.frames(request.body(), encoding)
+    let server = ServerCall { frames, output, ready, watchers, compressed }
     with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
     spawn detached run(server, handler, layers, timeout, trailers)
     // The headers go once the method sends its first message, or ends.
@@ -474,6 +501,10 @@ pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? !
         }
         0 => none
         -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
+        -3 => fail Status {
+            code: Code.ResourceExhausted
+            message: grpcNative.frameError(self.frames)
+        }
         _ => fail Status { code: Code.InvalidArgument, message: grpcNative.frameError(self.frames) }
     }
 }
@@ -483,16 +514,18 @@ pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message:
     self.start()
     watched(self.watchers, Incoming.call, Direction.Sent, message)
     let bytes = __protobuf.encode(message)
-    match self.output.writeBytes(framed(bytes)) {
+    match self.output.writeBytes(framed(bytes, self.compressed)) {
         ok(_) => {}
         err(error) => fail Status { code: Code.Cancelled, message: "the client is gone: {error}" }
     }
 }
 
-/// A message as gRPC frames it: not compressed, after its length.
-fn framed(bytes: Array[Byte]): Array[Byte] {
-    let flag: Array[Byte] = [0]
-    flag.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+/// A message as gRPC frames it: whether it is compressed, its length and
+/// its bytes.
+fn framed(bytes: Array[Byte], compressed: Bool): Array[Byte] {
+    let message = if compressed { __gzip.compress(bytes) } else { bytes }
+    let flag: Array[Byte] = [if compressed { 1 } else { 0 }]
+    flag.concat(UInt32.wrapping(message.length()).toBytes()).concat(message)
 }
 
 /// A unary method: one request, one reply.
@@ -644,13 +677,22 @@ impl[T: __protobuf.Message + __reflect.Reflect] Iterator[T ! Status] for Stream[
 // Clients
 // ---------------------------------------------------------------------------
 
+/// How a client compresses the messages it sends; every client reads
+/// compressed ones.
+pub enum Compression {
+    None
+    Gzip
+}
+
 /// A connection to a server, which its calls share: `http://host:port`, or
 /// `https://host:port` for TLS, which trusts the system's authorities and,
 /// as the HTTP client does, those of `trust`; `certificate` and `key`
-/// show the server who the client is.
+/// show the server who the client is, and `compression` compresses what it
+/// sends.
 pub type Channel = {
     priv native: grpcNative.Native
     priv target: String
+    priv compression: Compression = Compression.None
     priv layers: Array[fn(Call, fn(Call): !Status): !Status] = []
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
@@ -661,13 +703,14 @@ pub fn connect(
     trust: String = "",
     certificate: String = "",
     key: String = "",
+    compression: Compression = Compression.None,
 ): Channel ! Status {
     let native = grpcNative.channel(target, trust, certificate, key)
     let problem = grpcNative.channelError(native)
     if not problem.isEmpty() {
         fail Status { code: Code.InvalidArgument, message: problem }
     }
-    Channel { native, target: target.removePrefix("https://").removePrefix("http://") }
+    Channel { native, target: target.removePrefix("https://").removePrefix("http://"), compression }
 }
 
 /// Wraps each call the channel makes: `interceptor` gets the call and
@@ -740,7 +783,12 @@ fn Channel.open(self, rpc: Call, opening: Opening, slot: grpcNative.Native?): gr
         }
         none => {}
     }
-    let headers = headersOf(rpc)
+    var headers = headersOf(rpc)
+    // The runtime compresses a call's messages when it says so.
+    match self.compression {
+        Compression.Gzip => headers.extend(["grpc-encoding", "gzip"])
+        Compression.None => {}
+    }
     match slot {
         some(into) => grpcNative.open(
             into,

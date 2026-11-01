@@ -4052,3 +4052,14 @@ protoc's order, the options of `descriptor.proto` by their numbers. An
 option of the program's own, `(name)`, is still left out: writing it needs
 the extension that declares it and its values in protobuf's text format,
 and tools that read a server's reflection do not need it.
+
+## 2026-11-01 — gRPC compresses with gzip when asked
+
+Every client and server reads messages compressed with gzip and says so in
+`grpc-accept-encoding`, but sends them compressed only when the program
+asks, a channel with `compression: Compression.Gzip` and a service with
+`compress()`, as grpc-go does: compressing costs time on every message and
+gains only on large ones, which the program knows and the library does not.
+A server answers compressed only a client that reads gzip. A message that
+would grow past 16 MiB once decompressed is refused, so that a small one
+cannot take all the memory.

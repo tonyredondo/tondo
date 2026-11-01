@@ -6667,10 +6667,13 @@ pub fn bidiStream[In, Out](call: ServerCall, method: fn(Stream[In], Sender[Out])
 pub enum Direction { Received, Sent }
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
 pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
+pub fn Service.compress(self): Service
 
 pub type Stream[T]                                          // Iterator[T ! Status]
 pub type Channel
-pub fn connect(target: String, trust: String = "", certificate: String = "", key: String = ""): Channel ! Status
+pub enum Compression { None, Gzip }
+pub fn connect(target: String, trust: String = "", certificate: String = "", key: String = "",
+    compression: Compression = Compression.None): Channel ! Status
 pub fn Channel.unary[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status
 pub fn Channel.serverStream[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
 pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
@@ -6732,6 +6735,13 @@ pub fn Duplex.trailers(self): Map[String, String]
   cabeceras de la respuesta, antes del primer mensaje, y `setTrailer` en sus
   trailers, con el status. Los valores de los nombres que acaban en `-bin`
   van en base64, como viajan.
+- **Compresión.** Clientes y servidores leen siempre los mensajes
+  comprimidos con gzip y lo anuncian en `grpc-accept-encoding`; otra
+  codificación es `Unimplemented`, y un mensaje que pasaría de 16 MiB al
+  descomprimirse, `ResourceExhausted`. Solo comprime quien lo pide, como en
+  grpc-go: un canal con `compression: Compression.Gzip` comprime lo que
+  envía, y un servicio con `compress()` sus respuestas a un cliente que lee
+  gzip.
 - **Plazos.** Una llamada dentro de un `within` (lenguaje 11.17) envía el
   tiempo que le queda como `grpc-timeout`, redondeado hacia arriba, y el
   método corre dentro de un `within` de ese tiempo: si se acaba, la llamada
@@ -6782,8 +6792,8 @@ pub fn Duplex.trailers(self): Map[String, String]
   lo declara (14.12), con los de los archivos que importa; lo que no conoce
   es `NotFound`. Un servicio de un `.proto` lleva sus `files`, y el de
   `Health` el suyo.
-- **Fuera.** gRPC-Web y Connect, la compresión de los mensajes, el balanceo
-  entre servidores y el mapeo de proto3 a JSON.
+- **Fuera.** gRPC-Web y Connect, el balanceo entre servidores y el mapeo
+  de proto3 a JSON.
 
 ## 15. Contrato exigido a cada módulo
 
