@@ -120,6 +120,15 @@ fn finish<T>(outcome: Outcome<T>, store: impl FnOnce(T)) -> i64 {
 // Whole files and directories
 // ---------------------------------------------------------------------------
 
+/// Whether a file is one `write_atomically` writes through,
+/// `.{name}.tondo-{process}-{count}`, which watches do not report.
+pub(crate) fn temporary(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return false };
+    let Some((_, rest)) = name.strip_prefix('.').and_then(|name| name.rsplit_once(".tondo-")) else { return false };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    rest.split_once('-').is_some_and(|(process, count)| digits(process) && digits(count))
+}
+
 /// Writes through a temporary file in the same directory and a rename: the
 /// file a link names, keeping the permissions of the one it replaces.
 fn write_atomically(path: &str, data: &[u8]) -> Outcome<()> {

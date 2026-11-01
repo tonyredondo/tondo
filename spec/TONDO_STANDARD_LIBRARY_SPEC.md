@@ -1301,6 +1301,8 @@ pub fn File.reader(self): io.Reader
   `settle`), un lote con cada path cambiado una vez, ordenados por bytes, y lo
   que le pasó en total: un archivo creado y después modificado es `Created`, y
   uno creado y borrado no aparece. Un rename es un `Removed` y un `Created`.
+  El archivo temporal de `writeText` y `writeBytes` no aparece: el archivo
+  que escriben se crea o cambia de una vez.
   Cada `path` es el vigilado unido al camino de la entrada, como en `walk`, y
   un directorio vigilado no cambia por lo que contiene. Vigilar termina cuando
   no queda ninguna copia del `Receiver`; un path que no existe es `NotFound`.

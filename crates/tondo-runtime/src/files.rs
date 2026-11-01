@@ -498,6 +498,10 @@ fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<PathBuf>
     }
     let mut states: BTreeMap<String, &str> = BTreeMap::new();
     while let Some(path) = pending.pop() {
+        // A file `fs` writes whole appears or changes at once.
+        if crate::fs::temporary(&path) {
+            continue;
+        }
         let after = stamp(&path);
         let before = match after {
             Some(found) => watch.existing.insert(path.clone(), found),
