@@ -227,6 +227,9 @@ such a module: `src/api/user.proto` is `import app.api.user`, whose
 messages are records (`user_id` is `userId`, `Outer.Inner` is
 `OuterInner`), whose enums drop their prefix (`STATUS_ACTIVE` of `Status`
 is `Status.Active`) and whose services are gRPC's (`tondo guide http`).
+`protobuf.toJson(message)` and `protobuf.fromJson[T](text)` follow proto3's
+mapping to JSON, as Go's protojson does: lowerCamel names (`protoNames:
+true` for the `.proto`'s), 64-bit integers as text, an `Any` with `@type`.
 
 ```tondo
 import std.console

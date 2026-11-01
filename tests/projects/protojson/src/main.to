@@ -1,0 +1,91 @@
+// proto3's mapping to JSON, as Go's protojson writes and reads it: every
+// kind of field, with its JSON names or its `.proto` names, an `Any` of a
+// message and of a duration, what reading takes besides what writing gives,
+// and what it refuses.
+
+import protojson.api.every
+import std.console
+import std.json
+import std.protobuf
+import std.time
+
+fn main(): !protobuf.ProtobufError {
+    let inner = every.Inner { displayName: "Ada \"Lovelace\"", bigNumbers: [9007199254740993, -1] }
+    let value = every.Every {
+        smallInt: -5
+        bigInt: -9007199254740993
+        smallUint: 4000000000
+        bigUint: 18446744073709551615
+        zigSmall: -7
+        zigBig: 123456789012
+        fixedSmall: 1
+        fixedBig: 2
+        sfixedSmall: -3
+        sfixedBig: -4
+        single: 1.5
+        twice: 0.1
+        flag: true
+        text: "héllo\n"
+        blob: [0, 255, 10, 62, 63]
+        mood: every.Mood.Sad
+        inner: some(inner)
+        inners: [inner, every.Inner {}]
+        moods: [every.Mood.Happy, every.Mood.Sad]
+        byName: ["k": inner]
+        byNumber: [3: "three", -1: "minus"]
+        byFlag: [true: 5, false: -6]
+        at: some(time.utc(time.seconds(1700000000) + time.nanoseconds(1500)))
+        took: some(time.seconds(-3) - time.milliseconds(500))
+        object: json.parse("{{\"a\": 1, \"b\": [true, null, \"x\"]}}").unwrapOr(json.Value.Null)
+        value: json.parse("2.5").unwrapOr(json.Value.Null)
+        list: json.parse("[1, \"two\"]").unwrapOr(json.Value.Null)
+        mask: some(protobuf.FieldMask { paths: ["display_name", "inner.big_numbers"] })
+        anyMessage: some(protobuf.pack(inner))
+        anyDuration: some(protobuf.Any {
+            typeUrl: "type.googleapis.com/google.protobuf.Duration"
+            value: [8, 3, 16, 128, 202, 181, 238, 1]
+        })
+        nothing: some(protobuf.Empty {})
+        wrappedBig: some(7)
+        wrappedText: some("")
+        wrappedFlag: some(false)
+        choice: some(every.EveryChoice.PickedInner(every.Inner { displayName: "chosen" }))
+        maybe: some(0)
+        renamed: "r"
+        notNumber: Float.nan
+        infinite: -1.0 / 0.0
+    }
+    let text = protobuf.toJson(value)?
+    console.println(text)
+    console.println(protobuf.toJson(value, protoNames: true)?)
+    let back = protobuf.fromJson[every.Every](text)?
+    console.println(
+        "{protobuf.encode(back, deterministic: true) == protobuf.encode(value, deterministic: true)}",
+    )
+    // `.proto` names, an enum by number, an `int64` as a number and Base64
+    // of URLs.
+    let lenient =
+        "{{\"small_int\": 3, \"big_int\": 7, \"mood\": 1, \"blob\": \"AP8-Pw\", \"inner\": null}}"
+    console.println(protobuf.toJson(protobuf.fromJson[every.Every](lenient)?)?)
+    for wrong in ["{{\"nope\": 1}}", "{{\"smallInt\": \"x\"}}", "{{\"took\": \"3\"}}", "[1]"] {
+        match protobuf.fromJson[every.Every](wrong) {
+            ok(_) => console.println("read")
+            err(error) => console.println("{error}")
+        }
+    }
+    console.println(
+        protobuf.toJson(
+            protobuf.fromJson[every.Every]("{{\"nope\": 1, \"flag\": true}}", ignoreUnknown: true)?,
+        )?,
+    )
+}
+
+// expect-stdout: {"smallInt":-5,"bigInt":"-9007199254740993","smallUint":4000000000,"bigUint":"18446744073709551615","zigSmall":-7,"zigBig":"123456789012","fixedSmall":1,"fixedBig":"2","sfixedSmall":-3,"sfixedBig":"-4","single":1.5,"twice":0.1,"flag":true,"text":"héllo\n","blob":"AP8KPj8=","mood":"MOOD_SAD","inner":{"displayName":"Ada \"Lovelace\"","bigNumbers":["9007199254740993","-1"]},"inners":[{"displayName":"Ada \"Lovelace\"","bigNumbers":["9007199254740993","-1"]},{}],"moods":["MOOD_HAPPY","MOOD_SAD"],"byName":{"k":{"displayName":"Ada \"Lovelace\"","bigNumbers":["9007199254740993","-1"]}},"byNumber":{"-1":"minus","3":"three"},"byFlag":{"false":"-6","true":"5"},"at":"2023-11-14T22:13:20.000001500Z","took":"-3.500s","object":{"a":1,"b":[true,null,"x"]},"value":2.5,"list":[1,"two"],"mask":"displayName,inner.bigNumbers","anyMessage":{"@type":"type.googleapis.com/every.v1.Inner","displayName":"Ada \"Lovelace\"","bigNumbers":["9007199254740993","-1"]},"anyDuration":{"@type":"type.googleapis.com/google.protobuf.Duration","value":"3.500s"},"nothing":{},"wrappedBig":"7","wrappedText":"","wrappedFlag":false,"maybe":0,"otherName":"r","notNumber":"NaN","infinite":"-Infinity","pickedInner":{"displayName":"chosen"}}
+// expect-stdout: {"small_int":-5,"big_int":"-9007199254740993","small_uint":4000000000,"big_uint":"18446744073709551615","zig_small":-7,"zig_big":"123456789012","fixed_small":1,"fixed_big":"2","sfixed_small":-3,"sfixed_big":"-4","single":1.5,"twice":0.1,"flag":true,"text":"héllo\n","blob":"AP8KPj8=","mood":"MOOD_SAD","inner":{"display_name":"Ada \"Lovelace\"","big_numbers":["9007199254740993","-1"]},"inners":[{"display_name":"Ada \"Lovelace\"","big_numbers":["9007199254740993","-1"]},{}],"moods":["MOOD_HAPPY","MOOD_SAD"],"by_name":{"k":{"display_name":"Ada \"Lovelace\"","big_numbers":["9007199254740993","-1"]}},"by_number":{"-1":"minus","3":"three"},"by_flag":{"false":"-6","true":"5"},"at":"2023-11-14T22:13:20.000001500Z","took":"-3.500s","object":{"a":1,"b":[true,null,"x"]},"value":2.5,"list":[1,"two"],"mask":"displayName,inner.bigNumbers","any_message":{"@type":"type.googleapis.com/every.v1.Inner","display_name":"Ada \"Lovelace\"","big_numbers":["9007199254740993","-1"]},"any_duration":{"@type":"type.googleapis.com/google.protobuf.Duration","value":"3.500s"},"nothing":{},"wrapped_big":"7","wrapped_text":"","wrapped_flag":false,"maybe":0,"renamed":"r","not_number":"NaN","infinite":"-Infinity","picked_inner":{"display_name":"chosen"}}
+// expect-stdout: true
+// expect-stdout: {"smallInt":3,"bigInt":"7","blob":"AP8+Pw==","mood":"MOOD_HAPPY"}
+// expect-stdout: the message has no field `nope` at $.nope
+// expect-stdout: expected an integer at $.smallInt
+// expect-stdout: expected seconds, as `1.5s` at $.took
+// expect-stdout: expected an object at $
+// expect-stdout: {"flag":true}

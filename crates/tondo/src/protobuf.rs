@@ -30,6 +30,8 @@ struct Annotated {
     number: i64,
     encoding: String,
     packed: bool,
+    /// Its name in the `.proto`, when it is not the field's.
+    name: Option<String>,
 }
 
 /// What a value of a field's type is to protobuf.
@@ -45,8 +47,9 @@ enum Kind {
     Message(String, bool),
     /// A protobuf enum, by its type as written.
     Enum(String),
-    /// A `oneof`: each variant's name, number and kind.
-    OneOf(Vec<(String, i64, Kind)>),
+    /// A `oneof`: each variant's name, number, kind and name in the
+    /// `.proto`.
+    OneOf(Vec<(String, i64, Kind, String)>),
 }
 
 /// The shape of a field: its kind once, or optional, repeated or a map.
@@ -151,13 +154,14 @@ impl Generator<'_> {
     /// The number, encoding and packing an annotation gives.
     fn annotated(&self, uses: &[ast::AnnotationUse], name: &str) -> Option<Annotated> {
         let found = annotation(uses, self.alias, name)?;
-        let mut annotated = Annotated { number: 0, encoding: "Default".into(), packed: true };
+        let mut annotated = Annotated { number: 0, encoding: "Default".into(), packed: true, name: None };
         for arg in &found.args {
             let text = self.text(arg.value.span);
             match arg.name.as_ref().map(|n| n.name.as_str()) {
                 None | Some("number") => annotated.number = text.replace('_', "").parse().unwrap_or(-1),
                 Some("encoding") => annotated.encoding = text.rsplit('.').next().unwrap_or("").to_string(),
                 Some("packed") => annotated.packed = text != "false",
+                Some("name") => annotated.name = Some(text.trim_matches('"').to_string()),
                 _ => {}
             }
         }
@@ -304,7 +308,14 @@ impl Generator<'_> {
                         }
                         kind => kind,
                     };
-                    variants.push((variant.name.name.clone(), annotated.number, qualified));
+                    // A variant's name in the `.proto`: its own, or the
+                    // variant's in lowercase from its first letter.
+                    let vname = &variant.name.name;
+                    let proto = annotated.name.clone().unwrap_or_else(|| {
+                        let mut chars = vname.chars();
+                        chars.next().map_or_else(String::new, |c| c.to_lowercase().chain(chars).collect())
+                    });
+                    variants.push((vname.clone(), annotated.number, qualified, proto));
                 }
                 Ok(Kind::OneOf(variants))
             }
@@ -384,13 +395,17 @@ impl Generator<'_> {
         let mut parts = Vec::new();
         let mut unknown: Option<String> = None;
         let mut numbers: Vec<(i64, &str)> = Vec::new();
+        // The JSON of the message, field by field, as the bytes are.
+        let mut json_write = String::new();
+        let mut json_arms = String::new();
+        let mut aliases: Vec<(String, String)> = Vec::new();
         let mut failed = false;
         for field in fields {
             let fname = &field.name.name;
             let local = format!("__{fname}");
             // The field that keeps unknown fields needs no number, nor does
             // a `oneof`, whose variants have theirs.
-            let plain = || Annotated { number: 0, encoding: "Default".into(), packed: true };
+            let plain = || Annotated { number: 0, encoding: "Default".into(), packed: true, name: None };
             let oneof = matches!(&field.ty.kind, ast::TypeKind::Optional(inner) if matches!(self.kind(inner, "Default"), Ok(Kind::OneOf(_))));
             let Some(annotated) = self
                 .annotated(&field.uses, "Field")
@@ -450,6 +465,12 @@ impl Generator<'_> {
             let default = field.default.as_ref().map(|d| self.text(d.span));
             let ty = self.text(field.ty.span);
             let number = annotated.number;
+            // Its names in JSON: lowerCamel, or `@name`; and the `.proto`'s.
+            let proto_name = annotated.name.clone().unwrap_or_else(|| fname.clone());
+            let json = named(&field.annotations).unwrap_or_else(|| json_name(&proto_name));
+            let field_keys = keys(&json, &mut aliases, &proto_name);
+            let path = format!("$.{json}");
+            let named_field = format!("out.field({json:?}, {proto_name:?})");
             match &shape {
                 Shape::Single(kind) => {
                     let value = format!("self.{fname}");
@@ -466,11 +487,18 @@ impl Generator<'_> {
                                 "        if {condition} {{\n            {}\n        }}",
                                 put(kind, number, &value)
                             );
+                            let _ = writeln!(
+                                json_write,
+                                "        if {condition} {{\n            {named_field}\n            {}\n        }}",
+                                json_put(kind, &value)
+                            );
                         }
                         _ => {
                             let _ = writeln!(write, "        {}", put(kind, number, &value));
+                            let _ = writeln!(json_write, "        {named_field}\n        {}", json_put(kind, &value));
                         }
                     }
+                    json_arms.push_str(&json_arm(&field_keys, kind, &path, &local, default.is_none()));
                     match &default {
                         Some(default) => {
                             let _ = writeln!(locals, "        var {local}: {ty} = {default}");
@@ -491,17 +519,40 @@ impl Generator<'_> {
                 Shape::Optional(Kind::OneOf(variants)) => {
                     let _ =
                         writeln!(write, "        match self.{fname} {{\n            some(chosen) => match chosen {{");
-                    for (variant, number, kind) in variants {
+                    let _ = writeln!(
+                        json_write,
+                        "        match self.{fname} {{\n            some(chosen) => match chosen {{"
+                    );
+                    for (variant, number, kind, proto) in variants {
                         let enum_name = ty.trim_end_matches('?');
                         let _ = writeln!(
                             write,
                             "                {enum_name}.{variant}(value) => {}",
                             put(kind, *number, "value")
                         );
+                        let json = json_name(proto);
+                        let _ = writeln!(
+                            json_write,
+                            "                {enum_name}.{variant}(value) => {{\n                    out.field({json:?}, {proto:?})\n                    {}\n                }}",
+                            json_put(kind, "value")
+                        );
+                        let read = json_read(kind, "field", &format!("$.{json}"));
+                        let arm = match kind {
+                            Kind::Enum(_) => format!(
+                                "                {} => match {read} {{\n                    some(found) => {local} = some({enum_name}.{variant}(found))\n                    none => {{}}\n                }}\n",
+                                keys(&json, &mut aliases, proto)
+                            ),
+                            _ => format!(
+                                "                {} => {local} = some({enum_name}.{variant}({read}))\n",
+                                keys(&json, &mut aliases, proto)
+                            ),
+                        };
+                        json_arms.push_str(&arm);
                     }
+                    let _ = writeln!(json_write, "            }}\n            none => {{}}\n        }}");
                     let _ = writeln!(write, "            }}\n            none => {{}}\n        }}");
                     let _ = writeln!(locals, "        var {local}: {ty} = none");
-                    for (variant, number, kind) in variants {
+                    for (variant, number, kind, _) in variants {
                         let enum_name = ty.trim_end_matches('?');
                         let read = self.read(kind, fname);
                         arms.push_str(&format!(
@@ -527,6 +578,12 @@ impl Generator<'_> {
                     let _ = writeln!(locals, "        var {local}: {ty} = {}", default.as_deref().unwrap_or("none"));
                     arms.push_str(&self.arm(number, kind, fname, &local, true));
                     parts.push(format!("{fname}: {local}"));
+                    let _ = writeln!(
+                        json_write,
+                        "        match self.{fname} {{\n            some(value) => {{\n                {named_field}\n                {}\n            }}\n            none => {{}}\n        }}",
+                        json_put(kind, "value")
+                    );
+                    json_arms.push_str(&json_arm(&field_keys, kind, &path, &local, true));
                 }
                 Shape::Wrapped(kind) => {
                     let Kind::Scalar(scalar) = kind else { unreachable!("a wrapper holds a scalar") };
@@ -547,6 +604,12 @@ impl Generator<'_> {
                         self.read(kind, fname)
                     ));
                     parts.push(format!("{fname}: {local}"));
+                    let _ = writeln!(
+                        json_write,
+                        "        match self.{fname} {{\n            some(value) => {{\n                {named_field}\n                {}\n            }}\n            none => {{}}\n        }}",
+                        json_put(kind, "value")
+                    );
+                    json_arms.push_str(&json_arm(&field_keys, kind, &path, &local, true));
                 }
                 Shape::Repeated(kind) => {
                     let packable = matches!(kind, Kind::Enum(_))
@@ -580,6 +643,22 @@ impl Generator<'_> {
                         arms.push_str(&format!("                {number} => {push}\n"));
                     }
                     parts.push(format!("{fname}: {local}"));
+                    let _ = writeln!(
+                        json_write,
+                        "        if not self.{fname}.isEmpty() {{\n            {named_field}\n            out.beginArray()\n            for value in self.{fname} {{\n                {}\n            }}\n            out.endArray()\n        }}",
+                        json_put(kind, "value")
+                    );
+                    let read = json_read(kind, "item", &path);
+                    let push = match kind {
+                        Kind::Enum(_) => format!(
+                            "match {read} {{\n                        some(found) => {local}.push(found)\n                        none => {{}}\n                    }}"
+                        ),
+                        _ => format!("{local}.push({read})"),
+                    };
+                    let _ = writeln!(
+                        json_arms,
+                        "                {field_keys} => {{\n                    for item in input.array(field, {path:?})? {{\n                        {push}\n                    }}\n                }}"
+                    );
                 }
                 Shape::Map(key, value) => {
                     let _ = writeln!(
@@ -603,6 +682,27 @@ impl Generator<'_> {
                         self.missing_value(value)
                     ));
                     parts.push(format!("{fname}: {local}"));
+                    let _ = writeln!(
+                        json_write,
+                        "        if not self.{fname}.isEmpty() {{\n            {named_field}\n            out.begin()\n            for (key, value) in {p}.entries(self.{fname}, true) {{\n                out.key(\"{{key}}\")\n                {}\n            }}\n            out.end()\n        }}",
+                        json_put(value, "value")
+                    );
+                    let key_read = match *key_scalar {
+                        "string" => "entryKey".to_string(),
+                        "bool" => format!("input.boolKey(entryKey, {path:?})?"),
+                        scalar => format!("input.{}(input.text(entryKey), {path:?})?", json_method(scalar)),
+                    };
+                    let read = json_read(value, "entryValue", &path);
+                    let put_entry = match value {
+                        Kind::Enum(_) => format!(
+                            "match {read} {{\n                        some(found) => {local}[{key_read}] = found\n                        none => {{}}\n                    }}"
+                        ),
+                        _ => format!("{local}[{key_read}] = {read}"),
+                    };
+                    let _ = writeln!(
+                        json_arms,
+                        "                {field_keys} => {{\n                    for (entryKey, entryValue) in input.entries(field, {path:?})? {{\n                        {put_entry}\n                    }}\n                }}"
+                    );
                 }
                 Shape::Unknown => unreachable!("handled above"),
             }
@@ -615,6 +715,17 @@ impl Generator<'_> {
             None => "input.skip()?".to_string(),
         };
         let full = self.full_name(&t.uses, name);
+        // A field's `.proto` name becomes its JSON name, which the arms match.
+        let (renaming, matched) = if aliases.is_empty() {
+            (String::new(), "key")
+        } else {
+            let mut renaming = String::from("            let __key = match key {\n");
+            for (from, to) in &aliases {
+                let _ = writeln!(renaming, "                {from:?} => {to:?}");
+            }
+            renaming.push_str("                _ => key\n            }\n");
+            (renaming, "__key")
+        };
         let mut out = format!("impl {p}.Message for {name} {{\n    fn writeTo(self, out: {p}.Writer) {{\n");
         // A message's own fields first, then those it did not know.
         let (own, kept): (Vec<&str>, Vec<&str>) =
@@ -625,7 +736,8 @@ impl Generator<'_> {
         }
         let _ = write!(
             out,
-            "    }}\n\n    fn readFrom(input: {p}.Reader): {name} ! {p}.ProtobufError {{\n{locals}        for {{\n            match input.next()? {{\n                0 => break\n{arms}                _ => {fallback}\n            }}\n        }}\n{checks}        {name} {{ {} }}\n    }}\n\n    fn protobufName(): String {{\n        {full:?}\n    }}\n}}\n\n",
+            "    }}\n\n    fn readFrom(input: {p}.Reader): {name} ! {p}.ProtobufError {{\n{locals}        for {{\n            match input.next()? {{\n                0 => break\n{arms}                _ => {fallback}\n            }}\n        }}\n{checks}        {name} {{ {} }}\n    }}\n\n    fn protobufName(): String {{\n        {full:?}\n    }}\n\n    fn writeJson(self, out: {p}.JsonWriter): !{p}.ProtobufError {{\n        out.begin()\n{json_write}        out.end()\n    }}\n\n    fn readJson(input: {p}.JsonReader, document: {p}.JsonValue): {name} ! {p}.ProtobufError {{\n{locals}        for (key, field) in input.fields(document, \"$\")? {{\n{renaming}            match {matched} {{\n{json_arms}                _ => input.unknown(key, \"$\")?\n            }}\n        }}\n{checks}        {name} {{ {} }}\n    }}\n}}\n\n",
+            parts.join(", "),
             parts.join(", ")
         );
         Some(out)
@@ -744,7 +856,31 @@ impl Generator<'_> {
             }
             None => out.push_str("            _ => none\n"),
         }
-        out.push_str("        }\n    }\n}\n\n");
+        out.push_str("        }\n    }\n");
+        // Its values' names in the `.proto`, `@name` or the variant's, which
+        // JSON writes and reads.
+        let proto = |variant: &str| {
+            e.variants
+                .iter()
+                .find(|v| v.name.name == variant)
+                .and_then(|v| named(&v.annotations))
+                .unwrap_or_else(|| variant.to_string())
+        };
+        let _ = write!(out, "\n    fn protobufValueName(self): String {{\n        match self {{\n");
+        for (_, variant) in &numbers {
+            let _ = writeln!(out, "            {name}.{variant} => {:?}", proto(variant));
+        }
+        if let Some(open) = open {
+            let _ = writeln!(out, "            {name}.{open}(number) => \"{{number}}\"");
+        }
+        let _ = write!(
+            out,
+            "        }}\n    }}\n\n    fn fromProtobufValueName(name: String): {name}? {{\n        match name {{\n"
+        );
+        for (_, variant) in &numbers {
+            let _ = writeln!(out, "            {:?} => some({name}.{variant})", proto(variant));
+        }
+        out.push_str("            _ => none\n        }\n    }\n}\n\n");
         Some(out)
     }
 }
@@ -795,5 +931,97 @@ fn zero(scalar: &str) -> &'static str {
         "string" => "\"\"",
         "bytes" => "[]",
         _ => "0",
+    }
+}
+
+/// The text of `@name("text")` among a field's annotations.
+fn named(annotations: &[ast::Annotation]) -> Option<String> {
+    annotations.iter().find(|a| a.name.name == "name").and_then(|a| match &a.argument {
+        Some(ast::AnnotationArg::Text(text)) => Some(text.clone()),
+        _ => None,
+    })
+}
+
+/// A field's name in JSON, as protoc gives it: `user_id` is `userId`.
+fn json_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for c in name.chars() {
+        if c == '_' {
+            upper = true;
+        } else if upper {
+            out.push(c.to_ascii_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The pattern of a field's key in JSON, its JSON name; its `.proto` name,
+/// which reading takes too, becomes it first.
+fn keys(json: &str, aliases: &mut Vec<(String, String)>, proto: &str) -> String {
+    if json != proto && !aliases.iter().any(|(from, _)| from == proto) {
+        aliases.push((proto.to_string(), json.to_string()));
+    }
+    format!("{json:?}")
+}
+
+/// The method of `JsonWriter` and `JsonReader` for a scalar.
+fn json_method(scalar: &str) -> &'static str {
+    match scalar {
+        "int32" | "sint32" | "sfixed32" => "int32",
+        "uint32" | "fixed32" => "uint32",
+        "int64" | "sint64" | "sfixed64" => "int64",
+        "uint64" | "fixed64" => "uint64",
+        "bool" => "bool",
+        "float" => "float",
+        "double" => "double",
+        "string" => "string",
+        _ => "bytes",
+    }
+}
+
+/// The statement that writes a value of a kind as JSON.
+fn json_put(kind: &Kind, value: &str) -> String {
+    match kind {
+        Kind::Scalar(scalar) => format!("out.{}({value})", json_method(scalar)),
+        Kind::Timestamp => format!("out.timestamp({value})"),
+        Kind::Duration => format!("out.duration({value})"),
+        Kind::Json(_) => format!("out.jsonValue({value})"),
+        Kind::Message(..) => format!("out.message({value})?"),
+        Kind::Enum(_) => format!("out.enumValue({value})"),
+        Kind::OneOf(..) => unreachable!("a oneof is written by its variants"),
+    }
+}
+
+/// The expression that reads a value of a kind from the JSON in `value`;
+/// an enum's gives an option.
+fn json_read(kind: &Kind, value: &str, path: &str) -> String {
+    match kind {
+        Kind::Scalar(scalar) => format!("input.{}({value}, {path:?})?", json_method(scalar)),
+        Kind::Timestamp => format!("input.timestamp({value}, {path:?})?"),
+        Kind::Duration => format!("input.duration({value}, {path:?})?"),
+        Kind::Json(_) => format!("input.jsonValue({value}, {path:?})?"),
+        Kind::Message(ty, _) => format!("input.message[{ty}]({value}, {path:?})?"),
+        Kind::Enum(ty) => format!("input.enumValue[{ty}]({value}, {path:?})?"),
+        Kind::OneOf(..) => unreachable!("a oneof is read by its variants"),
+    }
+}
+
+/// The match arm that reads a field of JSON into `local`, wrapped in
+/// `some` when the local is optional.
+fn json_arm(keys: &str, kind: &Kind, path: &str, local: &str, optional: bool) -> String {
+    let read = json_read(kind, "field", path);
+    match (kind, optional) {
+        (Kind::Enum(_), true) => format!(
+            "                {keys} => match {read} {{\n                    some(found) => {local} = some(found)\n                    none => {{}}\n                }}\n"
+        ),
+        (Kind::Enum(_), false) => format!(
+            "                {keys} => match {read} {{\n                    some(found) => {local} = found\n                    none => {{}}\n                }}\n"
+        ),
+        (_, true) => format!("                {keys} => {local} = some({read})\n"),
+        (_, false) => format!("                {keys} => {local} = {read}\n"),
     }
 }

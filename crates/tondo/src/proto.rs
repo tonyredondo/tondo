@@ -1216,8 +1216,13 @@ impl Translator<'_> {
                 let encoding = annotation_encoding(resolved.encoding);
                 // A wrapper in a oneof holds its value as it is.
                 let ty = resolved.ty.clone();
-                let _ =
-                    writeln!(variants, "    @protobuf.Field({}{encoding}) {}({ty})", field.number, pascal(&field.name));
+                let _ = writeln!(
+                    variants,
+                    "    @protobuf.Field({}{encoding}, name: {:?}) {}({ty})",
+                    field.number,
+                    field.name,
+                    pascal(&field.name)
+                );
             }
             let _ = write!(self.body, "pub enum {enum_name} {{\n{variants}}}\n\n");
             let field_name = unique(camel(&oneof.name), &taken);
@@ -1254,6 +1259,9 @@ impl Translator<'_> {
             Some(json) if *json != name => format!(" @name({json:?})"),
             _ => String::new(),
         };
+        // Its name in the `.proto`, which JSON reads, when the field's is
+        // another.
+        let proto = if field.name == name { String::new() } else { format!(", name: {:?}", field.name) };
         if !(1..=536_870_911).contains(&field.number) {
             self.diags.error(
                 "E1911",
@@ -1271,7 +1279,7 @@ impl Translator<'_> {
             let encoding = annotation_encoding(value.encoding);
             let value_ty = if value.wrapper { format!("{}?", value.ty) } else { value.ty.clone() };
             return Some(format!(
-                "    @protobuf.Field({}{encoding}){renamed} {name}: Map[{}, {value_ty}] = [:]\n",
+                "    @protobuf.Field({}{encoding}{proto}){renamed} {name}: Map[{}, {value_ty}] = [:]\n",
                 field.number, key.ty
             ));
         }
@@ -1283,7 +1291,7 @@ impl Translator<'_> {
                 _ => format!("{ty}? = none"),
             };
             return Some(format!(
-                "    @protobuf.Field({}, encoding: protobuf.Encoding.Group){renamed} {name}: {shape}\n",
+                "    @protobuf.Field({}, encoding: protobuf.Encoding.Group{proto}){renamed} {name}: {shape}\n",
                 field.number
             ));
         }
@@ -1310,7 +1318,7 @@ impl Translator<'_> {
             },
             _ => format!("{ty} = {}", resolved.zero),
         };
-        Some(format!("    @protobuf.Field({}{encoding}{packed}){renamed} {name}: {shape}\n", field.number))
+        Some(format!("    @protobuf.Field({}{encoding}{packed}{proto}){renamed} {name}: {shape}\n", field.number))
     }
 
     /// The Tondo value of a proto2 default.

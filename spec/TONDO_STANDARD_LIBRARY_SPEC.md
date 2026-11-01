@@ -3831,7 +3831,8 @@ let back = protobuf.decode[User](bytes)?
 La superficie es:
 
 ~~~tondo pseudocode
-pub annotation Field = { number: Int, encoding: Encoding = Encoding.Default, packed: Bool = true }
+pub annotation Field = { number: Int, encoding: Encoding = Encoding.Default, packed: Bool = true,
+    name: String = "" }
 pub enum Encoding { Default, ZigZag, Fixed, Group, Wrapper, Struct, List }
 pub annotation Value = { number: Int }
 pub annotation Name = { name: String }
@@ -3843,10 +3844,14 @@ pub trait Message {
     fn writeTo(self, out: Writer)
     fn readFrom(input: Reader): Self ! ProtobufError
     fn protobufName(): String
+    fn writeJson(self, out: JsonWriter): !ProtobufError
+    fn readJson(input: JsonReader, value: json.Value): Self ! ProtobufError
 }
 pub trait Enum {
     fn number(self): Int32
     fn fromNumber(number: Int32): Self?
+    fn protobufValueName(self): String
+    fn fromProtobufValueName(name: String): Self?
 }
 pub alias ProtobufError = serialization.Error
 
@@ -3854,6 +3859,8 @@ pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte]
 pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
 pub fn encodeTo[T: Message](value: T, out: io.Writer, deterministic: Bool = false): Unit ! io.IoError
 pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
+pub fn toJson[T: Message](message: T, protoNames: Bool = false): String ! ProtobufError
+pub fn fromJson[T: Message](text: String, ignoreUnknown: Bool = false): T ! ProtobufError
 
 pub type Empty = {}
 pub type Any = { typeUrl: String = "", value: Array[Byte] = [] }
@@ -3864,6 +3871,8 @@ pub type FileDescriptor = { name: String, symbols: Array[String] = [], bytes: Ar
 
 pub type Writer       // lo que llama el código del compilador: int32, string, message...
 pub type Reader
+pub type JsonWriter   // y su JSON: field, int64, enumValue, timestamp...
+pub type JsonReader
 ~~~
 
 - **Tipos.** Un campo es un `Int32` (int32), `Int` (int64), `UInt32` (uint32),
@@ -3943,6 +3952,28 @@ anotados de arriba:
 - **Fuera.** Las editions son un error que dice qué escribir. Los `extend`,
   `option`, `reserved` y `extensions` no generan nada, y los campos de una
   extensión viajan como desconocidos.
+- **JSON.** `toJson` y `fromJson` siguen el mapeo de proto3 a JSON, como
+  `protojson` de Go:
+  - los campos van por su nombre en lowerCamel (el de `json_name`, o su
+    `@name`), o con `protoNames` por el del `.proto` (el `name` de
+    `@protobuf.Field`);
+  - los valores por defecto no se escriben;
+  - los enteros de 64 bits van como texto, los bytes en Base64 y los valores
+    de un enum por su nombre;
+  - un `float` o un `double` que no es un número va como `"NaN"`,
+    `"Infinity"` o `"-Infinity"`;
+  - los tipos de Google van en su forma: `Timestamp` en RFC 3339 en UTC,
+    `Duration` como `"1.5s"`, `FieldMask` como texto, los envoltorios como
+    su valor y `Struct`, `Value` y `ListValue` como el JSON que guardan;
+  - un `Any` va con `@type` y los campos de su mensaje, o con `value` para
+    un tipo de Google, y su tipo se busca entre los mensajes del programa,
+    que el compilador lista; uno que no es del programa falla.
+
+  `fromJson` lee los dos nombres de un campo, los números como número o
+  como texto, los valores de un enum por nombre o por número, Base64 de
+  los dos alfabetos y `null` como el valor por defecto; un campo que el
+  mensaje no tiene falla, salvo con `ignoreUnknown`. El compilador escribe
+  `writeJson` y `readJson` de cada mensaje, y los nombres de cada enum.
 - **Servicios.** Un `service` da un trait con sus llamadas, la función que
   hace de un valor que lo implementa el servicio que un servidor sirve, y un
   cliente, de `std.grpc` (14.41).
@@ -6792,8 +6823,7 @@ pub fn Duplex.trailers(self): Map[String, String]
   lo declara (14.12), con los de los archivos que importa; lo que no conoce
   es `NotFound`. Un servicio de un `.proto` lleva sus `files`, y el de
   `Health` el suyo.
-- **Fuera.** gRPC-Web y Connect, el balanceo entre servidores y el mapeo
-  de proto3 a JSON.
+- **Fuera.** gRPC-Web y Connect y el balanceo entre servidores.
 
 ## 15. Contrato exigido a cada módulo
 

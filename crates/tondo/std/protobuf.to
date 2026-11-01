@@ -4,6 +4,7 @@
 // their `Message` and `Enum` implementations from those annotations, field
 // by field, on the runtime's writer and reader of the wire format.
 
+import std.encoding as __encoding
 import std.internal.protobuf as pbNative
 import std.io as __io
 import std.json as __json
@@ -23,6 +24,9 @@ pub annotation Field = {
     number: Int
     encoding: Encoding = Encoding.Default
     packed: Bool = true
+    /// Its name in the `.proto`, when it is not the field's, as `user_id`,
+    /// which JSON reads and, with `protoNames`, writes.
+    name: String = ""
 }
 
 /// How a field is written, where protobuf has several ways for its type.
@@ -92,6 +96,17 @@ pub trait Message {
 
     /// Its full name, as `users.v1.User`.
     fn protobufName(): String
+
+    /// Writes the message as proto3's mapping to JSON gives it, which the
+    /// compiler writes for each message it implements.
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        fail jsonError(serialization.ErrorKind.Unsupported, "$", "this message has no form in JSON")
+    }
+
+    /// The message a JSON value gives, as proto3's mapping reads it.
+    fn readJson(input: JsonReader, value: __json.Value): Self ! ProtobufError {
+        fail jsonError(serialization.ErrorKind.Unsupported, "$", "this message has no form in JSON")
+    }
 }
 
 /// A protobuf enum: the compiler implements it for an enum whose variants
@@ -101,6 +116,17 @@ pub trait Enum {
     fn number(self): Int32
 
     fn fromNumber(number: Int32): Self?
+
+    /// The value's name in the `.proto`, as JSON writes it; its number
+    /// without one.
+    fn protobufValueName(self): String {
+        "{self.number()}"
+    }
+
+    /// The value of a name in the `.proto`.
+    fn fromProtobufValueName(name: String): Self? {
+        none
+    }
 }
 
 /// A failure to read protobuf, with the path of the field and the byte it
@@ -713,6 +739,18 @@ impl Message for Empty {
     fn protobufName(): String {
         "google.protobuf.Empty"
     }
+
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        out.begin()
+        out.end()
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): Empty ! ProtobufError {
+        for (key, _) in input.fields(value, "$")? {
+            input.unknown(key, "$")?
+        }
+        Empty {}
+    }
 }
 
 /// `google.protobuf.Any`: a message of any type, as its bytes and the URL
@@ -749,6 +787,91 @@ impl Message for Any {
     fn protobufName(): String {
         "google.protobuf.Any"
     }
+
+    /// `{"@type": url, ...}` with the fields of the message it holds, or its
+    /// form under `value` for a type of `google.protobuf` that has one.
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        if self.typeUrl.isEmpty() {
+            out.begin()
+            out.end()
+            return
+        }
+        let name = self.typeUrl.split("/").last().unwrapOr(self.typeUrl)
+        let inner = JsonWriter { json: __json.writer(), protoNames: out.protoNames }
+        if not wellKnownToJson(name, self.value, inner)? {
+            let known = match knownMessage(name) {
+                some(known) => known
+                none => fail jsonError(
+                    serialization.ErrorKind.Unsupported,
+                    "$",
+                    "the `Any` holds `{name}`, which is no message of this program",
+                )
+            }
+            let write = known.toJson
+            write(self.value, inner)?
+        }
+        let held = match __json.parse(inner.json.finish()) {
+            ok(held) => held
+            err(error) => fail jsonError(serialization.ErrorKind.Syntax, "$", "{error}")
+        }
+        out.begin()
+        out.key("@type")
+        out.string(self.typeUrl)
+        match (held, specialJson(name)) {
+            (__json.Value.Object(fields), false) => {
+                for (key, field) in fields {
+                    out.key(key)
+                    out.jsonValue(field)
+                }
+            }
+            (other, _) => {
+                out.key("value")
+                out.jsonValue(other)
+            }
+        }
+        out.end()
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): Any ! ProtobufError {
+        let fields = input.fields(value, "$")?
+        let typeUrl = match fields.find((field) { field.0 == "@type" }) {
+            some((_, __json.Value.Text(url))) => url
+            _ => fail jsonError(
+                serialization.ErrorKind.Missing,
+                "$.@type",
+                "an `Any` in JSON says its type in `@type`",
+            )
+        }
+        let name = typeUrl.split("/").last().unwrapOr(typeUrl)
+        let held = if specialJson(name) {
+            match fields.find((field) { field.0 == "value" }) {
+                some((_, inner)) => inner
+                none => __json.Value.Null
+            }
+        } else {
+            var rest: Map[String, __json.Value] = [:]
+            for (key, field) in fields {
+                if key != "@type" {
+                    rest[key] = field
+                }
+            }
+            __json.Value.Object(rest)
+        }
+        match wellKnownFromJson(name, held, input)? {
+            some(bytes) => return Any { typeUrl, value: bytes }
+            none => {}
+        }
+        let known = match knownMessage(name) {
+            some(known) => known
+            none => fail jsonError(
+                serialization.ErrorKind.Unsupported,
+                "$.@type",
+                "`{name}` is no message of this program",
+            )
+        }
+        let read = known.fromJson
+        Any { typeUrl, value: read(held, input)? }
+    }
 }
 
 /// `google.protobuf.FieldMask`: the paths of the fields an update sets,
@@ -778,6 +901,27 @@ impl Message for FieldMask {
 
     fn protobufName(): String {
         "google.protobuf.FieldMask"
+    }
+
+    /// Its paths joined by `,`, each in lowerCamel: `user.displayName`.
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        out.string(
+            self.paths
+                .map((path) { path.split(".").map((part) { lowerCamel(part) }).join(".") })
+                .join(","),
+        )
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): FieldMask ! ProtobufError {
+        let text = input.string(value, "$")?
+        if text.isEmpty() {
+            return FieldMask {}
+        }
+        FieldMask {
+            paths: text
+                .split(",")
+                .map((path) { path.split(".").map((part) { snakeCase(part) }).join(".") })
+        }
     }
 }
 
@@ -994,4 +1138,660 @@ impl __reflect.Reflect for FieldMask {
     fn reflectFields(self): Array[__reflect.Field]? {
         some([__reflect.Field { name: "paths", value: __reflect.valueOf(self.paths) }])
     }
+}
+
+// ---------------------------------------------------------------------------
+// JSON, as proto3 maps messages to it
+// ---------------------------------------------------------------------------
+
+/// The message as proto3's mapping to JSON writes it: fields by their
+/// names in lowerCamel, or with `protoNames` as the `.proto` writes them;
+/// fields with their default values left out; 64-bit integers as text,
+/// bytes in Base64 and enum values by name.
+pub fn toJson[T: Message](message: T, protoNames: Bool = false): String ! ProtobufError {
+    let out = JsonWriter { json: __json.writer(), protoNames }
+    message.writeJson(out)?
+    out.json.finish()
+}
+
+/// The message a JSON text gives, as proto3's mapping reads it: fields by
+/// either name, numbers as numbers or as text, enum values by name or by
+/// number. A field the message does not have fails, unless
+/// `ignoreUnknown`.
+pub fn fromJson[T: Message](text: String, ignoreUnknown: Bool = false): T ! ProtobufError {
+    let value = match __json.parse(text) {
+        ok(value) => value
+        err(error) => fail jsonError(serialization.ErrorKind.Syntax, "$", "{error}")
+    }
+    Message.readJson[T](JsonReader { ignoreUnknown }, value)?
+}
+
+fn jsonError(kind: serialization.ErrorKind, path: String, message: String): ProtobufError {
+    serialization.Error { kind, message, path, line: 0, column: 0, violations: [] }
+}
+
+/// Where a message writes itself as JSON.
+pub type JsonWriter = {
+    priv json: __json.Writer
+    priv protoNames: Bool
+}
+
+/// Starts an object, a message's or a map's.
+pub fn JsonWriter.begin(self) {
+    self.json.beginObject()
+}
+
+/// Ends the object.
+pub fn JsonWriter.end(self) {
+    self.json.endObject()
+}
+
+/// A field's name: its name in JSON, or its name in the `.proto` when the
+/// writer keeps those.
+pub fn JsonWriter.field(self, jsonName: String, protoName: String) {
+    self.json.key(if self.protoNames { protoName } else { jsonName })
+}
+
+/// A key of a map, or of an object as it is.
+pub fn JsonWriter.key(self, key: String) {
+    self.json.key(key)
+}
+
+/// Starts an array, a repeated field's.
+pub fn JsonWriter.beginArray(self) {
+    self.json.beginArray()
+}
+
+/// Ends the array.
+pub fn JsonWriter.endArray(self) {
+    self.json.endArray()
+}
+
+/// An `int32`, `sint32` or `sfixed32`, as a number.
+pub fn JsonWriter.int32(self, value: Int32) {
+    self.json.int(Int(value))
+}
+
+/// A `uint32` or `fixed32`, as a number.
+pub fn JsonWriter.uint32(self, value: UInt32) {
+    self.json.int(Int(value))
+}
+
+/// An `int64`, `sint64` or `sfixed64`, as text, which JavaScript reads
+/// without losing digits.
+pub fn JsonWriter.int64(self, value: Int) {
+    self.json.string("{value}")
+}
+
+/// A `uint64` or `fixed64`, as text.
+pub fn JsonWriter.uint64(self, value: UInt) {
+    self.json.string("{value}")
+}
+
+/// A `float`: a number, or `"NaN"`, `"Infinity"` or `"-Infinity"`.
+pub fn JsonWriter.float(self, value: Float32) {
+    if value.isNaN() or value.isInfinite() {
+        self.double(Float(value))
+        return
+    }
+    match __json.number("{value}") {
+        ok(number) => self.json.number(number)
+        err(_) => self.double(Float(value))
+    }
+}
+
+/// A `double`: a number, or `"NaN"`, `"Infinity"` or `"-Infinity"`.
+pub fn JsonWriter.double(self, value: Float) {
+    if value.isNaN() {
+        self.json.string("NaN")
+    } else if value.isInfinite() {
+        self.json.string(if value > 0.0 { "Infinity" } else { "-Infinity" })
+    } else {
+        self.json.float(value)
+    }
+}
+
+/// A `bool`.
+pub fn JsonWriter.bool(self, value: Bool) {
+    self.json.bool(value)
+}
+
+/// A `string`.
+pub fn JsonWriter.string(self, value: String) {
+    self.json.string(value)
+}
+
+/// `bytes`, in Base64 with its padding.
+pub fn JsonWriter.bytes(self, value: Array[Byte]) {
+    self.json.string(__encoding.base64Encode(value))
+}
+
+/// An enum's value, by its name in the `.proto`.
+pub fn JsonWriter.enumValue[T: Enum](self, value: T) {
+    let name = value.protobufValueName()
+    match Int.parse(name) {
+        ok(number) => self.json.int(number)
+        err(_) => self.json.string(name)
+    }
+}
+
+/// A message, as its own `writeJson` writes it.
+pub fn JsonWriter.message[T: Message](self, value: T): !ProtobufError {
+    value.writeJson(self)?
+}
+
+/// A `google.protobuf.Timestamp`, in RFC 3339 in UTC, with 0, 3, 6 or 9
+/// digits of a second: `2026-11-01T10:30:00.500Z`.
+pub fn JsonWriter.timestamp(self, value: __time.DateTime) {
+    let nanoseconds = value.sinceEpoch().nanoseconds()
+    let fraction = ((nanoseconds % 1_000_000_000) + 1_000_000_000) % 1_000_000_000
+    self.json.string("{value.format("%Y-%m-%dT%H:%M:%S")}{fractionText(fraction)}Z")
+}
+
+/// A `google.protobuf.Duration`, in seconds with 0, 3, 6 or 9 digits:
+/// `1.500s`, `-3s`.
+pub fn JsonWriter.duration(self, value: __time.Duration) {
+    let nanoseconds = value.nanoseconds()
+    let sign = if nanoseconds < 0 { "-" } else { "" }
+    let magnitude = nanoseconds.abs()
+    self.json.string("{sign}{magnitude / 1_000_000_000}{fractionText(magnitude % 1_000_000_000)}s")
+}
+
+/// A `google.protobuf.Value`, `Struct` or `ListValue`: the JSON it holds.
+pub fn JsonWriter.jsonValue(self, value: __json.Value) {
+    match value {
+        __json.Value.Null => self.json.null()
+        __json.Value.Bool(flag) => self.json.bool(flag)
+        __json.Value.Number(number) => self.json.number(number)
+        __json.Value.Text(text) => self.json.string(text)
+        __json.Value.Array(items) => {
+            self.json.beginArray()
+            for item in items {
+                self.jsonValue(item)
+            }
+            self.json.endArray()
+        }
+        __json.Value.Object(fields) => {
+            self.json.beginObject()
+            for (key, field) in fields {
+                self.json.key(key)
+                self.jsonValue(field)
+            }
+            self.json.endObject()
+        }
+    }
+}
+
+/// `.5`, `.500`, `.500001` or `.500000001`: the fewest groups of three
+/// digits that hold the nanoseconds; nothing for none.
+fn fractionText(nanoseconds: Int): String {
+    if nanoseconds == 0 {
+        return ""
+    }
+    let digits = "{nanoseconds}".padStart(9, "0")
+    if nanoseconds % 1_000_000 == 0 {
+        ".{digits.slice(0, 3).unwrapOr(digits)}"
+    } else if nanoseconds % 1_000 == 0 {
+        ".{digits.slice(0, 6).unwrapOr(digits)}"
+    } else {
+        ".{digits}"
+    }
+}
+
+/// A field's name in JSON, as protoc gives it: `user_id` is `userId`.
+fn lowerCamel(name: String): String {
+    var out = ""
+    var upper = false
+    for c in name.chars() {
+        if c == '_' {
+            upper = true
+        } else if upper {
+            out = "{out}{c.toUpper()}"
+            upper = false
+        } else {
+            out = "{out}{c}"
+        }
+    }
+    out
+}
+
+/// The `.proto` name of a field's name in JSON: `userId` is `user_id`.
+fn snakeCase(name: String): String {
+    var out = ""
+    for c in name.chars() {
+        out = if c.isUpper() { "{out}_{c.toLower()}" } else { "{out}{c}" }
+    }
+    out
+}
+
+/// Whether a type of `google.protobuf` has its own form in JSON, which an
+/// `Any` holds under `value`.
+fn specialJson(name: String): Bool {
+    name in
+        [
+            "google.protobuf.Timestamp",
+            "google.protobuf.Duration",
+            "google.protobuf.FieldMask",
+            "google.protobuf.Struct",
+            "google.protobuf.Value",
+            "google.protobuf.ListValue",
+            "google.protobuf.DoubleValue",
+            "google.protobuf.FloatValue",
+            "google.protobuf.Int64Value",
+            "google.protobuf.UInt64Value",
+            "google.protobuf.Int32Value",
+            "google.protobuf.UInt32Value",
+            "google.protobuf.BoolValue",
+            "google.protobuf.StringValue",
+            "google.protobuf.BytesValue",
+        ]
+}
+
+/// The bytes of a message as field 1 of another, which the readers of
+/// `Reader` for the types of `google.protobuf` read.
+fn asField(bytes: Array[Byte]): Reader {
+    let out = Writer { native: pbNative.writer(false) }
+    out.bytes(1, bytes)
+    let reader = Reader { native: pbNative.reader(pbNative.finish(out.native)) }
+    _ = reader.next()
+    reader
+}
+
+/// The bytes of field 1 of a message, which `Writer` wrote.
+fn fieldBytes(out: Writer): Array[Byte] ! ProtobufError {
+    let reader = Reader { native: pbNative.reader(pbNative.finish(out.native)) }
+    match reader.next()? {
+        1 => reader.bytes("value")?
+        _ => []
+    }
+}
+
+/// Writes the JSON of a type of `google.protobuf` from its bytes, as an
+/// `Any` holds it, when it is one that Tondo holds as a type of its own: a
+/// time, a duration, a JSON value or a wrapper. Whether it was.
+fn wellKnownToJson(name: String, bytes: Array[Byte], out: JsonWriter): Bool ! ProtobufError {
+    match name {
+        "google.protobuf.Timestamp" => out.timestamp(asField(bytes).timestamp("value")?)
+        "google.protobuf.Duration" => out.duration(asField(bytes).duration("value")?)
+        "google.protobuf.Value" => out.jsonValue(asField(bytes).jsonValue("value")?)
+        "google.protobuf.Struct" => out.jsonValue(asField(bytes).jsonStruct("value")?)
+        "google.protobuf.ListValue" => out.jsonValue(asField(bytes).jsonList("value")?)
+        _ => return wrappedToJson(name, bytes, out)?
+    }
+    true
+}
+
+/// Writes the JSON of a wrapper of `google.protobuf` from its bytes: the
+/// value it holds. Whether it was one.
+fn wrappedToJson(name: String, bytes: Array[Byte], out: JsonWriter): Bool ! ProtobufError {
+    let input = Reader { native: pbNative.reader(bytes) }
+    // The value's field, absent when it is its zero.
+    let present = input.next()? == 1
+    match name {
+        "google.protobuf.DoubleValue" => out.double(
+            if present { input.double("value")? } else { 0.0 },
+        )
+        "google.protobuf.FloatValue" => out.float(if present { input.float("value")? } else { 0.0 })
+        "google.protobuf.Int64Value" => out.int64(if present { input.int64("value")? } else { 0 })
+        "google.protobuf.UInt64Value" => out.uint64(
+            if present { input.uint64("value")? } else { 0 },
+        )
+        "google.protobuf.Int32Value" => out.int32(if present { input.int32("value")? } else { 0 })
+        "google.protobuf.UInt32Value" => out.uint32(
+            if present { input.uint32("value")? } else { 0 },
+        )
+        "google.protobuf.BoolValue" => out.bool(present and input.bool("value")?)
+        "google.protobuf.StringValue" => out.string(
+            if present { input.string("value")? } else { "" },
+        )
+        "google.protobuf.BytesValue" => out.bytes(if present { input.bytes("value")? } else { [] })
+        _ => return false
+    }
+    true
+}
+
+/// The bytes of a type of `google.protobuf` that Tondo holds as a type of
+/// its own, from its JSON, as an `Any` holds it; `none` for another type.
+fn wellKnownFromJson(
+    name: String,
+    value: __json.Value,
+    input: JsonReader,
+): Array[Byte]? ! ProtobufError {
+    let out = Writer { native: pbNative.writer(false) }
+    match name {
+        "google.protobuf.Timestamp" => out.timestamp(1, input.timestamp(value, "$.value")?)
+        "google.protobuf.Duration" => out.duration(1, input.duration(value, "$.value")?)
+        "google.protobuf.Value" => out.jsonValue(1, value)
+        "google.protobuf.Struct" => out.jsonStruct(1, value)
+        "google.protobuf.ListValue" => out.jsonList(1, value)
+        "google.protobuf.DoubleValue" => out.double(1, input.double(value, "$.value")?)
+        "google.protobuf.FloatValue" => out.float(1, input.float(value, "$.value")?)
+        "google.protobuf.Int64Value" => out.int64(1, input.int64(value, "$.value")?)
+        "google.protobuf.UInt64Value" => out.uint64(1, input.uint64(value, "$.value")?)
+        "google.protobuf.Int32Value" => out.int32(1, input.int32(value, "$.value")?)
+        "google.protobuf.UInt32Value" => out.uint32(1, input.uint32(value, "$.value")?)
+        "google.protobuf.BoolValue" => out.bool(1, input.bool(value, "$.value")?)
+        "google.protobuf.StringValue" => out.string(1, input.string(value, "$.value")?)
+        "google.protobuf.BytesValue" => out.bytes(1, input.bytes(value, "$.value")?)
+        _ => return none
+    }
+    // A time, a duration or a JSON value is a message of field 1; a
+    // wrapper's field 1 is its value.
+    if name.endsWith("Value") and
+        name != "google.protobuf.Value" and
+        name != "google.protobuf.ListValue" {
+        return some(pbNative.finish(out.native))
+    }
+    some(fieldBytes(out)?)
+}
+
+/// What reads a message's JSON.
+pub type JsonReader = {
+    priv ignoreUnknown: Bool
+}
+
+/// A JSON value, which a message's `readJson` reads.
+pub alias JsonValue = __json.Value
+
+/// A key of a map's object as a value, to read as the map's key.
+pub fn JsonReader.text(self, key: String): __json.Value {
+    __json.Value.Text(key)
+}
+
+/// A missing field that the message requires.
+pub fn JsonReader.missing(self, name: String): ProtobufError {
+    jsonError(serialization.ErrorKind.Missing, "$.{name}", "the required field `{name}` is missing")
+}
+
+/// A `bool` key of a map: `"true"` or `"false"`.
+pub fn JsonReader.boolKey(self, key: String, path: String): Bool ! ProtobufError {
+    match key {
+        "true" => true
+        "false" => false
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected `true` or `false`")
+    }
+}
+
+/// The fields of a message's object, without those that are `null`, which
+/// leave their fields as they were.
+pub fn JsonReader.fields(
+    self,
+    value: __json.Value,
+    path: String,
+): Array[(String, __json.Value)] ! ProtobufError {
+    match value {
+        __json.Value.Object(fields) => {
+            var present: Array[(String, __json.Value)] = []
+            for (key, field) in fields {
+                if not field.isNull() {
+                    present.push((key, field))
+                }
+            }
+            present
+        }
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected an object")
+    }
+}
+
+/// A field the message does not have: a failure, or nothing when the
+/// reader ignores them.
+pub fn JsonReader.unknown(self, key: String, path: String): !ProtobufError {
+    if not self.ignoreUnknown {
+        fail jsonError(
+            serialization.ErrorKind.Unknown,
+            "{path}.{key}",
+            "the message has no field `{key}`",
+        )
+    }
+}
+
+/// The items of a repeated field's array.
+pub fn JsonReader.array(
+    self,
+    value: __json.Value,
+    path: String,
+): Array[__json.Value] ! ProtobufError {
+    match value {
+        __json.Value.Array(items) => items
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected an array")
+    }
+}
+
+/// The entries of a map's object.
+pub fn JsonReader.entries(
+    self,
+    value: __json.Value,
+    path: String,
+): Array[(String, __json.Value)] ! ProtobufError {
+    match value {
+        __json.Value.Object(fields) => fields.entries().collect()
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected an object")
+    }
+}
+
+/// An integer, from a number or its text, which must fit between `least`
+/// and `most`.
+fn JsonReader.integer(
+    self,
+    value: __json.Value,
+    path: String,
+    least: Int,
+    most: Int,
+): Int ! ProtobufError {
+    let parsed = match value {
+        __json.Value.Number(number) => number.toInt()
+        __json.Value.Text(text) => Int.parse(text).ok()
+        _ => none
+    }
+    match parsed {
+        some(number) if number >= least and number <= most => number
+        some(_) => fail jsonError(
+            serialization.ErrorKind.Range,
+            path,
+            "the number does not fit its field",
+        )
+        none => fail jsonError(serialization.ErrorKind.Type, path, "expected an integer")
+    }
+}
+
+/// An `int32`, `sint32` or `sfixed32`.
+pub fn JsonReader.int32(self, value: __json.Value, path: String): Int32 ! ProtobufError {
+    Int32.wrapping(self.integer(value, path, -2_147_483_648, 2_147_483_647)?)
+}
+
+/// A `uint32` or `fixed32`.
+pub fn JsonReader.uint32(self, value: __json.Value, path: String): UInt32 ! ProtobufError {
+    UInt32.wrapping(self.integer(value, path, 0, 4_294_967_295)?)
+}
+
+/// An `int64`, `sint64` or `sfixed64`.
+pub fn JsonReader.int64(self, value: __json.Value, path: String): Int ! ProtobufError {
+    self.integer(value, path, Int.min, Int.max)?
+}
+
+/// A `uint64` or `fixed64`.
+pub fn JsonReader.uint64(self, value: __json.Value, path: String): UInt ! ProtobufError {
+    let text = match value {
+        __json.Value.Number(number) => number.text()
+        __json.Value.Text(text) => text
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected an integer")
+    }
+    match UInt.parse(text) {
+        ok(number) => number
+        err(_) => fail jsonError(
+            serialization.ErrorKind.Range,
+            path,
+            "expected an integer from 0 that fits 64 bits",
+        )
+    }
+}
+
+/// A `double`: a number, its text, or `"NaN"`, `"Infinity"` or
+/// `"-Infinity"`.
+pub fn JsonReader.double(self, value: __json.Value, path: String): Float ! ProtobufError {
+    match value {
+        __json.Value.Number(number) => number.toFloat()
+        __json.Value.Text("NaN") => Float.nan
+        __json.Value.Text("Infinity") => Float.infinity
+        __json.Value.Text("-Infinity") => -Float.infinity
+        __json.Value.Text(text) => match Float.parse(text) {
+            ok(number) => number
+            err(_) => fail jsonError(serialization.ErrorKind.Type, path, "expected a number")
+        }
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected a number")
+    }
+}
+
+/// A `float`, as a `double` is read.
+pub fn JsonReader.float(self, value: __json.Value, path: String): Float32 ! ProtobufError {
+    match Float32(self.double(value, path)?) {
+        ok(number) => number
+        err(_) => fail jsonError(
+            serialization.ErrorKind.Range,
+            path,
+            "the number does not fit a `float`",
+        )
+    }
+}
+
+/// A `bool`.
+pub fn JsonReader.bool(self, value: __json.Value, path: String): Bool ! ProtobufError {
+    match value {
+        __json.Value.Bool(flag) => flag
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected `true` or `false`")
+    }
+}
+
+/// A `string`.
+pub fn JsonReader.string(self, value: __json.Value, path: String): String ! ProtobufError {
+    match value {
+        __json.Value.Text(text) => text
+        _ => fail jsonError(serialization.ErrorKind.Type, path, "expected a text")
+    }
+}
+
+/// `bytes`, in Base64 of either alphabet, with or without padding.
+pub fn JsonReader.bytes(self, value: __json.Value, path: String): Array[Byte] ! ProtobufError {
+    let text = self.string(value, path)?
+    let alphabet = if text.contains("-") or text.contains("_") {
+        __encoding.Base64Alphabet.Url
+    } else {
+        __encoding.Base64Alphabet.Standard
+    }
+    match __encoding.base64Decode(text.trimEnd("="), alphabet) {
+        ok(bytes) => bytes
+        err(error) => fail jsonError(serialization.ErrorKind.Type, path, "expected Base64: {error}")
+    }
+}
+
+/// An enum's value, by name or by number; `none` for a name the enum does
+/// not have when the reader ignores unknown fields.
+pub fn JsonReader.enumValue[T: Enum](self, value: __json.Value, path: String): T? ! ProtobufError {
+    match value {
+        __json.Value.Text(name) => match Enum.fromProtobufValueName[T](name) {
+            some(found) => some(found)
+            none if self.ignoreUnknown => none
+            none => fail jsonError(
+                serialization.ErrorKind.Unknown,
+                path,
+                "the enum has no value `{name}`",
+            )
+        }
+        _ => Enum.fromNumber[T](self.int32(value, path)?)
+    }
+}
+
+/// A message, as its own `readJson` reads it.
+pub fn JsonReader.message[T: Message](self, value: __json.Value, path: String): T ! ProtobufError {
+    Message.readJson[T](self, value)?
+}
+
+/// A `google.protobuf.Timestamp`, in RFC 3339.
+pub fn JsonReader.timestamp(
+    self,
+    value: __json.Value,
+    path: String,
+): __time.DateTime ! ProtobufError {
+    match __time.parseDateTime(self.string(value, path)?) {
+        ok(time) => time
+        err(error) => fail jsonError(
+            serialization.ErrorKind.Type,
+            path,
+            "expected a time of RFC 3339: {error}",
+        )
+    }
+}
+
+/// A `google.protobuf.Duration`, in seconds: `1.5s`, `-3s`.
+pub fn JsonReader.duration(self, value: __json.Value, path: String): __time.Duration ! ProtobufError {
+    let text = self.string(value, path)?
+    let wrong = jsonError(serialization.ErrorKind.Type, path, "expected seconds, as `1.5s`")
+    if not text.endsWith("s") {
+        fail wrong
+    }
+    let number = text.removeSuffix("s")
+    let negative = number.startsWith("-")
+    let digits = number.removePrefix("-")
+    let (whole, fraction) = match digits.split(".") {
+        [whole] => (whole, "")
+        [whole, fraction] => (whole, fraction)
+        _ => fail wrong
+    }
+    if fraction.length() > 9 {
+        fail wrong
+    }
+    let seconds = match Int.parse(whole) {
+        ok(seconds) => seconds
+        err(_) => fail wrong
+    }
+    let nanoseconds = if fraction.isEmpty() {
+        0
+    } else {
+        match Int.parse(fraction.padEnd(9, "0")) {
+            ok(nanoseconds) => nanoseconds
+            err(_) => fail wrong
+        }
+    }
+    let total = seconds * 1_000_000_000 + nanoseconds
+    __time.nanoseconds(if negative { -total } else { total })
+}
+
+/// A `google.protobuf.Value`, `Struct` or `ListValue`: the JSON it holds.
+pub fn JsonReader.jsonValue(self, value: __json.Value, path: String): __json.Value ! ProtobufError {
+    value
+}
+
+// ---------------------------------------------------------------------------
+// The messages of the program, which an `Any` in JSON may hold
+// ---------------------------------------------------------------------------
+
+/// A message type of the program: its full name, and what writes it from
+/// its bytes as JSON and reads its bytes from JSON.
+type Known = {
+    name: String
+    toJson: fn(Array[Byte], JsonWriter): !ProtobufError
+    fromJson: fn(__json.Value, JsonReader): Array[Byte] ! ProtobufError
+}
+
+/// A type's entry in the table of the program's messages.
+fn entryOf[T: Message](): Known {
+    Known { name: Message.protobufName[T](), toJson: bytesToJson[T], fromJson: jsonToBytes[T] }
+}
+
+fn bytesToJson[T: Message](bytes: Array[Byte], out: JsonWriter): !ProtobufError {
+    decode[T](bytes)?.writeJson(out)?
+}
+
+fn jsonToBytes[T: Message](value: __json.Value, input: JsonReader): Array[Byte] ! ProtobufError {
+    encode(Message.readJson[T](input, value)?)
+}
+
+/// The message type of a full name among the program's.
+fn knownMessage(name: String): Known? {
+    knownMessages().find((known) { known.name == name })
+}
+
+/// Every message type of the program, which the compiler lists here.
+fn knownMessages(): Array[Known] {
+    []
 }

@@ -4284,6 +4284,44 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Array(items), result, span)
     }
 
+    /// `knownMessages()` of `std.protobuf`, which an `Any` in JSON reads:
+    /// `entryOf[T]()` for every message type of the program, each the
+    /// type of an implementation of `Message` without type parameters.
+    fn known_messages(&mut self, result: Ty, span: Span) -> hir::Expr {
+        // By their names in `std.protobuf`, whose names the body does not
+        // see as the module's.
+        let protobuf = self.module_paths.iter().position(|p| p == &["std", "protobuf"]).map(|m| m as u32);
+        let message = (0..self.traits.len())
+            .find(|&i| self.traits[i].name == "protobuf.Message" || self.traits[i].name == "Message")
+            .map(|i| TraitId(i as u32))
+            .filter(|id| self.trait_modules.get(id).copied() == protobuf);
+        let entry = (0..self.signatures.len())
+            .find(|&i| {
+                self.signatures[i].name == "protobuf.entryOf"
+                    && self.fn_scopes.get(i).is_some_and(|scope| Some(scope.module) == protobuf)
+            })
+            .map(|i| FnId(i as u32));
+        let (Some(message), Some(entry), TyKind::Array(element)) = (message, entry, self.types.kind(result).clone())
+        else {
+            return Self::mk(hir::ExprKind::Array(Vec::new()), result, span);
+        };
+        let mut types: Vec<Ty> = Vec::new();
+        for implementation in &self.impls {
+            if implementation.trait_id == message
+                && implementation.generics.is_empty()
+                && !self.types.has_error(implementation.target)
+                && !types.contains(&implementation.target)
+            {
+                types.push(implementation.target);
+            }
+        }
+        let items = types
+            .into_iter()
+            .map(|ty| Self::mk(hir::ExprKind::Call(Callee::Fn(entry), vec![ty], Vec::new()), element, span))
+            .collect();
+        Self::mk(hir::ExprKind::Array(items), result, span)
+    }
+
     /// `embed.text`, `embed.bytes` and `embed.files` (standard library
     /// 14.27): what they name in the package, read now and kept as a
     /// constant.
@@ -15509,6 +15547,10 @@ impl<'a> Checker<'a> {
         if signature.name == "reflect.annotationsOf" {
             let result = self.types.subst(signature.result, &inference.map);
             return self.annotations_of(type_args[0], args, result, span);
+        }
+        if signature.name == "protobuf.knownMessages" {
+            let result = self.types.subst(signature.result, &inference.map);
+            return self.known_messages(result, span);
         }
         if let Callee::Fn(id) = callee
             && signature.receiver.is_none()

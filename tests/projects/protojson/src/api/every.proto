@@ -1,0 +1,56 @@
+// Every kind of field proto3 maps to JSON in its own way.
+syntax = "proto3";
+package every.v1;
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+enum Mood { MOOD_UNSPECIFIED = 0; MOOD_HAPPY = 1; MOOD_SAD = 2; }
+
+message Inner { string display_name = 1; repeated int64 big_numbers = 2; }
+
+message Every {
+  int32 small_int = 1;
+  int64 big_int = 2;
+  uint32 small_uint = 3;
+  uint64 big_uint = 4;
+  sint32 zig_small = 5;
+  sint64 zig_big = 6;
+  fixed32 fixed_small = 7;
+  fixed64 fixed_big = 8;
+  sfixed32 sfixed_small = 9;
+  sfixed64 sfixed_big = 10;
+  float single = 11;
+  double twice = 12;
+  bool flag = 13;
+  string text = 14;
+  bytes blob = 15;
+  Mood mood = 16;
+  Inner inner = 17;
+  repeated Inner inners = 18;
+  repeated Mood moods = 19;
+  map<string, Inner> by_name = 20;
+  map<int32, string> by_number = 21;
+  map<bool, int64> by_flag = 22;
+  google.protobuf.Timestamp at = 23;
+  google.protobuf.Duration took = 24;
+  google.protobuf.Struct object = 25;
+  google.protobuf.Value value = 26;
+  google.protobuf.ListValue list = 27;
+  google.protobuf.FieldMask mask = 28;
+  google.protobuf.Any any_message = 29;
+  google.protobuf.Any any_duration = 30;
+  google.protobuf.Empty nothing = 31;
+  google.protobuf.Int64Value wrapped_big = 32;
+  google.protobuf.StringValue wrapped_text = 33;
+  google.protobuf.BoolValue wrapped_flag = 34;
+  oneof choice { string picked_text = 35; Inner picked_inner = 36; }
+  optional int32 maybe = 37;
+  string renamed = 38 [json_name = "otherName"];
+  double not_number = 39;
+  float infinite = 40;
+}

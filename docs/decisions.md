@@ -4063,3 +4063,17 @@ gains only on large ones, which the program knows and the library does not.
 A server answers compressed only a client that reads gzip. A message that
 would grow past 16 MiB once decompressed is refused, so that a small one
 cannot take all the memory.
+
+## 2026-11-01 — proto3's JSON, and the program's table of messages
+
+gRPC's JSON, as Connect and transcoding speak it, and the JSON other
+languages write of a message, follow proto3's own mapping, not std.json's:
+lowerCamel names, 64-bit integers as text, enums by name, the types of
+`google.protobuf` in their own forms. The compiler writes each message's
+JSON beside its bytes, and keeps a field's `.proto` name in
+`@protobuf.Field(name:)` for `protoNames`. An `Any` in JSON holds its
+message's fields, so writing one needs the message's type from its name:
+the compiler lists every message type of the program for `std.protobuf`,
+as a table it reads at run time, so that an `Any` of any message the
+program has needs no registration; one of a type the program does not have
+fails, since nothing could say what its fields are.
