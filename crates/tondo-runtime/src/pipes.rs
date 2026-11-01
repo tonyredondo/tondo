@@ -99,6 +99,24 @@ impl Host for Sink {
     fn give_up(&mut self, kind: Option<ErrorKind>) {
         self.0.gave_up = kind;
     }
+
+    fn other_end_gone(&mut self) -> Option<super::io::Gone> {
+        let pipe = self.0.pipe.clone();
+        Some(Box::pin(async move {
+            loop {
+                let notified = pipe.changed.notified();
+                let mut notified = std::pin::pin!(notified);
+                notified.as_mut().enable();
+                {
+                    let flow = pipe.flow();
+                    if flow.writer_gone || flow.reader_gone {
+                        return !flow.writer_gone;
+                    }
+                }
+                notified.await;
+            }
+        }))
+    }
 }
 
 impl Drop for Sink {

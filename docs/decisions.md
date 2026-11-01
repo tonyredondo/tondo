@@ -4029,3 +4029,15 @@ as `+`, `*` and the others still continue the line; a subtraction that goes
 on to the next line ends the first with `-`, as `tondo fmt` writes it. Code
 that split a subtraction before its `-` now has a statement of its own,
 which warns (`W1014`), so it does not change its meaning in silence.
+
+## 2026-11-01 — A gRPC method is cancelled when its client goes
+
+A method used to learn that its client was gone only when it sent a
+message, which failed; one that waited, as a health watch with no change or
+a stream of rare events, kept its task and what it held until it sent, which
+might be never. Now the method's task is cancelled as soon as the client
+goes, before the reply or during it, as a handler of `std.http` is: the
+server lets go of the reply, and so of the pipe the method writes to, and a
+pipe whose reader goes before its writer cancels the task that follows it.
+A streamed reply now reads its pipe without a thread, so that letting go of
+the reply lets go of the pipe at once rather than after the next write.

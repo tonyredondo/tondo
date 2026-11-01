@@ -293,7 +293,8 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   `result.mapErr(grpc.Status.from)?`; `details: [protobuf.pack(message)]`
   travel with a status.
 - A call in a `within` sends its deadline; the method runs within it, and
-  the client gets its `within`'s `TimedOut` when it passes.
+  the client gets its `within`'s `TimedOut` when it passes. A method whose
+  client goes is cancelled: its waits end and its `defer` runs.
 - `service.onCall((call, next) { ... next()? })` wraps each call of a
   server: refuse it with `fail`, give the method contexts with `with`, see
   its status. `grpc.connect(target)?.onCall((call, next) { next(call with {

@@ -6719,8 +6719,9 @@ pub fn Duplex.trailers(self): Map[String, String]
   texto, como `http.Problem.from` da un 500. Una petición que no
   es un mensaje del tipo da `InvalidArgument`; una comprimida,
   `Unimplemented`; una llamada que el servidor no tiene, `Unimplemented`
-  también, por su 404. Si el cliente se va, el envío siguiente falla y la
-  tarea del método se cancela.
+  también, por su 404. Si el cliente se va, antes de la respuesta o
+  durante ella, la tarea del método se cancela (lenguaje 11.15): sus esperas
+  terminan y corren sus `defer`, y el servidor sigue con las demás.
 - **Datos de la llamada.** `grpc.call()` da, en el método y en lo que este
   llama, el método, la metadata de la petición sin las cabeceras de HTTP y de
   gRPC (`content-type`, `te`, `user-agent`, `grpc-timeout`, `grpc-encoding`,

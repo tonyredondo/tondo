@@ -232,13 +232,27 @@ pub(crate) fn stream_of(
     source: Source,
 ) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
     futures_util::stream::unfold(Arc::new(source), |source| async move {
-        let reading = source.clone();
-        let read = tokio::task::spawn_blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await;
+        // A pipe is read here, without a thread, so that a reply dropped
+        // while it waits, as when its client goes, lets the pipe go too.
+        let read = if crate::io::waits_without_a_thread(source.0) {
+            loop {
+                let (read, blocked) = crate::io::attempt(source.0, |s| s.read(64 * 1024));
+                match blocked {
+                    Some(blocked) => blocked.await,
+                    None => break read,
+                }
+            }
+        } else {
+            let reading = source.clone();
+            match tokio::task::spawn_blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await {
+                Ok(read) => read,
+                Err(error) => Err(std::io::Error::other(error)),
+            }
+        };
         match read {
-            Ok(Ok(Some(bytes))) => Some((Ok(Bytes::from(bytes)), source)),
-            Ok(Ok(None)) => None,
-            Ok(Err(error)) => Some((Err(error), source)),
-            Err(error) => Some((Err(std::io::Error::other(error)), source)),
+            Ok(Some(bytes)) => Some((Ok(Bytes::from(bytes)), source)),
+            Ok(None) => None,
+            Err(error) => Some((Err(error), source)),
         }
     })
 }

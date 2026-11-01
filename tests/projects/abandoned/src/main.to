@@ -1,0 +1,76 @@
+// A client that goes cancels the method that serves it, whose `defer`
+// runs: one that waits after its first message, and one that waits before
+// any, while the server has not answered yet.
+
+import abandoned.api.greeter
+import std.console
+import std.grpc
+import std.http
+import std.sync
+
+type Greetings = {
+    gate: Receiver[Unit]
+    log: sync.Mutex[Array[String]]
+}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply { message: "hello {request.name}" }
+    }
+
+    fn repeat(self, request: greeter.HelloRequest, out: Sender[greeter.HelloReply]): !grpc.Status {
+        let log = self.log
+        defer {
+            log.update((list) { list.push("repeat cancelled") })
+        }
+        out.send(greeter.HelloReply { message: "first for {request.name}" })
+        _ = self.gate.receive()
+    }
+
+    fn collect(self, _: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {}
+    }
+
+    fn chat(self, _: grpc.Stream[greeter.HelloRequest], _: Sender[greeter.HelloReply]): !grpc.Status {
+        let log = self.log
+        defer {
+            log.update((list) { list.push("chat cancelled") })
+        }
+        log.update((list) { list.push("chat started") })
+        _ = self.gate.receive()
+    }
+}
+
+/// Reads the first reply of a stream and lets the call go.
+fn first(client: greeter.GreeterClient): String {
+    var replies = client.repeat(greeter.HelloRequest { name: "Ada" })
+    "{replies.next().map((each) { each.map((reply) { reply.message }) })}"
+}
+
+/// Starts a call and lets it go before any reply, once its method started.
+fn started(client: greeter.GreeterClient, log: sync.Mutex[Array[String]]) {
+    let chat = client.chat()
+    _ = log.updateWhen((list) { list.contains("chat started") }, (list) { list.length() })
+    _ = chat
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    let (open, gate) = channel[Unit]()
+    let log: sync.Mutex[Array[String]] = sync.Mutex([])
+    var app = http.App.new()
+    app.grpc(greeter.greeter(Greetings { gate, log }))
+    let server = app.start()?
+    let client = greeter.GreeterClient.connect("http://{server.address()}")?
+    console.println(first(client))
+    started(client, log)
+    let cancelled = log.updateWhen((list) { list.length() == 3 }, (list) { list })
+    console.println(cancelled.sorted().join(", "))
+    // The server still serves.
+    console.println(client.sayHello(greeter.HelloRequest { name: "Lin" })?.message)
+    _ = open
+    server.stop()
+}
+
+// expect-stdout: some(ok(first for Ada))
+// expect-stdout: chat cancelled, chat started, repeat cancelled
+// expect-stdout: hello Lin

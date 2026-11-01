@@ -356,6 +356,8 @@ fn run(
     timeout: __time.Duration?,
     trailers: __http.Trailers,
 ) {
+    // A client that goes cancels the method, as it would a handler.
+    grpcNative.follow(server.output)
     let outcome = match recover { served(server, handler, layers, timeout) } {
         ok(status) => status
         err(failure) => panicked("the method", failure.message)

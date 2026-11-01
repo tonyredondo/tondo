@@ -1674,6 +1674,7 @@ pub const NATIVES: &[Native] = {
         grpc("readFrame", &[Object], Int, "tondo_rt_grpc_read_frame"),
         grpc("frame", &[Object], Bytes, "tondo_rt_grpc_frame"),
         grpc("frameError", &[Object], String, "tondo_rt_grpc_frame_error"),
+        grpc("follow", &[IoWriter], Unit, "tondo_rt_grpc_follow"),
         grpc("signal", &[], Object, "tondo_rt_grpc_signal"),
         grpc("signalSet", &[Object], Unit, "tondo_rt_grpc_signal_set"),
         grpc("signalWait", &[Object], Bool, "tondo_rt_grpc_signal_wait"),

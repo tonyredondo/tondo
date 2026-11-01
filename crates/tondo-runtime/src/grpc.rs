@@ -669,6 +669,24 @@ pub extern "C" fn tondo_rt_grpc_frame_error(object: *mut NativeObject) -> *mut S
 }
 
 // ---------------------------------------------------------------------------
+// A client that goes
+// ---------------------------------------------------------------------------
+
+/// Cancels the running task if the reader of the pipe `writer` writes to is
+/// gone before the writer: the server dropped the reply, as its client
+/// went, or dropped the request's handler before it answered.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_grpc_follow(writer: *mut crate::io::StreamObject) {
+    let Some(gone) = crate::io::other_end_gone(writer) else { return };
+    let task = crate::tasks::current_id();
+    crate::http::runtime().spawn(async move {
+        if gone.await {
+            crate::tasks::cancel_by_id(task);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // When a server's headers may go
 // ---------------------------------------------------------------------------
 

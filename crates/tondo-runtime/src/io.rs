@@ -214,6 +214,21 @@ pub(crate) trait Host: Send {
     fn lock(&mut self, _shared: bool, _wait: bool) -> std::io::Result<bool> {
         Err(ErrorKind::Unsupported.into())
     }
+    /// For an end of a pipe: waits until either end is gone, and gives
+    /// whether the other went first.
+    fn other_end_gone(&mut self) -> Option<Gone> {
+        None
+    }
+}
+
+/// What `Host::other_end_gone` waits for.
+pub(crate) type Gone = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+
+/// What tells, for a stream that is an end of a pipe, whether its other
+/// end goes first.
+pub(crate) fn other_end_gone(stream: *mut StreamObject) -> Option<Gone> {
+    let mut state = unsafe { (*stream).state.lock().unwrap_or_else(|e| e.into_inner()) };
+    state.host.as_mut()?.other_end_gone()
 }
 
 /// What a `Mode::Ready` host waits for.
@@ -641,6 +656,22 @@ pub(crate) fn run_until<R: Send + 'static>(
             return result;
         },
     }
+}
+
+/// Whether a stream fails where it would wait, as a pipe's ends do, for
+/// `attempt`.
+pub(crate) fn waits_without_a_thread(stream: *mut StreamObject) -> bool {
+    matches!(unsafe { (*stream).mode }, Mode::Ready)
+}
+
+/// One try of an operation on a `Mode::Ready` stream, from a future: its
+/// result, and what to wait for before another when it would have waited.
+/// Dropping the future that waits gives the operation up.
+pub(crate) fn attempt<R>(stream: *mut StreamObject, op: impl FnOnce(&mut StreamState) -> R) -> (R, Option<Ready>) {
+    let mut state = unsafe { (*stream).state.lock().unwrap_or_else(|e| e.into_inner()) };
+    let result = op(&mut state);
+    let blocked = state.host.as_mut().and_then(|host| host.blocked());
+    (result, blocked)
 }
 
 /// Runs an operation in place when `ready` says the bytes already read
