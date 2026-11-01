@@ -7,6 +7,7 @@
 import std.internal.protobuf as pbNative
 import std.io as __io
 import std.json as __json
+import std.reflect as __reflect
 import std.serialization
 import std.time as __time
 
@@ -899,5 +900,88 @@ impl serialization.Decode for UnknownFields {
         UnknownFields {
             bytes: serialization.Decode.decode[serialization.Bytes](input, first)?.value
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reflection, which shows messages to the interceptors of std.grpc
+// ---------------------------------------------------------------------------
+
+impl __reflect.Reflect for Field {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Field"
+    }
+}
+
+impl __reflect.Reflect for Value {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Value"
+    }
+}
+
+impl __reflect.Reflect for Name {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Name"
+    }
+}
+
+impl __reflect.Reflect for Unknown {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Unknown"
+    }
+}
+
+/// Unknown fields show their size and travel as they are.
+impl __reflect.Reflect for UnknownFields {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.UnknownFields({self.bytes.length()} bytes)"
+    }
+}
+
+impl __reflect.Reflect for Empty {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Empty {{}}"
+    }
+
+    fn reflectFields(self): Array[__reflect.Field]? {
+        some([])
+    }
+}
+
+impl __reflect.Reflect for Any {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.Any {{ typeUrl: \"{self.typeUrl}\", value: {self.value.length()} bytes }}"
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "typeUrl" => __reflect.valueOf(self.typeUrl)
+            "value" => __reflect.valueOf(self.value)
+            _ => fail __reflect.ReflectError.noField("protobuf.Any", name, ["typeUrl", "value"])
+        }
+    }
+
+    fn reflectFields(self): Array[__reflect.Field]? {
+        some([
+            __reflect.Field { name: "typeUrl", value: __reflect.valueOf(self.typeUrl) },
+            __reflect.Field { name: "value", value: __reflect.valueOf(self.value) },
+        ])
+    }
+}
+
+impl __reflect.Reflect for FieldMask {
+    fn reflectShow(self, nested: Bool): String {
+        "protobuf.FieldMask {{ paths: {__reflect.valueOf(self.paths)} }}"
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "paths" => __reflect.valueOf(self.paths)
+            _ => fail __reflect.ReflectError.noField("protobuf.FieldMask", name, ["paths"])
+        }
+    }
+
+    fn reflectFields(self): Array[__reflect.Field]? {
+        some([__reflect.Field { name: "paths", value: __reflect.valueOf(self.paths) }])
     }
 }

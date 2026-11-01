@@ -1,4 +1,4 @@
-//! The transport of `std.grpc`'s clients (standard library 14.40): a
+//! The transport of `std.grpc`'s clients (standard library 14.41): a
 //! channel to a server keeps one HTTP/2 connection, over TLS with ALPN or
 //! as h2c, which its calls share; a call sends its messages framed as gRPC
 //! frames them, as they are given, and receives the server's messages,
@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 type Body = UnsyncBoxBody<Bytes, std::io::Error>;
 
 /// The codes of gRPC's status that the transport gives itself.
+const CANCELLED: i64 = 1;
 const INTERNAL: i64 = 13;
 const UNAVAILABLE: i64 = 14;
 const UNKNOWN: i64 = 2;
@@ -150,6 +151,42 @@ enum Event {
     End(i64, String, Vec<String>),
 }
 
+/// Where a call's task puts what arrives, and the status as soon as it
+/// comes.
+struct Events {
+    sender: mpsc::UnboundedSender<Event>,
+    ended: Arc<Ended>,
+}
+
+impl Events {
+    fn send(&self, event: Event) {
+        let _ = self.sender.send(event);
+    }
+
+    fn end(&self, code: i64, message: String, trailers: Vec<String>) {
+        self.ended.set(code, &message, &trailers);
+        self.send(Event::End(code, message, trailers));
+    }
+}
+
+/// A call's status once it ended, while its messages may still wait to be
+/// read: what the `next` of interceptors waits for.
+#[derive(Default)]
+struct Ended {
+    status: Mutex<Option<(i64, String, Vec<String>)>>,
+    notify: tokio::sync::Notify,
+}
+
+impl Ended {
+    fn set(&self, code: i64, message: &str, trailers: &[String]) {
+        let mut status = lock(&self.status);
+        if status.is_none() {
+            *status = Some((code, message.to_string(), trailers.to_vec()));
+            self.notify.notify_waiters();
+        }
+    }
+}
+
 struct Call {
     /// The messages to send, framed; dropped when the client has sent all.
     outgoing: Mutex<Option<mpsc::Sender<Bytes>>>,
@@ -161,11 +198,13 @@ struct Call {
     /// The message received last, and the status once it came.
     message: Mutex<Bytes>,
     status: Mutex<(i64, String, Vec<String>)>,
+    ended: Arc<Ended>,
 }
 
 impl Drop for Call {
     fn drop(&mut self) {
         self.task.abort();
+        self.ended.set(CANCELLED, "the call was cancelled", &[]);
     }
 }
 
@@ -214,10 +253,8 @@ fn code_of_http(status: u16) -> i64 {
 }
 
 /// Runs a call: sends its request, then gives what comes back as events.
-async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: mpsc::UnboundedSender<Event>) {
-    let end = |code: i64, message: String| {
-        let _ = events.send(Event::End(code, message, Vec::new()));
-    };
+async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: Events) {
+    let end = |code: i64, message: String| events.end(code, message, Vec::new());
     let mut sender = match channel.connection().await {
         Ok(sender) => sender,
         Err(problem) => return end(UNAVAILABLE, problem),
@@ -238,11 +275,10 @@ async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: 
     if head.status != 200 {
         return end(code_of_http(head.status.as_u16()), format!("the server answered HTTP {}", head.status));
     }
-    let _ = events.send(Event::Headers(pairs(&head.headers)));
+    events.send(Event::Headers(pairs(&head.headers)));
     // A status in the headers is the whole answer.
     if let Some((code, message)) = status_of(&head.headers) {
-        let _ = events.send(Event::End(code, message, pairs(&head.headers)));
-        return;
+        return events.end(code, message, pairs(&head.headers));
     }
     let mut buffer = BytesMut::new();
     while let Some(frame) = body.frame().await {
@@ -265,15 +301,14 @@ async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: 
                         );
                     }
                     buffer.advance(5);
-                    let _ = events.send(Event::Message(buffer.split_to(length).freeze()));
+                    events.send(Event::Message(buffer.split_to(length).freeze()));
                 }
             }
             Err(frame) => {
                 if let Ok(trailers) = frame.into_trailers() {
                     let (code, message) =
                         status_of(&trailers).unwrap_or((INTERNAL, "the server gave no status".into()));
-                    let _ = events.send(Event::End(code, message, pairs(&trailers)));
-                    return;
+                    return events.end(code, message, pairs(&trailers));
                 }
             }
         }
@@ -281,31 +316,20 @@ async fn exchange(channel: Arc<Channel>, request: hyper::Request<Body>, events: 
     end(INTERNAL, "the reply ended without a status".into())
 }
 
-/// Starts a call of `path`, `/package.Service/Method`, with the headers of
-/// its metadata as names and values; its messages follow with `send`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_grpc_start(
+/// A call of `path`, `/package.Service/Method`, with the headers of its
+/// metadata as names and values; with `single`, `message` is its one
+/// request and it sends no more, and without, its messages follow with
+/// `send`. `None` for what is not a channel.
+fn begin(
     channel: *mut NativeObject,
     path: *const Str,
     headers: *mut ArrayHeader,
-) -> *mut NativeObject {
-    let (events_out, events_in) = mpsc::unbounded_channel();
-    let (outgoing, mut messages) = mpsc::channel::<Bytes>(16);
-    let call = |task| Call {
-        outgoing: Mutex::new(Some(outgoing)),
-        incoming: tokio::sync::Mutex::new(events_in),
-        task,
-        headers: Mutex::new(Vec::new()),
-        message: Mutex::new(Bytes::new()),
-        status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
-    };
-    let channel = match native::get::<Result<Arc<Channel>, String>>(channel) {
-        Some(Ok(channel)) => channel.clone(),
-        Some(Err(problem)) => {
-            let _ = events_out.send(Event::End(UNAVAILABLE, problem.clone(), Vec::new()));
-            return native::new(call(crate::http::runtime().spawn(async {})));
-        }
-        None => return std::ptr::null_mut(),
+    message: *mut ArrayHeader,
+    single: bool,
+) -> Option<Call> {
+    let channel = match native::get::<Result<Arc<Channel>, String>>(channel)? {
+        Ok(channel) => channel.clone(),
+        Err(problem) => return Some(finished(UNAVAILABLE, problem.clone())),
     };
     let scheme = if channel.secure { "https" } else { "http" };
     let mut request = hyper::Request::post(format!("{scheme}://{}{}", channel.authority, text(path)))
@@ -317,19 +341,66 @@ pub unsafe extern "C" fn tondo_rt_grpc_start(
             request = request.header(name.as_str(), value.as_str());
         }
     }
+    let (outgoing, mut messages) = mpsc::channel::<Bytes>(16);
     let body = futures_util::stream::poll_fn(move |context| {
         messages.poll_recv(context).map(|m| m.map(|b| Ok(Frame::data(b))))
     });
     let request = match request.body(BodyExt::boxed_unsync(StreamBody::new(body))) {
         Ok(request) => request,
-        Err(error) => {
-            let _ =
-                events_out.send(Event::End(INTERNAL, format!("the call's metadata is not valid: {error}"), Vec::new()));
-            return native::new(call(crate::http::runtime().spawn(async {})));
-        }
+        Err(error) => return Some(finished(INTERNAL, format!("the call's metadata is not valid: {error}"))),
     };
-    let task = crate::http::runtime().spawn(exchange(channel, request, events_out));
-    native::new(call(task))
+    if single {
+        let _ = outgoing.try_send(framed(&unsafe { array_bytes(message) }));
+    }
+    let (sender, incoming) = mpsc::unbounded_channel();
+    let ended = Arc::new(Ended::default());
+    let task = crate::http::runtime().spawn(exchange(channel, request, Events { sender, ended: ended.clone() }));
+    Some(Call {
+        outgoing: Mutex::new((!single).then_some(outgoing)),
+        incoming: tokio::sync::Mutex::new(incoming),
+        task,
+        headers: Mutex::new(Vec::new()),
+        message: Mutex::new(Bytes::new()),
+        status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
+        ended,
+    })
+}
+
+/// A call that ended before it began, with this status.
+fn finished(code: i64, message: String) -> Call {
+    let (sender, incoming) = mpsc::unbounded_channel();
+    let ended = Arc::new(Ended::default());
+    Events { sender, ended: ended.clone() }.end(code, message, Vec::new());
+    Call {
+        outgoing: Mutex::new(None),
+        incoming: tokio::sync::Mutex::new(incoming),
+        task: crate::http::runtime().spawn(async {}),
+        headers: Mutex::new(Vec::new()),
+        message: Mutex::new(Bytes::new()),
+        status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
+        ended,
+    }
+}
+
+/// A message as gRPC frames it: not compressed, after its length.
+fn framed(message: &[u8]) -> Bytes {
+    let mut framed = BytesMut::with_capacity(5 + message.len());
+    framed.extend_from_slice(&[0]);
+    framed.extend_from_slice(&(message.len() as u32).to_be_bytes());
+    framed.extend_from_slice(message);
+    framed.freeze()
+}
+
+/// Starts a call (`begin`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_grpc_start(
+    channel: *mut NativeObject,
+    path: *const Str,
+    headers: *mut ArrayHeader,
+    message: *mut ArrayHeader,
+    single: u8,
+) -> *mut NativeObject {
+    begin(channel, path, headers, message, single != 0).map_or(std::ptr::null_mut(), native::new)
 }
 
 fn call<'a>(object: *mut NativeObject) -> Option<&'a Call> {
@@ -342,11 +413,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_send(object: *mut NativeObject, message: 
     let message = unsafe { array_bytes(message) };
     let Some(call) = call(object) else { return 0 };
     let Some(sender) = lock(&call.outgoing).clone() else { return 0 };
-    let mut framed = BytesMut::with_capacity(5 + message.len());
-    framed.extend_from_slice(&[0]);
-    framed.extend_from_slice(&(message.len() as u32).to_be_bytes());
-    framed.extend_from_slice(&message);
-    matches!(wait_for(sender.send(framed.freeze())), Some(Ok(()))) as u8
+    matches!(wait_for(sender.send(framed(&message))), Some(Ok(()))) as u8
 }
 
 /// Says the client sent all its messages.
@@ -366,7 +433,7 @@ pub extern "C" fn tondo_rt_grpc_next(object: *mut NativeObject) -> i64 {
     loop {
         let Some(next) = wait_for(async { call.incoming.lock().await.recv().await }) else {
             call.task.abort();
-            *lock(&call.status) = (1, "the call was cancelled".into(), Vec::new());
+            *lock(&call.status) = (CANCELLED, "the call was cancelled".into(), Vec::new());
             return -1;
         };
         match next {
@@ -408,6 +475,122 @@ pub extern "C" fn tondo_rt_grpc_headers(object: *mut NativeObject) -> *mut Array
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_trailers(object: *mut NativeObject) -> *mut ArrayHeader {
     crate::http::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.status).2.clone()))
+}
+
+// ---------------------------------------------------------------------------
+// Calls through a client's interceptors
+// ---------------------------------------------------------------------------
+
+/// Where the `next` of a client's interceptors puts the call it makes,
+/// for the code that called to take; or the status the interceptors ended
+/// with when they made none.
+#[derive(Default)]
+struct Slot {
+    held: Mutex<Held>,
+    notify: tokio::sync::Notify,
+}
+
+#[derive(Default)]
+enum Held {
+    #[default]
+    Waiting,
+    Made(Call),
+    Taken,
+    Closed(i64, String),
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_grpc_slot() -> *mut NativeObject {
+    native::new(Slot::default())
+}
+
+/// `next`: makes the call, which the slot keeps for the caller in place of
+/// one made before, and gives what says when it ends.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_grpc_open(
+    slot: *mut NativeObject,
+    channel: *mut NativeObject,
+    path: *const Str,
+    headers: *mut ArrayHeader,
+    message: *mut ArrayHeader,
+    single: u8,
+) -> *mut NativeObject {
+    let (Some(slot), Some(call)) = (native::get::<Slot>(slot), begin(channel, path, headers, message, single != 0))
+    else {
+        return std::ptr::null_mut();
+    };
+    let ended = call.ended.clone();
+    // A call made after the caller took one is nobody's, and ends.
+    let _replaced = {
+        let mut held = lock(&slot.held);
+        match *held {
+            Held::Taken => Some(call),
+            _ => match std::mem::replace(&mut *held, Held::Made(call)) {
+                Held::Made(before) => Some(before),
+                _ => None,
+            },
+        }
+    };
+    slot.notify.notify_waiters();
+    native::new(ended)
+}
+
+/// Waits until a call ends and gives its status: its code, its message and
+/// the trailers' names and values.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_grpc_ended(object: *mut NativeObject) -> *mut ArrayHeader {
+    let Some(ended) = native::get::<Arc<Ended>>(object).cloned() else {
+        return crate::http::string_array(&[]);
+    };
+    let status = wait_for(async move {
+        loop {
+            let notified = ended.notify.notified();
+            if let Some(status) = lock(&ended.status).clone() {
+                return status;
+            }
+            notified.await;
+        }
+    });
+    let (code, message, trailers) = status.unwrap_or((CANCELLED, "the call was cancelled".into(), Vec::new()));
+    let mut list = vec![code.to_string(), message];
+    list.extend(trailers);
+    crate::http::string_array(&list)
+}
+
+/// The call the interceptors made, once `next` made it; or one that ended
+/// with the status they closed the slot with.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_grpc_take(object: *mut NativeObject) -> *mut NativeObject {
+    let Some(slot) = native::get::<Slot>(object) else { return std::ptr::null_mut() };
+    let taken = wait_for(async {
+        loop {
+            let notified = slot.notify.notified();
+            {
+                let mut held = lock(&slot.held);
+                match std::mem::replace(&mut *held, Held::Taken) {
+                    Held::Made(call) => return call,
+                    Held::Closed(code, message) => return finished(code, message),
+                    other => *held = other,
+                }
+            }
+            notified.await;
+        }
+    });
+    native::new(taken.unwrap_or_else(|| finished(CANCELLED, "the call was cancelled".into())))
+}
+
+/// The interceptors returned: if they made no call, the caller's ends with
+/// `code` and `message`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_grpc_close(object: *mut NativeObject, code: i64, message: *const Str) {
+    if let Some(slot) = native::get::<Slot>(object) {
+        let mut held = lock(&slot.held);
+        if matches!(*held, Held::Waiting) {
+            *held = Held::Closed(code, text(message));
+        }
+        drop(held);
+        slot.notify.notify_waiters();
+    }
 }
 
 // ---------------------------------------------------------------------------

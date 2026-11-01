@@ -6653,6 +6653,9 @@ pub fn unary[In, Out](call: ServerCall, method: fn(In): Out ! Status): !Status
 pub fn serverStream[In, Out](call: ServerCall, method: fn(In, Sender[Out]): !Status): !Status
 pub fn clientStream[In, Out](call: ServerCall, method: fn(Stream[In]): Out ! Status): !Status
 pub fn bidiStream[In, Out](call: ServerCall, method: fn(Stream[In], Sender[Out]): !Status): !Status
+pub enum Direction { Received, Sent }
+pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
+pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
 
 pub type Stream[T]                                          // Iterator[T ! Status]
 pub type Channel
@@ -6661,6 +6664,8 @@ pub fn Channel.unary[In, Out](self, path: String, request: In, metadata: Map[Str
 pub fn Channel.serverStream[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
 pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
 pub fn Channel.bidiStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Duplex[In, Out]
+pub fn Channel.onCall(self, interceptor: fn(Call, fn(Call): !Status): !Status): Channel
+pub fn Channel.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Channel
 pub type Upload[In, Out]
 pub fn Upload.send(self, message: In): !Status
 pub fn Upload.finish(self): Out ! Status
@@ -6728,6 +6733,22 @@ pub fn Duplex.trailers(self): Map[String, String]
   envía y `finish` termina el envío y da la respuesta. `Duplex.send` y
   `closeSend` envían, `replies` da las respuestas, y `headers` y `trailers` la
   metadata del servidor una vez llegó, sin el status.
+- **Interceptores.** `Service.onCall` envuelve cada llamada de un servicio:
+  el interceptor recibe la `Call` y `next`, que corre el método en la tarea
+  de la llamada, así que puede rechazarla con `fail`, dar contextos al
+  método con `with`, medirla o cambiar su status; un pánico del método le
+  llega como `Internal`. `Channel.onCall` envuelve cada llamada de un canal:
+  `next(call)` la hace con la metadata y el plazo de la `Call` que recibe, y
+  da su status cuando termina. En una llamada unaria los interceptores
+  corren en la tarea de quien llama, y su fallo es el de la llamada; en un
+  stream corren en una tarea propia, con los contextos de quien llama,
+  mientras este lee la llamada que hizo `next`, o termina con su fallo si
+  no la hicieron. El primero que se añade es el más externo, como en
+  `App.use`. `onMessage` muestra cada mensaje, recibido o enviado, como un
+  `reflect.Value` (14.8), con la llamada y su `Direction`; la petición de
+  una llamada del cliente se ve cuando la llamada se hace. Los mensajes
+  implementan `reflect.Reflect`: los de un `.proto` y los tipos de Google
+  lo tienen.
 - **Fuera.** gRPC-Web y Connect, la compresión de los mensajes, el balanceo
   entre servidores y el mapeo de proto3 a JSON.
 

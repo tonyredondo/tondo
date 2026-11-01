@@ -3987,3 +3987,18 @@ client gets its `within`'s `TimedOut` as any other wait does. The client
 keeps one HTTP/2 connection a channel, shared by its calls and made again
 when it drops; the value behind a service is copied into each method, as
 closures copy what they capture, so it holds handles, not a `Sender`.
+
+## 2026-11-01 — gRPC's interceptors
+
+A tracer, an authenticator or a log wraps every call of a service or a
+client, which `onCall` does with `next`, as `App.use` and `Database.use`
+do, the first added outermost. On a server, `next` runs the method in the
+call's own task, so a context the interceptor gives with `with` reaches the
+method and what it calls, which is how a span would. On a client, a unary
+call is wrapped where it is made; a stream returns as soon as it starts and
+is read afterwards, so its interceptors run in a task of their own, with
+the caller's contexts, and `next` gives the status when the call ends,
+while the caller reads the call that `next` made: one `onCall` serves the
+four kinds of call, instead of a second pair of hooks for streams.
+`onMessage` shows each message as a `reflect.Value`, which reads any
+message without knowing its type, so messages implement `Reflect`.

@@ -1,4 +1,4 @@
-// std.grpc (standard library 14.40): gRPC over HTTP/2. A service of a
+// std.grpc (standard library 14.41): gRPC over HTTP/2. A service of a
 // `.proto` file gives a trait whose methods are its calls, a function that
 // makes a server's `Service` of a value that implements it, which
 // `App.grpc` serves, and a client. Messages are `std.protobuf`'s, a call's
@@ -10,6 +10,7 @@ import std.http as __http
 import std.internal.grpc as grpcNative
 import std.io as __io
 import std.protobuf as __protobuf
+import std.reflect as __reflect
 import std.time as __time
 
 // ---------------------------------------------------------------------------
@@ -238,6 +239,8 @@ pub fn setTrailer(name: String, value: String) {
 pub type Service = {
     name: String
     methods: Array[Method]
+    priv layers: Array[fn(Call, fn(): !Status): !Status] = []
+    priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
 
 /// A method of a service: its name and what serves it.
@@ -246,12 +249,44 @@ pub type Method = {
     handler: fn(ServerCall): !Status
 }
 
+/// Whether a message was received or sent by the side that sees it.
+pub enum Direction {
+    Received
+    Sent
+}
+
+/// `Received` or `Sent`.
+impl Display for Direction {
+    fn display(self): String {
+        match self {
+            Direction.Received => "Received"
+            Direction.Sent => "Sent"
+        }
+    }
+}
+
+/// Wraps each call of the service: `interceptor` gets the call and `next`,
+/// which runs the method in the call's task, so it can refuse the call
+/// with `fail`, give the method contexts with `with`, time it or change
+/// its status; a panic of the method reaches it as `Internal`. The first
+/// added is the outermost.
+pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service {
+    self with { layers: self.layers.concat([interceptor]) }
+}
+
+/// Shows `observer` each message of each call, as it is received or sent.
+pub fn Service.onMessage(self, observer: fn(Call, Direction, __reflect.Value)): Service {
+    self with { watchers: self.watchers.concat([observer]) }
+}
+
 impl __http.GrpcService for Service {
     fn serveOn(self, app: mut __http.App) {
         for method in self.methods {
             let path = "/{self.name}/{method.name}"
             let handler = method.handler
-            app.post(path, (request) { serve(request, path, handler)? })
+            let layers = self.layers
+            let watchers = self.watchers
+            app.post(path, (request) { serve(request, path, handler, layers, watchers)? })
         }
     }
 }
@@ -262,6 +297,7 @@ pub type ServerCall = {
     priv output: __io.Writer
     /// Set once the server's headers are to be sent.
     priv ready: grpcNative.Native
+    priv watchers: Array[fn(Call, Direction, __reflect.Value)]
 }
 
 /// Serves a call: runs its method in a task of its own, whose messages go
@@ -270,6 +306,8 @@ fn serve(
     request: __http.Request,
     path: String,
     handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    watchers: Array[fn(Call, Direction, __reflect.Value)],
 ): __http.Reply ! __http.Problem {
     let (output, reader) = __io.pipe()
     let headers = __http.Trailers.new()
@@ -288,9 +326,9 @@ fn serve(
         _ = metadata.remove(name)
     }
     let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
-    let server = ServerCall { frames: grpcNative.frames(request.body()), output, ready }
+    let server = ServerCall { frames: grpcNative.frames(request.body()), output, ready, watchers }
     with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
-    spawn detached run(server, handler, timeout, trailers)
+    spawn detached run(server, handler, layers, timeout, trailers)
     // The headers go once the method sends its first message, or ends.
     _ = grpcNative.signalWait(ready)
     var reply = __http.Reply.stream(
@@ -307,15 +345,13 @@ fn serve(
 fn run(
     server: ServerCall,
     handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
     timeout: __time.Duration?,
     trailers: __http.Trailers,
 ) {
-    let outcome = match recover { served(server, handler, timeout) } {
+    let outcome = match recover { served(server, handler, layers, timeout) } {
         ok(status) => status
-        err(failure) => Status {
-            code: Code.Internal
-            message: "the method panicked: {failure.message}"
-        }
+        err(failure) => panicked("the method", failure.message)
     }
     trailers.set("grpc-status", "{outcome.code.number()}")
     if not outcome.message.isEmpty() {
@@ -336,10 +372,20 @@ fn run(
     _ = server.output.close()
 }
 
-/// What a method gave, within the call's deadline.
-fn served(server: ServerCall, handler: fn(ServerCall): !Status, timeout: __time.Duration?): Status {
+/// The status of a call whose code panicked.
+fn panicked(who: String, message: String): Status {
+    Status { code: Code.Internal, message: "{who} panicked: {message}" }
+}
+
+/// What a method gave through the interceptors, within the call's deadline.
+fn served(
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    timeout: __time.Duration?,
+): Status {
     let outcome: !Status = match timeout {
-        some(limit) => match within limit { handler(server) } {
+        some(limit) => match within limit { intercepted(layers, 0, server, handler) } {
             ok(_) => ok(())
             err(failure) => match failure {
                 Status(status) => err(status)
@@ -350,7 +396,7 @@ fn served(server: ServerCall, handler: fn(ServerCall): !Status, timeout: __time.
                     })
             }
         }
-        none => handler(server)
+        none => intercepted(layers, 0, server, handler)
     }
     match outcome {
         ok(_) => Status { code: Code.Ok }
@@ -358,17 +404,58 @@ fn served(server: ServerCall, handler: fn(ServerCall): !Status, timeout: __time.
     }
 }
 
+/// The method through the interceptors from the one at `at` on.
+fn intercepted(
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    at: Int,
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+): !Status {
+    if at == layers.length() {
+        if at == 0 {
+            handler(server)?
+            return
+        }
+        // The interceptors see a panic of the method as its status.
+        match recover { handler(server) } {
+            ok(outcome) => outcome?
+            err(failure) => fail panicked("the method", failure.message)
+        }
+        return
+    }
+    let layer = layers[at]
+    layer(Incoming.call, () { intercepted(layers, at + 1, server, handler)? })?
+}
+
 /// Lets the server's headers go.
 fn ServerCall.start(self) {
     grpcNative.signalSet(self.ready)
 }
 
+/// Shows a message to those who watch the call's messages.
+fn watched[T: __reflect.Reflect](
+    watchers: Array[fn(Call, Direction, __reflect.Value)],
+    rpc: Call,
+    direction: Direction,
+    message: T,
+) {
+    if not watchers.isEmpty() {
+        let value = __reflect.valueOf(message)
+        for watcher in watchers {
+            watcher(rpc, direction, value)
+        }
+    }
+}
+
 /// The next message of the call, or `none` after the client's last.
-pub fn ServerCall.receive[T: __protobuf.Message](self): T? ! Status {
+pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? ! Status {
     match grpcNative.readFrame(self.frames) {
         -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
         1 => match __protobuf.decode[T](grpcNative.frame(self.frames)) {
-            ok(message) => some(message)
+            ok(message) => {
+                watched(self.watchers, Incoming.call, Direction.Received, message)
+                some(message)
+            }
             err(error) => fail Status {
                 code: Code.InvalidArgument
                 message: "the request is not a `{__protobuf.Message.protobufName[T]()}`: {error}"
@@ -380,8 +467,9 @@ pub fn ServerCall.receive[T: __protobuf.Message](self): T? ! Status {
 }
 
 /// Sends a message to the client.
-pub fn ServerCall.send[T: __protobuf.Message](self, message: T): !Status {
+pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message: T): !Status {
     self.start()
+    watched(self.watchers, Incoming.call, Direction.Sent, message)
     let bytes = __protobuf.encode(message)
     match self.output.writeBytes(framed(bytes)) {
         ok(_) => {}
@@ -396,10 +484,10 @@ fn framed(bytes: Array[Byte]): Array[Byte] {
 }
 
 /// A unary method: one request, one reply.
-pub fn unary[In: __protobuf.Message, Out: __protobuf.Message](
-    exchange: ServerCall,
-    method: fn(In): Out ! Status,
-): !Status {
+pub fn unary[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(In): Out ! Status): !Status {
     let request = match exchange.receive[In]()? {
         some(request) => request
         none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
@@ -408,10 +496,10 @@ pub fn unary[In: __protobuf.Message, Out: __protobuf.Message](
 }
 
 /// A method that sends a stream: one request, and replies as it sends them.
-pub fn serverStream[In: __protobuf.Message, Out: __protobuf.Message](
-    exchange: ServerCall,
-    method: fn(In, Sender[Out]): !Status,
-): !Status {
+pub fn serverStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(In, Sender[Out]): !Status): !Status {
     let request = match exchange.receive[In]()? {
         some(request) => request
         none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
@@ -421,25 +509,25 @@ pub fn serverStream[In: __protobuf.Message, Out: __protobuf.Message](
 }
 
 /// A method that receives a stream: the requests, and one reply.
-pub fn clientStream[In: __protobuf.Message, Out: __protobuf.Message](
-    exchange: ServerCall,
-    method: fn(Stream[In]): Out ! Status,
-): !Status {
+pub fn clientStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In]): Out ! Status): !Status {
     exchange.send(method(Stream[In] { source: Source.Server(exchange) })?)?
 }
 
 /// A method that receives a stream and sends one.
-pub fn bidiStream[In: __protobuf.Message, Out: __protobuf.Message](
-    exchange: ServerCall,
-    method: fn(Stream[In], Sender[Out]): !Status,
-): !Status {
+pub fn bidiStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In], Sender[Out]): !Status): !Status {
     let (sender, replies) = channel[Out](capacity: 16, discardWhenAbandoned: true)
     forward(exchange, replies, spawn method(Stream[In] { source: Source.Server(exchange) }, sender))?
 }
 
 /// Sends the replies a method gives as it gives them; when the client is
 /// gone, the method is cancelled.
-fn forward[Out: __protobuf.Message](
+fn forward[Out: __protobuf.Message + __reflect.Reflect](
     exchange: ServerCall,
     replies: Receiver[Out],
     sending: Join[!Status],
@@ -507,7 +595,7 @@ fn percentEncoded(text: String): String {
 
 enum Source {
     Server(ServerCall)
-    Client(grpcNative.Native)
+    Client(Outgoing)
 }
 
 /// The messages of a stream, each as it arrives: `for each in stream { let
@@ -517,14 +605,14 @@ pub type Stream[T] = {
     priv ended: Bool = false
 }
 
-impl[T: __protobuf.Message] Iterator[T ! Status] for Stream[T] {
+impl[T: __protobuf.Message + __reflect.Reflect] Iterator[T ! Status] for Stream[T] {
     fn next(mut self): (T ! Status)? {
         if self.ended {
             return none
         }
         let outcome = match self.source {
             Source.Server(exchange) => exchange.receive[T]()
-            Source.Client(native) => received[T](native)
+            Source.Client(outgoing) => outgoing.received[T]()
         }
         match outcome {
             ok(some(message)) => some(ok(message))
@@ -550,6 +638,9 @@ impl[T: __protobuf.Message] Iterator[T ! Status] for Stream[T] {
 /// show the server who the client is.
 pub type Channel = {
     priv native: grpcNative.Native
+    priv target: String
+    priv layers: Array[fn(Call, fn(Call): !Status): !Status] = []
+    priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
 
 /// A channel to a server, which connects with its first call.
@@ -564,153 +655,287 @@ pub fn connect(
     if not problem.isEmpty() {
         fail Status { code: Code.InvalidArgument, message: problem }
     }
-    Channel { native }
+    Channel { native, target: target.removePrefix("https://").removePrefix("http://") }
 }
 
-/// Starts a call with its metadata, and the deadline of the running
-/// `within` as `grpc-timeout`.
-fn Channel.start(self, path: String, metadata: Map[String, String]): grpcNative.Native {
+/// Wraps each call the channel makes: `interceptor` gets the call and
+/// `next`, which makes it with the metadata and deadline of the `Call` it
+/// is given and gives its status when it ends. A unary call runs the
+/// interceptors in the caller's task and fails as they do; a stream runs
+/// them in a task of their own, with the caller's contexts, while the
+/// caller reads the call `next` made. The first added is the outermost.
+pub fn Channel.onCall(self, interceptor: fn(Call, fn(Call): !Status): !Status): Channel {
+    self with { layers: self.layers.concat([interceptor]) }
+}
+
+/// Shows `observer` each message of each call, as it is sent or received.
+pub fn Channel.onMessage(self, observer: fn(Call, Direction, __reflect.Value)): Channel {
+    self with { watchers: self.watchers.concat([observer]) }
+}
+
+/// A call the client makes: the runtime's, what it is, and who watches its
+/// messages.
+type Outgoing = {
+    native: grpcNative.Native
+    call: Call
+    watchers: Array[fn(Call, Direction, __reflect.Value)]
+}
+
+/// The call of `path` with its metadata, and the time left before the
+/// running `within`'s deadline.
+fn Channel.callOf(self, path: String, metadata: Map[String, String]): Call {
+    Call { method: path, metadata, peer: self.target, timeout: __time.remaining() }
+}
+
+/// The headers of a call: its metadata, and its deadline as `grpc-timeout`.
+fn headersOf(rpc: Call): Array[String] {
     var headers: Array[String] = []
-    for (name, value) in metadata {
+    for (name, value) in rpc.metadata {
         headers.extend([name.toLower(), value])
     }
-    match __time.remaining() {
+    match rpc.timeout {
         some(left) => headers.extend(["grpc-timeout", timeoutText(left)])
         none => {}
     }
-    grpcNative.start(self.native, path, headers)
+    headers
+}
+
+/// What a call starts with: its one request, as bytes and as those who
+/// watch messages see it; none for a call whose requests follow.
+type Opening = {
+    message: Array[Byte] = []
+    single: Bool = false
+    shown: __reflect.Value? = none
+}
+
+/// A call's one request.
+fn Channel.opening[T: __protobuf.Message + __reflect.Reflect](self, request: T): Opening {
+    let shown: __reflect.Value? = if self.watchers.isEmpty() {
+        none
+    } else {
+        some(__reflect.valueOf(request))
+    }
+    Opening { message: __protobuf.encode(request), single: true, shown }
+}
+
+/// Makes a call, showing its request as sent.
+fn Channel.open(self, rpc: Call, opening: Opening, slot: grpcNative.Native?): grpcNative.Native {
+    match opening.shown {
+        some(value) => {
+            for watcher in self.watchers {
+                watcher(rpc, Direction.Sent, value)
+            }
+        }
+        none => {}
+    }
+    let headers = headersOf(rpc)
+    match slot {
+        some(into) => grpcNative.open(
+            into,
+            self.native,
+            rpc.method,
+            headers,
+            opening.message,
+            opening.single,
+        )
+        none => grpcNative.start(self.native, rpc.method, headers, opening.message, opening.single)
+    }
+}
+
+/// Starts a call. Through interceptors, they run in a task of their own
+/// and the call is the one their `next` made.
+fn Channel.started(self, rpc: Call, opening: Opening): Outgoing {
+    let native = if self.layers.isEmpty() {
+        self.open(rpc, opening, none)
+    } else {
+        let slot = grpcNative.slot()
+        spawn detached self.intercepted(slot, rpc, opening)
+        grpcNative.take(slot)
+    }
+    Outgoing { native, call: rpc, watchers: self.watchers }
+}
+
+/// Runs the interceptors around `next`, which makes the call into the
+/// slot; when they make none, the caller's call ends as they did.
+fn Channel.intercepted(self, slot: grpcNative.Native, rpc: Call, opening: Opening): !Status {
+    let outcome = match recover { self.layered(0, slot, rpc, opening) } {
+        ok(outcome) => outcome
+        err(failure) => err(panicked("an interceptor", failure.message))
+    }
+    match outcome {
+        ok(_) => grpcNative.close(slot, Code.Internal.number(), "the interceptors made no call")
+        err(status) => grpcNative.close(slot, status.code.number(), status.message)
+    }
+    outcome?
+}
+
+/// The call through the interceptors from the one at `at` on.
+fn Channel.layered(self, at: Int, slot: grpcNative.Native, rpc: Call, opening: Opening): !Status {
+    if at == self.layers.length() {
+        let ended = grpcNative.ended(self.open(rpc, opening, some(slot)))
+        let code = Int.parse(ended[0]).unwrapOr(2)
+        if code != 0 {
+            fail statusOf(code, ended[1], ended.drop(2))
+        }
+        return
+    }
+    let layer = self.layers[at]
+    let connection = self
+    layer(rpc, (next) { connection.layered(at + 1, slot, next, opening)? })?
 }
 
 /// The next message a call receives, `none` after the last, or its status
 /// when it failed.
-fn received[T: __protobuf.Message](native: grpcNative.Native): T? ! Status {
-    match grpcNative.next(native) {
-        1 => match __protobuf.decode[T](grpcNative.message(native)) {
-            ok(message) => some(message)
+fn Outgoing.received[T: __protobuf.Message + __reflect.Reflect](self): T? ! Status {
+    match grpcNative.next(self.native) {
+        1 => match __protobuf.decode[T](grpcNative.message(self.native)) {
+            ok(message) => {
+                watched(self.watchers, self.call, Direction.Received, message)
+                some(message)
+            }
             err(error) => fail Status {
                 code: Code.Internal
                 message: "the reply is not a `{__protobuf.Message.protobufName[T]()}`: {error}"
             }
         }
         0 => {
-            let code = grpcNative.code(native)
-            if code != 0 {
-                fail statusOf(code, grpcNative.detail(native), grpcNative.trailers(native))
-            }
+            self.ended()?
             none
         }
         _ => fail Status { code: Code.Cancelled, message: "the call was cancelled" }
     }
 }
 
-/// A unary call: one request, one reply.
-pub fn Channel.unary[In: __protobuf.Message, Out: __protobuf.Message](
-    self,
-    path: String,
-    request: In,
-    metadata: Map[String, String] = [:],
-): Out ! Status {
-    let native = self.start(path, metadata)
-    _ = grpcNative.send(native, __protobuf.encode(request))
-    grpcNative.closeSend(native)
-    let reply = match received[Out](native)? {
+/// Fails with the status of a call that ended, once it ended.
+fn Outgoing.ended(self): !Status {
+    let code = grpcNative.code(self.native)
+    if code != 0 {
+        fail statusOf(code, grpcNative.detail(self.native), grpcNative.trailers(self.native))
+    }
+}
+
+/// Sends a message; a call that ended fails with its status.
+fn Outgoing.send[T: __protobuf.Message + __reflect.Reflect](self, message: T): !Status {
+    watched(self.watchers, self.call, Direction.Sent, message)
+    if not grpcNative.send(self.native, __protobuf.encode(message)) {
+        // What arrived before the status does not matter any more.
+        for grpcNative.next(self.native) == 1 {}
+        self.ended()?
+        fail Status { code: Code.Cancelled, message: "the call ended" }
+    }
+}
+
+/// The one reply of a call, and then its status.
+fn Outgoing.reply[T: __protobuf.Message + __reflect.Reflect](self): T ! Status {
+    let reply = match self.received[T]()? {
         some(reply) => reply
         none => fail Status { code: Code.Internal, message: "the server sent no reply" }
     }
-    // The status after the reply.
-    _ = received[Out](native)?
+    _ = self.received[T]()?
     reply
 }
 
+/// A unary call: one request, one reply.
+pub fn Channel.unary[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status {
+    let rpc = self.callOf(path, metadata)
+    let opening = self.opening(request)
+    if self.layers.isEmpty() {
+        return self.started(rpc, opening).reply[Out]()?
+    }
+    // The interceptors run here, and their failure is the call's.
+    let slot = grpcNative.slot()
+    self.intercepted(slot, rpc, opening)?
+    Outgoing { native: grpcNative.take(slot), call: rpc, watchers: self.watchers }.reply[Out]()?
+}
+
 /// A call that receives a stream: one request, and the replies.
-pub fn Channel.serverStream[In: __protobuf.Message, Out: __protobuf.Message](
-    self,
-    path: String,
-    request: In,
-    metadata: Map[String, String] = [:],
-): Stream[Out] {
-    let native = self.start(path, metadata)
-    _ = grpcNative.send(native, __protobuf.encode(request))
-    grpcNative.closeSend(native)
-    Stream[Out] { source: Source.Client(native) }
+pub fn Channel.serverStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out] {
+    let rpc = self.callOf(path, metadata)
+    Stream[Out] { source: Source.Client(self.started(rpc, self.opening(request))) }
 }
 
 /// A call that sends a stream: `send` each request, then `finish` for the
 /// reply.
 pub type Upload[In, Out] = {
-    priv native: grpcNative.Native
+    priv outgoing: Outgoing
 }
 
 /// A call that sends a stream of requests and receives one reply.
-pub fn Channel.clientStream[In: __protobuf.Message, Out: __protobuf.Message](
-    self,
-    path: String,
-    metadata: Map[String, String] = [:],
-): Upload[In, Out] {
-    Upload[In, Out] { native: self.start(path, metadata) }
+pub fn Channel.clientStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out] {
+    Upload[In, Out] { outgoing: self.started(self.callOf(path, metadata), Opening {}) }
 }
 
 /// Sends a request; a call that ended fails with its status.
-pub fn Upload[In: __protobuf.Message, Out: __protobuf.Message].send(self, message: In): !Status {
-    if not grpcNative.send(self.native, __protobuf.encode(message)) {
-        _ = received[__protobuf.Empty](self.native)?
-        fail Status { code: Code.Cancelled, message: "the call ended" }
-    }
+pub fn Upload[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+].send(self, message: In): !Status {
+    self.outgoing.send(message)?
 }
 
 /// Says the requests are all sent, and gives the reply.
-pub fn Upload[In: __protobuf.Message, Out: __protobuf.Message].finish(self): Out ! Status {
-    grpcNative.closeSend(self.native)
-    let reply = match received[Out](self.native)? {
-        some(reply) => reply
-        none => fail Status { code: Code.Internal, message: "the server sent no reply" }
-    }
-    _ = received[Out](self.native)?
-    reply
+pub fn Upload[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+].finish(self): Out ! Status {
+    grpcNative.closeSend(self.outgoing.native)
+    self.outgoing.reply[Out]()?
 }
 
 /// A call that sends and receives streams: `send` requests, `closeSend`
 /// after the last, and read the replies as a `Stream`.
 pub type Duplex[In, Out] = {
-    priv native: grpcNative.Native
+    priv outgoing: Outgoing
 }
 
 /// A call that sends a stream of requests and receives a stream of replies.
-pub fn Channel.bidiStream[In: __protobuf.Message, Out: __protobuf.Message](
-    self,
-    path: String,
-    metadata: Map[String, String] = [:],
-): Duplex[In, Out] {
-    Duplex[In, Out] { native: self.start(path, metadata) }
+pub fn Channel.bidiStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](self, path: String, metadata: Map[String, String] = [:]): Duplex[In, Out] {
+    Duplex[In, Out] { outgoing: self.started(self.callOf(path, metadata), Opening {}) }
 }
 
-/// Sends a request.
-pub fn Duplex[In: __protobuf.Message, Out: __protobuf.Message].send(self, message: In): !Status {
-    if not grpcNative.send(self.native, __protobuf.encode(message)) {
-        fail Status { code: Code.Cancelled, message: "the call ended" }
-    }
+/// Sends a request; a call that ended fails with its status.
+pub fn Duplex[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+].send(self, message: In): !Status {
+    self.outgoing.send(message)?
 }
 
 /// Says the requests are all sent.
 pub fn Duplex[In, Out].closeSend(self) {
-    grpcNative.closeSend(self.native)
+    grpcNative.closeSend(self.outgoing.native)
 }
 
 /// The replies, as they arrive.
-pub fn Duplex[In: __protobuf.Message, Out: __protobuf.Message].replies(self): Stream[Out] {
-    Stream[Out] { source: Source.Client(self.native) }
+pub fn Duplex[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+].replies(self): Stream[Out] {
+    Stream[Out] { source: Source.Client(self.outgoing) }
 }
 
 /// The metadata the server answered with, once its first message or its
 /// status came.
 pub fn Duplex[In, Out].headers(self): Map[String, String] {
-    pairs(grpcNative.headers(self.native))
+    pairs(grpcNative.headers(self.outgoing.native))
 }
 
 /// The metadata that followed the server's last message, once the replies
 /// ended; the status is not among it.
 pub fn Duplex[In, Out].trailers(self): Map[String, String] {
-    var all = pairs(grpcNative.trailers(self.native))
+    var all = pairs(grpcNative.trailers(self.outgoing.native))
     for name in ["grpc-status", "grpc-message", "grpc-status-details-bin"] {
         _ = all.remove(name)
     }

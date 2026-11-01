@@ -294,5 +294,11 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   travel with a status.
 - A call in a `within` sends its deadline; the method runs within it, and
   the client gets its `within`'s `TimedOut` when it passes.
+- `service.onCall((call, next) { ... next()? })` wraps each call of a
+  server: refuse it with `fail`, give the method contexts with `with`, see
+  its status. `grpc.connect(target)?.onCall((call, next) { next(call with {
+  metadata: more })? })` wraps a client's, and `users.UserServiceClient.on(
+  channel)` uses it; `onMessage((call, direction, message) { ... })` sees
+  each message as a `reflect.Value`. The first added is the outermost.
 - The value that implements the service is copied into each method, so it
   is `Copy`: hold handles, as a `sql.Database`, not a `Sender`.

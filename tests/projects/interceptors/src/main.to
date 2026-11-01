@@ -1,0 +1,185 @@
+// gRPC's interceptors on both sides. The server's refuse a call without a
+// trace, give the method a context and see each status, a panic's too;
+// the client's add metadata from the caller's context, see a stream's
+// status once it ends, and refuse a call; observers see each message.
+
+import interceptors.api.greeter
+import std.console
+import std.grpc
+import std.http
+import std.reflect
+import std.sync
+
+context Trace = {
+    id: String = ""
+}
+
+type Greetings = {}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        if request.name == "boom" {
+            panic("the greeter broke")
+        }
+        greeter.HelloReply { message: "hello {request.name} in {Trace.id}" }
+    }
+
+    fn repeat(self, request: greeter.HelloRequest, out: Sender[greeter.HelloReply]): !grpc.Status {
+        for index in 0..request.times {
+            out.send(greeter.HelloReply { message: "{index} in {Trace.id}" })
+        }
+    }
+
+    fn collect(self, _: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {}
+    }
+
+    fn chat(
+        self,
+        input: grpc.Stream[greeter.HelloRequest],
+        out: Sender[greeter.HelloReply],
+    ): !grpc.Status {
+        for each in input {
+            out.send(greeter.HelloReply { message: "echo {each?.name}" })
+        }
+    }
+}
+
+/// What a call ended with, as a log shows it.
+fn ended(method: String, outcome: !grpc.Status): String {
+    match outcome {
+        ok(_) => "{method} ok"
+        err(status) => "{method} {status.code}"
+    }
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    let served: sync.Mutex[Array[String]] = sync.Mutex([])
+    let names: sync.Mutex[Array[String]] = sync.Mutex([])
+    let replied = sync.Atomic(0)
+    let service = greeter
+        .greeter(Greetings {})
+        .onCall(
+            (call, next) {
+                // The first added is the outermost: its context reaches the
+                // next one and the method.
+                let id = match call.metadata.get("x-trace") {
+                    some(id) => id
+                    none => fail grpc.Status {
+                        code: grpc.Code.Unauthenticated
+                        message: "no trace"
+                    }
+                }
+                with Trace { id }
+                next()?
+            },
+        )
+        .onCall(
+            (call, next) {
+                with Trace { id: "{Trace.id} {call.method}" }
+                let outcome = next()
+                served.update((log) { log.push(ended(call.method, outcome)) })
+                outcome?
+            },
+        )
+        .onMessage(
+            (_, direction, message) {
+                match direction {
+                    grpc.Direction.Received => {
+                        let name = message.get("name").map((value) { "{value}" }).unwrapOr("?")
+                        names.update((list) { list.push(name) })
+                    }
+                    grpc.Direction.Sent => _ = replied.add(1)
+                }
+            },
+        )
+    var app = http.App.new()
+    app.grpc(service)
+    let server = app.start()?
+
+    let called: sync.Mutex[Array[String]] = sync.Mutex([])
+    let sent = sync.Atomic(0)
+    let received = sync.Atomic(0)
+    let traced = grpc
+        .connect("http://{server.address()}")?
+        .onCall(
+            (call, next) {
+                var metadata = call.metadata
+                if not Trace.id.isEmpty() {
+                    metadata["x-trace"] = Trace.id
+                }
+                let outcome = next(call with { metadata: metadata })
+                called.update((log) { log.push(ended(call.method, outcome)) })
+                outcome?
+            },
+        )
+        .onMessage(
+            (_, direction, _) {
+                match direction {
+                    grpc.Direction.Sent => _ = sent.add(1)
+                    grpc.Direction.Received => _ = received.add(1)
+                }
+            },
+        )
+    let client = greeter.GreeterClient.on(traced)
+    match client.sayHello(greeter.HelloRequest { name: "Ada" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    with Trace { id: "t1" }
+    console.println(client.sayHello(greeter.HelloRequest { name: "Ada" })?.message)
+    match client.sayHello(greeter.HelloRequest { name: "boom" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    for each in client.repeat(greeter.HelloRequest { name: "Lin", times: 2 }) {
+        console.println(each?.message)
+    }
+    let chat = client.chat()
+    chat.send(greeter.HelloRequest { name: "x" })?
+    chat.closeSend()
+    for each in chat.replies() {
+        console.println(each?.message)
+    }
+
+    let refused = greeter.GreeterClient.on(
+        grpc
+            .connect("http://{server.address()}")?
+            .onCall(
+                (_, _) {
+                    fail grpc.Status { code: grpc.Code.PermissionDenied, message: "not from here" }
+                },
+            ),
+    )
+    match refused.sayHello(greeter.HelloRequest { name: "Ada" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    for each in refused.repeat(greeter.HelloRequest { name: "Lin", times: 2 }) {
+        match each {
+            ok(reply) => console.println(reply.message)
+            err(status) => console.println("{status}")
+        }
+    }
+
+    // A stream's interceptor sees its end in a task of its own.
+    let calls = called.updateWhen((log) { log.length() == 5 }, (log) { log })
+    console.println("client saw {calls.sorted().join(", ")}")
+    console.println("server saw {served.get().sorted().join(", ")}")
+    console.println("server received {names.get().sorted().join(", ")}; sent {replied.load()}")
+    console.println("client sent {sent.load()}, received {received.load()}")
+    server.stop()
+}
+
+// expect-stdout: Unauthenticated: no trace
+// expect-stdout: hello Ada in t1 /demo.v1.Greeter/SayHello
+// expect-stdout: Internal: the method panicked: the greeter broke
+// expect-stdout: 0 in t1 /demo.v1.Greeter/Repeat
+// expect-stdout: 1 in t1 /demo.v1.Greeter/Repeat
+// expect-stdout: echo x
+// expect-stdout: PermissionDenied: not from here
+// expect-stdout: PermissionDenied: not from here
+// expect-stdout: client saw /demo.v1.Greeter/Chat ok, /demo.v1.Greeter/Repeat ok, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello Unauthenticated, /demo.v1.Greeter/SayHello ok
+// expect-stdout: server saw /demo.v1.Greeter/Chat ok, /demo.v1.Greeter/Repeat ok, /demo.v1.Greeter/SayHello Internal, /demo.v1.Greeter/SayHello ok
+// expect-stdout: server received Ada, Lin, boom, x; sent 4
+// expect-stdout: client sent 5, received 4

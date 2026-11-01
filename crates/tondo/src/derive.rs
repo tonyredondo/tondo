@@ -76,7 +76,9 @@ impl Kind {
             (Kind::Reflect, "template") => matches!(name, "Html" | "TemplateError"),
             (Kind::Serialization, "template") => name == "Html",
             (Kind::Serialization, "http") => name == "UploadedFile",
-            (Kind::Serialization, "protobuf") => matches!(name, "Any" | "Empty" | "FieldMask" | "UnknownFields"),
+            (Kind::Reflect | Kind::Serialization, "protobuf") => {
+                matches!(name, "Any" | "Empty" | "FieldMask" | "UnknownFields")
+            }
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
