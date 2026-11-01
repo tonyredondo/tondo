@@ -3858,6 +3858,8 @@ pub type Empty = {}
 pub type Any = { typeUrl: String = "", value: Array[Byte] = [] }
 pub fn pack[T: Message](message: T): Any
 pub fn Any.unpack[T: Message](self): T ! ProtobufError
+pub type FileDescriptor = { name: String, symbols: Array[String] = [], bytes: Array[Byte] = [],
+    imports: Array[FileDescriptor] = [] }
 
 pub type Writer       // lo que llama el código del compilador: int32, string, message...
 pub type Reader
@@ -3943,6 +3945,13 @@ anotados de arriba:
 - **Servicios.** Un `service` da un trait con sus llamadas, la función que
   hace de un valor que lo implementa el servicio que un servidor sirve, y un
   cliente, de `std.grpc` (14.41).
+- **Descriptores.** El módulo de cada `.proto` da `fileDescriptor()`, un
+  `FileDescriptor`: su ruta, los nombres completos que declara (mensajes,
+  enums, servicios y sus llamadas), su `FileDescriptorProto` como lo escribe
+  protoc, sin las opciones salvo `packed` y `map_entry`, sin `reserved` ni
+  extensiones, y los de los archivos que importa; los de `google.protobuf`
+  describen sus mensajes. Con ellos la reflexión de `std.grpc` describe un
+  servidor.
 - Lo que un `.proto` dice mal, importa sin tenerlo o nombra sin declararlo es
   `E1911`, en su línea.
 
@@ -6644,7 +6653,7 @@ pub fn call(): Call
 pub fn setHeader(name: String, value: String)
 pub fn setTrailer(name: String, value: String)
 
-pub type Service = { name: String, methods: Array[Method] }
+pub type Service = { name: String, methods: Array[Method], files: Array[protobuf.FileDescriptor] = [] }
 pub type Method = { name: String, handler: fn(ServerCall): !Status }
 pub type ServerCall
 pub fn ServerCall.receive[T: protobuf.Message](self): T? ! Status
@@ -6666,6 +6675,13 @@ pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, S
 pub fn Channel.bidiStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Duplex[In, Out]
 pub fn Channel.onCall(self, interceptor: fn(Call, fn(Call): !Status): !Status): Channel
 pub fn Channel.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Channel
+
+pub enum ServingStatus { Unknown, Serving, NotServing, ServiceUnknown }
+pub type Health
+pub fn Health.new(): Health
+pub fn Health.set(self, service: String, status: ServingStatus)
+pub fn Health.service(self): Service
+pub fn reflection(services: Array[Service]): Service
 pub type Upload[In, Out]
 pub fn Upload.send(self, message: In): !Status
 pub fn Upload.finish(self): Out ! Status
@@ -6749,6 +6765,19 @@ pub fn Duplex.trailers(self): Map[String, String]
   una llamada del cliente se ve cuando la llamada se hace. Los mensajes
   implementan `reflect.Reflect`: los de un `.proto` y los tipos de Google
   lo tienen.
+- **Health.** `Health` es el servicio `grpc.health.v1.Health`, que leen los
+  balanceadores y los orquestadores: `app.grpc(health.service())`, y
+  `health.set(servicio, estado)` cuando cambia. El servidor, `""`, empieza
+  `Serving`. `Check` da el estado de un servicio, o `NotFound` si no lo
+  conoce; `Watch` da el estado, `ServiceUnknown` si no lo conoce, y luego
+  cada cambio.
+- **Reflexión.** `reflection(services)` es `grpc.reflection.v1` y `v1alpha`,
+  que leen herramientas como grpcurl para llamar a un servidor sin sus
+  `.proto`: `app.grpc(grpc.reflection([users, health.service()]))`. Lista
+  esos servicios y da por nombre de archivo o de símbolo el descriptor que
+  lo declara (14.12), con los de los archivos que importa; lo que no conoce
+  es `NotFound`. Un servicio de un `.proto` lleva sus `files`, y el de
+  `Health` el suyo.
 - **Fuera.** gRPC-Web y Connect, la compresión de los mensajes, el balanceo
   entre servidores y el mapeo de proto3 a JSON.
 

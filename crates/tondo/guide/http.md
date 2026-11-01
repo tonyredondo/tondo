@@ -300,5 +300,9 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   metadata: more })? })` wraps a client's, and `users.UserServiceClient.on(
   channel)` uses it; `onMessage((call, direction, message) { ... })` sees
   each message as a `reflect.Value`. The first added is the outermost.
+- `let health = grpc.Health.new()`, `app.grpc(health.service())` and
+  `health.set("users.v1.UserService", grpc.ServingStatus.NotServing)` answer
+  `grpc.health.v1`; `app.grpc(grpc.reflection([service, health.service()]))`
+  lets grpcurl list, describe and call them without the `.proto` files.
 - The value that implements the service is copied into each method, so it
   is `Copy`: hold handles, as a `sql.Database`, not a `Sender`.

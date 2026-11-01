@@ -1,0 +1,100 @@
+// A server's health and reflection, read by clients made from their own
+// `.proto` files: a status, a service it does not know, a change a watch
+// sees, the services it lists and the files that declare them, as protoc
+// writes them.
+
+import discovery.api.greeter
+import discovery.grpc.health.v1.health as checks
+import discovery.grpc.reflection.v1.reflection
+import std.console
+import std.grpc
+import std.http
+
+type Greetings = {}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply { message: "hello {request.name}" }
+    }
+
+    fn repeat(self, _: greeter.HelloRequest, _: Sender[greeter.HelloReply]): !grpc.Status {}
+
+    fn collect(self, _: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply {}
+    }
+
+    fn chat(self, _: grpc.Stream[greeter.HelloRequest], _: Sender[greeter.HelloReply]): !grpc.Status {}
+}
+
+fn hex(bytes: Array[Byte]): String {
+    bytes.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    let health = grpc.Health.new()
+    let service = greeter.greeter(Greetings {})
+    var app = http.App.new()
+    app.grpc(service)
+    app.grpc(health.service())
+    app.grpc(grpc.reflection([service, health.service()]))
+    let server = app.start()?
+    let connection = grpc.connect("http://{server.address()}")?
+
+    let client = checks.HealthClient.on(connection)
+    console.println("{client.check(checks.HealthCheckRequest {})?.status}")
+    match client.check(checks.HealthCheckRequest { service: "demo.v1.Greeter" }) {
+        ok(reply) => console.println("{reply.status}")
+        err(status) => console.println("{status}")
+    }
+    health.set("demo.v1.Greeter", grpc.ServingStatus.NotServing)
+    var watching = client.watch(checks.HealthCheckRequest { service: "demo.v1.Greeter" })
+    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
+    health.set("demo.v1.Greeter", grpc.ServingStatus.Serving)
+    console.println("{watching.next().map((each) { each.map((reply) { "{reply.status}" }) })}")
+
+    let asking = reflection.ServerReflectionClient.on(connection).serverReflectionInfo()
+    let ask = (request: reflection.ServerReflectionRequestMessageRequest) {
+        reflection.ServerReflectionRequest { messageRequest: some(request) }
+    }
+    asking.send(ask(reflection.ServerReflectionRequestMessageRequest.ListServices("*")))?
+    asking.send(
+        ask(
+            reflection.ServerReflectionRequestMessageRequest.FileContainingSymbol("demo.v1.Greeter"),
+        ),
+    )?
+    asking.send(
+        ask(
+            reflection.ServerReflectionRequestMessageRequest.FileContainingSymbol(
+                "grpc.health.v1.Health",
+            ),
+        ),
+    )?
+    asking.send(ask(reflection.ServerReflectionRequestMessageRequest.FileByFilename("nope.proto")))?
+    asking.closeSend()
+    for each in asking.replies() {
+        match each?.messageResponse {
+            some(reflection.ServerReflectionResponseMessageResponse.ListServicesResponse(list)) => {
+                console.println(list.service.map((s) { s.name }).join(", "))
+            }
+            some(reflection.ServerReflectionResponseMessageResponse.FileDescriptorResponse(files)) => {
+                console.println(
+                    "{files.fileDescriptorProto.length()} file: {hex(files.fileDescriptorProto[0])}",
+                )
+            }
+            some(reflection.ServerReflectionResponseMessageResponse.ErrorResponse(failure)) => {
+                console.println("{failure.errorCode}: {failure.errorMessage}")
+            }
+            _ => console.println("?")
+        }
+    }
+    server.stop()
+}
+
+// expect-stdout: SERVING
+// expect-stdout: NotFound: the server has no service `demo.v1.Greeter`
+// expect-stdout: some(ok(NOT_SERVING))
+// expect-stdout: some(ok(SERVING))
+// expect-stdout: demo.v1.Greeter, grpc.health.v1.Health
+// expect-stdout: 1 file: 0a116170692f677265657465722e70726f746f120764656d6f2e763122380a0c48656c6c6f5265717565737412120a046e616d6518012001280952046e616d6512140a0574696d6573180220012805520574696d657322260a0a48656c6c6f5265706c7912180a076d65737361676518012001280952076d65737361676532ea010a074772656574657212360a0853617948656c6c6f12152e64656d6f2e76312e48656c6c6f526571756573741a132e64656d6f2e76312e48656c6c6f5265706c7912360a0652657065617412152e64656d6f2e76312e48656c6c6f526571756573741a132e64656d6f2e76312e48656c6c6f5265706c79300112370a07436f6c6c65637412152e64656d6f2e76312e48656c6c6f526571756573741a132e64656d6f2e76312e48656c6c6f5265706c79280112360a044368617412152e64656d6f2e76312e48656c6c6f526571756573741a132e64656d6f2e76312e48656c6c6f5265706c7928013001620670726f746f33
+// expect-stdout: 1 file: 0a1b677270632f6865616c74682f76312f6865616c74682e70726f746f120e677270632e6865616c74682e7631222e0a124865616c7468436865636b5265717565737412180a077365727669636518012001280952077365727669636522b1010a134865616c7468436865636b526573706f6e736512490a0673746174757318012001280e32312e677270632e6865616c74682e76312e4865616c7468436865636b526573706f6e73652e53657276696e675374617475735206737461747573224f0a0d53657276696e67537461747573120b0a07554e4b4e4f574e1000120b0a0753455256494e471001120f0a0b4e4f545f53455256494e47100212130a0f534552564943455f554e4b4e4f574e100332ae010a064865616c746812500a05436865636b12222e677270632e6865616c74682e76312e4865616c7468436865636b526571756573741a232e677270632e6865616c74682e76312e4865616c7468436865636b526573706f6e736512520a05576174636812222e677270632e6865616c74682e76312e4865616c7468436865636b526571756573741a232e677270632e6865616c74682e76312e4865616c7468436865636b526573706f6e73653001620670726f746f33
+// expect-stdout: 5: no file `nope.proto`

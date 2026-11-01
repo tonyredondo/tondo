@@ -11,6 +11,7 @@ import std.internal.grpc as grpcNative
 import std.io as __io
 import std.protobuf as __protobuf
 import std.reflect as __reflect
+import std.sync as __sync
 import std.time as __time
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,10 @@ pub fn setTrailer(name: String, value: String) {
 pub type Service = {
     name: String
     methods: Array[Method]
+    /// The `.proto` file that declares it, which reflection gives.
+    files: Array[__protobuf.FileDescriptor] = []
+    /// Other names it answers to.
+    priv also: Array[String] = []
     priv layers: Array[fn(Call, fn(): !Status): !Status] = []
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
 }
@@ -281,12 +286,14 @@ pub fn Service.onMessage(self, observer: fn(Call, Direction, __reflect.Value)): 
 
 impl __http.GrpcService for Service {
     fn serveOn(self, app: mut __http.App) {
-        for method in self.methods {
-            let path = "/{self.name}/{method.name}"
-            let handler = method.handler
-            let layers = self.layers
-            let watchers = self.watchers
-            app.post(path, (request) { serve(request, path, handler, layers, watchers)? })
+        for name in [self.name].concat(self.also) {
+            for method in self.methods {
+                let path = "/{name}/{method.name}"
+                let handler = method.handler
+                let layers = self.layers
+                let watchers = self.watchers
+                app.post(path, (request) { serve(request, path, handler, layers, watchers)? })
+            }
         }
     }
 }
@@ -950,4 +957,471 @@ fn pairs(list: Array[String]): Map[String, String] {
         at += 2
     }
     all
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+/// Whether a server serves a service, as `grpc.health.v1` tells it.
+pub enum ServingStatus {
+    Unknown
+    Serving
+    NotServing
+    /// A service the server does not know, which only a watch gives.
+    ServiceUnknown
+}
+
+/// The status's name, as `NotServing`.
+impl Display for ServingStatus {
+    fn display(self): String {
+        match self {
+            ServingStatus.Unknown => "Unknown"
+            ServingStatus.Serving => "Serving"
+            ServingStatus.NotServing => "NotServing"
+            ServingStatus.ServiceUnknown => "ServiceUnknown"
+        }
+    }
+}
+
+/// The health a server tells of itself and its services, as
+/// `grpc.health.v1` asks it, which load balancers and orchestrators read:
+/// `app.grpc(health.service())`, then `health.set("users.v1.UserService",
+/// grpc.ServingStatus.NotServing)` as it changes. The server, `""`,
+/// starts `Serving`.
+pub type Health = {
+    priv statuses: __sync.Mutex[Map[String, ServingStatus]]
+}
+
+/// Health whose server serves, and no service yet.
+pub fn Health.new(): Health {
+    var statuses: Map[String, ServingStatus] = [:]
+    statuses[""] = ServingStatus.Serving
+    Health { statuses: __sync.Mutex(statuses) }
+}
+
+/// Sets a service's status, by its full name, or the server's, `""`;
+/// those who watch it get the new one.
+pub fn Health.set(self, service: String, status: ServingStatus) {
+    self.statuses.update(
+        (all) {
+            all[service] = status
+        },
+    )
+}
+
+/// The service `grpc.health.v1.Health`: `Check` gives a status, or
+/// `NotFound` for a service it does not know, and `Watch` gives one, then
+/// each change.
+pub fn Health.service(self): Service {
+    let statuses = self.statuses
+    Service {
+        name: "grpc.health.v1.Health"
+        methods: [
+            Method {
+                name: "Check"
+                handler: (exchange) {
+                    unary[HealthRequest, HealthReply](
+                        exchange,
+                        (request) { checked(statuses, request.service)? },
+                    )?
+                }
+            },
+            Method {
+                name: "Watch"
+                handler: (exchange) {
+                    serverStream[HealthRequest, HealthReply](
+                        exchange,
+                        (request, out) { followed(statuses, request.service, out) },
+                    )?
+                }
+            },
+        ]
+        files: [healthFile()]
+    }
+}
+
+fn checked(
+    statuses: __sync.Mutex[Map[String, ServingStatus]],
+    service: String,
+): HealthReply ! Status {
+    match statuses.get().get(service) {
+        some(status) => HealthReply { status }
+        none => fail Status {
+            code: Code.NotFound
+            message: "the server has no service `{service}`"
+        }
+    }
+}
+
+/// Sends a service's status, then each change, until the client goes.
+fn followed(
+    statuses: __sync.Mutex[Map[String, ServingStatus]],
+    service: String,
+    out: Sender[HealthReply],
+) {
+    var last: ServingStatus? = none
+    for {
+        let before = last
+        let now = statuses.updateWhen(
+            (all) { some(all.get(service).unwrapOr(ServingStatus.ServiceUnknown)) != before },
+            (all) { all.get(service).unwrapOr(ServingStatus.ServiceUnknown) },
+        )
+        out.send(HealthReply { status: now })
+        last = some(now)
+    }
+}
+
+/// `grpc.health.v1.HealthCheckRequest`.
+type HealthRequest = {
+    service: String = ""
+}
+
+impl __protobuf.Message for HealthRequest {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if not self.service.isEmpty() {
+            out.string(1, self.service)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthRequest ! __protobuf.ProtobufError {
+        var request = HealthRequest {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => request.service = input.string("service")?
+                _ => input.skip()?
+            }
+        }
+        request
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthCheckRequest"
+    }
+}
+
+impl __reflect.Reflect for HealthRequest {
+    fn reflectShow(self, nested: Bool): String {
+        "HealthCheckRequest {{ service: \"{self.service}\" }}"
+    }
+}
+
+/// `grpc.health.v1.HealthCheckResponse`.
+type HealthReply = {
+    status: ServingStatus = ServingStatus.Unknown
+}
+
+impl __protobuf.Message for HealthReply {
+    fn writeTo(self, out: __protobuf.Writer) {
+        let number: Int32 = match self.status {
+            ServingStatus.Unknown => 0
+            ServingStatus.Serving => 1
+            ServingStatus.NotServing => 2
+            ServingStatus.ServiceUnknown => 3
+        }
+        if number != 0 {
+            out.int32(1, number)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthReply ! __protobuf.ProtobufError {
+        var reply = HealthReply {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => reply.status = match input.int32("status")? {
+                    1 => ServingStatus.Serving
+                    2 => ServingStatus.NotServing
+                    3 => ServingStatus.ServiceUnknown
+                    _ => ServingStatus.Unknown
+                }
+                _ => input.skip()?
+            }
+        }
+        reply
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthCheckResponse"
+    }
+}
+
+impl __reflect.Reflect for HealthReply {
+    fn reflectShow(self, nested: Bool): String {
+        "HealthCheckResponse {{ status: {self.status} }}"
+    }
+}
+
+/// `grpc/health/v1/health.proto`, without `List`, as protoc describes it.
+fn healthFile(): __protobuf.FileDescriptor {
+    __protobuf.FileDescriptor {
+        name: "grpc/health/v1/health.proto"
+        symbols: [
+            "grpc.health.v1.HealthCheckRequest",
+            "grpc.health.v1.HealthCheckResponse",
+            "grpc.health.v1.HealthCheckResponse.ServingStatus",
+            "grpc.health.v1.Health",
+            "grpc.health.v1.Health.Check",
+            "grpc.health.v1.Health.Watch",
+        ]
+        bytes: __encoding
+            .base64Decode(
+                "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADMq4BCgZIZWFsdGgSUAoFQ2hlY2sSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlElIKBVdhdGNoEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZTABYgZwcm90bzM=",
+            )
+            .unwrapOr([])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reflection
+// ---------------------------------------------------------------------------
+
+/// Server reflection, as `grpc.reflection.v1` and `v1alpha` give it, which
+/// tools as grpcurl read to call a server without its `.proto` files:
+/// `app.grpc(grpc.reflection([users, health.service()]))`. It lists these
+/// services and gives the files that declare them.
+pub fn reflection(services: Array[Service]): Service {
+    let names = services.map((service) { service.name })
+    var files: Array[__protobuf.FileDescriptor] = []
+    for service in services {
+        files.extend(service.files)
+    }
+    let known = flattened(files)
+    Service {
+        name: "grpc.reflection.v1.ServerReflection"
+        methods: [
+            Method {
+                name: "ServerReflectionInfo"
+                handler: (exchange) {
+                    bidiStream[ReflectionRequest, ReflectionResponse](
+                        exchange,
+                        (input, out) {
+                            for each in input {
+                                out.send(answered(names, known, each?))
+                            }
+                        },
+                    )?
+                }
+            },
+        ]
+        also: ["grpc.reflection.v1alpha.ServerReflection"]
+    }
+}
+
+/// The files and those they import, each once.
+fn flattened(files: Array[__protobuf.FileDescriptor]): Array[__protobuf.FileDescriptor] {
+    var all: Array[__protobuf.FileDescriptor] = []
+    var queue = files
+    var at = 0
+    for at < queue.length() {
+        let file = queue[at]
+        at += 1
+        if not all.any((known) { known.name == file.name }) {
+            all.push(file)
+            queue.extend(file.imports)
+        }
+    }
+    all
+}
+
+/// What reflection answers a request.
+fn answered(
+    names: Array[String],
+    files: Array[__protobuf.FileDescriptor],
+    request: ReflectionRequest,
+): ReflectionResponse {
+    let missing = (what: String) { Answer.Failure(Int32.wrapping(Code.NotFound.number()), what) }
+    let answer = match request.asked {
+        Asked.Services(_) => Answer.Services(names)
+        Asked.FileByName(name) => match files.find((file) { file.name == name }) {
+            some(file) => Answer.Files(flattened([file]).map((each) { each.bytes }))
+            none => missing("no file `{name}`")
+        }
+        Asked.Symbol(symbol) => match files.find((file) { file.symbols.contains(symbol) }) {
+            some(file) => Answer.Files(flattened([file]).map((each) { each.bytes }))
+            none => missing("no symbol `{symbol}`")
+        }
+        Asked.ExtensionsOf(name) => if files.any((file) { file.symbols.contains(name) }) {
+            Answer.Extensions(name)
+        } else {
+            missing("no message `{name}`")
+        }
+        Asked.Extension(name, number) => missing("no extension {number} of `{name}`")
+        Asked.Nothing => Answer.Failure(
+            Int32.wrapping(Code.InvalidArgument.number()),
+            "the request asks nothing",
+        )
+    }
+    ReflectionResponse { host: request.host, original: request, answer }
+}
+
+/// What a reflection request asks.
+enum Asked {
+    Nothing
+    FileByName(String)
+    Symbol(String)
+    Extension(String, Int32)
+    ExtensionsOf(String)
+    Services(String)
+}
+
+/// `grpc.reflection.v1.ServerReflectionRequest`.
+type ReflectionRequest = {
+    host: String = ""
+    asked: Asked = Asked.Nothing
+}
+
+impl __protobuf.Message for ReflectionRequest {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if not self.host.isEmpty() {
+            out.string(1, self.host)
+        }
+        match self.asked {
+            Asked.Nothing => {}
+            Asked.FileByName(name) => out.string(3, name)
+            Asked.Symbol(symbol) => out.string(4, symbol)
+            Asked.Extension(name, number) => out.message(5, ExtensionAsked { name, number })
+            Asked.ExtensionsOf(name) => out.string(6, name)
+            Asked.Services(pattern) => out.string(7, pattern)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): ReflectionRequest ! __protobuf.ProtobufError {
+        var request = ReflectionRequest {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => request.host = input.string("host")?
+                3 => request.asked = Asked.FileByName(input.string("file_by_filename")?)
+                4 => request.asked = Asked.Symbol(input.string("file_containing_symbol")?)
+                5 => {
+                    let asked = input.message[ExtensionAsked]("file_containing_extension")?
+                    request.asked = Asked.Extension(asked.name, asked.number)
+                }
+                6 => request.asked = Asked.ExtensionsOf(
+                    input.string("all_extension_numbers_of_type")?,
+                )
+                7 => request.asked = Asked.Services(input.string("list_services")?)
+                _ => input.skip()?
+            }
+        }
+        request
+    }
+
+    fn protobufName(): String {
+        "grpc.reflection.v1.ServerReflectionRequest"
+    }
+}
+
+impl __reflect.Reflect for ReflectionRequest {
+    fn reflectShow(self, nested: Bool): String {
+        "ServerReflectionRequest"
+    }
+}
+
+/// `grpc.reflection.v1.ExtensionRequest`.
+type ExtensionAsked = {
+    name: String = ""
+    number: Int32 = 0
+}
+
+impl __protobuf.Message for ExtensionAsked {
+    fn writeTo(self, out: __protobuf.Writer) {
+        out.string(1, self.name)
+        out.int32(2, self.number)
+    }
+
+    fn readFrom(input: __protobuf.Reader): ExtensionAsked ! __protobuf.ProtobufError {
+        var asked = ExtensionAsked {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => asked.name = input.string("containing_type")?
+                2 => asked.number = input.int32("extension_number")?
+                _ => input.skip()?
+            }
+        }
+        asked
+    }
+
+    fn protobufName(): String {
+        "grpc.reflection.v1.ExtensionRequest"
+    }
+}
+
+/// What reflection answers.
+enum Answer {
+    Files(Array[Array[Byte]])
+    Extensions(String)
+    Services(Array[String])
+    Failure(Int32, String)
+}
+
+/// `grpc.reflection.v1.ServerReflectionResponse`, which only a server
+/// writes.
+type ReflectionResponse = {
+    host: String = ""
+    original: ReflectionRequest = ReflectionRequest {}
+    answer: Answer = Answer.Services([])
+}
+
+impl __protobuf.Message for ReflectionResponse {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if not self.host.isEmpty() {
+            out.string(1, self.host)
+        }
+        out.message(2, self.original)
+        match self.answer {
+            Answer.Files(files) => {
+                out.begin(4)
+                for file in files {
+                    out.bytes(1, file)
+                }
+                out.end()
+            }
+            Answer.Extensions(name) => {
+                out.begin(5)
+                out.string(1, name)
+                out.end()
+            }
+            Answer.Services(names) => {
+                out.begin(6)
+                for name in names {
+                    out.begin(1)
+                    out.string(1, name)
+                    out.end()
+                }
+                out.end()
+            }
+            Answer.Failure(code, message) => {
+                out.begin(7)
+                out.int32(1, code)
+                out.string(2, message)
+                out.end()
+            }
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): ReflectionResponse ! __protobuf.ProtobufError {
+        var response = ReflectionResponse {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => response.host = input.string("valid_host")?
+                _ => input.skip()?
+            }
+        }
+        response
+    }
+
+    fn protobufName(): String {
+        "grpc.reflection.v1.ServerReflectionResponse"
+    }
+}
+
+impl __reflect.Reflect for ReflectionResponse {
+    fn reflectShow(self, nested: Bool): String {
+        "ServerReflectionResponse"
+    }
 }

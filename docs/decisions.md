@@ -4002,3 +4002,19 @@ while the caller reads the call that `next` made: one `onCall` serves the
 four kinds of call, instead of a second pair of hooks for streams.
 `onMessage` shows each message as a `reflect.Value`, which reads any
 message without knowing its type, so messages implement `Reflect`.
+
+## 2026-11-01 — gRPC's health and reflection
+
+Load balancers and orchestrators ask a server's health through
+`grpc.health.v1`, and tools as grpcurl call a server they have no `.proto`
+for through reflection, which gives the descriptors of the files that
+declare its services. The compiler writes each file's `FileDescriptorProto`
+itself, as protoc does, byte for byte for a file without options, into a
+`fileDescriptor()` of its module, so a program needs neither protoc nor a
+generated file; a service of the file carries it, and
+`grpc.reflection([services])` gives those it is handed, rather than every
+service of the app, since an app does not keep its routes' kinds. The
+messages of both protocols are written in `std.grpc` by hand, as
+`google.rpc.Status` is, since the standard library is not derived; the
+descriptor of `health.proto` is a constant, which protoc and the compiler
+both write the same.

@@ -59,6 +59,16 @@ pub annotation Name = {
 /// `UnknownFields`, which writing puts back.
 pub annotation Unknown = {}
 
+/// A `.proto` file as reflection gives it to tools: its path, the full
+/// names it declares, its `FileDescriptorProto` and the files it imports.
+/// The module of a `.proto` file gives its own as `fileDescriptor()`.
+pub type FileDescriptor = {
+    name: String
+    symbols: Array[String] = []
+    bytes: Array[Byte] = []
+    imports: Array[FileDescriptor] = []
+}
+
 /// The fields of a message that its type does not know, as they were read.
 pub type UnknownFields = {
     priv bytes: Array[Byte] = []
