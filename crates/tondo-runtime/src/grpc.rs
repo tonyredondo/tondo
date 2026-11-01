@@ -54,6 +54,9 @@ enum Balancing {
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// How often round robin resolves its hosts again, to find the servers a
+/// name gains.
+const RESOLVE_EVERY: Duration = Duration::from_secs(30);
 
 /// Where a channel connects: the hosts of its target with their ports,
 /// and what it knows of the addresses they resolve to.
@@ -74,6 +77,10 @@ struct Pool {
     /// and once a connection dropped or could not be made.
     stale: bool,
     given: usize,
+    /// When the hosts were resolved last, and whether they are being
+    /// resolved again in the background.
+    resolved: Option<Instant>,
+    refreshing: bool,
 }
 
 /// An address of a host of the target: its connection, and when it may be
@@ -210,6 +217,7 @@ impl Channel {
             (Balancing::RoundRobin, count) => {
                 pool.given = pool.given.wrapping_add(1);
                 self.reconnect(pool, now);
+                self.refresh(pool, now);
                 ready[(pool.given - 1) % count]
             }
         };
@@ -245,14 +253,50 @@ impl Channel {
         }
     }
 
-    /// Resolves the hosts again, keeping what it knows of the addresses
-    /// still there; a host that does not resolve now keeps its addresses.
+    /// Resolves round robin's hosts again in the background once
+    /// `RESOLVE_EVERY` passed since the last time, so that its calls reach
+    /// the servers a name gains, and leave those it loses.
+    fn refresh(self: &Arc<Self>, pool: &mut Pool, now: Instant) {
+        let recent = pool.resolved.is_some_and(|at| now.saturating_duration_since(at) < RESOLVE_EVERY);
+        if pool.refreshing || recent {
+            return;
+        }
+        pool.refreshing = true;
+        let channel = self.clone();
+        tokio::spawn(async move {
+            let found = channel.lookup().await;
+            let mut pool = channel.pool.lock().await;
+            let _ = channel.adopt(&mut pool, found);
+            pool.refreshing = false;
+        });
+    }
+
+    /// Resolves the hosts again.
     async fn resolve(&self, pool: &mut Pool) -> Result<(), String> {
+        let found = self.lookup().await;
+        self.adopt(pool, found)
+    }
+
+    /// The addresses each host resolves to now, or why it does not.
+    async fn lookup(&self) -> Vec<Result<Vec<SocketAddr>, String>> {
+        let mut found = Vec::new();
+        for (host, port) in &self.hosts {
+            found.push(match tokio::net::lookup_host((host.as_str(), *port)).await {
+                Ok(addresses) => Ok(addresses.collect()),
+                Err(error) => Err(format!("cannot resolve {host}: {error}")),
+            });
+        }
+        found
+    }
+
+    /// Takes the addresses the hosts resolved to, keeping what it knows of
+    /// those still there; a host that did not resolve keeps its addresses.
+    fn adopt(&self, pool: &mut Pool, found: Vec<Result<Vec<SocketAddr>, String>>) -> Result<(), String> {
         let mut known = std::mem::take(&mut pool.backends);
         let mut problem = None;
-        for (host, port) in &self.hosts {
+        for ((host, port), addresses) in self.hosts.iter().zip(found) {
             let same = |b: &Backend| b.host == *host && b.port == *port;
-            match tokio::net::lookup_host((host.as_str(), *port)).await {
+            match addresses {
                 Ok(addresses) => {
                     for address in addresses {
                         if pool.backends.iter().any(|b| same(b) && b.address == address) {
@@ -272,14 +316,15 @@ impl Channel {
                         });
                     }
                 }
-                Err(error) => {
-                    problem = Some(format!("cannot resolve {host}: {error}"));
+                Err(failure) => {
+                    problem = Some(failure);
                     let (kept, others) = known.into_iter().partition(|b| same(b));
                     pool.backends.extend::<Vec<Backend>>(kept);
                     known = others;
                 }
             }
         }
+        pool.resolved = Some(Instant::now());
         if pool.backends.is_empty() {
             pool.stale = true;
             return Err(problem.unwrap_or_else(|| format!("{} has no address", self.target)));
@@ -335,7 +380,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
             false => None,
         };
         let balancing = if balancing == 1 { Balancing::RoundRobin } else { Balancing::PickFirst };
-        let pool = Pool { backends: Vec::new(), stale: true, given: 0 };
+        let pool = Pool { backends: Vec::new(), stale: true, given: 0, resolved: None, refreshing: false };
         let target = rest.to_string();
         Ok(Arc::new(Channel { secure, hosts, target, tls, balancing, pool: tokio::sync::Mutex::new(pool) }))
     })();
@@ -1170,17 +1215,22 @@ mod tests {
         (address, streams)
     }
 
-    /// The status a call to `address` ends with.
-    async fn called(address: SocketAddr, one: Option<Bytes>, stream: Option<Body>) -> i64 {
-        let pool = Pool { backends: Vec::new(), stale: true, given: 0 };
-        let channel = Arc::new(Channel {
+    /// A channel to `address`.
+    fn channel(address: SocketAddr, balancing: Balancing) -> Arc<Channel> {
+        let pool = Pool { backends: Vec::new(), stale: true, given: 0, resolved: None, refreshing: false };
+        Arc::new(Channel {
             secure: false,
             hosts: vec![("127.0.0.1".into(), address.port())],
             target: address.to_string(),
             tls: None,
-            balancing: Balancing::PickFirst,
+            balancing,
             pool: tokio::sync::Mutex::new(pool),
-        });
+        })
+    }
+
+    /// The status a call to `address` ends with.
+    async fn called(address: SocketAddr, one: Option<Bytes>, stream: Option<Body>) -> i64 {
+        let channel = channel(address, Balancing::PickFirst);
         let prepared = Prepared { path: "/demo.Greeter/Hello".into(), headers: hyper::HeaderMap::new(), one, stream };
         let (sender, mut incoming) = mpsc::unbounded_channel();
         exchange(channel, prepared, Events { sender, ended: Arc::new(Ended::default()) }).await;
@@ -1210,5 +1260,41 @@ mod tests {
             (called(address, None, Some(BodyExt::boxed_unsync(body))).await, streams)
         });
         assert_eq!((code, streams.load(Ordering::SeqCst)), (UNAVAILABLE, 1));
+    }
+
+    #[test]
+    fn round_robin_resolves_its_hosts_again() {
+        let addresses = crate::http::runtime().block_on(async {
+            let (address, _) = refusing().await;
+            let channel = channel(address, Balancing::RoundRobin);
+            let sender = connect(None, "127.0.0.1".into(), address, address.to_string()).await.expect("a connection");
+            let backend = |address: SocketAddr, sender: Option<SendRequest<Body>>| Backend {
+                host: "127.0.0.1".into(),
+                port: channel.hosts[0].1,
+                address,
+                sender,
+                connecting: false,
+                retry: Some(Instant::now() + Duration::from_secs(60)),
+                backoff: FIRST_BACKOFF,
+            };
+            {
+                // A pool resolved 31 s ago, with an address the name lost.
+                let mut pool = channel.pool.lock().await;
+                pool.backends =
+                    vec![backend(address, Some(sender)), backend("127.0.0.1:9".parse().expect("an address"), None)];
+                (pool.stale, pool.resolved) = (false, Instant::now().checked_sub(Duration::from_secs(31)));
+            }
+            channel.pick().await.expect("a connection");
+            loop {
+                let pool = channel.pool.lock().await;
+                if !pool.refreshing {
+                    return pool.backends.iter().map(|b| (b.address, b.sender.is_some())).collect::<Vec<_>>();
+                }
+                drop(pool);
+                tokio::task::yield_now().await;
+            }
+        });
+        assert_eq!(addresses.len(), 1);
+        assert!(addresses[0].1, "the connection to the address still there is kept");
     }
 }

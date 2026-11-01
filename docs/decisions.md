@@ -4158,3 +4158,16 @@ balancing picks next. A call of one message keeps its bytes to send them
 again; a call that streams its messages goes again only when it was never
 sent, since the ones it sent are gone. A call a server began is not
 retried: whether to do it twice is the program's to decide.
+
+## 2026-11-01 — Round robin resolves its name every 30 seconds
+
+gRPC's DNS resolver looks a name up again only when a connection drops,
+so a round robin client keeps the servers it first found until one
+breaks, and servers added behind the name, as a service that scales up,
+get no calls; gRPC's answer is for servers to close their connections
+from time to time. A Tondo channel with `RoundRobin` instead looks its
+hosts up again once 30 seconds passed since the last time, in the
+background of the call that notices it, which then does not wait: new
+addresses are connected as round robin connects the others, and those a
+name lost are dropped once their calls end. `PickFirst` stays on one
+server and has no use for it.

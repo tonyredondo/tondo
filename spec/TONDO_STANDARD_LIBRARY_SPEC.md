@@ -6855,8 +6855,10 @@ pub fn Duplex.trailers(self): Map[String, String]
   1,6 veces más cada vez, hasta 2 minutos, con un 20 % al azar arriba o
   abajo, y 20 s como máximo por intento; mientras todas esperan, una llamada
   falla en el acto con `Unavailable`. El canal vuelve a resolver los hosts
-  cuando una conexión cae o un intento falla, así que sigue a un servicio
-  cuyas direcciones cambian.
+  cuando una conexión cae o un intento falla, y con `RoundRobin` también
+  cada 30 s, en segundo plano y sin hacer esperar a la llamada que lo
+  dispara: así reparte entre los servidores que gana un nombre y deja los
+  que pierde, cuyas llamadas en curso terminan.
 - **Reintento transparente.** Una llamada que ningún servidor empezó se
   envía otra vez, hasta tres intentos, como hace gRPC: la que una conexión
   que se cerró no llegó a enviar, y la que un servidor rechazó antes de

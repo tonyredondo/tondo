@@ -303,7 +303,9 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
 - `grpc.connect("http://a:50051,b:50051", balancing:
   grpc.Balancing.RoundRobin)` spreads calls over several servers, or over
   the addresses a name resolves to; `PickFirst`, the default, keeps them on
-  the first that answers. An address that fails waits as gRPC's backoff
+  the first that answers; round robin resolves the name again every 30
+  seconds, so it reaches the servers it gains. An address that fails waits
+  as gRPC's backoff
   says, and a call while all wait fails at once with `Unavailable`. A call
   no server began, as one a server going away refused, goes again by
   itself.
