@@ -135,6 +135,11 @@ fn find(id: Int): User? {
 - `app.compress()` compresses text and JSON replies with zstd or gzip, as
   the client's `Accept-Encoding` prefers; it compresses what the middleware
   added after it returns.
+- `app.cors(["https://example.com"])` lets pages of that origin, or of any
+  with `"*"`, call the app from a browser: it answers their preflight and
+  lets them read each reply. `headers`, `exposed`, `credentials` (cookies)
+  and `maxAge` say the rest. Add it first, so that what other middleware
+  answers, as a 401, carries it too.
 - `app.route("GET", "/api/*rest", http.proxy("http://backend:8080", strip:
   "/api"))` passes requests on to another server and its responses back.
 - Routes use `:name` and `*rest` segments (`{name}` would interpolate).

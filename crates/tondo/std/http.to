@@ -2245,6 +2245,102 @@ pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): 
     self.layers.push(middleware)
 }
 
+/// Lets pages of other origins call the app, as browsers ask it (CORS): it
+/// answers their preflight `OPTIONS` and lets them read its replies.
+/// `origins` are the origins it lets in, as `https://example.com`, or `*`
+/// for any; `headers` those the pages may send, all they ask for when
+/// empty; `exposed` those of a reply they may read; `credentials` whether
+/// they send cookies; and `maxAge` how long a browser keeps a preflight's
+/// answer.
+pub fn App.cors(
+    mut self,
+    origins: Array[String],
+    headers: Array[String] = [],
+    exposed: Array[String] = [],
+    credentials: Bool = false,
+    maxAge: __time.Duration = __time.seconds(600),
+) {
+    let policy = Cors { origins, headers, exposed, credentials, maxAge }
+    self.use((request, next) { policy.answer(request, next)? })
+}
+
+/// What `App.cors` lets other origins do.
+type Cors = {
+    origins: Array[String]
+    headers: Array[String]
+    exposed: Array[String]
+    credentials: Bool
+    maxAge: __time.Duration
+}
+
+/// The value of `Access-Control-Allow-Origin` for a page of `origin`, if
+/// it may call: `*`, or the origin itself when it sends cookies.
+fn Cors.allowed(self, origin: String): String? {
+    if self.origins.contains("*") {
+        return some(if self.credentials { origin } else { "*" })
+    }
+    if self.origins.contains(origin) { some(origin) } else { none }
+}
+
+/// A preflight is answered here; another request is answered by the app,
+/// with what lets the page read the reply, a problem's too, and with
+/// `Vary: Origin` always, so that a cache does not give a reply to a page
+/// it was not for.
+fn Cors.answer(self, request: Request, next: fn(Request): Reply ! Problem): Reply ! Problem {
+    let allowed = match request.header("origin") {
+        some(origin) => self.allowed(origin)
+        none => none
+    }
+    let asked = request.header("access-control-request-method")
+    if request.method() == "OPTIONS" and asked.isSome() {
+        var reply = Reply
+            .empty()
+            .addHeader(
+                "vary",
+                "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+            )
+        match allowed {
+            some(value) => {
+                reply = reply
+                    .header("access-control-allow-origin", value)
+                    .header("access-control-allow-methods", asked.unwrapOr(""))
+                    .header("access-control-max-age", "{self.maxAge.nanoseconds() / 1_000_000_000}")
+                let headers = if self.headers.isEmpty() {
+                    request.header("access-control-request-headers").unwrapOr("")
+                } else {
+                    self.headers.join(", ")
+                }
+                if not headers.isEmpty() {
+                    reply = reply.header("access-control-allow-headers", headers)
+                }
+                if self.credentials {
+                    reply = reply.header("access-control-allow-credentials", "true")
+                }
+            }
+            none => {}
+        }
+        return reply
+    }
+    var reply = match next(request) {
+        ok(reply) => reply
+        err(problem) => Reply.problem(problem)
+    }
+    reply = reply.addHeader("vary", "Origin")
+    match allowed {
+        some(value) => {
+            reply = reply.header("access-control-allow-origin", value)
+            if not self.exposed.isEmpty() {
+                reply = reply.header("access-control-expose-headers", self.exposed.join(", "))
+            }
+            if self.credentials {
+                reply = reply.header("access-control-allow-credentials", "true")
+            }
+        }
+        none => {}
+    }
+    reply
+}
+
 /// The routes of another app under a prefix, with its middleware around
 /// them.
 pub fn App.mount(mut self, prefix: String, other: App) {

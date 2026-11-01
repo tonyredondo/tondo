@@ -4077,3 +4077,16 @@ the compiler lists every message type of the program for `std.protobuf`,
 as a table it reads at run time, so that an `Any` of any message the
 program has needs no registration; one of a type the program does not have
 fails, since nothing could say what its fields are.
+
+## 2026-11-01 — CORS as a middleware of App
+
+A page served from another origin, as a gRPC-Web or Connect client in a
+browser, can call an app only when the app answers the browser's preflight
+and says in each reply that the page may read it. That is the same for
+every API an app serves, so it is `App.cors`, a middleware of the app
+rather than of gRPC. It lets in only the origins it is given, or `*`;
+with cookies (`credentials`) it names the origin, since browsers refuse
+`*` then. It sends `Vary: Origin` on every reply, without an `Origin`
+too, so that a cache does not give one page's reply to another, and it
+adds its headers to a `Problem` as well, so that a page reads the error
+instead of a CORS failure.

@@ -1,0 +1,62 @@
+// `app.cors` lets pages of other origins call an app: it answers their
+// preflight and lets them read each reply, a problem's too, for the
+// origins it lets in, and not for the others.
+
+import std.console
+import std.http
+
+fn shown(response: http.Response, names: Array[String]): String {
+    names.map((name) { "{response.header(name).unwrapOr("-")}" }).join(" ")
+}
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.cors(["https://good.example"], exposed: ["x-total"])
+    app.post("/items", (_) { http.Reply.text("made").header("x-total", "1") })
+    app.get(
+        "/broken",
+        (_) {
+            fail http.Problem.notFound("no such item")
+        },
+    )
+    let server = app.start()?
+    let web = http.Client.new()
+    let base = "http://{server.address()}"
+    let preflight =
+        web.request(
+            "OPTIONS",
+            "{base}/items",
+            headers: [
+                "origin": "https://good.example",
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "content-type, x-custom",
+            ],
+        )?
+    console.println(
+        "{preflight.status()} {shown(preflight, ["access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "access-control-max-age"])}",
+    )
+    let made = web.post("{base}/items", headers: ["origin": "https://good.example"])?
+    console.println(
+        "{made.status()} {shown(made, ["access-control-allow-origin", "access-control-expose-headers", "vary"])}",
+    )
+    match web.get("{base}/broken", headers: ["origin": "https://good.example"]) {
+        ok(response) => console.println("{response.status()}")
+        err(http.HttpError.Status(response)) => {
+            console.println(
+                "{response.status()} {shown(response, ["access-control-allow-origin"])}",
+            )
+        }
+        err(error) => console.println("{error}")
+    }
+    let other = web.post("{base}/items", headers: ["origin": "https://evil.example"])?
+    console.println("{other.status()} {shown(other, ["access-control-allow-origin"])}")
+    let plain = web.post("{base}/items")?
+    console.println("{plain.status()} {shown(plain, ["access-control-allow-origin", "vary"])}")
+    server.stop()
+}
+
+// expect-stdout: 204 https://good.example POST content-type, x-custom 600
+// expect-stdout: 200 https://good.example x-total Origin
+// expect-stdout: 404 https://good.example
+// expect-stdout: 200 -
+// expect-stdout: 200 - Origin

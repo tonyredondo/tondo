@@ -4975,6 +4975,8 @@ pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): Un
 pub fn App.grpc[S: GrpcService](mut self, service: S)
 pub trait GrpcService { fn serveOn(self, app: mut App) }
 pub fn App.compress(mut self, minimum: Int = 1024)
+pub fn App.cors(mut self, origins: Array[String], headers: Array[String] = [],
+    exposed: Array[String] = [], credentials: Bool = false, maxAge: time.Duration = time.seconds(600))
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
 pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
     socket: String? = none, limits: Limits? = none): Unit ! HttpError
@@ -5151,6 +5153,20 @@ pub alias TlsVersion = net.TlsVersion
   Una respuesta ya codificada, un archivo, los eventos y los WebSockets van
   como están. Es un middleware: comprime lo que devuelven los que se añaden
   después.
+- `App.cors` deja que páginas de otros orígenes llamen a la app desde un
+  navegador (CORS). `origins` son los que deja, como `https://example.com`, o
+  `*` para cualquiera. Responde él mismo al preflight (un `OPTIONS` con
+  `Access-Control-Request-Method`) con `204`: a un origen que deja, con
+  `Access-Control-Allow-Origin`, el método pedido, `headers` o, vacío, las
+  cabeceras que pidió, y `Access-Control-Max-Age` de `maxAge`; a otro, sin
+  ellas, y el navegador no envía la petición. Al resto de peticiones de un
+  origen que deja, también a un `Problem`, añade `Access-Control-Allow-Origin`
+  y `Access-Control-Expose-Headers` con `exposed`, para que la página lea la
+  respuesta. Con `credentials`, la página envía cookies: responde con el
+  origen en lugar de `*` y `Access-Control-Allow-Credentials: true`. Toda
+  respuesta lleva `Vary: Origin`. Es un middleware: añadido primero, rodea a
+  los demás, y también lo que responden ellos, como un `401`, lleva esas
+  cabeceras.
 - `listen` y `start` sirven HTTP/1.1 y HTTP/2; con `tls`, sobre TLS con ALPN.
   `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
   las peticiones en curso terminan.
