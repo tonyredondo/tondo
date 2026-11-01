@@ -289,8 +289,9 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   `metadata: [...]` too. `https://` connects with TLS, trusting `trust:`.
 - In a method, `grpc.call()` gives the metadata, the peer and the time left;
   `grpc.setHeader` and `grpc.setTrailer` answer with metadata. A panic
-  answers `Internal`; `details: [protobuf.pack(message)]` travel with a
-  status.
+  answers `Internal`, and so does another error, with
+  `result.mapErr(grpc.Status.from)?`; `details: [protobuf.pack(message)]`
+  travel with a status.
 - A call in a `within` sends its deadline; the method runs within it, and
   the client gets its `within`'s `TimedOut` when it passes.
 - The value that implements the service is copied into each method, so it

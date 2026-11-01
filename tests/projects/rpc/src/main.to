@@ -1,7 +1,7 @@
 // A gRPC server and its client in one program: each kind of call, the
-// metadata and the deadline a method sees, a failure with details, a
-// method that panics, the server's headers and trailers, a deadline that
-// passes and a server that is not there.
+// metadata and the deadline a method sees, a failure with details, another
+// error as `Internal`, a method that panics, the server's headers and
+// trailers, a deadline that passes and a server that is not there.
 
 import rpc.api.greeter
 import std.console
@@ -25,6 +25,7 @@ impl greeter.Greeter for Greetings {
             }
             "boom" => panic("the greeter broke")
             "slow" => _ = self.gate.receive()
+            "seven" => _ = Int.parse(request.name).mapErr(grpc.Status.from)?
             _ => {}
         }
         let call = grpc.call()
@@ -80,6 +81,10 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
             "{status}, {status.details[0].unpack[greeter.HelloReply]().map((r) { r.message })}",
         )
     }
+    match client.sayHello(greeter.HelloRequest { name: "seven" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
     match client.sayHello(greeter.HelloRequest { name: "boom" }) {
         ok(reply) => console.println(reply.message)
         err(status) => console.println("{status}")
@@ -117,6 +122,7 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
 // expect-stdout: hello Ada from test, deadline false
 // expect-stdout: hello Lin from nobody, deadline true
 // expect-stdout: InvalidArgument: who?, ok(a name, please)
+// expect-stdout: Internal: invalid data
 // expect-stdout: Internal: the method panicked: the greeter broke
 // expect-stdout: 0: Lin
 // expect-stdout: 1: Lin

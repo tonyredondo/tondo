@@ -6637,6 +6637,7 @@ pub enum Code { Ok, Cancelled, Unknown, InvalidArgument, DeadlineExceeded, NotFo
 pub fn Code.number(self): Int
 pub fn Code.of(number: Int): Code
 pub type Status = { code: Code, message: String = "", details: Array[protobuf.Any] = [] }
+pub fn Status.from[E: Display](error: E): Status
 
 pub type Call = { method: String, metadata: Map[String, String], peer: String, timeout: time.Duration? }
 pub fn call(): Call
@@ -6692,7 +6693,9 @@ pub fn Duplex.trailers(self): Map[String, String]
   el primero o al terminar, y el status en los trailers: `grpc-status`,
   `grpc-message` y, si tiene `details`, `grpc-status-details-bin`, un
   `google.rpc.Status`. Un método que falla termina con su `Status`, y uno que
-  entra en pánico con `Internal` y el mensaje del pánico. Una petición que no
+  entra en pánico con `Internal` y el mensaje del pánico. Otro error se
+  convierte con `result.mapErr(grpc.Status.from)?`, que da `Internal` con su
+  texto, como `http.Problem.from` da un 500. Una petición que no
   es un mensaje del tipo da `InvalidArgument`; una comprimida,
   `Unimplemented`; una llamada que el servidor no tiene, `Unimplemented`
   también, por su 404. Si el cliente se va, el envío siguiente falla y la

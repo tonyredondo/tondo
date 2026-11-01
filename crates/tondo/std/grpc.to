@@ -123,6 +123,12 @@ impl Display for Status {
     }
 }
 
+/// A failure of the server's own, for `result.mapErr(grpc.Status.from)?`:
+/// `Internal`, with the error's text.
+pub fn Status.from[E: Display](error: E): Status {
+    Status { code: Code.Internal, message: "{error}" }
+}
+
 /// `google.rpc.Status`, which `grpc-status-details-bin` carries.
 type RpcStatus = {
     code: Int32 = 0
