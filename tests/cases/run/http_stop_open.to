@@ -1,0 +1,26 @@
+// A server that stops lets go of the connections its clients keep open: a
+// request on one is answered, or fails, rather than wait for a server
+// that no longer answers.
+
+import std.console
+import std.http
+import std.time
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/", (_) { http.Reply.text("here") })
+    let server = app.start()?
+    let web = http.Client.new()
+    let url = "http://{server.address()}/"
+    console.println(web.get(url)?.text()?)
+    server.stop()
+    match within time.seconds(10) {
+        _ = web.get(url)
+    } {
+        ok(_) => console.println("answered")
+        err(_) => console.println("still waiting")
+    }
+}
+
+// expect-stdout: here
+// expect-stdout: answered

@@ -5171,7 +5171,9 @@ pub alias TlsVersion = net.TlsVersion
   cabeceras.
 - `listen` y `start` sirven HTTP/1.1 y HTTP/2; con `tls`, sobre TLS con ALPN.
   `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
-  las peticiones en curso terminan.
+  las peticiones en curso terminan, y una conexión que un cliente mantiene
+  abierta no toma más: termina las que tiene y se cierra, con un GOAWAY en
+  HTTP/2, y una petición que llega mientras tanto recibe `503`.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
   agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
   bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera

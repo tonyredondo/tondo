@@ -721,30 +721,37 @@ async fn accept(
             },
             _ = stopped.changed() => return,
         };
-        let (sender, tls) = (sender.clone(), tls.clone());
+        let (sender, tls, mut stopping) = (sender.clone(), tls.clone(), stopped.clone());
         tokio::spawn(async move {
-            let serve = |client: Option<Vec<u8>>| {
-                let (secure, client) = (tls.is_some(), Arc::new(client.unwrap_or_default()));
-                hyper::service::service_fn(move |request| {
-                    handle(request, sender.clone(), remote.clone(), secure, client.clone(), limits)
-                })
-            };
-            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
-            builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
-            builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
-            match tls.clone() {
+            let secure = tls.is_some();
+            let (stream, client): (Box<dyn Connected>, _) = match tls {
                 Some(acceptor) => {
                     // A client that does not finish its handshake in time is let go.
                     let shaken = tokio::time::timeout(limits.head_timeout, acceptor.accept(stream)).await;
-                    if let Ok(Ok(stream)) = shaken {
-                        let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
-                        let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
-                        let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(shown)).await;
-                    }
+                    let Ok(Ok(stream)) = shaken else { return };
+                    let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
+                    (Box::new(stream), shown.unwrap_or_default())
                 }
-                None => {
-                    let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
-                    let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(None)).await;
+                None => (stream, Vec::new()),
+            };
+            let (client, answering) = (Arc::new(client), stopping.clone());
+            let serve = hyper::service::service_fn(move |request| {
+                handle(request, sender.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
+            });
+            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
+            builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
+            let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
+            let connection = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve);
+            tokio::pin!(connection);
+            // When the server stops, a connection kept open takes no more
+            // requests: it ends those it has and closes, with a GOAWAY on
+            // HTTP/2, so that its client connects again.
+            tokio::select! {
+                _ = connection.as_mut() => {}
+                _ = async { _ = stopping.wait_for(|stopped| *stopped).await } => {
+                    connection.as_mut().graceful_shutdown();
+                    let _ = connection.await;
                 }
             }
         });
@@ -758,7 +765,11 @@ async fn handle(
     secure: bool,
     client: Arc<Vec<u8>>,
     limits: Limits,
+    stopped: watch::Receiver<bool>,
 ) -> Result<hyper::Response<Body>, Infallible> {
+    if *stopped.borrow() {
+        return Ok(plain(503, "the server is stopping"));
+    }
     super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
     let _active = super::diagnostics::Open::new(&super::diagnostics::HTTP_SERVER_ACTIVE);
     let websocket = request
