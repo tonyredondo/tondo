@@ -4981,7 +4981,7 @@ pub fn App.cors(mut self, origins: Array[String], headers: Array[String] = [],
     exposed: Array[String] = [], credentials: Bool = false, maxAge: time.Duration = time.seconds(600))
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
 pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
-    socket: String? = none, limits: Limits? = none): Unit ! HttpError
+    socket: String? = none, limits: Limits? = none, grace: time.Duration = time.seconds(30)): Unit ! HttpError
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
     socket: String? = none, limits: Limits? = none): Server ! HttpError
 pub type Limits = { body: Int, head: Int, headTimeout: time.Duration, bodyTimeout: time.Duration, replyTimeout: time.Duration }
@@ -5175,7 +5175,11 @@ pub alias TlsVersion = net.TlsVersion
   antes de saberlo, y se cierra, con un GOAWAY en HTTP/2, así que su cliente
   conecta de nuevo. `stop` vuelve cuando se cerraron todas, o cuando pasa
   `grace`: las que quedan, como un stream que no termina, se cierran como
-  están, y una petición que llega entonces recibe `503`.
+  están, y una petición que llega entonces recibe `503`. `listen` recibe
+  `Interrupt` y `Terminate` (19.2): con la primera drena así, con su
+  `grace`, mientras sus handlers siguen, y después termina el programa como
+  la señal lo habría terminado, con `130` o `143`; una segunda lo termina en
+  el acto.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
   agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
   bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera
@@ -7441,9 +7445,9 @@ Vida de un `Process` (20.9 del lenguaje):
 Señales:
 
 - `Interrupt` (Ctrl-C) y `Terminate` (`kill`, `docker stop`, Kubernetes)
-  cancelan el programa sin que escriba nada (20.10 del lenguaje): un servidor
-  deja de aceptar, sus tareas ejecutan sus `defer` y termina con `130` o
-  `143`. Un `defer` que necesita esperar, como para enviar lo que le queda,
+  cancelan el programa sin que escriba nada (20.10 del lenguaje): sus
+  tareas ejecutan sus `defer` y termina con `130` o `143`. Un servidor de
+  `App.listen` drena antes sus conexiones (14.24). Un `defer` que necesita esperar, como para enviar lo que le queda,
   lo hace dentro de un `within`, que le da hasta su plazo (11.15 y 11.17 del
   lenguaje).
 - `signals(...)` entrega en un canal las señales pedidas que llegan, en vez de

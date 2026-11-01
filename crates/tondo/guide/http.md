@@ -153,7 +153,9 @@ fn find(id: Int): User? {
   with `url()` and `stop()`, for tests. `stop()` drains: the requests that
   arrived are answered and the connections close, for up to `grace` (30
   seconds), so a reply that never ends, as a stream a client still holds,
-  keeps it waiting that long.
+  keeps it waiting that long. `app.listen()` drains the same way on Ctrl-C
+  or `SIGTERM`, as a deploy sends, then ends the program; a second Ctrl-C
+  ends it at once.
 - `app.files("/", Site)` serves the files of `const Site: fs.FileSystem =
   embed.files("public")`, kept in the executable, as it serves a directory
   of the disk; a folder answers with its `index.html` (`tondo guide stdlib`).

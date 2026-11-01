@@ -143,6 +143,17 @@ pub unsafe extern "C" fn tondo_rt_process_signals(
     channel
 }
 
+/// Ends the program as the signal of `process.Signal` number `tag` does
+/// when nothing listens for it, once a server that listened for it
+/// drained: its tasks are cancelled, the caller's too, and it ends with
+/// 128 + the signal.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_signal_end(tag: i64) {
+    if let Some(&signal) = SIGNALS.get(tag as usize) {
+        super::tasks::abandon_all(128 + signal);
+    }
+}
+
 /// Whether a channel of signals exists: then every task waiting is not a
 /// deadlock, as a signal may come.
 pub(crate) fn listening() -> bool {

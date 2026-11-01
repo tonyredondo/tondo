@@ -14,6 +14,7 @@ import std.io as __io
 import std.json as __json
 import std.net as __net
 import std.panics as __panics
+import std.process as __process
 import std.serialization as __serialization
 import std.sync as __sync
 import std.time as __time
@@ -2713,7 +2714,9 @@ pub fn App.openApi(
 /// which it makes and removes when it stops. `limits` bounds what each
 /// client sends, `Limits.standard()` without it. A client that goes away
 /// before its reply cancels the task that answers it: the handler stops at
-/// its next wait and runs its `defer`s.
+/// its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
+/// first drains the server, as `Server.stop(grace)` does, and then ends
+/// the program as it would have; a second one ends it at once.
 pub fn App.listen(
     self,
     port: Int = 8080,
@@ -2721,9 +2724,41 @@ pub fn App.listen(
     tls: Tls? = none,
     socket: String? = none,
     limits: Limits? = none,
+    grace: __time.Duration = __time.seconds(30),
 ): !HttpError {
     let listening = bound(host, port, tls, socket, limits)?
+    let (heard, asked) = channel[__process.Signal](1)
+    spawn detached drainWhenAsked(listening, grace, heard)
     serve(listening, self.pipeline())
+    match asked.receive(timeout: __time.seconds(0)) {
+        some(signal) => {
+            httpNative.signalEnd(if signal == __process.Signal.Interrupt { 0 } else { 1 })
+            // Cancelled now, it unwinds here.
+            __time.sleep(__time.seconds(1))
+        }
+        none => {}
+    }
+}
+
+/// Drains a server that listens once the program is asked to end.
+fn drainWhenAsked(
+    listening: httpNative.Native,
+    grace: __time.Duration,
+    heard: Sender[__process.Signal],
+) {
+    match askedToEnd() {
+        some(signal) => {
+            heard.send(signal)
+            httpNative.serverStop(listening, grace.milliseconds())
+        }
+        none => {}
+    }
+}
+
+/// The first `Interrupt` or `Terminate`. The channel goes with the call,
+/// so that the next ends the program at once.
+fn askedToEnd(): __process.Signal? {
+    __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate).receive()
 }
 
 /// Starts serving in a task of its own, for a program that goes on, such

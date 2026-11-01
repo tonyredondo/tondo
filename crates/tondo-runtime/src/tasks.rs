@@ -2160,6 +2160,16 @@ pub(crate) fn abandon(status: i32) {
     }
 }
 
+/// Ends the program as a signal nothing listens for does, from a task:
+/// cancels every task, this one too, which unwinds at its next wait.
+pub(crate) fn abandon_all(status: i32) {
+    abandon(status);
+    let me = current();
+    if !me.is_null() {
+        unsafe { cancel_task(me) };
+    }
+}
+
 /// When the main task has finished after a panic: waits for the other
 /// tasks to run their cleanups, and gives the panic's exit status.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]

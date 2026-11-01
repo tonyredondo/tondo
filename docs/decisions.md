@@ -4171,3 +4171,16 @@ background of the call that notices it, which then does not wait: new
 addresses are connected as round robin connects the others, and those a
 name lost are dropped once their calls end. `PickFirst` stays on one
 server and has no use for it.
+
+## 2026-11-01 — A server that listens drains on SIGTERM
+
+A deploy ends a server with `SIGTERM`, which cancelled the program: every
+task, the handlers answering requests too, so those requests failed, and
+the program ended within seconds. `App.listen` now receives `Interrupt`
+and `Terminate` itself, through `process.signals`: the first drains the
+server as `Server.stop` does, within `grace`, while its handlers go on,
+and then ends the program as the signal would have, with its `defer`s
+run and 130 or 143, so a program whose server listens in a task of its
+own still ends. Its channel goes after the first, so a second signal
+ends the program at once, as before. A program that wants to decide by
+itself starts the server with `App.start` and listens for the signals.

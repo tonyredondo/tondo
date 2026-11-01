@@ -1,0 +1,45 @@
+// A server that listens drains when the program is asked to end: a
+// handler still answering when `Terminate` comes goes on and answers, and
+// once the server drained, the program ends as the signal ends it.
+
+import std.console
+import std.env
+import std.fs
+import std.http
+import std.process
+import std.time
+
+fn main(): !(http.HttpError | fs.FsError) {
+    let socket = "{fs.createTemporaryDirectory()?}/app.socket"
+    let (started, began) = channel[Unit](1)
+    let (release, released) = channel[Unit](1)
+    var app = http.App.new()
+    app.get(
+        "/slow",
+        (_) {
+            started.send(())
+            _ = released.receive()
+            console.println("answered after the signal")
+            http.Reply.text("finished")
+        },
+    )
+    spawn detached ask(socket, began, release)
+    app.listen(socket: some(socket))?
+    console.println("not reached")
+}
+
+/// Calls the server, and asks the program to end while it answers.
+fn ask(socket: String, began: Receiver[Unit], release: Sender[Unit]) {
+    for not fs.exists(socket) {
+        time.sleep(time.milliseconds(5))
+    }
+    let web = http.Client.new(baseUrl: "http://app", socket: socket)
+    let slow = spawn web.get("/slow")
+    _ = began.receive()
+    _ = process.command("kill", "-TERM", "{env.processId()}").run()
+    release.send(())
+    _ = slow.wait()
+}
+
+// expect-stdout: answered after the signal
+// expect-exit: 143
