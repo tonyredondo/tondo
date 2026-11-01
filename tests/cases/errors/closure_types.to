@@ -1,0 +1,10 @@
+// Each closure has a type of its own: a variable that holds one cannot take
+// another, and the error says the function type that holds either.
+
+fn main() {
+    var pick = () { 1 }
+    pick = () { 2 }
+    _ = pick
+}
+
+// expect-error: E1102 each closure is a type of its own, so this one is not the other: give the place the function type `fn(): Int`

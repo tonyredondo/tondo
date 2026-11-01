@@ -10015,6 +10015,14 @@ impl<'a> Checker<'a> {
                 hir::ExprKind::Int(literal) if expected == Ty::BYTE && (0..256).contains(&literal) => {
                     format!("an integer literal is not a `Byte`: write `Byte({literal}u8)`")
                 }
+                // Each closure has a type of its own, which only it has.
+                _ if self.types.is_closure(value.ty) && self.types.is_closure(expected) => {
+                    let shown = self.types.display(expected);
+                    let signature = shown.trim_start_matches("closure ");
+                    format!(
+                        "each closure is a type of its own, so this one is not the other: give the place the function type `{signature}`, which any closure of that signature fits"
+                    )
+                }
                 _ if narrowed.is_some() && expected != Ty::BYTE && value.ty != Ty::BYTE => {
                     let text = self.sources.slice(value.span);
                     let target = self.types.display(expected);

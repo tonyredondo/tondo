@@ -1822,12 +1822,8 @@ impl Types {
                 // A closure is shown by its signature.
                 Some((template, _)) if self.closures.contains_key(template) => {
                     let info = &self.closures[template];
-                    let signature =
-                        TyKind::Fn(info.params.clone(), info.result, info.variadic, info.modes.clone(), info.is_unsafe);
-                    match self.map.get(&signature) {
-                        Some(&ty) => format!("closure {}", self.display(ty)),
-                        None => "closure".into(),
-                    }
+                    let signature = self.display_fn(&info.params, info.result, info.variadic, &info.modes, info.is_unsafe);
+                    format!("closure {signature}")
                 }
                 _ => self.adt(*id).name.clone(),
             },
@@ -1902,27 +1898,32 @@ impl Types {
                 }
             }
             TyKind::Fn(params, result, variadic, modes, is_unsafe) => {
-                let mut shown: Vec<String> = params
-                    .iter()
-                    .zip(modes)
-                    .map(|(&t, mode)| match mode {
-                        Mode::Value => self.display(t),
-                        mode => format!("{} {}", mode.keyword(), self.display(t)),
-                    })
-                    .collect();
-                if *variadic && let Some(last) = shown.last_mut() {
-                    let element = match self.kind(*params.last().unwrap()) {
-                        TyKind::Array(element) => self.display(*element),
-                        _ => last.clone(),
-                    };
-                    *last = format!("...{element}");
-                }
-                let keyword = if *is_unsafe { "unsafe fn" } else { "fn" };
-                match *result {
-                    Ty::UNIT => format!("{keyword}({})", shown.join(", ")),
-                    _ => format!("{keyword}({}): {}", shown.join(", "), self.display(*result)),
-                }
+                self.display_fn(params, *result, *variadic, modes, *is_unsafe)
             }
+        }
+    }
+
+    /// A function type's signature: `fn(Int, var Array[Int]): Bool`.
+    fn display_fn(&self, params: &[Ty], result: Ty, variadic: bool, modes: &[Mode], is_unsafe: bool) -> String {
+        let mut shown: Vec<String> = params
+            .iter()
+            .zip(modes)
+            .map(|(&t, mode)| match mode {
+                Mode::Value => self.display(t),
+                mode => format!("{} {}", mode.keyword(), self.display(t)),
+            })
+            .collect();
+        if variadic && let Some(last) = shown.last_mut() {
+            let element = match self.kind(*params.last().unwrap()) {
+                TyKind::Array(element) => self.display(*element),
+                _ => last.clone(),
+            };
+            *last = format!("...{element}");
+        }
+        let keyword = if is_unsafe { "unsafe fn" } else { "fn" };
+        match result {
+            Ty::UNIT => format!("{keyword}({})", shown.join(", ")),
+            _ => format!("{keyword}({}): {}", shown.join(", "), self.display(result)),
         }
     }
 }
