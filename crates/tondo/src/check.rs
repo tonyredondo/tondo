@@ -8677,6 +8677,12 @@ impl<'a> Checker<'a> {
                 Some(self.spawn_statement(cx, call))
             }
             ast::StmtKind::Expr(value) => {
+                // A line that starts with `-` is a value of its own (5.2):
+                // a subtraction split before its `-` becomes one.
+                if let ast::ExprKind::Unary(ast::UnaryOp::Neg, _) = value.kind {
+                    let message = "this line starts with `-`, so it is a negative value of its own that nothing uses, not a subtraction from the line before: to subtract, end that line with `-`";
+                    self.diags.warning("W1014", value.span, message);
+                }
                 // The value of a block, `if` or `match` statement is dropped.
                 let expected = matches!(
                     value.kind,

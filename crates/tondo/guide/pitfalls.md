@@ -259,15 +259,17 @@ fn greet() {
 greet()
 ```
 
-A line that starts with an operator continues the one before: a `-1` alone
-on a line subtracts. Write `(-1)`, or bind it first.
+A line that starts with `+`, `*`, `and` or another binary operator
+continues the one before, but one that starts with `-` is a negative value
+of its own, as a `match` arm's `-1 =>`: a subtraction that goes on to the
+next line ends the first with `-`. A negative value that nothing uses warns
+(`W1014`).
 
-```tondo error E1102
-import std.console
-
-fn fallback(): Int {
-    console.println("none found")
-    -1
+```tondo
+fn total(price: Int, discount: Int, fee: Int): Int {
+    price -
+        discount
+        + fee
 }
 
 fn main() {}

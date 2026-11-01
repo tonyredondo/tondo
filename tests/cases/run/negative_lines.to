@@ -1,0 +1,28 @@
+// A line that starts with `-` begins a value of its own, as a negative arm
+// of a `match` after another; a subtraction that goes on to the next line
+// ends the first with `-`. A negative value that nothing uses warns.
+
+import std.console
+
+fn sign(number: Int): String {
+    match number {
+        0 => "zero"
+        -1 => "minus one"
+        -2 => "minus two"
+        _ => "other"
+    }
+}
+
+fn split(price: Int, discount: Int): Int {
+    let total = price
+    -discount
+    total
+}
+
+fn main() {
+    let total = 10 - 3
+    console.println("{sign(-1)} {sign(-2)} {sign(0)} {total} {split(10, 3)}")
+}
+
+// expect-stdout: minus one minus two zero 7 10
+// expect-warning: W1014 this line starts with `-`

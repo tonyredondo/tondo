@@ -457,7 +457,6 @@ fn watched[T: __reflect.Reflect](
 /// The next message of the call, or `none` after the client's last.
 pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? ! Status {
     match grpcNative.readFrame(self.frames) {
-        -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
         1 => match __protobuf.decode[T](grpcNative.frame(self.frames)) {
             ok(message) => {
                 watched(self.watchers, Incoming.call, Direction.Received, message)
@@ -469,6 +468,7 @@ pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? !
             }
         }
         0 => none
+        -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
         _ => fail Status { code: Code.InvalidArgument, message: grpcNative.frameError(self.frames) }
     }
 }

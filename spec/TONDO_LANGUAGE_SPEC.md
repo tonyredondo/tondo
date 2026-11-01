@@ -450,7 +450,7 @@ Una nueva línea no produce `NL`:
   - `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `^`, `|`, `..`, `..=`.
   - `<`, `<=`, `>`, `>=`, `==`, `!=`, `in`, `and`, `or` o `with`.
   - Los prefijos incompletos `not`, `~`, `spawn`, `fail` o `defer`.
-- Cuando el siguiente token significativo es `.`, o uno de los operadores binarios de la lista anterior, desde `+` hasta `with`. Un `with` solo continúa la línea anterior cuando le sigue `{`, la actualización de un record (9.3); seguido de un nombre empieza la sentencia que cambia un contexto (11.16).
+- Cuando el siguiente token significativo es `.`, o uno de los operadores binarios de la lista anterior, desde `+` hasta `with`, salvo `-`. Un `with` solo continúa la línea anterior cuando le sigue `{`, la actualización de un record (9.3); seguido de un nombre empieza la sentencia que cambia un contexto (11.16). Un `-` al comienzo de una línea empieza un valor negativo, como el brazo `-1 =>` de un `match` tras otro; una resta que sigue en la línea siguiente termina la primera con `-`, y un negativo suelto que nada usa avisa (`W1014`).
 
 En cualquier otro caso produce exactamente un `NL` aunque existan varias nuevas líneas físicas consecutivas; el parser conserva aparte cuántas líneas y comentarios había para documentación y formato. Cuando se anidan delimitadores, manda el delimitador abierto más interior: entrar en `{}` restaura las nuevas líneas significativas aunque ese body esté dentro de `()` o `[]`, y entrar después en unos `()` o `[]` interiores vuelve a suprimirlas hasta su cierre. Una llave `{` nunca suprime por sí sola el `NL`, porque dentro de un body las nuevas líneas separan elementos. `return` tampoco lo suprime: `return` al final de una línea devuelve `Unit`, y para devolver una expresión esta comienza en esa misma línea.
 
@@ -8814,6 +8814,7 @@ oculten un diagnóstico independiente.
 | `W1011` | `duplicate-set-entry` | Literal de set repite una clave constante. |
 | `W1012` | `converted-field-missing` | `reflect.convert` rellena con `none` un campo opcional del destino que el origen no tiene. |
 | `W1013` | `serial-spawn-in-loop` | `spawn` cuyo `Join` nadie consume dentro de un bucle: cada iteración espera a su tarea. |
+| `W1014` | `unused-negation` | Sentencia que es un valor negativo que nada usa, como una resta partida antes de su `-`. |
 
 #### Pánicos del lenguaje
 
@@ -9139,6 +9140,7 @@ con condiciones cerradas:
 - Literal `Set[...]` con una entrada constante repetida (`W1011`).
 - Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
 - `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
+- Sentencia que es un valor negativo que nada usa (`W1014`).
 
 Son errores obligatorios, entre otros:
 

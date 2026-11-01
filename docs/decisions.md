@@ -4018,3 +4018,14 @@ messages of both protocols are written in `std.grpc` by hand, as
 `google.rpc.Status` is, since the standard library is not derived; the
 descriptor of `health.proto` is a constant, which protoc and the compiler
 both write the same.
+
+## 2026-11-01 — A line that starts with `-` begins a value
+
+A line that started with a binary operator continued the one before, `-`
+among them, so a `match` could not have a negative arm after its first,
+`-1 =>`, and the arms protobuf derives for an enum with a negative value
+did not compile. A `-` at the start of a line now begins a negative value,
+as `+`, `*` and the others still continue the line; a subtraction that goes
+on to the next line ends the first with `-`, as `tondo fmt` writes it. Code
+that split a subtraction before its `-` now has a statement of its own,
+which warns (`W1014`), so it does not change its meaning in silence.

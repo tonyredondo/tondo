@@ -11,4 +11,6 @@ message All {
   optional group Grp = 18 { optional int32 g = 19; }
   optional int32 withDefault = 20 [default = 5];
   optional double far = 21 [default = inf];
+  optional Sign sign = 22 [default = MINUS];
+  enum Sign { PLUS = 1; MINUS = -1; }
 }

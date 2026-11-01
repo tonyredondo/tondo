@@ -314,10 +314,12 @@ fn significant_newlines(mut raw: Vec<Token>, bracketed: Vec<usize>, end: u32) ->
             }
             // A run of newlines is followed by a token, or by the end. A
             // `with` continues the line only as a record's update, before
-            // `{`; before a name it changes a context (11.16).
+            // `{`; before a name it changes a context (11.16). A `-` starts
+            // a negative number, as a `match` arm's `-1 =>`.
             let next = raw.get(i + 1).map(|t| &t.tok);
             let context = next == Some(&Tok::Kw(Kw::With)) && raw.get(i + 2).is_some_and(|t| t.tok != Tok::LBrace);
-            if next.is_some_and(|t| *t == Tok::Dot || is_binary_continuation(t)) && !context {
+            let continues = |t: &Tok| *t == Tok::Dot || (is_binary_continuation(t) && *t != Tok::Minus);
+            if next.is_some_and(continues) && !context {
                 continue;
             }
         }
@@ -1119,6 +1121,11 @@ let c = "{"{get("http://127.0.0.1:1/")}".startsWith("err(no")}""#;
         assert_eq!(errors, 0);
         let newlines = t.iter().filter(|t| **t == Tok::Newline).count();
         assert_eq!(newlines, 2);
+        // A line that starts with `-` does not continue the one before; one
+        // that ends with it does.
+        let newlines = |text: &str| toks(text).0.iter().filter(|t| **t == Tok::Newline).count();
+        assert_eq!(newlines("0 => a\n-1 => b"), 2);
+        assert_eq!(newlines("let x = a -\n    b"), 1);
     }
 
     #[test]

@@ -234,6 +234,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "`reflect.convert` fills with `none` an optional field the source does not have.",
     ),
     ("W1013", "serial-spawn-in-loop", "A `spawn` whose `Join` nobody takes, in a loop: each turn waits for its task."),
+    (
+        "W1014",
+        "unused-negation",
+        "A statement that is a negative value nobody uses, as a subtraction split before its `-`.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),
