@@ -3909,3 +3909,14 @@ be read. Without `enter` the runtime still walks the whole tree at once;
 with it, the walk lists one directory at a time, since `enter` runs in
 the program. `fs.watch` now skips such a directory too, rather than
 watching nothing.
+
+## 2026-11-01 — A literal can be a `Byte`
+
+A `Byte` literal had to be `Byte(255u8)`, so a file's magic number was
+`[Byte(0x89u8), Byte(0x50u8), ...]` and a pixel `pixels.push(Byte(255u8))`,
+and a program that wrote `255` where a byte goes got E1102. The rule kept
+binary data apart from arithmetic, but a literal is a constant whose
+value the compiler sees, and the type keeps that boundary: a `Byte` still
+has no arithmetic, and a variable still converts with `Byte(n)`. So an
+unsuffixed literal from 0 to 255 is a `Byte` where one is expected, in
+expressions and in patterns, and one out of range is a compile error.

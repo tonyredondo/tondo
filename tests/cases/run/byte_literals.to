@@ -1,0 +1,27 @@
+// Where a `Byte` is expected, a literal from 0 to 255 is one: in arrays,
+// arguments, optionals, comparisons, bitwise operations and patterns.
+
+import std.console
+
+fn kind(first: Byte): String {
+    match first {
+        0x89 => "png"
+        0xFF => "jpeg"
+        _ => "other"
+    }
+}
+
+fn main() {
+    let magic: Array[Byte] = [0x89, 0x50, 0x4E, 0x47]
+    var pixels: Array[Byte] = []
+    pixels.push(255)
+    let maybe: Byte? = 7
+    let x = 300
+    console.println(
+        "{magic.length()} {pixels[0]} {maybe} {kind(magic[0])} {magic[1] == 0x50} {magic[3] & 0x0F}",
+    )
+    console.println("{Byte(x).isErr()} {Byte(x - 100).ok()}")
+}
+
+// expect-stdout: 4 255 some(7) png true 7
+// expect-stdout: true some(200)

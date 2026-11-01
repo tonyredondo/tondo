@@ -11754,6 +11754,7 @@ impl<'a> Checker<'a> {
     fn literal_type(&self, expr: &ast::Expr, ty: Ty) -> Option<Ty> {
         Some(match &expr.kind {
             ast::ExprKind::Int { suffix: Some(suffix), .. } => Ty::int(IntTy::from_suffix(suffix)),
+            ast::ExprKind::Int { .. } if ty == Ty::BYTE => Ty::BYTE,
             ast::ExprKind::Int { .. } => self.expected_number(Some(ty), false).unwrap_or(Ty::INT),
             ast::ExprKind::Float { suffix: Some(suffix), .. } => {
                 if *suffix == "f32" {
@@ -13476,6 +13477,19 @@ impl<'a> Checker<'a> {
             let literal = self.int_literal(negative, magnitude, None, Some(Ty::INT), span);
             let call = hir::ExprKind::Call(Callee::Trait(number, index as u32), vec![target], vec![literal]);
             return Self::mk(call, target, span);
+        }
+        // Where a `Byte` is expected, a literal from 0 to 255 is one (5.7).
+        let unwrapped = expected.map(|t| match *self.types.kind(t) {
+            TyKind::Option(inner) => inner,
+            _ => t,
+        });
+        if suffix.is_none() && unwrapped == Some(Ty::BYTE) {
+            if negative && magnitude != 0 || magnitude > 255 {
+                let sign = if negative { "-" } else { "" };
+                let message = format!("literal `{sign}{magnitude}` is not a `Byte`, which holds 0 to 255");
+                self.diags.error("E1102", span, message);
+            }
+            return Self::mk(hir::ExprKind::Int(magnitude.min(255) as i128), Ty::BYTE, span);
         }
         let int = match suffix {
             Some(suffix) => IntTy::from_suffix(suffix),

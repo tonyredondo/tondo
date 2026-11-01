@@ -711,15 +711,15 @@ Sufijos opcionales:
 
 Sin contexto ni sufijo, un literal entero tiene tipo `Int`.
 
-Con tipo esperado, un literal sin sufijo puede adoptar exactamente uno de los enteros intrínsecos `Int8`…`Int128` o `UInt8`…`UInt128`, incluidos `Int`, `UInt` y aliases transparentes de esos tipos. El valor matemático debe caber; en otro caso es error de compilación. Un literal entero no adopta implícitamente `Float`, `Byte` ni un newtype, salvo un tipo del programa que implementa `Number`, al que llega como `Number.fromInt[T](literal)` (18.10). Por tanto:
+Con tipo esperado, un literal sin sufijo puede adoptar exactamente uno de los enteros intrínsecos `Int8`…`Int128` o `UInt8`…`UInt128`, incluidos `Int`, `UInt` y aliases transparentes de esos tipos, o `Byte`. El valor matemático debe caber, de 0 a 255 en un `Byte`; en otro caso es error de compilación. Un literal entero no adopta implícitamente `Float` ni un newtype, salvo un tipo del programa que implementa `Number`, al que llega como `Number.fromInt[T](literal)` (18.10). Por tanto:
 
 ~~~tondo
 let small: UInt8 = 42
-let byte: Byte = Byte(255u8)
+let magic: Array[Byte] = [0x89, 0x50, 0x4E, 0x47]
 let id = UserId(42)
 ~~~
 
-Los sufijos fijan el tipo antes de aplicar contexto. No existe un sufijo de `Byte`: su construcción explícita conserva visible la frontera entre datos binarios y aritmética.
+Los sufijos fijan el tipo antes de aplicar contexto. No existe un sufijo de `Byte`. La frontera entre datos binarios y aritmética queda en el tipo: un `Byte` no tiene aritmética ordinaria, y un entero que no es un literal se convierte a `Byte` explícitamente, `Byte(value)`.
 
 Un literal numérico seguido inmediatamente por un carácter
 `Unicode_XID_Continue` o `_` que no pertenezca a sus dígitos o a un sufijo válido

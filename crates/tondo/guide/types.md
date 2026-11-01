@@ -7,7 +7,9 @@
 `Float` (64-bit), `Float32`, `Bool`, `Char` (a Unicode scalar), `Byte`,
 `String`, `Unit` (`()`), `Never`. Conversions are explicit: `Float(n)` cannot
 fail; `Int(x)`, `Byte(n)` and other narrowing ones return
-`T ! NumericConversionError`. A `Byte` literal is `Byte(255u8)`.
+`T ! NumericConversionError`. Where a `Byte` is expected, a literal from 0
+to 255 is one: `let magic: Array[Byte] = [0x89, 0x50]`; a `Byte` has no
+arithmetic, and an `Int` becomes one with `Byte(n)?`.
 
 Every number has the same operations in every width (`tondo api prelude`
 lists them): arithmetic that wraps, checks or saturates instead of

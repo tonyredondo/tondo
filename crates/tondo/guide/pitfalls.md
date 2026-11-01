@@ -215,8 +215,8 @@ fn User.name(self): String {
 fn main() {}
 ```
 
-Numbers do not convert by themselves: `Int(3.5)?`, `Float(n)`; a `Byte`
-literal is `Byte(255u8)`.
+Numbers do not convert by themselves: `Int(3.5)?`, `Float(n)`, `Byte(n)?`;
+only a literal takes the type it is expected to have, a `Byte` too.
 
 ```tondo error E1102
 fn main() {

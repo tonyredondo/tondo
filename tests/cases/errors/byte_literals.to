@@ -1,0 +1,14 @@
+// A literal out of the range of a `Byte` is no `Byte`, and a `Byte` still
+// has no arithmetic.
+
+fn main() {
+    let high: Byte = 256
+    let low: Byte = -1
+    let byte: Byte = 1
+    _ = byte + 1
+    _ = (high, low)
+}
+
+// expect-error: E1102 literal `256` is not a `Byte`, which holds 0 to 255
+// expect-error: E1102 literal `-1` is not a `Byte`, which holds 0 to 255
+// expect-error: E1102 operator `+` cannot be applied to `Byte`
