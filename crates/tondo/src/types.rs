@@ -1822,7 +1822,8 @@ impl Types {
                 // A closure is shown by its signature.
                 Some((template, _)) if self.closures.contains_key(template) => {
                     let info = &self.closures[template];
-                    let signature = self.display_fn(&info.params, info.result, info.variadic, &info.modes, info.is_unsafe);
+                    let signature =
+                        self.display_fn(&info.params, info.result, info.variadic, &info.modes, info.is_unsafe);
                     format!("closure {signature}")
                 }
                 _ => self.adt(*id).name.clone(),
