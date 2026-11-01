@@ -80,8 +80,13 @@ pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut
             for item in &file.items {
                 match item {
                     ast::Item::Type(t) => {
+                        // A message may have no numbered field: it is empty,
+                        // or has only a oneof, as a `.proto` file's may.
                         if let ast::TypeBody::Record(fields) = &t.body
-                            && fields.iter().any(|f| annotation(&f.uses, &alias, "Field").is_some())
+                            && (fields.iter().any(|f| {
+                                annotation(&f.uses, &alias, "Field").is_some()
+                                    || annotation(&f.uses, &alias, "Unknown").is_some()
+                            }) || annotation(&t.uses, &alias, "Name").is_some())
                             && !generator.implemented(&t.name.name, "Message")
                             && let Some(code) = generator.message(t, fields, diags)
                         {

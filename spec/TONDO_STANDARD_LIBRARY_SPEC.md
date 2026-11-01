@@ -3807,7 +3807,8 @@ impl Display for Value                     // como JSON
 
 `std.protobuf` lee y escribe [Protocol Buffers](https://protobuf.dev/programming-guides/encoding/),
 el formato binario de gRPC, en proto2 y proto3. Un record cuyos campos llevan
-número es un mensaje, y un enum cuyas variantes llevan número es un enum de
+número es un mensaje, y también uno con `@protobuf.Name` sin ellos, vacío o
+con solo un `oneof`; un enum cuyas variantes llevan número es un enum de
 protobuf; el compilador escribe su implementación de `Message` y de `Enum`
 desde esas anotaciones, campo a campo y con el tipo exacto de cada uno.
 

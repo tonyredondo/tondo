@@ -50,6 +50,12 @@ fn main(): !protobuf.ProtobufError {
         "{value.i32} {value.u64} {value.s} {value.packed} {value.grp.map((g) { g.g })} {value.withDefault} {value.far} {value.sign}",
     )
     console.println("{hex(protobuf.encode(value)) == legacy}")
+    // A message with no field, and one with only a oneof.
+    let choice = protobuf.encode(common.Choice { pick: some(common.ChoicePick.Name("x")) })
+    let nothing = protobuf.encode(common.Nothing {})
+    console.println(
+        "{nothing.length()} {hex(choice)} {protobuf.decode[common.Choice](choice)?.pick.isSome()} {protobuf.decode[common.Nothing](nothing).isOk()}",
+    )
     // Full names, as `Any` and gRPC carry them.
     console.println("{protobuf.pack(ada).typeUrl} {protobuf.pack(ada.addresses[0]).typeUrl}")
 }
@@ -58,4 +64,5 @@ fn main(): !protobuf.ProtobufError {
 // expect-stdout: Ada STATUS_ACTIVE some(10) HOME some([name])
 // expect-stdout: -7 some(18446744073709551615) some(héllo) [3, 4] some(some(42)) 5 inf MINUS
 // expect-stdout: true
+// expect-stdout: 0 0a0178 true true
 // expect-stdout: type.googleapis.com/users.v1.User type.googleapis.com/users.v1.User.Address
