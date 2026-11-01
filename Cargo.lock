@@ -2689,6 +2689,7 @@ dependencies = [
  "bytes",
  "flate2",
  "futures-util",
+ "h2",
  "hmac",
  "html-escape",
  "http-body-util",

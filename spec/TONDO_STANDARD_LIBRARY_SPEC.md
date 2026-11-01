@@ -6857,6 +6857,12 @@ pub fn Duplex.trailers(self): Map[String, String]
   falla en el acto con `Unavailable`. El canal vuelve a resolver los hosts
   cuando una conexión cae o un intento falla, así que sigue a un servicio
   cuyas direcciones cambian.
+- **Reintento transparente.** Una llamada que ningún servidor empezó se
+  envía otra vez, hasta tres intentos, como hace gRPC: la que una conexión
+  que se cerró no llegó a enviar, y la que un servidor rechazó antes de
+  empezarla, con `REFUSED_STREAM` o por llegar tras su GOAWAY. Una llamada
+  con stream del cliente solo se reintenta si no llegó a enviarse, porque
+  sus mensajes ya salieron.
 - **Streams.** `Stream[T]` da los mensajes según llegan, cada uno
   `T ! Status`; el fallo de la llamada es su último elemento. `Upload.send`
   envía y `finish` termina el envío y da la respuesta. `Duplex.send` y

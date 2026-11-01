@@ -467,34 +467,82 @@ fn code_of_http(status: u16) -> i64 {
     }
 }
 
+/// A call's request: its path and headers, and what it sends, its one
+/// message, which it can send again, or the stream of its messages.
+struct Prepared {
+    path: String,
+    headers: hyper::HeaderMap,
+    one: Option<Bytes>,
+    stream: Option<Body>,
+}
+
+impl Prepared {
+    /// The request to `authority`, or `None` when its stream was sent.
+    fn request(&mut self, scheme: &str, authority: &str) -> Result<Option<hyper::Request<Body>>, String> {
+        let body = match (&self.one, self.stream.take()) {
+            (Some(message), _) => {
+                let full = http_body_util::Full::new(message.clone());
+                BodyExt::boxed_unsync(full.map_err(|never| match never {}))
+            }
+            (None, Some(stream)) => stream,
+            (None, None) => return Ok(None),
+        };
+        let mut request = hyper::Request::post(format!("{scheme}://{authority}{}", self.path))
+            .body(body)
+            .map_err(|error| format!("the call's path is not valid: {error}"))?;
+        *request.headers_mut() = self.headers.clone();
+        Ok(Some(request))
+    }
+}
+
+/// Whether the server refused a request before it began: `REFUSED_STREAM`,
+/// or a stream after the last its GOAWAY takes.
+fn refused(error: &hyper::Error) -> bool {
+    let source = std::error::Error::source(error).and_then(|e| e.downcast_ref::<h2::Error>());
+    source.is_some_and(|e| {
+        e.reason() == Some(h2::Reason::REFUSED_STREAM)
+            || (e.is_go_away() && e.is_remote() && e.reason() == Some(h2::Reason::NO_ERROR))
+    })
+}
+
 /// Runs a call: sends its request, then gives what comes back as events.
-async fn exchange(channel: Arc<Channel>, mut request: hyper::Request<Body>, events: Events) {
+/// A request no server began, as one a connection that closed never sent
+/// or one a server going away refused, goes again, as gRPC's transparent
+/// retry does: a stream only when it was never sent.
+async fn exchange(channel: Arc<Channel>, mut prepared: Prepared, events: Events) {
     let end = |code: i64, message: String| events.end(code, message, Vec::new());
-    // A connection that closed between calls is let go, and the call
-    // takes another.
+    let scheme = if channel.secure { "https" } else { "http" };
     let mut tries = 0;
-    let (mut sender, authority) = loop {
+    let response = loop {
+        tries += 1;
         let (mut sender, authority) = match channel.pick().await {
             Ok(picked) => picked,
             Err(problem) => return end(UNAVAILABLE, problem),
         };
-        tries += 1;
-        match sender.ready().await {
-            Ok(()) => break (sender, authority),
-            Err(error) if tries == 3 => {
-                return end(UNAVAILABLE, format!("the connection to {authority} closed: {error}"));
+        if let Err(error) = sender.ready().await {
+            match tries {
+                3 => return end(UNAVAILABLE, format!("the connection to {authority} closed: {error}")),
+                _ => continue,
             }
-            Err(_) => {}
         }
-    };
-    let scheme = if channel.secure { "https" } else { "http" };
-    match format!("{scheme}://{authority}{}", request.uri().path()).parse() {
-        Ok(uri) => *request.uri_mut() = uri,
-        Err(error) => return end(INTERNAL, format!("the call's path is not valid: {error}")),
-    }
-    let response = match sender.send_request(request).await {
-        Ok(response) => response,
-        Err(error) => return end(UNAVAILABLE, format!("the request to {authority} failed: {error}")),
+        let request = match prepared.request(scheme, &authority) {
+            Ok(Some(request)) => request,
+            Ok(None) => return end(UNAVAILABLE, format!("the connection to {authority} closed")),
+            Err(problem) => return end(INTERNAL, problem),
+        };
+        match sender.try_send_request(request).await {
+            Ok(response) => break response,
+            Err(mut failure) => {
+                let unsent = failure.take_message();
+                if tries < 3 && (unsent.is_some() || (prepared.one.is_some() && refused(failure.error()))) {
+                    if let Some(request) = unsent.filter(|_| prepared.one.is_none()) {
+                        prepared.stream = Some(request.into_body());
+                    }
+                    continue;
+                }
+                return end(UNAVAILABLE, format!("the request to {authority} failed: {}", failure.into_error()));
+            }
+        }
     };
     let (head, mut body) = response.into_parts();
     if head.status != 200 {
@@ -567,7 +615,7 @@ fn begin(
         Err(problem) => return Some(finished(UNAVAILABLE, problem.clone())),
     };
     // The address the call goes to gives the rest of its URI.
-    let mut request = hyper::Request::post(text(path))
+    let mut head = hyper::Request::post(text(path))
         .header("content-type", "application/grpc+proto")
         .header("te", "trailers")
         .header("grpc-accept-encoding", "gzip")
@@ -577,23 +625,36 @@ fn begin(
     for pair in crate::http::strings(headers).chunks(2) {
         if let [name, value] = pair {
             compressed |= name == "grpc-encoding" && value == "gzip";
-            request = request.header(name.as_str(), value.as_str());
+            head = head.header(name.as_str(), value.as_str());
         }
     }
-    let (outgoing, mut messages) = mpsc::channel::<Bytes>(16);
-    let body = futures_util::stream::poll_fn(move |context| {
-        messages.poll_recv(context).map(|m| m.map(|b| Ok(Frame::data(b))))
-    });
-    let request = match request.body(BodyExt::boxed_unsync(StreamBody::new(body))) {
-        Ok(request) => request,
+    let headers = match head.body(()) {
+        Ok(request) => request.into_parts().0.headers,
         Err(error) => return Some(finished(INTERNAL, format!("the call's metadata is not valid: {error}"))),
     };
-    if single {
-        let _ = outgoing.try_send(framed(&unsafe { array_bytes(message) }, compressed));
-    }
+    let (outgoing, mut messages) = mpsc::channel::<Bytes>(16);
+    let prepared = match single {
+        true => Prepared {
+            path: text(path),
+            headers,
+            one: Some(framed(&unsafe { array_bytes(message) }, compressed)),
+            stream: None,
+        },
+        false => {
+            let body = futures_util::stream::poll_fn(move |context| {
+                messages.poll_recv(context).map(|m| m.map(|b| Ok(Frame::data(b))))
+            });
+            Prepared {
+                path: text(path),
+                headers,
+                one: None,
+                stream: Some(BodyExt::boxed_unsync(StreamBody::new(body))),
+            }
+        }
+    };
     let (sender, incoming) = mpsc::unbounded_channel();
     let ended = Arc::new(Ended::default());
-    let task = crate::http::runtime().spawn(exchange(channel, request, Events { sender, ended: ended.clone() }));
+    let task = crate::http::runtime().spawn(exchange(channel, prepared, Events { sender, ended: ended.clone() }));
     Some(Call {
         outgoing: Mutex::new((!single).then_some(outgoing)),
         incoming: tokio::sync::Mutex::new(incoming),
@@ -1077,4 +1138,77 @@ pub extern "C" fn tondo_rt_grpc_signal_wait(object: *mut NativeObject) -> u8 {
         }
     });
     waited.is_some() as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A server that refuses the first stream, as one going away does, and
+    /// answers the next with an `Ok` status; and how many it was sent.
+    async fn refusing() -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let address = listener.local_addr().expect("an address");
+        let streams = Arc::new(AtomicUsize::new(0));
+        let counted = streams.clone();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("a client");
+            let mut connection = h2::server::handshake(socket).await.expect("HTTP/2");
+            while let Some(Ok((_, mut respond))) = connection.accept().await {
+                if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                    respond.send_reset(h2::Reason::REFUSED_STREAM);
+                    continue;
+                }
+                let head = hyper::Response::builder().header("content-type", "application/grpc").body(());
+                let mut stream = respond.send_response(head.expect("a head"), false).expect("a reply");
+                let mut trailers = hyper::HeaderMap::new();
+                trailers.insert("grpc-status", hyper::header::HeaderValue::from_static("0"));
+                stream.send_trailers(trailers).expect("trailers");
+            }
+        });
+        (address, streams)
+    }
+
+    /// The status a call to `address` ends with.
+    async fn called(address: SocketAddr, one: Option<Bytes>, stream: Option<Body>) -> i64 {
+        let pool = Pool { backends: Vec::new(), stale: true, given: 0 };
+        let channel = Arc::new(Channel {
+            secure: false,
+            hosts: vec![("127.0.0.1".into(), address.port())],
+            target: address.to_string(),
+            tls: None,
+            balancing: Balancing::PickFirst,
+            pool: tokio::sync::Mutex::new(pool),
+        });
+        let prepared = Prepared { path: "/demo.Greeter/Hello".into(), headers: hyper::HeaderMap::new(), one, stream };
+        let (sender, mut incoming) = mpsc::unbounded_channel();
+        exchange(channel, prepared, Events { sender, ended: Arc::new(Ended::default()) }).await;
+        loop {
+            match incoming.recv().await {
+                Some(Event::End(code, ..)) => return code,
+                Some(_) => {}
+                None => return -1,
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_call_goes_again() {
+        let (code, streams) = crate::http::runtime().block_on(async {
+            let (address, streams) = refusing().await;
+            (called(address, Some(framed(b"hello", false)), None).await, streams)
+        });
+        assert_eq!((code, streams.load(Ordering::SeqCst)), (0, 2));
+    }
+
+    #[test]
+    fn a_refused_stream_that_was_sent_does_not() {
+        let (code, streams) = crate::http::runtime().block_on(async {
+            let (address, streams) = refusing().await;
+            let body = http_body_util::Full::new(framed(b"hello", false)).map_err(|never| match never {});
+            (called(address, None, Some(BodyExt::boxed_unsync(body))).await, streams)
+        });
+        assert_eq!((code, streams.load(Ordering::SeqCst)), (UNAVAILABLE, 1));
+    }
 }

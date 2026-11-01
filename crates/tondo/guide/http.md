@@ -304,7 +304,9 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   grpc.Balancing.RoundRobin)` spreads calls over several servers, or over
   the addresses a name resolves to; `PickFirst`, the default, keeps them on
   the first that answers. An address that fails waits as gRPC's backoff
-  says, and a call while all wait fails at once with `Unavailable`.
+  says, and a call while all wait fails at once with `Unavailable`. A call
+  no server began, as one a server going away refused, goes again by
+  itself.
 - `grpc.connect(target, compression: grpc.Compression.Gzip)` compresses
   what a client sends, and `service.compress()` what a service answers to
   a client that reads gzip; both always read it.

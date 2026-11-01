@@ -4146,3 +4146,15 @@ HTTP/2, answers what it has and closes, and `stop` returns once they all
 closed. A reply that never ends, as a stream a client still watches,
 would hold it for ever, so `grace`, 30 seconds by default as Kubernetes
 gives a pod, bounds the wait; then what is left closes as it is.
+
+## 2026-11-01 — gRPC's transparent retry
+
+A server that goes away, as one draining when it stops, refuses the
+streams it will not begin, and a connection that closes may drop a
+request before sending it. Neither reached a method, so making the call
+again cannot do it twice; gRPC's clients do it by themselves, once, and
+a Tondo channel now does too, up to three tries, on the address its
+balancing picks next. A call of one message keeps its bytes to send them
+again; a call that streams its messages goes again only when it was never
+sent, since the ones it sent are gone. A call a server began is not
+retried: whether to do it twice is the program's to decide.

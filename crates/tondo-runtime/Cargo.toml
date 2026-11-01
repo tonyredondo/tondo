@@ -18,6 +18,7 @@ bcrypt = { version = "0.19.3", default-features = false, features = ["std"] }
 bytes = "1.12.1"
 flate2 = "1"
 futures-util = { version = "0.3.34", features = ["sink"] }
+h2 = "0.4.20"
 hmac = "0.13.0"
 html-escape = "0.2"
 icu_collator = "2.4"
