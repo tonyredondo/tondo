@@ -31,6 +31,7 @@ std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
 std.mcp        Model Context Protocol servers from a value's methods
 std.graphql    GraphQL servers from your types, with introspection (`tondo guide http`)
+std.grpc       gRPC servers and clients of the services of `.proto` files (`tondo guide http`)
 std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
 std.sql        SQLite, PostgreSQL, MySQL: queries, rows, migrations (`tondo guide databases`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
@@ -224,8 +225,8 @@ integer; a `oneof` is an enum whose variants carry `@protobuf.Field(n)`,
 held in a `T?` field without a number. A `.proto` file among the sources is
 such a module: `src/api/user.proto` is `import app.api.user`, whose
 messages are records (`user_id` is `userId`, `Outer.Inner` is
-`OuterInner`) and whose enums drop their prefix (`STATUS_ACTIVE` of `Status`
-is `Status.Active`).
+`OuterInner`), whose enums drop their prefix (`STATUS_ACTIVE` of `Status`
+is `Status.Active`) and whose services are gRPC's (`tondo guide http`).
 
 ```tondo
 import std.console

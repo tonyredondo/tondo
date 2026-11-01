@@ -3963,3 +3963,27 @@ types of the same names. Enum values drop the enum's name, as protoc's
 other languages do, and keep it as their `@name` for JSON; generated
 enums show that name. The well-known types are Tondo's own types, so a
 `Timestamp` is a `time.DateTime` everywhere.
+
+## 2026-11-01 — gRPC from the services of `.proto` files
+
+A `service` gives a trait of its calls, a function that makes a server's
+`grpc.Service` of a value that implements it, and a client, so that
+`app.grpc(users.userService(Users { db }))` is checked by the compiler
+like any other implementation: a call with the wrong types, or one
+missing, is an error at the value, not a failure when a client calls.
+The service is routes of the `http.App`, one `POST` a call, so gRPC shares
+a port and its middleware with the rest of a server, over HTTP/2 with or
+without TLS. A method runs in a task of its own, whose messages go out as
+it sends them through a pipe; the headers wait for its first message, so
+that `setHeader` works until then, and the status goes in trailers, which
+`std.http` sends after a streamed reply with `Reply.stream(trailers:)`.
+What a call carries besides its messages comes by context, `grpc.call()`,
+as a deadline does, instead of a parameter every method would take. A
+stream from the server is the prelude's `Sender`, so a method sends as a
+producer task does; when the client goes, sending fails and the method's
+task is cancelled. A `within` around a call becomes `grpc-timeout`,
+rounded up so the server's deadline is never the earlier one, and the
+client gets its `within`'s `TimedOut` as any other wait does. The client
+keeps one HTTP/2 connection a channel, shared by its calls and made again
+when it drops; the value behind a service is copied into each method, as
+closures copy what they capture, so it holds handles, not a `Sender`.

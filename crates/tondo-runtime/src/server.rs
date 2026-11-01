@@ -981,6 +981,69 @@ pub unsafe extern "C" fn tondo_rt_http_respond_stream(
     request(object).send(response(status, &strings(headers), BodyExt::boxed_unsync(StreamBody::new(frames))));
 }
 
+/// The trailers of a reply, which its handler gives before the reply's
+/// stream ends and which follow its last bytes, as gRPC's status does.
+#[derive(Default)]
+struct Trailers(Mutex<Vec<(String, String)>>);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_trailers() -> *mut NativeObject {
+    native::new(Arc::new(Trailers::default()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_trailers_set(object: *mut NativeObject, name: *const Str, value: *const Str) {
+    if let Some(trailers) = native::get::<Arc<Trailers>>(object) {
+        let mut list = lock(&trailers.0);
+        let name = text(name).to_ascii_lowercase();
+        list.retain(|(n, _)| *n != name);
+        list.push((name, text(value).to_string()));
+    }
+}
+
+/// The names and values set, in order.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_trailers_list(object: *mut NativeObject) -> *mut ArrayHeader {
+    let list = native::get::<Arc<Trailers>>(object)
+        .map_or(Vec::new(), |t| lock(&t.0).iter().flat_map(|(name, value)| [name.clone(), value.clone()]).collect());
+    string_array(&list)
+}
+
+/// Responds with what a stream gives, as it gives it, and then the
+/// trailers the handler set by the time the stream ended.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_respond_trailed(
+    object: *mut NativeObject,
+    status: i64,
+    headers: *mut ArrayHeader,
+    input: *mut StreamObject,
+    trailers: *mut NativeObject,
+) {
+    use futures_util::StreamExt;
+    let Some(trailers) = native::get::<Arc<Trailers>>(trailers).cloned() else {
+        return unsafe { tondo_rt_http_respond_stream(object, status, headers, input) };
+    };
+    unsafe { super::tasks::tondo_rt_handle_retain(input as *mut u8) };
+    let frames = stream_of(Source(input)).map(|chunk| chunk.map(Frame::data));
+    let last = futures_util::stream::once(async move {
+        let mut map = hyper::HeaderMap::new();
+        for (name, value) in lock(&trailers.0).iter() {
+            if let (Ok(name), Ok(value)) = (
+                hyper::header::HeaderName::try_from(name.as_str()),
+                hyper::header::HeaderValue::try_from(value.as_str()),
+            ) {
+                map.append(name, value);
+            }
+        }
+        Ok(Frame::trailers(map))
+    });
+    request(object).send(response(
+        status,
+        &strings(headers),
+        BodyExt::boxed_unsync(StreamBody::new(frames.chain(last))),
+    ));
+}
+
 /// `bytes=start-end`, `bytes=start-` or `bytes=-suffix` against a length:
 /// the first and last byte, `None` for what is not one range, or `Err`
 /// when it starts past the end.

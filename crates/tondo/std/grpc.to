@@ -1,0 +1,715 @@
+// std.grpc (standard library 14.40): gRPC over HTTP/2. A service of a
+// `.proto` file gives a trait whose methods are its calls, a function that
+// makes a server's `Service` of a value that implements it, which
+// `App.grpc` serves, and a client. Messages are `std.protobuf`'s, a call's
+// failure is a `Status`, and what a call carries besides, its metadata, its
+// peer and its deadline, `call()` gives in the method.
+
+import std.encoding as __encoding
+import std.http as __http
+import std.internal.grpc as grpcNative
+import std.io as __io
+import std.protobuf as __protobuf
+import std.time as __time
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/// The code of a call's status, as gRPC numbers them from 0.
+pub enum Code {
+    Ok
+    Cancelled
+    Unknown
+    InvalidArgument
+    DeadlineExceeded
+    NotFound
+    AlreadyExists
+    PermissionDenied
+    ResourceExhausted
+    FailedPrecondition
+    Aborted
+    OutOfRange
+    Unimplemented
+    Internal
+    Unavailable
+    DataLoss
+    Unauthenticated
+}
+
+/// The code's number.
+pub fn Code.number(self): Int {
+    match self {
+        Code.Ok => 0
+        Code.Cancelled => 1
+        Code.Unknown => 2
+        Code.InvalidArgument => 3
+        Code.DeadlineExceeded => 4
+        Code.NotFound => 5
+        Code.AlreadyExists => 6
+        Code.PermissionDenied => 7
+        Code.ResourceExhausted => 8
+        Code.FailedPrecondition => 9
+        Code.Aborted => 10
+        Code.OutOfRange => 11
+        Code.Unimplemented => 12
+        Code.Internal => 13
+        Code.Unavailable => 14
+        Code.DataLoss => 15
+        Code.Unauthenticated => 16
+    }
+}
+
+/// The code of a number, `Unknown` for one gRPC does not have.
+pub fn Code.of(number: Int): Code {
+    match number {
+        0 => Code.Ok
+        1 => Code.Cancelled
+        3 => Code.InvalidArgument
+        4 => Code.DeadlineExceeded
+        5 => Code.NotFound
+        6 => Code.AlreadyExists
+        7 => Code.PermissionDenied
+        8 => Code.ResourceExhausted
+        9 => Code.FailedPrecondition
+        10 => Code.Aborted
+        11 => Code.OutOfRange
+        12 => Code.Unimplemented
+        13 => Code.Internal
+        14 => Code.Unavailable
+        15 => Code.DataLoss
+        16 => Code.Unauthenticated
+        _ => Code.Unknown
+    }
+}
+
+/// The code's name, as `NotFound`.
+impl Display for Code {
+    fn display(self): String {
+        match self {
+            Code.Ok => "Ok"
+            Code.Cancelled => "Cancelled"
+            Code.Unknown => "Unknown"
+            Code.InvalidArgument => "InvalidArgument"
+            Code.DeadlineExceeded => "DeadlineExceeded"
+            Code.NotFound => "NotFound"
+            Code.AlreadyExists => "AlreadyExists"
+            Code.PermissionDenied => "PermissionDenied"
+            Code.ResourceExhausted => "ResourceExhausted"
+            Code.FailedPrecondition => "FailedPrecondition"
+            Code.Aborted => "Aborted"
+            Code.OutOfRange => "OutOfRange"
+            Code.Unimplemented => "Unimplemented"
+            Code.Internal => "Internal"
+            Code.Unavailable => "Unavailable"
+            Code.DataLoss => "DataLoss"
+            Code.Unauthenticated => "Unauthenticated"
+        }
+    }
+}
+
+/// How a call failed: its code, a message for people and details for
+/// programs, as `google.rpc.Status` carries them.
+pub type Status = {
+    code: Code
+    message: String = ""
+    details: Array[__protobuf.Any] = []
+}
+
+/// `NotFound: no user 7`.
+impl Display for Status {
+    fn display(self): String {
+        if self.message.isEmpty() { "{self.code}" } else { "{self.code}: {self.message}" }
+    }
+}
+
+/// `google.rpc.Status`, which `grpc-status-details-bin` carries.
+type RpcStatus = {
+    code: Int32 = 0
+    message: String = ""
+    details: Array[__protobuf.Any] = []
+}
+
+impl __protobuf.Message for RpcStatus {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if self.code != 0 {
+            out.int32(1, self.code)
+        }
+        if not self.message.isEmpty() {
+            out.string(2, self.message)
+        }
+        for detail in self.details {
+            out.message(3, detail)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): RpcStatus ! __protobuf.ProtobufError {
+        var status = RpcStatus {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => status.code = input.int32("code")?
+                2 => status.message = input.string("message")?
+                3 => status.details.push(input.message[__protobuf.Any]("details")?)
+                _ => input.skip()?
+            }
+        }
+        status
+    }
+
+    fn protobufName(): String {
+        "google.rpc.Status"
+    }
+}
+
+/// The status a call ended with, from its code, message and trailers.
+fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
+    var details: Array[__protobuf.Any] = []
+    var at = 0
+    for at + 1 < trailers.length() {
+        if trailers[at] == "grpc-status-details-bin" {
+            let decoded = __encoding
+                .base64Decode(trailers[at + 1])
+                .ok()
+                .andThen((bytes) { __protobuf.decode[RpcStatus](bytes).ok() })
+            match decoded {
+                some(rpc) => details = rpc.details
+                none => {}
+            }
+        }
+        at += 2
+    }
+    Status { code: Code.of(code), message, details }
+}
+
+// ---------------------------------------------------------------------------
+// Calls as a method sees them
+// ---------------------------------------------------------------------------
+
+/// What a call carries besides its messages: the method, as
+/// `/users.v1.UserService/Get`, its metadata, the peer's address and the
+/// time left before its deadline.
+pub type Call = {
+    method: String = ""
+    metadata: Map[String, String] = [:]
+    peer: String = ""
+    timeout: __time.Duration? = none
+}
+
+context Incoming = {
+    call: Call = Call {}
+    headers: __http.Trailers? = none
+    trailers: __http.Trailers? = none
+}
+
+/// The call the running method serves; an empty one outside a method.
+pub fn call(): Call {
+    Incoming.call
+}
+
+/// Sets metadata the server answers with, before its first message.
+pub fn setHeader(name: String, value: String) {
+    match Incoming.headers {
+        some(headers) => headers.set(name, value)
+        none => {}
+    }
+}
+
+/// Sets metadata that follows the server's last message, with the status.
+pub fn setTrailer(name: String, value: String) {
+    match Incoming.trailers {
+        some(trailers) => trailers.set(name, value)
+        none => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Servers
+// ---------------------------------------------------------------------------
+
+/// A service a server serves: its full name and its methods, which a
+/// `.proto` file's service gives as `users.userService(value)`.
+pub type Service = {
+    name: String
+    methods: Array[Method]
+}
+
+/// A method of a service: its name and what serves it.
+pub type Method = {
+    name: String
+    handler: fn(ServerCall): !Status
+}
+
+impl __http.GrpcService for Service {
+    fn serveOn(self, app: mut __http.App) {
+        for method in self.methods {
+            let path = "/{self.name}/{method.name}"
+            let handler = method.handler
+            app.post(path, (request) { serve(request, path, handler)? })
+        }
+    }
+}
+
+/// A call being served: the messages it receives and sends.
+pub type ServerCall = {
+    priv frames: grpcNative.Native
+    priv output: __io.Writer
+    /// Set once the server's headers are to be sent.
+    priv ready: grpcNative.Native
+}
+
+/// Serves a call: runs its method in a task of its own, whose messages go
+/// out as it sends them and whose status follows as trailers.
+fn serve(
+    request: __http.Request,
+    path: String,
+    handler: fn(ServerCall): !Status,
+): __http.Reply ! __http.Problem {
+    let (output, reader) = __io.pipe()
+    let headers = __http.Trailers.new()
+    let trailers = __http.Trailers.new()
+    let ready = grpcNative.signal()
+    var metadata = request.headers()
+    let timeout = timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
+    for name in [
+        "content-type",
+        "te",
+        "grpc-timeout",
+        "grpc-encoding",
+        "grpc-accept-encoding",
+        "user-agent",
+    ] {
+        _ = metadata.remove(name)
+    }
+    let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
+    let server = ServerCall { frames: grpcNative.frames(request.body()), output, ready }
+    with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
+    spawn detached run(server, handler, timeout, trailers)
+    // The headers go once the method sends its first message, or ends.
+    _ = grpcNative.signalWait(ready)
+    var reply = __http.Reply.stream(
+        reader,
+        contentType: "application/grpc",
+        trailers: some(trailers),
+    )
+    for (name, value) in headers.all() {
+        reply = reply.header(name, value)
+    }
+    reply
+}
+
+fn run(
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+    timeout: __time.Duration?,
+    trailers: __http.Trailers,
+) {
+    let outcome = match recover { served(server, handler, timeout) } {
+        ok(status) => status
+        err(failure) => Status {
+            code: Code.Internal
+            message: "the method panicked: {failure.message}"
+        }
+    }
+    trailers.set("grpc-status", "{outcome.code.number()}")
+    if not outcome.message.isEmpty() {
+        trailers.set("grpc-message", percentEncoded(outcome.message))
+    }
+    if not outcome.details.isEmpty() {
+        let rpc = RpcStatus {
+            code: Int32.wrapping(outcome.code.number())
+            message: outcome.message
+            details: outcome.details
+        }
+        trailers.set(
+            "grpc-status-details-bin",
+            __encoding.base64Encode(__protobuf.encode(rpc)).trimEnd("="),
+        )
+    }
+    server.start()
+    _ = server.output.close()
+}
+
+/// What a method gave, within the call's deadline.
+fn served(server: ServerCall, handler: fn(ServerCall): !Status, timeout: __time.Duration?): Status {
+    let outcome: !Status = match timeout {
+        some(limit) => match within limit { handler(server) } {
+            ok(_) => ok(())
+            err(failure) => match failure {
+                Status(status) => err(status)
+                _ =>
+                    err(Status {
+                        code: Code.DeadlineExceeded
+                        message: "the call's deadline passed"
+                    })
+            }
+        }
+        none => handler(server)
+    }
+    match outcome {
+        ok(_) => Status { code: Code.Ok }
+        err(status) => status
+    }
+}
+
+/// Lets the server's headers go.
+fn ServerCall.start(self) {
+    grpcNative.signalSet(self.ready)
+}
+
+/// The next message of the call, or `none` after the client's last.
+pub fn ServerCall.receive[T: __protobuf.Message](self): T? ! Status {
+    match grpcNative.readFrame(self.frames) {
+        -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
+        1 => match __protobuf.decode[T](grpcNative.frame(self.frames)) {
+            ok(message) => some(message)
+            err(error) => fail Status {
+                code: Code.InvalidArgument
+                message: "the request is not a `{__protobuf.Message.protobufName[T]()}`: {error}"
+            }
+        }
+        0 => none
+        _ => fail Status { code: Code.InvalidArgument, message: grpcNative.frameError(self.frames) }
+    }
+}
+
+/// Sends a message to the client.
+pub fn ServerCall.send[T: __protobuf.Message](self, message: T): !Status {
+    self.start()
+    let bytes = __protobuf.encode(message)
+    match self.output.writeBytes(framed(bytes)) {
+        ok(_) => {}
+        err(error) => fail Status { code: Code.Cancelled, message: "the client is gone: {error}" }
+    }
+}
+
+/// A message as gRPC frames it: not compressed, after its length.
+fn framed(bytes: Array[Byte]): Array[Byte] {
+    let flag: Array[Byte] = [0]
+    flag.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+}
+
+/// A unary method: one request, one reply.
+pub fn unary[In: __protobuf.Message, Out: __protobuf.Message](
+    exchange: ServerCall,
+    method: fn(In): Out ! Status,
+): !Status {
+    let request = match exchange.receive[In]()? {
+        some(request) => request
+        none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
+    }
+    exchange.send(method(request)?)?
+}
+
+/// A method that sends a stream: one request, and replies as it sends them.
+pub fn serverStream[In: __protobuf.Message, Out: __protobuf.Message](
+    exchange: ServerCall,
+    method: fn(In, Sender[Out]): !Status,
+): !Status {
+    let request = match exchange.receive[In]()? {
+        some(request) => request
+        none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
+    }
+    let (sender, replies) = channel[Out](capacity: 16, discardWhenAbandoned: true)
+    forward(exchange, replies, spawn method(request, sender))?
+}
+
+/// A method that receives a stream: the requests, and one reply.
+pub fn clientStream[In: __protobuf.Message, Out: __protobuf.Message](
+    exchange: ServerCall,
+    method: fn(Stream[In]): Out ! Status,
+): !Status {
+    exchange.send(method(Stream[In] { source: Source.Server(exchange) })?)?
+}
+
+/// A method that receives a stream and sends one.
+pub fn bidiStream[In: __protobuf.Message, Out: __protobuf.Message](
+    exchange: ServerCall,
+    method: fn(Stream[In], Sender[Out]): !Status,
+): !Status {
+    let (sender, replies) = channel[Out](capacity: 16, discardWhenAbandoned: true)
+    forward(exchange, replies, spawn method(Stream[In] { source: Source.Server(exchange) }, sender))?
+}
+
+/// Sends the replies a method gives as it gives them; when the client is
+/// gone, the method is cancelled.
+fn forward[Out: __protobuf.Message](
+    exchange: ServerCall,
+    replies: Receiver[Out],
+    sending: Join[!Status],
+): !Status {
+    for reply in replies {
+        match exchange.send(reply) {
+            ok(_) => {}
+            err(status) => {
+                sending.cancel()
+                fail status
+            }
+        }
+    }
+    sending.wait()?
+}
+
+/// The duration of `grpc-timeout`: digits and a unit, `100m`.
+fn timeoutOf(text: String): __time.Duration? {
+    if text.length() < 2 {
+        return none
+    }
+    let amount = Int.parse(text.slice(0, text.length() - 1).unwrapOr("")).ok()?
+    match text.slice(text.length() - 1, text.length()).unwrapOr("") {
+        "H" => some(__time.seconds(amount * 3600))
+        "M" => some(__time.seconds(amount * 60))
+        "S" => some(__time.seconds(amount))
+        "m" => some(__time.milliseconds(amount))
+        "u" => some(__time.microseconds(amount))
+        "n" => some(__time.nanoseconds(amount))
+        _ => none
+    }
+}
+
+/// `grpc-timeout` for the time left: at most eight digits of the finest
+/// unit that holds it, rounded up, so that the server's deadline is not
+/// before the client's.
+fn timeoutText(left: __time.Duration): String {
+    var amount = left.nanoseconds().max(1)
+    for (unit, next) in [("n", 1000), ("u", 1000), ("m", 1000), ("S", 60), ("M", 60)] {
+        if amount < 100_000_000 {
+            return "{amount}{unit}"
+        }
+        amount = (amount + next - 1) / next
+    }
+    "{amount.min(99_999_999)}H"
+}
+
+/// `grpc-message`, percent-encoded as gRPC writes it.
+fn percentEncoded(text: String): String {
+    var out = ""
+    for byte in text.bytes() {
+        let value = Int(byte)
+        out = if value >= 0x20 and value <= 0x7e and value != 0x25 {
+            "{out}{Char.from(value).unwrapOr('?')}"
+        } else {
+            "{out}%{value.toString(16).padStart(2, "0").toUpper()}"
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Streams of messages
+// ---------------------------------------------------------------------------
+
+enum Source {
+    Server(ServerCall)
+    Client(grpcNative.Native)
+}
+
+/// The messages of a stream, each as it arrives: `for each in stream { let
+/// message = each? }`. A failure ends it.
+pub type Stream[T] = {
+    priv source: Source
+}
+
+impl[T: __protobuf.Message] Iterator[T ! Status] for Stream[T] {
+    fn next(mut self): (T ! Status)? {
+        match self.source {
+            Source.Server(exchange) => match exchange.receive[T]() {
+                ok(some(message)) => some(ok(message))
+                ok(none) => none
+                err(status) => some(err(status))
+            }
+            Source.Client(native) => match received[T](native) {
+                ok(some(message)) => some(ok(message))
+                ok(none) => none
+                err(status) => some(err(status))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+/// A connection to a server, which its calls share: `http://host:port`, or
+/// `https://host:port` for TLS, which trusts the system's authorities and,
+/// as the HTTP client does, those of `trust`; `certificate` and `key`
+/// show the server who the client is.
+pub type Channel = {
+    priv native: grpcNative.Native
+}
+
+/// A channel to a server, which connects with its first call.
+pub fn connect(
+    target: String,
+    trust: String = "",
+    certificate: String = "",
+    key: String = "",
+): Channel ! Status {
+    let native = grpcNative.channel(target, trust, certificate, key)
+    let problem = grpcNative.channelError(native)
+    if not problem.isEmpty() {
+        fail Status { code: Code.InvalidArgument, message: problem }
+    }
+    Channel { native }
+}
+
+/// Starts a call with its metadata, and the deadline of the running
+/// `within` as `grpc-timeout`.
+fn Channel.start(self, path: String, metadata: Map[String, String]): grpcNative.Native {
+    var headers: Array[String] = []
+    for (name, value) in metadata {
+        headers.extend([name.toLower(), value])
+    }
+    match __time.remaining() {
+        some(left) => headers.extend(["grpc-timeout", timeoutText(left)])
+        none => {}
+    }
+    grpcNative.start(self.native, path, headers)
+}
+
+/// The next message a call receives, `none` after the last, or its status
+/// when it failed.
+fn received[T: __protobuf.Message](native: grpcNative.Native): T? ! Status {
+    match grpcNative.next(native) {
+        1 => match __protobuf.decode[T](grpcNative.message(native)) {
+            ok(message) => some(message)
+            err(error) => fail Status {
+                code: Code.Internal
+                message: "the reply is not a `{__protobuf.Message.protobufName[T]()}`: {error}"
+            }
+        }
+        0 => {
+            let code = grpcNative.code(native)
+            if code != 0 {
+                fail statusOf(code, grpcNative.detail(native), grpcNative.trailers(native))
+            }
+            none
+        }
+        _ => fail Status { code: Code.Cancelled, message: "the call was cancelled" }
+    }
+}
+
+/// A unary call: one request, one reply.
+pub fn Channel.unary[In: __protobuf.Message, Out: __protobuf.Message](
+    self,
+    path: String,
+    request: In,
+    metadata: Map[String, String] = [:],
+): Out ! Status {
+    let native = self.start(path, metadata)
+    _ = grpcNative.send(native, __protobuf.encode(request))
+    grpcNative.closeSend(native)
+    let reply = match received[Out](native)? {
+        some(reply) => reply
+        none => fail Status { code: Code.Internal, message: "the server sent no reply" }
+    }
+    // The status after the reply.
+    _ = received[Out](native)?
+    reply
+}
+
+/// A call that receives a stream: one request, and the replies.
+pub fn Channel.serverStream[In: __protobuf.Message, Out: __protobuf.Message](
+    self,
+    path: String,
+    request: In,
+    metadata: Map[String, String] = [:],
+): Stream[Out] {
+    let native = self.start(path, metadata)
+    _ = grpcNative.send(native, __protobuf.encode(request))
+    grpcNative.closeSend(native)
+    Stream[Out] { source: Source.Client(native) }
+}
+
+/// A call that sends a stream: `send` each request, then `finish` for the
+/// reply.
+pub type Upload[In, Out] = {
+    priv native: grpcNative.Native
+}
+
+/// A call that sends a stream of requests and receives one reply.
+pub fn Channel.clientStream[In: __protobuf.Message, Out: __protobuf.Message](
+    self,
+    path: String,
+    metadata: Map[String, String] = [:],
+): Upload[In, Out] {
+    Upload[In, Out] { native: self.start(path, metadata) }
+}
+
+/// Sends a request; a call that ended fails with its status.
+pub fn Upload[In: __protobuf.Message, Out: __protobuf.Message].send(self, message: In): !Status {
+    if not grpcNative.send(self.native, __protobuf.encode(message)) {
+        _ = received[__protobuf.Empty](self.native)?
+        fail Status { code: Code.Cancelled, message: "the call ended" }
+    }
+}
+
+/// Says the requests are all sent, and gives the reply.
+pub fn Upload[In: __protobuf.Message, Out: __protobuf.Message].finish(self): Out ! Status {
+    grpcNative.closeSend(self.native)
+    let reply = match received[Out](self.native)? {
+        some(reply) => reply
+        none => fail Status { code: Code.Internal, message: "the server sent no reply" }
+    }
+    _ = received[Out](self.native)?
+    reply
+}
+
+/// A call that sends and receives streams: `send` requests, `closeSend`
+/// after the last, and read the replies as a `Stream`.
+pub type Duplex[In, Out] = {
+    priv native: grpcNative.Native
+}
+
+/// A call that sends a stream of requests and receives a stream of replies.
+pub fn Channel.bidiStream[In: __protobuf.Message, Out: __protobuf.Message](
+    self,
+    path: String,
+    metadata: Map[String, String] = [:],
+): Duplex[In, Out] {
+    Duplex[In, Out] { native: self.start(path, metadata) }
+}
+
+/// Sends a request.
+pub fn Duplex[In: __protobuf.Message, Out: __protobuf.Message].send(self, message: In): !Status {
+    if not grpcNative.send(self.native, __protobuf.encode(message)) {
+        fail Status { code: Code.Cancelled, message: "the call ended" }
+    }
+}
+
+/// Says the requests are all sent.
+pub fn Duplex[In, Out].closeSend(self) {
+    grpcNative.closeSend(self.native)
+}
+
+/// The replies, as they arrive.
+pub fn Duplex[In: __protobuf.Message, Out: __protobuf.Message].replies(self): Stream[Out] {
+    Stream[Out] { source: Source.Client(self.native) }
+}
+
+/// The metadata the server answered with, once its first message or its
+/// status came.
+pub fn Duplex[In, Out].headers(self): Map[String, String] {
+    pairs(grpcNative.headers(self.native))
+}
+
+/// The metadata that followed the server's last message, once the replies
+/// ended; the status is not among it.
+pub fn Duplex[In, Out].trailers(self): Map[String, String] {
+    var all = pairs(grpcNative.trailers(self.native))
+    for name in ["grpc-status", "grpc-message", "grpc-status-details-bin"] {
+        _ = all.remove(name)
+    }
+    all
+}
+
+fn pairs(list: Array[String]): Map[String, String] {
+    var all: Map[String, String] = [:]
+    var at = 0
+    for at + 1 < list.length() {
+        all[list[at]] = list[at + 1]
+        at += 2
+    }
+    all
+}

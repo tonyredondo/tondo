@@ -1875,6 +1875,8 @@ impl Iterator[Upload ! Problem] for Uploads {
 enum Payload {
     Data(Array[Byte])
     Stream(__io.Reader)
+    /// A stream whose trailers follow its last bytes.
+    Trailed(__io.Reader, Trailers)
     File(String, String)
     /// An embedded file: its path, its bytes and the digest of its `ETag`.
     Embedded(String, Array[Byte], String)
@@ -1927,17 +1929,50 @@ pub fn Reply.bytes(
     Reply { code: status, headerList: ["content-type", contentType], payload: Payload.Data(bytes) }
 }
 
-/// What a stream gives, sent as it gives it.
+/// What a stream gives, sent as it gives it, and after it the `trailers`
+/// set by the time it ends.
 pub fn Reply.stream(
     input: __io.Reader,
     contentType: String = "application/octet-stream",
     status: Int = 200,
+    trailers: Trailers? = none,
 ): Reply {
     Reply {
         code: status
         headerList: ["content-type", contentType]
-        payload: Payload.Stream(input)
+        payload: match trailers {
+            some(after) => Payload.Trailed(input, after)
+            none => Payload.Stream(input)
+        }
     }
+}
+
+/// The headers that follow the last bytes of a streamed reply, as gRPC's
+/// status does, which its handler sets before the stream ends.
+pub type Trailers = {
+    priv native: httpNative.Native
+}
+
+/// Trailers to set.
+pub fn Trailers.new(): Trailers {
+    Trailers { native: httpNative.trailers() }
+}
+
+/// Sets a trailer, replacing one of that name.
+pub fn Trailers.set(self, name: String, value: String) {
+    httpNative.trailersSet(self.native, name, value)
+}
+
+/// The trailers set, by name.
+pub fn Trailers.all(self): Map[String, String] {
+    let list = httpNative.trailersList(self.native)
+    var all: Map[String, String] = [:]
+    var at = 0
+    for at + 1 < list.length() {
+        all[list[at]] = list[at + 1]
+        at += 2
+    }
+    all
 }
 
 /// A file, with the content type of its extension. It answers `Range`
@@ -2228,6 +2263,17 @@ pub fn App.mount(mut self, prefix: String, other: App) {
     for (name, schema) in other.schemas {
         self.schemas[name] = schema
     }
+}
+
+/// Serves a gRPC service, which `std.grpc` makes from a service of a
+/// `.proto` file: `app.grpc(users.userService(Users { db }))`.
+pub fn App.grpc[S: GrpcService](mut self, service: S) {
+    service.serveOn(mut self)
+}
+
+/// What `App.grpc` serves, which `std.grpc` implements.
+pub trait GrpcService {
+    fn serveOn(self, app: mut App)
 }
 
 /// Serves the files of a tree at `{prefix}/...`: `GET` and `HEAD`, with
@@ -2919,6 +2965,13 @@ fn send(incoming: httpNative.Native, reply: Reply) {
             reply.code,
             reply.headerList,
             input,
+        )
+        Payload.Trailed(input, trailers) => httpNative.respondTrailed(
+            incoming,
+            reply.code,
+            reply.headerList,
+            input,
+            trailers.native,
         )
         Payload.File(path, download) => {
             let problem = httpNative.respondFile(incoming, reply.headerList, path, download)

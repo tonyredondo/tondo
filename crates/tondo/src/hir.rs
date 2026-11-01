@@ -1278,6 +1278,9 @@ pub const NATIVES: &[Native] = {
     ) -> Native {
         Native { module: "protobuf", name, receiver: None, params, result, symbol }
     }
+    const fn grpc(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "grpc", name, receiver: None, params, result, symbol }
+    }
     const fn cbor(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "cbor", name, receiver: None, params, result, symbol }
     }
@@ -1584,6 +1587,10 @@ pub const NATIVES: &[Native] = {
         http("requestRead", &[Object], Bytes, "tondo_rt_http_request_read"),
         http("respond", &[Object, Int, Strings, Bytes], Unit, "tondo_rt_http_respond"),
         http("respondStream", &[Object, Int, Strings, IoReader], Unit, "tondo_rt_http_respond_stream"),
+        http("respondTrailed", &[Object, Int, Strings, IoReader, Object], Unit, "tondo_rt_http_respond_trailed"),
+        http("trailers", &[], Object, "tondo_rt_http_trailers"),
+        http("trailersSet", &[Object, String, String], Unit, "tondo_rt_http_trailers_set"),
+        http("trailersList", &[Object], Strings, "tondo_rt_http_trailers_list"),
         http("respondFile", &[Object, Strings, String, String], String, "tondo_rt_http_respond_file"),
         http("respondBytes", &[Object, Strings, String, Bytes, String], Unit, "tondo_rt_http_respond_bytes"),
         http("saveBody", &[Object, String, Int], Int, "tondo_rt_http_save_body"),
@@ -1647,6 +1654,24 @@ pub const NATIVES: &[Native] = {
         yaml("outlineNumbers", &[Object], Ints, "tondo_rt_yaml_outline_numbers"),
         yaml("outlineProperties", &[Object], Strings, "tondo_rt_yaml_outline_properties"),
         yaml("outlineError", &[Object], String, "tondo_rt_yaml_outline_error"),
+        grpc("channel", &[String, String, String, String], Object, "tondo_rt_grpc_channel"),
+        grpc("channelError", &[Object], String, "tondo_rt_grpc_channel_error"),
+        grpc("start", &[Object, String, Strings], Object, "tondo_rt_grpc_start"),
+        grpc("send", &[Object, Bytes], Bool, "tondo_rt_grpc_send"),
+        grpc("closeSend", &[Object], Unit, "tondo_rt_grpc_close_send"),
+        grpc("next", &[Object], Int, "tondo_rt_grpc_next"),
+        grpc("message", &[Object], Bytes, "tondo_rt_grpc_message"),
+        grpc("code", &[Object], Int, "tondo_rt_grpc_code"),
+        grpc("detail", &[Object], String, "tondo_rt_grpc_detail"),
+        grpc("headers", &[Object], Strings, "tondo_rt_grpc_headers"),
+        grpc("trailers", &[Object], Strings, "tondo_rt_grpc_trailers"),
+        grpc("frames", &[IoReader], Object, "tondo_rt_grpc_frames"),
+        grpc("readFrame", &[Object], Int, "tondo_rt_grpc_read_frame"),
+        grpc("frame", &[Object], Bytes, "tondo_rt_grpc_frame"),
+        grpc("frameError", &[Object], String, "tondo_rt_grpc_frame_error"),
+        grpc("signal", &[], Object, "tondo_rt_grpc_signal"),
+        grpc("signalSet", &[Object], Unit, "tondo_rt_grpc_signal_set"),
+        grpc("signalWait", &[Object], Bool, "tondo_rt_grpc_signal_wait"),
         protobuf("writer", &[Bool], Object, "tondo_rt_pb_writer"),
         protobuf("deterministic", &[Object], Bool, "tondo_rt_pb_deterministic"),
         protobuf("writeVarint", &[Object, Int, Int], Unit, "tondo_rt_pb_write_varint"),

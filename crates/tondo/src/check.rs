@@ -246,6 +246,7 @@ enum StdModule {
     InternalYaml,
     InternalMsgpack,
     InternalProtobuf,
+    InternalGrpc,
     InternalCbor,
     InternalNet,
     /// `std.internal.fuzz`: the runtime's side of `testing.fuzz`.
@@ -3136,6 +3137,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "yaml"] => StdModule::InternalYaml,
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
             ["std", "internal", "protobuf"] => StdModule::InternalProtobuf,
+            ["std", "internal", "grpc"] => StdModule::InternalGrpc,
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
@@ -3256,6 +3258,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalYaml
                 | StdModule::InternalMsgpack
                 | StdModule::InternalProtobuf
+                | StdModule::InternalGrpc
                 | StdModule::InternalCbor
                 | StdModule::InternalNet
                 | StdModule::InternalFs
@@ -3403,6 +3406,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
                     | StdModule::InternalProtobuf
+                    | StdModule::InternalGrpc
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFs
@@ -14829,6 +14833,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
                     | StdModule::InternalProtobuf
+                    | StdModule::InternalGrpc
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFuzz
@@ -14893,6 +14898,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalYaml => "yaml",
                     StdModule::InternalMsgpack => "msgpack",
                     StdModule::InternalProtobuf => "protobuf",
+                    StdModule::InternalGrpc => "grpc",
                     StdModule::InternalCbor => "cbor",
                     StdModule::InternalNet => "net",
                     StdModule::InternalFuzz => "fuzz",

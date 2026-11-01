@@ -143,7 +143,7 @@ tasks        spawn, Group, channels, select, cancellation, std.sync, contexts
 projects     tondo.toml, modules, imports, dependencies, native libraries
 testing      test, suite, std.testing, snapshots, tondo test
 stdlib       the standard modules and what each is for
-http         HTTP client and server, typed handlers, OpenAPI, WebSockets
+http         HTTP client and server, typed handlers, OpenAPI, WebSockets, GraphQL, gRPC
 templates    text and HTML templates checked against their data
 databases    SQLite, PostgreSQL, MySQL: queries, rows, transactions, migrations
 meta         derive, reflection, generators, annotations

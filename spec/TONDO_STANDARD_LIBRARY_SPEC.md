@@ -1803,6 +1803,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.graphql` | Core | — | 0.1 | Servidores de GraphQL hechos de los tipos del programa, con introspección |
 | `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
+| `std.grpc` | Capability-gated | `network` | 0.1 | Servidores y clientes de gRPC de los `service` de los archivos `.proto`, con streaming, metadata, plazos y status |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
@@ -3938,7 +3939,10 @@ anotados de arriba:
   tipo de su módulo.
 - **Fuera.** Las editions son un error que dice qué escribir. Los `extend`,
   `option`, `reserved` y `extensions` no generan nada, y los campos de una
-  extensión viajan como desconocidos. Los `service` son de `std.grpc`.
+  extensión viajan como desconocidos.
+- **Servicios.** Un `service` da un trait con sus llamadas, la función que
+  hace de un valor que lo implementa el servicio que un servidor sirve, y un
+  cliente, de `std.grpc` (14.41).
 - Lo que un `.proto` dice mal, importa sin tenerlo o nombra sin declararlo es
   `E1911`, en su línea.
 
@@ -4892,7 +4896,12 @@ pub fn Reply.text(text: String, status: Int = 200): Reply
 pub fn Reply.html(html: String, status: Int = 200): Reply
 pub fn Reply.json[T: serialization.Encode](value: T, status: Int = 200): Reply
 pub fn Reply.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream", status: Int = 200): Reply
-pub fn Reply.stream(input: io.Reader, contentType: String = "application/octet-stream", status: Int = 200): Reply
+pub fn Reply.stream(input: io.Reader, contentType: String = "application/octet-stream", status: Int = 200,
+    trailers: Trailers? = none): Reply
+pub type Trailers
+pub fn Trailers.new(): Trailers
+pub fn Trailers.set(self, name: String, value: String)
+pub fn Trailers.all(self): Map[String, String]
 pub fn Reply.file(path: String, download: String? = none): Reply
 pub fn Reply.events(events: Receiver[Event]): Reply
 pub fn Reply.redirect(url: String, status: Int = 302): Reply
@@ -4921,6 +4930,8 @@ pub fn App.mount(mut self, prefix: String, other: App)
 pub fn App.files(mut self, prefix: String, files: fs.FileSystem, listing: Bool = false)
 pub fn App.uploads(mut self, prefix: String, directory: String)
 pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): Unit ! HttpError)
+pub fn App.grpc[S: GrpcService](mut self, service: S)
+pub trait GrpcService { fn serveOn(self, app: mut App) }
 pub fn App.compress(mut self, minimum: Int = 1024)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
 pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
@@ -5009,6 +5020,12 @@ pub alias TlsVersion = net.TlsVersion
       http.Reply.stream(body, contentType: "text/plain")
   })
   ```
+
+  Con `trailers`, los que estén puestos cuando el stream termine van detrás
+  de sus últimos bytes, en HTTP/2; la tarea que escribe los pone antes de
+  cerrar el writer. Así envía gRPC su status.
+- `App.grpc` sirve un servicio de gRPC, que `std.grpc` hace de un `service`
+  de un archivo `.proto` (14.41), junto a las demás rutas de la aplicación.
 - `Request.clientIp()` es la dirección IP del cliente, sin puerto. Tras un
   proxy o un balanceador, la conexión llega de él, y la dirección del cliente
   viene en `X-Forwarded-For`, que cualquier cliente puede escribir. Por eso
@@ -6557,6 +6574,160 @@ pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
   navegador sin consulta recibe GraphiQL.
 
 
+### 14.41 `std.grpc`
+
+`std.grpc` sirve y llama servicios de gRPC sobre HTTP/2. Cada `service` de un
+archivo `.proto` (14.12) da un trait con sus llamadas, una función que hace
+de un valor que lo implementa el `Service` que `App.grpc` sirve, y un
+cliente. Los mensajes son los de `std.protobuf`, y una llamada que falla da
+un `Status`.
+
+~~~proto
+// src/api/users.proto
+syntax = "proto3";
+package users.v1;
+
+message GetUser { int64 id = 1; }
+message User { int64 id = 1; string name = 2; }
+
+service UserService {
+  rpc Get(GetUser) returns (User);
+  rpc Watch(GetUser) returns (stream User);
+}
+~~~
+
+~~~tondo
+import std.grpc
+import std.http
+import app.api.users
+
+type Users = { names: Map[Int, String] }
+
+impl users.UserService for Users {
+    fn get(self, request: users.GetUser): users.User ! grpc.Status {
+        match self.names.get(request.id) {
+            some(name) => users.User { id: request.id, name }
+            none => fail grpc.Status { code: grpc.Code.NotFound, message: "no user {request.id}" }
+        }
+    }
+
+    fn watch(self, request: users.GetUser, out: Sender[users.User]): !grpc.Status {
+        out.send(self.get(request)?)
+    }
+}
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.grpc(users.userService(Users { names: [7: "Ada"] }))
+    app.listen(port: 50051)?
+}
+
+// Y un cliente:
+let client = users.UserServiceClient.connect("http://localhost:50051")?
+let user = within time.seconds(2) { client.get(users.GetUser { id: 7 }) }?
+for each in client.watch(users.GetUser { id: 7 }) {
+    console.println(each?.name)
+}
+~~~
+
+~~~tondo pseudocode
+pub enum Code { Ok, Cancelled, Unknown, InvalidArgument, DeadlineExceeded, NotFound, AlreadyExists,
+    PermissionDenied, ResourceExhausted, FailedPrecondition, Aborted, OutOfRange, Unimplemented,
+    Internal, Unavailable, DataLoss, Unauthenticated }
+pub fn Code.number(self): Int
+pub fn Code.of(number: Int): Code
+pub type Status = { code: Code, message: String = "", details: Array[protobuf.Any] = [] }
+
+pub type Call = { method: String, metadata: Map[String, String], peer: String, timeout: time.Duration? }
+pub fn call(): Call
+pub fn setHeader(name: String, value: String)
+pub fn setTrailer(name: String, value: String)
+
+pub type Service = { name: String, methods: Array[Method] }
+pub type Method = { name: String, handler: fn(ServerCall): !Status }
+pub type ServerCall
+pub fn ServerCall.receive[T: protobuf.Message](self): T? ! Status
+pub fn ServerCall.send[T: protobuf.Message](self, message: T): !Status
+pub fn unary[In, Out](call: ServerCall, method: fn(In): Out ! Status): !Status
+pub fn serverStream[In, Out](call: ServerCall, method: fn(In, Sender[Out]): !Status): !Status
+pub fn clientStream[In, Out](call: ServerCall, method: fn(Stream[In]): Out ! Status): !Status
+pub fn bidiStream[In, Out](call: ServerCall, method: fn(Stream[In], Sender[Out]): !Status): !Status
+
+pub type Stream[T]                                          // Iterator[T ! Status]
+pub type Channel
+pub fn connect(target: String, trust: String = "", certificate: String = "", key: String = ""): Channel ! Status
+pub fn Channel.unary[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status
+pub fn Channel.serverStream[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
+pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
+pub fn Channel.bidiStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Duplex[In, Out]
+pub type Upload[In, Out]
+pub fn Upload.send(self, message: In): !Status
+pub fn Upload.finish(self): Out ! Status
+pub type Duplex[In, Out]
+pub fn Duplex.send(self, message: In): !Status
+pub fn Duplex.closeSend(self)
+pub fn Duplex.replies(self): Stream[Out]
+pub fn Duplex.headers(self): Map[String, String]
+pub fn Duplex.trailers(self): Map[String, String]
+~~~
+
+- **Lo que da un `service`.** `service UserService` da el trait
+  `UserService`, con un método por `rpc`, en camelCase como los campos, cuya
+  forma depende del streaming: `fn get(self, request: In): Out ! grpc.Status`;
+  con stream del servidor, `fn watch(self, request: In, out: Sender[Out]):
+  !grpc.Status`; con stream del cliente, `fn upload(self, input:
+  grpc.Stream[In]): Out ! grpc.Status`; y con los dos, `fn chat(self, input:
+  grpc.Stream[In], out: Sender[Out]): !grpc.Status`. `userService(value)` da
+  el `grpc.Service` de un valor que lo implementa, y `UserServiceClient` es su
+  cliente: `connect(target, trust)`, u `on(channel)` sobre un canal que
+  comparte con otros, con un método por llamada que admite además
+  `metadata`. Una llamada unaria da `Out ! grpc.Status`; una con stream del
+  servidor, `grpc.Stream[Out]`; una con stream del cliente,
+  `grpc.Upload[In, Out]`; y una con los dos, `grpc.Duplex[In, Out]`. El
+  compilador comprueba que el valor implementa cada llamada con su forma.
+- **Servidor.** `App.grpc` añade un `POST` por llamada en
+  `/{paquete}.{servicio}/{llamada}`, así que gRPC comparte el puerto con las
+  demás rutas, en HTTP/2 con TLS o sin él. Cada llamada corre su método en
+  una tarea propia: sus mensajes salen mientras los envía, las cabeceras con
+  el primero o al terminar, y el status en los trailers: `grpc-status`,
+  `grpc-message` y, si tiene `details`, `grpc-status-details-bin`, un
+  `google.rpc.Status`. Un método que falla termina con su `Status`, y uno que
+  entra en pánico con `Internal` y el mensaje del pánico. Una petición que no
+  es un mensaje del tipo da `InvalidArgument`; una comprimida,
+  `Unimplemented`; una llamada que el servidor no tiene, `Unimplemented`
+  también, por su 404. Si el cliente se va, el envío siguiente falla y la
+  tarea del método se cancela.
+- **Datos de la llamada.** `grpc.call()` da, en el método y en lo que este
+  llama, el método, la metadata de la petición sin las cabeceras de HTTP y de
+  gRPC (`content-type`, `te`, `user-agent`, `grpc-timeout`, `grpc-encoding`,
+  `grpc-accept-encoding`), la dirección del cliente y el tiempo que quedaba;
+  fuera de un método, una `Call` vacía. `setHeader` pone metadata en las
+  cabeceras de la respuesta, antes del primer mensaje, y `setTrailer` en sus
+  trailers, con el status. Los valores de los nombres que acaban en `-bin`
+  van en base64, como viajan.
+- **Plazos.** Una llamada dentro de un `within` (lenguaje 11.17) envía el
+  tiempo que le queda como `grpc-timeout`, redondeado hacia arriba, y el
+  método corre dentro de un `within` de ese tiempo: si se acaba, la llamada
+  termina con `DeadlineExceeded`. El plazo del cliente vence antes, así que
+  este recibe el `TimedOut` de su `within`.
+- **Cliente.** `connect` hace un canal hacia `http://host:port`, o
+  `https://host:port` con TLS, que confía en las autoridades del sistema y en
+  las de `trust`, como el cliente de `std.http`; `certificate` y `key`
+  presentan al cliente. El canal conecta con su primera llamada, vuelve a
+  conectar si la conexión se cae y lleva sus llamadas a la vez sobre una
+  conexión de HTTP/2. Un destino de otro esquema da `InvalidArgument`, y uno
+  que no responde `Unavailable`. Una respuesta sin `grpc-status` toma el
+  código de su estado de HTTP, como lo traduce gRPC: 400 `Internal`, 401
+  `Unauthenticated`, 403 `PermissionDenied`, 404 `Unimplemented`, 429, 502,
+  503 y 504 `Unavailable`, y los demás `Unknown`.
+- **Streams.** `Stream[T]` da los mensajes según llegan, cada uno
+  `T ! Status`; el fallo de la llamada es su último elemento. `Upload.send`
+  envía y `finish` termina el envío y da la respuesta. `Duplex.send` y
+  `closeSend` envían, `replies` da las respuestas, y `headers` y `trailers` la
+  metadata del servidor una vez llegó, sin el status.
+- **Fuera.** gRPC-Web y Connect, la compresión de los mensajes, el balanceo
+  entre servidores y el mapeo de proto3 a JSON.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:
@@ -6823,7 +6994,8 @@ No forman parte de STD-0.1:
 
 - Locale y formatting cultural implícito; calendario civil y zonas horarias sí
   pertenecen a `std.time`.
-- RPC y gRPC; Protobuf y la frontera de red sí pertenecen a STD-0.1.
+- gRPC-Web, Connect y la compresión de los mensajes de gRPC; Protobuf y gRPC
+  sobre HTTP/2 sí pertenecen a STD-0.1.
 - Formatos adicionales a JSON, MessagePack, Protobuf, YAML, TOML y CBOR.
 - Aleatoriedad y entropía de usuario.
 - Streams generales o reactivos; los protocolos acotados de byte I/O de

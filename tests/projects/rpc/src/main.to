@@ -1,0 +1,129 @@
+// A gRPC server and its client in one program: each kind of call, the
+// metadata and the deadline a method sees, a failure with details, a
+// method that panics, the server's headers and trailers, a deadline that
+// passes and a server that is not there.
+
+import rpc.api.greeter
+import std.console
+import std.grpc
+import std.http
+import std.protobuf
+import std.time
+
+type Greetings = {
+    prefix: String
+    gate: Receiver[Unit]
+}
+
+impl greeter.Greeter for Greetings {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        match request.name {
+            "" => fail grpc.Status {
+                code: grpc.Code.InvalidArgument
+                message: "who?"
+                details: [protobuf.pack(greeter.HelloReply { message: "a name, please" })]
+            }
+            "boom" => panic("the greeter broke")
+            "slow" => _ = self.gate.receive()
+            _ => {}
+        }
+        let call = grpc.call()
+        let caller = call.metadata.get("x-caller").unwrapOr("nobody")
+        greeter.HelloReply {
+            message: "{self.prefix} {request.name} from {caller}, deadline {call.timeout.isSome()}"
+        }
+    }
+
+    fn repeat(self, request: greeter.HelloRequest, out: Sender[greeter.HelloReply]): !grpc.Status {
+        for index in 0..request.times {
+            out.send(greeter.HelloReply { message: "{index}: {request.name}" })
+        }
+    }
+
+    fn collect(self, input: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        var names: Array[String] = []
+        for each in input {
+            names.push(each?.name)
+        }
+        greeter.HelloReply { message: names.join("+") }
+    }
+
+    fn chat(
+        self,
+        input: grpc.Stream[greeter.HelloRequest],
+        out: Sender[greeter.HelloReply],
+    ): !grpc.Status {
+        grpc.setHeader("x-chat", "on")
+        grpc.setTrailer("x-said", "goodbye")
+        for each in input {
+            out.send(greeter.HelloReply { message: "echo {each?.name}" })
+        }
+    }
+}
+
+fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
+    let (open, gate) = channel[Unit]()
+    var app = http.App.new()
+    app.grpc(greeter.greeter(Greetings { prefix: "hello", gate }))
+    let server = app.start()?
+    let client = greeter.GreeterClient.connect("http://{server.address()}")?
+    console.println(
+        client
+            .sayHello(greeter.HelloRequest { name: "Ada" }, metadata: ["x-caller": "test"])?
+            .message,
+    )
+    let timed = within time.seconds(60) { client.sayHello(greeter.HelloRequest { name: "Lin" }) }?
+    console.println(timed.message)
+    match client.sayHello(greeter.HelloRequest {}) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println(
+            "{status}, {status.details[0].unpack[greeter.HelloReply]().map((r) { r.message })}",
+        )
+    }
+    match client.sayHello(greeter.HelloRequest { name: "boom" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    for each in client.repeat(greeter.HelloRequest { name: "Lin", times: 3 }) {
+        console.println(each?.message)
+    }
+    let upload = client.collect()
+    for name in ["a", "b", "c"] {
+        upload.send(greeter.HelloRequest { name })?
+    }
+    console.println(upload.finish()?.message)
+    let chat = client.chat()
+    chat.send(greeter.HelloRequest { name: "x" })?
+    chat.send(greeter.HelloRequest { name: "y" })?
+    chat.closeSend()
+    for each in chat.replies() {
+        console.println(each?.message)
+    }
+    console.println("{chat.headers().get("x-chat")} {chat.trailers()}")
+    // The client's deadline passes before the server's, which is later.
+    match within time.milliseconds(50) { client.sayHello(greeter.HelloRequest { name: "slow" }) } {
+        ok(reply) => console.println(reply.message)
+        err(failure) => console.println("{failure}")
+    }
+    open.send(())
+    let nobody = greeter.GreeterClient.connect("http://127.0.0.1:1")?
+    match nobody.sayHello(greeter.HelloRequest { name: "Ada" }) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status.code}")
+    }
+    server.stop()
+}
+
+// expect-stdout: hello Ada from test, deadline false
+// expect-stdout: hello Lin from nobody, deadline true
+// expect-stdout: InvalidArgument: who?, ok(a name, please)
+// expect-stdout: Internal: the method panicked: the greeter broke
+// expect-stdout: 0: Lin
+// expect-stdout: 1: Lin
+// expect-stdout: 2: Lin
+// expect-stdout: a+b+c
+// expect-stdout: echo x
+// expect-stdout: echo y
+// expect-stdout: some(on) [x-said: goodbye]
+// expect-stdout: timed out after 50ms
+// expect-stdout: Unavailable

@@ -224,3 +224,74 @@ fn main(): !http.HttpError {
   seen. A method's error leaves its field null with the error's message
   and path. A `sql.Database` or a `sync.Mutex` in a root is carried, not
   shown.
+
+## gRPC
+
+A `service` of a `.proto` file among the sources gives, in its module, a
+trait of its calls, a function that makes a server's service of a value
+that implements it, and a client. Messages are records of `std.protobuf`;
+a failure is a `grpc.Status`.
+
+```text
+// src/api/users.proto
+syntax = "proto3";
+package users.v1;
+message GetUser { int64 id = 1; }
+message User { int64 id = 1; string name = 2; }
+service UserService {
+  rpc Get(GetUser) returns (User);
+  rpc Watch(GetUser) returns (stream User);
+}
+
+// src/main.to
+import std.console
+import std.grpc
+import std.http
+import std.time
+import app.api.users
+
+type Users = { names: Map[Int, String] }
+
+impl users.UserService for Users {
+    fn get(self, request: users.GetUser): users.User ! grpc.Status {
+        match self.names.get(request.id) {
+            some(name) => users.User { id: request.id, name }
+            none => fail grpc.Status { code: grpc.Code.NotFound, message: "no user {request.id}" }
+        }
+    }
+
+    fn watch(self, request: users.GetUser, out: Sender[users.User]): !grpc.Status {
+        out.send(self.get(request)?)
+    }
+}
+
+fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
+    var app = http.App.new()
+    app.grpc(users.userService(Users { names: [7: "Ada"] }))   // beside other routes
+    let server = app.start()?
+    let client = users.UserServiceClient.connect("http://{server.address()}")?
+    let user = within time.seconds(2) { client.get(users.GetUser { id: 7 }) }?
+    console.println(user.name)
+    for each in client.watch(users.GetUser { id: 7 }) {
+        console.println(each?.name)
+    }
+    server.stop()
+}
+```
+
+- A call's method takes the request and gives `Out ! grpc.Status`; with a
+  stream from the server it takes `out: Sender[Out]` and gives
+  `!grpc.Status`; with one from the client it takes
+  `input: grpc.Stream[In]`, read with `for each in input { each? }`.
+- The client's call gives `Out ! grpc.Status`, a `grpc.Stream[Out]`, a
+  `grpc.Upload[In, Out]` (`send`, then `finish()` for the reply) or a
+  `grpc.Duplex[In, Out]` (`send`, `closeSend()`, `replies()`); each takes
+  `metadata: [...]` too. `https://` connects with TLS, trusting `trust:`.
+- In a method, `grpc.call()` gives the metadata, the peer and the time left;
+  `grpc.setHeader` and `grpc.setTrailer` answer with metadata. A panic
+  answers `Internal`; `details: [protobuf.pack(message)]` travel with a
+  status.
+- A call in a `within` sends its deadline; the method runs within it, and
+  the client gets its `within`'s `TimedOut` when it passes.
+- The value that implements the service is copied into each method, so it
+  is `Copy`: hold handles, as a `sql.Database`, not a `Sender`.

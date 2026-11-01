@@ -27,6 +27,7 @@ mod env;
 mod files;
 mod fs;
 mod fuzz;
+mod grpc;
 mod heap;
 mod http;
 mod image;

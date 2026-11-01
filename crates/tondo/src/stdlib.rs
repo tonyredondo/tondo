@@ -17,6 +17,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("messagepack", include_str!("../std/messagepack.to")),
     ("cbor", include_str!("../std/cbor.to")),
     ("protobuf", include_str!("../std/protobuf.to")),
+    ("grpc", include_str!("../std/grpc.to")),
     ("net", include_str!("../std/net.to")),
     ("ffi", include_str!("../std/ffi.to")),
     ("regex", include_str!("../std/regex.to")),
