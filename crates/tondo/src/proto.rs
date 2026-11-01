@@ -1034,9 +1034,8 @@ impl Translator<'_> {
             fields,
             "    @protobuf.Unknown @ignore {unknown}: protobuf.UnknownFields = protobuf.UnknownFields {{}}"
         );
-        let package = &self.file.package;
-        let full_name = if package.is_empty() { full.clone() } else { format!("{package}.{full}") };
-        let _ = write!(self.body, "@protobuf.Name({full_name:?})\npub type {name} = {{\n{fields}}}\n\n");
+        // Its scope begins with the package.
+        let _ = write!(self.body, "@protobuf.Name({full:?})\npub type {name} = {{\n{fields}}}\n\n");
         let nested_outer = format!("{outer}{}", message.name);
         for nested in &message.messages {
             self.message(nested, &nested_outer, &full);
