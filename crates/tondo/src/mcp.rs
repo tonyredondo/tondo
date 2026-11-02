@@ -1599,7 +1599,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 22] = [
+    const KEYS: [&str; 23] = [
         "debugging",
         "running",
         "pausing",
@@ -1619,6 +1619,7 @@ fn debugger(value: &Value) -> bool {
         "unwatched",
         "steps",
         "recording",
+        "snapshot",
         "deleted",
         "reloaded",
         "error",
@@ -2066,11 +2067,12 @@ as `ssh host` or `docker exec -i box`, where `tondo relay` joins it to this sess
         description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
 {expressions}>], break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
 changes it; a std.sync cell's value, in any task), delete <id>, \
-catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), continue, step, step into <name> (that call of the line), next, finish (a step says \
+catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), snapshot (in one answer: why it stopped, every frame with its bindings, where the task was spawned, the other \
+tasks and the last lines run), continue, until <line>, step, step into <name> (that call of the line), next, finish (a step says \
 what a function returned), steps all|program (into the standard library's code or over it), pause, locals \
 (what the code there can use: its bindings, a closure's captures, and those of the functions it is written in, \
 as a test's suites), record [<lines>|off] (keep each line run, with its bindings), back [<n>], forward [<n>], \
-reverse (move through that history; locals, print and stack show it), context (the task's contexts, and the `with` that set each field), print <expression> \
+reverse, back until <condition> (move through that history; locals, print and stack show it), context (the task's contexts, and the `with` that set each field), print <expression> \
 (bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \
 length(), isEmpty(), isSome(), contains(), which read and never run the program's code), children <path> \
 [<start> <count>], set <target> <expression> (a binding or a part, as user.age or items[i]), stack, frame <n>, \

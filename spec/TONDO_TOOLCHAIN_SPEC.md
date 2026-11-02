@@ -807,6 +807,7 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   para donde empieza esa línea, o la siguiente con código del archivo;
   `break fn <nombre> ...`, donde empieza cada función con ese nombre, entero
   (`Stack.push`) o el suyo (`push`), y una genérica en cada uno de sus tipos.
+  Con `task <id>` tras el lugar, el breakpoint es solo de esa tarea.
   La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
   cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
@@ -848,7 +849,8 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   es el error. Un deadlock (`P0013`) para el programa antes de terminarlo,
   donde espera la tarea principal, para ver dónde espera cada una; al
   seguir, termina con su pánico.
-- `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
+- `continue` sigue hasta un breakpoint; `until <línea>` o `until
+  <file>:<line>`, hasta esa línea, o la parada que llegue antes; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
   llamó. `step into <nombre>` entra en la llamada de ese nombre que hace la
@@ -866,7 +868,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   últimas `lines` (10000); `record off` lo deja. Con el programa parado,
   `back [<n>]` va `n` líneas atrás en el historial de la tarea parada,
   `reverse` a la última anterior con un breakpoint, y `forward [<n>]`, o un
-  paso, hacia delante; pasada la última, al presente. Mientras muestra el
+  paso, hacia delante; pasada la última, al presente. `back until
+  <condición>` y `forward until <condición>` van a la línea más cercana en
+  que la condición se cumplía, leída con los bindings de entonces. Mientras muestra el
   pasado, `locals`, `print`, `children` y `stack` lo leen, de su marco más
   interior, y `continue` sigue desde el presente.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
@@ -889,7 +893,14 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   recortado. `print <expresión>` da también el valor de una expresión, con
   su tipo, y la ruta de lo que nombra si es un binding o una parte suya. Un
   binding cuyo valor se movió o se liberó no se muestra.
-- `stack [<task>]` da las funciones de una tarea parada, de dentro afuera;
+- `snapshot` da en una respuesta por qué y dónde paró la tarea, cada marco
+  de su pila con sus bindings, dónde se lanzó, las demás tareas y las
+  últimas líneas de su historial: lo que una herramienta o un modelo
+  pediría en varias órdenes. `locals` marca `changed` en un binding cuyo
+  valor cambió desde la última vez que mostró ese marco.
+- `stack [<task>]` da las funciones de una tarea parada, de dentro afuera,
+  y después, en `spawned`, dónde se lanzó la tarea y dónde se lanzó la que
+  la lanzó;
   `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
   tarea parada. Las funciones de fuera muestran sus bindings como estaban al
   empezar la línea que llamó.
@@ -930,7 +941,8 @@ sus pilas, el estado de cada una y la memoria por dónde se creó. Los
 breakpoints, con su condición, sus hits y sus logpoints, los de función
 (`setFunctionBreakpoints`), los de datos, que son watches de una variable o
 una parte suya (`dataBreakpointInfo` y `setDataBreakpoints`), los pasos, la
-pausa, las tareas (`threads`), también las que esperan, la pila de cada una, la de un test con sus
+pausa, las tareas (`threads`), también las que esperan, la pila de cada una
+y, tras una etiqueta, dónde se lanzó, la de un test con sus
 suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está

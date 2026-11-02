@@ -34,6 +34,7 @@ pub const HELP: &str = "\
 break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with {expressions}>]
                                                 stop where that line starts, or write a message there (b)
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
+break <place> task <id> ...                     the same for one task only
 watch <expression> [if <condition>] [hits <n>]  stop on the line after the one that changes its value, in this
                                                 frame or a call it makes, until the frame returns; a std.sync
                                                 cell's value, as state.value, in whichever task changes it
@@ -42,11 +43,15 @@ continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)
 step into <name>                                into the call of that name the line makes: plus, items.map
 next                                            to the next line of this function (n)
+until <line>|<file>:<line>                      on until that line, or the next stop
+snapshot                                        why the task stopped, each frame with its bindings, where it was
+                                                spawned, the other tasks and the last lines of its history
 finish                                          until this function returns (f)
 steps program|all                               steps go over the standard library's code (the default), or into it
 record [<lines>|off]                            keep each line the tasks run, with the bindings as it started (10000)
-back [<n>]                                      n lines back in the stopped task's history: locals, print, stack
-forward [<n>]                                   n lines forward in it, as steps do there; past the last, the present
+back [<n> | until <condition>]                  back in the stopped task's history, n lines or to the nearest where
+                                                the condition held: locals, print, stack show it
+forward [<n> | until <condition>]               forward in it, as steps do there; past the last, the present
 reverse                                         back to the last line at a breakpoint, or the first kept
 pause                                           stop every task, as Ctrl-C does
 catch panic [<code>...] error [<type>...]|none  stop where a task panics and no recover stops it (the default), where
@@ -268,7 +273,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
-            | "steps" | "record" | "back" | "forward" | "reverse" => {
+            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -430,6 +435,20 @@ impl Session {
             for (index, frame) in frames.iter().enumerate() {
                 println!("#{index} {}", frame.as_str().unwrap_or_default());
             }
+            for place in value["spawned"].as_array().into_iter().flatten() {
+                println!("   spawned at {}", place.as_str().unwrap_or_default());
+            }
+        } else if let Some(snapshot) = value.get("snapshot") {
+            println!("task {} stopped: {}", snapshot["task"], snapshot["why"].as_str().unwrap_or_default());
+            for (index, frame) in snapshot["frames"].as_array().into_iter().flatten().enumerate() {
+                println!("#{index} {}", frame["at"].as_str().unwrap_or_default());
+                for local in frame["locals"].as_array().into_iter().flatten() {
+                    println!("    {}", binding(local));
+                }
+            }
+            for place in snapshot["spawned"].as_array().into_iter().flatten() {
+                println!("   spawned at {}", place.as_str().unwrap_or_default());
+            }
         } else if let Some(tasks) = value["tasks"].as_array() {
             for task in tasks {
                 println!(
@@ -471,7 +490,10 @@ impl Session {
 
 fn binding(value: &Value) -> String {
     let (name, value_text) = (value["name"].as_str().unwrap_or_default(), value["value"].as_str().unwrap_or_default());
-    let from = value["from"].as_str().map_or(String::new(), |from| format!("  (of {from})"));
+    let mut from = value["from"].as_str().map_or(String::new(), |from| format!("  (of {from})"));
+    if value["changed"] == true {
+        from.push_str("  (changed)");
+    }
     match value["type"].as_str() {
         Some(ty) => format!("{name}: {ty} = {value_text}{from}"),
         None => format!("{name} = {value_text}{from}"),

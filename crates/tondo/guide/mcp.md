@@ -105,6 +105,10 @@ and one that leaves a function says what it `returned`. `tasks` lists the
 tasks that wait too, whose frames `task 2` and `stack 2` show.
 `record` keeps each line the tasks run with its bindings, which `back`,
 `forward` and `reverse` go through while the program is stopped.
+`snapshot` gives a stop at once: why, every frame with its bindings
+(`changed` where a value changed), where the task was spawned, the other
+tasks and the last lines run; `until 30` runs to a line, and
+`back until total > 10` finds where a value went wrong in the history.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling

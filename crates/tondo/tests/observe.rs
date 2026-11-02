@@ -1600,6 +1600,97 @@ fn debugger_calls_the_programs_code() {
     adapter.stop();
 }
 
+const SPAWNING: &str = r#"import std.console
+
+fn work(start: Int, done: Sender[Int]) {
+    var total = start
+    for i in 0..5 {
+        total += i
+    }
+    done.send(total)
+}
+
+fn launch(done: Sender[Int]) {
+    spawn work(100, done)
+}
+
+fn main() {
+    let (done, results) = channel[Int](2)
+    launch(done)
+    let got = results.receive()
+    console.println("{got}")
+}
+"#;
+
+/// A task's stack goes on with where it was spawned; `locals` says what
+/// changed; a breakpoint can be one task's; the history is searched by a
+/// condition; `until` runs to a line; `snapshot` gives a stop at once.
+#[test]
+fn debugger_follows_tasks_and_searches_history() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-spawn");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("spawning.to"), SPAWNING).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "spawning.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "record\nbreak spawning.to:6 task 1\nbreak spawning.to:6 task 2\ncontinue\nstack\nlocals\nnext\nnext\n\
+        locals\nback until total == 100\nforward 100\ndelete 2\nuntil 8\nsnapshot\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<(&str, &str, &Value)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), s["why"].as_str().unwrap(), &s["back"]))
+        .collect();
+    assert_eq!(
+        stops[1..],
+        [
+            ("spawning.to:6 in work", "breakpoint 2", &Value::Null),
+            ("spawning.to:5 in work", "step", &Value::Null),
+            ("spawning.to:6 in work", "breakpoint 2", &Value::Null),
+            ("spawning.to:5 in work", "history", &json!(1)),
+            ("spawning.to:6 in work", "history", &json!(0)),
+            ("spawning.to:8 in work", "until", &Value::Null),
+        ]
+    );
+    let stack = lines.iter().find(|l| l.get("stack").is_some()).unwrap();
+    assert_eq!(stack["spawned"], json!(["spawning.to:12 in launch", "spawning.to:17 in main"]));
+    let locals: Vec<&Vec<Value>> = lines.iter().filter_map(|l| l["locals"].as_array()).collect();
+    let changed = |locals: &Vec<Value>| -> Vec<String> {
+        locals.iter().filter(|l| l["changed"] == true).map(|l| l["name"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!((changed(locals[0]), changed(locals[1])), (vec![], vec!["i".to_string()]));
+    let snapshot = lines.iter().find_map(|l| l.get("snapshot")).unwrap();
+    assert_eq!((&snapshot["task"], &snapshot["why"]), (&json!(2), &json!("until")));
+    assert_eq!(snapshot["frames"][0]["at"], "spawning.to:8 in work");
+    let total = snapshot["frames"][0]["locals"].as_array().unwrap().iter().find(|l| l["name"] == "total").unwrap();
+    assert_eq!(total["value"], "110");
+    assert!(snapshot["before"].as_array().unwrap().len() >= 5, "{snapshot}");
+    // The editor shows where the task was spawned after its frames.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "spawning.to", "cwd": dir }));
+    let path = dir.join("spawning.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 6 }] }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let names: Vec<&str> =
+        trace["stackFrames"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["work", "spawned at", "launch", "main"]);
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

@@ -194,11 +194,17 @@ fn called(table: &Table, rest: &str) -> Result<String, String> {
 /// An event the debugger hears once the answer to its command went.
 static TELL_AFTER: Mutex<Option<String>> = Mutex::new(None);
 
-/// `back [n]`, `forward [n]` and `reverse`: the moment of the stopped task's
-/// history `locals`, `print` and `stack` show, n lines before or after the
-/// one shown, or the last before it at a breakpoint; forward past the last
-/// is the present again.
-fn moved(table: &Table, word: &str, count: usize) -> Result<String, String> {
+/// `back [n | until <condition>]`, `forward [n | until <condition>]` and
+/// `reverse`: the moment of the stopped task's history `locals`, `print`
+/// and `stack` show: n lines before or after the one shown, the nearest
+/// where the condition holds, or the last before it at a breakpoint;
+/// forward past the last is the present again.
+fn moved(table: &Table, word: &str, rest: &str) -> Result<String, String> {
+    let until = match rest.strip_prefix("until ") {
+        Some(condition) => Some(expression::parse(condition).map_err(|m| format!("the condition: {m}"))?),
+        None => None,
+    };
+    let count = rest.parse().unwrap_or(1);
     let mut state = state();
     let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
     let task = state.selected.map_or(stop.task, |(task, _)| task);
@@ -210,13 +216,32 @@ fn moved(table: &Table, word: &str, count: usize) -> Result<String, String> {
     // The last line recorded is where the task is now.
     let present = mine.len() - 1;
     let at = state.past.and_then(|past| mine.iter().position(|&i| i == past)).unwrap_or(present);
-    let to = match word {
-        "back" => at.saturating_sub(count),
-        "reverse" => {
-            let marked = |&&i: &&usize| table.marked.get(history[i].site).is_some_and(|m| m.load(Ordering::Relaxed));
-            mine[..at].iter().rposition(|i| marked(&i)).unwrap_or(0)
+    // Whether the condition holds at a moment, as its bindings were.
+    let holds = |moment: &Moment, condition: &Expr| {
+        let read = |name: &str| match moment.bindings.iter().find(|(n, ..)| n == name) {
+            Some((.., text)) => Ok(text.clone()),
+            None => Err(format!("no binding `{name}`")),
+        };
+        Evaluator::new(&read).holds(condition)
+    };
+    let to = match (word, &until) {
+        ("back", Some(condition)) => {
+            let found = mine[..at].iter().rposition(|&i| holds(&history[i], condition));
+            found.ok_or(format!("no line before this one in task {task}'s history has `{}`", &rest[6..]))?
         }
-        _ => (at + count).min(present),
+        ("forward", Some(condition)) => {
+            let found = mine[at + 1..].iter().position(|&i| holds(&history[i], condition)).map(|i| at + 1 + i);
+            found.ok_or(format!("no line after this one in task {task}'s history has `{}`", &rest[6..]))?
+        }
+        _ => match word {
+            "back" => at.saturating_sub(count),
+            "reverse" => {
+                let marked =
+                    |&&i: &&usize| table.marked.get(history[i].site).is_some_and(|m| m.load(Ordering::Relaxed));
+                mine[..at].iter().rposition(|i| marked(&i)).unwrap_or(0)
+            }
+            _ => (at + count).min(present),
+        },
     };
     if to == at {
         return Err(match word {
@@ -626,6 +651,10 @@ struct Breakpoint {
     count: u64,
     hits: Option<Hits>,
     log: Option<String>,
+    /// The task it stops alone, when it names one.
+    task: Option<u64>,
+    /// `until`'s: it goes at the next stop, wherever that is.
+    once: bool,
 }
 
 /// When a breakpoint stops by its count of hits: at the `n`th, from it on,
@@ -813,6 +842,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         let mut hit = None;
         for breakpoint in state.breakpoints.iter_mut() {
             let here = breakpoint.sites.contains(&site)
+                && breakpoint.task.is_none_or(|t| t == task)
                 && breakpoint.condition.as_ref().is_none_or(|c| evaluating(&table, stack(), 0, |e| e.holds(c)));
             if !here {
                 continue;
@@ -836,7 +866,9 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             }
         }
         let changed = if watching { watched(&table, &mut state, task, frame, site) } else { None };
+        let until = hit.is_some_and(|id| state.breakpoints.iter().any(|b| b.id == id && b.once));
         match (hit, stepped) {
+            (Some(_), _) if until => Some("until".to_string()),
             (Some(id), _) => Some(format!("breakpoint {id}")),
             _ if changed.is_some() => changed,
             (None, true) if matches!(state.mode, Mode::Restarted { .. }) => {
@@ -847,6 +879,11 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             (None, false) => return restarting(frame, task, site),
         }
     };
+    // `until`'s breakpoint goes at the stop.
+    if why.is_some() && state.breakpoints.iter().any(|b| b.once) {
+        state.breakpoints.retain(|b| !b.once);
+        remark(&table, &state);
+    }
     // A patch may come while the task waits.
     drop(table);
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
@@ -1379,6 +1416,40 @@ pub(crate) fn command(line: &str) -> Option<String> {
             go_after_answer(Mode::Run);
             "{\"running\":true}".into()
         }
+        // `until <line>` or `until <file>:<line>`: runs until that line, or
+        // the next stop, wherever that is.
+        "until" => {
+            let Some(stop) = stopped() else { return Some(not_stopped()) };
+            let at = match rest.parse::<u32>() {
+                Ok(line) => match table.sites.get(stop.site) {
+                    Some(site) => format!("{}:{line}", site.file),
+                    None => return Some("{\"error\":\"until takes a line of a file, as `until main.to:12`\"}".into()),
+                },
+                Err(_) => rest.to_string(),
+            };
+            let sites = match line_sites(table, &at) {
+                Ok(sites) => sites,
+                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
+            };
+            let mut state = state();
+            let id = state.next_breakpoint;
+            state.next_breakpoint += 1;
+            let task = None;
+            state.breakpoints.push(Breakpoint {
+                id,
+                sites,
+                condition: None,
+                count: 0,
+                hits: None,
+                log: None,
+                task,
+                once: true,
+            });
+            remark(table, &state);
+            drop(state);
+            go_after_answer(Mode::Run);
+            "{\"running\":true}".into()
+        }
         // The history: kept from now on, or no longer.
         "record" => {
             let lines = match rest {
@@ -1400,15 +1471,12 @@ pub(crate) fn command(line: &str) -> Option<String> {
             }
             format!("{{\"recording\":{lines}}}")
         }
-        "back" | "forward" | "reverse" => {
-            let count = rest.parse().unwrap_or(1);
-            match moved(table, word, count) {
-                Ok(answer) => answer,
-                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
-            }
-        }
+        "back" | "forward" | "reverse" => match moved(table, word, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // A step in the past goes forward in the history.
-        "step" | "next" | "finish" if state().past.is_some() => match moved(table, "forward", 1) {
+        "step" | "next" | "finish" if state().past.is_some() => match moved(table, "forward", "1") {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
@@ -1582,22 +1650,13 @@ pub(crate) fn command(line: &str) -> Option<String> {
                         "this frame's bindings are not known: none of its function's lines ran since the debugger came";
                     return Some(format!("{{\"error\":{}}}", quoted(message)));
                 }
-                let items: Vec<String> = visible(table, &frames, index)
-                    .into_iter()
-                    .map(|(binding, address, from)| {
-                        let whole = show(binding.show, address);
-                        let from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
-                        format!(
-                            "{{\"name\":{},\"type\":{},{}{from}}}",
-                            quoted(&binding.name),
-                            quoted(&binding.ty),
-                            described(&whole)
-                        )
-                    })
-                    .collect();
+                let looked = {
+                    let state = state();
+                    state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0)))
+                };
+                let items = locals_of(table, &frames, index, looked.map_or(0, |(task, _)| task));
                 // In the frame a step stopped in, what a function returned.
                 let state = state();
-                let looked = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0)));
                 let returned = match &state.stopped {
                     Some(stop) if looked == Some((stop.task, 0)) => returned(stop),
                     _ => String::new(),
@@ -1682,6 +1741,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
             let mut frames: Vec<String> = frames(table, &held).iter().map(|f| f.place.clone()).collect();
+            let spawned: Vec<String> = spawned(task).iter().map(|s| quoted(s)).collect();
             // A frame `goto` moves shows where it goes on.
             if let (Some((_, line)), Some(first)) =
                 (MOVED_TO.lock().unwrap_or_else(|e| e.into_inner()).filter(|(t, _)| *t == task), frames.first_mut())
@@ -1689,8 +1749,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 *first = moved_place(first, line);
             }
             let frames: Vec<String> = frames.iter().map(|f| quoted(f)).collect();
-            format!("{{\"stack\":[{}]}}", frames.join(","))
+            // Where the task was spawned, and its spawner: the stack's
+            // cause.
+            format!("{{\"stack\":[{}],\"spawned\":[{}]}}", frames.join(","), spawned.join(","))
         }
+        "snapshot" => match snapshot(table) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         "tasks" => {
             let state = state();
             let held: Vec<String> = state
@@ -2012,6 +2078,14 @@ fn breakpoint(table: &Table, text: &str) -> String {
         Some((at, condition)) => (at.trim(), Some(condition.trim())),
         None => (text.trim(), None),
     };
+    // One task's, `task <id>`.
+    let (at, task) = match at.split_once(" task ") {
+        Some((at, task)) => match task.trim().parse::<u64>() {
+            Ok(task) => (at.trim(), Some(task)),
+            Err(_) => return error(format!("`task` takes a task's number, as `tasks` lists them, not `{task}`")),
+        },
+        None => (at, None),
+    };
     let sites = match at.strip_prefix("fn ") {
         Some(name) => function_sites(table, name.trim()),
         None => line_sites(table, at),
@@ -2048,7 +2122,7 @@ fn breakpoint(table: &Table, text: &str) -> String {
     state.next_breakpoint += 1;
     let at = &table.sites[sites[0]];
     let answer = format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}}}}}", quoted(&at.file), at.line);
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log });
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false });
     remark(table, &state);
     answer
 }
@@ -2116,6 +2190,100 @@ fn usable(table: &Table, function: usize) -> Vec<&str> {
         }
     }
     out
+}
+
+/// The bindings the code of a frame can use, as `locals` gives them: each
+/// one changed since `locals` last showed that frame says so.
+fn locals_of(table: &Table, frames: &[Frame], index: usize, task: u64) -> Vec<String> {
+    let key = (task, frames[index].pointer, frames[index].function);
+    let shown: Vec<(String, String)> = visible(table, frames, index)
+        .into_iter()
+        .map(|(binding, address, _)| (binding.name.clone(), show(binding.show, address)))
+        .collect();
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let before = seen.iter().find(|(k, _)| *k == key).map(|(_, texts)| texts.clone());
+    let items = visible(table, frames, index)
+        .into_iter()
+        .zip(&shown)
+        .map(|((binding, _, from), (_, whole))| {
+            let from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
+            let was = before.as_ref().and_then(|b| b.iter().find(|(n, _)| *n == binding.name)).map(|(_, t)| t);
+            let changed = if was.is_some_and(|was| was != whole) { ",\"changed\":true" } else { "" };
+            format!(
+                "{{\"name\":{},\"type\":{},{}{from}{changed}}}",
+                quoted(&binding.name),
+                quoted(&binding.ty),
+                described(whole)
+            )
+        })
+        .collect();
+    seen.retain(|(k, _)| *k != key);
+    seen.push((key, shown));
+    // A few frames' worth: those a session looks at.
+    if seen.len() > 64 {
+        seen.remove(0);
+    }
+    items
+}
+
+/// What `locals` last showed of each frame, by its task, frame pointer and
+/// function, which the next shows changes against.
+#[allow(clippy::type_complexity)]
+static SEEN: Mutex<Vec<((u64, usize, Option<usize>), Vec<(String, String)>)>> = Mutex::new(Vec::new());
+
+/// Where a task was spawned, and its spawner, as `file:line in function`:
+/// what its stack goes on with.
+fn spawned(task: u64) -> Vec<String> {
+    super::tasks::spawned_at(task)
+        .into_iter()
+        .filter_map(|address| {
+            let described = super::trace::describe(address)?;
+            let (file, line) = described.at?;
+            (!described.function.starts_with("spawn")).then(|| format!("{file}:{line} in {}", described.function))
+        })
+        .collect()
+}
+
+/// `snapshot`: what a model needs of a stop in one answer: why and where
+/// the task stopped, each frame of its stack with its bindings, where it
+/// was spawned, the other tasks, and the last lines of its history.
+fn snapshot(table: &Table) -> Result<String, String> {
+    let state = state();
+    let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let held = stop_of(&state, stop.task).unwrap_or(stop.clone());
+    drop(state);
+    let frames = frames(table, &held);
+    let described: Vec<String> = (0..frames.len())
+        .map(|index| {
+            let locals = match frames[index].addresses == 0 && frames[index].function.is_some() {
+                true => String::new(),
+                false => locals_of(table, &frames, index, stop.task).join(","),
+            };
+            format!("{{\"at\":{},\"locals\":[{locals}]}}", quoted(&frames[index].place))
+        })
+        .collect();
+    let spawned: Vec<String> = spawned(stop.task).iter().map(|s| quoted(s)).collect();
+    let tasks = command("tasks").unwrap_or_default();
+    let tasks = tasks.strip_prefix("{\"tasks\":").and_then(|t| t.strip_suffix('}')).unwrap_or("[]").to_string();
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut lines: Vec<String> = history
+        .iter()
+        .rev()
+        .filter(|m| m.task == stop.task)
+        .skip(1)
+        .take(10)
+        .map(|m| quoted(&place_in(table, m.site)))
+        .collect();
+    lines.reverse();
+    Ok(format!(
+        "{{\"snapshot\":{{\"task\":{},\"why\":{},\"frames\":[{}],\"spawned\":[{}],\"tasks\":{tasks},\"before\":[{}]{}}}}}",
+        stop.task,
+        quoted(&stop.why),
+        described.join(","),
+        spawned.join(","),
+        lines.join(","),
+        returned(&stop)
+    ))
 }
 
 /// `print <expression>`: its value in the frame looked at, with its type

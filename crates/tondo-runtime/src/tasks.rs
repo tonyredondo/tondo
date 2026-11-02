@@ -1726,6 +1726,19 @@ unsafe fn switched_out(task: *mut Task) -> Option<(usize, (usize, usize))> {
     }
 }
 
+/// Where the task `id` was spawned, the return addresses of each spawn,
+/// innermost first, then where its spawner was, and on.
+pub(crate) fn spawned_at(id: u64) -> Vec<usize> {
+    let Some(task) = by_id(id) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut origin = unsafe { (*task).origin };
+    while let Some(Origin::Spawned { parent, .. }) = origin {
+        out.extend_from_slice(origin.map_or(&[][..], |o| o.frames()));
+        origin = *parent;
+    }
+    out
+}
+
 /// The tasks switched out that wait, or are ready to run again: each
 /// one's number, which of the two, the frame pointer it saved and its
 /// stack's bounds, for the debugger to show where each is.

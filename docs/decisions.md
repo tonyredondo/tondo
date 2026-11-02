@@ -4493,3 +4493,16 @@ tools take `via`, and `debug_start` takes `test`, so that a model debugs
 one test alone as `tondo debug --test` does; `goto` answers as a step
 does, so that a session waits for the stop it brings instead of timing
 out, and moving through a history that has nowhere to go says so.
+
+## 2026-11-02 — A stop at once, and the cause of a task
+
+A model debugging over MCP asked `tasks`, `stack`, `locals` of each
+frame and the history in as many calls, each a round trip. `snapshot`
+answers all of it at once. A task's stack ended at its first function,
+though what started it is half of why it is there: the runtime keeps
+where each task was spawned, and its spawner's, for dumps, and `stack`
+and the editor's call stack go on with them, as async stacks do in other
+debuggers. `locals` marks what changed since it last showed a frame, as
+an editor highlights it; `until` runs to a line; a breakpoint can be one
+task's; and `back until <condition>` searches the history rather than
+stepping through it.

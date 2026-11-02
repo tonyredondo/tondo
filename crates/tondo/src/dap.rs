@@ -94,6 +94,9 @@ struct Debuggee {
 }
 
 /// A frame's id: its task, and its place in the task's stack.
+/// The frames after a task's stack, where it was spawned, from this index.
+const SPAWNED: u64 = 9_000;
+
 fn frame_id(task: u64, index: u64) -> u64 {
     task * 10_000 + index
 }
@@ -914,10 +917,33 @@ fn handle(
                     }))
                 })
                 .collect();
+            // Where the task was spawned, and its spawner, after a label:
+            // places to look at, without bindings.
+            let mut frames = frames;
+            let spawned = stack["spawned"].as_array().cloned().unwrap_or_default();
+            if !spawned.is_empty() {
+                let label = json!({ "id": frame_id(task, SPAWNED), "name": "spawned at", "line": 0, "column": 0,
+                    "presentationHint": "label" });
+                frames.push(label);
+            }
+            for (index, place) in spawned.iter().enumerate() {
+                let Some((at, function)) = place.as_str().and_then(|p| p.split_once(" in ")) else { continue };
+                let Some((file, line)) = at.rsplit_once(':') else { continue };
+                let path = program.root.join(file);
+                frames.push(json!({
+                    "id": frame_id(task, SPAWNED + 1 + index as u64), "name": function,
+                    "line": line.parse::<u64>().unwrap_or(0), "column": 1, "presentationHint": "subtle",
+                    "source": { "name": file, "path": path.display().to_string() },
+                }));
+            }
             Ok(json!({ "stackFrames": frames, "totalFrames": frames.len() }))
         }
         "scopes" => {
             let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
+            // A place where a task was spawned has no bindings to show.
+            if index >= SPAWNED {
+                return Ok(json!({ "scopes": [] }));
+            }
             let locals = program.handle(task, index, String::new());
             let mut scopes = vec![json!({ "name": "Locals", "variablesReference": locals, "expensive": false })];
             // The bindings of the functions this one is written in, as a
