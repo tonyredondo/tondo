@@ -273,7 +273,11 @@ impl Server {
             "workspace/symbol" => Some(Ok(self.workspace_symbols(params))),
             "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
-            "textDocument/codeLens" => Some(Ok(self.lenses(params).unwrap_or(json!([])))),
+            "textDocument/codeLens" => {
+                let mut lenses = self.lenses(params).and_then(|l| l.as_array().cloned()).unwrap_or_default();
+                lenses.extend(self.reference_lenses(params).unwrap_or_default());
+                Some(Ok(Value::Array(lenses)))
+            }
             "textDocument/foldingRange" => Some(Ok(self.folding_ranges(params).unwrap_or(json!([])))),
             "textDocument/selectionRange" => Some(Ok(self.selection_ranges(params).unwrap_or(json!([])))),
             "textDocument/rangeFormatting" => Some(Ok(self.range_formatting(params).unwrap_or(json!([])))),
@@ -523,6 +527,57 @@ impl Server {
         Some(Value::Array(lenses))
     }
 
+    /// Over each function, method, type and trait of a file: how many
+    /// places refer to it and, for a trait, how many types implement it,
+    /// which open them as the editor shows references.
+    fn reference_lenses(&mut self, params: &Value) -> Option<Vec<Value>> {
+        self.prepare(params)?;
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let source = analyzed.analysis.sources.file(file);
+        let inside = |span: Span| span.start >= source.base && span.end <= source.base + source.text.len() as u32;
+        let mut uses: HashMap<usize, Vec<Span>> = HashMap::new();
+        for &(span, def) in &index.uses {
+            if span != index.defs[def].name_span {
+                uses.entry(def).or_default().push(span);
+            }
+        }
+        let kinds = [DefKind::Function, DefKind::Method, DefKind::Type, DefKind::Enum, DefKind::Trait];
+        let mut lenses = Vec::new();
+        for (id, def) in index.defs.iter().enumerate() {
+            if !kinds.contains(&def.kind) || !inside(def.name_span) || def.name == "main" {
+                continue;
+            }
+            let (_, range) = self.place(analyzed, def.name_span)?;
+            let mut lens = |title: String, spans: Vec<Span>| {
+                let mut spans = spans;
+                spans.sort_by_key(|span| (span.start, span.end));
+                spans.dedup();
+                let locations: Vec<Value> = spans.iter().filter_map(|&span| self.location(analyzed, span)).collect();
+                let command = json!({ "title": title, "command": "tondo.showReferences", "arguments": [uri, range["start"], locations] });
+                lenses.push(json!({ "range": range, "command": command }));
+            };
+            let found = uses.get(&id).cloned().unwrap_or_default();
+            let count = found.iter().collect::<HashSet<_>>().len();
+            lens(if count == 1 { "1 reference".into() } else { format!("{count} references") }, found);
+            if def.kind == DefKind::Trait {
+                let impls: Vec<Span> =
+                    index.impls.iter().filter(|(d, ..)| *d == Some(id)).map(|(_, span, _)| *span).collect();
+                if !impls.is_empty() {
+                    let count = impls.len();
+                    lens(
+                        if count == 1 { "1 implementation".into() } else { format!("{count} implementations") },
+                        impls,
+                    );
+                }
+            }
+        }
+        Some(lenses)
+    }
+
     /// Sends the diagnostics of each file of a root, and clears those of
     /// files that have none now.
     fn publish(&mut self, root: &Path, analyzed: &Analyzed) {
@@ -660,6 +715,14 @@ impl Server {
         if let Some((analyzed, module, _, span)) = self.imported(params) {
             let (_, range) = self.place(analyzed, span)?;
             return Some(json!({ "contents": { "kind": "markdown", "value": module_hover(&module) }, "range": range }));
+        }
+        // What a `?` or a `fail` does there.
+        if let Some((analyzed, _, offset)) = self.at(params)
+            && let Some(index) = analyzed.analysis.index.as_ref()
+            && let Some((span, note)) = index.notes.iter().find(|(s, _)| s.start <= offset && offset < s.end)
+        {
+            let (_, range) = self.place(analyzed, *span)?;
+            return Some(json!({ "contents": { "kind": "markdown", "value": note }, "range": range }));
         }
         let units = self.units;
         let Some((analyzed, def, span)) = self.def_at(params) else { return self.builtin_hover(params) };
@@ -1871,6 +1934,8 @@ impl Server {
                 }
             }
         }
+        // Refactors are offered when asked for, not for the light bulb.
+        let refactor = wants("refactor") && params["context"]["triggerKind"].as_u64() != Some(2) && from < to;
         if !imports.is_empty() && wants("source.organizeImports") {
             imports.sort_by(|(a, x), (b, y)| (a.start, x).cmp(&(b.start, y)));
             actions.push(json!({
@@ -1889,7 +1954,72 @@ impl Server {
                 "edit": { "changes": changes },
             }));
         }
+        if refactor {
+            actions.extend(self.refactors(params));
+        }
         Some(Value::Array(actions))
+    }
+
+    /// Refactors of a selection: an expression into a variable, whole lines
+    /// into a function. Each is offered only when the program checks after
+    /// it as it did before.
+    fn refactors(&mut self, params: &Value) -> Vec<Value> {
+        let start = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let end = json!({ "textDocument": params["textDocument"], "position": params["range"]["end"] });
+        let Some(path) = params["textDocument"]["uri"].as_str().and_then(uri_path) else { return Vec::new() };
+        let (Some((analyzed, file, from)), Some((_, _, to))) = (self.at(&start), self.at(&end)) else {
+            return Vec::new();
+        };
+        let Some(index) = analyzed.analysis.index.as_ref() else { return Vec::new() };
+        let source = analyzed.analysis.sources.file(file);
+        let (base, text) = (source.base, source.text.clone());
+        // The selection without the blanks around it.
+        let (mut a, mut b) = ((from - base) as usize, (to - base) as usize);
+        while a < b && text.as_bytes()[a].is_ascii_whitespace() {
+            a += 1;
+        }
+        while b > a && text.as_bytes()[b - 1].is_ascii_whitespace() {
+            b -= 1;
+        }
+        if a >= b {
+            return Vec::new();
+        }
+        let selected = Span::new(base + a as u32, base + b as u32);
+        let mut candidates = Vec::new();
+        if let Some(edits) = extract_variable(index, &text, base, selected) {
+            candidates.push(("Extract into a variable", edits));
+        }
+        if let Some(edits) = extract_function(index, source, selected) {
+            candidates.push(("Extract into a function", edits));
+        }
+        let before = errors_of(analyzed);
+        let mut actions = Vec::new();
+        for (title, edits) in candidates {
+            let mut edited = text.clone();
+            let mut ordered = edits.clone();
+            ordered.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
+            for (span, replacement) in &ordered {
+                edited.replace_range((span.start - base) as usize..(span.end - base) as usize, replacement);
+            }
+            if !self.checks_as_before(&path, &before, edited) {
+                continue;
+            }
+            let Some(analyzed) = self.analyses.get(&key_of(&path)) else { continue };
+            actions.push(json!({ "title": title, "kind": "refactor.extract", "edit": { "changes": self.edits(analyzed, &edits) } }));
+        }
+        actions
+    }
+
+    /// Whether the program, with `text` as this file, has no error it did
+    /// not have before.
+    fn checks_as_before(&mut self, path: &Path, before: &[(String, String)], text: String) -> bool {
+        let mut open: HashMap<PathBuf, String> =
+            self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
+        open.insert(path.to_path_buf(), text);
+        let (root, _) = root_of(path);
+        let Some(after) = self.analyzed(&root, open) else { return false };
+        let after = errors_of(&after);
+        after.len() <= before.len() && after.iter().all(|error| before.contains(error))
     }
 
     /// A repair's edits, by file.
@@ -2900,4 +3030,250 @@ fn arguments(tokens: &[crate::lexer::Token]) -> Vec<(usize, u32, bool, Option<St
         current.push(token);
     }
     out
+}
+
+/// The errors of an analysis, by code and message.
+fn errors_of(analyzed: &Analyzed) -> Vec<(String, String)> {
+    let diagnostics = analyzed.analysis.diags.list.iter();
+    let errors = diagnostics.filter(|d| d.severity == crate::diag::Severity::Error);
+    errors.map(|d| (d.code.unwrap_or_default().to_string(), d.message.clone())).collect()
+}
+
+/// `name`, or `name2`, `name3`... when the file already uses it.
+fn unused_name(name: &str, text: &str) -> String {
+    let taken = |candidate: &str| {
+        text.match_indices(candidate).any(|(at, _)| {
+            let before = text[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let after = text[at + candidate.len()..].chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            !before && !after
+        })
+    };
+    (1..).map(|n| if n == 1 { name.to_string() } else { format!("{name}{n}") }).find(|c| !taken(c)).unwrap_or_default()
+}
+
+/// A name for the value of an expression: what its last call or field
+/// says it is, as `upper` for `name.toUpper()`, or `value`.
+fn value_name(expression: &str) -> String {
+    let expression = expression.trim_end_matches('?');
+    let mut head = expression;
+    if expression.ends_with(')') {
+        let mut depth = 0;
+        for (at, c) in expression.char_indices().rev() {
+            match c {
+                ')' => depth += 1,
+                '(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        head = &expression[..at];
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let last = head.rsplit('.').next().unwrap_or_default();
+    let name = ["to", "get", "read", "as"]
+        .iter()
+        .find_map(|prefix| last.strip_prefix(prefix).filter(|rest| rest.starts_with(|c: char| c.is_uppercase())))
+        .unwrap_or(last);
+    let mut chars = name.chars();
+    let name: String = chars.next().map_or_else(String::new, |first| first.to_lowercase().chain(chars).collect());
+    let plain = !name.is_empty()
+        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !name.starts_with(|c: char| c.is_numeric());
+    if !plain || Kw::lookup(&name).is_some() {
+        return if expression.starts_with('"') { "text".into() } else { "value".into() };
+    }
+    name
+}
+
+/// The edits that move an expression into a `let` before its statement,
+/// when moving it there cannot change what the program does.
+fn extract_variable(index: &Index, text: &str, base: u32, selected: Span) -> Option<Vec<(Span, String)>> {
+    // A whole expression of the program.
+    if !index.types.iter().any(|(span, _)| *span == selected) {
+        return None;
+    }
+    let (a, b) = ((selected.start - base) as usize, (selected.end - base) as usize);
+    // The statement starts on this line, or on the lines this one continues.
+    let mut line = text[..a].rfind('\n').map_or(0, |at| at + 1);
+    while line > 0 {
+        let above = text[..line - 1].rfind('\n').map_or(0, |at| at + 1);
+        let previous = text[above..line - 1].trim_end();
+        let continues = previous.ends_with(['(', '[', ',', '=', '+', '-', '*', '/'])
+            || previous.ends_with(" and")
+            || previous.ends_with(" or");
+        if !continues {
+            break;
+        }
+        line = above;
+    }
+    let head = &text[line..a];
+    // Not inside a block or closure the line opens, an arm, or past what
+    // may skip it.
+    let opened = head.matches('{').count() != head.matches('}').count();
+    let skips = [" and ", " or ", "=>"].iter().any(|word| head.contains(word));
+    let trimmed = head.trim_start();
+    if opened || skips || trimmed.starts_with('}') || trimmed.starts_with("else") {
+        return None;
+    }
+    let expression = &text[a..b];
+    let indent: String = text[line..].chars().take_while(|c| *c == ' ').collect();
+    // A name its function does not use, nor anything the module declares.
+    let enclosing = index
+        .defs
+        .iter()
+        .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+        .filter(|d| d.decl_span.start <= selected.start && selected.end <= d.decl_span.end)
+        .min_by_key(|d| d.decl_span.end - d.decl_span.start);
+    let scope =
+        enclosing.map_or(text, |d| &text[(d.decl_span.start - base) as usize..(d.decl_span.end - base) as usize]);
+    let declared: Vec<&str> = index
+        .defs
+        .iter()
+        .filter(|d| !matches!(d.kind, DefKind::Local | DefKind::Parameter | DefKind::Field))
+        .filter(|d| d.decl_span.start >= base && d.decl_span.end <= base + text.len() as u32)
+        .map(|d| d.name.as_str())
+        .collect();
+    let mut name = unused_name(&value_name(expression), scope);
+    while declared.contains(&name.as_str()) {
+        name = unused_name(&format!("{name}Value"), scope);
+    }
+    let at = Span::new(base + line as u32, base + line as u32);
+    Some(vec![(at, format!("{indent}let {name} = {expression}\n")), (selected, name)])
+}
+
+/// The edits that move whole lines of a block into a new function, with
+/// the bindings they read as its parameters and those read after them as
+/// its result.
+fn extract_function(index: &Index, source: &SourceFile, selected: Span) -> Option<Vec<(Span, String)>> {
+    let (text, base) = (&source.text, source.base);
+    let (a, b) = ((selected.start - base) as usize, (selected.end - base) as usize);
+    let first = text[..a].rfind('\n').map_or(0, |at| at + 1);
+    let last = text[b..].find('\n').map_or(text.len(), |at| b + at);
+    if !text[first..a].trim().is_empty() || !text[b..last].trim().is_empty() {
+        return None;
+    }
+    let lines = &text[first..last];
+    let indent: String = lines.chars().take_while(|c| *c == ' ').collect();
+    let level = |line: &&str| line.trim().is_empty() || line.starts_with(&indent);
+    if !lines.lines().all(|line| level(&line)) {
+        return None;
+    }
+    let block = Span::new(base + first as u32, base + last as u32);
+    // What leaves the block other than at its end stays where it is.
+    let tokens = crate::lexer::lex(source, Some(block), &mut crate::diag::Diagnostics::default());
+    let leaves = tokens.iter().any(|t| matches!(t.tok, Tok::Kw(Kw::Return | Kw::Break | Kw::Continue | Kw::Defer)));
+    let fails = tokens.iter().any(|t| matches!(t.tok, Tok::Question | Tok::Kw(Kw::Fail)));
+    if leaves {
+        return None;
+    }
+    let enclosing = index
+        .defs
+        .iter()
+        .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+        .filter(|d| d.decl_span.start <= block.start && block.end <= d.decl_span.end)
+        .min_by_key(|d| d.decl_span.end - d.decl_span.start);
+    let scope = enclosing.map_or(Span::new(base, base + text.len() as u32), |d| d.decl_span);
+    let local = |def: &crate::index::Def| matches!(def.kind, DefKind::Local | DefKind::Parameter);
+    let within = |span: Span, outer: Span| outer.start <= span.start && span.end <= outer.end;
+    // The bindings declared before it that it reads, in the order it does.
+    let mut inputs: Vec<(u32, usize)> = Vec::new();
+    for &(span, def) in &index.uses {
+        let declared = &index.defs[def];
+        if within(span, block)
+            && local(declared)
+            && declared.name_span.start < block.start
+            && within(declared.name_span, scope)
+        {
+            match inputs.iter_mut().find(|(_, d)| *d == def) {
+                Some(first) => first.0 = first.0.min(span.start),
+                None => inputs.push((span.start, def)),
+            }
+        }
+    }
+    inputs.sort();
+    // Those it declares that are read after it.
+    let mut outputs: Vec<usize> = Vec::new();
+    for &(span, def) in &index.uses {
+        let declared = &index.defs[def];
+        if declared.kind == DefKind::Local
+            && within(declared.name_span, block)
+            && span.start >= block.end
+            && within(span, scope)
+            && !outputs.contains(&def)
+        {
+            outputs.push(def);
+        }
+    }
+    outputs.sort_by_key(|&def| index.defs[def].name_span.start);
+    let var = |def: &crate::index::Def| {
+        let at = (def.name_span.start - base) as usize;
+        text.get(..at).is_some_and(|before| before.trim_end().ends_with("var"))
+    };
+    let mut parameters = Vec::new();
+    let mut arguments = Vec::new();
+    for &(_, def) in &inputs {
+        let declared = &index.defs[def];
+        let ty = declared.ty.as_ref()?;
+        if declared.name == "self" || var(declared) || ty.starts_with("var ") || ty.starts_with("mut ") {
+            return None;
+        }
+        parameters.push(format!("{}: {ty}", declared.name));
+        arguments.push(declared.name.clone());
+    }
+    let mut results = Vec::new();
+    for &def in &outputs {
+        let declared = &index.defs[def];
+        results.push((declared.name.clone(), declared.ty.clone()?, var(declared)));
+    }
+    if results.len() > 1 && results.iter().any(|(_, _, var)| *var) {
+        return None;
+    }
+    // The error it propagates is the enclosing function's.
+    let error = match (fails, enclosing) {
+        (false, _) => None,
+        (true, Some(def)) => {
+            let header = header(&text[(def.decl_span.start - base) as usize..(def.decl_span.end - base) as usize]);
+            let after = header.rsplit_once(')')?.1;
+            Some(after.split_once('!')?.1.trim().trim_end_matches('{').trim().to_string()).filter(|e| !e.is_empty())
+        }
+        (true, None) => return None,
+    };
+    if fails && error.is_none() {
+        return None;
+    }
+    let name = unused_name("extracted", text);
+    let (binding, result, returned) = match results.as_slice() {
+        [] => (String::new(), None, None),
+        [(name, ty, var)] => {
+            (format!("{} {name} = ", if *var { "var" } else { "let" }), Some(ty.clone()), Some(name.clone()))
+        }
+        many => {
+            let names: Vec<&str> = many.iter().map(|(n, ..)| n.as_str()).collect();
+            let types: Vec<&str> = many.iter().map(|(_, t, _)| t.as_str()).collect();
+            let tuple = format!("({})", names.join(", "));
+            (format!("let {tuple} = "), Some(format!("({})", types.join(", "))), Some(tuple))
+        }
+    };
+    let signature = match (&result, &error) {
+        (None, None) => String::new(),
+        (Some(result), None) => format!(": {result}"),
+        (None, Some(error)) => format!(": !{error}"),
+        (Some(result), Some(error)) => format!(": {result} ! {error}"),
+    };
+    let body: String = lines
+        .lines()
+        .map(|line| match line.trim().is_empty() {
+            true => "\n".to_string(),
+            false => format!("    {}\n", &line[indent.len()..]),
+        })
+        .collect();
+    let returned = returned.map(|value| format!("    {value}\n")).unwrap_or_default();
+    let function = format!("\n\nfn {name}({}){signature} {{\n{body}{returned}}}", parameters.join(", "));
+    let question = if fails { "?" } else { "" };
+    let call = format!("{indent}{binding}{name}({}){question}", arguments.join(", "));
+    let after = Span::new(scope.end, scope.end);
+    Some(vec![(block, call), (after, function)])
 }

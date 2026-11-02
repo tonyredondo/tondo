@@ -1045,3 +1045,157 @@ fn files_changed_on_disk() {
     assert_eq!(diagnostics[0]["code"], "E1102", "{diagnostics}");
     editor.stop();
 }
+
+const REFACTORED: &str = "\
+pub enum ConfigError {
+    Invalid
+}
+
+pub trait Named {
+    fn name(self): String
+}
+
+pub type Box = { label: String }
+
+impl Named for Box {
+    fn name(self): String {
+        self.label
+    }
+}
+
+fn check(port: Int): Int ! ConfigError {
+    if port < 0 {
+        fail ConfigError.Invalid
+    }
+    port
+}
+
+fn first(values: Array[Int]): Int? {
+    let found = values.first()?
+    some(found * 2)
+}
+
+fn total(port: Int): Int ! ConfigError {
+    let checked = check(port)?
+    let base = checked + 1
+    let doubled = base * 2 + 10
+    doubled * 3 + base
+}
+
+fn guarded(values: Array[Int]): Bool {
+    values.isEmpty() or values.first() == some(0)
+}
+
+fn sum(values: Array[Int]): Int {
+    var all = 0
+    for value in values {
+        all += value
+    }
+    all
+}
+
+fn main() {
+    let box = Box { label: \"a\" }
+    _ = (Named.name(box), first([1]), total(80), guarded([]), sum([]))
+}
+";
+
+#[test]
+fn explains_counts_and_refactors() {
+    let dir = project("lsp-refactor", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", REFACTORED)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    // What a `?` and a `fail` do there.
+    let hover = |editor: &mut Editor, line: &str, word: &str| -> String {
+        let found = editor.at("textDocument/hover", &uri, REFACTORED, line, word, json!({}));
+        found["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    assert_eq!(
+        hover(&mut editor, "let checked = check(port)?", "?"),
+        "`?` gives the `Int`, or returns the `ConfigError` from `total`"
+    );
+    assert_eq!(hover(&mut editor, "values.first()?", "?"), "`?` gives the `Int`, or returns `none` from `first`");
+    assert_eq!(hover(&mut editor, "fail ConfigError", "fail"), "`fail` ends `check` with the `ConfigError`");
+
+    // How many places use each declaration, and implement a trait.
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let line_of = |text: &str| REFACTORED.lines().position(|l| l.contains(text)).unwrap() as u64;
+    let titles = |line: u64| -> Vec<String> {
+        let lenses = lenses.as_array().unwrap().iter().filter(|l| l["range"]["start"]["line"] == line);
+        lenses.map(|l| l["command"]["title"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(titles(line_of("pub trait Named")), ["2 references", "1 implementation"], "{lenses}");
+    assert_eq!(titles(line_of("fn check(")), ["1 reference"], "{lenses}");
+    let check =
+        lenses.as_array().unwrap().iter().find(|l| l["range"]["start"]["line"] == line_of("fn check(")).unwrap();
+    assert_eq!(check["command"]["command"], "tondo.showReferences");
+    assert_eq!(check["command"]["arguments"][2].as_array().unwrap().len(), 1);
+
+    // Refactors of a selection, when asked for.
+    let refactors = |editor: &mut Editor, start: (u64, u64), end: (u64, u64)| -> Vec<(String, Value)> {
+        let range =
+            json!({ "start": { "line": start.0, "character": start.1 }, "end": { "line": end.0, "character": end.1 } });
+        let params = json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [], "triggerKind": 1 } });
+        let found = editor.request("textDocument/codeAction", params);
+        let actions = found.as_array().unwrap().iter().filter(|a| a["kind"] == "refactor.extract");
+        actions.map(|a| (a["title"].as_str().unwrap().to_string(), a["edit"]["changes"][&uri].clone())).collect()
+    };
+    let doubled = line_of("let doubled");
+    let found = refactors(&mut editor, (doubled, 18), (doubled, 26));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "Extract into a variable");
+    assert_eq!(found[0].1[0]["newText"], "    let value = base * 2\n");
+    assert_eq!(found[0].1[1]["newText"], "value");
+    // Lines into a function, with what they read as parameters, what is
+    // read after them as its result, and the error it propagates.
+    let found = refactors(&mut editor, (line_of("let checked"), 4), (doubled, 31));
+    assert_eq!(found.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["Extract into a function"], "{found:?}");
+    assert_eq!(found[0].1[0]["newText"], "    let (base, doubled) = extracted(port)?");
+    assert_eq!(
+        found[0].1[1]["newText"],
+        "\n\nfn extracted(port: Int): (Int, Int) ! ConfigError {\n    let checked = check(port)?\n    let base = checked + 1\n    let doubled = base * 2 + 10\n    (base, doubled)\n}"
+    );
+    // Not what may not run where it would go, nor what changes a `var`
+    // of its function.
+    let guarded = line_of("values.isEmpty() or");
+    assert!(refactors(&mut editor, (guarded, 24), (guarded, 49)).is_empty());
+    assert!(refactors(&mut editor, (line_of("for value in values"), 4), (line_of("all += value") + 1, 5)).is_empty());
+    // The light bulb does not ask for them.
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": { "line": doubled, "character": 18 }, "end": { "line": doubled, "character": 26 } }, "context": { "diagnostics": [], "triggerKind": 2 } });
+    let automatic = editor.request("textDocument/codeAction", params);
+    assert!(automatic.as_array().unwrap().iter().all(|a| a["kind"] != "refactor.extract"), "{automatic}");
+
+    // A method an `impl` lacks and fields a literal lacks are written for
+    // the program to fill.
+    let broken = "pub type Counter = { n: Int, label: String }\n\nimpl Iterator[Int] for Counter {}\n\nlet counter = Counter {}\n_ = counter\n";
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": broken }] }),
+    );
+    let repairs = |editor: &mut Editor, line: u64, character: u64| -> Vec<(String, String)> {
+        let at = json!({ "line": line, "character": character });
+        let params = json!({ "textDocument": { "uri": uri }, "range": { "start": at, "end": at }, "context": { "diagnostics": [] } });
+        let found = editor.request("textDocument/codeAction", params);
+        let fixes = found.as_array().unwrap().iter().filter(|a| a["kind"] == "quickfix");
+        fixes
+            .map(|a| {
+                (
+                    a["title"].as_str().unwrap().to_string(),
+                    a["edit"]["changes"][&uri][0]["newText"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        repairs(&mut editor, 2, 1),
+        [(
+            "write `next`".to_string(),
+            "\n    fn next(mut self): Int? {\n        panic(\"`next` is not written yet\")\n    }\n".to_string()
+        )]
+    );
+    assert_eq!(
+        repairs(&mut editor, 4, 16),
+        [("add the fields `n: Int` and `label: String`".to_string(), " n: 0, label: \"\" ".to_string())]
+    );
+    editor.stop();
+}

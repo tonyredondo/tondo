@@ -71,6 +71,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     }),
     vscode.commands.registerCommand('tondo.restartLanguageServer', () => restartClient(output)),
+    // What a code lens of references or implementations opens.
+    vscode.commands.registerCommand('tondo.showReferences', (uri: string, at: Point, places: Place[]) =>
+      vscode.commands.executeCommand(
+        'editor.action.showReferences',
+        vscode.Uri.parse(uri),
+        new vscode.Position(at.line, at.character),
+        places.map((place) => new vscode.Location(vscode.Uri.parse(place.uri), range(place.range))),
+      ),
+    ),
     // What a diagnostic's code means, which its link opens.
     vscode.workspace.registerTextDocumentContentProvider('tondo-explain', {
       provideTextDocumentContent: async (uri) => {
@@ -79,6 +88,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     }),
   );
+}
+
+/** A position and a location as the language server writes them. */
+type Point = { line: number; character: number };
+type Place = { uri: string; range: { start: Point; end: Point } };
+
+function range(of: Place['range']): vscode.Range {
+  return new vscode.Range(of.start.line, of.start.character, of.end.line, of.end.character);
 }
 
 export async function deactivate(): Promise<void> {

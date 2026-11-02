@@ -4270,3 +4270,19 @@ the near one it does, with its repair, or the `tondo api` of the module;
 a method a type of the prelude or the library lacks gives the `tondo
 api` of the type. `tondo api` takes `http.Client` as the compiler writes
 it, and a search ends by saying how to see one result.
+
+## 2026-11-02 — Refactors that keep the program checking
+
+The language server gained the editing help an IDE is expected to give:
+the method an `impl` lacks and the fields a literal lacks, written by
+repairs of the compiler so that `tondo fix` and agents get them too;
+what a `?` or a `fail` propagates and where to, on hover; counts of
+references and implementations over each declaration; and extracting
+an expression into a variable or lines into a function. A refactor is a
+guess about the program's meaning, so each is offered only after the
+server has checked the program with it applied and found no error it did
+not have, and only where moving code cannot change when it runs: not
+past an `and`, out of a closure or an arm, nor lines that leave their
+block or change a `var` of their function. They come when asked for, not
+with the light bulb, so that selecting text does not check the program
+again each time.

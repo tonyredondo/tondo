@@ -5067,10 +5067,13 @@ impl<'a> Checker<'a> {
             bodies.push(f);
             methods[index] = Some(id);
         }
-        for ((name, _, has_default), provided) in declared.iter().zip(&methods) {
+        for ((name, signature, has_default), provided) in declared.iter().zip(&methods) {
             if provided.is_none() && !has_default {
                 let message = format!("`impl {trait_name} for {target_name}` is missing `{name}`");
                 self.diags.error("E1114", decl.span, message);
+                if let Some(edit) = self.method_stub(decl.span, name, signature, &map) {
+                    self.diags.fix(format!("write `{name}`"), false, vec![edit]);
+                }
             }
         }
         let name =
@@ -5088,6 +5091,97 @@ impl<'a> Checker<'a> {
             generics: binders,
             methods,
         });
+    }
+
+    /// The edit that writes a trait's method into an `impl` before its
+    /// closing brace, with the trait's signature for this type and a body
+    /// that says it is not written yet.
+    fn method_stub(
+        &mut self,
+        within: Span,
+        name: &str,
+        signature: &Signature,
+        map: &HashMap<Ty, Ty>,
+    ) -> Option<(Span, String)> {
+        let shown = |checker: &mut Self, ty: Ty| {
+            let ty = checker.types.subst(ty, map);
+            checker.types.display(ty)
+        };
+        let own: Vec<Ty> = signature.generics.iter().copied().filter(|g| !map.contains_key(g)).collect();
+        let mut generics = Vec::new();
+        for generic in own {
+            let param = self.types.param(generic).map(|p| p.name.clone()).unwrap_or_default();
+            let bounds: Vec<String> = self
+                .bounds
+                .get(&generic)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(bound, args)| {
+                    let trait_name = self.traits[bound.0 as usize].name.clone();
+                    match args.is_empty() {
+                        true => trait_name,
+                        false => {
+                            let args: Vec<String> = args.iter().map(|&a| shown(self, a)).collect();
+                            format!("{trait_name}[{}]", args.join(", "))
+                        }
+                    }
+                })
+                .collect();
+            generics.push(if bounds.is_empty() { param } else { format!("{param}: {}", bounds.join(" + ")) });
+        }
+        let mut params = Vec::new();
+        for (index, (&ty, written)) in signature.params.iter().zip(&signature.names).enumerate() {
+            let mode = signature.modes.get(index).copied().unwrap_or(ast::Mode::Value);
+            if index == 0 && signature.receiver.is_some() {
+                params.push(match signature.receiver {
+                    Some(ast::Mode::Mut) => "mut self".to_string(),
+                    Some(ast::Mode::Var) => "var self".to_string(),
+                    _ => "self".to_string(),
+                });
+                continue;
+            }
+            let last = index + 1 == signature.params.len();
+            let ty = match (signature.variadic && last, self.types.kind(ty).clone()) {
+                (true, TyKind::Array(element)) => format!("...{}", shown(self, element)),
+                _ => shown(self, ty),
+            };
+            let mode = match mode {
+                ast::Mode::Value => String::new(),
+                mode => format!("{} ", mode.keyword()),
+            };
+            params.push(format!("{written}: {mode}{ty}"));
+        }
+        let returned = self.types.subst(signature.result, map);
+        let result = match self.types.kind(returned).clone() {
+            TyKind::Unit => String::new(),
+            TyKind::Result(Ty::UNIT, error) => format!(": !{}", shown(self, error)),
+            _ => format!(": {}", shown(self, signature.result)),
+        };
+        let generics = if generics.is_empty() { String::new() } else { format!("[{}]", generics.join(", ")) };
+        // At the `impl`'s indentation and one more, before its last brace.
+        let file = self.sources.file_of(within.start);
+        let text = &file.text[(within.start - file.base) as usize..(within.end - file.base) as usize];
+        if !text.ends_with('}') {
+            return None;
+        }
+        let close = within.end - 1;
+        let line = file.text[..(within.start - file.base) as usize].rfind('\n').map_or(0, |at| at + 1);
+        let indent: String = file.text[line..].chars().take_while(|c| *c == ' ').collect();
+        let method = format!(
+            "{indent}    fn {name}{generics}({}){result} {{\n{indent}        panic(\"`{name}` is not written yet\")\n{indent}    }}\n",
+            params.join(", ")
+        );
+        let last = file.text[..(close - file.base) as usize].rfind('\n').map_or(0, |at| at + 1);
+        let before = &file.text[last..(close - file.base) as usize];
+        // A blank line after the methods the `impl` has.
+        let open = within.start + text.find('{')? as u32 + 1;
+        let methods = !file.text[(open - file.base) as usize..last.max((open - file.base) as usize)].trim().is_empty();
+        let method = if methods { format!("\n{method}") } else { method };
+        Some(match before.trim().is_empty() {
+            true => (Span::new(file.base + last as u32, file.base + last as u32), method),
+            false => (Span::new(close, close), format!("\n{method}{indent}")),
+        })
     }
 
     /// Each implementation's target implements the traits its trait
@@ -8816,6 +8910,7 @@ impl<'a> Checker<'a> {
                 // It ends the function, even where it cannot.
                 cx.diverged = true;
                 let error = self.error_channel(cx, value.ty, stmt.span, "E1302")?;
+                self.note_propagation(cx, value.ty, Span::new(stmt.span.start, stmt.span.start + 4), "fail");
                 let value = self.coerce(value, error);
                 Some(hir::Stmt::Fail(value))
             }
@@ -10876,7 +10971,61 @@ impl<'a> Checker<'a> {
             let what = if missing.len() == 1 { "the field" } else { "the fields" };
             let message = format!("this value is missing {what} {}", listed(&typed));
             self.diags.error("E1102", span, message);
+            // Each with the value a new one starts from, when every one has
+            // such a value.
+            let values: Option<Vec<String>> =
+                missing.iter().map(|(n, t)| Some(format!("{n}: {}", self.empty_value(**t)?))).collect();
+            if let Some(values) = values
+                && let Some(edit) = self.field_edit(span, &values)
+            {
+                let title =
+                    format!("add {} {}", if values.len() == 1 { "the field" } else { "the fields" }, listed(&typed));
+                self.diags.fix(title, false, vec![edit]);
+            }
         }
+    }
+
+    /// The value a field of a type starts from when nothing says another:
+    /// a zero, an empty text or collection, `none`, `false`.
+    fn empty_value(&self, ty: Ty) -> Option<&'static str> {
+        Some(match self.types.kind(ty) {
+            TyKind::Int(_) => "0",
+            TyKind::Float(_) => "0.0",
+            TyKind::Bool => "false",
+            TyKind::String => "\"\"",
+            TyKind::Option(_) => "none",
+            TyKind::Array(_) => "[]",
+            TyKind::Map(..) => "[:]",
+            _ => return None,
+        })
+    }
+
+    /// The edit that adds fields to a record literal before its closing
+    /// brace: on their own lines in a literal of several lines, else after
+    /// a comma.
+    fn field_edit(&self, literal: Span, fields: &[String]) -> Option<(Span, String)> {
+        let file = self.sources.file_of(literal.start);
+        let start = (literal.start - file.base) as usize;
+        let text = &file.text[start..(literal.end - file.base) as usize];
+        let open = text.find('{')?;
+        if !text.ends_with('}') {
+            return None;
+        }
+        let inside = &text[open + 1..text.len() - 1];
+        let close = literal.end - 1;
+        if inside.trim().is_empty() {
+            let span = Span::new(literal.start + open as u32 + 1, close);
+            return Some((span, format!(" {} ", fields.join(", "))));
+        }
+        if inside.contains('\n') {
+            let line = file.text[..(close - file.base) as usize].rfind('\n').map_or(0, |at| at + 1);
+            let indent: String = file.text[line..].chars().take_while(|c| *c == ' ').collect();
+            let lines: String = fields.iter().map(|field| format!("{indent}    {field}\n")).collect();
+            return Some((Span::new(file.base + line as u32, file.base + line as u32), lines));
+        }
+        let end = literal.start + (open + 1 + inside.trim_end().len()) as u32;
+        let separator = if inside.trim_end().ends_with(',') { " " } else { ", " };
+        Some((Span::new(end, end), format!("{separator}{}", fields.join(", "))))
     }
 
     /// Whether a name is a context's (11.16).
@@ -12052,6 +12201,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let value = self.expr(cx, inner, hint);
+        self.note_propagation(cx, value.ty, Span::new(span.end - 1, span.end), "?");
         match self.types.kind(value.ty).clone() {
             TyKind::Option(payload) => {
                 if !matches!(self.types.kind(cx.result), TyKind::Option(_)) {
@@ -12117,6 +12267,50 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1301", span, message);
                 Self::error_expr(span)
             }
+        }
+    }
+
+    /// For an editor's hover: what a `?` or a `fail` does with a value of
+    /// type `ty` where it is written.
+    fn note_propagation(&mut self, cx: &FnCx, ty: Ty, at: Span, what: &str) {
+        if self.index.is_none() || ty == Ty::ERROR {
+            return;
+        }
+        let from = match (cx.parent.is_some(), cx.infer_error) {
+            (true, _) => "the closure".to_string(),
+            (false, true) if self.naming == "main" => "`main`".to_string(),
+            _ => format!("`{}`", self.naming),
+        };
+        // What the error does once out of the function.
+        let error = match self.types.kind(ty).clone() {
+            TyKind::Result(_, error) => Some(error),
+            TyKind::Option(_) => None,
+            _ => Some(ty),
+        };
+        let then = match cx.error {
+            _ if cx.infer_error && cx.parent.is_none() && self.naming == "main" => {
+                ", which ends the program: it prints `error: ` and the error's `Display`, and exits with 1".to_string()
+            }
+            Some(channel) if Some(channel) != error => format!(", which fails with `{}`", self.types.display(channel)),
+            _ => String::new(),
+        };
+        let note = match (what, self.types.kind(ty).clone()) {
+            ("fail", _) => format!("`fail` ends {from} with the `{}`{then}", self.types.display(ty)),
+            (_, TyKind::Option(payload)) => {
+                format!("`?` gives the `{}`, or returns `none` from {from}", self.types.display(payload))
+            }
+            (_, TyKind::Result(ok, Ty::NEVER)) => {
+                format!("`?` gives the `{}`: what it applies to cannot fail", self.types.display(ok))
+            }
+            (_, TyKind::Result(ok, error)) => format!(
+                "`?` gives the `{}`, or returns the `{}` from {from}{then}",
+                self.types.display(ok),
+                self.types.display(error)
+            ),
+            _ => return,
+        };
+        if let Some(index) = self.index.as_mut() {
+            index.notes.push((at, note));
         }
     }
 

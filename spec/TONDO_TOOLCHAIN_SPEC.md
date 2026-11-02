@@ -533,7 +533,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   trait, parámetro, variable, campo, variante, función, método), de las
   palabras clave, los textos, los números y los comentarios; del archivo
   entero o de las líneas de un rango.
-- Hover de una palabra clave: qué hace, un uso y el tema de la guía.
+- Hover de una palabra clave: qué hace, un uso y el tema de la guía. El de
+  un `?` o un `fail` dice qué da y qué propaga ahí: el valor, y el error o
+  `none` que devuelve de la función o el closure, con el error de la
+  función si es otro; en `main` o un script, que el error termina el
+  programa.
 - Los símbolos de un archivo y su formato canónico (21 del lenguaje), entero o
   en las líneas de un rango; los bloques, corchetes de varias líneas, imports
   y comentarios que se pliegan; y la selección que crece del token a los
@@ -554,12 +558,31 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   aplica las seguras del archivo que no se tocan entre sí. La acción
   `source.organizeImports` añade, en orden, los imports de los módulos que el
   archivo nombra sin importar y quita los que no usa; la extensión de VS
-  Code la aplica al guardar.
+  Code la aplica al guardar. Entre las reparaciones están escribir el método
+  que le falta a un `impl` (`E1114`), con la firma del trait para ese tipo y
+  un `panic` que dice que falta, y los campos que le faltan a un literal
+  (`E1102`) cuando cada uno tiene un valor del que parte uno nuevo: `0`,
+  `0.0`, `false`, `""`, `none`, `[]` o `[:]`.
+- Refactors de una selección, cuando el editor los pide y no para la
+  bombilla (`triggerKind` 2): extraer una expresión a una variable, con un
+  `let` antes de su sentencia, salvo si ahí podría evaluarse cuando antes no
+  (tras un `and` o un `or`, dentro de un bloque o un closure de la línea, en
+  un brazo); y extraer líneas enteras de un bloque a una función, con las
+  variables de fuera que leen como parámetros y las que se leen después como
+  su resultado, que propaga con `?` el error de la función que las contenía.
+  No se ofrece si las líneas salen del bloque (`return`, `break`,
+  `continue`, `defer`) o leen una variable `var` o `self` de fuera. Cada
+  refactor se ofrece solo si el programa, con él aplicado, no tiene un error
+  que no tuviera.
 - Code lenses *Run*, *Debug*, *Debug Live* y *Profile* sobre el `main` de un
   programa, o sobre la primera sentencia de un script, en el archivo que lo
   contiene, con las órdenes `tondo.run`, `tondo.debug`, `tondo.debugLive` y
   `tondo.profile` y la URI del archivo como argumento, que el editor
-  implementa.
+  implementa. Sobre cada función, método, tipo y trait de un archivo, salvo
+  `main`, cuántas referencias tiene y, en un trait, cuántas
+  implementaciones, con la orden `tondo.showReferences` y como argumentos la
+  URI, la posición y las ubicaciones, que el editor muestra como sus
+  referencias.
 - Si el editor lo pide con `"tests": true` en `initializationOptions`, la
   notificación `tondo/tests` le da las suites y los tests de un proyecto cada
   vez que cambian al analizarlo, aunque no estén guardados:

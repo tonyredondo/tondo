@@ -87,6 +87,9 @@ pub struct Index {
     /// Each method of an `impl`: the trait method it implements, and its
     /// name.
     pub implemented: Vec<(usize, Span)>,
+    /// What a `?` or a `fail` does where it is written: what it gives, what
+    /// it propagates and where to, which a hover shows.
+    pub notes: Vec<(Span, String)>,
     keys: HashMap<Key, usize>,
 }
 
