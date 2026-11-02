@@ -1219,6 +1219,9 @@ fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
 /// A cycle of tasks that wait for each other, through locks and joins, in
 /// words: a deadlock's cause.
 pub(crate) fn cycle(tasks: &[u64]) -> Option<String> {
+    // From the lowest task, so that the same cycle reads the same.
+    let mut tasks = tasks.to_vec();
+    tasks.sort_unstable();
     let edges: Vec<(u64, String, Vec<u64>)> =
         tasks.iter().filter_map(|&t| waits_for(t).map(|(text, on)| (t, text, on))).collect();
     for &(start, ..) in &edges {
@@ -1952,7 +1955,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let frames: Vec<String> = frames.iter().map(|f| quoted(f)).collect();
             // Where the task was spawned, and its spawner: the stack's
             // cause.
-            format!("{{\"stack\":[{}],\"spawned\":[{}]}}", frames.join(","), spawned.join(","))
+            let spawned = match spawned.is_empty() {
+                true => String::new(),
+                false => format!(",\"spawned\":[{}]", spawned.join(",")),
+            };
+            format!("{{\"stack\":[{}]{spawned}}}", frames.join(","))
         }
         "snapshot" => match snapshot(table) {
             Ok(answer) => answer,
