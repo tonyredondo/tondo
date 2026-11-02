@@ -992,7 +992,7 @@ pub enum ReflectOp {
     /// The type's identity, as an `Int`.
     Identity,
     /// The capabilities the compiler demonstrates of the type, as bits:
-    /// 1 `Copy`, 2 `Equatable`, 4 `Key`.
+    /// 1 `Copy`, 2 `Equatable`, 4 `Key`, 8 `Send`, 16 `Share`.
     Capabilities,
     /// A value of any type as text, as the report of an error that ends
     /// `main` shows it: its `Display`, a string, `Type.Variant`, or the

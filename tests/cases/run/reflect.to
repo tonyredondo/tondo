@@ -143,7 +143,7 @@ fn main(): Unit ! reflect.ReflectError {
 // expect-stdout: [a: 1]
 // expect-stdout: [ok(1), err("no")]
 // expect-stdout: 3
-// expect-stdout: User Record Set[Copy, Equatable]
+// expect-stdout: User Record Set[Copy, Equatable, Send, Share]
 // expect-stdout:   0 name: String some(What others call them.)
 // expect-stdout:   1 age: Int none
 // expect-stdout:   2 address: Address none

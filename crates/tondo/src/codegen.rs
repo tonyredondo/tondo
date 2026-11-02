@@ -6075,7 +6075,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let types = self.e.cg.types();
                         let bits = types.is_copy(*ty) as i64
                             | (types.is_equatable(*ty) as i64) << 1
-                            | (types.is_key(*ty) as i64) << 2;
+                            | (types.is_key(*ty) as i64) << 2
+                            | (types.is_send(*ty) as i64) << 3
+                            | (types.is_share(*ty) as i64) << 4;
                         Val::Scalar(self.e.fb.ins().iconst(types::I64, bits))
                     }
                 }

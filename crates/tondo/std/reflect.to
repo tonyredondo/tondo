@@ -1195,6 +1195,12 @@ pub fn TypeInfo.capabilities(self): Set[TypeCapability] {
     if self.bits / 4 % 2 == 1 {
         found.insert(TypeCapability.Key)
     }
+    if self.bits / 8 % 2 == 1 {
+        found.insert(TypeCapability.Send)
+    }
+    if self.bits / 16 % 2 == 1 {
+        found.insert(TypeCapability.Share)
+    }
     found
 }
 
