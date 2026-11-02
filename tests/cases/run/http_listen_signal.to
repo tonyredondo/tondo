@@ -36,7 +36,7 @@ fn ask(socket: String, began: Receiver[Unit], release: Sender[Unit]) {
     let web = http.Client.new(baseUrl: "http://app", socket: socket)
     let slow = spawn web.get("/slow")
     _ = began.receive()
-    _ = process.command("kill", "-TERM", "{env.processId()}").run()
+    _ = process.signal(env.processId(), process.Signal.Terminate)
     release.send(())
     _ = slow.wait()
 }
