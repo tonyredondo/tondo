@@ -73,7 +73,8 @@ process ID or name. A change it cannot make in place says to start again.
 `debug_start` debugs a `.to` file or project (built with `--debug`), a
 debug executable or a running debug build, also one on another machine or
 in a container with `via` (`ssh host`, `docker exec -i box`, where `tondo`
-is installed too), and gives a session; with
+is installed too), or one test of a project with `test`, its id as `test`
+lists it, and gives a session; with
 `live`, `reload` changes its code where it stopped. `debug` sends it one
 command and gives the answers, the events and what the program printed:
 
@@ -110,7 +111,8 @@ tasks that wait too, whose frames `task 2` and `stack 2` show.
 
 `ps` lists the programs started with `TONDO_DIAGNOSTICS=1` and the debug
 builds; `counters`, `trace`, `dump` and `dump_read` look into one by
-`program`, its process ID or name. `profile` profiles a `path` it runs, a
+`program`, its process ID or name, and with `via`, as `ssh host`, they and
+`ps` and `reload` reach one on another machine or in a container. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `memory` or `tasks`, and gives the functions and the program's lines that
 take the most, each with its code.

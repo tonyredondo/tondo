@@ -4482,3 +4482,14 @@ of that analysis, as nothing calls it, and the patch adds it to a slot.
 The stopped task, waiting in the runtime, calls it on its own stack, and
 its probes let it run to its end. Conditions, watches and logpoints never
 call, so that looking at a program does not change it unless asked.
+
+## 2026-11-02 — Every tool of a running program takes `--via`
+
+The relay serves any connection to a program, not only a debugger's, so
+`ps`, `counters`, `trace`, `profile`, `dump` and `reload` take `--via`
+as `debug` does: the connection they open goes through `tondo relay` on
+the other machine, and `ps` runs `tondo ps` there. In `tondo mcp`, their
+tools take `via`, and `debug_start` takes `test`, so that a model debugs
+one test alone as `tondo debug --test` does; `goto` answers as a step
+does, so that a session waits for the stop it brings instead of timing
+out, and moving through a history that has nowhere to go says so.

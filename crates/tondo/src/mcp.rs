@@ -263,7 +263,7 @@ impl Server {
                     (None, Some(program)) => program,
                     (None, None) => return Err("give `session`, or `program`: a running live build".into()),
                 };
-                match crate::live::reload_named(&program) {
+                match crate::live::reload_at(&program, args.text("via").as_deref()) {
                     Ok(reloaded) => Ok(Reply::new(reloaded.summary(), reloaded.json())),
                     Err(refused) => Err(refused.message()),
                 }
@@ -329,6 +329,10 @@ impl Server {
     fn debug_start(&mut self, args: &Args) -> Result<Reply, String> {
         let target = args.need("target")?;
         let mut argv = vec!["debug".to_string(), "--json".into()];
+        // One test of the project, alone.
+        if let Some(test) = args.text("test") {
+            argv.extend(["--test".into(), test]);
+        }
         if let Some(via) = args.text("via") {
             argv.extend(["--via".into(), via]);
         }
@@ -1083,7 +1087,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             push(&["target", "pack", "--json"]);
             argv.extend(args.text("dir"));
         }
-        "ps" => push(&["ps", "--json"]),
+        "ps" => {
+            push(&["ps", "--json"]);
+            option(&mut argv, "--via", "via");
+        }
         "add_dependency" => {
             push(&["add", &args.need("alias")?, "--json"]);
             for key in ["path", "git", "tag", "branch", "rev", "url", "sha256", "project"] {
@@ -1099,10 +1106,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             let count = args.number("count").unwrap_or(1.0).max(1.0).to_string();
             push(&["counters", &args.need("program")?, "--json", "--count", &count]);
             option(&mut argv, "--interval", "interval");
+            option(&mut argv, "--via", "via");
         }
         "trace" => {
             push(&["trace", "--json"]);
             argv.extend(args.text("program"));
+            option(&mut argv, "--via", "via");
             option(&mut argv, "--duration", "duration");
             option(&mut argv, "--output", "output");
             let started = args.list("command");
@@ -1114,6 +1123,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump" => {
             push(&["dump", &args.need("program")?, "--json"]);
             option(&mut argv, "--output", "output");
+            option(&mut argv, "--via", "via");
         }
         "dump_read" => {
             push(&["dump", "read", &args.need("file")?]);
@@ -1674,6 +1684,12 @@ const TARGET: (&str, &str, &str) =
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const PROGRAM: (&str, &str, &str) =
     ("program", "string!", "A running program's process ID or name, as `ps` lists them.");
+const VIA: (&str, &str, &str) = (
+    "via",
+    "string",
+    "The command that reaches a program on another machine or in a container, as `ssh host` or `docker exec -i \
+box`, where `tondo relay` joins it to this one.",
+);
 
 const TOOLS: &[Tool] = &[
     Tool {
@@ -1976,9 +1992,9 @@ TONDO_TARGETS names the directory.",
     Tool {
         name: "ps",
         description: "The running Tondo programs that can be observed: those started with TONDO_DIAGNOSTICS=1, and \
-debug builds.",
+debug builds; with `via`, those of another machine or a container.",
         kind: Kind::Reads,
-        params: &[],
+        params: &[VIA],
     },
     Tool {
         name: "counters",
@@ -1986,6 +2002,7 @@ debug builds.",
         kind: Kind::Reads,
         params: &[
             PROGRAM,
+            VIA,
             ("count", "integer", "How many readings; 1 by default."),
             ("interval", "number", "Seconds between readings."),
         ],
@@ -1997,6 +2014,7 @@ a running program, or of `command`, which it starts.",
         kind: Kind::Edits,
         params: &[
             ("program", "string", "A running program's process ID or name."),
+            VIA,
             ("command", "strings", "An executable to start and trace, and its arguments."),
             ("duration", "number", "Seconds to record."),
             ("output", "string", "The trace file to write."),
@@ -2006,7 +2024,7 @@ a running program, or of `command`, which it starts.",
         name: "dump",
         description: "Write a dump of a running program: its tasks and where they are, its counters, its live memory.",
         kind: Kind::Edits,
-        params: &[PROGRAM, ("output", "string", "The dump file to write.")],
+        params: &[PROGRAM, VIA, ("output", "string", "The dump file to write.")],
     },
     Tool {
         name: "dump_read",
@@ -2029,6 +2047,12 @@ debug build's process ID or name. A program it starts waits before main for brea
             ("target", "string!", "The program to debug."),
             ("args", "strings", "The arguments of a program it starts."),
             ("live", "boolean", "Build it live (`--live`), so that `reload` changes its code while it is debugged."),
+            (
+                "test",
+                "string",
+                "The id of a test of the project `target` names, as `test` lists it: the session debugs that test \
+alone, and says how it ended.",
+            ),
             (
                 "via",
                 "string",
@@ -2119,6 +2143,7 @@ with other fields, says to start the program again; files that do not compile le
         params: &[
             ("session", "string", "The session `run_start` gave."),
             ("program", "string", "A running live build's process ID or name."),
+            VIA,
         ],
     },
 ];

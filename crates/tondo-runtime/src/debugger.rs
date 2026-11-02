@@ -218,6 +218,14 @@ fn moved(table: &Table, word: &str, count: usize) -> Result<String, String> {
         }
         _ => (at + count).min(present),
     };
+    if to == at {
+        return Err(match word {
+            "forward" => "this is the present: `continue` or a step goes on from here".into(),
+            _ => format!(
+                "no line of task {task}'s history comes before this one: `record` keeps them from when it starts"
+            ),
+        });
+    }
     state.past = (to < present).then_some(mine[to]);
     state.selected = None;
     let moment = &history[mine[to]];
@@ -1477,7 +1485,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let at = moved_place(&place_in(table, stop.site), line);
             *TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(format!("{{\"stopped\":{{\"why\":\"goto\",\"task\":{},\"at\":{}}}}}", stop.task, quoted(&at)));
-            format!("{{\"goto\":{line}}}")
+            // The stop at the target line comes next, as after a step.
+            format!("{{\"running\":true,\"goto\":{line}}}")
         }
         // What a call of the program's code gives, on the stopped task.
         "call" => match called(table, rest) {

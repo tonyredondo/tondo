@@ -258,7 +258,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     crate::live::goto(pid, &mut ask, &place, line).and_then(|hex| ask(&format!("goto {line} {hex}")));
                 match moved {
                     // Where it goes on, which the debugger tells next.
-                    Ok(answer) if answer.get("goto").is_some() => session.wait_event(),
+                    Ok(answer) if answer["running"] == true => {
+                        session.show(&answer);
+                        session.wait_event();
+                    }
                     Ok(answer) => session.show(&answer),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
