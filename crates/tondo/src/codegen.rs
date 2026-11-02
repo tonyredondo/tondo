@@ -938,10 +938,10 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     };
     for (index, (body, mut built)) in bodies.iter().zip(built).enumerate() {
         cg.current = index;
-        // A test's trace ends at the test, without the runner's tree that
-        // calls it.
+        // The runner that calls the tests is not the program's; a test's
+        // suites are, and a debugger shows their frames.
         let runner = !program.tests.is_empty() && program.main.is_some_and(|main| index == main.0 as usize);
-        let traced = (!runner && !body.name.starts_with("suite ")).then_some(body.name.as_str());
+        let traced = (!runner).then_some(body.name.as_str());
         if built.serial {
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
@@ -4400,6 +4400,9 @@ struct DebugFrame {
     /// code of a function that did not change stays the same.
     first: Option<(DataId, usize)>,
     shown: Vec<(Local, Option<ir::StackSlot>)>,
+    /// A closure's captures, after `shown`: where each is in the closure's
+    /// environment, its first parameter, and whether it is boxed there.
+    captured: Vec<(u32, bool)>,
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
     line: Option<(String, usize)>,
@@ -4462,13 +4465,32 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let ty = body.locals[index];
                 described.push((name.clone(), ty, cg.glue(Glue::Show, ty)));
             }
-            let words = shown.len().div_ceil(64).max(1) as u32;
+            // What a closure captured is a binding of its body too, read
+            // from its environment; but not in one that gives its captures
+            // away, which may have.
+            let mut captured = Vec::new();
+            let env = body.params.first().map(|local| body.locals[local.0 as usize]);
+            if let Some(env) = env.filter(|&env| cg.types().closure_calls(env).is_some_and(|(_, once)| !once))
+                && let TyKind::Adt(id) = *cg.types().kind(env)
+                && let AdtKind::Record(fields) = cg.types().adt(id).kind.clone()
+            {
+                for (index, field) in fields.iter().enumerate() {
+                    let slot = cg.slot(env, Proj::Field(index as u32));
+                    if matches!(cg.class(slot.ty), Class::Zero) {
+                        continue;
+                    }
+                    captured.push((slot.offset, slot.boxed));
+                    described.push((field.name.clone(), slot.ty, cg.glue(Glue::Show, slot.ty)));
+                }
+            }
+            let count = shown.len() + captured.len();
+            let words = count.div_ceil(64).max(1) as u32;
             let alive = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, words * 8, 3));
-            let size = (shown.len().max(1) * 8) as u32;
+            let size = (count.max(1) * 8) as u32;
             let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
             let function = cg.debug_function(body.name.clone(), described);
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, alive, addresses, line: None }
+            DebugFrame { function, first, shown, captured, alive, addresses, line: None }
         });
         FnCodegen {
             e: Emit { cg, fb },
@@ -4529,11 +4551,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         if let Some(debug) = &self.debug {
             let zero = self.e.fb.ins().iconst(types::I64, 0);
-            for word in 0..debug.shown.len().div_ceil(64) {
-                self.e.fb.ins().stack_store(POINTER, zero, debug.alive, word as i32 * 8);
+            let (shown, captured, alive) = (debug.shown.len(), debug.captured.len(), debug.alive);
+            for word in 0..(shown + captured).div_ceil(64) {
+                self.e.fb.ins().stack_store(POINTER, zero, alive, word as i32 * 8);
             }
             for &param in &self.body.params {
                 self.mark(param, true);
+            }
+            // A closure's captures hold their values from its start.
+            for index in shown..shown + captured {
+                let (offset, bit) = ((index / 64) as i32 * 8, 1i64 << (index % 64));
+                let word = self.e.fb.ins().stack_load(POINTER, types::I64, alive, offset);
+                let word = self.e.fb.ins().bor_imm_s(word, bit);
+                self.e.fb.ins().stack_store(POINTER, word, alive, offset);
             }
         }
         if self.e.cg.coverage().is_some() {
@@ -5222,6 +5252,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => self.e.fb.ins().iconst(POINTER, 0),
                 };
                 self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index as i32 * 8);
+            }
+            if !debug.captured.is_empty() {
+                let env = match self.storage[self.body.params[0].0 as usize] {
+                    Storage::Pointer(var) => Some(self.e.fb.use_var(var)),
+                    Storage::Slot(slot) => Some(self.e.fb.ins().stack_addr(POINTER, slot, 0)),
+                    _ => None,
+                };
+                for (at, &(offset, boxed)) in debug.captured.iter().enumerate() {
+                    let address = match env {
+                        Some(env) => {
+                            let field = self.e.fb.ins().iadd_imm_s(env, i64::from(offset));
+                            if boxed { self.e.fb.ins().load(POINTER, flags(), field, 0) } else { field }
+                        }
+                        None => self.e.fb.ins().iconst(POINTER, 0),
+                    };
+                    let index = (debug.shown.len() + at) as i32;
+                    self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index * 8);
+                }
             }
             let index = self.e.cg.debug_site(span.start, debug.function);
             let site = match debug.first {

@@ -38,7 +38,8 @@ finish                                          until this function returns (f)
 pause                                           stop every task, as Ctrl-C does
 catch panic|none                                stop where a task panics and no recover stops it (the default), or not
 set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
-locals                                          the bindings that hold a value (l)
+locals                                          the bindings that hold a value here, and those of the
+                                                functions this one is written in, as a test's suites (l)
 context                                         the task's contexts, and the `with` that set each field
 print <path>                                    a binding or a part of it: user.name, items[2], map[\"key\"] (p)
 children <path>                                 the parts of a binding or of a part
@@ -377,9 +378,10 @@ impl Session {
 
 fn binding(value: &Value) -> String {
     let (name, value_text) = (value["name"].as_str().unwrap_or_default(), value["value"].as_str().unwrap_or_default());
+    let from = value["from"].as_str().map_or(String::new(), |from| format!("  (of {from})"));
     match value["type"].as_str() {
-        Some(ty) => format!("{name}: {ty} = {value_text}"),
-        None => format!("{name} = {value_text}"),
+        Some(ty) => format!("{name}: {ty} = {value_text}{from}"),
+        None => format!("{name} = {value_text}{from}"),
     }
 }
 

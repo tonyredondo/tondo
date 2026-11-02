@@ -73,16 +73,17 @@ debug executable or a running debug build, and gives a session; with
 command and gives the answers, the events and what the program printed:
 
 ```text
-break src/main.to:12 [if count > 3]   delete <id>
-continue   step   next   finish   pause   wait
-locals     print <name>   context   stack   tasks
-reload     restart
+break src/main.to:12 [if count > 3] [hits 5] [log at {i}]   delete <id>
+continue   step   next   finish   pause   wait   catch panic|none
+locals   print user.name   children user   set count 3   context
+stack    frame 1   task 2   tasks   reload   restart
 ```
 
-`locals` lists every binding the stopped line can use, those of the
-enclosing blocks and closures included; `context` the task's contexts and
-the `with` that set each field. `debug_stop` ends the session and its
-program.
+`locals` lists what the stopped line can use: its bindings, what a closure
+captured, and those of the functions it is written in that are on the
+stack, as a test's suites, each with where it is from; `context` the
+program's contexts and the `with` that set each field. `debug_stop` ends
+the session and its program.
 
 ## Observing and profiling
 

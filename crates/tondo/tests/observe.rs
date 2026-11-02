@@ -459,6 +459,55 @@ fn debugger_session() {
     assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }
 
+const CLOSED: &str = r#"fn total(items: Array[Int]): Array[Int] {
+    let offset = 3
+    let label = "total"
+    items.map((item) { item + offset })
+}
+
+fn main() {
+    _ = total([1, 2])
+}
+"#;
+
+/// A closure's frame shows what it captured as its own bindings, and the
+/// bindings of the function it is written in, whose frame is below it.
+#[test]
+fn debugger_shows_what_a_block_can_use() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-closure");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("closed.to"), CLOSED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "closed.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break closed.to:4\ncontinue\ncontinue\nlocals\nprint label\ndelete 1\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
+    assert_eq!(stops[2]["at"], "closed.to:4 in closure in total");
+    let locals = lines.iter().find_map(|l| l["locals"].as_array()).unwrap();
+    let shown: Vec<String> = locals.iter().map(|l| format!("{} = {} {}", l["name"], l["value"], l["from"])).collect();
+    assert_eq!(
+        shown,
+        [
+            r#""item" = "1" null"#,
+            r#""offset" = "3" null"#,
+            r#""items" = "[1, 2]" "total""#,
+            r#""label" = "\"total\"" "total""#
+        ]
+    );
+    let label = lines.iter().find(|l| l["name"] == "label").unwrap();
+    assert_eq!(label["value"], "\"total\"");
+}
+
 /// One message of the Debug Adapter Protocol.
 fn dap_read(reader: &mut impl BufRead) -> Value {
     let mut length = 0;
@@ -484,7 +533,7 @@ fn debug_adapter_runs_a_test() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/main.to"), "pub fn add(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {}\n")
         .unwrap();
-    let tests = "test adds {\n    assert(add(1, 2) == 3)\n}\n\ntest fails {\n    let sum = add(1, 2)\n    assert(sum == 4, \"wrong sum\")\n}\n";
+    let tests = "test adds {\n    assert(add(1, 2) == 3)\n}\n\nsuite sums {\n    let base = 1\n    let unused = 5\n    test fails {\n        let sum = add(base, 2)\n        assert(sum == 4, \"wrong sum\")\n    }\n}\n";
     std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .arg("dap")
@@ -512,10 +561,10 @@ fn debug_adapter_runs_a_test() {
     };
     send("initialize", json!({ "adapterID": "tondo" }));
     response(&mut output, "initialize", &mut events);
-    send("launch", json!({ "program": ".", "cwd": dir, "test": "daptests::unit::daptests::fails" }));
+    send("launch", json!({ "program": ".", "cwd": dir, "test": "daptests::unit::daptests::sums::fails" }));
     response(&mut output, "launch", &mut events);
     let path = dir.join("src/main_test.to");
-    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 7 }] }));
+    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 10 }] }));
     response(&mut output, "setBreakpoints", &mut events);
     // A file of the other system has no code in the program.
     let (here, other) = if cfg!(target_os = "macos") { ("macOS", "linux") } else { ("Linux", "macos") };
@@ -538,7 +587,21 @@ fn debug_adapter_runs_a_test() {
     };
     send("stackTrace", json!({ "threadId": stopped["body"]["threadId"] }));
     let trace = response(&mut output, "stackTrace", &mut events);
-    assert_eq!(trace["body"]["stackFrames"][0]["line"], 7, "{trace}");
+    assert_eq!(trace["body"]["stackFrames"][0]["line"], 10, "{trace}");
+    assert_eq!(trace["body"]["stackFrames"][1]["name"], "suite sums", "{trace}");
+    // The test's bindings, what it captured of its suite among them, then
+    // the rest of its suite's, and the contexts.
+    send("scopes", json!({ "frameId": trace["body"]["stackFrames"][0]["id"] }));
+    let scopes = response(&mut output, "scopes", &mut events)["body"]["scopes"].clone();
+    let names: Vec<&str> = scopes.as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Locals", "suite sums", "Context"]);
+    let mut shown = |reference: &Value| {
+        send("variables", json!({ "variablesReference": reference }));
+        let variables = response(&mut output, "variables", &mut events)["body"]["variables"].clone();
+        variables.as_array().unwrap().iter().map(|v| format!("{} = {}", v["name"], v["value"])).collect::<Vec<_>>()
+    };
+    assert_eq!(shown(&scopes[0]["variablesReference"]), [r#""sum" = "3""#, r#""base" = "1""#]);
+    assert_eq!(shown(&scopes[1]["variablesReference"]), [r#""unused" = "5""#]);
     // The failing assertion stops on its line again as it reports.
     let mut said = String::new();
     send("continue", json!({ "threadId": 1 }));

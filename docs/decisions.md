@@ -4193,3 +4193,17 @@ The guide taught a dozen of `tondo`'s commands and almost none of
 every tool, grouped by what they are for, and a test fails when the
 table of commands or of tools has one they do not name, so that they
 keep up with the toolchain without anyone remembering to.
+
+## 2026-11-02 — The debugger shows what a block can use
+
+Stopped in a test, the debugger showed the test's own bindings and none
+of its suite's, though the test uses them: a test is a closure, what it
+captured lives in its environment and not in its frame, and the suite's
+frame was left out of the table of functions so that a failure's stack
+would end at the test. Now a closure's frame shows its captures as its
+bindings, the suites are in the table and a failure's report stops at
+the test by itself, and `locals` adds the bindings of the functions a
+frame is written in whose frames are below it on its stack, as a
+closure's maker or a test's suites, each with where it is from. What is
+not on the stack, as the maker of a closure called later from elsewhere,
+is not shown: its values are gone.

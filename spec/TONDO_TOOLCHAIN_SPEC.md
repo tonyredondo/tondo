@@ -696,7 +696,11 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una.
 - `locals` muestra los bindings que tienen un valor en la función donde paró
-  la tarea, y `print <path>` uno, o una parte suya por su ruta: `user.name`,
+  la tarea, lo que un closure capturó entre ellos, y después los de las
+  funciones en que está escrita cuyos marcos siguen en su pila, cada uno con
+  la función de la que es (`from`): las de un closure, la que lo hizo; las de
+  un test, sus suites. Así se ve todo lo que el código de ese bloque puede
+  usar. `print <path>` muestra uno, o una parte suya por su ruta: `user.name`,
   `items[2]`, `scores["x"]`, `pair.0`. Los textos van entre comillas, los
   registros con sus campos, los enums con su variante y las colecciones con
   sus elementos; `children <path>` da las partes de un valor, cada una con su
@@ -723,9 +727,10 @@ ejecuta ese test solo; la consola dice cómo terminó. Con `"dump"`, un
 volcado (sección 7.5), `launch` lo abre sin programa: sus tareas como hilos,
 sus pilas, el estado de cada una y la memoria por dónde se creó. Los
 breakpoints, con su condición, sus hits y sus logpoints, los pasos, la pausa,
-las tareas (`threads`), la pila de cada una con los bindings de cada función,
-desplegables por partes (`variables`), un ámbito `Context` en cada marco con
-los contextos de la tarea, `evaluate` de una ruta, `setVariable`
+las tareas (`threads`), la pila de cada una, la de un test con sus suites,
+con los bindings de cada función, desplegables por partes (`variables`), en
+cada marco un ámbito por cada función en que está escrita, como la suite de
+un test, y un ámbito `Context` con los contextos de la tarea, `evaluate` de una ruta, `setVariable`
 y la excepción de un pánico (el filtro `panic`, con `exceptionInfo`) son las
 órdenes de `tondo debug`; la salida del programa y los logpoints van a la
 consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del

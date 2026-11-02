@@ -531,8 +531,15 @@ fn runs(addresses: impl Iterator<Item = usize>) -> impl Iterator<Item = (Frame, 
     // The body of `spawn call()` only makes the call, and a trace shows the
     // spawn as the task's origin instead.
     let mut frames = addresses.flat_map(frames).filter(|f| !spawn_body(f.function)).peekable();
+    // A test's trace ends at the test, or the suite whose setup it is in,
+    // without the suites and the runner around it.
+    let mut ended = false;
     std::iter::from_fn(move || {
+        if ended {
+            return None;
+        }
         let frame = frames.next()?;
+        ended = frame.function.starts_with("test ") || frame.function.starts_with("suite ");
         let mut times = 1;
         // The same as the trace shows it, whatever type its call assigns.
         let shown = |f: &Frame| (f.function, f.file, f.line, f.column);

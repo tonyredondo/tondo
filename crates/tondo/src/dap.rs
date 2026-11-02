@@ -14,6 +14,10 @@ use std::sync::{Arc, Mutex};
 /// The path of the handle of a frame's contexts, before a context's name.
 const CONTEXT: &str = "@context ";
 
+/// The path of the scope of a function this one is written in, by its
+/// name: a test's suite, a closure's maker.
+const OUTER: &str = "@outer ";
+
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
 struct Editor {
@@ -611,12 +615,24 @@ fn handle(
         "scopes" => {
             let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
             let locals = program.handle(task, index, String::new());
+            let mut scopes = vec![json!({ "name": "Locals", "variablesReference": locals, "expensive": false })];
+            // The bindings of the functions this one is written in, as a
+            // test's suites, a scope for each.
+            program.ask(&format!("select {task} {index}"))?;
+            let mut outers: Vec<String> = Vec::new();
+            for local in program.ask("locals").ok().iter().flat_map(|l| l["locals"].as_array().cloned()).flatten() {
+                if let Some(from) = local["from"].as_str().filter(|from| !outers.iter().any(|o| o == from)) {
+                    outers.push(from.to_string());
+                }
+            }
+            for outer in outers {
+                let reference = program.handle(task, index, format!("{OUTER}{outer}"));
+                scopes.push(json!({ "name": outer, "variablesReference": reference, "expensive": false }));
+            }
             // The task's contexts (language 11.16).
             let context = program.handle(task, index, CONTEXT.to_string());
-            Ok(json!({ "scopes": [
-                { "name": "Locals", "variablesReference": locals, "expensive": false },
-                { "name": "Context", "variablesReference": context, "expensive": false },
-            ] }))
+            scopes.push(json!({ "name": "Context", "variablesReference": context, "expensive": false }));
+            Ok(json!({ "scopes": scopes }))
         }
         // A frame's bindings, or the parts of one or of a part, each with a
         // reference to its own parts when it has some.
@@ -647,9 +663,13 @@ fn handle(
                         }
                     }
                 }
-            } else if path.is_empty() {
+            } else if path.is_empty() || path.starts_with(OUTER) {
+                let outer = path.strip_prefix(OUTER);
                 let locals = program.ask("locals")?;
                 for local in locals["locals"].as_array().into_iter().flatten() {
+                    if local["from"].as_str() != outer {
+                        continue;
+                    }
                     let name = local["name"].as_str().unwrap_or_default().to_string();
                     let parts = local["children"].as_u64().unwrap_or(0);
                     let reference = if parts > 0 { program.handle(task, index, name.clone()) } else { 0 };

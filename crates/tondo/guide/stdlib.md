@@ -719,6 +719,11 @@ set count 3 | catch none        change a binding; do not stop at panics
 tasks | task 2 | pause | delete 1 | quit
 ```
 
+`locals` shows what the code where it stopped can use: its bindings, what a
+closure captured, and those of the functions it is written in whose frames
+are below it, marked with which: a closure's maker, a test's suites.
+`context` shows every context of the program, and where each field was set.
+
 A panic that no `recover` stops stops the debugger where the program's code
 panicked, before it unwinds. When
 one task stops, all stop at their next line, and go on together.

@@ -269,7 +269,7 @@ fn logged(table: &Table, frame: &Frame, message: &str) -> String {
         out.push_str(&rest[..open]);
         let Some(close) = rest[open..].find('}') else { break };
         let path = rest[open + 1..open + close].trim();
-        match resolve(table, frame, path) {
+        match resolve(table, std::slice::from_ref(frame), 0, path) {
             Ok(found) => {
                 let text = &found.text;
                 let unquoted = text.strip_prefix('"').and_then(|t| t.strip_suffix('"'));
@@ -611,12 +611,12 @@ struct Found {
     parts: Vec<(String, String, usize)>,
 }
 
-fn resolve(table: &Table, frame: &Frame, path: &str) -> Result<Found, String> {
+fn resolve(table: &Table, frames: &[Frame], index: usize, path: &str) -> Result<Found, String> {
     let root = path.find(['.', '[']).map_or(path, |i| &path[..i]);
     let rest = &path[root.len()..];
-    let bound = bound(table, frame);
-    let Some((binding, address)) = bound.iter().find(|(b, _)| b.name == root) else {
-        let names: Vec<&str> = bound.iter().map(|(b, _)| b.name.as_str()).collect();
+    let bound = visible(table, frames, index);
+    let Some((binding, address, _)) = bound.iter().find(|(b, ..)| b.name == root) else {
+        let names: Vec<&str> = bound.iter().map(|(b, ..)| b.name.as_str()).collect();
         return Err(match names.is_empty() {
             true => format!("no binding `{root}` holds a value here"),
             false => format!("no binding `{root}` holds a value here; these do: {}", names.join(", ")),
@@ -669,7 +669,7 @@ fn clip(mut text: String, limit: usize) -> String {
 fn holds(condition: &Condition, table: &Table, site: usize, addresses: usize, alive: usize) -> bool {
     let function = table.sites.get(site).map(|s| s.function);
     let frame = Frame { place: String::new(), function, addresses, alive };
-    let Ok(Found { text: value, .. }) = resolve(table, &frame, &condition.name) else { return false };
+    let Ok(Found { text: value, .. }) = resolve(table, &[frame], 0, &condition.name) else { return false };
     let unquote = |text: &str| text.strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(text).to_string();
     let (left, right) = (unquote(&value), unquote(&condition.value));
     let order = match (left.parse::<f64>(), right.parse::<f64>()) {
@@ -805,7 +805,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 return Some(format!("{{\"error\":{}}}", quoted(message)));
             }
             let frame = match selected(table) {
-                Ok(frame) => frame,
+                Ok((frames, index)) => frames.into_iter().nth(index).expect("a selected frame"),
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
             let bound = bound(table, &frame);
@@ -855,23 +855,25 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"selected\":{{\"task\":{task},\"frame\":{frame}}}}}")
         }
         "locals" | "print" | "children" => {
-            let frame = match selected(table) {
-                Ok(frame) => frame,
+            let (frames, index) = match selected(table) {
+                Ok(selected) => selected,
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
             if word == "locals" {
+                let frame = &frames[index];
                 if frame.addresses == 0 && frame.function.is_some() {
                     let message =
                         "this frame's bindings are not known: none of its function's lines ran since the debugger came";
                     return Some(format!("{{\"error\":{}}}", quoted(message)));
                 }
-                let items: Vec<String> = bound(table, &frame)
+                let items: Vec<String> = visible(table, &frames, index)
                     .into_iter()
-                    .map(|(binding, address)| {
+                    .map(|(binding, address, from)| {
                         let whole = show(binding.show, address, WHOLE);
                         let parts = super::shown::parse(&whole).parts.len();
+                        let from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
                         format!(
-                            "{{\"name\":{},\"type\":{},\"value\":{},\"children\":{parts}}}",
+                            "{{\"name\":{},\"type\":{},\"value\":{},\"children\":{parts}{from}}}",
                             quoted(&binding.name),
                             quoted(&binding.ty),
                             quoted(&clipped(&whole))
@@ -880,7 +882,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     .collect();
                 return Some(format!("{{\"locals\":[{}]}}", items.join(",")));
             }
-            let found = match resolve(table, &frame, rest) {
+            let found = match resolve(table, &frames, index, rest) {
                 Ok(found) => found,
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
@@ -1034,13 +1036,52 @@ unsafe fn write(ty: &str, address: usize, text: &str) -> Result<(), String> {
 
 /// The frame `locals` and `print` look at: the one `select` chose, or the
 /// stopped task's own.
-fn selected(table: &Table) -> Result<Frame, String> {
+fn selected(table: &Table) -> Result<(Vec<Frame>, usize), String> {
     let state = state();
     let not = "the program runs: `pause` stops it, or a breakpoint".to_string();
     let (task, index) = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0))).ok_or(not.clone())?;
     let held = state.held.iter().find(|h| h.task == task).cloned().or(state.stopped.clone()).ok_or(not)?;
     drop(state);
-    frames(table, &held).into_iter().nth(index).ok_or_else(|| format!("task {task} has no frame {index}"))
+    let frames = frames(table, &held);
+    match index < frames.len() {
+        true => Ok((frames, index)),
+        false => Err(format!("task {task} has no frame {index}")),
+    }
+}
+
+/// The function that the function `name` is written in, by how the
+/// compiler names it: a closure's or a cleanup's, and for a test or a
+/// suite, any suite, those around it being the ones on its stack.
+fn written_in(name: &str) -> Option<(&str, bool)> {
+    if name.starts_with("test ") || name.starts_with("suite ") {
+        return Some(("suite ", true));
+    }
+    name.strip_prefix("closure in ").or(name.strip_prefix("defer in ")).map(|outer| (outer, false))
+}
+
+/// The bindings the code of a frame can use, with where each is: its own,
+/// then those of the functions it is written in whose frames are further
+/// down its stack, as a closure's maker or a test's suites, each with the
+/// function it is from.
+fn visible<'t>(table: &'t Table, frames: &[Frame], index: usize) -> Vec<(&'t Binding, usize, Option<&'t str>)> {
+    let name = |frame: &Frame| frame.function.map(|f| table.functions[f].name.as_str());
+    let mut out: Vec<(&Binding, usize, Option<&str>)> =
+        bound(table, &frames[index]).into_iter().map(|(b, a)| (b, a, None)).collect();
+    let mut at = index;
+    while let Some((outer, prefix)) = name(&frames[at]).and_then(written_in) {
+        let found = (at + 1..frames.len()).find(|&below| {
+            name(&frames[below]).is_some_and(|n| if prefix { n.starts_with(outer) } else { n == outer })
+        });
+        let Some(below) = found else { break };
+        let from = name(&frames[below]);
+        for (binding, address) in bound(table, &frames[below]) {
+            if !out.iter().any(|(b, ..)| b.name == binding.name) {
+                out.push((binding, address, from));
+            }
+        }
+        at = below;
+    }
+    out
 }
 
 /// `break <file>:<line> [if <path> <op> <value>] [hits <count>] [log <message>]`:
