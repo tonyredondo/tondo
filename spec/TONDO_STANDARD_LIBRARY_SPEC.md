@@ -3404,8 +3404,7 @@ variante. Expone:
 - `id(): TypeId`, `qualifiedName(): String` y `kind(): TypeKind`;
 - `genericArguments(): Array[TypeInfo]` en orden de declaración;
 - `capabilities(): Set[TypeCapability]` con solo capacidades que el compilador
-  demuestra: hoy `Copy`, `Equatable` y `Key`, porque `Send` y `Share` todavía no
-  se comprueban;
+  demuestra: `Copy`, `Equatable`, `Key`, `Send` y `Share`;
 - `underlying(): TypeInfo?`, el tipo que envuelve un newtype;
 - `fields(): Array[FieldInfo]` de un record;
 - `variants(): Array[VariantInfo]` de un enum;
