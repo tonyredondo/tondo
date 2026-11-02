@@ -88,6 +88,9 @@ struct Debuggee {
     /// task, a frame of its stack, and a path in it, empty for the frame's
     /// bindings.
     handles: Vec<(u64, u64, String)>,
+    /// The calls of the line a task stopped at that `stepIn` can go into,
+    /// by their `targetId`.
+    targets: Vec<String>,
 }
 
 /// A frame's id: its task, and its place in the task's stack.
@@ -193,6 +196,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsSetVariable": true,
                 "supportsSetExpression": true,
                 "supportsCompletionsRequest": true,
+                "supportsStepInTargetsRequest": true,
                 "completionTriggerCharacters": ["."],
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
@@ -510,7 +514,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         }
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let mut debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new() };
+    let mut debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new(), targets: Vec::new() };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -520,6 +524,102 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         debuggee.ask("steps all")?;
     }
     Ok(debuggee)
+}
+
+/// The calls a line of source makes, as `step into` names them: each name
+/// before a `(`, with its receiver or module, once, in the code and the
+/// interpolations of texts, not in comments.
+fn calls(line: &str) -> Vec<String> {
+    const WORDS: [&str; 14] =
+        ["if", "for", "while", "match", "fn", "return", "fail", "not", "and", "or", "in", "with", "within", "spawn"];
+    // The line with the texts blanked out, their interpolations kept.
+    let (mut code, mut quote, mut nested, mut escaped) = (Vec::new(), None, 0, false);
+    for c in line.chars() {
+        let kept = match (quote, c) {
+            (None, '/') if code.last() == Some(&'/') => {
+                code.pop();
+                break;
+            }
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                ' '
+            }
+            (None, _) => c,
+            (Some(_), _) if escaped => {
+                escaped = false;
+                ' '
+            }
+            (Some(_), '\\') if nested == 0 => {
+                escaped = true;
+                ' '
+            }
+            (Some(open), _) if nested == 0 && c == open => {
+                quote = None;
+                ' '
+            }
+            (Some('"'), '{') => {
+                nested += 1;
+                if nested == 1 { ' ' } else { c }
+            }
+            (Some(_), '}') if nested > 0 => {
+                nested -= 1;
+                if nested == 0 { ' ' } else { c }
+            }
+            (Some(_), _) if nested > 0 => c,
+            (Some(_), _) => ' ',
+        };
+        code.push(kept);
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut at = 0;
+    while at < code.len() {
+        let c = code[at];
+        let word_char = |c: char| c.is_alphanumeric() || c == '_';
+        // A name that goes on a chain, as `map` in `items.map`, starts with
+        // it; one after `].` or `).` starts there.
+        let chained = at > 0 && (word_char(code[at - 1]) || (code[at - 1] == '.' && at > 1 && word_char(code[at - 2])));
+        if !(c.is_alphabetic() || c == '_') || chained {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < code.len() && (word_char(code[at]) || code[at] == '.') {
+            at += 1;
+        }
+        let word: String = code[start..at].iter().collect();
+        // Type arguments between the name and its arguments.
+        let mut next = at;
+        if code.get(next) == Some(&'[') {
+            let mut depth = 0;
+            while next < code.len() {
+                depth += match code[next] {
+                    '[' => 1,
+                    ']' => -1,
+                    _ => 0,
+                };
+                next += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        if code.get(next) == Some(&'(') && !WORDS.contains(&word.as_str()) && !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn finds_the_calls_of_a_line() {
+        let line = r#"    let total = plus(twice(1), twice[Int](2)) + [1, 2].map((x) { x * 3 }).length() // keep(1)"#;
+        assert_eq!(super::calls(line), ["plus", "twice", "map", "length"]);
+        let line = r#"    console.println("{sum(items)} \"f(x)\" {json.encode(p)}")"#;
+        assert_eq!(super::calls(line), ["console.println", "sum", "json.encode"]);
+        assert_eq!(super::calls("    if ready(x) and not done() {"), ["ready", "done"]);
+    }
 }
 
 /// The value whose part the console writes after a dot that ends `text`:
@@ -693,12 +793,28 @@ fn handle(
         }
         "next" | "stepIn" | "stepOut" => {
             program.handles.clear();
-            let asked = match command {
-                "next" => "next",
-                "stepIn" => "step",
-                _ => "finish",
+            let target = arguments["targetId"].as_u64().and_then(|id| program.targets.get(id as usize));
+            let asked = match (command, target) {
+                ("next", _) => "next".to_string(),
+                ("stepIn", Some(target)) => format!("step into {target}"),
+                ("stepIn", None) => "step".to_string(),
+                _ => "finish".to_string(),
             };
-            program.ask(asked).map(|_| json!({}))
+            program.ask(&asked).map(|_| json!({}))
+        }
+        // The calls of the line a frame is at, which `stepIn` goes into.
+        "stepInTargets" => {
+            let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
+            let stack = program.ask(&format!("stack {task}"))?;
+            let place = stack["stack"].get(index as usize).and_then(Value::as_str).unwrap_or_default().to_string();
+            let line = place.split_once(" in ").and_then(|(at, _)| at.rsplit_once(':')).and_then(|(file, line)| {
+                let text = std::fs::read_to_string(program.root.join(file)).ok()?;
+                text.lines().nth(line.parse::<usize>().ok()?.checked_sub(1)?).map(String::from)
+            });
+            program.targets = line.as_deref().map(calls).unwrap_or_default();
+            let targets: Vec<Value> =
+                program.targets.iter().enumerate().map(|(id, label)| json!({ "id": id, "label": label })).collect();
+            Ok(json!({ "targets": targets }))
         }
         "pause" => program.ask("pause").map(|_| json!({})),
         "setExceptionBreakpoints" => {

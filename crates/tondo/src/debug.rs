@@ -37,6 +37,7 @@ watch <expression> [if <condition>] [hits <n>]  stop on the line after the one t
 delete <id>                                     remove a breakpoint or a watch
 continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)
+step into <name>                                into the call of that name the line makes: plus, items.map
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
 steps program|all                               steps go over the standard library's code (the default), or into it

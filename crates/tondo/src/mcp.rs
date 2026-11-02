@@ -2032,7 +2032,7 @@ debug build's process ID or name. A program it starts waits before main for brea
         description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
 {expressions}>], break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
 changes it; a std.sync cell's value, in any task), delete <id>, \
-catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), continue, step, next, finish (a step says \
+catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), continue, step, step into <name> (that call of the line), next, finish (a step says \
 what a function returned), steps all|program (into the standard library's code or over it), pause, locals \
 (what the code there can use: its bindings, a closure's captures, and those of the functions it is written in, \
 as a test's suites), context (the task's contexts, and the `with` that set each field), print <expression> \

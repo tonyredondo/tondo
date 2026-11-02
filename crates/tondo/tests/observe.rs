@@ -737,8 +737,12 @@ fn debug_adapter() {
     assert_eq!(complete("1 + na"), ["names"]);
     assert_eq!(complete("ada.a"), ["age"]);
     assert_eq!(complete("names[0].is"), ["isEmpty()", "isSome()", "isNone()", "isOk()", "isErr()"]);
-    // Into the call: the caller's frame still shows its bindings.
-    send("stepIn", json!({ "threadId": thread }));
+    // Into the call the line makes, by its target: the caller's frame
+    // still shows its bindings.
+    send("stepInTargets", json!({ "frameId": frame }));
+    let targets = response(&mut output, "stepInTargets", &mut events)["body"]["targets"].clone();
+    assert_eq!(targets, json!([{ "id": 0, "label": "older" }]));
+    send("stepIn", json!({ "threadId": thread, "targetId": 0 }));
     response(&mut output, "stepIn", &mut events);
     until(&mut output, "stopped", &mut events);
     send("stackTrace", json!({ "threadId": thread }));
@@ -1307,6 +1311,46 @@ fn debugger_stops_at_a_deadlock() {
     assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
     // Going on, the program ends with the deadlock.
     assert!(String::from_utf8_lossy(&output.stderr).contains("panic[P0013]: deadlock"));
+}
+
+const INTO: &str = r#"fn twice(n: Int): Int {
+    n * 2
+}
+
+fn plus(a: Int, b: Int): Int {
+    a + b
+}
+
+fn main() {
+    let total = plus(twice(1), twice(2)) + [1, 2].map((x) { x * 3 }).length()
+    _ = total
+}
+"#;
+
+/// `step into` goes into the call of a name the line makes, over the
+/// others, or on to the next line when the line makes none.
+#[test]
+fn debugger_steps_into_a_chosen_call() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-into");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("into.to"), INTO).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "into.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break into.to:10\ncontinue\ndelete 1\nstep into plus\nfinish\nstep into nothing\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<(&str, &Value)> =
+        lines.iter().filter_map(|l| l.get("stopped")).map(|s| (s["at"].as_str().unwrap(), &s["returned"])).collect();
+    assert_eq!(stops[2], ("into.to:6 in plus", &json!({ "function": "twice", "value": "4" })));
+    assert_eq!(stops.last().unwrap().0, "into.to:11 in main");
 }
 
 #[test]

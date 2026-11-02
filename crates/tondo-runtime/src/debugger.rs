@@ -288,6 +288,35 @@ enum Mode {
     Restarted {
         task: u64,
     },
+    /// Into the call of a function of the name `INTO` holds that the frame
+    /// makes, or on to its next line.
+    Into {
+        task: u64,
+        frame: usize,
+    },
+}
+
+/// The name `step into` goes into.
+static INTO: Mutex<String> = Mutex::new(String::new());
+
+/// Whether a function is called `name`: by its whole name, as
+/// `Stack.push`, or by its own, `push`, with a generic one's type
+/// arguments or without; `loose`, also by the name after the last dot, as
+/// a call `items.push` names `Array.push`.
+fn named(function: &Function, name: &str, loose: bool) -> bool {
+    let mut plain = String::new();
+    let mut depth = 0;
+    for c in function.name.chars() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            _ if depth == 0 => plain.push(c),
+            _ => {}
+        }
+    }
+    let own = name.rsplit('.').next().unwrap_or(name);
+    let by_own = loose || own == name;
+    function.name == name || plain == name || (by_own && (plain == own || plain.ends_with(&format!(".{own}"))))
 }
 
 /// Where the task that stopped is: its probe, the frame of its function
@@ -520,6 +549,15 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         // standard library's and the derived, unless it started there.
         let standard = || table.sites.get(site).is_some_and(Site::generated);
         let stepped = match state.mode {
+            // The call asked for, made by the frame itself, or the frame's
+            // next line.
+            Mode::Into { task: t, frame: f } if t == task => {
+                let function = table.sites.get(site).map(|s| &table.functions[s.function]);
+                let caller = unsafe { *(frame as *const usize) };
+                let into = INTO.lock().unwrap_or_else(|e| e.into_inner());
+                (frame >= f && !standard()) || (caller == f && function.is_some_and(|f| named(f, &into, true)))
+            }
+            Mode::Into { .. } => false,
             Mode::Step { .. } | Mode::Next { .. } | Mode::Finish { .. }
                 if !STEPS_STD.load(Ordering::Relaxed) && standard() =>
             {
@@ -852,7 +890,7 @@ fn resume(mode: Mode) {
         RESTART_FRAME.store(0, Ordering::Relaxed);
     }
     let stepping = match mode {
-        Mode::Step { task } | Mode::Next { task, .. } | Mode::Finish { task, .. } => task,
+        Mode::Step { task } | Mode::Next { task, .. } | Mode::Finish { task, .. } | Mode::Into { task, .. } => task,
         Mode::Run | Mode::Restarted { .. } => 0,
     };
     STEPPING.store(stepping, Ordering::Relaxed);
@@ -1109,6 +1147,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let in_std = table.sites.get(stop.site).is_some_and(Site::generated);
             STEPS_STD.store(STEPS_ALL.load(Ordering::Relaxed) || in_std, Ordering::Relaxed);
             let mode = match word {
+                // A call of the line, by its function's name.
+                "step" if rest.starts_with("into ") => {
+                    *INTO.lock().unwrap_or_else(|e| e.into_inner()) = rest["into ".len()..].trim().to_string();
+                    Mode::Into { task: stop.task, frame: stop.frame }
+                }
                 "step" => Mode::Step { task: stop.task },
                 "next" => Mode::Next { task: stop.task, frame: stop.frame },
                 _ => Mode::Finish { task: stop.task, frame: stop.frame },
@@ -1696,25 +1739,8 @@ fn line_sites(table: &Table, at: &str) -> Result<Vec<usize>, String> {
 /// name, as `Stack.push`, or by their own, `push`; a generic one in each
 /// of its types.
 fn function_sites(table: &Table, name: &str) -> Result<Vec<usize>, String> {
-    let plain = |full: &str| {
-        let mut out = String::new();
-        let mut depth = 0;
-        for c in full.chars() {
-            match c {
-                '[' => depth += 1,
-                ']' => depth -= 1,
-                _ if depth == 0 => out.push(c),
-                _ => {}
-            }
-        }
-        out
-    };
-    let named = |function: &Function| {
-        let plain = plain(&function.name);
-        function.name == name || plain == name || plain.ends_with(&format!(".{name}"))
-    };
     let mut sites = Vec::new();
-    for (index, _) in table.functions.iter().enumerate().filter(|(_, f)| named(f)) {
+    for (index, _) in table.functions.iter().enumerate().filter(|(_, f)| named(f, name, false)) {
         let of = || table.sites.iter().enumerate().filter(|(_, s)| s.function == index);
         let Some(first) = of().map(|(_, s)| s.line).min() else { continue };
         sites.extend(of().filter(|(_, s)| s.line == first).map(|(i, _)| i));

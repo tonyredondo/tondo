@@ -841,7 +841,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
-  llamó. `pause`, o Ctrl-C, para el programa. Cada sentencia empieza una
+  llamó. `step into <nombre>` entra en la llamada de ese nombre que hace la
+  línea (`plus`, `items.map`), pasando por encima de las demás, o sigue a la
+  siguiente línea si no la hace. `pause`, o Ctrl-C, para el programa. Cada sentencia empieza una
   línea donde se para, también una que no calcula nada, como
   `let ready = true`. Los pasos pasan por encima del código que no está en
   los archivos del programa, el de la librería estándar y el derivado, salvo
@@ -902,7 +904,8 @@ suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
-la tarea, `evaluate` de una expresión, `completions` en la consola (los bindings, los
+la tarea, `evaluate` de una expresión, `stepInTargets` con las llamadas de la línea,
+`completions` en la consola (los bindings, los
 campos de un valor tras su punto y los métodos de las expresiones),
 `setVariable` y `setExpression`, de una parte también, y las excepciones de un
 pánico y de un error (los filtros `panic` y `error`, cuya condición nombra
