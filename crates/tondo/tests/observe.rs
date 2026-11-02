@@ -404,6 +404,7 @@ fn main() {
 context Trace = {
     depth: Int = 0
     path: String = "/"
+    tags: Array[String] = ["start"]
 }
 "#;
 
@@ -447,7 +448,15 @@ fn debugger_session() {
         .iter()
         .map(|f| (f["name"].as_str().unwrap(), f["value"].as_str().unwrap(), &f["set"]))
         .collect();
-    assert_eq!(fields, [("depth", "2", &json!("debugged.to:11:5 in main")), ("path", "\"/\"", &Value::Null)]);
+    assert_eq!(
+        fields,
+        [
+            ("depth", "2", &json!("debugged.to:11:5 in main")),
+            ("path", "\"/\"", &Value::Null),
+            ("tags", "[\"start\"]", &Value::Null)
+        ]
+    );
+    assert_eq!(contexts[0]["fields"][2]["children"], 1);
     // The caller's frame, and parts of its bindings by their paths.
     assert!(lines.iter().any(|l| l["selected"] == json!({ "task": 1, "frame": 1 })), "{lines:?}");
     let name = lines.iter().find(|l| l["name"] == "ada.name").unwrap();

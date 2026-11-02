@@ -257,7 +257,8 @@ pub(crate) unsafe fn described(task: *mut crate::tasks::Task) -> Vec<Described> 
                 }
                 let set = node.map(|o| (o.at.clone(), o.task != task.id));
                 let name = name.trim_start_matches('.').to_string();
-                Field { name, value: part.text.to_string(), parts: part.parts.len(), set }
+                let parts = super::shown::parse(part.text).parts.len();
+                Field { name, value: part.text.to_string(), parts, set }
             })
             .collect();
         out.push(Described { name: entry.name.clone(), fields });
