@@ -199,11 +199,22 @@ impl Checker<'_> {
         let mut shapes: HashMap<Ty, usize> = HashMap::new();
         let mut types = Vec::new();
         let mut found = Vec::new();
+        // The methods and `impl`s of each type, and what the runtime gives
+        // each intrinsic one, gathered once rather than for each type.
+        let mut by_owner = Members::default();
+        for ((owner, name), id) in &self.methods {
+            if self.signatures.get(id.0 as usize).is_some_and(|s| s.receiver.is_some()) {
+                by_owner.methods.entry(*owner).or_default().push((name.clone(), id.0));
+            }
+        }
+        for (index, implementation) in self.impls.iter().enumerate() {
+            by_owner.impls.entry(implementation.target).or_default().push(index);
+        }
         for (span, ty) in std::mem::take(&mut self.index_exprs) {
             let shape = match shapes.get(&ty) {
                 Some(&shape) => shape,
                 None => {
-                    let shape = Shape { name: self.types.display(ty), members: self.index_members(ty) };
+                    let shape = Shape { name: self.types.display(ty), members: self.index_members(ty, &mut by_owner) };
                     found.push(shape);
                     shapes.insert(ty, found.len() - 1);
                     found.len() - 1
@@ -218,7 +229,7 @@ impl Checker<'_> {
     }
 
     /// The fields and methods of a value of type `ty`.
-    fn index_members(&mut self, ty: Ty) -> Vec<Member> {
+    fn index_members(&mut self, ty: Ty, by_owner: &mut Members) -> Vec<Member> {
         let mut members: Vec<Member> = Vec::new();
         let owner = self.index_type_name(ty);
         let index = self.index.as_ref();
@@ -251,14 +262,7 @@ impl Checker<'_> {
         // The methods a value has: those that take `self`, not its type's
         // other functions, as `Builder.new`.
         let key = self.owner_key(ty);
-        let mut methods: Vec<(String, u32)> = self
-            .methods
-            .iter()
-            .filter(|((owner, _), id)| {
-                *owner == key && self.signatures.get(id.0 as usize).is_some_and(|s| s.receiver.is_some())
-            })
-            .map(|((_, name), id)| (name.clone(), id.0))
-            .collect();
+        let mut methods = by_owner.methods.get(&key).cloned().unwrap_or_default();
         methods.sort();
         for (name, id) in methods {
             let def = self.index.as_ref().and_then(|index| index.of(&Key::Fn(id)));
@@ -267,9 +271,16 @@ impl Checker<'_> {
         // What the runtime implements, as `tondo api` documents it.
         let shown = self.types.display(ty);
         let intrinsic = shown.split('[').next().unwrap_or_default().to_string();
-        for name in crate::api::builtin_methods(&intrinsic) {
-            let on_values = crate::api::builtin_doc(&intrinsic, name).is_some_and(|(d, _)| crate::api::takes_self(&d));
-            if on_values && !members.iter().any(|m| m.name == name) {
+        let runtime = by_owner.builtins.entry(intrinsic.clone()).or_insert_with(|| {
+            let names = crate::api::builtin_methods(&intrinsic).into_iter();
+            names
+                .filter(|name| {
+                    crate::api::builtin_doc(&intrinsic, name).is_some_and(|(d, _)| crate::api::takes_self(&d))
+                })
+                .collect()
+        });
+        for &name in runtime.iter() {
+            if !members.iter().any(|m| m.name == name) {
                 let builtin = Some(intrinsic.clone());
                 members.push(Member {
                     name: name.to_string(),
@@ -281,10 +292,12 @@ impl Checker<'_> {
                 });
             }
         }
-        for implementation in &self.impls {
-            if implementation.target != key && implementation.target != ty {
-                continue;
-            }
+        let mut implemented: Vec<usize> = by_owner.impls.get(&key).into_iter().flatten().copied().collect();
+        if ty != key {
+            implemented.extend(by_owner.impls.get(&ty).into_iter().flatten());
+        }
+        implemented.sort_unstable();
+        for implementation in implemented.into_iter().map(|index| &self.impls[index]) {
             let id = implementation.trait_id;
             for method in &self.traits[id.0 as usize].methods {
                 if method.signature.receiver.is_some() && !members.iter().any(|m| m.name == method.name) {
@@ -314,4 +327,14 @@ impl Checker<'_> {
             self.index_refer(&field, Key::Field(owner, name.to_string()));
         }
     }
+}
+
+/// What `index_members` looks up for each type, gathered once: the methods
+/// with a receiver by their type, the `impl`s by the type they are for,
+/// and what the runtime gives each intrinsic type.
+#[derive(Default)]
+struct Members {
+    methods: HashMap<Ty, Vec<(String, u32)>>,
+    impls: HashMap<Ty, Vec<usize>>,
+    builtins: HashMap<String, Vec<&'static str>>,
 }
