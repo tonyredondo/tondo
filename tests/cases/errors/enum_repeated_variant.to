@@ -1,0 +1,13 @@
+// A variant written twice is one error: the `Display` an enum of plain
+// variants gets is not written for it, so its code adds none.
+
+enum Mode {
+    On
+    On
+}
+
+fn main() {
+    _ = Mode.On
+}
+
+// expect-error: E1505 variant `On` is declared more than once
