@@ -625,6 +625,15 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   implementaciones, con la orden `tondo.showReferences` y como argumentos la
   URI, la posición y las ubicaciones, que el editor muestra como sus
   referencias.
+- Si el editor no lo pide, *Run test* o *Run suite* sobre cada test y cada
+  suite, con la orden `tondo.runTest`, que el servidor ejecuta
+  (`workspace/executeCommand`): corre `tondo test` con ese test, o los de la
+  suite, aparte del servidor, y dice cómo fue con `window/showMessage`, el
+  pánico o el error que lo hizo fallar, con lo que escribió en
+  `window/logMessage`.
+- Al escribir `}` (`textDocument/onTypeFormatting`), el bloque que cierra
+  toma el formato canónico, si el archivo se lee; la extensión de VS Code
+  lo activa con `editor.formatOnType`.
 - Si el editor lo pide con `"tests": true` en `initializationOptions`, la
   notificación `tondo/tests` le da las suites y los tests de un proyecto cada
   vez que cambian al analizarlo, aunque no estén guardados:

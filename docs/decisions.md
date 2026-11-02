@@ -4357,3 +4357,13 @@ text shows each as a `note`. An unused binding gets the repair its
 warning described, renaming it `_name`, as a decision rather than a safe
 repair, as an unused binding may be a mistake.
 
+## 2026-11-02 — Tests and layout for every editor
+
+VS Code runs and debugs tests from its Testing view, through
+`tondo/tests`; other editors had no way to run one. An editor that does
+not ask for `tondo/tests` gets *Run test* over each test and suite,
+which the server runs itself with `tondo test` and reports in a message,
+with the panic that failed it; VS Code, which asks, gets no duplicate.
+Writing `}` lays out the block it closes, in every editor that formats
+on typing, which the VS Code extension turns on as it does on saving.
+

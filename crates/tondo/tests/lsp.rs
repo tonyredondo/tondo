@@ -1577,3 +1577,64 @@ fn points_to_related_places_and_renames_unused() {
     assert_eq!(rename["edit"]["changes"][&uri][0]["newText"], "_unused");
     editor.stop();
 }
+
+#[test]
+fn runs_tests_from_lenses_and_formats_closed_blocks() {
+    let dir = project(
+        "lsp-run-tests",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", "fn main() {}\n\npub fn double(n: Int): Int {\n    n * 2\n}\n"),
+            (
+                "src/main_test.to",
+                "test doubles {\n    assert(double(2) == 4)\n}\n\ntest fails {\n    assert(double(2) == 5)\n}\n",
+            ),
+        ],
+    );
+    // An editor that does not run tests itself gets a lens over each.
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main_test.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let runs: Vec<Value> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|l| l["command"]["command"] == "tondo.runTest")
+        .map(|l| l["command"].clone())
+        .collect();
+    let ids: Vec<&str> = runs.iter().map(|c| c["arguments"][1].as_str().unwrap()).collect();
+    assert_eq!(ids, ["app::unit::app::doubles", "app::unit::app::fails"], "{lenses}");
+    // Running one says how it went, and why it failed.
+    let said = |editor: &mut Editor, command: &Value| -> String {
+        editor.request(
+            "workspace/executeCommand",
+            json!({ "command": "tondo.runTest", "arguments": command["arguments"] }),
+        );
+        loop {
+            let message = editor.receive();
+            if message["method"] == "window/showMessage" {
+                return message["params"]["message"].as_str().unwrap().to_string();
+            }
+        }
+    };
+    assert_eq!(said(&mut editor, &runs[0]), "`app::unit::app::doubles` passed");
+    assert_eq!(
+        said(&mut editor, &runs[1]),
+        "`app::unit::app::fails` failed: panic[P0007]: assertion-failed: double(2) == 5"
+    );
+    editor.stop();
+
+    // A block closed with `}` takes the canonical layout.
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let text = "fn main() {}\n\npub fn double(n: Int): Int {\n    if n>1 {\n  return n*2\n}\n    n * 2\n}\n";
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let params = json!({ "textDocument": { "uri": uri }, "position": { "line": 5, "character": 1 }, "ch": "}",
+        "options": { "tabSize": 4, "insertSpaces": true } });
+    let edits = editor.request("textDocument/onTypeFormatting", params);
+    assert_eq!(edits[0]["newText"], "    if n > 1 {\n        return n * 2\n    }\n", "{edits}");
+    editor.stop();
+}

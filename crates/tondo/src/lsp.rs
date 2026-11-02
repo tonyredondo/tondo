@@ -275,6 +275,7 @@ impl Server {
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
             "textDocument/codeLens" => {
                 let mut lenses = self.lenses(params).and_then(|l| l.as_array().cloned()).unwrap_or_default();
+                lenses.extend(self.test_lenses(params).unwrap_or_default());
                 lenses.extend(self.reference_lenses(params).unwrap_or_default());
                 Some(Ok(Value::Array(lenses)))
             }
@@ -298,6 +299,8 @@ impl Server {
             "typeHierarchy/supertypes" => Some(Ok(self.type_hierarchy(params, true).unwrap_or(json!([])))),
             "typeHierarchy/subtypes" => Some(Ok(self.type_hierarchy(params, false).unwrap_or(json!([])))),
             "workspace/willRenameFiles" => Some(Ok(self.will_rename_files(params).unwrap_or(Value::Null))),
+            "textDocument/onTypeFormatting" => Some(Ok(self.on_type_formatting(params).unwrap_or(json!([])))),
+            "workspace/executeCommand" => Some(Ok(self.execute(params).unwrap_or(Value::Null))),
             "initialized" => {
                 if self.watches {
                     let watchers: Vec<Value> = ["**/*.to", "**/tondo.toml", "**/tondo.lock"]
@@ -361,6 +364,8 @@ impl Server {
                 "foldingRangeProvider": true,
                 "colorProvider": true,
                 "documentLinkProvider": { "resolveProvider": false },
+                "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
+                "executeCommandProvider": { "commands": ["tondo.runTest"] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
                 "callHierarchyProvider": true,
@@ -493,6 +498,93 @@ impl Server {
             send(json!({ "jsonrpc": "2.0", "method": "tondo/tests",
                 "params": { "root": self.uri(root), "tests": tests } }));
         }
+    }
+
+    /// *Run test* over each test and suite of a file, for an editor that
+    /// does not run them itself from `tondo/tests`, as VS Code does.
+    fn test_lenses(&mut self, params: &Value) -> Option<Vec<Value>> {
+        if self.tests {
+            return None;
+        }
+        self.prepare(params)?;
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let source = analyzed.analysis.sources.file(file);
+        let inside = |span: Span| span.start >= source.base && span.end <= source.base + source.text.len() as u32;
+        let nodes = analyzed.tests.as_ref()?;
+        let lenses = nodes.iter().skip(1).filter(|node| inside(node.span)).filter_map(|node| {
+            let (_, range) = self.place(analyzed, node.span)?;
+            let title = if node.suite { "Run suite" } else { "Run test" };
+            let arguments = json!([uri, node.id, node.suite]);
+            Some(json!({ "range": range, "command": { "title": title, "command": "tondo.runTest", "arguments": arguments } }))
+        });
+        Some(lenses.collect())
+    }
+
+    /// A command a lens gives: `tondo.runTest` runs a test or a suite of the
+    /// file's project with `tondo test`, apart from the server, and says how
+    /// it went.
+    fn execute(&mut self, params: &Value) -> Option<Value> {
+        if params["command"] != "tondo.runTest" {
+            return None;
+        }
+        let arguments = &params["arguments"];
+        let path = uri_path(arguments[0].as_str()?)?;
+        let id = arguments[1].as_str()?.to_string();
+        let suite = arguments[2].as_bool().unwrap_or(false);
+        let (root, _) = root_of(&path);
+        let tondo = std::env::current_exe().ok()?;
+        std::thread::spawn(move || {
+            let chosen =
+                if suite { ["--filter".to_string(), format!("{id}::")] } else { ["--exact".to_string(), id.clone()] };
+            let ran = std::process::Command::new(tondo).arg("test").args(chosen).current_dir(&root).output();
+            let (kind, message) = match ran {
+                Ok(ran) if ran.status.success() => (3, format!("`{id}` passed")),
+                Ok(ran) => {
+                    let output =
+                        format!("{}{}", String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));
+                    send(
+                        json!({ "jsonrpc": "2.0", "method": "window/logMessage", "params": { "type": 3, "message": output } }),
+                    );
+                    // Why: the panic or the error, as the report writes it.
+                    let why = output.lines().find(|l| l.starts_with("panic[") || l.starts_with("error"));
+                    (1, format!("`{id}` failed: {}", why.unwrap_or("see the output").trim()))
+                }
+                Err(error) => (1, format!("`{id}` did not run: {error}")),
+            };
+            send(
+                json!({ "jsonrpc": "2.0", "method": "window/showMessage", "params": { "type": kind, "message": message } }),
+            );
+        });
+        Some(Value::Null)
+    }
+
+    /// On `}`, the block it closes in the canonical layout, when the file
+    /// reads.
+    fn on_type_formatting(&self, params: &Value) -> Option<Value> {
+        let (_, text) = self.document(params)?;
+        let at = offset(&text, &params["position"], self.units)?;
+        let close = text[..at].rfind('}')?;
+        // The `{` the brace closes, by counting from it back.
+        let mut depth = 0;
+        let open = text[..close].char_indices().rev().find_map(|(i, c)| match c {
+            '}' => {
+                depth += 1;
+                None
+            }
+            '{' if depth == 0 => Some(i),
+            '{' => {
+                depth -= 1;
+                None
+            }
+            _ => None,
+        })?;
+        let first = text[..open].matches('\n').count();
+        let last = text[..close].matches('\n').count();
+        let range = json!({ "start": { "line": first, "character": 0 }, "end": { "line": last, "character": 0 } });
+        self.range_formatting(&json!({ "textDocument": params["textDocument"], "range": range }))
     }
 
     /// Run, Debug and Debug Live over a program's `main`, or over the first
