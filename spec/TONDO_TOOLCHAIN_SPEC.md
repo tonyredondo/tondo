@@ -570,7 +570,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   W1002, W1003, W1006, W1007) lleva la etiqueta `Unnecessary`, que el editor
   atenúa.
 - El código de cada diagnóstico enlaza a `tondo-explain:<código>`, lo que
-  `tondo explain` dice de él (sección 7.13).
+  `tondo explain` dice de él (sección 7.13), y sus `related` (22.3 del
+  lenguaje) van como `relatedInformation`: la primera declaración de lo que
+  se declara dos veces, campos y variantes incluidos; el binding que otro
+  ocultaría; el método del trait que un `impl` no cumple o repite; el
+  `impl` con que otro se solapa; el primer `derive` de uno repetido.
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
   acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
   aplica las seguras del archivo que no se tocan entre sí. La acción
@@ -580,7 +584,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   que le falta a un `impl` (`E1114`), con la firma del trait para ese tipo y
   un `panic` que dice que falta, y los campos que le faltan a un literal
   (`E1102`) cuando cada uno tiene un valor del que parte uno nuevo: `0`,
-  `0.0`, `false`, `""`, `none`, `[]` o `[:]`. Un `match` que no cubre todos
+  `0.0`, `false`, `""`, `none`, `[]` o `[:]`. Una variable o un parámetro
+  sin usar (`W1002`, `W1003`) se renombra a `_nombre`, como decisión: a veces
+  es un error que no conviene ocultar. Un `match` que no cubre todos
   los casos (`E1204`) ofrece, además del brazo del primero que falta, uno
   para cada caso que falta, hasta 32; y un nombre privado de otro módulo
   (`E1501`), declararlo `pub` en el archivo que lo declara, como decisión

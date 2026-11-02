@@ -106,6 +106,7 @@ fn check_with<'a>(
         script_bindings: Vec::new(),
         scripting: false,
         naming: String::new(),
+        declared_at: HashMap::new(),
         leaving: None,
         comparing: None,
         panic_datum: None,
@@ -456,6 +457,8 @@ struct TraitMethod {
     name: String,
     signature: Signature,
     default: Option<FnId>,
+    /// Where the trait declares it; none for the prelude's own.
+    span: Span,
 }
 
 /// An implementation (12.4); its methods are generic over the binders.
@@ -769,6 +772,9 @@ struct Checker<'a> {
     /// The function whose body is checked, as stack traces name it, and
     /// the name the next closure takes instead of `closure in` it.
     naming: String,
+    /// Where each name of the module was first declared, which a second
+    /// declaration points to.
+    declared_at: HashMap<String, Span>,
     /// For an editor: the name of the function whose body is checked, which
     /// its `return`, `fail` and `?` leave.
     leaving: Option<Span>,
@@ -2986,7 +2992,7 @@ impl<'a> Checker<'a> {
             is_unsafe: false,
             foreign: false,
         };
-        let display = TraitMethod { name: "display".into(), signature, default: None };
+        let display = TraitMethod { name: "display".into(), signature, default: None, span: Span::default() };
         self.traits.push(TraitDef {
             name: "Display".into(),
             self_param,
@@ -3012,7 +3018,7 @@ impl<'a> Checker<'a> {
             is_unsafe: false,
             foreign: false,
         };
-        let next = TraitMethod { name: "next".into(), signature, default: None };
+        let next = TraitMethod { name: "next".into(), signature, default: None, span: Span::default() };
         self.traits.push(TraitDef {
             name: "Iterator".into(),
             self_param,
@@ -3509,6 +3515,25 @@ impl<'a> Checker<'a> {
         } else if self.names.insert(name.name.clone(), value).is_some() {
             let message = format!("`{}` is declared more than once", name.name);
             self.diags.error("E1002", name.span, message);
+            self.first_declared(name);
+        } else {
+            self.declared_at.insert(name.name.clone(), name.span);
+        }
+    }
+
+    /// Where the binding `name` visible in `cx`, or in what encloses it, is
+    /// declared.
+    fn binding_span(&self, cx: &FnCx, name: &str) -> Option<Span> {
+        match self.lookup(cx, name) {
+            Some(local) => Some(cx.locals[local.0 as usize].span),
+            None => self.binding_span(cx.parent.as_deref()?, name),
+        }
+    }
+
+    /// Points the error reported last to where `name` was first declared.
+    fn first_declared(&mut self, name: &ast::Ident) {
+        if let Some(&first) = self.declared_at.get(&name.name) {
+            self.diags.related(first, format!("`{}` is first declared here", name.name));
         }
     }
 
@@ -3526,6 +3551,9 @@ impl<'a> Checker<'a> {
         } else if self.type_names.insert(name.name.clone(), value).is_some() {
             let message = format!("type `{}` is declared more than once", name.name);
             self.diags.error("E1002", name.span, message);
+            self.first_declared(name);
+        } else {
+            self.declared_at.insert(name.name.clone(), name.span);
         }
     }
 
@@ -3842,12 +3870,13 @@ impl<'a> Checker<'a> {
                 }
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Opaque, .. }) => AdtKind::Record(Vec::new()),
                 ast::Item::Enum(decl) => {
-                    let mut seen = HashSet::new();
+                    let mut seen = HashMap::new();
                     let mut variants = Vec::new();
                     for variant in &decl.variants {
-                        if !seen.insert(variant.name.name.as_str()) {
+                        if let Some(first) = seen.insert(variant.name.name.as_str(), variant.name.span) {
                             let message = format!("variant `{}` is declared more than once", variant.name.name);
                             self.diags.error("E1505", variant.name.span, message);
+                            self.diags.related(first, format!("`{}` is first declared here", variant.name.name));
                         }
                         let payload = match &variant.payload {
                             ast::VariantPayload::Unit => Payload::Unit,
@@ -4452,12 +4481,13 @@ impl<'a> Checker<'a> {
     /// The fields of a C struct: types that cross to C, and `@count(n)`
     /// arrays of them stored in place.
     fn c_fields(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
-        let mut seen = HashSet::new();
+        let mut seen = HashMap::new();
         let mut resolved = Vec::new();
         for field in fields {
-            if !seen.insert(field.name.name.as_str()) {
+            if let Some(first) = seen.insert(field.name.name.as_str(), field.name.span) {
                 let message = format!("field `{}` is declared more than once", field.name.name);
                 self.diags.error("E1505", field.name.span, message);
+                self.diags.related(first, format!("`{}` is first declared here", field.name.name));
             }
             let mut ty = self.resolve_type(&field.ty);
             if !self.require_c_type(ty, field.ty.span) {
@@ -4488,12 +4518,13 @@ impl<'a> Checker<'a> {
     /// The fields of a record or a variant; of a context's record with
     /// `context`, whose fields take `@log` and `@label` (11.16).
     fn field_decls(&mut self, fields: &[ast::FieldDecl], context: bool) -> Vec<Field> {
-        let mut seen = HashSet::new();
+        let mut seen = HashMap::new();
         let mut resolved = Vec::new();
         for field in fields {
-            if !seen.insert(field.name.name.as_str()) {
+            if let Some(first) = seen.insert(field.name.name.as_str(), field.name.span) {
                 let message = format!("field `{}` is declared more than once", field.name.name);
                 self.diags.error("E1505", field.name.span, message);
+                self.diags.related(first, format!("`{}` is first declared here", field.name.name));
             }
             let ty = self.resolve_type(&field.ty);
             for annotation in &field.annotations {
@@ -4754,6 +4785,9 @@ impl<'a> Checker<'a> {
             if self.trait_names.contains_key(&name.name) || self.type_names.contains_key(&name.name) {
                 let message = format!("`{}` is already declared", name.name);
                 self.diags.error("E1002", name.span, message);
+                self.first_declared(name);
+            } else {
+                self.declared_at.insert(name.name.clone(), name.span);
             }
             let self_param = self.types.declare_param("Self".into());
             let params = decl.generics.iter().map(|g| self.types.declare_param(g.name.name.clone())).collect();
@@ -4914,7 +4948,8 @@ impl<'a> Checker<'a> {
                         None
                     }
                 };
-                self.traits[id.0 as usize].methods.push(TraitMethod { name: f.name.name.clone(), signature, default });
+                let method = TraitMethod { name: f.name.name.clone(), signature, default, span: f.name.span };
+                self.traits[id.0 as usize].methods.push(method);
             }
         }
     }
@@ -4939,7 +4974,7 @@ impl<'a> Checker<'a> {
             let id = FnId(bodies.len() as u32);
             self.signatures.push(signature.clone());
             bodies.push(f);
-            let method = TraitMethod { name: f.name.name.clone(), signature, default: Some(id) };
+            let method = TraitMethod { name: f.name.name.clone(), signature, default: Some(id), span: f.name.span };
             self.traits[ITERATOR.0 as usize].methods.push(method);
         }
     }
@@ -5016,31 +5051,40 @@ impl<'a> Checker<'a> {
         }
         // A type has at most one `Iterator`, whatever it yields (10.17).
         if trait_id == ITERATOR {
-            let earlier: Vec<(Ty, Vec<Ty>)> =
-                self.impls.iter().filter(|i| i.trait_id == ITERATOR).map(|i| (i.target, i.generics.clone())).collect();
-            for (other, generics) in earlier {
+            let earlier: Vec<(Ty, Vec<Ty>, Span)> = self
+                .impls
+                .iter()
+                .filter(|i| i.trait_id == ITERATOR)
+                .map(|i| (i.target, i.generics.clone(), i.span))
+                .collect();
+            for (other, generics, at) in earlier {
                 let vars: Vec<Ty> = binders.iter().chain(&generics).copied().collect();
                 if self.types.unify_both(target, other, &vars, &mut HashMap::new()) {
                     let message =
                         format!("`{target_name}` already implements `Iterator`; a type yields one element type");
                     self.diags.error("E1113", decl.span, message);
+                    self.diags.related(at, "the `Iterator` it has");
                     return;
                 }
             }
         }
         // Only those of the same head may overlap it.
-        let earlier: Vec<(Vec<Ty>, Ty, Vec<Ty>)> = self
+        let earlier: Vec<(Vec<Ty>, Ty, Vec<Ty>, Span)> = self
             .impl_candidates(trait_id, target)
             .into_iter()
-            .map(|i| (self.impls[i].trait_args.clone(), self.impls[i].target, self.impls[i].generics.clone()))
+            .map(|i| {
+                let other = &self.impls[i];
+                (other.trait_args.clone(), other.target, other.generics.clone(), other.span)
+            })
             .collect();
-        for (other_args, other_target, other_generics) in earlier {
+        for (other_args, other_target, other_generics, at) in earlier {
             if self.headers_overlap((&trait_args, target, &binders), (&other_args, other_target, &other_generics)) {
                 let message = format!(
                     "`impl {trait_name} for {target_name}` overlaps an earlier implementation for `{}`",
                     self.types.display(other_target)
                 );
                 self.diags.error("E1111", decl.span, message);
+                self.diags.related(at, "the implementation it overlaps");
                 return;
             }
         }
@@ -5051,6 +5095,8 @@ impl<'a> Checker<'a> {
         map.extend(def.params.iter().copied().zip(trait_args.iter().copied()));
         let declared: Vec<(String, Signature, bool)> =
             def.methods.iter().map(|m| (m.name.clone(), m.signature.clone(), m.default.is_some())).collect();
+        let declared_at: Vec<Span> = def.methods.iter().map(|m| m.span).collect();
+        let mut first: Vec<Span> = vec![Span::default(); declared.len()];
         let mut types: Vec<(String, Ty)> =
             decl.generics.iter().map(|g| g.name.name.clone()).zip(binders.iter().copied()).collect();
         types.dedup();
@@ -5073,8 +5119,10 @@ impl<'a> Checker<'a> {
             if methods[index].is_some() {
                 let message = format!("`{}` is implemented more than once", f.name.name);
                 self.diags.error("E1114", f.name.span, message);
+                self.diags.related(first[index], format!("`{}` is first implemented here", f.name.name));
                 continue;
             }
+            first[index] = f.name.span;
             let id = FnId(bodies.len() as u32);
             let mut signature = self.signature(f, None, scope.clone());
             signature.name = format!("{trait_name}.{}", f.name.name);
@@ -5085,6 +5133,7 @@ impl<'a> Checker<'a> {
                 let code = if expected.is_unsafe != signature.is_unsafe { "E1702" } else { "E1114" };
                 let message = format!("`{}` does not match `{trait_name}`: {problem}", f.name.name);
                 self.diags.error(code, f.name.span, message);
+                self.diags.related(declared_at[index], format!("`{trait_name}` declares `{}` here", f.name.name));
             }
             self.signatures.push(signature);
             self.index_implemented(trait_id.0, id.0, &f.name);
@@ -8706,6 +8755,9 @@ impl<'a> Checker<'a> {
                 name.name
             );
             self.diags.error("E1003", name.span, message);
+            if let Some(earlier) = self.binding_span(cx, &name.name) {
+                self.diags.related(earlier, format!("`{}` is declared here", name.name));
+            }
         } else if INTRINSICS.contains(&name.name.as_str()) {
             let message = format!("`{}` is a reserved intrinsic name", name.name);
             self.diags.error("E1005", name.span, message);
@@ -8743,11 +8795,13 @@ impl<'a> Checker<'a> {
                     "the parameter `{name}` is never used: write `_` instead, or `_{name}` to hold its value until the function ends"
                 );
                 self.diags.warning("W1003", *span, message);
+                self.diags.fix(format!("rename it `_{name}`"), false, vec![(*span, format!("_{name}"))]);
             } else {
                 let message = format!(
                     "`{name}` is never used: write `_` instead, or `_{name}` to hold its value until the block ends"
                 );
                 self.diags.warning("W1002", *span, message);
+                self.diags.fix(format!("rename it `_{name}`"), false, vec![(*span, format!("_{name}"))]);
             }
         }
     }

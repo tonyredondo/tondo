@@ -18,6 +18,9 @@ pub struct Diagnostic {
     pub span: Option<Span>,
     /// The repairs it suggests (22.4).
     pub fixes: Vec<Fix>,
+    /// Other places it concerns, each with what it is there (22.3), as the
+    /// declaration a duplicate repeats.
+    pub related: Vec<(Span, String)>,
 }
 
 /// A repair: what replaces each span. `safe` when applying it is what the
@@ -42,7 +45,17 @@ impl Diagnostics {
             message: message.into(),
             span: Some(span),
             fixes: Vec::new(),
+            related: Vec::new(),
         });
+    }
+
+    /// Points the diagnostic reported last to another place it concerns.
+    pub fn related(&mut self, span: Span, message: impl Into<String>) {
+        if let Some(last) = self.list.last_mut()
+            && span != Span::default()
+        {
+            last.related.push((span, message.into()));
+        }
     }
 
     /// Suggests a repair for the diagnostic reported last.
@@ -59,6 +72,7 @@ impl Diagnostics {
             message: message.into(),
             span: Some(span),
             fixes: Vec::new(),
+            related: Vec::new(),
         });
     }
 
@@ -71,6 +85,7 @@ impl Diagnostics {
             message,
             span: None,
             fixes: Vec::new(),
+            related: Vec::new(),
         });
     }
 
@@ -82,6 +97,7 @@ impl Diagnostics {
             message: format!("{what} is not implemented yet"),
             span: Some(span),
             fixes: Vec::new(),
+            related: Vec::new(),
         });
     }
 
@@ -117,6 +133,11 @@ impl Diagnostics {
                 for fix in a.fixes.drain(..) {
                     if !b.fixes.contains(&fix) {
                         b.fixes.push(fix);
+                    }
+                }
+                for related in a.related.drain(..) {
+                    if !b.related.contains(&related) {
+                        b.related.push(related);
                     }
                 }
             }
@@ -181,13 +202,30 @@ impl Diagnostics {
                     )
                 })
                 .collect();
+            let related: Vec<String> = d
+                .related
+                .iter()
+                .map(|(span, message)| {
+                    let file = sources.file_of(span.start);
+                    let (start, line, column) = file.position(span.start);
+                    let (end, end_line, end_column) = file.position(span.end.max(span.start));
+                    format!(
+                        "{{\"message\":{},\"source_id\":{},\"module\":{},\"file\":{},\"range\":{{\"start\":{{\"byte\":{start},\"line\":{line},\"column\":{column}}},\"end\":{{\"byte\":{end},\"line\":{end_line},\"column\":{end_column}}}}}}}",
+                        json_string(message),
+                        json_string(source_id),
+                        json_string(&file.module),
+                        json_string(&file.logical)
+                    )
+                })
+                .collect();
             let [module_part, file_part, start, end] = &id_parts;
             let hashed = format!("0.1\n{source_id}\n{module_part}\n{file_part}\n{code}\n{start}\n{end}\n");
             let id = crate::hash::sha256_hex(hashed.as_bytes());
             items.push(format!(
-                "{{\"id\":\"diag:{id}\",\"severity\":\"{severity}\",\"code\":\"{code}\",\"message\":{},\"source_id\":{},\"module\":{module},\"file\":{file},\"range\":{range},\"expected\":null,\"actual\":null,\"related\":[],\"fixes\":[{}]}}",
+                "{{\"id\":\"diag:{id}\",\"severity\":\"{severity}\",\"code\":\"{code}\",\"message\":{},\"source_id\":{},\"module\":{module},\"file\":{file},\"range\":{range},\"expected\":null,\"actual\":null,\"related\":[{}],\"fixes\":[{}]}}",
                 json_string(&d.message),
                 json_string(source_id),
+                related.join(","),
                 fixes.join(",")
             ));
         }
@@ -207,6 +245,11 @@ impl Diagnostics {
             }
             if let Some(span) = d.span {
                 render_snippet(&mut out, sources, span);
+            }
+            for (span, message) in &d.related {
+                let file = sources.file_of(span.start);
+                let (line, column) = file.line_col(span.start);
+                writeln!(out, "note: {message}\n --> {}:{line}:{column}", file.path.display()).unwrap();
             }
         }
         out

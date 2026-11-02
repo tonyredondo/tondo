@@ -188,7 +188,15 @@ pub(crate) fn derive_display(modules: &mut [ModuleSource], sources: &mut SourceM
             for item in &file.items {
                 let ast::Item::Enum(e) = item else { continue };
                 let plain = e.variants.iter().all(|v| matches!(v.payload, ast::VariantPayload::Unit));
-                if !plain || e.variants.is_empty() || !e.generics.is_empty() || shown.contains(e.name.name.as_str()) {
+                // A variant written twice is an error of its own (E1505).
+                let named: HashSet<&str> = e.variants.iter().map(|v| v.name.name.as_str()).collect();
+                let repeated = named.len() != e.variants.len();
+                if !plain
+                    || repeated
+                    || e.variants.is_empty()
+                    || !e.generics.is_empty()
+                    || shown.contains(e.name.name.as_str())
+                {
                     continue;
                 }
                 let name = &e.name.name;

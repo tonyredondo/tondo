@@ -254,6 +254,9 @@ pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::Syste
                 edit.0 = moved(edit.0);
             }
         }
+        for related in &mut diagnostic.related {
+            related.0 = moved(related.0);
+        }
         let known = into
             .diags
             .list

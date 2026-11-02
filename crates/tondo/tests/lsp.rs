@@ -1546,3 +1546,34 @@ fn completes_and_finds_what_is_not_imported() {
     assert_eq!(found[0]["name"], "handleRequest", "{found}");
     editor.stop();
 }
+
+#[test]
+fn points_to_related_places_and_renames_unused() {
+    let text = "fn helper(): Int {\n    1\n}\n\nfn helper(): Int {\n    2\n}\n\nfn main() {\n    let unused = 1\n    _ = helper()\n}\n";
+    let dir = project("lsp-related", &[("main.to", text)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    editor.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 0 } }),
+    );
+    // A second declaration points to the first.
+    let (_, diagnostics) = editor.diagnostics.iter().find(|(u, _)| *u == uri).cloned().unwrap();
+    let repeated = diagnostics.as_array().unwrap().iter().find(|d| d["code"] == "E1002").expect("a duplicate");
+    let related = &repeated["relatedInformation"][0];
+    assert_eq!(related["message"], "`helper` is first declared here", "{repeated}");
+    assert_eq!(related["location"]["range"]["start"]["line"], 0);
+    // A binding nothing uses is renamed to say so, as a decision.
+    let text = "fn main() {\n    let unused = 1\n}\n";
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let at = json!({ "line": 1, "character": 8 });
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": at, "end": at }, "context": { "diagnostics": [] } });
+    let found = editor.request("textDocument/codeAction", params);
+    let rename = found.as_array().unwrap().iter().find(|a| a["title"] == "rename it `_unused`").expect("a rename");
+    assert_eq!(rename["isPreferred"], false);
+    assert_eq!(rename["edit"]["changes"][&uri][0]["newText"], "_unused");
+    editor.stop();
+}

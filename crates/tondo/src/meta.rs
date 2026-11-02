@@ -68,19 +68,20 @@ pub fn expand(
                     })
                     .collect()
             };
-            let mut seen: Vec<(String, String)> = Vec::new();
+            let mut seen: Vec<((String, String), Span)> = Vec::new();
             for derive in derives {
                 let Some(target) = target(modules, packages, module, &derive, sources, diags) else { continue };
                 for trait_ref in &derive.traits {
                     let trait_text = sources.slice(trait_ref.span).to_string();
                     let pair = (trait_text.clone(), target.written.clone());
-                    if seen.contains(&pair) {
+                    if let Some((_, first)) = seen.iter().find(|(p, _)| *p == pair) {
                         let message =
                             format!("`{trait_text}` is already derived for `{}` in this module", target.written);
                         diags.error("E2103", trait_ref.span, message);
+                        diags.related(*first, format!("`{trait_text}` is first derived here"));
                         continue;
                     }
-                    seen.push(pair);
+                    seen.push((pair, trait_ref.span));
                     let Some(provider) =
                         provider(modules, packages, module, file, trait_ref, &trait_text, providers, diags)
                     else {

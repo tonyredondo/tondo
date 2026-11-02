@@ -608,6 +608,17 @@ impl Server {
                 "source": "tondo",
                 "message": diagnostic.message,
             });
+            // The other places it concerns, as the declaration it repeats.
+            let related: Vec<Value> = diagnostic
+                .related
+                .iter()
+                .filter_map(|(span, message)| {
+                    Some(json!({ "location": self.location(analyzed, *span)?, "message": message }))
+                })
+                .collect();
+            if !related.is_empty() {
+                published["relatedInformation"] = json!(related);
+            }
             // What nothing uses or nothing reaches, which editors fade.
             if matches!(code, "W1001" | "W1002" | "W1003" | "W1006" | "W1007") {
                 published["tags"] = json!([1]);

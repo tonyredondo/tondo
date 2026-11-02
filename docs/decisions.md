@@ -4344,3 +4344,16 @@ a part fails, as its value never changes.
 `meta.literal` writes a text as the Tondo string literal that reads back
 as it, for generators, which wrote their own escaping and missed `{`.
 
+## 2026-11-02 — Diagnostics point to the other place
+
+The diagnostics format had `related` from the start, but the compiler
+left it empty, and an editor could not lead from a duplicate to what it
+repeats. It is filled now where another place explains the error: the
+first declaration of a name, field or variant declared twice, the
+binding another would shadow, the method of a trait an `impl` does not
+match or repeats, the `impl` another overlaps, the first of a repeated
+`derive`. The language server gives them as `relatedInformation`, and the
+text shows each as a `note`. An unused binding gets the repair its
+warning described, renaming it `_name`, as a decision rather than a safe
+repair, as an unused binding may be a mistake.
+
