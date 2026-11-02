@@ -210,6 +210,9 @@ pub struct MatchReport {
     pub unreachable: Vec<usize>,
     /// A value no arm matches, rendered as a pattern.
     pub missing: Option<String>,
+    /// A pattern for each case no arm matches, as arms that together make
+    /// the `match` cover every value, up to a few dozen.
+    pub every_missing: Vec<String>,
 }
 
 /// Checks arms in order; guarded arms never cover later ones (14.4).
@@ -226,7 +229,25 @@ pub fn check_match(types: &Types, scrutinee: Ty, arms: &[(&Pattern, bool)]) -> M
         }
     }
     let missing = useful(types, &rows, &[Pat::Wild], &[scrutinee]).map(|w| render(types, scrutinee, &w[0]));
-    MatchReport { unreachable, missing }
+    // Each case missing, found again once the ones before it are arms.
+    let mut every_missing = Vec::new();
+    while every_missing.len() < 32
+        && let Some(witness) = useful(types, &rows, &[Pat::Wild], &[scrutinee])
+    {
+        every_missing.push(render(types, scrutinee, &witness[0]));
+        rows.push(witness.into_iter().map(as_written).collect());
+    }
+    MatchReport { unreachable, missing, every_missing }
+}
+
+/// A witness as its rendering covers it: a value of an open domain, or
+/// arrays of any length, are written `_`.
+fn as_written(pat: Pat) -> Pat {
+    match pat {
+        Pat::Ctor(Ctor::Value(_) | Ctor::LenAtLeast(0), _) => Pat::Wild,
+        Pat::Ctor(ctor, args) => Pat::Ctor(ctor, args.into_iter().map(as_written).collect()),
+        other => other,
+    }
 }
 
 /// A value of `ty` the irrefutable `pattern` does not match, if any.

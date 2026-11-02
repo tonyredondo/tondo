@@ -280,6 +280,7 @@ impl Server {
             }
             "textDocument/foldingRange" => Some(Ok(self.folding_ranges(params).unwrap_or(json!([])))),
             "textDocument/documentColor" => Some(Ok(self.colors(params).unwrap_or(json!([])))),
+            "textDocument/documentLink" => Some(Ok(self.links(params).unwrap_or(json!([])))),
             "textDocument/colorPresentation" => Some(Ok(self.color_presentation(params).unwrap_or(json!([])))),
             "textDocument/selectionRange" => Some(Ok(self.selection_ranges(params).unwrap_or(json!([])))),
             "textDocument/rangeFormatting" => Some(Ok(self.range_formatting(params).unwrap_or(json!([])))),
@@ -359,6 +360,7 @@ impl Server {
                 "codeLensProvider": { "resolveProvider": false },
                 "foldingRangeProvider": true,
                 "colorProvider": true,
+                "documentLinkProvider": { "resolveProvider": false },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
                 "callHierarchyProvider": true,
@@ -2749,6 +2751,40 @@ impl Server {
     }
 
     /// Blocks, brackets that span lines, runs of imports and of comments.
+    /// Links of each `import` to its module's first file, and of each path
+    /// of `std.embed` to the file it reads.
+    fn links(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let source = analyzed.analysis.sources.file(file);
+        let text = &source.text;
+        let sources = &analyzed.analysis.sources;
+        let mut links = Vec::new();
+        let mut start = 0;
+        for line in text.split_inclusive('\n') {
+            let range = |from: usize, to: usize| json!({ "start": position(text, start + from, self.units), "end": position(text, start + to, self.units) });
+            if let Some(module) = line.strip_prefix("import ").and_then(|rest| rest.split_whitespace().next()) {
+                let target =
+                    (0..sources.len()).find(|&i| sources.file(i).module == module && analyzed.paths[i].is_some());
+                if let Some(target) = target.and_then(|i| analyzed.paths[i].as_ref()) {
+                    links.push(json!({ "range": range(7, 7 + module.len()), "target": self.uri(target) }));
+                }
+            }
+            for (at, _) in line.match_indices("(\"") {
+                let inside = start + at + 2;
+                let Some((_, whole)) = embed_path(text, inside) else { continue };
+                let read = crate::embed::resolve(&path, &whole).ok().filter(|found| found.is_file());
+                if let Some(read) = read {
+                    links.push(json!({ "range": range(at + 2, at + 2 + whole.len()), "target": self.uri(&read) }));
+                }
+            }
+            start += line.len();
+        }
+        Some(Value::Array(links))
+    }
+
     /// The colours a file writes as `Color.hex("#rrggbb")` or
     /// `Color.rgb(r, g, b)`, which an editor shows and picks.
     fn colors(&self, params: &Value) -> Option<Value> {
@@ -3533,16 +3569,35 @@ fn extract_function(index: &Index, source: &SourceFile, selected: Span) -> Optio
         let at = (def.name_span.start - base) as usize;
         text.get(..at).is_some_and(|before| before.trim_end().ends_with("var"))
     };
+    // A `var` of the function, or a parameter it may change, is lent with
+    // `mut`; `self` makes the new function a method of the same type.
     let mut parameters = Vec::new();
     let mut arguments = Vec::new();
+    let mut receiver = None;
     for &(_, def) in &inputs {
         let declared = &index.defs[def];
         let ty = declared.ty.as_ref()?;
-        if declared.name == "self" || var(declared) || ty.starts_with("var ") || ty.starts_with("mut ") {
-            return None;
+        if declared.name == "self" {
+            let method = enclosing.filter(|d| d.kind == DefKind::Method)?;
+            let header =
+                header(&text[(method.decl_span.start - base) as usize..(method.decl_span.end - base) as usize]);
+            let (before, params) = header.split_once('(')?;
+            let owner = before.trim().rsplit_once(' ')?.1.rsplit_once('.')?.0.to_string();
+            let mode = params.split([',', ')']).next()?.trim().to_string();
+            receiver = Some((owner, mode));
+            continue;
         }
-        parameters.push(format!("{}: {ty}", declared.name));
-        arguments.push(declared.name.clone());
+        let loaned = ty.strip_prefix("var ").or_else(|| ty.strip_prefix("mut "));
+        match (var(declared), loaned) {
+            (false, None) => {
+                parameters.push(format!("{}: {ty}", declared.name));
+                arguments.push(declared.name.clone());
+            }
+            (_, inner) => {
+                parameters.push(format!("{}: mut {}", declared.name, inner.unwrap_or(ty)));
+                arguments.push(format!("mut {}", declared.name));
+            }
+        }
     }
     let mut results = Vec::new();
     for &def in &outputs {
@@ -3592,9 +3647,16 @@ fn extract_function(index: &Index, source: &SourceFile, selected: Span) -> Optio
         })
         .collect();
     let returned = returned.map(|value| format!("    {value}\n")).unwrap_or_default();
-    let function = format!("\n\nfn {name}({}){signature} {{\n{body}{returned}}}", parameters.join(", "));
+    let (declared, callee) = match &receiver {
+        Some((owner, mode)) => {
+            parameters.insert(0, mode.clone());
+            (format!("{owner}.{name}"), format!("self.{name}"))
+        }
+        None => (name.clone(), name.clone()),
+    };
+    let function = format!("\n\nfn {declared}({}){signature} {{\n{body}{returned}}}", parameters.join(", "));
     let question = if fails { "?" } else { "" };
-    let call = format!("{indent}{binding}{name}({}){question}", arguments.join(", "));
+    let call = format!("{indent}{binding}{callee}({}){question}", arguments.join(", "));
     let after = Span::new(scope.end, scope.end);
     Some(vec![(block, call), (after, function)])
 }

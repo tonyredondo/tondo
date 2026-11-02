@@ -28,6 +28,9 @@ struct Declarations {
     types: HashMap<String, bool>,
     /// Functions and newtype constructors.
     values: HashMap<String, bool>,
+    /// Where each declaration starts, after its annotations, where `pub`
+    /// goes.
+    starts: HashMap<String, Span>,
 }
 
 impl Declarations {
@@ -289,24 +292,30 @@ fn declarations(module: &ModuleSource) -> Declarations {
             match item {
                 Item::Fn(f) if f.owner.is_none() => {
                     decls.values.insert(f.name.name.clone(), f.public);
+                    decls.starts.insert(f.name.name.clone(), f.span);
                 }
                 Item::Type(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
+                    decls.starts.insert(t.name.name.clone(), t.span);
                     if let TypeBody::Newtype(_) = t.body {
                         decls.values.insert(t.name.name.clone(), t.public);
                     }
                 }
                 Item::Enum(e) => {
                     decls.types.insert(e.name.name.clone(), e.public);
+                    decls.starts.insert(e.name.name.clone(), e.span);
                 }
                 Item::Alias(a) => {
                     decls.types.insert(a.name.name.clone(), a.public);
+                    decls.starts.insert(a.name.name.clone(), a.span);
                 }
                 Item::Const(c) => {
                     decls.values.insert(c.name.name.clone(), c.public);
+                    decls.starts.insert(c.name.name.clone(), c.span);
                 }
                 Item::Trait(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
+                    decls.starts.insert(t.name.name.clone(), t.span);
                 }
                 Item::Fn(_) | Item::Impl(_) | Item::Test(_) | Item::Derive(_) => {}
             }
@@ -626,6 +635,11 @@ impl Linker<'_> {
                     let message =
                         format!("`{}` is private to module `{module}`; declare it `pub` to use it here", name.name);
                     self.diags.error("E1501", name.span, message);
+                    // A decision: it changes what the module offers.
+                    if let Some(start) = self.decls[target].starts.get(&name.name) {
+                        let at = Span::new(start.start, start.start);
+                        self.diags.fix(format!("declare `{}` `pub`", name.name), false, vec![(at, "pub ".into())]);
+                    }
                 }
                 Some(true) => {}
             }

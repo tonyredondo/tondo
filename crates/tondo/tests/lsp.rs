@@ -1157,11 +1157,12 @@ fn explains_counts_and_refactors() {
         found[0].1[1]["newText"],
         "\n\nfn extracted(port: Int): (Int, Int) ! ConfigError {\n    let checked = check(port)?\n    let base = checked + 1\n    let doubled = base * 2 + 10\n    (base, doubled)\n}"
     );
-    // Not what may not run where it would go, nor what changes a `var`
-    // of its function.
+    // Not what may not run where it would go; a `var` of its function is
+    // lent with `mut`.
     let guarded = line_of("values.isEmpty() or");
     assert!(refactors(&mut editor, (guarded, 24), (guarded, 49)).is_empty());
-    assert!(refactors(&mut editor, (line_of("for value in values"), 4), (line_of("all += value") + 1, 5)).is_empty());
+    let found = refactors(&mut editor, (line_of("for value in values"), 4), (line_of("all += value") + 1, 5));
+    assert_eq!(found[0].1[0]["newText"], "    extracted(values, mut all)", "{found:?}");
     // The light bulb does not ask for them.
     let params = json!({ "textDocument": { "uri": uri }, "range": { "start": { "line": doubled, "character": 18 }, "end": { "line": doubled, "character": 26 } }, "context": { "diagnostics": [], "triggerKind": 2 } });
     let automatic = editor.request("textDocument/codeAction", params);
@@ -1397,5 +1398,107 @@ fn renames_where_a_binding_is_assigned() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 8 }, "newName": "total" });
     let found = editor.request("textDocument/rename", params);
     assert_eq!(found["changes"][&uri].as_array().unwrap().len(), 5, "{found}");
+    editor.stop();
+}
+
+const SHAPES: &str = "pub enum Shape {
+    Dot
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+fn area(shape: Shape): Float {
+    0.0
+}
+";
+
+const COUNTED: &str = "import app.shapes
+import std.console
+import std.embed
+
+pub type Counter = { count: Int, step: Int }
+
+fn Counter.advance(mut self, times: Int) {
+    var total = 0
+    for _ in 0..times {
+        total += self.step
+        self.count += self.step
+    }
+    console.println(\"{total}\")
+}
+
+fn describe(shape: shapes.Shape): String {
+    match shape {
+        shapes.Shape.Dot => \"dot\"
+    }
+}
+
+fn main() {
+    var counter = Counter { count: 0, step: 2 }
+    counter.advance(3)
+    console.println(\"{describe(shapes.Shape.Dot)} {shapes.area(shapes.Shape.Dot)} {embed.text(\"../assets/greeting.txt\")}\")
+}
+";
+
+#[test]
+fn fills_arms_publishes_extracts_and_links() {
+    let dir = project(
+        "lsp-fourth",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/shapes/shapes.to", SHAPES),
+            ("src/main.to", COUNTED),
+            ("assets/greeting.txt", "hello\n"),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let shapes = format!("file://{}", dir.join("src/shapes/shapes.to").display());
+    let line_of = |part: &str| COUNTED.lines().position(|l| l.contains(part)).unwrap() as u64;
+    let actions = |editor: &mut Editor, start: (u64, u64), end: (u64, u64)| -> Vec<Value> {
+        let range =
+            json!({ "start": { "line": start.0, "character": start.1 }, "end": { "line": end.0, "character": end.1 } });
+        let params = json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [], "triggerKind": 1 } });
+        editor.request("textDocument/codeAction", params).as_array().unwrap().clone()
+    };
+    let titled = |found: &[Value], title: &str| found.iter().find(|a| a["title"] == title).cloned();
+
+    // A function another module may not use: `pub`, in its own file.
+    let area = line_of("shapes.area(");
+    let column = COUNTED.lines().nth(area as usize).unwrap().find("area(").unwrap() as u64;
+    let found = actions(&mut editor, (area, column), (area, column));
+    let public = titled(&found, "declare `area` `pub`").expect("a repair");
+    assert_eq!(public["edit"]["changes"][&shapes][0]["newText"], "pub ");
+    assert_eq!(public["edit"]["changes"][&shapes][0]["range"]["start"]["line"], 6);
+    let fixed = SHAPES.replace("fn area", "pub fn area");
+    std::fs::write(dir.join("src/shapes/shapes.to"), &fixed).unwrap();
+    editor.notify("workspace/didChangeWatchedFiles", json!({ "changes": [{ "uri": shapes, "type": 2 }] }));
+
+    // A `match` gets an arm for each case it misses.
+    let matched = line_of("match shape");
+    let found = actions(&mut editor, (matched, 4), (matched, 4));
+    let every = titled(&found, "add an arm for each of the 2 cases missing").expect("every arm");
+    assert_eq!(
+        every["edit"]["changes"][&uri][0]["newText"],
+        "        shapes.Shape.Circle(_) => panic(\"`shapes.Shape.Circle(_)` is not handled yet\")\n        shapes.Shape.Rect { .. } => panic(\"`shapes.Shape.Rect { .. }` is not handled yet\")\n"
+    );
+
+    // Lines that use `self` and a `var` of the method become a method that
+    // borrows the `var`.
+    let found = actions(&mut editor, (line_of("for _ in 0..times"), 4), (line_of("self.count += self.step") + 1, 5));
+    let extract = titled(&found, "Extract into a function").expect("an extraction");
+    let edits = &extract["edit"]["changes"][&uri];
+    assert_eq!(edits[0]["newText"], "    self.extracted(times, mut total)");
+    assert_eq!(
+        edits[1]["newText"],
+        "\n\nfn Counter.extracted(mut self, times: Int, total: mut Int) {\n    for _ in 0..times {\n        total += self.step\n        self.count += self.step\n    }\n}"
+    );
+
+    // Links: an import to its module, an embedded path to its file.
+    let links = editor.request("textDocument/documentLink", json!({ "textDocument": { "uri": uri } }));
+    let targets: Vec<&str> = links.as_array().unwrap().iter().map(|l| l["target"].as_str().unwrap()).collect();
+    assert!(targets.contains(&shapes.as_str()), "{links}");
+    let greeting = format!("file://{}", dir.join("assets/greeting.txt").display());
+    assert!(targets.contains(&greeting.as_str()), "{links}");
     editor.stop();
 }

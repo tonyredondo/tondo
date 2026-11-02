@@ -542,6 +542,8 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   entero o de las líneas de un rango. Una variable `var` o un parámetro
   `mut` o `var` llevan el modificador `mutable`, que la extensión de VS Code
   subraya.
+- Enlaces (`textDocument/documentLink`): cada `import` al primer archivo de
+  su módulo, y cada ruta de `std.embed` al archivo que lee.
 - Los colores escritos como `Color.hex("#rrggbb")` (o `#rrggbbaa`) y
   `Color.rgb(r, g, b)` con literales, que el editor muestra y deja elegir;
   el elegido se escribe como estaba: el texto hexadecimal o los números.
@@ -574,7 +576,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   que le falta a un `impl` (`E1114`), con la firma del trait para ese tipo y
   un `panic` que dice que falta, y los campos que le faltan a un literal
   (`E1102`) cuando cada uno tiene un valor del que parte uno nuevo: `0`,
-  `0.0`, `false`, `""`, `none`, `[]` o `[:]`.
+  `0.0`, `false`, `""`, `none`, `[]` o `[:]`. Un `match` que no cubre todos
+  los casos (`E1204`) ofrece, además del brazo del primero que falta, uno
+  para cada caso que falta, hasta 32; y un nombre privado de otro módulo
+  (`E1501`), declararlo `pub` en el archivo que lo declara, como decisión
+  porque cambia lo que el módulo ofrece.
 - Refactors de una selección, cuando el editor los pide y no para la
   bombilla (`triggerKind` 2): extraer una expresión a una variable, con un
   `let` antes de su sentencia, salvo si ahí podría evaluarse cuando antes no
@@ -582,8 +588,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   un brazo); y extraer líneas enteras de un bloque a una función, con las
   variables de fuera que leen como parámetros y las que se leen después como
   su resultado, que propaga con `?` el error de la función que las contenía.
-  No se ofrece si las líneas salen del bloque (`return`, `break`,
-  `continue`, `defer`) o leen una variable `var` o `self` de fuera. Sobre
+  Una variable `var` de fuera, o un parámetro `mut` o `var`, pasa prestado
+  con `mut` (`total: mut Int`, llamado con `mut total`); si las líneas usan
+  `self`, la función nueva es un método del mismo tipo con el mismo
+  receptor, llamado con `self.`. No se ofrece si las líneas salen del
+  bloque (`return`, `break`, `continue`, `defer`). Sobre
   un `let` leído una sola vez, en la sentencia siguiente y no tras lo que
   pueda saltarlo o retrasarlo, escribir su valor allí y quitar el `let`.
   Cada refactor se ofrece solo si el programa, con él aplicado, no tiene un

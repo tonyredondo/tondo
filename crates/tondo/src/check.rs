@@ -11535,12 +11535,18 @@ impl<'a> Checker<'a> {
                     let line = file.text[..(close - file.base) as usize].rfind('\n').map_or(0, |at| at + 1);
                     let before = &file.text[line..(close - file.base) as usize];
                     let indent: String = file.text[line..].chars().take_while(|c| *c == ' ').collect();
-                    let arm = format!("{indent}    {missing} => panic(\"`{missing}` is not handled yet\")\n");
-                    let edit = match before.trim().is_empty() {
-                        true => (Span::new(file.base + line as u32, file.base + line as u32), arm),
-                        false => (Span::new(close, close), format!("\n{arm}{indent}")),
+                    let at = |arms: String| match before.trim().is_empty() {
+                        true => (Span::new(file.base + line as u32, file.base + line as u32), arms),
+                        false => (Span::new(close, close), format!("\n{arms}{indent}")),
                     };
-                    self.diags.fix(format!("add an arm for `{missing}`"), false, vec![edit]);
+                    let arm =
+                        |missing: &str| format!("{indent}    {missing} => panic(\"`{missing}` is not handled yet\")\n");
+                    self.diags.fix(format!("add an arm for `{missing}`"), false, vec![at(arm(&missing))]);
+                    if report.every_missing.len() > 1 {
+                        let arms: String = report.every_missing.iter().map(|m| arm(m)).collect();
+                        let title = format!("add an arm for each of the {} cases missing", report.every_missing.len());
+                        self.diags.fix(title, false, vec![at(arms)]);
+                    }
                 }
             }
         }

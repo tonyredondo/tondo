@@ -4300,3 +4300,15 @@ marked `mutable`, which VS Code underlines; and the colours of
 assignment writes was no reference, so a rename left `sum += value` as
 it was; it is one now.
 
+## 2026-11-02 — Every missing arm, `pub` where needed, extraction of methods
+
+A `match` that misses several cases gets them all as arms in one repair,
+found as the exhaustiveness check finds one: each case missing is added
+and the check asked again, with a value of an open domain written `_` so
+that it covers what it says. A name private to another module gets the
+repair that declares it `pub` there, a decision because it widens what
+the module offers. Extracting lines lends a `var` of the function with
+`mut` and makes lines that use `self` a method of the same type, still
+offered only when the program checks with them. Imports and embedded
+paths are links.
+
