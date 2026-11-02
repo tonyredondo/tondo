@@ -477,8 +477,12 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   stdlib con su módulo, en su copia de la caché.
 - La firma de la llamada que se escribe, con su documentación y el argumento
   en que está el cursor.
-- El tipo de cada variable declarada sin escribirlo, y el parámetro al que va
-  cada argumento que no lo nombra ni es ya su nombre, como pistas en línea.
+- El tipo de cada variable y cada parámetro de un closure declarados sin
+  escribirlo, y el parámetro al que va cada argumento que no lo nombra ni es
+  ya su nombre, como pistas en línea.
+- Mientras el depurador está parado (`textDocument/inlineValue`), las
+  variables y parámetros que usan las líneas de la función donde paró hasta
+  esa línea, para que el editor muestre su valor junto a ellas.
 - Definición y referencias de variables, parámetros (también en argumentos con
   nombre), funciones, métodos, tipos, campos, variantes, constantes, traits,
   anotaciones (también sus campos en los argumentos de un uso) y módulos; las
@@ -500,7 +504,12 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   `modulo.Tipo.`, sus funciones sin `self`, como `Builder.new`, y las
   variantes de un enum; y si no, las variables y parámetros de la función
   hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
-  no importa todavía, con el `import` que los trae, y las palabras clave.
+  no importa todavía, con el `import` que los trae, y las palabras clave,
+  las que abren una construcción como plantilla con sus partes por rellenar
+  (`match`, `for`, `fn`...). Donde empieza un argumento, los nombres de los
+  parámetros de la llamada que no se dieron todavía, `nombre: `; en las
+  llaves de un record escrito por el nombre de su tipo, `User { ... }`, sus
+  campos que faltan.
   Tras `@`, las anotaciones visibles, y dentro de sus paréntesis los campos
   que faltan, como los parámetros de una llamada. En la ruta de `std.embed`,
   lo que hay en el directorio escrito hasta el cursor.
@@ -512,7 +521,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   paréntesis, salvo si los hay ya, y abre la ayuda de sus parámetros.
 - Resaltado semántico de cada nombre según lo que declara (módulo, tipo, enum,
   trait, parámetro, variable, campo, variante, función, método), de las
-  palabras clave, los textos, los números y los comentarios.
+  palabras clave, los textos, los números y los comentarios; del archivo
+  entero o de las líneas de un rango.
+- Hover de una palabra clave: qué hace, un uso y el tema de la guía.
 - Los símbolos de un archivo y su formato canónico (21 del lenguaje), entero o
   en las líneas de un rango; los bloques, corchetes de varias líneas, imports
   y comentarios que se pliegan; y la selección que crece del token a los
@@ -521,7 +532,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   (`workspace/willRenameFiles`) cambia los imports de él y de los módulos que
   contiene, y los nombres con que se usa.
 - Al empezar, analiza los proyectos de las carpetas del editor, para que sus
-  problemas se vean antes de abrir sus archivos.
+  problemas se vean antes de abrir sus archivos, y le pide que vigile sus
+  `.to`, `tondo.toml` y `tondo.lock`: lo que cambia en el disco, como tras un
+  checkout, se analiza de nuevo. Lo que nada usa o nada alcanza (W1001,
+  W1002, W1003, W1006, W1007) lleva la etiqueta `Unnecessary`, que el editor
+  atenúa.
 - El código de cada diagnóstico enlaza a `tondo-explain:<código>`, lo que
   `tondo explain` dice de él (sección 7.13).
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como

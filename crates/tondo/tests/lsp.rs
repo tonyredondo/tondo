@@ -927,3 +927,121 @@ fn reads_the_files_of_each_system() {
     assert_eq!(systems, expected);
     editor.stop();
 }
+
+/// What helps write and read Tondo in an editor beyond navigation: the
+/// keywords as snippets, a call's parameters by name and a record's
+/// fields, the type of a closure's parameter, unused code faded, what a
+/// keyword does, the values a debugger shows beside the lines, the tokens
+/// of some lines, and an arm for what a `match` misses.
+#[test]
+fn writing_helps() {
+    let dir = project(
+        "lsp-writing",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/models/models.to", MODELS), ("src/main.to", MAIN)],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let with_line = |editor: &mut Editor, typed: &str| -> String {
+        let text =
+            MAIN.replace("    console.println(ada.name)\n", &format!("    console.println(ada.name)\n    {typed}\n"));
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        text
+    };
+    let complete = |editor: &mut Editor, typed: &str| -> Vec<Value> {
+        let text = with_line(editor, typed);
+        let line = text.lines().position(|l| l == format!("    {typed}")).unwrap();
+        let position = json!({ "line": line, "character": 4 + typed.len() });
+        let result =
+            editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+        result["items"].as_array().unwrap().clone()
+    };
+    let labels =
+        |items: &[Value]| -> Vec<String> { items.iter().map(|i| i["label"].as_str().unwrap().to_string()).collect() };
+    let keyword = complete(&mut editor, "ma").into_iter().find(|i| i["label"] == "match").unwrap();
+    assert_eq!(keyword["insertTextFormat"], 2);
+    assert!(keyword["insertText"].as_str().unwrap().starts_with("match ${1:value} {"), "{keyword}");
+    assert_eq!(labels(&complete(&mut editor, "_ = greet(ada, ")[..1]), ["times:"]);
+    assert_eq!(labels(&complete(&mut editor, "_ = models.make(\"Al\", ")[..1]), ["age:"]);
+    assert_eq!(labels(&complete(&mut editor, "_ = models.User { ")[..2]), ["name:", "age:"]);
+    assert_eq!(labels(&complete(&mut editor, "_ = models.User { name: \"Al\", ")[..1]), ["age:"]);
+
+    // A closure's parameter written without its type shows it.
+    let text = with_line(&mut editor, "let doubled = [1, 2].map((n) { n * 2 })");
+    let lines = text.lines().count();
+    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": lines, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
+    let labels_of: Vec<&str> = hints.as_array().unwrap().iter().map(|h| h["label"].as_str().unwrap()).collect();
+    assert!(labels_of.contains(&": Int") && labels_of.contains(&": Array[Int]"), "{hints}");
+    // Unused code is faded.
+    with_line(&mut editor, "let unused = 1");
+    editor.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 0 } }),
+    );
+    let (_, diagnostics) = editor.diagnostics.iter().find(|(u, _)| *u == uri).cloned().unwrap();
+    let unused = diagnostics.as_array().unwrap().iter().find(|d| d["code"] == "W1002").expect("an unused binding");
+    assert_eq!(unused["tags"], json!([1]));
+
+    // What a keyword does.
+    let text = with_line(&mut editor, "_ = 1");
+    let hover = editor.at("textDocument/hover", &uri, &text, "match models.Role", "match", json!({}));
+    assert!(hover["contents"]["value"].as_str().unwrap().contains("Chooses by a value's shape"), "{hover}");
+    // While a debugger is stopped at a line, the bindings up to it.
+    let stopped = text.lines().position(|l| l.contains("console.println(ada.name)")).unwrap();
+    let values = editor.request(
+        "textDocument/inlineValue",
+        json!({ "textDocument": { "uri": uri }, "range": range,
+            "context": { "frameId": 1, "stoppedLocation": { "start": { "line": stopped, "character": 0 }, "end": { "line": stopped, "character": 4 } } } }),
+    );
+    let names: Vec<&str> = values.as_array().unwrap().iter().map(|v| v["variableName"].as_str().unwrap()).collect();
+    assert!(names.contains(&"ada") && names.contains(&"level") && !names.contains(&"text"), "{names:?}");
+    // The tokens of a few lines, as of the whole file.
+    let some = editor.request(
+        "textDocument/semanticTokens/range",
+        json!({ "textDocument": { "uri": uri }, "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 1, "character": 0 } } }),
+    );
+    let all = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
+    let (some, all) = (some["data"].as_array().unwrap().len(), all["data"].as_array().unwrap().len());
+    assert!(some > 0 && some < all, "{some} of {all}");
+
+    // A `match` without every case: an arm for the one it misses.
+    let text = MAIN.replace("        models.Role.Admin => console.println(\"admin\")\n", "");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 3 }, "contentChanges": [{ "text": text }] }),
+    );
+    editor.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 0 } }),
+    );
+    let (_, diagnostics) = editor.diagnostics.iter().find(|(u, _)| *u == uri).cloned().unwrap();
+    let missing = diagnostics.as_array().unwrap().iter().find(|d| d["code"] == "E1204").cloned().expect("E1204");
+    let actions = editor.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": missing["range"], "context": { "diagnostics": [missing] } }),
+    );
+    let titles: Vec<&str> = actions.as_array().unwrap().iter().map(|a| a["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"add an arm for `models.Role.Admin`"), "{titles:?}");
+    editor.stop();
+}
+
+/// A file changed on disk, as by a checkout, is analyzed again once the
+/// editor says so, which the server asks it to watch for.
+#[test]
+fn files_changed_on_disk() {
+    let dir =
+        project("lsp-watched", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {}\n")]);
+    let mut editor = Editor::start_with_folders(&dir);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    editor.request("workspace/symbol", json!({ "query": "" }));
+    let uri = format!("file://{}", dir.join("src/main.to").display());
+    std::fs::write(dir.join("src/main.to"), "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n").unwrap();
+    editor.notify("workspace/didChangeWatchedFiles", json!({ "changes": [{ "uri": uri, "type": 2 }] }));
+    editor.request("workspace/symbol", json!({ "query": "" }));
+    let (_, diagnostics) = editor.diagnostics.iter().find(|(u, _)| *u == uri).cloned().expect("diagnostics");
+    assert_eq!(diagnostics[0]["code"], "E1102", "{diagnostics}");
+    editor.stop();
+}

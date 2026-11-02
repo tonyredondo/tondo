@@ -4231,3 +4231,17 @@ The runtime now counts, on each side, the calls, those that run and
 those that failed: a status other than `Ok`, or on a server a call its
 client left before it ended. Metrics with labels, as by method or
 status, stay the interceptors' to write, as the guide shows.
+
+## 2026-11-02 — More of the editor from the language server
+
+A review of the language server against the protocol found what an
+editor could not yet do: complete a call's parameters by name or a
+record's fields, write a keyword's construction as a snippet, show the
+type of a closure's parameter, fade unused code, say what a keyword
+does, show the values of bindings beside their lines while debugging
+(`inlineValue`, which the debugger's `evaluate` answers), give the
+tokens of some lines, follow files that change on disk, as after a
+checkout, and offer an arm for what a `match` misses, which the
+compiler gives as a fix that requires a decision, since its body
+panics until written. The tokens are also counted in one pass now: a
+large file took time quadratic in its lines.

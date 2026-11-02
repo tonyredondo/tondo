@@ -11306,6 +11306,22 @@ impl<'a> Checker<'a> {
             if let Some(missing) = report.missing {
                 let message = format!("`match` is not exhaustive: `{missing}` is not covered");
                 self.diags.error("E1204", span, message);
+                // An arm for it before the closing brace, at the arms'
+                // indentation, that says it is not written yet.
+                let file = self.sources.file_of(span.start);
+                let text = &file.text[(span.start - file.base) as usize..(span.end - file.base) as usize];
+                if text.ends_with('}') {
+                    let close = span.end - 1;
+                    let line = file.text[..(close - file.base) as usize].rfind('\n').map_or(0, |at| at + 1);
+                    let before = &file.text[line..(close - file.base) as usize];
+                    let indent: String = file.text[line..].chars().take_while(|c| *c == ' ').collect();
+                    let arm = format!("{indent}    {missing} => panic(\"`{missing}` is not handled yet\")\n");
+                    let edit = match before.trim().is_empty() {
+                        true => (Span::new(file.base + line as u32, file.base + line as u32), arm),
+                        false => (Span::new(close, close), format!("\n{arm}{indent}")),
+                    };
+                    self.diags.fix(format!("add an arm for `{missing}`"), false, vec![edit]);
+                }
             }
         }
         let all_diverge = out.iter().all(|a| a.body.ty == Ty::NEVER);

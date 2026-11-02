@@ -177,6 +177,9 @@ struct Server {
     /// Whether the editor asked for the tests of each project
     /// (`tondo/tests`), and the last it was sent of each.
     tests: bool,
+    /// Whether the editor watches the files for it, as it asks once it
+    /// starts: a change on disk, as a checkout's, is analyzed again.
+    watches: bool,
     /// The editor's folders, whose projects are analyzed when it starts.
     folders: Vec<PathBuf>,
     listed: HashMap<PathBuf, Value>,
@@ -213,6 +216,10 @@ impl Server {
         let id = message.get("id").cloned();
         if method == "exit" {
             return false;
+        }
+        // The editor's answer to what the server asked, as to watch files.
+        if method.is_empty() {
+            return true;
         }
         let result = self.answer(&method, params, id.is_some());
         if let (Some(id), Some(result)) = (id, result) {
@@ -252,7 +259,9 @@ impl Server {
                 None
             }
             "textDocument/hover" => Some(Ok(self.hover(params).unwrap_or(Value::Null))),
-            "textDocument/definition" => Some(Ok(self.definition(params).unwrap_or(Value::Null))),
+            "textDocument/definition" | "textDocument/declaration" => {
+                Some(Ok(self.definition(params).unwrap_or(Value::Null)))
+            }
             "textDocument/references" => Some(Ok(self.references(params).unwrap_or(json!([])))),
             "textDocument/prepareRename" => Some(Ok(self.prepare_rename(params).unwrap_or(Value::Null))),
             "textDocument/rename" => Some(self.rename(params)),
@@ -283,12 +292,32 @@ impl Server {
             "typeHierarchy/subtypes" => Some(Ok(self.type_hierarchy(params, false).unwrap_or(json!([])))),
             "workspace/willRenameFiles" => Some(Ok(self.will_rename_files(params).unwrap_or(Value::Null))),
             "initialized" => {
+                if self.watches {
+                    let watchers: Vec<Value> = ["**/*.to", "**/tondo.toml", "**/tondo.lock"]
+                        .iter()
+                        .map(|glob| json!({ "globPattern": glob }))
+                        .collect();
+                    send(json!({ "jsonrpc": "2.0", "id": "watch", "method": "client/registerCapability",
+                        "params": { "registrations": [{ "id": "watch", "method": "workspace/didChangeWatchedFiles",
+                            "registerOptions": { "watchers": watchers } }] } }));
+                }
                 self.analyze_workspace();
                 None
             }
-            "textDocument/semanticTokens/full" => {
+            // Files that changed on disk, not in the editor: their projects
+            // are analyzed again.
+            "workspace/didChangeWatchedFiles" => {
+                for change in params["changes"].as_array().into_iter().flatten() {
+                    if let Some(path) = change["uri"].as_str().and_then(uri_path) {
+                        self.dirty.insert(root_of(&path).0);
+                    }
+                }
+                None
+            }
+            "textDocument/semanticTokens/full" | "textDocument/semanticTokens/range" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
+            "textDocument/inlineValue" => Some(Ok(self.inline_values(params).unwrap_or(json!([])))),
             _ if request => Some(Err((-32601, format!("`{method}` is not supported")))),
             _ => None,
         }
@@ -299,6 +328,7 @@ impl Server {
         let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
         self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
         self.tests = params["initializationOptions"]["tests"] == true;
+        self.watches = params["capabilities"]["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"] == true;
         let folders = params["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str());
         self.folders = folders.chain(params["rootUri"].as_str()).filter_map(uri_path).collect();
         self.folders.dedup();
@@ -308,6 +338,8 @@ impl Server {
                 "textDocumentSync": { "openClose": true, "change": 1 },
                 "hoverProvider": true,
                 "definitionProvider": true,
+                "declarationProvider": true,
+                "inlineValueProvider": true,
                 "referencesProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
@@ -334,6 +366,7 @@ impl Server {
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
                     "full": true,
+                    "range": true,
                 },
             },
             "serverInfo": { "name": "tondo", "version": driver::VERSION },
@@ -515,6 +548,10 @@ impl Server {
                 "source": "tondo",
                 "message": diagnostic.message,
             });
+            // What nothing uses or nothing reaches, which editors fade.
+            if matches!(code, "W1001" | "W1002" | "W1003" | "W1006" | "W1007") {
+                published["tags"] = json!([1]);
+            }
             // The code opens what it means (`tondo explain`).
             if crate::explain::CODES.iter().any(|(c, ..)| *c == code) {
                 published["codeDescription"] = json!({ "href": format!("tondo-explain:{code}") });
@@ -716,7 +753,15 @@ impl Server {
         let start = text[..at].rfind(|c: char| !is_name(c)).map_or(0, |i| i + 1);
         let end = text[at..].find(|c: char| !is_name(c)).map_or(text.len(), |i| at + i);
         let name = &text[start..end];
-        let (header, docs) = self.builtin(analyzed, file, start, name)?;
+        let (header, docs) = match self.builtin(analyzed, file, start, name) {
+            Some(found) => found,
+            // A word of the language: what it does, and where the guide
+            // says more.
+            None => {
+                let (_, about) = KEYWORD_DOCS.iter().find(|(word, _)| *word == name)?;
+                (name.to_string(), about.to_string())
+            }
+        };
         let mut value = format!("```tondo\n{header}\n```");
         if !docs.is_empty() {
             value.push_str(&format!("\n\n{docs}"));
@@ -950,10 +995,12 @@ impl Server {
         let index = analyzed.analysis.index.as_ref()?;
         let source = analyzed.analysis.sources.file(file);
         let mut hints = Vec::new();
+        // The type of each binding written without one: a `let`, and a
+        // closure's parameter.
         for def in &index.defs {
-            let (Some(ty), DefKind::Local) = (&def.ty, def.kind) else { continue };
+            let (Some(ty), DefKind::Local | DefKind::Parameter) = (&def.ty, def.kind) else { continue };
             let span = def.name_span;
-            if def.name == "_" || span.start < from.max(source.base) || span.end > to {
+            if def.name == "_" || def.name == "self" || span.start < from.max(source.base) || span.end > to {
                 continue;
             }
             if span.end > source.base + source.text.len() as u32 {
@@ -1208,7 +1255,17 @@ impl Server {
             return Some(json!({ "isIncomplete": false, "items": items }));
         }
         if !text[..start].ends_with('.') {
-            return Some(json!({ "isIncomplete": false, "items": self.names(latest, offset) }));
+            let mut items = self.names(latest, offset);
+            // In a record's braces, its fields not written yet; where a
+            // call's argument starts, its parameters' names.
+            let (before, written) = (text[..start].trim_end(), &text[..cursor]);
+            let mut first = self.record_fields(latest, &text, start).unwrap_or_default();
+            if first.is_empty() && before.ends_with(['(', ',']) {
+                first = self.named_arguments(params, written).unwrap_or_default();
+            }
+            first.extend(items);
+            items = first;
+            return Some(json!({ "isIncomplete": false, "items": items }));
         }
         let end = start - 1;
         // A module the file imports, a type, or a type of a module: what it
@@ -1255,6 +1312,88 @@ impl Server {
         let base = analyzed.analysis.sources.file(file).base;
         let items = self.members(&analyzed, base + end as u32, &here, call).unwrap_or_default();
         Some(json!({ "isIncomplete": false, "items": items }))
+    }
+
+    /// In the braces of a record written by its type's name, `User { ... }`,
+    /// the fields not written yet, each as `name: `.
+    fn record_fields(&self, analyzed: &Analyzed, text: &str, start: usize) -> Option<Vec<Value>> {
+        // The innermost brace still open before the name being written.
+        let mut depth = 0usize;
+        let mut open = None;
+        for (i, c) in text[..start].char_indices().rev() {
+            match c {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' if depth > 0 => depth -= 1,
+                '{' if depth > 0 => depth -= 1,
+                '(' | '[' => return None,
+                '{' => {
+                    open = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let open = open?;
+        // Where a field starts: nothing but space since the brace, a comma
+        // or the end of a line.
+        let entry = text[open..start].rfind(['{', ',', '\n']).map_or(open, |at| open + at + 1);
+        if !text[entry..start].trim().is_empty() {
+            return None;
+        }
+        let head = text[..open].trim_end();
+        let named = head.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let name = head[named..].rsplit('.').next()?;
+        if !name.starts_with(|c: char| c.is_uppercase()) {
+            return None;
+        }
+        let index = analyzed.analysis.index.as_ref()?;
+        let def = index.defs.iter().find(|d| d.kind == DefKind::Type && d.name == name)?;
+        let file = analyzed.analysis.sources.file_of(def.decl_span.start);
+        let declaration = file.slice(def.decl_span);
+        let body = declaration.split_once('{')?.1;
+        let given = &text[open..start];
+        let mut items = Vec::new();
+        for line in body.lines().map(str::trim) {
+            if line.starts_with("//") || line.starts_with('@') || line.starts_with("priv ") {
+                continue;
+            }
+            let Some((field, ty)) = line.split_once(':') else { continue };
+            let field = field.trim();
+            if field.is_empty() || !field.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            if given.contains(&format!("{field}:")) || given.contains(&format!("{field},")) {
+                continue;
+            }
+            items.push(json!({
+                "label": format!("{field}:"), "kind": 5, "detail": ty.trim(), "sortText": format!("!{field}"),
+                "insertText": format!("{field}: "),
+            }));
+        }
+        Some(items)
+    }
+
+    /// Where an argument of a call starts, the names of the parameters the
+    /// call does not name yet, each as `name: `.
+    fn named_arguments(&mut self, params: &Value, written: &str) -> Option<Vec<Value>> {
+        let signature = self.signature_help(params)?;
+        let call = &written[written.rfind('(')?..];
+        // Those before the argument being written are given by position.
+        let given = signature["activeParameter"].as_u64().unwrap_or(0) as usize;
+        let mut items = Vec::new();
+        for parameter in signature["signatures"][0]["parameters"].as_array()?.iter().skip(given) {
+            let label = parameter["label"].as_str().unwrap_or_default();
+            let Some((name, _)) = label.split_once(':') else { continue };
+            let name = name.trim().trim_start_matches("...");
+            if name.is_empty() || name.ends_with("self") || call.contains(&format!("{name}:")) {
+                continue;
+            }
+            items.push(json!({
+                "label": format!("{name}:"), "kind": 5, "detail": label, "sortText": format!("!{name}"),
+                "insertText": format!("{name}: "),
+            }));
+        }
+        Some(items)
     }
 
     /// The annotations a file writes after `@` (27.13): its module's, and
@@ -1533,7 +1672,12 @@ impl Server {
             }));
         }
         for keyword in KEYWORDS {
-            items.push(json!({ "label": keyword, "kind": 14 }));
+            let mut item = json!({ "label": keyword, "kind": 14 });
+            if let Some((_, snippet)) = SNIPPETS.iter().find(|(k, _)| *k == keyword) {
+                item["insertText"] = json!(snippet);
+                item["insertTextFormat"] = json!(2);
+            }
+            items.push(item);
         }
         items
     }
@@ -1575,6 +1719,8 @@ impl Server {
     }
 
     fn semantic_tokens(&mut self, params: &Value) -> Option<Value> {
+        // Of the lines of `range`, when it is given.
+        let lines = params["range"]["start"]["line"].as_u64().zip(params["range"]["end"]["line"].as_u64());
         let start = json!({ "textDocument": params["textDocument"], "position": { "line": 0, "character": 0 } });
         self.prepare(&start)?;
         let (analyzed, file, _) = self.at(&start)?;
@@ -1646,18 +1792,24 @@ impl Server {
         }
         tokens.sort_by_key(|t| (t.0, t.1));
         tokens.dedup_by_key(|t| t.0);
-        // One line each, as relative positions.
+        // One line each, as relative positions; the lines counted as the
+        // tokens go, once.
         let text = &source.text;
         let mut data = Vec::new();
         let (mut last_line, mut last_column) = (0, 0);
+        let (mut line, mut line_start, mut counted) = (0usize, 0usize, 0usize);
         for (start, end, kind, modifiers) in tokens {
             let mut from = start as usize;
             let end = end as usize;
             while from < end {
+                for (at, _) in text[counted..from].match_indices('\n') {
+                    line += 1;
+                    line_start = counted + at + 1;
+                }
+                counted = from;
                 let line_end = text[from..end].find('\n').map_or(end, |i| from + i);
-                if line_end > from {
-                    let line_start = text[..from].rfind('\n').map_or(0, |i| i + 1);
-                    let line = text[..from].matches('\n').count();
+                let shown = lines.is_none_or(|(first, last)| (first..=last).contains(&(line as u64)));
+                if line_end > from && shown {
                     let column = self.units.count(&text[line_start..from]);
                     let length = self.units.count(&text[from..line_end]);
                     let delta_line = line - last_line;
@@ -1790,6 +1942,104 @@ const TOKEN_TYPES: [&str; 16] = [
 ];
 
 /// The keywords completion offers.
+/// What each word of the language does, which hovering it shows.
+const KEYWORD_DOCS: &[(&str, &str)] = &[
+    (
+        "let",
+        "A binding that does not change: `let total = 3`; `var` for one that does. A name never hides another visible one. `tondo guide syntax`.",
+    ),
+    ("var", "A binding that changes: `var count = 0`, then `count += 1`. `tondo guide syntax`."),
+    (
+        "fn",
+        "A function: `fn add(a: Int, b: Int): Int { a + b }`; a method is `fn User.greet(self): String`. Its errors go in its signature: `fn load(): Config ! LoadError`. `tondo guide syntax`.",
+    ),
+    ("pub", "Visible to other modules; without it, a declaration is its module's. `tondo guide projects`."),
+    ("type", "A record, `type User = { name: String, age: Int }`, or a newtype, `type Id = Int`. `tondo guide types`."),
+    (
+        "enum",
+        "A value that is one of its variants, each with its own data: `enum Shape { Circle(Float), Square(Float) }`. `tondo guide types`.",
+    ),
+    (
+        "trait",
+        "What a type must offer: `trait Shape { fn area(self): Float }`, implemented with `impl`. `tondo guide types`.",
+    ),
+    (
+        "impl",
+        "A type's implementation of a trait: `impl Display for User { fn display(self): String { ... } }`. `tondo guide types`.",
+    ),
+    ("const", "A value the program computes once, when it compiles: `const Limit: Int = 100`. `tondo guide syntax`."),
+    ("import", "Brings a module in by its path: `import std.http`, then `http.App`. `tondo guide projects`."),
+    (
+        "if",
+        "Runs a block when the condition holds; it is an expression: `let size = if big { 10 } else { 1 }`. `tondo guide syntax`.",
+    ),
+    ("else", "The block of an `if` when its condition does not hold. `tondo guide syntax`."),
+    (
+        "for",
+        "A loop over what an iterator gives, `for item in items`, while a condition holds, `for n < 10`, or for ever, `for { ... }`. `tondo guide syntax`.",
+    ),
+    ("in", "What a `for` goes through, or whether a value is in a collection: `x in [1, 2]`. `tondo guide syntax`."),
+    (
+        "match",
+        "Chooses by a value's shape, every case covered: `match shape { Shape.Circle(r) => ..., _ => ... }`. `tondo guide syntax`.",
+    ),
+    (
+        "return",
+        "Leaves the function early with a value; the last expression of a block is its value without it. `tondo guide syntax`.",
+    ),
+    ("break", "Leaves the loop it is in. `tondo guide syntax`."),
+    ("continue", "Goes on to the next turn of the loop it is in. `tondo guide syntax`."),
+    (
+        "fail",
+        "Ends the function with an error of its `!` type: `fail ParseError.Empty`. `?` passes on one that a call gives. `tondo guide errors`.",
+    ),
+    (
+        "spawn",
+        "Runs a call in a task of its own: `let job = spawn fetch(url)`, then `job.wait()`. `tondo guide tasks`.",
+    ),
+    (
+        "defer",
+        "Runs a call or a block when the scope ends, however it ends: `defer file.close()`. `tondo guide errors`.",
+    ),
+    ("select", "Waits for the first of several channels or tasks. `tondo guide tasks`."),
+    ("recover", "Stops a panic of its block, as a `T ! Panic`: `recover { risky() }`. `tondo guide errors`."),
+    (
+        "context",
+        "Values that go with the work that runs, read anywhere: `context Request = { id: String = \"\" }`, set by `with`. `tondo guide tasks`.",
+    ),
+    (
+        "annotation",
+        "A type whose values are written on declarations, `@Check(min: 3)`, and read by reflection or a `derive`. `tondo guide meta`.",
+    ),
+    (
+        "with",
+        "Changes fields of a context until the block ends: `with Request { id: id }`; on a record, a copy with fields changed: `user with { age: 37 }`. `tondo guide tasks`.",
+    ),
+    (
+        "within",
+        "Runs a block with a deadline; its waits end when it passes: `within time.seconds(2) { fetch() }`. `tondo guide tasks`.",
+    ),
+    ("none", "An option without a value; `some(x)` has one. `tondo guide errors`."),
+    ("some", "An option with a value: `some(3)`; `none` has none. `tondo guide errors`."),
+];
+
+/// What a keyword completes to, its parts to fill in turn.
+const SNIPPETS: &[(&str, &str)] = &[
+    ("fn", "fn ${1:name}($2) {\n\t$0\n}"),
+    ("type", "type ${1:Name} = {\n\t$0\n}"),
+    ("enum", "enum ${1:Name} {\n\t$0\n}"),
+    ("trait", "trait ${1:Name} {\n\t$0\n}"),
+    ("impl", "impl ${1:Trait} for ${2:Type} {\n\t$0\n}"),
+    ("if", "if ${1:condition} {\n\t$0\n}"),
+    ("for", "for ${1:item} in ${2:items} {\n\t$0\n}"),
+    ("match", "match ${1:value} {\n\t${2:pattern} => $0\n}"),
+    ("defer", "defer {\n\t$0\n}"),
+    ("recover", "recover {\n\t$0\n}"),
+    ("within", "within ${1:time.seconds(1)} {\n\t$0\n}"),
+    ("context", "context ${1:Name} = {\n\t${2:field}: ${3:String} = $0\n}"),
+    ("with", "with ${1:Context} { ${2:field}: $0 }"),
+];
+
 const KEYWORDS: [&str; 29] = [
     "let",
     "var",
@@ -2343,6 +2593,41 @@ impl Server {
     }
 
     /// The declaration of the type a binding, field or parameter has.
+    /// While a debugger is stopped: the bindings of the lines shown, from
+    /// the start of the function it stopped in to the line it stopped at,
+    /// for the editor to show their values beside them.
+    fn inline_values(&mut self, params: &Value) -> Option<Value> {
+        let stopped = &params["context"]["stoppedLocation"]["end"];
+        let first = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let at = json!({ "textDocument": params["textDocument"], "position": stopped });
+        self.prepare(&first)?;
+        let (analyzed, file, from) = self.at(&first)?;
+        let to = self.at(&at)?.2;
+        let index = analyzed.analysis.index.as_ref()?;
+        let source = analyzed.analysis.sources.file(file);
+        // The function the stop is in: what is before it belongs to others.
+        let function = index
+            .defs
+            .iter()
+            .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+            .filter(|d| d.decl_span.start <= to && to <= d.decl_span.end)
+            .map(|d| d.decl_span.start)
+            .max()
+            .unwrap_or(source.base);
+        let from = from.max(function);
+        let bound = |def: usize| matches!(index.defs[def].kind, DefKind::Local | DefKind::Parameter);
+        let mut values = Vec::new();
+        for (span, def) in index.uses.iter().filter(|(_, def)| bound(*def)) {
+            let name = &index.defs[*def].name;
+            if span.start < from || span.end > to || name == "_" {
+                continue;
+            }
+            let Some((_, range)) = self.place(analyzed, *span) else { continue };
+            values.push(json!({ "range": range, "variableName": name, "caseSensitiveLookup": true }));
+        }
+        Some(Value::Array(values))
+    }
+
     fn type_definition(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
         let (analyzed, def, _) = self.def_at(params)?;
