@@ -577,6 +577,7 @@ fn run(
         ok(status) => status
         err(failure) => panicked(who, failure.message)
     }
+    grpcNative.served(server.frames, outcome.code.number())
     server.start()
     match server.wire {
         Wire.Connect => done.send(outcome)

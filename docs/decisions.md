@@ -4220,3 +4220,14 @@ with its methods, `tondo api --search` finds declarations by their names
 and documentation, the MCP tool `api` does both, and the editor's hover
 of a module and its search of symbols reach the standard library too,
 those the compiler implements included.
+
+## 2026-11-02 — The runtime counts gRPC calls
+
+gRPC already had its observability hooks, `onCall` and `onMessage` on a
+service and on a channel, as HTTP has `App.use` and `Client.use`. What
+it lacked against HTTP were the runtime's own counters, which `tondo
+counters` shows with nothing written: a channel's calls went uncounted.
+The runtime now counts, on each side, the calls, those that run and
+those that failed: a status other than `Ok`, or on a server a call its
+client left before it ended. Metrics with labels, as by method or
+status, stay the interceptors' to write, as the guide shows.

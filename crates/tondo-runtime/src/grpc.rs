@@ -441,6 +441,9 @@ impl Ended {
         if status.is_none() {
             *status = Some((code, message.to_string(), trailers.to_vec()));
             self.notify.notify_waiters();
+            if code != 0 {
+                crate::diagnostics::GRPC_CLIENT_FAILED.add(1);
+            }
         }
     }
 }
@@ -459,6 +462,8 @@ struct Call {
     ended: Arc<Ended>,
     /// Whether it sends its messages compressed with gzip.
     compressed: bool,
+    /// The call counted among those of clients that run.
+    _active: crate::diagnostics::Open,
 }
 
 impl Drop for Call {
@@ -655,7 +660,9 @@ fn begin(
     message: *mut ArrayHeader,
     single: bool,
 ) -> Option<Call> {
-    let channel = match native::get::<Result<Arc<Channel>, String>>(channel)? {
+    let channel = native::get::<Result<Arc<Channel>, String>>(channel)?;
+    crate::diagnostics::GRPC_CLIENT_CALLS.add(1);
+    let channel = match channel {
         Ok(channel) => channel.clone(),
         Err(problem) => return Some(finished(UNAVAILABLE, problem.clone())),
     };
@@ -709,6 +716,7 @@ fn begin(
         status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
         ended,
         compressed,
+        _active: crate::diagnostics::Open::new(&crate::diagnostics::GRPC_CLIENT_ACTIVE),
     })
 }
 
@@ -726,6 +734,7 @@ fn finished(code: i64, message: String) -> Call {
         status: Mutex::new((UNKNOWN, String::new(), Vec::new())),
         ended,
         compressed: false,
+        _active: crate::diagnostics::Open::new(&crate::diagnostics::GRPC_CLIENT_ACTIVE),
     }
 }
 
@@ -987,6 +996,48 @@ struct Frames {
     /// The Base64 text of a gRPC-Web body sent as text not yet decoded, or
     /// `None` for a body of bytes.
     text: Option<Vec<u8>>,
+    /// Whether the call it serves ended with its status; one let go of
+    /// before, as its client went, failed.
+    served: bool,
+    /// The call counted among those the server serves.
+    _active: crate::diagnostics::Open,
+}
+
+impl Frames {
+    /// The frames of a call a server serves, which it counts.
+    fn new(source: Option<crate::http::Source>, buffer: BytesMut, encoding: String, text: Option<Vec<u8>>) -> Frames {
+        crate::diagnostics::GRPC_SERVER_CALLS.add(1);
+        let active = crate::diagnostics::Open::new(&crate::diagnostics::GRPC_SERVER_ACTIVE);
+        Frames {
+            source,
+            buffer,
+            message: Bytes::new(),
+            error: String::new(),
+            encoding,
+            text,
+            served: false,
+            _active: active,
+        }
+    }
+}
+
+impl Drop for Frames {
+    fn drop(&mut self) {
+        if !self.served {
+            crate::diagnostics::GRPC_SERVER_FAILED.add(1);
+        }
+    }
+}
+
+/// The status a server's call ended with: one but `Ok` failed.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_grpc_served(object: *mut NativeObject, code: i64) {
+    if let Some(frames) = native::get::<Mutex<Frames>>(object) {
+        lock(frames).served = true;
+        if code != 0 {
+            crate::diagnostics::GRPC_SERVER_FAILED.add(1);
+        }
+    }
 }
 
 /// The frames of a request body's stream, compressed with `encoding`, and
@@ -998,14 +1049,8 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
     text_body: u8,
 ) -> *mut NativeObject {
     unsafe { crate::tasks::tondo_rt_handle_retain(input as *mut u8) };
-    let frames = Frames {
-        source: Some(crate::http::Source(input)),
-        buffer: BytesMut::new(),
-        message: Bytes::new(),
-        error: String::new(),
-        encoding: text(encoding),
-        text: (text_body != 0).then(Vec::new),
-    };
+    let frames =
+        Frames::new(Some(crate::http::Source(input)), BytesMut::new(), text(encoding), (text_body != 0).then(Vec::new));
     native::new(Mutex::new(frames))
 }
 
@@ -1013,14 +1058,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
 /// unary call of Connect.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_grpc_frames_of(bytes: *mut ArrayHeader, encoding: *const Str) -> *mut NativeObject {
-    let frames = Frames {
-        source: None,
-        buffer: BytesMut::from(&unsafe { array_bytes(bytes) }[..]),
-        message: Bytes::new(),
-        error: String::new(),
-        encoding: text(encoding),
-        text: None,
-    };
+    let frames = Frames::new(None, BytesMut::from(&unsafe { array_bytes(bytes) }[..]), text(encoding), None);
     native::new(Mutex::new(frames))
 }
 

@@ -329,6 +329,10 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   metadata: more })? })` wraps a client's, and `users.UserServiceClient.on(
   channel)` uses it; `onMessage((call, direction, message) { ... })` sees
   each message as a `reflect.Value`. The first added is the outermost.
+  Interceptors are where metrics, logs and traces go, on both sides, as
+  `App.use` and `Client.use` are for HTTP; and without any, `tondo
+  counters` shows `grpc.client.calls`, `grpc.server.calls`, how many run
+  and how many failed.
 - `let health = grpc.Health.new()`, `app.grpc(health.service())` and
   `health.set("users.v1.UserService", grpc.ServingStatus.NotServing)` answer
   `grpc.health.v1`; `app.grpc(grpc.reflection([service, health.service()]))`

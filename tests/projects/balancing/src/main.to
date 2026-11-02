@@ -1,10 +1,12 @@
 // A channel to several servers: round robin gives each call to the next
 // of those that answer, pick first all of them to the first that answers;
 // an address that does not answer waits for its backoff, and a call while
-// every address waits fails at once.
+// every address waits fails at once. The runtime counts the calls of
+// clients and of servers, and those that failed.
 
 import balancing.api.greeter
 import std.console
+import std.diagnostics
 import std.grpc
 import std.http
 
@@ -13,7 +15,10 @@ type Named = {
 }
 
 impl greeter.Greeter for Named {
-    fn sayHello(self, _: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        if request.name == "fail" {
+            fail grpc.Status { code: grpc.Code.NotFound, message: "no such greeting" }
+        }
         greeter.HelloReply { message: self.name }
     }
 
@@ -75,6 +80,17 @@ fn main(): !(http.HttpError | grpc.Status) {
             "{status.code} {status.message.startsWith("no address of {dead} answers; the channel tries again in")}",
         )
     }
+    match greeter.GreeterClient.on(robin).sayHello(greeter.HelloRequest { name: "fail" }) {
+        ok(_) => console.println("answered")
+        err(status) => console.println("{status.code}")
+    }
+    let metrics = diagnostics.metrics()
+    let counted = (name: String) {
+        metrics.find((m) { m.name == name }).map((m) { m.value }).unwrapOr(-1)
+    }
+    console.println(
+        "client {counted("grpc.client.calls")} calls, {counted("grpc.client.failed")} failed; server {counted("grpc.server.calls")} calls, {counted("grpc.server.failed")} failed",
+    )
     a.stop()
     b.stop()
     c.stop()
@@ -86,3 +102,5 @@ fn main(): !(http.HttpError | grpc.Status) {
 // expect-stdout: a c a c
 // expect-stdout: Unavailable
 // expect-stdout: Unavailable true
+// expect-stdout: NotFound
+// expect-stdout: client 18 calls, 3 failed; server 16 calls, 1 failed

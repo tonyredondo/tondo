@@ -588,6 +588,7 @@ Los contadores del runtime, por grupos:
 | `timers` | `pending` |
 | `net` | `connections`; `read` y `written`, bytes de `std.net` |
 | `http` | `client.requests`; `server.requests`; `server.active`, peticiones que se están atendiendo |
+| `grpc` | `client.calls`, `client.active` y `client.failed`, las llamadas de los canales; `server.calls`, `server.active` y `server.failed`, las que sirven sus servicios, gRPC-Web y Connect incluidos; falla la que termina con un status que no es `Ok`, o la que su cliente deja antes |
 | `sockets` | `tcp`, `listening`, `udp` y `unix` abiertos |
 | `descriptors` | `files`, `pipes` y `total` abiertos |
 | `processes` | `running` y `started`, los procesos que lanzó el programa |

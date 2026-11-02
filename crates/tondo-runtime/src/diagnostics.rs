@@ -105,6 +105,12 @@ pub(crate) static NET_WRITTEN: Count = Count::new();
 pub(crate) static HTTP_CLIENT_REQUESTS: Count = Count::new();
 pub(crate) static HTTP_SERVER_REQUESTS: Count = Count::new();
 pub(crate) static HTTP_SERVER_ACTIVE: Count = Count::new();
+pub(crate) static GRPC_CLIENT_CALLS: Count = Count::new();
+pub(crate) static GRPC_CLIENT_ACTIVE: Count = Count::new();
+pub(crate) static GRPC_CLIENT_FAILED: Count = Count::new();
+pub(crate) static GRPC_SERVER_CALLS: Count = Count::new();
+pub(crate) static GRPC_SERVER_ACTIVE: Count = Count::new();
+pub(crate) static GRPC_SERVER_FAILED: Count = Count::new();
 pub(crate) static PROCESSES_STARTED: Count = Count::new();
 
 // ---------------------------------------------------------------------------
@@ -409,6 +415,12 @@ fn sample() -> Vec<Sample> {
     add("http.client.requests", false, "", HTTP_CLIENT_REQUESTS.get());
     add("http.server.requests", false, "", HTTP_SERVER_REQUESTS.get());
     add("http.server.active", true, "", HTTP_SERVER_ACTIVE.get());
+    add("grpc.client.calls", false, "", GRPC_CLIENT_CALLS.get());
+    add("grpc.client.active", true, "", GRPC_CLIENT_ACTIVE.get());
+    add("grpc.client.failed", false, "", GRPC_CLIENT_FAILED.get());
+    add("grpc.server.calls", false, "", GRPC_SERVER_CALLS.get());
+    add("grpc.server.active", true, "", GRPC_SERVER_ACTIVE.get());
+    add("grpc.server.failed", false, "", GRPC_SERVER_FAILED.get());
     let open = descriptors();
     add("sockets.tcp", true, "", open.tcp);
     add("sockets.listening", true, "", open.listening);
