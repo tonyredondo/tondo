@@ -1586,7 +1586,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 18] = [
+    const KEYS: [&str; 20] = [
         "debugging",
         "running",
         "pausing",
@@ -1602,6 +1602,8 @@ fn debugger(value: &Value) -> bool {
         "tasks",
         "catch",
         "logged",
+        "watch",
+        "unwatched",
         "deleted",
         "reloaded",
         "error",
@@ -2026,10 +2028,14 @@ debug build's process ID or name. A program it starts waits before main for brea
     },
     Tool {
         name: "debug",
-        description: "A command of a debugging session: break <file>:<line> [if <name> <op> <value>], delete <id>, \
-continue, step, next, finish, pause, locals (what the code there can use: its bindings, a closure's captures, \
-and those of the functions it is written in, as a test's suites), context (the task's contexts, and the `with` \
-that set each field), print <name>, stack, frame <n>, tasks, reload (a program started with `live`: \
+        description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
+{expressions}>], break fn <name>, watch <expression> (stops after the line that changes it), delete <id>, \
+catch panic|error|none (stop where a panic, or an error, starts), continue, step, next, finish, pause, locals \
+(what the code there can use: its bindings, a closure's captures, and those of the functions it is written in, \
+as a test's suites), context (the task's contexts, and the `with` that set each field), print <expression> \
+(bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \
+length(), isEmpty(), isSome(), contains(), which read and never run the program's code), children <path> \
+[<start> <count>], stack, frame <n>, tasks, reload (a program started with `live`: \
 its code as its files are now, even while it is stopped), restart (live: the stopped function returns and is \
 called again with the same arguments, from its start, as its code is now); and wait, which waits for a running \
 program to stop. Gives the debugger's answers and events, and what the program printed.",

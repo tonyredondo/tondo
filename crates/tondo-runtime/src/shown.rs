@@ -6,25 +6,32 @@
 //! and anything else as it is.
 
 /// A part of a value: its text, and its own parts, each by the name that
-/// follows its parent's path: `.field`, `.0`, `[2]` or `["key"]`.
+/// follows its parent's path: `.field`, `.0`, `[2]` or `["key"]`; and
+/// whether those are by position, an array's or a set's.
 pub(crate) struct Part<'a> {
     pub text: &'a str,
     pub parts: Vec<(String, Part<'a>)>,
+    pub indexed: bool,
 }
 
-/// The parts of a value's text; what does not read as a value is one part
-/// without parts.
+/// The parts of a value's text, one level down: theirs are not read, so
+/// that a value of any size opens part by part. What does not read as a
+/// value is one part without parts.
 pub(crate) fn parse(text: &str) -> Part<'_> {
     let mut at = 0;
-    match value(text, &mut at) {
+    match value(text, &mut at, true) {
         Some(part) if at == text.len() => part,
-        _ => Part { text, parts: Vec::new() },
+        _ => leaf(text),
     }
 }
 
-/// The part a path names, from the parts of the value it starts at:
-/// `.field`, `.0`, `[2]` or `["key"]`, one after another.
-pub(crate) fn find<'p, 'a>(mut part: &'p Part<'a>, mut path: &str) -> Option<&'p Part<'a>> {
+fn leaf(text: &str) -> Part<'_> {
+    Part { text, parts: Vec::new(), indexed: false }
+}
+
+/// The text of the part a path names in a value's text: `.field`, `.0`,
+/// `[2]` or `["key"]`, one after another.
+pub(crate) fn find<'a>(mut text: &'a str, mut path: &str) -> Option<&'a str> {
     while !path.is_empty() {
         let length = match path.as_bytes()[0] {
             b'.' => path[1..].find(['.', '[']).map_or(path.len(), |i| i + 1),
@@ -32,10 +39,10 @@ pub(crate) fn find<'p, 'a>(mut part: &'p Part<'a>, mut path: &str) -> Option<&'p
             _ => return None,
         };
         let (step, rest) = path.split_at(length);
-        part = &part.parts.iter().find(|(name, _)| name == step)?.1;
+        text = parse(text).parts.into_iter().find(|(name, _)| name == step)?.1.text;
         path = rest;
     }
-    Some(part)
+    Some(text)
 }
 
 /// Where the `]` that closes the `[` a path starts with is, past quotes.
@@ -54,21 +61,22 @@ fn closing(path: &str) -> Option<usize> {
     None
 }
 
-fn value<'a>(text: &'a str, at: &mut usize) -> Option<Part<'a>> {
+/// A value from `at`, and, when `open`, its parts, but not theirs.
+fn value<'a>(text: &'a str, at: &mut usize, open: bool) -> Option<Part<'a>> {
     let start = *at;
-    let leaf = |end: usize| Part { text: &text[start..end], parts: Vec::new() };
+    let part = |at: usize, parts: Vec<(String, Part<'a>)>, indexed| Part { text: &text[start..at], parts, indexed };
     match text.as_bytes().get(start)? {
         b'"' | b'\'' => {
             *at = quote_end(text, start)?;
-            Some(leaf(*at))
+            Some(leaf(&text[start..*at]))
         }
         b'[' => {
-            let parts = items(text, at, b']', true)?;
-            Some(Part { text: &text[start..*at], parts })
+            let (parts, keyed) = items(text, at, b']', true, open)?;
+            Some(part(*at, parts, !keyed))
         }
         b'(' => {
-            let parts = items(text, at, b')', false)?;
-            Some(Part { text: &text[start..*at], parts: numbered(parts) })
+            let (parts, _) = items(text, at, b')', false, open)?;
+            Some(part(*at, numbered(parts), false))
         }
         _ => {
             let end =
@@ -81,12 +89,12 @@ fn value<'a>(text: &'a str, at: &mut usize) -> Option<Part<'a>> {
             let rest = &text[end..];
             if rest.starts_with('(') {
                 // A variant and its payload.
-                let parts = items(text, at, b')', false)?;
-                return Some(Part { text: &text[start..*at], parts: numbered(parts) });
+                let (parts, _) = items(text, at, b')', false, open)?;
+                return Some(part(*at, numbered(parts), false));
             }
             if rest.starts_with('[') && word == "Set" {
-                let parts = items(text, at, b']', true)?;
-                return Some(Part { text: &text[start..*at], parts });
+                let (parts, _) = items(text, at, b']', false, open)?;
+                return Some(part(*at, parts, true));
             }
             if rest.starts_with(" { ") {
                 // A record's fields, by name.
@@ -94,14 +102,17 @@ fn value<'a>(text: &'a str, at: &mut usize) -> Option<Part<'a>> {
                 let mut parts = Vec::new();
                 loop {
                     let colon = text[*at..].find(": ")? + *at;
-                    let name = format!(".{}", &text[*at..colon]);
+                    let name = &text[*at..colon];
                     *at = colon + 2;
-                    parts.push((name, value(text, at)?));
+                    let field = value(text, at, false)?;
+                    if open {
+                        parts.push((format!(".{name}"), field));
+                    }
                     if text[*at..].starts_with(", ") {
                         *at += 2;
                     } else if text[*at..].starts_with(" }") {
                         *at += 2;
-                        return Some(Part { text: &text[start..*at], parts });
+                        return Some(part(*at, parts, false));
                     } else {
                         return None;
                     }
@@ -110,42 +121,57 @@ fn value<'a>(text: &'a str, at: &mut usize) -> Option<Part<'a>> {
             if rest.starts_with(": ") && word.chars().next().is_some_and(char::is_uppercase) {
                 // A member of a union: its value's parts.
                 *at += 2;
-                let inner = value(text, at)?;
-                return Some(Part { text: &text[start..*at], parts: inner.parts });
+                let inner = value(text, at, open)?;
+                return Some(part(*at, inner.parts, inner.indexed));
             }
-            Some(leaf(end))
+            Some(leaf(word))
         }
     }
 }
 
-/// The items between brackets, `[`…`]` or `(`…`)`: each by its index, or
-/// by its key when they are a map's `key: value`.
-fn items<'a>(text: &'a str, at: &mut usize, close: u8, keyed: bool) -> Option<Vec<(String, Part<'a>)>> {
+/// The items between brackets, `[`…`]` or `(`…`)`, when `open`: each by
+/// its index, or by its key when they are a map's `key: value`, which
+/// the second says.
+fn items<'a>(
+    text: &'a str,
+    at: &mut usize,
+    close: u8,
+    keys: bool,
+    open: bool,
+) -> Option<(Vec<(String, Part<'a>)>, bool)> {
     *at += 1;
     let mut parts = Vec::new();
     // An empty map.
-    if keyed && text[*at..].starts_with(":]") {
+    if keys && text[*at..].starts_with(":]") {
         *at += 2;
-        return Some(parts);
+        return Some((parts, true));
     }
     if text.as_bytes().get(*at) == Some(&close) {
         *at += 1;
-        return Some(parts);
+        return Some((parts, false));
     }
+    let mut keyed = false;
     loop {
-        let item = value(text, at)?;
-        let part = if keyed && text[*at..].starts_with(": ") {
-            *at += 2;
-            (format!("[{}]", item.text), value(text, at)?)
-        } else {
-            (format!("[{}]", parts.len()), item)
+        let item = value(text, at, false)?;
+        let entry = match keys && text[*at..].starts_with(": ") {
+            true => {
+                *at += 2;
+                keyed = true;
+                Some(value(text, at, false)?)
+            }
+            false => None,
         };
-        parts.push(part);
+        if open {
+            parts.push(match entry {
+                Some(entry) => (format!("[{}]", item.text), entry),
+                None => (format!("[{}]", parts.len()), item),
+            });
+        }
         match text.as_bytes().get(*at)? {
             b',' if text[*at..].starts_with(", ") => *at += 2,
             &c if c == close => {
                 *at += 1;
-                return Some(parts);
+                return Some((parts, keyed));
             }
             _ => return None,
         }
@@ -187,21 +213,32 @@ mod tests {
         assert_eq!(user.text, shown);
         let fields: Vec<String> = user.parts.iter().map(|(name, _)| name.clone()).collect();
         assert_eq!(fields, [".name", ".tags", ".scores", ".at", ".role", ".extra"]);
-        assert_eq!(find(&user, ".name").unwrap().text, r#""Ada, \"the first\"""#);
-        assert_eq!(
-            names(find(&user, ".tags").unwrap()),
-            [("[0]".into(), "\"a\"".into()), ("[1]".into(), "\"b\"".into())]
-        );
-        assert_eq!(find(&user, r#".scores["y"]"#).unwrap().text, "2");
-        assert_eq!(find(&user, ".at.1").unwrap().text, "2.5");
-        assert_eq!(find(&user, ".role.0").unwrap().text, "3");
-        assert_eq!(find(&user, ".extra.0[0]").unwrap().text, "1");
-        assert!(find(&user, ".missing").is_none());
-        // A union's member, an empty map, and what is not a value.
+        // One level down: a part's own parts wait to be opened.
+        assert!(user.parts.iter().all(|(_, part)| part.parts.is_empty()));
+        assert_eq!(find(shown, ".name").unwrap(), r#""Ada, \"the first\"""#);
+        let tags = parse(find(shown, ".tags").unwrap());
+        assert_eq!(names(&tags), [("[0]".into(), "\"a\"".into()), ("[1]".into(), "\"b\"".into())]);
+        assert!(tags.indexed && !parse(find(shown, ".scores").unwrap()).indexed);
+        assert!(parse(find(shown, ".extra.0").unwrap()).indexed);
+        assert_eq!(find(shown, r#".scores["y"]"#).unwrap(), "2");
+        assert_eq!(find(shown, ".at.1").unwrap(), "2.5");
+        assert_eq!(find(shown, ".role.0").unwrap(), "3");
+        assert_eq!(find(shown, ".extra.0[0]").unwrap(), "1");
+        assert!(find(shown, ".missing").is_none());
+        // A union's member, an empty map, a map keyed by numbers, and what
+        // is not a value.
         assert_eq!(names(&parse("Shape: Shape.Circle(1.5)")), [(".0".into(), "1.5".into())]);
         assert!(parse("[:]").parts.is_empty());
+        assert!(!parse("[0: 1]").indexed);
         let odd = parse("fn(Int): Int");
         assert_eq!((odd.text, odd.parts.len()), ("fn(Int): Int", 0));
         assert_eq!(parse("[1, 2, 3...").parts.len(), 0);
+    }
+
+    #[test]
+    fn finds_a_part_of_a_large_value() {
+        let shown = format!("[{}]", (0..200_000).map(|i| format!("P {{ n: {i} }}")).collect::<Vec<_>>().join(", "));
+        assert_eq!(parse(&shown).parts.len(), 200_000);
+        assert_eq!(find(&shown, "[199999].n"), Some("199999"));
     }
 }

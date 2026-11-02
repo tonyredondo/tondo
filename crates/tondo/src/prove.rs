@@ -453,7 +453,8 @@ impl Prover<'_> {
             | Statement::Release(_)
             | Statement::DeferPush(..)
             | Statement::DeferPop
-            | Statement::LendAt(..) => {}
+            | Statement::LendAt(..)
+            | Statement::Failing(..) => {}
         }
     }
 

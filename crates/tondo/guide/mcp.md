@@ -76,17 +76,26 @@ debug executable or a running debug build, and gives a session; with
 command and gives the answers, the events and what the program printed:
 
 ```text
-break src/main.to:12 [if count > 3] [hits 5] [log at {i}]   delete <id>
-continue   step   next   finish   pause   wait   catch panic|none
-locals   print user.name   children user   set count 3   context
-stack    frame 1   task 2   tasks   reload   restart
+break src/main.to:12 [if count > 3 and name != ""] [hits 5] [log at {i}: {total / i}]
+break fn parse   watch total   delete <id>   catch panic error   catch none
+continue   step   next   finish   pause   wait
+locals   print items[i + 1].name   print total / count   children items 100 50
+set count 3   context   stack   frame 1   task 2   tasks   reload   restart
 ```
 
 `locals` lists what the stopped line can use: its bindings, what a closure
 captured, and those of the functions it is written in that are on the
 stack, as a test's suites, each with where it is from; `context` the
-program's contexts and the `with` that set each field. `debug_stop` ends
-the session and its program.
+program's contexts and the `with` that set each field. Conditions, `print`,
+`watch` and the `{}` of a message take expressions: bindings and their
+parts, literals, arithmetic, comparisons, `and`, `or`, `not`, and
+`length()`, `isEmpty()`, `isSome()`, `isNone()`, `isOk()`, `isErr()`,
+`contains()`, `startsWith()` and `endsWith()`; they read values and never
+run the program's code. `watch` stops on the line after the one that
+changed the value, in its frame or a call it makes; `catch error` stops
+where an error starts, a `fail` or a `?` on what the standard library
+failed with. `children` gives a page of a large value's parts from
+`start`. `debug_stop` ends the session and its program.
 
 ## Observing and profiling
 

@@ -138,6 +138,7 @@ enum Rt {
     DebugTable,
     MetricsWatch,
     DebugLine,
+    DebugFailed,
     SbQuoted,
     BoxNew,
     BoxRetain,
@@ -422,6 +423,7 @@ impl Rt {
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
+            Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64], &[]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -4409,6 +4411,8 @@ struct DebugFrame {
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
     line: Option<(String, usize)>,
+    /// The site of the last probe.
+    site: usize,
 }
 
 impl<'a, 'b> FnCodegen<'a, 'b> {
@@ -4493,7 +4497,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
             let function = cg.debug_function(body.name.clone(), described);
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, captured, alive, addresses, line: None }
+            DebugFrame { function, first, shown, captured, alive, addresses, line: None, site: 0 }
         });
         FnCodegen {
             e: Emit { cg, fb },
@@ -5275,17 +5279,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             let index = self.e.cg.debug_site(span.start, debug.function);
-            let site = match debug.first {
-                Some((first, number)) => {
-                    let first = self.e.cg.declare_data_in_func(first, self.e.fb.func);
-                    let first = self.e.fb.ins().symbol_value(POINTER, first);
-                    let first = self.e.fb.ins().load(types::I64, flags(), first, 0);
-                    self.e.fb.ins().iadd_imm_s(first, (index - number) as i64)
-                }
-                None => self.e.cg.site_constant(&mut self.e.fb, index),
-            };
-            let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
-            let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
+            debug.site = index;
+            let (site, addresses, alive) = self.debug_place(&debug);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
             // A binding the debugger changed comes back from its copy.
             for &(local, copy) in &debug.shown {
@@ -5299,6 +5294,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.site_now = Some((site, self.e.cg.site_base() + index as u32));
         }
         self.debug = Some(debug);
+    }
+
+    /// The site of the last probe, and the addresses of the bindings and
+    /// of their bits, as a probe gives them to the runtime.
+    fn debug_place(&mut self, debug: &DebugFrame) -> (ir::Value, ir::Value, ir::Value) {
+        let site = match debug.first {
+            Some((first, number)) => {
+                let first = self.e.cg.declare_data_in_func(first, self.e.fb.func);
+                let first = self.e.fb.ins().symbol_value(POINTER, first);
+                let first = self.e.fb.ins().load(types::I64, flags(), first, 0);
+                self.e.fb.ins().iadd_imm_s(first, (debug.site - number) as i64)
+            }
+            None => self.e.cg.site_constant(&mut self.e.fb, debug.site),
+        };
+        let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
+        let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
+        (site, addresses, alive)
+    }
+
+    /// An error leaves the program's own code where it starts: a `fail`, or
+    /// a `?` on what the program's code did not fail with already, as a
+    /// call of the standard library. The runtime stops there for a
+    /// debugger that catches errors, and shows the error.
+    fn failing(&mut self, error: &Operand, span: Span, called: Option<Span>) {
+        let sources = self.e.cg.sources();
+        let standard = |span: Span| sources.file_of(span.start).logical.starts_with("<std>/");
+        if self.debug.is_none() || standard(span) || called.is_some_and(|called| !standard(called)) {
+            return;
+        }
+        self.probe(span);
+        let Some(debug) = self.debug.take() else { return };
+        let (site, addresses, alive) = self.debug_place(&debug);
+        self.debug = Some(debug);
+        let ty = self.operand_ty(error);
+        let value = self.operand(error);
+        let address = self.in_memory(ty, value);
+        let glue = self.e.glue_address(Glue::Show, ty);
+        self.e.call_rt(Rt::DebugFailed, &[site, addresses, alive, glue, address]);
     }
 
     /// A live build's state at a point: each local live there, how it is
@@ -5492,6 +5525,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.probed = None;
         match stmt {
             Statement::OsrLoad(point) => self.osr_load(*point),
+            Statement::Failing(error, span, called) => self.failing(error, *span, *called),
             Statement::Assign(place, rvalue, span) => {
                 // What it allocates: the collection a method changes, or the
                 // value it makes.

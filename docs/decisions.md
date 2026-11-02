@@ -4367,3 +4367,27 @@ with the panic that failed it; VS Code, which asks, gets no duplicate.
 Writing `}` lays out the block it closes, in every editor that formats
 on typing, which the VS Code extension turns on as it does on saving.
 
+
+## 2026-11-02 — A debugger that evaluates, watches and stops at errors
+
+A condition compared one path with one literal, and `print` read a path,
+so `items[i]`, `total / count` or `a > 1 and b` could not be asked. The
+debugger now evaluates expressions in conditions, logpoints, `print` and
+watches: bindings and their parts, literals, arithmetic, comparisons,
+`and`, `or`, `not`, and methods that only read, as `length()` or
+`contains()`. It reads values as it shows them and never runs the
+program's code, so looking changes nothing and works in a stopped task;
+calling the program's functions is left out for that reason. A condition
+is checked when it is set: a name that is no binding there is an error at
+once, not a breakpoint that never stops.
+
+`watch` stops on the line after the one that changed a value, in the
+watching frame or a call it makes, reading it at the task's probes rather
+than through the processor's watchpoints, which see memory but not a
+value that is rebuilt elsewhere; it ends with its frame. `catch error`
+stops where an error starts: a `fail` of the program's code, or a `?` on
+what a function of the standard library failed with, so that an error
+that travels through several `?` stops once, where it began. `break fn`
+stops where functions of a name start. A value is read whole and opened
+one level at a time, so an array of any size opens, in pages, where the
+answers clipped it at a megabyte before.

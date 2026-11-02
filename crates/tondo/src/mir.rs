@@ -220,6 +220,11 @@ pub enum Statement {
     LendAt(Local, Operand),
     /// Loads the state of a point from the hidden parameter (toolchain 7.10).
     OsrLoad(u32),
+    /// In a debug build, an error leaves the function, from a `fail` or a
+    /// `?` at the span; for a `?` on a call of a function, that function's
+    /// span. A debugger that catches errors stops where one starts
+    /// (toolchain 7.6).
+    Failing(Operand, Span, Option<Span>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -573,6 +578,7 @@ pub(crate) fn statement_locals(statement: &Statement, used: &mut Vec<Local>, def
             operand_uses(operand, used);
             defined.push(*local);
         }
+        Statement::Failing(operand, ..) => operand_uses(operand, used),
         Statement::DeferPop | Statement::OsrLoad(_) => {}
     }
 }

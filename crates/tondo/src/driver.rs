@@ -912,7 +912,7 @@ pub fn object_counting(
     fuzz: bool,
 ) -> Result<(Vec<u8>, Vec<codegen::Counted>), String> {
     let program = analysis.program.as_ref().expect("object_counting() requires a checked program");
-    let bodies = lower::lower(program, false);
+    let bodies = lower::lower(program, false, debug);
     let mut counted = Vec::new();
     let triple = target.map(Target::triple);
     let options =
@@ -929,9 +929,9 @@ pub fn compile(
     live: Option<&mut crate::live::Build>,
 ) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
-    let mut bodies = lower::lower(program, live.is_some());
-    let triple = target.map(Target::triple);
     let debug = debug || live.is_some();
+    let mut bodies = lower::lower(program, live.is_some(), debug);
+    let triple = target.map(Target::triple);
     if !debug && !analysis.meta {
         crate::inline::inline(&mut bodies);
         crate::elide::elide(&mut bodies, &program.types);

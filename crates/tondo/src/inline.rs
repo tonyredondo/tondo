@@ -828,7 +828,7 @@ pub(crate) fn visit_statement(statement: &mut Statement, f: &mut impl FnMut(&mut
         }
         Statement::Retain(place) | Statement::Release(place) | Statement::DeferPush(_, place) => f(place),
         Statement::Lend(_, place) | Statement::Moved(place) => f(place),
-        Statement::LendAt(_, operand) => visit_operand(operand, f),
+        Statement::LendAt(_, operand) | Statement::Failing(operand, ..) => visit_operand(operand, f),
         Statement::Clear(_) | Statement::DeferPop | Statement::OsrLoad(_) => {}
     }
 }

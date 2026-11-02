@@ -34,7 +34,7 @@ use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
+pub fn lower(program: &hir::Program, live: bool, debug: bool) -> Vec<Body> {
     // The fields of each context whose initial values are computed, a bit
     // each (11.16).
     let computed: Vec<u64> = program
@@ -48,7 +48,8 @@ pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
         let indices: Vec<usize> = (0..program.functions.len()).collect();
         crate::parallel::map(&indices, 1, |&i| {
             let f = &program.functions[i];
-            lower_function(&program.types, f, waits, restart(i, f), recovering, &computed)
+            let functions = debug.then_some(&program.functions[..]);
+            lower_function(&program.types, f, functions, waits, restart(i, f), recovering, &computed)
         })
     };
     let plain = lower_all(None, false);
@@ -274,6 +275,9 @@ struct Again {
 struct Builder<'a> {
     types: &'a Types,
     function: &'a hir::Function,
+    /// In a debug build, the program's functions, for where an error
+    /// comes from.
+    functions: Option<&'a [hir::Function]>,
     /// The fields of each context whose initial values are computed.
     computed: &'a [u64],
     locals: Vec<Ty>,
@@ -331,6 +335,7 @@ struct Builder<'a> {
 fn lower_function(
     types: &Types,
     function: &hir::Function,
+    functions: Option<&[hir::Function]>,
     waits: Option<&[bool]>,
     restart: Option<hir::FnId>,
     recovering: bool,
@@ -339,6 +344,7 @@ fn lower_function(
     let mut b = Builder {
         types,
         function,
+        functions,
         computed,
         locals: Vec::new(),
         names: Vec::new(),
@@ -733,11 +739,20 @@ impl Builder<'_> {
     }
 
     /// Evaluates `rvalue` into a new temporary; owned results join the frame.
-    /// In a test or a setup, tells the runner where an error leaves it.
-    fn note_failure(&mut self, span: Span) {
+    /// In a test or a setup, tells the runner where an error leaves it;
+    /// in a debug build, the debugger, with the error and, for a `?` on a
+    /// call, the function called.
+    fn note_failure(&mut self, span: Span, error: &Operand, from: Option<&hir::Expr>) {
         if self.function.test {
             let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::TestWhere), Vec::new());
             self.temp(Ty::UNIT, call, span);
+        }
+        if let Some(functions) = self.functions {
+            let called = match from.map(|e| &e.kind) {
+                Some(hir::ExprKind::Call(hir::Callee::Fn(id), ..)) => Some(functions[id.0 as usize].span),
+                _ => None,
+            };
+            self.push(Statement::Failing(error.clone(), span, called));
         }
     }
 
@@ -1716,7 +1731,7 @@ impl Builder<'_> {
             hir::Stmt::Fail(error) => {
                 let span = error.span;
                 let error = self.expr(error);
-                self.note_failure(span);
+                self.note_failure(span, &error, None);
                 self.emit_fail(error, span);
             }
             hir::Stmt::Break | hir::Stmt::Continue => {
@@ -2219,7 +2234,7 @@ impl Builder<'_> {
                 } else {
                     let TyKind::Result(_, error_ty) = *self.types.kind(inner.ty) else { unreachable!() };
                     let error = self.widen(Operand::Copy(place.variant_field(ERR, 0)), error_ty, e.span);
-                    self.note_failure(e.span);
+                    self.note_failure(e.span, &error, Some(inner));
                     self.emit_fail(error, e.span);
                 }
                 self.switch_to(next);

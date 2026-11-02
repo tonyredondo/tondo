@@ -793,19 +793,40 @@ un test del proyecto, solo, con sus snapshots y las entradas de su fuzz store
 línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
 y cada evento como una línea de JSON, para una herramienta o un modelo:
 
-- `break <file>:<line> [if <path> <op> <value>] [hits <count>] [log <message>]`
-  para donde empieza esa línea, o la siguiente con código del archivo. La
-  condición compara un binding, o una parte suya por su ruta, con `==`, `!=`,
-  `<`, `<=`, `>` o `>=`: como números si los dos lo son, y si no como el texto
-  que el depurador muestra. `hits` cuenta las veces que se cumple y para en la
+- `break <file>:<line> [if <condición>] [hits <count>] [log <message>]`
+  para donde empieza esa línea, o la siguiente con código del archivo;
+  `break fn <nombre> ...`, donde empieza cada función con ese nombre, entero
+  (`Stack.push`) o el suyo (`push`), y una genérica en cada uno de sus tipos.
+  La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
+  cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
-  `log`, no para: escribe el mensaje, cada `{ruta}` cambiada por lo que nombra,
-  y sigue. La condición y el mensaje leen lo mismo que `locals`: también lo
-  de las funciones en que está escrito el código de esa línea. `delete <id>`
-  lo quita.
+  `log`, no para: escribe el mensaje, cada `{expresión}` cambiada por su
+  valor, y sigue. La condición y el mensaje leen lo mismo que `locals`:
+  también lo de las funciones en que está escrito el código de esa línea; un
+  nombre que no es un binding de ellas, o una expresión mal escrita, es un
+  error al poner el breakpoint. `delete <id>` lo quita.
+- Las expresiones de las condiciones, de los mensajes, de `print` y de
+  `watch` leen bindings y sus partes, con índices y claves que también son
+  expresiones (`items[i + 1].name`), literales (números, textos, caracteres,
+  `true`, `false`, `none` y variantes como `Role.Admin`), aritmética,
+  comparaciones, `and`, `or` y `not`, con la precedencia del lenguaje, y los
+  métodos `length()`, `isEmpty()`, `isSome()`, `isNone()`, `isOk()`,
+  `isErr()`, `contains()`, `startsWith()` y `endsWith()`. Leen los valores
+  como el depurador los muestra y nunca ejecutan código del programa, así que
+  no cambian nada. Un `Int` y un `Float` se operan como `Float`; un valor que
+  no es un número, un `Bool`, un texto ni un carácter es igual a otro si se
+  muestran igual, y operar dos de esos tipos distintos es un error.
+- `watch <expresión>` vigila su valor en el marco que se mira: la tarea para
+  en la línea siguiente a la que lo cambió, en ese marco o en una llamada
+  suya, con la expresión, sus dos valores y esa línea como motivo. Acaba
+  cuando el marco vuelve; `delete <id>` la quita antes.
 - Una tarea que entra en pánico para donde el código del programa lo produjo,
-  antes de deshacer su pila, con el texto del pánico como motivo; `catch none`
-  lo desactiva y `catch panic` lo vuelve a activar.
+  antes de deshacer su pila, con el texto del pánico como motivo. Con
+  `catch error`, también para donde empieza un error: un `fail` del código
+  del programa, o un `?` que propaga uno de una función de la librería
+  estándar; un `?` que propaga el de una función del programa no vuelve a
+  parar. `catch` toma `panic`, `error`, los dos o `none`; por defecto,
+  `panic`.
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
@@ -820,8 +841,12 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   usar. `print <path>` muestra uno, o una parte suya por su ruta: `user.name`,
   `items[2]`, `scores["x"]`, `pair.0`. Los textos van entre comillas, los
   registros con sus campos, los enums con su variante y las colecciones con
-  sus elementos; `children <path>` da las partes de un valor, cada una con su
-  ruta. Un binding cuyo valor se movió o se liberó no se muestra.
+  sus elementos; `children <path> [<start> <count>]` da las partes de un
+  valor, cada una con su ruta, todas o las `count` desde la `start`-ésima, y
+  cuántas son. Un valor se lee entero, sea cual sea su tamaño; se muestra
+  recortado. `print <expresión>` da también el valor de una expresión, con
+  su tipo, y la ruta de lo que nombra si es un binding o una parte suya. Un
+  binding cuyo valor se movió o se liberó no se muestra.
 - `stack [<task>]` da las funciones de una tarea parada, de dentro afuera;
   `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
   tarea parada. Las funciones de fuera muestran sus bindings como estaban al
@@ -843,13 +868,17 @@ da, `launch` compila los tests del proyecto como un build de depuración y
 ejecuta ese test solo; la consola dice cómo terminó. Con `"dump"`, un
 volcado (sección 7.5), `launch` lo abre sin programa: sus tareas como hilos,
 sus pilas, el estado de cada una y la memoria por dónde se creó. Los
-breakpoints, con su condición, sus hits y sus logpoints, los pasos, la pausa,
-las tareas (`threads`), la pila de cada una, la de un test con sus suites,
-con los bindings de cada función, desplegables por partes (`variables`), en
-cada marco un ámbito por cada función en que está escrita, como la suite de
-un test, y un ámbito `Context` con los contextos de la tarea, `evaluate` de una ruta, `setVariable`
-y la excepción de un pánico (el filtro `panic`, con `exceptionInfo`) son las
-órdenes de `tondo debug`; la salida del programa y los logpoints van a la
+breakpoints, con su condición, sus hits y sus logpoints, los de función
+(`setFunctionBreakpoints`), los de datos, que son watches de una variable o
+una parte suya (`dataBreakpointInfo` y `setDataBreakpoints`), los pasos, la
+pausa, las tareas (`threads`), la pila de cada una, la de un test con sus
+suites, con los bindings de cada función, desplegables por partes
+(`variables`), los elementos de un array o un set por páginas
+(`indexedVariables`), en cada marco un ámbito por cada función en que está
+escrita, como la suite de un test, y un ámbito `Context` con los contextos de
+la tarea, `evaluate` de una expresión, `setVariable` y las excepciones de un
+pánico y de un error (los filtros `panic` y `error`, con `exceptionInfo`) son
+las órdenes de `tondo debug`; la salida del programa y los logpoints van a la
 consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.

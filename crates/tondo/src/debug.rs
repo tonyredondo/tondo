@@ -28,21 +28,26 @@ extern "C" fn interrupted(_: i32) {
 }
 
 pub const HELP: &str = "\
-break <file>:<line> [if <path> <op> <value>] [hits <n>|>= <n>|% <n>] [log <message with {paths}>]
+break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with {expressions}>]
                                                 stop where that line starts, or write a message there (b)
-delete <id>                                     remove a breakpoint
+break fn <name> ...                             the same where each function of that name starts: Stack.push, push
+watch <expression>                              stop on the line after the one that changes its value, in this
+                                                frame or a call it makes, until the frame returns
+delete <id>                                     remove a breakpoint or a watch
 continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
 pause                                           stop every task, as Ctrl-C does
-catch panic|none                                stop where a task panics and no recover stops it (the default), or not
+catch panic|error|none                          stop where a task panics and no recover stops it (the default), where
+                                                an error starts (a fail, or a ? on what std failed with), both, or none
 set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
 locals                                          the bindings that hold a value here, and those of the
                                                 functions this one is written in, as a test's suites (l)
 context                                         the task's contexts, and the `with` that set each field
-print <path>                                    a binding or a part of it: user.name, items[2], map[\"key\"] (p)
-children <path>                                 the parts of a binding or of a part
+print <expression>                              a binding or a part of it: user.name, items[i + 1], map[\"key\"], or what
+                                                an expression computes from them: total / count, name.length() > 3 (p)
+children <path> [<start> <count>]               the parts of a binding or of a part, all or those from start on
 stack [<task>]                                  where the stopped task is, or another (bt)
 frame <n>                                       look at frame n of the stack: locals, print
 task <id>                                       look at another stopped task, from its innermost frame
@@ -197,7 +202,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" => {
+            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -254,8 +259,8 @@ impl Session {
                 self.events.push(value);
                 continue;
             }
-            // A logpoint's message, as it comes.
-            if value.get("logged").is_some() {
+            // A logpoint's message, or a watch that ended, as it comes.
+            if value.get("logged").is_some() || value.get("unwatched").is_some() {
                 self.show(&value);
                 continue;
             }
@@ -278,7 +283,7 @@ impl Session {
                 Ok(value) if value.get("stopped").is_some() || value.get("exited").is_some() => {
                     self.events.push(value);
                 }
-                Ok(value) if value.get("logged").is_some() => self.show(&value),
+                Ok(value) if value.get("logged").is_some() || value.get("unwatched").is_some() => self.show(&value),
                 // The answer to `pause`.
                 Ok(_) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -357,6 +362,10 @@ impl Session {
             }
         } else if let Some(logged) = value["logged"].as_str() {
             println!("{logged}");
+        } else if let Some(watch) = value.get("watch") {
+            println!("watch {} = {}", watch["id"], watch["value"].as_str().unwrap_or_default());
+        } else if let Some(id) = value.get("unwatched") {
+            println!("watch {id} ended: {}", value["why"].as_str().unwrap_or_default());
         } else if let Some(id) = value.get("deleted") {
             println!("breakpoint {id} removed");
         } else if let Some(parts) = value["children"].as_array() {

@@ -18,6 +18,11 @@ const CONTEXT: &str = "@context ";
 /// name: a test's suite, a closure's maker.
 const OUTER: &str = "@outer ";
 
+/// The key of the function breakpoints among the breakpoints the adapter
+/// keeps by file, and the start of a watch's, before its data id.
+const FUNCTIONS: &str = "@functions";
+const DATA: &str = "@data ";
+
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
 struct Editor {
@@ -186,8 +191,11 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsRestartFrame": true,
                 "supportsExceptionInfoRequest": true,
                 "supportsSetVariable": true,
+                "supportsFunctionBreakpoints": true,
+                "supportsDataBreakpoints": true,
                 "exceptionBreakpointFilters": [
-                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true }
+                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true },
+                    { "filter": "error", "label": "Errors", "description": "Stop where an error starts: a fail, or a ? on what the standard library failed with", "default": false }
                 ],
             })),
             "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),
@@ -439,16 +447,22 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                     "start" => "entry",
                     "step" => "step",
                     "pause" => "pause",
-                    _ if why.starts_with("panic[") => "exception",
+                    _ if why.starts_with("panic[") || why.starts_with("error: ") => "exception",
+                    _ if why.starts_with("watch ") => "data breakpoint",
                     _ => "breakpoint",
                 };
                 let mut body = json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true });
-                if why.starts_with("panic[") {
+                if reason == "exception" || reason == "data breakpoint" {
                     body["text"] = json!(why);
+                    body["description"] = json!(why);
                 }
                 events.event("stopped", body);
             } else if let Some(logged) = value["logged"].as_str() {
                 events.event("output", json!({ "category": "console", "output": format!("{logged}\n") }));
+            } else if let Some(id) = value.get("unwatched") {
+                let why = value["why"].as_str().unwrap_or_default();
+                let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
+                events.event("breakpoint", json!({ "reason": "changed", "breakpoint": breakpoint }));
             } else if value.get("exited").is_some() {
                 let (count, ended) = &*read_out;
                 let count = count.lock().unwrap_or_else(|e| e.into_inner());
@@ -499,6 +513,29 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     Ok(debuggee)
 }
 
+/// A breakpoint's condition, count of hits and message, as `break` takes
+/// them.
+fn options(wanted: &Value) -> String {
+    let condition = wanted["condition"].as_str().map_or(String::new(), |c| format!(" if {c}"));
+    let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
+    let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));
+    format!("{condition}{hits}{log}")
+}
+
+/// Gives a variable with parts the reference that opens them, and an
+/// array's or a set's the count of its items, which the editor asks for in
+/// pages.
+fn opened(program: &mut Debuggee, task: u64, index: u64, path: &str, answer: &Value, variable: &mut Value) {
+    let parts = answer["children"].as_u64().unwrap_or(0);
+    if parts == 0 {
+        return;
+    }
+    variable["variablesReference"] = json!(program.handle(task, index, path.to_string()));
+    if answer["indexed"] == true {
+        variable["indexedVariables"] = json!(parts);
+    }
+}
+
 fn handle(
     program: &mut Debuggee,
     command: &str,
@@ -526,10 +563,7 @@ fn handle(
                     set.push(json!({ "verified": false, "line": line, "message": message }));
                     continue;
                 }
-                let condition = wanted["condition"].as_str().map_or(String::new(), |c| format!(" if {c}"));
-                let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
-                let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));
-                match program.ask(&format!("break {path}:{line}{condition}{hits}{log}")) {
+                match program.ask(&format!("break {path}:{line}{}", options(wanted))) {
                     Ok(answer) => {
                         ids.push(answer["breakpoint"]["id"].as_u64().unwrap_or(0));
                         set.push(json!({ "verified": true, "line": answer["breakpoint"]["line"] }));
@@ -538,6 +572,90 @@ fn handle(
                 }
             }
             breakpoints.insert(path, ids);
+            Ok(json!({ "breakpoints": set }))
+        }
+        // Where each function of a name starts.
+        "setFunctionBreakpoints" => {
+            for id in breakpoints.remove(FUNCTIONS).unwrap_or_default() {
+                program.ask(&format!("delete {id}"))?;
+            }
+            let (mut set, mut ids) = (Vec::new(), Vec::new());
+            for wanted in arguments["breakpoints"].as_array().into_iter().flatten() {
+                let name = wanted["name"].as_str().unwrap_or_default().trim();
+                match program.ask(&format!("break fn {name}{}", options(wanted))) {
+                    Ok(answer) => {
+                        let at = &answer["breakpoint"];
+                        ids.push(at["id"].as_u64().unwrap_or(0));
+                        let file = at["file"].as_str().unwrap_or_default();
+                        let source = json!({ "name": file, "path": program.root.join(file).display().to_string() });
+                        set.push(json!({ "verified": true, "line": at["line"], "source": source }));
+                    }
+                    Err(message) => set.push(json!({ "verified": false, "message": message })),
+                }
+            }
+            breakpoints.insert(FUNCTIONS.to_string(), ids);
+            Ok(json!({ "breakpoints": set }))
+        }
+        // A binding, or a part of one, that a watch can look at: what names
+        // it in its frame.
+        "dataBreakpointInfo" => {
+            let name = arguments["name"].as_str().unwrap_or_default();
+            let found = match arguments["variablesReference"].as_u64() {
+                Some(reference) => (reference as usize)
+                    .checked_sub(1)
+                    .and_then(|r| program.handles.get(r).cloned())
+                    .filter(|(.., path)| !path.starts_with(CONTEXT))
+                    .map(|(task, index, path)| match path.is_empty() || path.starts_with(OUTER) {
+                        true => (task, index, name.to_string()),
+                        false if name.starts_with('[') => (task, index, format!("{path}{name}")),
+                        false => (task, index, format!("{path}.{name}")),
+                    }),
+                None => {
+                    arguments["frameId"].as_u64().map(frame_of).map(|(task, index)| (task, index, name.to_string()))
+                }
+            };
+            Ok(match found {
+                Some((task, index, path)) => json!({
+                    "dataId": format!("{task} {index} {path}"), "description": path,
+                    "accessTypes": ["write"], "canPersist": false,
+                }),
+                None => json!({ "dataId": null, "description": "a context's field is not watched" }),
+            })
+        }
+        // Watches: a new one looks at its frame from now on, until it
+        // returns; one no longer wanted goes.
+        "setDataBreakpoints" => {
+            let wanted: Vec<String> = arguments["breakpoints"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|b| b["dataId"].as_str().map(String::from))
+                .collect();
+            let known: Vec<String> = breakpoints.keys().filter(|k| k.starts_with(DATA)).cloned().collect();
+            for key in known.into_iter().filter(|key| !wanted.iter().any(|w| key[DATA.len()..] == *w)) {
+                for id in breakpoints.remove(&key).unwrap_or_default() {
+                    program.ask(&format!("delete {id}"))?;
+                }
+            }
+            let mut set = Vec::new();
+            for data in wanted {
+                let key = format!("{DATA}{data}");
+                if let Some(&id) = breakpoints.get(&key).and_then(|ids| ids.first()) {
+                    set.push(json!({ "verified": true, "id": id }));
+                    continue;
+                }
+                let mut parts = data.splitn(3, ' ');
+                let (task, index, path) = (parts.next(), parts.next(), parts.next().unwrap_or_default());
+                let selected = program.ask(&format!("select {} {}", task.unwrap_or("1"), index.unwrap_or("0")));
+                match selected.and_then(|_| program.ask(&format!("watch {path}"))) {
+                    Ok(answer) => {
+                        let id = answer["watch"]["id"].as_u64().unwrap_or(0);
+                        breakpoints.insert(key, vec![id]);
+                        set.push(json!({ "verified": true, "id": id }));
+                    }
+                    Err(message) => set.push(json!({ "verified": false, "message": message })),
+                }
+            }
             Ok(json!({ "breakpoints": set }))
         }
         "configurationDone" | "continue" => {
@@ -555,21 +673,29 @@ fn handle(
         }
         "pause" => program.ask("pause").map(|_| json!({})),
         "setExceptionBreakpoints" => {
-            let panics = arguments["filters"].as_array().is_some_and(|f| f.iter().any(|f| f == "panic"));
-            program.ask(if panics { "catch panic" } else { "catch none" }).map(|_| json!({}))
+            let filters: Vec<&str> = arguments["filters"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|f| matches!(*f, "panic" | "error"))
+                .collect();
+            let caught = if filters.is_empty() { "none".to_string() } else { filters.join(" ") };
+            program.ask(&format!("catch {caught}")).map(|_| json!({}))
         }
-        // Why the task stopped at a panic: its message, with where.
+        // Why the task stopped at a panic or an error: its message, with
+        // where.
         "exceptionInfo" => {
             let task = arguments["threadId"].as_u64().unwrap_or(1);
             let tasks = program.ask("tasks")?;
             let held = tasks["tasks"].as_array().into_iter().flatten().find(|t| t["task"] == task);
             let why = held.and_then(|t| t["why"].as_str()).unwrap_or_default();
-            if !why.starts_with("panic[") {
-                return Err(format!("task {task} did not panic"));
-            }
-            Ok(
-                json!({ "exceptionId": "panic", "description": why, "breakMode": "always", "details": { "message": why } }),
-            )
+            let id = match why {
+                _ if why.starts_with("panic[") => "panic",
+                _ if why.starts_with("error: ") => "error",
+                _ => return Err(format!("task {task} did not stop at a panic or an error")),
+            };
+            Ok(json!({ "exceptionId": id, "description": why, "breakMode": "always", "details": { "message": why } }))
         }
         // The frame where the task stopped, the only one that restarts.
         "restartFrame" => match arguments["frameId"].as_u64().map(frame_of) {
@@ -671,24 +797,28 @@ fn handle(
                         continue;
                     }
                     let name = local["name"].as_str().unwrap_or_default().to_string();
-                    let parts = local["children"].as_u64().unwrap_or(0);
-                    let reference = if parts > 0 { program.handle(task, index, name.clone()) } else { 0 };
-                    variables.push(json!({
-                        "name": name, "value": local["value"], "type": local["type"],
-                        "variablesReference": reference, "evaluateName": name,
-                    }));
+                    let mut variable = json!({
+                        "name": name, "value": local["value"], "type": local["type"], "evaluateName": name,
+                        "variablesReference": 0,
+                    });
+                    opened(program, task, index, &name, local, &mut variable);
+                    variables.push(variable);
                 }
-            } else {
-                let parts = program.ask(&format!("children {path}"))?;
+            } else if arguments["filter"] != "named" {
+                // All the parts, or a page of an array's.
+                let page = match (arguments["start"].as_u64(), arguments["count"].as_u64()) {
+                    (Some(start), Some(count)) if count > 0 => format!(" {start} {count}"),
+                    _ => String::new(),
+                };
+                let parts = program.ask(&format!("children {path}{page}"))?;
                 for part in parts["children"].as_array().into_iter().flatten() {
                     let name = part["name"].as_str().unwrap_or_default();
                     let shown = name.strip_prefix('.').unwrap_or(name);
                     let path = part["path"].as_str().unwrap_or_default().to_string();
-                    let count = part["children"].as_u64().unwrap_or(0);
-                    let reference = if count > 0 { program.handle(task, index, path.clone()) } else { 0 };
-                    variables.push(json!({
-                        "name": shown, "value": part["value"], "variablesReference": reference, "evaluateName": path,
-                    }));
+                    let mut variable =
+                        json!({ "name": shown, "value": part["value"], "evaluateName": path, "variablesReference": 0 });
+                    opened(program, task, index, &path, part, &mut variable);
+                    variables.push(variable);
                 }
             }
             Ok(json!({ "variables": variables }))
@@ -709,7 +839,8 @@ fn handle(
             let set = program.ask(&format!("set {name} {value}"))?;
             Ok(json!({ "value": set["value"], "type": set["type"], "variablesReference": 0 }))
         }
-        // A binding or a part of it, by its path, in the frame chosen.
+        // What an expression gives in the frame chosen; a binding or a part
+        // of one opens by its path.
         "evaluate" => {
             let path = arguments["expression"].as_str().unwrap_or_default().trim().to_string();
             let (task, index) = match arguments["frameId"].as_u64() {
@@ -722,9 +853,11 @@ fn handle(
             };
             program.ask(&format!("select {task} {index}"))?;
             let value = program.ask(&format!("print {path}"))?;
-            let parts = value["children"].as_u64().unwrap_or(0);
-            let reference = if parts > 0 { program.handle(task, index, path) } else { 0 };
-            Ok(json!({ "result": value["value"], "type": value["type"], "variablesReference": reference }))
+            let mut result = json!({ "result": value["value"], "type": value["type"], "variablesReference": 0 });
+            if let Some(path) = value["path"].as_str() {
+                opened(program, task, index, path, &value, &mut result);
+            }
+            Ok(result)
         }
         // Tondo's own: a live build's code as its files are now.
         "reload" => {

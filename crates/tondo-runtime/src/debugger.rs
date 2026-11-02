@@ -7,10 +7,13 @@
 //! probe, and they all go on together.
 
 use super::{Builder, Str, str_bytes};
+use expression::{Evaluator, Expr};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, RwLock};
+
+mod expression;
 
 /// Shows a value: appends it, as the debugger writes it, to a builder.
 type Show = unsafe extern "C" fn(*mut Builder, *const u8);
@@ -66,6 +69,8 @@ fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 /// Every task stops at its next probe: one stopped, or the debugger asked.
 static HOLD: AtomicBool = AtomicBool::new(false);
+/// A frame watches an expression: every probe looks.
+static WATCHING: AtomicBool = AtomicBool::new(false);
 
 /// Called by a debug build's process before anything else, or by a
 /// library before its first call.
@@ -215,13 +220,29 @@ struct State {
     /// stopped task's own by default.
     selected: Option<(u64, usize)>,
     breakpoints: Vec<Breakpoint>,
+    watches: Vec<Watch>,
     next_breakpoint: u32,
+}
+
+/// An expression a task's frame watches: the task stops on the line after
+/// the one that changed its value, in that frame or a call it makes, until
+/// the frame returns.
+struct Watch {
+    id: u32,
+    task: u64,
+    expr: Expr,
+    text: String,
+    /// The frame, and those that called it, which live while it does.
+    frames: Vec<Frame>,
+    /// The value as it was, and the site of the task's last probe.
+    value: String,
+    last: usize,
 }
 
 struct Breakpoint {
     id: u32,
     sites: Vec<usize>,
-    condition: Option<Condition>,
+    condition: Option<Expr>,
     /// How many times its condition held here, and from which count on it
     /// stops; and the message it writes instead of stopping (a logpoint).
     count: u64,
@@ -260,34 +281,34 @@ impl Hits {
     }
 }
 
-/// A logpoint's message: each `{path}` in it replaced by what it names
+/// A logpoint's message: each `{expression}` in it replaced by its value
 /// there, a text without its quotes.
 fn logged(table: &Table, frames: &[Frame], message: &str) -> String {
     let mut out = String::new();
-    let mut rest = message;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let Some(close) = rest[open..].find('}') else { break };
-        let path = rest[open + 1..open + close].trim();
-        match resolve(table, frames, 0, path) {
-            Ok(found) => {
-                let text = &found.text;
-                let unquoted = text.strip_prefix('"').and_then(|t| t.strip_suffix('"'));
-                out.push_str(unquoted.unwrap_or(text));
-            }
-            Err(_) => out.push_str(&format!("{{{path}?}}")),
+    for (text, expr) in pieces(message) {
+        match expr.map(|expr| evaluating(table, frames, 0, |e| e.evaluate(&expr?).map(|v| v.value.written()))) {
+            None => out.push_str(text),
+            Some(Ok(value)) => out.push_str(&value),
+            Some(Err(_)) => out.push_str(&format!("{{{text}?}}")),
         }
-        rest = &rest[open + close + 1..];
     }
-    out.push_str(rest);
     out
 }
 
-/// `name op literal`, against a binding's value as the debugger shows it.
-struct Condition {
-    name: String,
-    op: String,
-    value: String,
+/// A logpoint's message in pieces: a text, or an expression in braces with
+/// its text.
+fn pieces(message: &str) -> Vec<(&str, Option<Result<Expr, String>>)> {
+    let mut out = Vec::new();
+    let mut rest = message;
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}') else { break };
+        out.push((&rest[..open], None));
+        let text = rest[open + 1..open + close].trim();
+        out.push((text, Some(expression::parse(text))));
+        rest = &rest[open + close + 1..];
+    }
+    out.push((rest, None));
+    out
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -297,6 +318,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     held: Vec::new(),
     selected: None,
     breakpoints: Vec::new(),
+    watches: Vec::new(),
     next_breakpoint: 1,
 });
 static RESUMED: Condvar = Condvar::new();
@@ -345,7 +367,8 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         living.store(alive as isize - frame as isize, Ordering::Relaxed);
     }
     let marked = table.marked.get(site).is_some_and(|m| m.load(Ordering::Relaxed));
-    if !marked && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
+    let watching = WATCHING.load(Ordering::Relaxed);
+    if !marked && !watching && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
         return restarting(frame, task, site);
     }
     let mut state = state();
@@ -382,7 +405,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         let mut hit = None;
         for breakpoint in state.breakpoints.iter_mut() {
             let here = breakpoint.sites.contains(&site)
-                && breakpoint.condition.as_ref().is_none_or(|c| holds(c, &table, stack()));
+                && breakpoint.condition.as_ref().is_none_or(|c| evaluating(&table, stack(), 0, |e| e.holds(c)));
             if !here {
                 continue;
             }
@@ -404,8 +427,10 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
                 }
             }
         }
+        let changed = if watching { watched(&table, &mut state, task, frame, site) } else { None };
         match (hit, stepped) {
             (Some(id), _) => Some(format!("breakpoint {id}")),
+            _ if changed.is_some() => changed,
             (None, true) if matches!(state.mode, Mode::Restarted { .. }) => {
                 RESTART_FRAME.store(0, Ordering::Relaxed);
                 Some("restart".to_string())
@@ -421,6 +446,38 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         Stop { task, site, frame, bounds, addresses: addresses as usize, alive: alive as usize, why: String::new() };
     hold(state, stop, why);
     restarting(frame, task, site)
+}
+
+/// At a probe of a task, its watches: one whose frame returned ends, and
+/// the first whose value changed gives why the task stops: its expression,
+/// its values, and the line that changed it.
+fn watched(table: &Table, state: &mut State, task: u64, frame: usize, site: usize) -> Option<String> {
+    let mut changed = None;
+    state.watches.retain_mut(|watch| {
+        if watch.task != task {
+            return true;
+        }
+        // The frame returned when the task runs in an outer one, or another
+        // call took its place.
+        let watched = &watch.frames[0];
+        let function = table.sites.get(site).map(|s| s.function);
+        if frame > watched.pointer || (frame == watched.pointer && function != watched.function) {
+            tell(&format!("{{\"unwatched\":{},\"why\":\"its frame returned\"}}", watch.id));
+            return false;
+        }
+        let now = evaluating(table, &watch.frames, 0, |e| e.evaluate(&watch.expr).map(|v| v.text));
+        if let Some(now) = now.ok().filter(|now| *now != watch.value) {
+            let (before, after) = (clipped(&watch.value), clipped(&now));
+            let at = place_in(table, watch.last);
+            let why = format!("watch {}: {} changed from {before} to {after} at {at}", watch.id, watch.text);
+            changed.get_or_insert(why);
+            watch.value = now;
+        }
+        watch.last = site;
+        true
+    });
+    WATCHING.store(!state.watches.is_empty(), Ordering::Relaxed);
+    changed
 }
 
 /// Holds the task until the program goes on: as the one that stopped,
@@ -449,8 +506,34 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
 }
 
 /// Whether a panic stops the program while a debugger is attached
-/// (`catch panic`, the default, or `catch none`).
+/// (`catch panic`, the default, or `catch none`), and whether an error does
+/// (`catch error`).
 static CATCH: AtomicBool = AtomicBool::new(true);
+static CATCH_ERRORS: AtomicBool = AtomicBool::new(false);
+
+/// In a debug build, an error leaves a function where it starts: a `fail`
+/// of the program's code, or a `?` that passes one on from the standard
+/// library. With a debugger that catches errors, the task stops there, the
+/// error as why, and the others at their next probe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_debug_failed(
+    site: i64,
+    addresses: *const usize,
+    alive: *const u64,
+    glue: Show,
+    error: *const u8,
+) {
+    if !ATTACHED.load(Ordering::Relaxed) || !CATCH_ERRORS.load(Ordering::Relaxed) {
+        return;
+    }
+    let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
+    let task = super::tasks::current_id();
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let (addresses, alive) = (addresses as usize, alive as usize);
+    let stop = Stop { task, site: site as usize, frame, bounds, addresses, alive, why: String::new() };
+    let why = format!("error: {}", clipped(&show(glue, error as usize)));
+    hold(state(), stop, Some(why));
+}
 
 /// A task panics: with a debugger attached that catches panics, it stops
 /// where the program's own code panicked, before it unwinds, the panic's
@@ -556,13 +639,15 @@ fn resume(mode: Mode) {
 // Bindings
 // ---------------------------------------------------------------------------
 
-/// A frame of a held task: where it is, its function, and where its
-/// bindings and the bits of those that hold a value are, or 0 when that is
-/// not known: a function none of whose probes ran with a debugger
-/// attached.
+/// A frame of a held task: where it is, its function, its frame pointer,
+/// and where its bindings and the bits of those that hold a value are, or
+/// 0 when that is not known: a function none of whose probes ran with a
+/// debugger attached.
+#[derive(Clone)]
 struct Frame {
     place: String,
     function: Option<usize>,
+    pointer: usize,
     addresses: usize,
     alive: usize,
 }
@@ -571,7 +656,7 @@ struct Frame {
 fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
     let function = table.sites.get(held.site).map(|s| s.function);
     let place = place_in(table, held.site);
-    let mut out = vec![Frame { place, function, addresses: held.addresses, alive: held.alive }];
+    let mut out = vec![Frame { place, function, pointer: held.frame, addresses: held.addresses, alive: held.alive }];
     if held.site == usize::MAX {
         return out;
     }
@@ -589,7 +674,8 @@ fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
             Some((a, l)) if a != UNKNOWN && fp != 0 => ((fp as isize + a) as usize, (fp as isize + l) as usize),
             _ => (0, 0),
         };
-        out.push(Frame { place: format!("{file}:{line} in {}", described.function), function, addresses, alive });
+        let place = format!("{file}:{line} in {}", described.function);
+        out.push(Frame { place, function, pointer: fp, addresses, alive });
     }
     out
 }
@@ -610,12 +696,10 @@ fn bound<'t>(table: &'t Table, frame: &Frame) -> Vec<(&'t Binding, usize)> {
 
 /// What a path names in a frame: a binding, then its parts, as
 /// `user.name` or `items[2]`: the binding's type when it is the binding,
-/// the part's text, and its own parts with their texts and how many parts
-/// each has.
+/// and the whole text of what it names.
 struct Found {
     ty: Option<String>,
     text: String,
-    parts: Vec<(String, String, usize)>,
 }
 
 fn resolve(table: &Table, frames: &[Frame], index: usize, path: &str) -> Result<Found, String> {
@@ -623,44 +707,55 @@ fn resolve(table: &Table, frames: &[Frame], index: usize, path: &str) -> Result<
     let rest = &path[root.len()..];
     let bound = visible(table, frames, index);
     let Some((binding, address, _)) = bound.iter().find(|(b, ..)| b.name == root) else {
-        let names: Vec<&str> = bound.iter().map(|(b, ..)| b.name.as_str()).collect();
-        return Err(match names.is_empty() {
-            true => format!("no binding `{root}` holds a value here"),
-            false => format!("no binding `{root}` holds a value here; these do: {}", names.join(", ")),
-        });
+        return Err(missing(root, &bound));
     };
-    let whole = show(binding.show, *address, WHOLE);
-    let value = super::shown::parse(&whole);
-    let Some(part) = super::shown::find(&value, rest) else {
-        return Err(format!("`{path}` is not a part of `{root}`, which is {}", clipped(&whole)));
-    };
-    let parts = part.parts.iter().map(|(name, p)| (name.clone(), clipped(p.text), p.parts.len())).collect();
-    let ty = rest.is_empty().then(|| binding.ty.clone());
-    Ok(Found { ty, text: clipped(part.text), parts })
+    let whole = show(binding.show, *address);
+    if rest.is_empty() {
+        return Ok(Found { ty: Some(binding.ty.clone()), text: whole });
+    }
+    match super::shown::find(&whole, rest) {
+        Some(part) => Ok(Found { ty: None, text: part.to_string() }),
+        None => Err(format!("`{path}` is not a part of `{root}`, which is {}", clipped(&whole))),
+    }
 }
 
-/// How much of a value the debugger shows, and how much it reads to find
-/// a part of it.
-const SHOWN: usize = 4096;
-const WHOLE: usize = 1 << 20;
+fn missing(name: &str, bound: &[(&Binding, usize, Option<&str>)]) -> String {
+    let names: Vec<&str> = bound.iter().map(|(b, ..)| b.name.as_str()).collect();
+    match names.is_empty() {
+        true => format!("no binding `{name}` holds a value here"),
+        false => format!("no binding `{name}` holds a value here; these do: {}", names.join(", ")),
+    }
+}
 
-/// A value as the debugger shows it, at most `limit` bytes.
-fn show(glue: Show, address: usize, limit: usize) -> String {
+/// Runs `f` with an evaluator of expressions that reads the bindings the
+/// code of a frame can use.
+fn evaluating<T>(table: &Table, frames: &[Frame], index: usize, f: impl FnOnce(&mut Evaluator) -> T) -> T {
+    let bound = visible(table, frames, index);
+    let read = |name: &str| match bound.iter().find(|(b, ..)| b.name == name) {
+        Some((binding, address, _)) => Ok(show(binding.show, *address)),
+        None => Err(missing(name, &bound)),
+    };
+    f(&mut Evaluator::new(&read))
+}
+
+/// How much of a value's text the debugger shows; it reads all of it to
+/// find a part.
+const SHOWN: usize = 4096;
+
+/// A value as the debugger shows it.
+fn show(glue: Show, address: usize) -> String {
     let mut builder = super::Builder::new(0);
     unsafe { glue(&mut builder, address as *const u8) };
     let text = builder.finish();
     let shown = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
     unsafe { super::tondo_rt_str_release(text) };
-    clip(shown, limit)
+    shown
 }
 
 fn clipped(text: &str) -> String {
-    clip(text.to_string(), SHOWN)
-}
-
-fn clip(mut text: String, limit: usize) -> String {
-    if text.len() > limit {
-        let mut end = limit;
+    let mut text = text.to_string();
+    if text.len() > SHOWN {
+        let mut end = SHOWN;
         while !text.is_char_boundary(end) {
             end -= 1;
         }
@@ -670,27 +765,12 @@ fn clip(mut text: String, limit: usize) -> String {
     text
 }
 
-/// Whether a breakpoint's condition holds at a probe: numbers compare as
-/// numbers, and anything else as the text the debugger shows, a string
-/// without its quotes.
-fn holds(condition: &Condition, table: &Table, frames: &[Frame]) -> bool {
-    let Ok(Found { text: value, .. }) = resolve(table, frames, 0, &condition.name) else { return false };
-    let unquote = |text: &str| text.strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(text).to_string();
-    let (left, right) = (unquote(&value), unquote(&condition.value));
-    let order = match (left.parse::<f64>(), right.parse::<f64>()) {
-        (Ok(a), Ok(b)) => a.partial_cmp(&b),
-        _ => Some(left.cmp(&right)),
-    };
-    use std::cmp::Ordering::*;
-    matches!(
-        (condition.op.as_str(), order),
-        ("==", Some(Equal))
-            | ("!=", Some(Less | Greater))
-            | ("<", Some(Less))
-            | ("<=", Some(Less | Equal))
-            | (">", Some(Greater))
-            | (">=", Some(Greater | Equal))
-    )
+/// What an answer says of a value: its text, clipped, how many parts it
+/// has, and whether they go by position, which a tool shows in pages.
+fn described(text: &str) -> String {
+    let value = super::shown::parse(text);
+    let indexed = if value.indexed && !value.parts.is_empty() { ",\"indexed\":true" } else { "" };
+    format!("\"value\":{},\"children\":{}{indexed}", quoted(&clipped(text)), value.parts.len())
 }
 
 // ---------------------------------------------------------------------------
@@ -728,7 +808,11 @@ pub(crate) fn detach() {
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CLIENT_FD.store(-1, Ordering::Relaxed);
     ATTACHED.store(false, Ordering::Relaxed);
-    state().breakpoints.clear();
+    let mut state = state();
+    state.breakpoints.clear();
+    state.watches.clear();
+    WATCHING.store(false, Ordering::Relaxed);
+    drop(state);
     if let Some(table) = table() {
         table.marked.iter().for_each(|m| m.store(false, Ordering::Relaxed));
     }
@@ -759,6 +843,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let id: u32 = rest.parse().unwrap_or(0);
             let mut state = state();
             state.breakpoints.retain(|b| b.id != id);
+            state.watches.retain(|w| w.id != id);
+            WATCHING.store(!state.watches.is_empty(), Ordering::Relaxed);
             remark(table, &state);
             format!("{{\"deleted\":{id}}}")
         }
@@ -820,21 +906,50 @@ pub(crate) fn command(line: &str) -> Option<String> {
             if let Err(message) = unsafe { write(&binding.ty, *address, value.trim()) } {
                 return Some(format!("{{\"error\":{}}}", quoted(&message)));
             }
-            let shown = show(binding.show, *address, SHOWN);
-            format!(
-                "{{\"name\":{},\"type\":{},\"value\":{},\"children\":0}}",
-                quoted(name),
-                quoted(&binding.ty),
-                quoted(&shown)
-            )
+            let shown = show(binding.show, *address);
+            format!("{{\"name\":{},\"type\":{},{}}}", quoted(name), quoted(&binding.ty), described(&shown))
         }
-        "catch" => match rest {
-            "panic" | "none" => {
-                CATCH.store(rest == "panic", Ordering::Relaxed);
-                format!("{{\"catch\":{}}}", quoted(rest))
+        // What stops the program: panics, errors, both or none.
+        // An expression the frame looked at watches, until it returns.
+        "watch" => {
+            let (frames, index) = match selected(table) {
+                Ok(selected) => selected,
+                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
+            };
+            let expr = match expression::parse(rest) {
+                Ok(expr) => expr,
+                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
+            };
+            let value = match evaluating(table, &frames, index, |e| e.evaluate(&expr)) {
+                Ok(evaluated) => evaluated.text,
+                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
+            };
+            let mut state = state();
+            let Some((task, _)) = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0))) else {
+                return Some(not_stopped());
+            };
+            let last = state.held.iter().find(|h| h.task == task).map_or(usize::MAX, |h| h.site);
+            let id = state.next_breakpoint;
+            state.next_breakpoint += 1;
+            let frames = frames[index..].to_vec();
+            let answer = format!("{{\"watch\":{{\"id\":{id},{}}}}}", described(&value));
+            state.watches.push(Watch { id, task, expr, text: rest.to_string(), frames, value, last });
+            WATCHING.store(true, Ordering::Relaxed);
+            answer
+        }
+        "catch" => {
+            let kinds: Vec<&str> = rest.split_whitespace().collect();
+            let known = |kinds: &[&str]| kinds.iter().all(|k| matches!(*k, "panic" | "error"));
+            if !(known(&kinds) && !kinds.is_empty() || kinds == ["none"]) {
+                let message =
+                    "catch takes `panic`, to stop where a task panics, `error`, where an error starts, both, or `none`";
+                return Some(format!("{{\"error\":{}}}", quoted(message)));
             }
-            _ => "{\"error\":\"catch takes `panic`, to stop where a task panics, or `none`\"}".into(),
-        },
+            CATCH.store(kinds.contains(&"panic"), Ordering::Relaxed);
+            CATCH_ERRORS.store(kinds.contains(&"error"), Ordering::Relaxed);
+            let kinds: Vec<String> = kinds.iter().filter(|k| **k != "none").map(|k| quoted(k)).collect();
+            format!("{{\"catch\":[{}]}}", kinds.join(","))
+        }
         "select" => {
             // A task and its frame, or a frame of the task looked at.
             let numbers: Vec<Option<u64>> = rest.split_whitespace().map(|w| w.parse().ok()).collect();
@@ -874,45 +989,51 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 let items: Vec<String> = visible(table, &frames, index)
                     .into_iter()
                     .map(|(binding, address, from)| {
-                        let whole = show(binding.show, address, WHOLE);
-                        let parts = super::shown::parse(&whole).parts.len();
+                        let whole = show(binding.show, address);
                         let from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
                         format!(
-                            "{{\"name\":{},\"type\":{},\"value\":{},\"children\":{parts}{from}}}",
+                            "{{\"name\":{},\"type\":{},{}{from}}}",
                             quoted(&binding.name),
                             quoted(&binding.ty),
-                            quoted(&clipped(&whole))
+                            described(&whole)
                         )
                     })
                     .collect();
                 return Some(format!("{{\"locals\":[{}]}}", items.join(",")));
             }
-            let found = match resolve(table, &frames, index, rest) {
+            if word == "print" {
+                return Some(printed(table, &frames, index, rest));
+            }
+            // The parts of a value by its path, all or a page of them:
+            // `children <path> [<start> <count>]`.
+            let (path, page) = match rest.rsplitn(3, ' ').collect::<Vec<_>>()[..] {
+                [count, start, path] => match (start.parse::<usize>(), count.parse::<usize>()) {
+                    (Ok(start), Ok(count)) => (path.trim(), Some((start, count))),
+                    _ => (rest, None),
+                },
+                _ => (rest, None),
+            };
+            let found = match resolve(table, &frames, index, path) {
                 Ok(found) => found,
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
-            if word == "print" {
-                let ty = found.ty.as_deref().map_or("null".to_string(), quoted);
-                return Some(format!(
-                    "{{\"name\":{},\"type\":{ty},\"value\":{},\"children\":{}}}",
-                    quoted(rest),
-                    quoted(&found.text),
-                    found.parts.len()
-                ));
-            }
-            let items: Vec<String> = found
-                .parts
+            let parts = super::shown::parse(&found.text).parts;
+            let total = parts.len();
+            let (start, count) = page.unwrap_or((0, total));
+            let items: Vec<String> = parts
                 .iter()
-                .map(|(name, text, parts)| {
+                .skip(start)
+                .take(count)
+                .map(|(name, part)| {
                     format!(
-                        "{{\"name\":{},\"path\":{},\"value\":{},\"children\":{parts}}}",
+                        "{{\"name\":{},\"path\":{},{}}}",
                         quoted(name),
-                        quoted(&format!("{rest}{name}")),
-                        quoted(text)
+                        quoted(&format!("{path}{name}")),
+                        described(part.text)
                     )
                 })
                 .collect();
-            format!("{{\"children\":[{}]}}", items.join(","))
+            format!("{{\"children\":[{}],\"total\":{total}}}", items.join(","))
         }
         // The contexts of the task looked at, and which `with` set each
         // field (language 11.16).
@@ -1089,9 +1210,9 @@ fn visible<'t>(table: &'t Table, frames: &[Frame], index: usize) -> Vec<(&'t Bin
     out
 }
 
-/// `break <file>:<line> [if <path> <op> <value>] [hits <count>] [log <message>]`:
-/// the probes of that line,
-/// or of the next line that has one in the file.
+/// `break <file>:<line> [if <condition>] [hits <count>] [log <message>]`:
+/// the probes of that line, or of the next line that has one in the file;
+/// `break fn <name> ...`, those where each function of that name starts.
 fn breakpoint(table: &Table, text: &str) -> String {
     let error = |message: String| format!("{{\"error\":{}}}", quoted(&message));
     let (text, log) = match text.split_once(" log ") {
@@ -1109,10 +1230,53 @@ fn breakpoint(table: &Table, text: &str) -> String {
         Some((at, condition)) => (at.trim(), Some(condition.trim())),
         None => (text.trim(), None),
     };
-    let Some((file, line)) = at.rsplit_once(':') else {
-        return error(format!("a breakpoint is `file:line`, as `main.to:12`, not `{at}`"));
+    let sites = match at.strip_prefix("fn ") {
+        Some(name) => function_sites(table, name.trim()),
+        None => line_sites(table, at),
     };
-    let Ok(line) = line.parse::<u32>() else { return error(format!("`{line}` is not a line number")) };
+    let sites = match sites {
+        Ok(sites) => sites,
+        Err(message) => return error(message),
+    };
+    let condition = match condition.map(expression::parse) {
+        Some(Err(message)) => return error(format!("the condition: {message}")),
+        Some(Ok(condition)) => Some(condition),
+        None => None,
+    };
+    // What the condition and the message read are bindings there.
+    let mut exprs: Vec<&Expr> = condition.iter().collect();
+    let pieces = log.as_deref().map(pieces).unwrap_or_default();
+    for (_, expr) in &pieces {
+        match expr {
+            Some(Ok(expr)) => exprs.push(expr),
+            Some(Err(message)) => return error(format!("the message: {message}")),
+            None => {}
+        }
+    }
+    let functions: std::collections::BTreeSet<usize> = sites.iter().map(|&s| table.sites[s].function).collect();
+    let usable: Vec<&str> = functions.into_iter().flat_map(|f| usable(table, f)).collect();
+    let mut read = Vec::new();
+    exprs.iter().for_each(|expr| expression::names(expr, &mut read));
+    if let Some(name) = read.iter().find(|n| expression::binding_name(n) && !usable.contains(&n.as_str())) {
+        let place = place_in(table, sites[0]);
+        return error(format!("`{name}` is not a binding at {place}; these are: {}", usable.join(", ")));
+    }
+    let mut state = state();
+    let id = state.next_breakpoint;
+    state.next_breakpoint += 1;
+    let at = &table.sites[sites[0]];
+    let answer = format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}}}}}", quoted(&at.file), at.line);
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log });
+    remark(table, &state);
+    answer
+}
+
+/// The probes of a line, `file:line`, or of the next line with code.
+fn line_sites(table: &Table, at: &str) -> Result<Vec<usize>, String> {
+    let Some((file, line)) = at.rsplit_once(':') else {
+        return Err(format!("a breakpoint is `file:line`, as `main.to:12`, or `fn name`, not `{at}`"));
+    };
+    let Ok(line) = line.parse::<u32>() else { return Err(format!("`{line}` is not a line number")) };
     // A file as the compiler named it, or a path that ends with it, as an
     // editor gives.
     let matches = |site: &Site| {
@@ -1120,36 +1284,111 @@ fn breakpoint(table: &Table, text: &str) -> String {
     };
     let Some(found) = table.sites.iter().filter(|s| matches(s) && s.line >= line).map(|s| s.line).min() else {
         let files: std::collections::BTreeSet<&str> = table.sites.iter().map(|s| s.file.as_str()).collect();
-        return error(format!(
+        return Err(format!(
             "no code at {file}:{line} or after it; the program's files are {}",
             files.into_iter().collect::<Vec<_>>().join(", ")
         ));
     };
-    let condition = match condition.map(parse_condition) {
-        Some(Err(message)) => return error(message),
-        Some(Ok(condition)) => Some(condition),
-        None => None,
-    };
-    let sites = table.sites.iter().enumerate().filter(|(_, s)| matches(s) && s.line == found).map(|(i, _)| i).collect();
-    let mut state = state();
-    let id = state.next_breakpoint;
-    state.next_breakpoint += 1;
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log });
-    remark(table, &state);
-    let file = table.sites.iter().find(|s| matches(s) && s.line == found).map_or(file, |s| s.file.as_str());
-    format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{found}}}}}", quoted(file))
+    Ok(table.sites.iter().enumerate().filter(|(_, s)| matches(s) && s.line == found).map(|(i, _)| i).collect())
 }
 
-fn parse_condition(text: &str) -> Result<Condition, String> {
-    for op in ["==", "!=", "<=", ">=", "<", ">"] {
-        if let Some((name, value)) = text.split_once(op) {
-            let (name, value) = (name.trim(), value.trim());
-            if !name.is_empty() && !value.is_empty() && !name.contains(' ') {
-                return Ok(Condition { name: name.into(), op: op.into(), value: value.into() });
+/// The probes where the functions called `name` start: by their whole
+/// name, as `Stack.push`, or by their own, `push`; a generic one in each
+/// of its types.
+fn function_sites(table: &Table, name: &str) -> Result<Vec<usize>, String> {
+    let plain = |full: &str| {
+        let mut out = String::new();
+        let mut depth = 0;
+        for c in full.chars() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ if depth == 0 => out.push(c),
+                _ => {}
             }
         }
+        out
+    };
+    let named = |function: &Function| {
+        let plain = plain(&function.name);
+        function.name == name || plain == name || plain.ends_with(&format!(".{name}"))
+    };
+    let mut sites = Vec::new();
+    for (index, _) in table.functions.iter().enumerate().filter(|(_, f)| named(f)) {
+        let of = || table.sites.iter().enumerate().filter(|(_, s)| s.function == index);
+        let Some(first) = of().map(|(_, s)| s.line).min() else { continue };
+        sites.extend(of().filter(|(_, s)| s.line == first).map(|(i, _)| i));
     }
-    Err(format!("a condition is `name op value` with ==, !=, <, <=, > or >=, as `count > 3`, not `{text}`"))
+    if sites.is_empty() {
+        let near: Vec<&str> = table
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .filter(|f| f.to_lowercase().contains(&name.to_lowercase()) && !f.starts_with("closure in "))
+            .take(10)
+            .collect();
+        return Err(match near.is_empty() {
+            true => format!("no function `{name}` has code in the program"),
+            false => format!("no function `{name}` has code in the program; these do: {}", near.join(", ")),
+        });
+    }
+    Ok(sites)
+}
+
+/// The names of the bindings the code of a function can use: its own, and
+/// those of the functions it is written in.
+fn usable(table: &Table, function: usize) -> Vec<&str> {
+    let mut out: Vec<&str> = table.functions[function].bindings.iter().map(|b| b.name.as_str()).collect();
+    let mut name = table.functions[function].name.as_str();
+    while let Some((outer, prefix)) = written_in(name) {
+        let around =
+            table.functions.iter().filter(|f| if prefix { f.name.starts_with(outer) } else { f.name == outer });
+        let around: Vec<&Function> = around.collect();
+        out.extend(around.iter().flat_map(|f| f.bindings.iter().map(|b| b.name.as_str())));
+        match around.first() {
+            Some(first) if !prefix => name = first.name.as_str(),
+            _ => break,
+        }
+    }
+    out
+}
+
+/// `print <expression>`: its value in the frame looked at, with its type
+/// when it has one, and the path that names it when it is a binding or a
+/// part of one, whose parts `children` gives. A path that is not an
+/// expression, as a map's key that is a record, reads as a path.
+fn printed(table: &Table, frames: &[Frame], index: usize, text: &str) -> String {
+    let expr = match expression::parse(text) {
+        Ok(expr) => expr,
+        Err(message) => {
+            return match resolve(table, frames, index, text) {
+                Ok(found) => {
+                    let ty = found.ty.as_deref().map_or("null".to_string(), quoted);
+                    format!(
+                        "{{\"name\":{},\"type\":{ty},{},\"path\":{}}}",
+                        quoted(text),
+                        described(&found.text),
+                        quoted(text)
+                    )
+                }
+                Err(_) => format!("{{\"error\":{}}}", quoted(&message)),
+            };
+        }
+    };
+    let evaluated = match evaluating(table, frames, index, |e| e.evaluate(&expr)) {
+        Ok(evaluated) => evaluated,
+        Err(message) => return format!("{{\"error\":{}}}", quoted(&message)),
+    };
+    let ty = match (&expr, &evaluated.path) {
+        (Expr::Name(name), Some(_)) => {
+            visible(table, frames, index).iter().find(|(b, ..)| b.name == *name).map(|(b, ..)| b.ty.clone())
+        }
+        (_, Some(_)) => None,
+        (_, None) => evaluated.value.ty().map(str::to_string),
+    };
+    let ty = ty.as_deref().map_or("null".to_string(), quoted);
+    let path = evaluated.path.as_deref().map_or(String::new(), |path| format!(",\"path\":{}", quoted(path)));
+    format!("{{\"name\":{},\"type\":{ty},{}{path}}}", quoted(text), described(&evaluated.text))
 }
 
 /// Marks the sites that have a breakpoint.

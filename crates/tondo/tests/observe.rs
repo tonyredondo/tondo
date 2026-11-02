@@ -748,6 +748,203 @@ fn debug_adapter() {
     child.wait().unwrap();
 }
 
+const WATCHED: &str = r#"import std.console
+
+enum Problem {
+    Empty
+}
+
+fn bump(counter: mut Int) {
+    counter += 10
+}
+
+fn sum(items: Array[Int]): Int {
+    var total = 0
+    for item in items {
+        if item == 3 {
+            bump(mut total)
+        }
+        total += item
+    }
+    total
+}
+
+fn first(items: Array[Int]): Int ! Problem {
+    if items.isEmpty() {
+        fail Problem.Empty
+    }
+    items[0]
+}
+
+fn parsed(text: String): Int ! Problem {
+    let value = Int.parse(text).mapErr((_) { Problem.Empty })?
+    value
+}
+
+fn main() {
+    var many: Array[Int] = []
+    for i in 0..250 {
+        many.push(i)
+    }
+    console.println("{sum([1, 2, 3, 4])}")
+    match first([]) {
+        ok(n) => console.println("{n}")
+        err(_) => console.println("empty")
+    }
+    match parsed("x") {
+        ok(n) => console.println("{n}")
+        err(_) => console.println("not a number")
+    }
+}
+"#;
+
+/// Expressions in `print` and in conditions, a breakpoint where a function
+/// starts, a page of an array's items, a watch that stops after the line
+/// that changed its value, also in a call, and stops where errors start.
+#[test]
+fn debugger_evaluates_watches_and_catches_errors() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-watch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("watched.to"), WATCHED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "watched.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break watched.to:17 if totl > 1\nbreak watched.to:17 if total >\nbreak fn nothing\n\
+        break fn sum\ncatch panic error\ncontinue\nprint items.length() * 2 + items[items.length() - 1]\n\
+        print items[0] == 1 and not items.isEmpty()\nframe 1\nchildren many 248 5\nframe 0\nwatch total\ndelete 1\n\
+        continue\ncontinue\ncontinue\ndelete 2\ncontinue\ncontinue\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let errors: Vec<&str> = lines.iter().filter_map(|l| l["error"].as_str()).collect();
+    assert_eq!(errors.len(), 3, "{lines:?}");
+    assert!(errors[0].starts_with("`totl` is not a binding at watched.to:17 in sum; these are: items, total"));
+    assert_eq!(errors[1], "the condition: the expression ends too soon");
+    assert!(errors[2].starts_with("no function `nothing` has code in the program"), "{}", errors[2]);
+    let computed: Vec<(&Value, &Value)> =
+        lines.iter().filter(|l| l["name"].is_string()).map(|l| (&l["value"], &l["type"])).collect();
+    assert_eq!(computed, [(&json!("12"), &json!("Int")), (&json!("true"), &json!("Bool"))]);
+    let page = lines.iter().find(|l| l["children"].is_array()).unwrap();
+    assert_eq!(page["total"], 250);
+    let paths: Vec<&str> = page["children"].as_array().unwrap().iter().map(|p| p["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["many[248]", "many[249]"]);
+    assert_eq!(lines.iter().find_map(|l| l.get("watch")).unwrap()["value"], "0");
+    let stops: Vec<(&str, &str)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), s["why"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        stops[1..],
+        [
+            ("watched.to:13 in sum", "breakpoint 1"),
+            ("watched.to:13 in sum", "watch 2: total changed from 0 to 1 at watched.to:17 in sum"),
+            ("watched.to:13 in sum", "watch 2: total changed from 1 to 3 at watched.to:17 in sum"),
+            ("watched.to:17 in sum", "watch 2: total changed from 3 to 13 at watched.to:8 in bump"),
+            ("watched.to:24 in first", "error: Problem.Empty"),
+            ("watched.to:30 in parsed", "error: Problem.Empty"),
+        ]
+    );
+    assert!(lines.iter().any(|l| l.get("exited").is_some()));
+}
+
+/// The adapter's function breakpoints, errors as exceptions, pages of an
+/// array, expressions, and watches as data breakpoints.
+#[test]
+fn debug_adapter_watches_and_pages() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-watch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("watched.to"), WATCHED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("dap")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let (mut seq, mut events) = (0, Vec::new());
+    // The body of the response to a request; with no command, of the next
+    // stop.
+    let mut ask = move |command: &str, arguments: Value| -> Value {
+        if command.is_empty() {
+            if let Some(at) = events.iter().position(|e: &Value| e["event"] == "stopped") {
+                return events.remove(at)["body"].clone();
+            }
+            loop {
+                let message = dap_read(&mut output);
+                if message["event"] == "stopped" {
+                    return message["body"].clone();
+                }
+            }
+        }
+        seq += 1;
+        let text = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+        std::io::Write::write_all(&mut input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+            .unwrap();
+        loop {
+            let message = dap_read(&mut output);
+            if message["type"] == "response" && message["command"] == command {
+                assert_eq!(message["success"], true, "{message}");
+                return message["body"].clone();
+            }
+            events.push(message);
+        }
+    };
+    ask("initialize", json!({ "adapterID": "tondo" }));
+    ask("launch", json!({ "program": "watched.to", "cwd": dir }));
+    let set = ask("setFunctionBreakpoints", json!({ "breakpoints": [{ "name": "sum" }] }));
+    assert_eq!((&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"]), (&json!(true), &json!(13)));
+    ask("setExceptionBreakpoints", json!({ "filters": ["panic", "error"] }));
+    ask("configurationDone", json!({}));
+    assert_eq!(ask("", Value::Null)["reason"], "breakpoint");
+    let trace = ask("stackTrace", json!({ "threadId": 1 }));
+    let frames = trace["stackFrames"].as_array().unwrap().clone();
+    let scopes = ask("scopes", json!({ "frameId": frames[1]["id"] }));
+    let locals = ask("variables", json!({ "variablesReference": scopes["scopes"][0]["variablesReference"] }));
+    let many = locals["variables"].as_array().unwrap().iter().find(|v| v["name"] == "many").unwrap().clone();
+    assert_eq!(many["indexedVariables"], 250);
+    let page = ask(
+        "variables",
+        json!({ "variablesReference": many["variablesReference"], "filter": "indexed", "start": 248, "count": 2 }),
+    );
+    let names: Vec<&str> = page["variables"].as_array().unwrap().iter().map(|v| v["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["[248]", "[249]"]);
+    let evaluated = ask("evaluate", json!({ "expression": "items.length() + 1", "frameId": frames[0]["id"] }));
+    assert_eq!((&evaluated["result"], &evaluated["type"]), (&json!("5"), &json!("Int")));
+    let scopes = ask("scopes", json!({ "frameId": frames[0]["id"] }));
+    let reference = scopes["scopes"][0]["variablesReference"].clone();
+    let info = ask("dataBreakpointInfo", json!({ "variablesReference": reference, "name": "total" }));
+    assert_eq!(info["description"], "total");
+    let set = ask("setDataBreakpoints", json!({ "breakpoints": [{ "dataId": info["dataId"] }] }));
+    assert_eq!(set["breakpoints"][0]["verified"], true);
+    ask("setFunctionBreakpoints", json!({ "breakpoints": [] }));
+    ask("continue", json!({ "threadId": 1 }));
+    let stopped = ask("", Value::Null);
+    assert_eq!(stopped["reason"], "data breakpoint", "{stopped}");
+    let why = stopped["description"].as_str().unwrap();
+    assert!(
+        why.starts_with("watch 2: total changed from 0 to 1 at ") && why.ends_with("watched.to:17 in sum"),
+        "{why}"
+    );
+    ask("setDataBreakpoints", json!({ "breakpoints": [] }));
+    ask("continue", json!({ "threadId": 1 }));
+    let stopped = ask("", Value::Null);
+    assert_eq!((&stopped["reason"], &stopped["text"]), (&json!("exception"), &json!("error: Problem.Empty")));
+    let info = ask("exceptionInfo", json!({ "threadId": 1 }));
+    assert_eq!(info["exceptionId"], "error");
+    ask("disconnect", json!({}));
+    drop(ask);
+    child.wait().unwrap();
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");
