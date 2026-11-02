@@ -4456,3 +4456,16 @@ while the program stands still, and `locals`, `print` and `stack` read
 the moment shown; nothing runs backwards, and `continue` goes on from the
 present. It is slower while it records, as every line renders its
 bindings, and it keeps the innermost frame's bindings only.
+
+## 2026-11-02 — `goto` moves a frame as a reload does
+
+Set Next Statement moves a frame to another line of its function without
+running the lines between. A live build already moves frames at
+statements, to the new code of a reload, with their values copied by
+the names the points' layouts give. `goto` is such a move inside the
+same code: `tondo` reads the build's manifest, finds the points of the
+two lines, and lets the copies decide: a binding the target line uses
+that holds no value at the current one refuses the move, and says so.
+The runtime keeps the move for the stopped frame only, once, and the
+frame shows at the target line until it goes on; a move the frame cannot
+make where it stands is forgotten at its next line.

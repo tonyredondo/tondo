@@ -766,6 +766,49 @@ fn moves(bytes: &[u8]) -> Result<Moves, String> {
     Ok((moves, redirects))
 }
 
+/// The move the debugger asked for one frame (`goto`): to another
+/// statement of its own code, once, by the task and the frame at the
+/// site where it stopped.
+static GOTO: std::sync::Mutex<Option<(u64, usize, i64, Move)>> = std::sync::Mutex::new(None);
+static GOING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// At a task's next probe, the move it did not make, as when it was not
+/// where a statement starts, goes.
+pub(crate) fn forget_goto(task: u64) {
+    if GOING.load(Ordering::Relaxed) {
+        let mut goto = GOTO.lock().unwrap_or_else(|e| e.into_inner());
+        if goto.take_if(|(t, ..)| *t == task).is_some() {
+            GOING.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Moves a stopped frame to another statement of its function, as `moves`
+/// writes it with no conversion: it goes there as it goes on.
+pub(crate) fn goto(task: u64, frame: usize, site: i64, bytes: &[u8]) -> Result<(), String> {
+    let info = unsafe { INFO.load(Ordering::Acquire).as_ref() }.ok_or("the program is not a live build")?;
+    let (mut moves, _) = moves(bytes)?;
+    let Some((_, mut found)) = moves.pop().filter(|_| moves.is_empty()) else {
+        return Err("a move to another line is one move".into());
+    };
+    if found.slot >= info.capacity || !found.conversions.is_empty() {
+        return Err("the move is damaged".into());
+    }
+    found.code = unsafe { (info.slots.add(found.slot as usize) as *const AtomicU64).as_ref() }
+        .expect("the image's slots")
+        .load(Ordering::Acquire);
+    *GOTO.lock().unwrap_or_else(|e| e.into_inner()) = Some((task, frame, site, found));
+    GOING.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Whether the frame at a probe is the one the debugger moves to another
+/// line.
+pub(crate) fn going(task: u64, frame: usize, site: i64) -> bool {
+    let goto = GOTO.lock().unwrap_or_else(|e| e.into_inner());
+    goto.as_ref().is_some_and(|(t, f, s, _)| (*t, *f, *s) == (task, frame, site))
+}
+
 /// What a probe answers for its site: whether its frame moves to new code.
 pub(crate) fn moving(site: i64) -> u8 {
     if !PENDING.load(Ordering::Acquire) {
@@ -782,9 +825,23 @@ pub(crate) fn moving(site: i64) -> u8 {
 /// takes them from, converted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8, params: *const u64) -> u64 {
+    // The frame the debugger moves goes first, once.
+    let task = super::tasks::current_id();
+    let mut goto = GOTO.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, _, _, found)) = goto.take_if(|(t, _, s, _)| (*t, *s) == (task, site)) {
+        GOING.store(false, Ordering::Relaxed);
+        drop(goto);
+        return unsafe { transferred(site, &found, old, params) };
+    }
+    drop(goto);
     let moves = MOVES.read().unwrap_or_else(|e| e.into_inner());
     let Ok(index) = moves.binary_search_by_key(&site, |(s, _)| *s) else { return 0 };
-    let found = &moves[index].1;
+    unsafe { transferred(site, &moves[index].1, old, params) }
+}
+
+/// The state a move of a frame at `site` gives the new code, or 0 when the
+/// frame stays.
+unsafe fn transferred(site: i64, found: &Move, old: *const u8, params: *const u64) -> u64 {
     let state = unsafe { libc::calloc(1, 24 + found.size as usize) } as *mut u8;
     if state.is_null() {
         return 0;

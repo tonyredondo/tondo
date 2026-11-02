@@ -887,6 +887,11 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
   tarea parada. Las funciones de fuera muestran sus bindings como estaban al
   empezar la línea que llamó.
+- `goto <línea>`, en un build live, hace que el marco donde paró la tarea
+  siga en la sentencia de esa línea de su función, sin ejecutar las de en
+  medio, cuando lo que esa sentencia usa ya tiene valor: si no, un error
+  dice qué binding no lo tiene. Se muestra ahí al momento y va ahí al
+  seguir.
 - `set <destino> [=] <expresión>` cambia un binding de la función donde paró
   la tarea, o una parte suya (`user.age`, `items[i]`, `pair.0`), al valor de
   la expresión: un número, `Bool`, `Char`, `Byte`, `String` o la variante de
@@ -918,6 +923,7 @@ suites, con los bindings de cada función, desplegables por partes
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
 la tarea, `evaluate` de una expresión, `stepInTargets` con las llamadas de la línea,
+`gotoTargets` y `goto` en un build live,
 `completions` en la consola (los bindings, los
 campos de un valor tras su punto y los métodos de las expresiones),
 `setVariable` y `setExpression`, de una parte también, y las excepciones de un

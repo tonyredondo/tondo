@@ -138,6 +138,18 @@ fn record(table: &Table, here: &Stop) {
     history.push_back(Moment { task: here.task, site: here.site, stack, bindings });
 }
 
+/// The line `goto` moves a stopped task's frame to as it goes on, where
+/// its stack shows it until then.
+static MOVED_TO: Mutex<Option<(u64, u32)>> = Mutex::new(None);
+
+/// A place, `file:line in function`, at another line.
+fn moved_place(place: &str, line: u32) -> String {
+    match place.split_once(" in ").and_then(|(at, function)| Some((at.rsplit_once(':')?.0, function))) {
+        Some((file, function)) => format!("{file}:{line} in {function}"),
+        None => place.to_string(),
+    }
+}
+
 /// An event the debugger hears once the answer to its command went.
 static TELL_AFTER: Mutex<Option<String>> = Mutex::new(None);
 
@@ -674,6 +686,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     }
     let Some(table) = table() else { return 0 };
     let site = site as usize;
+    super::live::forget_goto(super::tasks::current_id());
     // The frame of the function that has the probe.
     let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
     let task = super::tasks::current_id();
@@ -987,6 +1000,8 @@ fn restarting(frame: usize, task: u64, site: usize) -> u8 {
     let asked = RESTART_FRAME.load(Ordering::Relaxed);
     match asked != 0 && asked == frame && RESTART_TASK.load(Ordering::Relaxed) == task {
         true => 1,
+        // The frame the debugger moves to another line.
+        false if super::live::going(task, frame, site as i64) => 2,
         false => super::live::moving(site as i64),
     }
 }
@@ -1053,6 +1068,7 @@ fn resume(mode: Mode) {
     };
     STEPPING.store(stepping, Ordering::Relaxed);
     *RETURNED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *MOVED_TO.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let mut state = state();
     state.mode = mode;
     state.stopped = None;
@@ -1359,6 +1375,35 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        // `goto <line> <move>`: the stopped frame goes on at the statement
+        // of that line of its function, by the move `tondo` worked out from
+        // the live build's points, as soon as it goes on; until then it
+        // shows there.
+        "goto" => {
+            let Some(stop) = stopped() else { return Some(not_stopped()) };
+            if !super::live::on() {
+                return Some(
+                    "{\"error\":\"a frame goes to another line in a live build: debug the program with --live\"}"
+                        .into(),
+                );
+            }
+            let (line, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+            let bytes: Option<Vec<u8>> = (0..hex.len())
+                .step_by(2)
+                .map(|i| hex.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()))
+                .collect();
+            let (Ok(line), Some(bytes)) = (line.parse::<u32>(), bytes) else {
+                return Some("{\"error\":\"goto takes a line and a move as tondo writes it\"}".into());
+            };
+            if let Err(message) = super::live::goto(stop.task, stop.frame, stop.site as i64, &bytes) {
+                return Some(format!("{{\"error\":{}}}", quoted(&message)));
+            }
+            *MOVED_TO.lock().unwrap_or_else(|e| e.into_inner()) = Some((stop.task, line));
+            let at = moved_place(&place_in(table, stop.site), line);
+            *TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(format!("{{\"stopped\":{{\"why\":\"goto\",\"task\":{},\"at\":{}}}}}", stop.task, quoted(&at)));
+            format!("{{\"goto\":{line}}}")
+        }
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {
@@ -1547,7 +1592,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let Some(held) = held else {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
-            let frames: Vec<String> = frames(table, &held).iter().map(|f| quoted(&f.place)).collect();
+            let mut frames: Vec<String> = frames(table, &held).iter().map(|f| f.place.clone()).collect();
+            // A frame `goto` moves shows where it goes on.
+            if let (Some((_, line)), Some(first)) =
+                (MOVED_TO.lock().unwrap_or_else(|e| e.into_inner()).filter(|(t, _)| *t == task), frames.first_mut())
+            {
+                *first = moved_place(first, line);
+            }
+            let frames: Vec<String> = frames.iter().map(|f| quoted(f)).collect();
             format!("{{\"stack\":[{}]}}", frames.join(","))
         }
         "tasks" => {

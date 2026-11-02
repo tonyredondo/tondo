@@ -1447,6 +1447,76 @@ fn debugger_goes_back_in_history() {
     assert_eq!(stack[..2], [json!("watched.to:17 in sum"), json!("watched.to:39 in main")]);
 }
 
+const JUMPED: &str = r#"import std.console
+
+fn main() {
+    var count = 0
+    count += 1
+    count += 10
+    let label = "done"
+    console.println("{count} {label}")
+}
+"#;
+
+/// In a live build, `goto` moves the stopped frame to another line of its
+/// function, when what that line uses holds a value; it goes on there.
+#[test]
+fn debugger_moves_a_frame_to_another_line() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-goto");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("jumped.to"), JUMPED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--live", "jumped.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break jumped.to:6\ncontinue\ngoto 5\nstack\nnext\nprint count\ngoto 8\ndelete 1\ngoto 4\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<(&str, &str)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), s["why"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        stops[1..],
+        [
+            ("jumped.to:6 in main", "breakpoint 1"),
+            ("jumped.to:5 in main", "goto"),
+            ("jumped.to:6 in main", "breakpoint 1"),
+            ("jumped.to:4 in main", "goto"),
+        ]
+    );
+    assert_eq!(lines.iter().find_map(|l| l["stack"].as_array()).unwrap()[0], "jumped.to:5 in main");
+    assert_eq!(lines.iter().find(|l| l["name"] == "count").unwrap()["value"], "2");
+    let error = lines.iter().find_map(|l| l["error"].as_str()).unwrap();
+    assert_eq!(error, "the frame does not go to line 8: `label` holds no value at line 6 yet");
+    // From line 4 again, `count` starts over.
+    assert!(text.contains("11 done"), "{text}");
+    // The editor's `goto`, to a target of the line.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "jumped.to", "cwd": dir, "live": true }));
+    let path = dir.join("jumped.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 6 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let targets = adapter.ask("gotoTargets", json!({ "source": { "path": path }, "line": 5 }));
+    adapter.ask("goto", json!({ "threadId": 1, "targetId": targets["targets"][0]["id"] }));
+    assert_eq!(adapter.until("stopped")["reason"], "goto");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(trace["stackFrames"][0]["line"], 5);
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

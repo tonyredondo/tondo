@@ -586,15 +586,8 @@ impl From<String> for Refused {
 /// patches the process `pid` with it; `ask` sends the process a request
 /// and gives its answer.
 pub fn reload(pid: u32, ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>) -> Result<Reloaded, Refused> {
-    let live = ask("live")?;
-    if let Some(error) = live["error"].as_str() {
-        return Err(Refused::Failed(error.to_string()));
-    }
+    let (live, manifest) = manifest_of(pid, ask)?;
     let id = live["build"].as_str().unwrap_or_default().to_string();
-    let file = [manifest_path(&format!("{id}-{pid}")), manifest_path(&id)].into_iter().find(|f| f.exists());
-    let file = file.ok_or_else(|| format!("tondo has no manifest of the build {id}: build it again with --live"))?;
-    let text = std::fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
-    let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
     let strings = |key: &str| -> Vec<String> {
         manifest[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect()
     };
@@ -610,6 +603,47 @@ pub fn reload(pid: u32, ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, S
     let reloaded = patch(pid, ask, &manifest, &path, options, &live, id);
     let _ = std::env::set_current_dir(here);
     reloaded
+}
+
+/// What a running live build says of itself, and the manifest of its
+/// build, or of its process once a patch went in.
+fn manifest_of(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+) -> Result<(serde_json::Value, serde_json::Value), String> {
+    let live = ask("live")?;
+    if let Some(error) = live["error"].as_str() {
+        return Err(error.to_string());
+    }
+    let id = live["build"].as_str().unwrap_or_default().to_string();
+    let file = [manifest_path(&format!("{id}-{pid}")), manifest_path(&id)].into_iter().find(|f| f.exists());
+    let file = file.ok_or_else(|| format!("tondo has no manifest of the build {id}: build it again with --live"))?;
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let manifest = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok((live, manifest))
+}
+
+/// `goto`: the move of the stopped frame at `place`, `file:line in
+/// function`, to the statement at `line` of its function, as the runtime's
+/// `goto` takes it, in hexadecimal; or why it does not go there.
+pub fn goto(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    place: &str,
+    line: u64,
+) -> Result<String, String> {
+    let (_, manifest) = manifest_of(pid, ask)
+        .map_err(|e| format!("{e}: a frame goes to another line in a live build, debugged with --live"))?;
+    let stopped = "the program runs: `pause` stops it, or a breakpoint";
+    let (at, function) = place.split_once(" in ").ok_or(stopped)?;
+    let from = at.rsplit_once(':').and_then(|(_, line)| line.parse().ok()).ok_or(stopped)?;
+    let points = manifest["points"].as_object().into_iter().flatten();
+    let Some((identity, entry)) = points.into_iter().find(|(identity, _)| osr::shown(identity) == function) else {
+        return Err(format!("the live build has no statements of `{function}`"));
+    };
+    let slot = manifest["slots"][identity.as_str()].as_u64().ok_or(format!("`{function}` has no slot"))?;
+    let bytes = osr::goto(entry, slot as u32, from, line)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// The rest of a reload, from the directory the program was built in.

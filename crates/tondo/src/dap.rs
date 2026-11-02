@@ -198,6 +198,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsCompletionsRequest": true,
                 "supportsStepInTargetsRequest": true,
                 "supportsStepBack": true,
+                "supportsGotoTargetsRequest": true,
                 "completionTriggerCharacters": ["."],
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
@@ -461,6 +462,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                 let reason = match why {
                     "start" => "entry",
                     "step" | "history" => "step",
+                    "goto" => "goto",
                     "pause" => "pause",
                     _ if why.starts_with("panic[") || why.starts_with("error: ") => "exception",
                     _ if why.starts_with("watch ") => "data breakpoint",
@@ -801,6 +803,22 @@ fn handle(
                 _ => "finish".to_string(),
             };
             program.ask(&asked).map(|_| json!({}))
+        }
+        // A live build's frame goes on at another line of its function:
+        // each line is a target, which the move checks.
+        "gotoTargets" => {
+            let line = arguments["line"].as_u64().unwrap_or(0);
+            Ok(json!({ "targets": [{ "id": line, "label": format!("line {line}"), "line": line }] }))
+        }
+        "goto" => {
+            let line = arguments["targetId"].as_u64().unwrap_or(0);
+            let task = arguments["threadId"].as_u64().unwrap_or(1);
+            let stack = program.ask(&format!("stack {task}"))?;
+            let place = stack["stack"][0].as_str().unwrap_or_default().to_string();
+            let pid = program.pid;
+            let hex = crate::live::goto(pid, &mut |request| program.answer(request), &place, line)?;
+            program.handles.clear();
+            program.ask(&format!("goto {line} {hex}")).map(|_| json!({}))
         }
         // Back in the history `record` keeps: a line, or to the last line
         // at a breakpoint.

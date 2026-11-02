@@ -84,7 +84,7 @@ continue   step   next   finish   steps all   pause   wait
 record   back 3   forward   reverse   record off
 locals   print items[i + 1].name   print total / count   children items 100 50
 set count count + 1   set user.age = 37   context   stack   frame 1   task 2
-tasks   reload   restart
+tasks   reload   restart   goto 12
 ```
 
 `locals` lists what the stopped line can use: its bindings, what a closure

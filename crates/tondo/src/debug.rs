@@ -65,6 +65,7 @@ frame <n>                                       look at frame n of the stack: lo
 task <id>                                       look at another stopped task, from its innermost frame
 tasks                                           where each stopped task is
 reload                                          a live build: its code as its files are now (r)
+goto <line>                                     a live build: the stopped frame goes on at that line of its function
 restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
@@ -212,6 +213,29 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     (Ok(reloaded), false) => println!("{}", reloaded.summary()),
                     (Err(refused), true) => println!("{}", serde_json::json!({ "error": refused.message() })),
                     (Err(refused), false) => println!("{}", refused.message()),
+                }
+            }
+            // The stopped frame goes on at another line of its function.
+            "goto" => {
+                let Ok(line) = rest.parse::<u64>() else {
+                    session.show(
+                        &serde_json::json!({ "error": "goto takes a line of the stopped function, as `goto 12`" }),
+                    );
+                    continue;
+                };
+                let mut ask = |request: &str| {
+                    session.send(request)?;
+                    session.answer()
+                };
+                let place =
+                    ask("stack").ok().and_then(|s| s["stack"][0].as_str().map(String::from)).unwrap_or_default();
+                let moved =
+                    crate::live::goto(pid, &mut ask, &place, line).and_then(|hex| ask(&format!("goto {line} {hex}")));
+                match moved {
+                    // Where it goes on, which the debugger tells next.
+                    Ok(answer) if answer.get("goto").is_some() => session.wait_event(),
+                    Ok(answer) => session.show(&answer),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"

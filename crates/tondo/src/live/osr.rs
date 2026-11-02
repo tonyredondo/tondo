@@ -365,7 +365,7 @@ pub(super) fn shown_name(identity: &str) -> &str {
 
 /// A function as a report names it: without its parameters, result and
 /// place among its function's closures.
-fn shown(identity: &str) -> &str {
+pub(super) fn shown(identity: &str) -> &str {
     let name = identity.split('(').next().unwrap_or(identity);
     match name.rsplit_once(' ') {
         Some((closure, place)) if place.contains('/') && closure.starts_with("closure in ") => closure,
@@ -518,6 +518,39 @@ pub(super) struct Migrations {
     pub refused: HashMap<String, String>,
     /// The conversions back, from a new type to the old, that lose nothing.
     pub backs: HashMap<(String, String), usize>,
+}
+
+/// The move of a frame of the version `entry` of a function, at the
+/// statement that starts at line `from` of its file, to the one at line
+/// `to`, in the same code: as `moves` writes moves, for the debugger's
+/// `goto`; or why it does not go there, as a binding the line uses that
+/// holds no value yet.
+pub(super) fn goto(entry: &Value, slot: u32, from: u64, to: u64) -> Result<Vec<u8>, String> {
+    let top = entry["top"].as_u64().unwrap_or(0);
+    let points = list(entry, "points");
+    let at = |line: u64, sited: bool| {
+        points.iter().find(|p| top + p["line"].as_u64().unwrap_or(0) == line && (!sited || p["site"].is_i64()))
+    };
+    let here =
+        at(from, true).ok_or(format!("the frame is not where a statement of line {from} starts: step to one"))?;
+    let there = at(to, false).ok_or(format!("no statement of this function starts at line {to}"))?;
+    let paths: HashMap<&str, &str> =
+        points.iter().filter_map(|p| p["path"].as_str()).map(|p| (p, p)).chain([("", "")]).collect();
+    let (copies, _) = copies(here, there, &paths, &Migrations::default()).map_err(|why| {
+        let why = why.replace("is new there", &format!("holds no value at line {from} yet"));
+        format!("the frame does not go to line {to}: {why}")
+    })?;
+    let word = |key: &str| there[key].as_u64().unwrap_or(0) as u32;
+    let mut bytes = Vec::from(*b"OSR5");
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend(here["site"].as_i64().unwrap_or(0).to_le_bytes());
+    bytes.extend([slot, word("point"), word("size"), copies.len() as u32].into_iter().flat_map(u32::to_le_bytes));
+    for (from, to, size) in copies {
+        bytes.extend([from, to, size].into_iter().flat_map(u32::to_le_bytes));
+    }
+    // No conversion, parameter or result of another shape, nor redirect.
+    bytes.extend([0u32; 7].into_iter().flat_map(u32::to_le_bytes));
+    Ok(bytes)
 }
 
 /// Lines as a short list: `3, 5–8`.
