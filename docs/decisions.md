@@ -4532,3 +4532,14 @@ editor sets them as exception filters, as DAP has no events of its own.
 `freeze <task>` keeps a task held while the others go on, to let one
 side of a race run first; a frozen task that runs stops at its next
 line.
+
+## 2026-11-02 — What keeps memory, while stopped
+
+Dumps already find every object of a debug build and what points to it,
+from the words of the heap and the tasks' stacks. A stopped program asks
+the same: `retainers` gives, for the object a binding or a part of one
+holds, the stacks that point to it and the shortest chains of objects
+from a stack to it; `memory` counts the objects by where they were made
+and says how each place grew since it last counted, which between two
+stops shows what accumulates. The editor's console takes them as typed,
+with the other commands that only look.

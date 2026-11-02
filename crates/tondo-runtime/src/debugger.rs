@@ -1754,6 +1754,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
             RESUMED.notify_all();
             format!("{{\"frozen\":[{}]}}", frozen.join(","))
         }
+        "retainers" => match retainers(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "memory" => match memory() {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {
@@ -2059,6 +2067,154 @@ fn set(table: &Table, text: &str) -> Result<String, String> {
         return Err("a binding changes in the frame where its task stopped: `frame 0`".into());
     }
     let (frames, index) = selected(table)?;
+    let (address, layout, ty) = located(table, &frames, index, target, true)?;
+    let evaluated = evaluating(table, &frames, index, |e| e.evaluate(&expression::parse(value)?));
+    match (&table.layouts[layout], evaluated) {
+        (Layout::Scalar(ty), Ok(evaluated)) => unsafe { write(ty, address, &evaluated.value)? },
+        // A text without its quotes, as it was written before.
+        (Layout::Scalar(ty), Err(_)) if ty == "String" => unsafe {
+            write(ty, address, &expression::Value::Text(value.to_string()))?
+        },
+        (Layout::Plain(size, variants), Ok(evaluated)) => {
+            let shown = evaluated.value.shown();
+            let name = shown.rsplit('.').next().unwrap_or_default();
+            let Some(tag) = variants.iter().position(|v| v == name) else {
+                return Err(format!("`{value}` is none of its variants: {}", variants.join(", ")));
+            };
+            unsafe { std::ptr::copy_nonoverlapping(&(tag as u64).to_le_bytes()[0], address as *mut u8, *size) };
+        }
+        (_, Err(message)) => return Err(message),
+        _ => return Err(format!("the debugger does not change `{target}`, a value of type {ty}")),
+    }
+    Ok(printed(table, &frames, index, target))
+}
+
+/// An object of the heap as `retainers` and `memory` name it: its size,
+/// where it was made, and a text's first characters.
+fn object_named(objects: &super::heap::Objects, at: usize) -> String {
+    let (_, size, site, text) = &objects.list[at];
+    let made = made_at(*site);
+    match text {
+        Some(text) => format!("the text {:?} of {size} bytes, made at {made}", clip(text, 40)),
+        None => format!("an object of {size} bytes, made at {made}"),
+    }
+}
+
+fn made_at(site: usize) -> String {
+    super::trace::describe(site)
+        .and_then(|d| d.at.map(|(file, line)| format!("{file}:{line} in {}", d.function)))
+        .unwrap_or_else(|| "a place the debugger does not know".into())
+}
+
+fn clip(text: &str, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((at, _)) => format!("{}...", &text[..at]),
+        None => text.to_string(),
+    }
+}
+
+/// `retainers <path>`: what keeps the value a binding or a part of one
+/// holds alive, when it is an object of the heap: the stacks of the tasks
+/// that point to it, and the shortest chains of objects from a stack to it.
+fn retainers(table: &Table, target: &str) -> Result<String, String> {
+    let (frames, index) = selected(table)?;
+    let (address, ..) = located(table, &frames, index, target, false)?;
+    let object = unsafe { *(address as *const usize) };
+    let objects = super::heap::objects().ok_or("the program does not keep its objects: a debug build does")?;
+    let Ok(found) = objects.list.binary_search_by_key(&object, |o| o.0) else {
+        return Err(format!("`{target}` is not an object of the heap: its value is in its frame, or in another value"));
+    };
+    let mut by: Vec<Vec<usize>> = vec![Vec::new(); objects.list.len()];
+    for &(from, to) in &objects.edges {
+        by[to].push(from);
+    }
+    let stacks = |at: usize| -> Vec<u64> { objects.roots.iter().filter(|r| r.1 == at).map(|r| r.0).collect() };
+    // From the object back to the stacks, the nearest first.
+    let mut came: Vec<Option<usize>> = vec![None; objects.list.len()];
+    let mut seen = vec![false; objects.list.len()];
+    let mut queue = std::collections::VecDeque::from([found]);
+    seen[found] = true;
+    let mut chains = Vec::new();
+    while let Some(at) = queue.pop_front() {
+        if at != found && !stacks(at).is_empty() {
+            let mut chain = vec![format!("the stack of task {}", stacks(at)[0])];
+            let mut step = Some(at);
+            while let Some(here) = step {
+                chain.push(object_named(&objects, here));
+                step = came[here];
+            }
+            chains.push(format!("[{}]", chain.iter().map(|c| quoted(c)).collect::<Vec<_>>().join(",")));
+            if chains.len() == 3 {
+                break;
+            }
+        }
+        for &from in &by[at] {
+            if !seen[from] {
+                seen[from] = true;
+                came[from] = Some(at);
+                queue.push_back(from);
+            }
+        }
+    }
+    let held: Vec<String> = stacks(found).iter().map(u64::to_string).collect();
+    Ok(format!(
+        "{{\"retainers\":{{\"object\":{},\"stacks\":[{}],\"chains\":[{}]}}}}",
+        quoted(&object_named(&objects, found)),
+        held.join(","),
+        chains.join(",")
+    ))
+}
+
+/// What `memory` counted last time, by where the objects were made.
+static COUNTED: Mutex<Vec<(usize, usize, usize)>> = Mutex::new(Vec::new());
+
+/// `memory`: the program's objects by where they were made, the places
+/// with the most bytes first, and how each grew since `memory` last
+/// counted.
+fn memory() -> Result<String, String> {
+    let objects = super::heap::objects().ok_or("the program does not keep its objects: a debug build does")?;
+    let mut by: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
+    for &(_, size, site, _) in &objects.list {
+        let place = by.entry(site).or_default();
+        place.0 += 1;
+        place.1 += size;
+    }
+    let mut counted = COUNTED.lock().unwrap_or_else(|e| e.into_inner());
+    let before = std::mem::take(&mut *counted);
+    let mut places: Vec<(usize, (usize, usize))> = by.into_iter().collect();
+    places.sort_by_key(|&(site, (_, bytes))| (std::cmp::Reverse(bytes), site));
+    *counted = places.iter().map(|&(site, (count, bytes))| (site, count, bytes)).collect();
+    let rows: Vec<String> = places
+        .iter()
+        .take(20)
+        .map(|&(site, (count, bytes))| {
+            let grew = match before.iter().find(|b| b.0 == site) {
+                Some(&(_, was, was_bytes)) => (count as i64 - was as i64, bytes as i64 - was_bytes as i64),
+                None if before.is_empty() => (0, 0),
+                None => (count as i64, bytes as i64),
+            };
+            format!(
+                "{{\"at\":{},\"objects\":{count},\"bytes\":{bytes},\"more\":{},\"more_bytes\":{}}}",
+                quoted(&made_at(site)),
+                grew.0,
+                grew.1
+            )
+        })
+        .collect();
+    let (count, bytes) = (objects.list.len(), objects.list.iter().map(|o| o.1).sum::<usize>());
+    Ok(format!("{{\"memory\":{{\"objects\":{count},\"bytes\":{bytes},\"places\":[{}]}}}}", rows.join(",")))
+}
+
+/// Where a binding of a frame, or a part of one, as `user.age` or
+/// `items[i]`, is in memory, its layout and the binding's type; `writing`
+/// first copies an array another value shares, as a change does.
+fn located(
+    table: &Table,
+    frames: &[Frame],
+    index: usize,
+    target: &str,
+    writing: bool,
+) -> Result<(usize, usize, String), String> {
     let mut steps = Vec::new();
     let mut place = &expression::parse(target)?;
     let root = loop {
@@ -2093,7 +2249,7 @@ fn set(table: &Table, text: &str) -> Result<String, String> {
                 layout = inner;
             }
             (Err(at), Layout::Array(size, inner)) => {
-                let at = match evaluating(table, &frames, index, |e| e.evaluate(at))?.value {
+                let at = match evaluating(table, frames, index, |e| e.evaluate(at))?.value {
                     expression::Value::Int(at) => at,
                     other => return Err(format!("an index is an Int, not {}", other.shown())),
                 };
@@ -2104,7 +2260,7 @@ fn set(table: &Table, text: &str) -> Result<String, String> {
                 };
                 // An array another value shares is copied first, as the
                 // program does, when its items hold nothing counted.
-                if !unsafe { super::unique(*slot) } {
+                if writing && !unsafe { super::unique(*slot) } {
                     let plain = match &table.layouts[*inner] {
                         Layout::Scalar(ty) => ty != "String",
                         Layout::Plain(..) => true,
@@ -2119,32 +2275,15 @@ fn set(table: &Table, text: &str) -> Result<String, String> {
                 address = unsafe { super::element(*slot, *size, at) } as usize;
                 layout = *inner;
             }
-            _ => {
+            _ if writing => {
                 return Err(format!(
                     "the debugger does not change `{target}`: it changes numbers, Bool, Char, String and plain enums, in records, tuples and arrays"
                 ));
             }
+            _ => return Err(format!("the debugger finds the parts of records, tuples and arrays, not `{target}`")),
         }
     }
-    let evaluated = evaluating(table, &frames, index, |e| e.evaluate(&expression::parse(value)?));
-    match (&table.layouts[layout], evaluated) {
-        (Layout::Scalar(ty), Ok(evaluated)) => unsafe { write(ty, address, &evaluated.value)? },
-        // A text without its quotes, as it was written before.
-        (Layout::Scalar(ty), Err(_)) if ty == "String" => unsafe {
-            write(ty, address, &expression::Value::Text(value.to_string()))?
-        },
-        (Layout::Plain(size, variants), Ok(evaluated)) => {
-            let shown = evaluated.value.shown();
-            let name = shown.rsplit('.').next().unwrap_or_default();
-            let Some(tag) = variants.iter().position(|v| v == name) else {
-                return Err(format!("`{value}` is none of its variants: {}", variants.join(", ")));
-            };
-            unsafe { std::ptr::copy_nonoverlapping(&(tag as u64).to_le_bytes()[0], address as *mut u8, *size) };
-        }
-        (_, Err(message)) => return Err(message),
-        _ => return Err(format!("the debugger does not change `{target}`, a value of type {}", binding.ty)),
-    }
-    Ok(printed(table, &frames, index, target))
+    Ok((address, layout, binding.ty.clone()))
 }
 
 /// Writes a number, a `Bool`, a `Char` or a `String` of the type `ty` at

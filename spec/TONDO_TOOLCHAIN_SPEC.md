@@ -813,6 +813,12 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   enviar o recibir por un canal, con lo que tiene; y `break on wait <ms>`,
   una que esperó más de esos milisegundos un lock, un canal u otra tarea,
   al acabar la espera. `delete <id>` los quita como a los demás.
+- `retainers <path>` dice qué mantiene vivo el objeto del heap que tiene un
+  binding, o una parte suya: las pilas de las tareas que apuntan a él y las
+  cadenas de objetos más cortas desde una pila hasta él, cada objeto con su
+  tamaño y dónde se hizo. `memory` da los objetos del programa por dónde se
+  hicieron, los lugares con más bytes primero, y cuánto creció cada uno
+  desde el último `memory`: entre dos paradas, lo que se acumula.
 - `freeze <task>` deja una tarea retenida, o la retiene en su siguiente
   línea si corre, mientras las demás siguen; `thaw <task>` la deja seguir.
   La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
@@ -961,7 +967,9 @@ suites, con los bindings de cada función, desplegables por partes
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
 la tarea, `evaluate` de una expresión, y en la consola, en un build live, de una que
 llama al código del programa, como `call`, `stepInTargets` con las llamadas de la línea,
-`gotoTargets` y `goto` en un build live,
+`gotoTargets` y `goto` en un build live, las órdenes que solo miran
+(`memory`, `retainers`, `snapshot`, `tasks`, `freeze`, `thaw`, `record`,
+`context`) escritas en la consola,
 `completions` en la consola (los bindings, los
 campos de un valor tras su punto y los métodos de las expresiones),
 `setVariable` y `setExpression`, de una parte también, y las excepciones de un

@@ -38,6 +38,10 @@ break <place> task <id> ...                     the same for one task only
 break on spawn|send|receive|wait <ms>           stop a task as it starts, sends or receives on a channel, or once
                                                 it waited longer than that for a lock, a channel or a task
 freeze <task>, thaw <task>                      the task stays held while the others go on, or goes on again
+retainers <path>                                what keeps a value of the heap alive: the stacks that point to it,
+                                                and the shortest chains of objects from a stack to it
+memory                                          the objects by where they were made, and how each place grew since
+                                                the last `memory`
 watch <expression> [if <condition>] [hits <n>]  stop on the line after the one that changes its value, in this
                                                 frame or a call it makes, until the frame returns; a std.sync
                                                 cell's value, as state.value, in whichever task changes it
@@ -276,7 +280,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
-            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze" | "thaw" => {
+            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze" | "thaw"
+            | "retainers" | "memory" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -463,6 +468,33 @@ impl Session {
             }
         } else if let Some(logged) = value["logged"].as_str() {
             println!("{logged}");
+        } else if let Some(retainers) = value.get("retainers") {
+            println!("{}", retainers["object"].as_str().unwrap_or_default());
+            let stacks: Vec<String> =
+                retainers["stacks"].as_array().into_iter().flatten().map(|t| t.to_string()).collect();
+            if !stacks.is_empty() {
+                println!("  the stacks of task {} point to it", stacks.join(", task "));
+            }
+            for chain in retainers["chains"].as_array().into_iter().flatten() {
+                let links: Vec<&str> = chain.as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                println!("  {}", links.join("\n    -> "));
+            }
+        } else if let Some(memory) = value.get("memory") {
+            println!("{} objects, {} bytes", memory["objects"], memory["bytes"]);
+            for place in memory["places"].as_array().into_iter().flatten() {
+                let more = place["more"].as_i64().unwrap_or(0);
+                let grew = if more == 0 {
+                    String::new()
+                } else {
+                    format!("  ({more:+} objects, {:+} bytes)", place["more_bytes"].as_i64().unwrap_or(0))
+                };
+                println!(
+                    "  {:>8} bytes in {:>5} objects  {}{grew}",
+                    place["bytes"].as_u64().unwrap_or(0),
+                    place["objects"].as_u64().unwrap_or(0),
+                    place["at"].as_str().unwrap_or_default()
+                );
+            }
         } else if let Some(frozen) = value["frozen"].as_array() {
             let tasks: Vec<String> = frozen.iter().map(|t| t.to_string()).collect();
             match tasks.is_empty() {

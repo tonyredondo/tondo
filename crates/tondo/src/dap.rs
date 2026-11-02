@@ -1141,6 +1141,14 @@ fn handle(
                 }
             };
             program.ask(&format!("select {task} {index}"))?;
+            // In the console, the debugger's own commands that only look.
+            let word = path.split_whitespace().next().unwrap_or_default();
+            let looking = ["memory", "retainers", "snapshot", "tasks", "freeze", "thaw", "record", "context"];
+            if arguments["context"] == "repl" && looking.contains(&word) {
+                let answer = program.ask(&path)?;
+                let shown = serde_json::to_string_pretty(&answer).unwrap_or_default();
+                return Ok(json!({ "result": shown, "variablesReference": 0 }));
+            }
             let value = match program.ask(&format!("print {path}")) {
                 Ok(value) => value,
                 // In the console, an expression that calls the program's

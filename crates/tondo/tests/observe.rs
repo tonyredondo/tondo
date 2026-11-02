@@ -1763,6 +1763,59 @@ fn debugger_stops_at_events_and_freezes_tasks() {
     adapter.stop();
 }
 
+const RETAINED: &str = r#"import std.console
+
+type Entry = { name: String, data: Array[Int] }
+
+fn fill(cache: Ref[Array[Entry]], count: Int): Array[Entry] {
+    var more = cache.value
+    for i in 0..count {
+        more.push(Entry { name: "entry {i}", data: [i, i + 1] })
+    }
+    more
+}
+
+fn main() {
+    let first = fill(Ref([]), 3)
+    let kept = Ref(first)
+    let second = fill(kept, 50)
+    console.println("{second.length()}")
+}
+"#;
+
+/// `retainers` says what keeps a value alive, and `memory` where the
+/// objects were made and how that grew since it last counted.
+#[test]
+fn debugger_tells_what_holds_memory() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-memory");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("retained.to"), RETAINED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "retained.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break retained.to:16\ncontinue\nmemory\nretainers first\nnext\nmemory\nretainers nothing\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let counted: Vec<&Value> = lines.iter().filter_map(|l| l.get("memory")).collect();
+    assert!(counted[0]["objects"].as_u64() > Some(0), "{:?}", counted[0]);
+    let places = counted[0]["places"].as_array().unwrap();
+    assert!(places.iter().any(|p| p["at"] == "retained.to:8 in fill"), "{places:?}");
+    // A line later, a place that made more says so.
+    let grown = counted[1]["places"].as_array().unwrap();
+    assert!(grown.iter().any(|p| p["more"].as_i64() > Some(0)), "{grown:?}");
+    let held = lines.iter().find_map(|l| l.get("retainers")).unwrap();
+    assert!(held["object"].as_str().unwrap().ends_with("made at retained.to:8 in fill"), "{held}");
+    assert_eq!(held["stacks"], json!([1]));
+    assert!(lines.iter().any(|l| l["error"].as_str().is_some_and(|e| e.contains("nothing"))));
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");
