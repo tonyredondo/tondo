@@ -1650,6 +1650,17 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         Ok(out)
     };
+    // A standard module as the compiler and its errors write it, `http` or
+    // `http.Response`, is `std.http`'s, unless the project has one so named.
+    let target = target.map(|name| {
+        let module = name.split('.').next().unwrap_or_default();
+        let standard = format!("std.{module}");
+        let own = || modules().unwrap_or_default().iter().any(|(n, _, _)| n.split('.').next() == Some(module));
+        match !name.starts_with("std.") && tondo::api::standard(&standard).is_some() && !own() {
+            true => format!("std.{name}"),
+            false => name,
+        }
+    });
     if let Some(query) = search {
         // The standard modules, and the project's and its dependencies'
         // when there is a project.
@@ -1677,6 +1688,11 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
                     println!("    {}", found.about);
                 }
             }
+            println!(
+                "`tondo api <name>` shows one, with its methods and an example, as `tondo api {}.{}`",
+                found[0].module,
+                found[0].name.split('.').next().unwrap_or_default()
+            );
         }
         return Ok(ExitCode::SUCCESS);
     }

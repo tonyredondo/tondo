@@ -1,0 +1,14 @@
+// A name a module does not declare: the one it may have meant, with its
+// repair, or where to see what it declares.
+
+import std.json
+
+fn main() {
+    let x = json.encod(1)
+    let y = json.Writr
+    let z = json.Document
+}
+
+// expect-error: E1001 module `std.json` declares no `encod`; did you mean `encode`?
+// expect-error: E1001 module `std.json` declares no `Writr`; did you mean `Writer`?
+// expect-error: E1001 module `std.json` declares no `Document`: `tondo api std.json` shows what it declares

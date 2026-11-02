@@ -97,6 +97,8 @@ tondo test [<project>]             run the tests
 tondo fmt <file.to>                canonical layout; --compact prints the fewest tokens
 tondo api <module>                 a module's declarations and docs, no bodies:
                                    std.http, std.fs, prelude, app.models, a dependency
+tondo api <module>.<Type>          one type, its methods and an example: String,
+                                   Option, std.http.Client (or http.Client)
 tondo api --list                   the modules there are
 tondo api --search <words>         declarations by their names and docs
 tondo graph [<path>]               a program's modules, files and imports; with a
@@ -116,10 +118,13 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 ## Working as an agent
 
-1. `tondo api --search <words>` finds what does a job; `tondo api --list`
-   names the modules, and `tondo api <module>` shows what to call, with an
-   example; `tondo api String` one type and its methods, as for `Array`,
-   `Map`, `Option` or `std.http.Client`.
+1. Look before you call: Tondo's library is its own, and guessing a name
+   from another language is the commonest mistake. `tondo api --search
+   <words>` finds what does a job; `tondo api std.http.Client`, or
+   `String`, `Array`, `Option`, shows a type with its methods and an
+   example that compiles, which every type of the standard library has;
+   `tondo api <module>` shows a whole module, `--list` the modules. An
+   error about a name that does not exist says which `tondo api` to run.
 2. Write the code; layout does not matter.
 3. `tondo check --json`, fix what it reports, repeat; then `tondo test`.
 4. `tondo fmt` the files you wrote. To show a file to a model, `tondo fmt

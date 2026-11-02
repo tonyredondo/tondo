@@ -4257,3 +4257,16 @@ Writing them ran each one, and what they showed was fixed on the way:
 a URL host that RFC 3986 does not allow, `http.Saved` without a
 decoder, protobuf fields typed with an alias, reflection without `Send`
 and `Share`, and a `derive` error that did not say what to write.
+
+## 2026-11-02 — Leading agents to `tondo api`
+
+Agents wrote Tondo by guessing names from other languages, and only the
+guide's overview told them to look first. The MCP server's instructions,
+the `api` tool, the overview and the guides of the library, the CLI and
+MCP now say to look up what a program calls before calling it, and that
+a type's view has its methods and an example that compiles. The
+compiler's errors lead there too: a name a module does not declare gives
+the near one it does, with its repair, or the `tondo api` of the module;
+a method a type of the prelude or the library lacks gives the `tondo
+api` of the type. `tondo api` takes `http.Client` as the compiler writes
+it, and a search ends by saying how to see one result.

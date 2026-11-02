@@ -1,9 +1,10 @@
 # The standard library
 
-`import std.x` brings a module; `tondo api std.x` shows all it has. The
-prelude needs no import: methods of `String`, `Char`, `Int`, `Float`,
-`Option`, `Result`, `Array`, `Map`, `Set`, ranges and iterators (`tondo api
-prelude`).
+`import std.x` brings a module; `tondo api std.x` shows all it has, and
+`tondo api std.x.Type` one type with its methods and an example that
+compiles, which every type has. The prelude needs no import: methods of
+`String`, `Char`, `Int`, `Float`, `Option`, `Result`, `Array`, `Map`, `Set`,
+ranges and iterators (`tondo api prelude`, or `tondo api String`).
 
 ```text
 std.console    print, println, eprintln, readLine, the streams

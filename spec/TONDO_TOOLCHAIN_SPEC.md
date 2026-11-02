@@ -421,10 +421,18 @@ $ tondo api --list
 - Con una declaración de un módulo, `std.http.Client`, `std.json.encode` o
   `String`, del preludio, muestra solo ella y lo que le pertenece: los
   métodos y los `impl` de un tipo, o un método por su nombre, `Client.get`.
+  Un módulo de la stdlib se nombra también sin `std.`, como lo escriben el
+  compilador y sus errores (`http.Client`), salvo que el proyecto tenga un
+  módulo de ese nombre.
 - `--search` busca las palabras en los nombres y la documentación de las
   declaraciones de la stdlib, el proyecto y sus dependencias, primero las que
   se llaman así, y da cada una con su módulo, su declaración y la primera
-  frase de su documentación; con `--json`, `matches`.
+  frase de su documentación, y al final cómo ver una con su ejemplo; con
+  `--json`, `matches`.
+- El error de un nombre que un módulo no declara propone el parecido que
+  declara, con su reparación, o nombra el `tondo api` del módulo; el de un
+  método que no existe en un tipo del preludio o de la stdlib, sin uno
+  parecido, nombra el `tondo api` del tipo.
 - Un record con campos privados muestra los públicos y `// private fields`;
   un trait, las firmas de sus métodos; un `impl`, su cabecera. `--private`
   muestra también lo privado, para quien trabaja dentro del paquete.

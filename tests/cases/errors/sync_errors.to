@@ -26,6 +26,6 @@ fn main() {
 // expect-error: E1206 another task may change a shared collection, so a `for` over it binds values
 // expect-error: E1102 `sync.Queue` takes an array, found `Int`
 // expect-error: E1102 `sync.Once` starts empty: `sync.Once.new[T]()`
-// expect-error: E1001 `sync.Mutex[Int]` has no method `length`
+// expect-error: E1001 `sync.Mutex[Int]` has no method `length`: `tondo api sync.Mutex` shows the methods it has
 // expect-error: E1102 `updateWhen` waits until its first function gives `true`, but it gives `Int`
 // expect-warning: W1003 the parameter `f` is never used: write `_` instead, or `_f` to hold its value until the function ends

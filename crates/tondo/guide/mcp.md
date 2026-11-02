@@ -18,10 +18,12 @@ source and stack, as data.
 
 1. `guide`, the overview, then the topics it names; `pitfalls` before
    writing much.
-2. `api` with `search` to find what does a job, `list` for the modules,
-   then `api` with a `module` (`std.http`, `prelude`, a module of the
-   project) or a declaration (`std.http.Client`, `String`) for what to
-   call, with examples; `hover` and `complete` at a place of a file.
+2. `api` before calling what you have not used: `search` finds what does
+   a job, then `api` with a declaration (`std.http.Client`, `String`,
+   `Option`) gives a type, its methods and an example that compiles, which
+   every type of the standard library has; with a `module` (`std.http`,
+   `prelude`, a module of the project), all it declares; `list` names the
+   modules. `hover` and `complete` work at a place of a file.
 3. Write, then `check`: each diagnostic has an id and says what to write.
    `fix` applies the safe repairs, or those chosen by id.
 4. `format` the files written; `compact` shows one in fewer tokens.

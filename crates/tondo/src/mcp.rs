@@ -29,7 +29,9 @@ const TTL_MS: u64 = 3_600_000;
 const LIMIT: usize = 256 * 1024;
 
 const INSTRUCTIONS: &str = "Tondo's toolchain. Tondo is a new language: read the guide before writing it \
-(the `guide` tool, or the tondo://guide resources), and `api` for what a module offers. After each edit, \
+(the `guide` tool, or the tondo://guide resources), and look up with `api` what you call before calling it, \
+as names from other languages are often wrong: `search` finds what does a job, and a declaration, as \
+std.http.Client or String, gives its methods and an example that compiles. After each edit, \
 `check` the program: each diagnostic says how to repair it, and `fix` applies the compiler's safe fixes. \
 `run` and `test` build and run it, and a failure comes with its code, data and stack as `panic`; \
 `debug_start` debugs a build. A program that keeps running is a \
@@ -1705,9 +1707,10 @@ those `apply` chooses by the ids `check` gives (a fix that needs a decision appl
     },
     Tool {
         name: "api",
-        description: "The declarations and documentation of a module, with its example: a standard one \
-(std.console), one of the project, or a .to file; or of one declaration and what belongs to it, as std.http.Client \
-or String. `search` finds declarations by their names and documentation; `list` names the modules.",
+        description: "What to call, before calling it: one declaration and what belongs to it, as std.http.Client, \
+String or Option, with an example that compiles, which every standard type has; or all the declarations of a \
+module, a standard one (std.console), one of the project, or a .to file. `search` finds declarations by their \
+names and documentation; `list` names the modules.",
         kind: Kind::Reads,
         params: &[
             (

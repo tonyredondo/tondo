@@ -22,6 +22,7 @@ Every error message says what to write; `tondo check --json` has it as data.
 | `&&`, `\|\|`, `!x` | `and`, `or`, `not x` |
 | `len(x)`, `x.len()`, `x.length` | `x.length()` |
 | `` `${x}` ``, `"{}".format(x)` | `"{x}"` |
+| a method guessed from another library | `tondo api String`, `tondo api std.http.Client`: its methods and an example |
 
 No semicolons; a newline ends a statement.
 

@@ -66,9 +66,9 @@ pub const COMMANDS: &[Command] = &[
             "tondo api --search <words> [--project <dir>] [--json]",
         ],
         summary: &[
-            "show a module's declarations, documentation and example,",
-            "or one declaration's (std.http.Client, String); find",
-            "declarations by their names and documentation",
+            "show a module's declarations, documentation and examples,",
+            "or one type with its methods and example (std.http.Client,",
+            "String); find declarations by their names and documentation",
         ],
     },
     Command {

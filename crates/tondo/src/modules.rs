@@ -603,8 +603,24 @@ impl Linker<'_> {
             let module = &self.paths[target];
             match self.decls[target].get(&name.name) {
                 None => {
-                    let message = format!("module `{module}` declares no `{}`", name.name);
-                    self.diags.error("E1001", name.span, message);
+                    let declared = &self.decls[target];
+                    let public = declared.types.iter().chain(&declared.values).filter(|(_, public)| **public);
+                    match crate::check::closest(&name.name, public.map(|(n, _)| n.as_str())) {
+                        Some(near) => {
+                            let message =
+                                format!("module `{module}` declares no `{}`; did you mean `{near}`?", name.name);
+                            let edit = vec![(name.span, near.to_string())];
+                            self.diags.error("E1001", name.span, message);
+                            self.diags.fix(format!("write `{near}`"), false, edit);
+                        }
+                        None => {
+                            let message = format!(
+                                "module `{module}` declares no `{}`: `tondo api {module}` shows what it declares",
+                                name.name
+                            );
+                            self.diags.error("E1001", name.span, message);
+                        }
+                    }
                 }
                 Some(false) => {
                     let message =

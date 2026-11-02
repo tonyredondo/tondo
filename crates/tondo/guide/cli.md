@@ -25,8 +25,8 @@ tondo fmt <file.to>...            canonical layout; --check changes nothing
 tondo fmt --compact <file.to>     the same code in about 15% fewer tokens
 tondo explain E1102               what an error, warning or panic code means
 tondo expand [<path>]             what each `derive` wrote
-tondo api std.http                a module's declarations, docs and example
-tondo api std.http.Client         one declaration, with its methods: also String
+tondo api std.http                a module's declarations, docs and examples
+tondo api std.http.Client         one type, its methods and example: also String
 tondo api --search base64         declarations by name and docs, std's included
 tondo api --list                  every module: std, the project's, dependencies
 tondo guide [<topic>]             this guide; --list names the topics

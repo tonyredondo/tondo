@@ -13395,9 +13395,29 @@ impl<'a> Checker<'a> {
             self.diags.error("E1001", method.span, message);
             self.diags.fix(format!("call `{near}`"), false, vec![(method.span, near)]);
             return Self::error_expr(span);
+        } else if let Some(shown) = self.api_name(ty) {
+            message = format!("{message}: `tondo api {shown}` shows the methods it has");
         }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
+    }
+
+    /// The name `tondo api` shows a type of the prelude or of a standard
+    /// module by, with its methods: `String`, `Option`, `http.Response`;
+    /// `none` for a type of the program.
+    fn api_name(&mut self, ty: Ty) -> Option<String> {
+        let shown = match self.types.kind(ty) {
+            TyKind::Option(_) => "Option".to_string(),
+            TyKind::Result(..) => "Result".to_string(),
+            _ => self.types.display(ty).split('[').next().unwrap_or_default().to_string(),
+        };
+        let known = match shown.split_once('.') {
+            Some((module, _)) => {
+                module == "prelude" || crate::api::standard_modules().contains(&format!("std.{module}"))
+            }
+            None => crate::api::standard("prelude").and_then(|api| crate::api::declared(&api, &shown)).is_some(),
+        };
+        known.then_some(shown)
     }
 
     /// The method of `ty` whose name looks like a typo of `name`: one the
@@ -16463,7 +16483,7 @@ fn capitalized(name: &str) -> String {
 
 /// The candidate closest to `name` when it looks like a typo of it: a few
 /// edits away, fewer for a short name.
-fn closest<'n>(name: &str, candidates: impl IntoIterator<Item = &'n str>) -> Option<&'n str> {
+pub(crate) fn closest<'n>(name: &str, candidates: impl IntoIterator<Item = &'n str>) -> Option<&'n str> {
     let limit = match name.chars().count() {
         0..=2 => 0,
         3..=5 => 1,

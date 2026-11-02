@@ -24,6 +24,7 @@ fn main() {
     let t = connect(port: 1)
     let u = connect(host: "a", 1)
     let v = p.length()
+    let w = "text".reverseWords()
 }
 
 // expect-error: E1505 `x` is a field of `Point`
@@ -33,4 +34,5 @@ fn main() {
 // expect-error: E1102 missing argument `host`
 // expect-error: E1102 positional arguments must come before named ones
 // expect-error: E1001 `Point` has no method `length`
+// expect-error: E1001 `String` has no method `reverseWords`: `tondo api String` shows the methods it has
 // expect-warning: W1003 the parameter `port` is never used: write `_` instead, or `_port` to hold its value until the function ends
