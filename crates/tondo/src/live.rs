@@ -1049,7 +1049,16 @@ const CANNOT: &str = " in a statement that may use, after the wait, what a `Ref`
 
 /// `tondo reload <pid|name>`: the running live program `name`.
 pub fn reload_named(name: &str) -> Result<Reloaded, Refused> {
-    let mut program = crate::observe::connect(name)?;
+    reload_at(name, None)
+}
+
+/// A reload of the running live program `name`, here, or where `via`
+/// reaches.
+pub fn reload_at(name: &str, via: Option<&str>) -> Result<Reloaded, Refused> {
+    let mut program = match via {
+        Some(via) => crate::observe::connect_via(name, Some(via))?,
+        None => crate::observe::connect(name)?,
+    };
     let pid = program.pid;
     reload(pid, &mut |request| program.ask(request))
 }

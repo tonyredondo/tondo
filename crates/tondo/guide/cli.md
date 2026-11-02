@@ -103,7 +103,8 @@ tondo dump read api.dump tasks    read a dump; TONDO_DUMP=<dir> writes one at a 
 tondo debug app.to -- arg         break, step, locals, print, stack, tasks
 tondo debug --test <id>           one test, as `tondo test --list` names it
 tondo debug --live app.to         and `reload` the code where it stopped
-tondo debug --via "ssh host" app  a program on another machine, where `tondo relay app` joins it
+tondo debug --via "ssh host" app  a program on another machine, where `tondo relay app` joins it;
+                                  ps, counters, trace, profile, dump and reload take --via too
 tondo dap                         the same for an editor, with the Debug Adapter Protocol
 ```
 

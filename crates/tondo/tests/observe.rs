@@ -1394,6 +1394,16 @@ fn debugger_reaches_a_program_through_a_relay() {
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
+    // The other tools that look at a running program reach it so too.
+    let (program_id, pid) = (u64::from(program.id()), program.id().to_string());
+    let observed = |args: &[&str]| -> Value {
+        let output =
+            Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).args(["--via", &via, "--json"]).output().unwrap();
+        serde_json::from_slice(&output.stdout).unwrap_or(Value::Null)
+    };
+    let counters = observed(&["counters", &pid, "--count", "1"]);
+    let dumped = observed(&["dump", &pid, "--output", dir.join("looped.dump.json").to_str().unwrap()]);
+    let listed = observed(&["ps"]);
     let _ = program.kill();
     let _ = program.wait();
     let lines: Vec<Value> =
@@ -1401,6 +1411,9 @@ fn debugger_reaches_a_program_through_a_relay() {
     let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap();
     assert_eq!(stop["at"], "looped.to:6 in main");
     assert_eq!(lines.iter().find(|l| l["name"] == "ticks > 0").unwrap()["value"], "true");
+    assert!(counters["counters"].as_array().is_some_and(|c| !c.is_empty()), "{counters}");
+    assert!(dumped["summary"].as_str().unwrap().starts_with("looped (pid "), "{dumped}");
+    assert!(listed["programs"].as_array().unwrap().iter().any(|p| p["pid"].as_u64() == Some(program_id)), "{listed}");
 }
 
 /// `record` keeps each line a task runs with its bindings; `back`,

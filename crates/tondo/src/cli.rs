@@ -167,10 +167,14 @@ pub const COMMANDS: &[Command] = &[
             "and its kin; checked",
         ],
     },
-    Command { name: "ps", usage: &["tondo ps [--json]"], summary: &["list the running Tondo programs"] },
+    Command {
+        name: "ps",
+        usage: &["tondo ps [--via <command>] [--json]"],
+        summary: &["list the running Tondo programs"],
+    },
     Command {
         name: "counters",
-        usage: &["tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]"],
+        usage: &["tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--via <command>] [--json]"],
         summary: &["watch a running program's counters, the runtime's", "and its own (std.diagnostics)"],
     },
     Command {
@@ -193,13 +197,13 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "reload",
-        usage: &["tondo reload <pid|name> [--json]"],
+        usage: &["tondo reload <pid|name> [--via <command>] [--json]"],
         summary: &["change a running live build's code to what its", "files say now"],
     },
     Command { name: "dap", usage: &["tondo dap"], summary: &["debug for an editor, with the Debug Adapter Protocol"] },
     Command {
         name: "dump",
-        usage: &["tondo dump <pid|name> [--output <path>] [--json]"],
+        usage: &["tondo dump <pid|name> [--output <path>] [--via <command>] [--json]"],
         summary: &["write a dump of a running program: its tasks and", "where they are, its counters, its live memory"],
     },
     Command {
@@ -210,7 +214,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "trace",
         usage: &[
-            "tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]",
+            "tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--via <command>] [--json]",
             "tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]",
         ],
         summary: &["record what a program's tasks do, for Perfetto,", "and a profile of where it spends its time"],
@@ -218,7 +222,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "profile",
         usage: &[
-            "tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]",
+            "tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--via <command>] [--json]",
             "tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]",
             "tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]",
         ],

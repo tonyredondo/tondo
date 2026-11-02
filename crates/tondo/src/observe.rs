@@ -65,6 +65,18 @@ pub(crate) fn program_name(info: &Value) -> &str {
 
 /// `tondo ps [--json]`.
 pub fn ps(json: bool) -> Result<(), String> {
+    // Those of the machine `--via` reaches, as its `tondo ps` lists them.
+    if let Some(command) = VIA.get() {
+        let words: Vec<&str> = command.split_whitespace().collect();
+        let (program, arguments) = words.split_first().ok_or("--via takes the command that reaches the programs")?;
+        let status = std::process::Command::new(program)
+            .args(arguments)
+            .args(["tondo", "ps"])
+            .args(json.then_some("--json"))
+            .status()
+            .map_err(|e| format!("cannot run `{command}`: {e}"))?;
+        return if status.success() { Ok(()) } else { Err(format!("`{command} tondo ps` failed")) };
+    }
     let programs = running();
     if json {
         crate::cli::print_json("ps", true, json!({ "programs": programs }));
@@ -107,7 +119,25 @@ fn target(name: &str) -> Result<u32, String> {
     }
 }
 
+/// The command that reaches the programs the tools look at, on another
+/// machine or in a container (`--via`), when it is not this one.
+static VIA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// From now on, the programs are where `command` reaches, through
+/// `tondo relay` there.
+pub fn reach_via(command: String) {
+    let _ = VIA.set(command);
+}
+
 pub(crate) fn connect(name: &str) -> Result<Program, String> {
+    connect_via(name, VIA.get().map(String::as_str))
+}
+
+/// A connection to the program `name`, here or where `via` reaches.
+pub(crate) fn connect_via(name: &str, via: Option<&str>) -> Result<Program, String> {
+    if let Some(command) = via {
+        return self::via(command, name);
+    }
     let pid = target(name)?;
     Program::connect(pid).map_err(|_| {
         format!(
@@ -399,7 +429,7 @@ pub(crate) fn record(
         if stop && !stopping {
             stopping = true;
             if let Some(request) = ask {
-                asked = Program::connect(program.pid).ok().and_then(|mut other| other.ask(request).ok());
+                asked = connect(&program.pid.to_string()).ok().and_then(|mut other| other.ask(request).ok());
             }
             let _ = writeln!(program.writer, "stop");
         }

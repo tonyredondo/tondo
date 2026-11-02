@@ -37,6 +37,18 @@ fn main() -> ExitCode {
         print!("{help}");
         return ExitCode::SUCCESS;
     }
+    // The tools that look at a running program reach one on another
+    // machine, or in a container, with `--via <command>`.
+    let mut args = args.clone();
+    let observing = matches!(command, "ps" | "counters" | "trace" | "profile" | "dump" | "reload");
+    if let Some(at) = args.iter().position(|a| a == "--via").filter(|_| observing) {
+        let Some(via) = args.get(at + 1).map(|v| v.to_string_lossy().into_owned()) else {
+            eprintln!("tondo: --via takes the command that reaches the program, as `ssh host`");
+            return ExitCode::from(2);
+        };
+        tondo::observe::reach_via(via);
+        args.drain(at..at + 2);
+    }
     let result = match command {
         "run" => run_command(&args[1..]),
         "build" => build_command(&args[1..]),

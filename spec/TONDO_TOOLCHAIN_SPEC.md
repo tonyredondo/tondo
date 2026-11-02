@@ -665,6 +665,12 @@ las herramientas, así que no paga por ellas; `tondo trace -- <program>` y
 `TONDO_DUMP` la dan por puesta. Un programa que termina borra su socket, y
 `tondo ps` borra los de los que terminaron sin hacerlo.
 
+Las órdenes que miran un programa en ejecución, `ps`, `counters`, `trace`,
+`profile`, `dump`, `reload` y `debug`, llegan con `--via <command>` a uno de
+otra máquina o de un contenedor: ejecutan `<command> tondo relay <name>`,
+como `ssh host`, y hablan con el programa por la entrada y la salida de ese
+`tondo relay` (sección 7.6); `ps` ejecuta allí `tondo ps`.
+
 - `ps` lista los programas del usuario en ejecución: su proceso, cuánto llevan
   en marcha y su línea de órdenes; con `--json`, como `programs` de
   `tondo-ps-0.1/1` (sección 7.12).
