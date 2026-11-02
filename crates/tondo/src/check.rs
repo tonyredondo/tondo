@@ -9262,6 +9262,8 @@ impl<'a> Checker<'a> {
         let (base, field) = match &target.kind {
             ast::ExprKind::Path(segments) => {
                 let root = &segments[0];
+                // For an editor, the binding written is a reference too.
+                self.index_local(cx, root);
                 if self.lookup(cx, &root.name).is_none()
                     && let Some(captured) = self.capture(cx, &root.name, root.span)
                 {

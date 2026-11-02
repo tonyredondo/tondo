@@ -1199,3 +1199,18 @@ fn explains_counts_and_refactors() {
     );
     editor.stop();
 }
+
+#[test]
+fn renames_where_a_binding_is_assigned() {
+    let dir = project(
+        "lsp-assigned",
+        &[("main.to", "fn main() {\n    var sum = 0\n    sum += 1\n    sum = sum * 2\n    _ = sum\n}\n")],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let params =
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 8 }, "newName": "total" });
+    let found = editor.request("textDocument/rename", params);
+    assert_eq!(found["changes"][&uri].as_array().unwrap().len(), 5, "{found}");
+    editor.stop();
+}
