@@ -3882,7 +3882,8 @@ pub type JsonReader
   `UInt` (uint64), `Float32` (float), `Float` (double), `Bool`, `String` o
   `Array[Byte]` (bytes); un mensaje; un enum de protobuf; `time.DateTime`
   (`google.protobuf.Timestamp`); `time.Duration` (`google.protobuf.Duration`);
-  o `json.Value` (`google.protobuf.Value`). `encoding: ZigZag` escribe un
+  o `json.Value` (`google.protobuf.Value`); o un alias de uno de ellos, como
+  `protobuf.JsonValue`. `encoding: ZigZag` escribe un
   entero con signo como sint32 o sint64, y `Fixed` un entero en 4 u 8 bytes,
   por su ancho: fixed32, fixed64, sfixed32 o sfixed64. `Group` escribe un
   mensaje como grupo de proto2; `Wrapper`, un `T?` escalar como el envoltorio

@@ -66,6 +66,7 @@ enum Shape {
 
 /// Where a type is declared: its module and file.
 struct Found<'a> {
+    module: usize,
     file: &'a ast::Module,
     item: &'a ast::Item,
 }
@@ -193,9 +194,10 @@ impl Generator<'_> {
             let item = file.items.iter().find(|item| match item {
                 ast::Item::Type(t) => t.name.name == name,
                 ast::Item::Enum(e) => e.name.name == name,
+                ast::Item::Alias(a) => a.name.name == name,
                 _ => false,
             })?;
-            Some(Found { file, item })
+            Some(Found { module, file, item })
         })
     }
 
@@ -209,6 +211,10 @@ impl Generator<'_> {
         let import =
             self.file.imports.iter().find(|i| i.alias.as_ref().unwrap_or(i.path.last().unwrap()).name == alias.name)?;
         match &import.path[..] {
+            // The alias `protobuf.JsonValue` is a `json.Value`.
+            [std, module] if std.name == "std" && module.name == "protobuf" && name.name == "JsonValue" => {
+                Some(("json".into(), "Value".into()))
+            }
             [std, module] if std.name == "std" => Some((module.name.clone(), name.name.clone())),
             _ => None,
         }
@@ -246,6 +252,18 @@ impl Generator<'_> {
         }
         if bytes {
             return scalar("bytes", None, None);
+        }
+        // An alias is its type, read where it is declared; a message or an
+        // enum keeps the name written here.
+        if let Some(Found { module, file, item: ast::Item::Alias(alias) }) = self.find(ty) {
+            let protobuf = alias_of(file, "protobuf").unwrap_or_default();
+            let declared = Generator { module, file, alias: &protobuf, ..*self };
+            let written = self.text(ty.span);
+            return match declared.kind(&alias.target, encoding)? {
+                Kind::Message(_, group) => Ok(Kind::Message(written, group)),
+                Kind::Enum(_) => Ok(Kind::Enum(written)),
+                kind => Ok(kind),
+            };
         }
         if let Some((module, name)) = self.standard(ty) {
             return match (module.as_str(), name.as_str(), encoding) {

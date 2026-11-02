@@ -1,0 +1,47 @@
+// Protobuf fields whose types are aliases: of a scalar, a message, an
+// enum, and std.protobuf's `JsonValue` (protobuf).
+import std.console
+import std.json
+import std.protobuf
+
+alias UserId = Int
+
+pub type Tag = {
+    @protobuf.Field(1)
+    name: String = ""
+}
+
+alias Label = Tag
+
+pub enum Level {
+    @protobuf.Value(0)
+    Low
+    @protobuf.Value(1)
+    High
+}
+
+alias Severity = Level
+
+pub type Event = {
+    @protobuf.Field(1, encoding: protobuf.Encoding.ZigZag)
+    user: UserId = 0
+    @protobuf.Field(2)
+    payload: protobuf.JsonValue = json.Value.Null
+    @protobuf.Field(3)
+    labels: Array[Label] = []
+    @protobuf.Field(4)
+    severity: Severity = Level.Low
+}
+
+let event = Event {
+    user: -5
+    payload: json.parse(r"""{"a": 1}""")?
+    labels: [Tag { name: "x" }]
+    severity: Level.High
+}
+let read = protobuf.decode[Event](protobuf.encode(event))?
+console.println(
+    "{read.user} {read.payload} {read.labels.length()} {read.severity == Level.High} {protobuf.toJson(read)?}",
+)
+
+// expect-stdout: -5 {"a":1} 1 true {"user":"-5","payload":{"a":1},"labels":[{"name":"x"}],"severity":"High"}
