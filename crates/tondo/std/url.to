@@ -11,6 +11,7 @@
 // ```
 
 import std.encoding as __encoding
+import std.internal.net as netNative
 // Templates and reflection read a URL by its parts.
 import std.reflect as __reflect
 
@@ -124,6 +125,12 @@ pub fn parse(text: String): Url ! UrlError {
         // The port: what follows the last `:`, but inside the brackets of
         // an IPv6 address.
         let closing = hostPort.findLast("]").unwrapOr(-1)
+        if hostPort.startsWith("[") != (closing >= 0) {
+            fail UrlError {
+                message: "an IPv6 address is written between `[` and `]`, as `http://[::1]:8080/`"
+                offset: hostStart
+            }
+        }
         match hostPort.findLast(":") {
             some(colon) if colon > closing => {
                 let digits = hostPort.slice(colon + 1, hostPort.length()).unwrapOr("")
@@ -139,6 +146,27 @@ pub fn parse(text: String): Url ! UrlError {
                 hostPort = hostPort.slice(0, colon).unwrapOr("")
             }
             _ => {}
+        }
+        if hostPort.startsWith("[") {
+            if not hostPort.endsWith("]") or
+                not ipv6(hostPort.slice(1, hostPort.length() - 1).unwrapOr("")) {
+                fail UrlError {
+                    message: "`{hostPort}` is not an IPv6 address between `[` and `]`, as `[::1]` or `[fe80::1%25en0]`"
+                    offset: hostStart
+                }
+            }
+        } else {
+            for (index, character) in hostPort.chars().enumerate() {
+                if character.code() < 128 and
+                    not (asciiLetter(character) or
+                        character.isDigit() or
+                        "-._~!$&'()*+,;=%".contains("{character}")) {
+                    fail UrlError {
+                        message: "`{character}` cannot be in a host, which has letters, digits and `-._~!$&'()*+,;=`: write it as `%XX`"
+                        offset: hostStart + index
+                    }
+                }
+            }
         }
         parsed.host = hostPort.removePrefix("[").removeSuffix("]")
     }
@@ -160,6 +188,12 @@ fn isScheme(text: String): Bool {
         }
     }
     not text.isEmpty()
+}
+
+/// Whether it is an IPv6 address, with a zone after `%25` (RFC 6874).
+fn ipv6(text: String): Bool {
+    let address = text.slice(0, text.find("%25").unwrapOr(text.length())).unwrapOr("")
+    address.contains(":") and not netNative.canonicalIp(address).isEmpty()
 }
 
 fn asciiLetter(character: Char): Bool {

@@ -39,6 +39,16 @@ fn main(): !url.UrlError {
         ok(_) => console.println("unexpected")
         err(error) => console.println("{error}")
     }
+    // Brackets hold an IPv6 address, and a host only what RFC 3986 lets it.
+    for text in ["http://[::1/", "http://[x]/", "http://a b/"] {
+        match url.parse(text) {
+            ok(_) => console.println("unexpected")
+            err(error) => console.println("{error}")
+        }
+    }
+    console.println(
+        "{url.parse("http://[fe80::1%25en0]:80/")?.host} {url.parse("http://bücher.example/")?.host}",
+    )
     // A path keeps how it was written while `path` is what that decodes to,
     // and another module builds a URL with a literal of the public fields.
     let files = url.parse("https://example.com/files/a%2Fb/c%20d?x=1")?
@@ -123,6 +133,10 @@ fn rfcExamples(): !url.UrlError {
 // expect-stdout: `99999` is not a port, which is a number from 0 to 65535 (at 19)
 // expect-stdout: `1http` is not a scheme, which is a letter then letters, digits, `+`, `-` or `.`; a relative path with a `:` starts with `./` (at 0)
 // expect-stdout: a `%` is followed by two hexadecimal digits: write `%25` for a `%` itself (at 2)
+// expect-stdout: an IPv6 address is written between `[` and `]`, as `http://[::1]:8080/` (at 7)
+// expect-stdout: `[x]` is not an IPv6 address between `[` and `]`, as `[::1]` or `[fe80::1%25en0]` (at 7)
+// expect-stdout: ` ` cannot be in a host, which has letters, digits and `-._~!$&'()*+,;=`: write it as `%XX` (at 8)
+// expect-stdout: fe80::1%25en0 bücher.example
 // expect-stdout: /files/a/b/c d https://example.com/files/a%2Fb/c%20d?x=1 /files/a%2Fb/c%20d
 // expect-stdout: https://example.com/other/e%20f?x=1 https://example.com/a/b true
 // expect-stdout: 37 cases, 0 wrong

@@ -5492,8 +5492,10 @@ impl Display for Url
   `path` cambia, se codifica el nuevo. `Url` guarda esa forma en un campo
   privado con valor por defecto, así que otro módulo lo construye con un
   literal de los demás campos y sus patrones terminan en `..`. Una URL que no
-  se lee, como un puerto que no es un número o un esquema con un carácter que
-  no admite, es `UrlError` con el offset de lo que falla.
+  se lee, como un puerto que no es un número, un esquema o un host con un
+  carácter que no admiten, o unos corchetes que no encierran una dirección
+  IPv6 (con su zona tras `%25`, RFC 6874), es `UrlError` con el offset de lo
+  que falla.
 - `resolve` da la URL de una referencia vista desde esta, como un navegador
   resuelve un enlace (RFC 3986, 5.2), con sus `.` y `..` quitados.
 - `param` y `params` leen la query como un formulario, con `+` como espacio:
