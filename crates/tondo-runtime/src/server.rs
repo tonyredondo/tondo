@@ -33,10 +33,12 @@ struct Server {
     socket: Option<String>,
 }
 
-/// Where a server is in its life, and how many connections it has open.
+/// Where a server is in its life, how many connections it has open, and
+/// whether it still listens for more.
 struct Life {
     phase: watch::Sender<Phase>,
     open: watch::Sender<usize>,
+    listening: watch::Sender<bool>,
 }
 
 /// Serving; after `stop`, draining, as its connections end the requests
@@ -725,8 +727,14 @@ fn started(
     limits: Limits,
 ) -> *mut NativeObject {
     let (sender, receiver) = mpsc::channel(1024);
-    let life = Arc::new(Life { phase: watch::channel(Phase::Serving).0, open: watch::channel(0).0 });
-    runtime().spawn(accept(listening, tls, sender, life.clone(), limits));
+    let life = Arc::new(Life {
+        phase: watch::channel(Phase::Serving).0,
+        open: watch::channel(0).0,
+        listening: watch::channel(true).0,
+    });
+    // Watched from now, so that a `stop` before the task first runs is seen.
+    let stopped = life.phase.subscribe();
+    runtime().spawn(accept(listening, tls, sender, life.clone(), stopped, limits));
     native::new(Server {
         failure: Mutex::new(None),
         address,
@@ -741,17 +749,23 @@ async fn accept(
     tls: Option<tokio_rustls::TlsAcceptor>,
     sender: mpsc::Sender<Request>,
     life: Arc<Life>,
+    mut stopped: watch::Receiver<Phase>,
     limits: Limits,
 ) {
     use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-    let mut stopped = life.phase.subscribe();
     loop {
         let (stream, remote) = tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok(accepted) => accepted,
                 Err(_) => continue,
             },
-            _ = stopped.changed() => return,
+            _ = stopped.changed() => {
+                // The port is free once `stop` returns, for a server that
+                // takes it again or a client that must find it closed.
+                drop(listener);
+                life.listening.send_replace(false);
+                return;
+            }
         };
         let (sender, tls, mut stopping) = (sender.clone(), tls.clone(), stopped.clone());
         let counted = Counted::new(life.clone());
@@ -909,12 +923,14 @@ pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject, grace: i6
             serving
         });
         if draining {
+            let mut listening = life.listening.subscribe();
             runtime().spawn(async move {
                 let grace = std::time::Duration::from_millis(grace.max(0) as u64);
                 let mut open = life.open.subscribe();
                 let _ = tokio::time::timeout(grace, open.wait_for(|open| *open == 0)).await;
                 life.phase.send_replace(Phase::Closed);
             });
+            wait(async move { _ = listening.wait_for(|listening| !*listening).await });
         }
     }
     if let Some(path) = native::get::<Server>(server).and_then(|s| s.socket.as_ref()) {

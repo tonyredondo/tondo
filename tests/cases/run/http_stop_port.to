@@ -1,0 +1,28 @@
+// Once `stop` returns, the server's port is closed: a client finds nothing
+// there, and a server can take the port again at once.
+
+import std.console
+import std.http
+import std.net
+
+fn main(): !(http.HttpError | net.NetError) {
+    var app = http.App.new()
+    app.get("/", (_) { http.Reply.text("here") })
+    var open = 0
+    for _ in 0..50 {
+        let server = app.start()?
+        let port = Int.parse(server.address().split(":").last().unwrapOr("")).unwrapOr(0)
+        server.stop()
+        match net.connect("127.0.0.1", port) {
+            ok(stream) => {
+                open += 1
+                _ = stream.close()
+            }
+            err(_) => {}
+        }
+        app.start(port: port)?.stop()
+    }
+    console.println("{open} of 50 still open")
+}
+
+// expect-stdout: 0 of 50 still open
