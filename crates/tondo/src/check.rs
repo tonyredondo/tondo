@@ -65,6 +65,8 @@ fn check_with<'a>(
         traits: Vec::new(),
         trait_names: HashMap::new(),
         impls: Vec::new(),
+        impl_heads: HashMap::new(),
+        heads_indexed: 0,
         bounds: HashMap::new(),
         call_bounds: HashMap::new(),
         cursor_templates: HashMap::new(),
@@ -740,6 +742,14 @@ fn std_alias(module: &str, member: &str) -> String {
 /// `embed.files`: `Kept(names, contents, tags)`.
 const KEPT_TREE: u32 = 2;
 
+/// The outermost part of a type, which an `impl` for it must share.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Head {
+    Adt(crate::types::AdtId),
+    Template(crate::types::TemplateId),
+    Kind(std::mem::Discriminant<TyKind>),
+}
+
 struct Checker<'a> {
     /// What an editor asks to know: each declaration and each name that
     /// refers to one.
@@ -803,6 +813,11 @@ struct Checker<'a> {
     traits: Vec<TraitDef>,
     trait_names: HashMap<String, TraitId>,
     impls: Vec<ImplDef>,
+    /// The `impl`s of each trait by the head of the type they are for, a
+    /// type parameter's as `None`, so that asking whether a type has a
+    /// trait looks only at those that may match; and how many are there.
+    impl_heads: HashMap<(TraitId, Option<Head>), Vec<usize>>,
+    heads_indexed: usize,
     /// The traits each type parameter is bound by, with their arguments.
     bounds: HashMap<Ty, Vec<(TraitId, Vec<Ty>)>>,
     /// The call protocol bounding a type parameter (11.8), and its
@@ -5008,11 +5023,11 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // Only those of the same head may overlap it.
         let earlier: Vec<(Vec<Ty>, Ty, Vec<Ty>)> = self
-            .impls
-            .iter()
-            .filter(|i| i.trait_id == trait_id)
-            .map(|i| (i.trait_args.clone(), i.target, i.generics.clone()))
+            .impl_candidates(trait_id, target)
+            .into_iter()
+            .map(|i| (self.impls[i].trait_args.clone(), self.impls[i].target, self.impls[i].generics.clone()))
             .collect();
         for (other_args, other_target, other_generics) in earlier {
             if self.headers_overlap((&trait_args, target, &binders), (&other_args, other_target, &other_generics)) {
@@ -5429,8 +5444,7 @@ impl<'a> Checker<'a> {
             let members = members.clone();
             return members.into_iter().all(|member| self.satisfies_depth(member, trait_id, args, depth + 1));
         }
-        let candidates: Vec<usize> = (0..self.impls.len()).filter(|&i| self.impls[i].trait_id == trait_id).collect();
-        for index in candidates {
+        for index in self.impl_candidates(trait_id, ty) {
             let (target, trait_args, generics) =
                 (self.impls[index].target, self.impls[index].trait_args.clone(), self.impls[index].generics.clone());
             let mut map = HashMap::new();
@@ -5445,6 +5459,41 @@ impl<'a> Checker<'a> {
             });
         }
         false
+    }
+
+    /// The `impl`s of a trait that may be for `ty`, in the order they were
+    /// declared: those for a type of the same head, and those for a type
+    /// parameter; all of the trait's when `ty` is one.
+    fn impl_candidates(&mut self, trait_id: TraitId, ty: Ty) -> Vec<usize> {
+        while self.heads_indexed < self.impls.len() {
+            let index = self.heads_indexed;
+            let key = (self.impls[index].trait_id, self.head(self.impls[index].target));
+            self.impl_heads.entry(key).or_default().push(index);
+            self.heads_indexed += 1;
+        }
+        let Some(head) = self.head(ty) else {
+            return (0..self.impls.len()).filter(|&i| self.impls[i].trait_id == trait_id).collect();
+        };
+        let empty = Vec::new();
+        let same = self.impl_heads.get(&(trait_id, Some(head))).unwrap_or(&empty);
+        let any = self.impl_heads.get(&(trait_id, None)).unwrap_or(&empty);
+        let mut candidates: Vec<usize> = same.iter().chain(any).copied().collect();
+        candidates.sort_unstable();
+        candidates
+    }
+
+    /// What a type is at its outermost: a nominal type, by its template for
+    /// an instance of a generic one, or a kind of type; `None` for a type
+    /// parameter, which any type may be.
+    fn head(&self, ty: Ty) -> Option<Head> {
+        match self.types.kind(ty) {
+            TyKind::Param(_) => None,
+            TyKind::Adt(id) => Some(match &self.types.adt(*id).instance {
+                Some((template, _)) => Head::Template(*template),
+                None => Head::Adt(*id),
+            }),
+            kind => Some(Head::Kind(std::mem::discriminant(kind))),
+        }
     }
 
     /// The first bound of the type parameter `param` that `actual` does not
