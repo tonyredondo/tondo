@@ -2,6 +2,16 @@
 // TLS, UDP sockets and names, on the runtime's network. Every operation
 // waits like any call, without holding a worker, and takes a timeout of its
 // own; there is none unless one is given.
+//
+// ```tondo
+// import std.console
+// import std.net
+//
+// let connection = net.connect("example.com", 80)?
+// connection.write("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n")?
+// console.println(connection.readLine()?.unwrapOr(""))
+// connection.close()?
+// ```
 
 import std.internal.net as netNative
 import std.io as __io

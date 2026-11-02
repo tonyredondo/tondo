@@ -1,5 +1,14 @@
 // std.console: the program's standard output, error and input
 // (standard library 19.1).
+//
+// ```tondo
+// import std.console
+//
+// console.print("What is your name? ")
+// let name = console.readLine().unwrapOr("stranger")
+// console.println("Hello, {name}!")
+// console.eprintln("greeted {name}")
+// ```
 
 /// Writes to standard output, which the runtime buffers and delivers; it
 /// never waits and cannot fail.

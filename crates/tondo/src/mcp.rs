@@ -992,6 +992,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             argv.extend(args.text("module"));
             switch(&mut argv, "--private", "private");
             switch(&mut argv, "--list", "list");
+            option(&mut argv, "--search", "search");
             option(&mut argv, "--project", "project");
         }
         "guide" => {
@@ -1704,11 +1705,21 @@ those `apply` chooses by the ids `check` gives (a fix that needs a decision appl
     },
     Tool {
         name: "api",
-        description: "The declarations and documentation of a module: a standard one (std.console), one of the \
-project, or a .to file; `list` names the modules.",
+        description: "The declarations and documentation of a module, with its example: a standard one \
+(std.console), one of the project, or a .to file; or of one declaration and what belongs to it, as std.http.Client \
+or String. `search` finds declarations by their names and documentation; `list` names the modules.",
         kind: Kind::Reads,
         params: &[
-            ("module", "string", "The module: std.<name>, prelude, a module of the project, or a .to file."),
+            (
+                "module",
+                "string",
+                "The module (std.<name>, prelude, a module of the project, a .to file) or a declaration of one (std.http.Client, String).",
+            ),
+            (
+                "search",
+                "string",
+                "Words to find in the names and documentation of the declarations of std, the project and its dependencies.",
+            ),
             ("private", "boolean", "Its private declarations too."),
             ("list", "boolean", "Name the modules instead."),
             ("project", "string", "The project whose modules to show; the server's directory by default."),

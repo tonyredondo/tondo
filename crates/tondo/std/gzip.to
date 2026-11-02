@@ -1,5 +1,14 @@
 // std.gzip (standard library 14.29): data compressed in the gzip format of
 // RFC 1952, whole or as streams of std.io.
+//
+// ```tondo
+// import std.console
+// import std.gzip
+//
+// let packed = gzip.compress("hello ".repeat(100).bytes())
+// let unpacked = gzip.decompress(packed)?
+// console.println("{packed.length()} bytes for {unpacked.length()}")
+// ```
 
 import std.internal.codec as codecNative
 import std.io as __io

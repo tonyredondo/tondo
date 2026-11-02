@@ -2,6 +2,15 @@
 // its `Display`; values written with a format the program chooses while it
 // runs; and numbers, percents, amounts and plural forms as each language
 // writes them, from the CLDR data that tondo carries.
+//
+// ```tondo
+// import std.console
+// import std.format
+//
+// console.println(format.number(1234567.891, locale: "de", decimals: 2))
+// console.println(format.currency(19.99, "EUR", locale: "fr"))
+// console.println(format.percent(0.25))
+// ```
 
 import std.formats as __formats
 import std.internal.text as textNative

@@ -3,6 +3,20 @@
 // from any of them. The compiler implements `Encode` and `Decode` for every
 // record, enum and newtype whose parts implement them; each format gives a
 // `Source` and a `Sink`.
+//
+// ```tondo
+// import std.console
+// import std.json
+// import std.serialization
+//
+// match json.decode[Int]("\"text\"") {
+//     ok(number) => console.println("{number}")
+//     err(error) => {
+//         let failure: serialization.Error = error
+//         console.println("{failure.path}: {failure.message}")
+//     }
+// }
+// ```
 
 import std.internal.codec as serialcodec
 import std.internal.text as serialtext

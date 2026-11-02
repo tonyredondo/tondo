@@ -42,6 +42,15 @@ pub fn remaining(): __time.Duration? {
 /// ISO 8601 in RFC 3339's form, `2026-10-22`, `2026-10-22T06:38:28Z` or
 /// `2026-10-22 08:38:28.5+02:00`, or the form of a `strftime` pattern, as
 /// a date and time in UTC; without an offset, the text is in UTC.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let start = time.parseDateTime("2026-11-02T08:30:00Z")?
+/// let end = start.add(time.hours(36))
+/// console.println("{end} {end.format("%A %d %B, %H:%M")}")
+/// ```
 pub fn parseDateTime(
     text: String,
     pattern: String? = none,

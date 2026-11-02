@@ -3,6 +3,24 @@
 // enum whose variants carry numbers is a protobuf enum: the compiler writes
 // their `Message` and `Enum` implementations from those annotations, field
 // by field, on the runtime's writer and reader of the wire format.
+//
+// ```tondo
+// import std.console
+// import std.protobuf
+//
+// // A `.proto` file under `src` is a module of such records; one can be
+// // written by hand too.
+// pub type Point = {
+//     @protobuf.Field(1)
+//     x: Int32 = 0
+//     @protobuf.Field(2)
+//     y: Int32 = 0
+// }
+//
+// let bytes = protobuf.encode(Point { x: 3, y: 4 })
+// let point = protobuf.decode[Point](bytes)?
+// console.println("{bytes.length()} bytes: {point.x}, {point.y} {protobuf.toJson(point)?}")
+// ```
 
 import std.encoding as __encoding
 import std.internal.protobuf as pbNative

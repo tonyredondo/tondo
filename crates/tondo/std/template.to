@@ -3,6 +3,17 @@
 // Tondo's. A template whose text is known when the program compiles is
 // compiled with it into code; a `Set` loads templates while the program
 // runs, and writes them with the values its data has by reflection.
+//
+// ```tondo
+// import std.console
+// import std.template
+//
+// pub type Post = { title: String, tags: Array[String] }
+//
+// var site = template.Set.html()
+// site.add("post.html", r"""<h1>{{ title }}</h1>{{ for tag in tags }}<em>{{ tag }}</em>{{ end }}""")?
+// console.println(site.render("post.html", Post { title: "Tea & cake", tags: ["food"] })?)
+// ```
 
 import std.formats as __formats
 import std.fs as __fs
@@ -228,6 +239,18 @@ fn style(value: String): String {
 /// site generator. They see their data by reflection, with the names the
 /// code uses, and call the `pub` methods of the values given with
 /// `functions` as functions.
+///
+/// ```tondo
+/// import std.console
+/// import std.template
+///
+/// pub type Page = { title: String, items: Array[String] }
+///
+/// var site = template.Set.html()
+/// site.add("base.html", r"""<main>{{ block "main" }}{{ end }}</main>""")?
+/// site.add("list.html", r"""{{ extends "base.html" }}{{ block "main" }}<h1>{{ title }}</h1>{{ for item in items }}<li>{{ item }}</li>{{ end }}{{ end }}""")?
+/// console.println(site.render("list.html", Page { title: "Today", items: ["tea", "<cake>"] })?)
+/// ```
 pub type Set = {
     priv html: Bool
     priv templates: Map[String, Loaded]

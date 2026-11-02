@@ -529,9 +529,26 @@ fn highlights_symbols_signatures_hints() {
     let kinds: Vec<u64> = highlights.as_array().unwrap().iter().map(|h| h["kind"].as_u64().unwrap()).collect();
     assert_eq!(kinds, [3, 2, 2], "{highlights}");
 
+    // The project's declarations, then the standard library's, each with
+    // its module, where the editor opens it.
     let symbols = editor.request("workspace/symbol", json!({ "query": "gre" }));
-    let names: Vec<&str> = symbols.as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["greet"]);
+    let symbols = symbols.as_array().unwrap();
+    assert_eq!(symbols[0]["name"], "greet");
+    assert!(symbols[1..].iter().all(|s| s["containerName"].as_str().is_some()), "{symbols:?}");
+    let found = |editor: &mut Editor, query: &str| -> Value {
+        let symbols = editor.request("workspace/symbol", json!({ "query": query }));
+        symbols.as_array().unwrap().iter().find(|s| s["name"] == query).cloned().unwrap_or_default()
+    };
+    let encode = found(&mut editor, "base64Encode");
+    assert_eq!(encode["containerName"], "std.encoding");
+    assert!(encode["location"]["uri"].as_str().unwrap().ends_with("/encoding.to"), "{encode}");
+    let println = found(&mut editor, "println");
+    assert_eq!(println["containerName"], "std.console");
+    assert!(println["location"]["uri"].as_str().unwrap().ends_with("/api/console.to"), "{println}");
+    // A standard module's import says what it is for.
+    let hover = editor.at("textDocument/hover", &uri, MAIN, "import std.console", "console", json!({}));
+    let value = hover["contents"]["value"].as_str().unwrap();
+    assert!(value.starts_with("```tondo\nmodule std.console\n```\n\n"), "{value}");
 
     // The runtime's functions show what `tondo api` says of them.
     let hover = editor.at("textDocument/hover", &uri, MAIN, "console.println(ada.name)", "println", json!({}));

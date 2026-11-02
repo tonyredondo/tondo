@@ -1609,12 +1609,16 @@ fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// project or its dependencies, or a file; the whole package without one.
 fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut private, mut list, mut json, mut project, mut target) = (false, false, false, PathBuf::from("."), None);
+    let mut search = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str() {
             Some("--private") => private = true,
             Some("--list") => list = true,
             Some("--json") => json = true,
+            Some("--search") => {
+                search = Some(rest.next().and_then(|a| a.to_str()).ok_or(format!("--search takes words\n{USAGE}"))?)
+            }
             Some("--project") => {
                 project = rest.next().map(PathBuf::from).ok_or(format!("--project names a directory\n{USAGE}"))?
             }
@@ -1646,6 +1650,36 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         Ok(out)
     };
+    if let Some(query) = search {
+        // The standard modules, and the project's and its dependencies'
+        // when there is a project.
+        let mut apis: Vec<(String, String)> = tondo::api::standard_modules()
+            .into_iter()
+            .filter_map(|m| Some((m.clone(), tondo::api::standard(&m)?)))
+            .collect();
+        for (name, paths, _) in modules().unwrap_or_default() {
+            apis.push((name, render(&paths)?));
+        }
+        let found = tondo::api::search(query, apis.iter().map(|(name, api)| (name.clone(), api.as_str())));
+        if json {
+            let matches: Vec<serde_json::Value> = found
+                .iter()
+                .map(|f| serde_json::json!({ "module": f.module, "name": f.name, "declaration": f.declaration, "doc": f.about }))
+                .collect();
+            print_json("api", true, serde_json::json!({ "search": query, "matches": matches }));
+        } else if found.is_empty() {
+            println!("nothing is named or documented with `{query}`; `tondo api --list` shows the modules");
+        } else {
+            for found in &found {
+                let qualified = format!("{}.{}", found.module, found.name);
+                println!("{qualified}\n    {}", found.declaration);
+                if !found.about.is_empty() {
+                    println!("    {}", found.about);
+                }
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     if list {
         let mut names: Vec<String> = tondo::api::standard_modules().iter().map(|name| name.to_string()).collect();
         if let Ok(modules) = modules() {
@@ -1661,17 +1695,40 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     // What is shown: the module or file named, or each module of the
     // project.
     let (key, shown) = match target {
-        Some(name) if name == "prelude" || name.starts_with("std.") => match tondo::api::standard(&name) {
-            Some(text) => ("module", vec![(name, text.to_string())]),
-            None => return Err(format!("there is no standard module `{name}`; `tondo api --list` shows them")),
-        },
+        Some(name) if let Some(text) = tondo::api::standard(&name) => ("module", vec![(name, text)]),
         Some(file) if file.ends_with(".to") => ("file", vec![(file.clone(), render(&[PathBuf::from(file)])?)]),
         Some(name) => {
-            let modules = modules()?;
-            let Some((_, paths, _)) = modules.iter().find(|(n, _, _)| *n == name) else {
-                return Err(format!("the project has no module `{name}`; `tondo api --list` shows them"));
-            };
-            ("module", vec![(name, render(paths)?)])
+            let modules = modules().unwrap_or_default();
+            match modules.iter().find(|(n, _, _)| *n == name) {
+                Some((_, paths, _)) => ("module", vec![(name, render(paths)?)]),
+                // A declaration of a module, as `std.http.Client`, or of
+                // the prelude, as `String`.
+                None => {
+                    let api = |module: &str| -> Option<String> {
+                        match module == "prelude" || module.starts_with("std.") {
+                            true => tondo::api::standard(module),
+                            false => modules.iter().find(|(n, _, _)| n == module).and_then(|(_, p, _)| render(p).ok()),
+                        }
+                    };
+                    let segments: Vec<&str> = name.split('.').collect();
+                    let found = (0..segments.len()).rev().find_map(|split| {
+                        let (module, declared) = match split {
+                            0 => ("prelude".to_string(), name.clone()),
+                            _ => (segments[..split].join("."), segments[split..].join(".")),
+                        };
+                        let text = tondo::api::declared(&api(&module)?, &declared)?;
+                        Some((format!("{module}.{declared}"), text))
+                    });
+                    match found {
+                        Some(found) => ("declaration", vec![found]),
+                        None => {
+                            return Err(format!(
+                                "there is no module or declaration `{name}`; `tondo api --list` shows the modules, and `tondo api --search <words>` finds declarations"
+                            ));
+                        }
+                    }
+                }
+            }
         }
         None => {
             let mut shown = Vec::new();
@@ -1688,8 +1745,17 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let entries: Vec<serde_json::Value> = shown
             .iter()
             .map(|(name, text)| {
-                let key = if key == "file" { "file" } else { "module" };
-                serde_json::json!({ key: name, "declarations": tondo::api::declarations(text) })
+                let field = match key {
+                    "file" => "file",
+                    "declaration" => "declaration",
+                    _ => "module",
+                };
+                let mut entry = serde_json::json!({ field: name, "declarations": tondo::api::declarations(text) });
+                if let Some(summary) = tondo::api::summary(name) {
+                    entry["summary"] = serde_json::json!(summary);
+                    entry["example"] = serde_json::json!(tondo::api::example(name));
+                }
+                entry
             })
             .collect();
         let fields = match (key, entries.as_slice()) {

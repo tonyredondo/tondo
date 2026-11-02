@@ -3,6 +3,15 @@
 // while it runs. The authority checks each name with TLS-ALPN-01 (RFC
 // 8737), which the server answers on its own port, so nothing else has to
 // be reachable.
+//
+// ```tondo
+// import std.acme
+// import std.http
+//
+// var app = http.App.new()
+// app.get("/", (_) { http.Reply.text("hello") })
+// app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))?
+// ```
 
 import std.crypto as __crypto
 import std.encoding as __encoding

@@ -1,5 +1,17 @@
 // std.fs: the filesystem (standard library 10.5). Operations wait without
 // blocking a worker.
+//
+// ```tondo
+// import std.console
+// import std.fs
+//
+// fs.writeText("notes.txt", "first line\n")?
+// fs.appendText("notes.txt", "second line\n")?
+// for line in fs.readText("notes.txt")?.lines() {
+//     console.println(line)
+// }
+// fs.remove("notes.txt")?
+// ```
 
 /// It names no path and no content.
 pub enum FsError {

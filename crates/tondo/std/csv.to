@@ -1,5 +1,15 @@
 // std.csv (standard library 14.23): comma-separated values (RFC 4180), read
 // and written a record at a time, so a file of any size streams through.
+//
+// ```tondo
+// import std.console
+// import std.csv
+// import std.io
+//
+// for row in csv.rows(io.reader("name,age\nAda,36\nAlan,41\n")) {
+//     console.println(row?.join(" | "))
+// }
+// ```
 
 import std.internal.codec as codecNative
 import std.io as __io

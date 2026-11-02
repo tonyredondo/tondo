@@ -2,6 +2,24 @@
 // program's types, as a record of options and arguments or an enum of
 // subcommands, with the help their documentation gives; and what a program
 // writes to a terminal: styles, tables, progress and questions.
+//
+// ```tondo
+// import std.cli
+// import std.console
+//
+// /// Greets someone.
+// type Greet = {
+//     /// Who to greet.
+//     name: String = "world"
+//     /// How many times.
+//     times: Int = 1
+// }
+//
+// let options = cli.parse[Greet]()
+// for _ in 0..options.times {
+//     console.println("hello {options.name}")
+// }
+// ```
 
 import std.console as __console
 import std.env as __env
@@ -84,6 +102,29 @@ pub enum Shell {
 /// The command line of the program read as a `T`: writes the help asked
 /// for and ends with 0, or writes the error and the usage to standard error
 /// and ends with 2.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// /// Manages the notes.
+/// enum Notes {
+///     /// Adds a note.
+///     Add(Note)
+///     /// Lists the notes.
+///     List
+/// }
+///
+/// type Note = {
+///     /// What it says.
+///     text: String
+/// }
+///
+/// match cli.parse[Notes]() {
+///     Notes.Add(note) => console.println("added {note.text}")
+///     Notes.List => console.println("no notes yet")
+/// }
+/// ```
 pub fn parse[T: __reflect.Reflect](): T {
     match parseArgs[T](__env.args()) {
         ok(value) => value

@@ -1,5 +1,14 @@
 // std.time: durations, the monotonic clock, waits, dates and time zones
 // (standard library 14.3).
+//
+// ```tondo
+// import std.console
+// import std.time
+//
+// let started = time.now()
+// time.sleep(time.milliseconds(10))
+// console.println("took {started.elapsed()}, now {time.utcNow()}")
+// ```
 
 /// A signed interval in nanoseconds; it displays as Go writes it: `1h2m3.5s`.
 pub type Duration

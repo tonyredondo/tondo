@@ -1,6 +1,16 @@
 // std.io: the streams shared by the console, files, processes and memory
 // (standard library 10.3). Streams are shared handles: copies use the
 // same stream, each operation is atomic, and the last copy closes it.
+//
+// ```tondo
+// import std.console
+// import std.io
+//
+// let (writer, reader) = io.pipe()
+// writer.writeLine("through a pipe")?
+// writer.close()?
+// console.println(reader.readText()?)
+// ```
 
 /// Why a stream failed: it is closed, its data is not UTF-8 where text was
 /// wanted, or the host failed.

@@ -250,7 +250,8 @@ tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>] [--json]
 tondo fmt [--check | --compact] [--json] <file.to>...
-tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>] [--json]
+tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
+tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
@@ -402,6 +403,8 @@ $ tondo api std.csv
 pub fn rows(input: io.Reader, separator: Char = ','): Rows
 ...
 $ tondo api app.models
+$ tondo api std.http.Client
+$ tondo api --search base64
 $ tondo api --list
 ~~~
 
@@ -410,6 +413,16 @@ $ tondo api --list
   dependencias (`app.models`, `shapes`) o un archivo `.to`. Sin argumento,
   muestra todos los módulos del paquete, cada uno tras `// module nombre`.
   `--list` nombra los módulos disponibles.
+- Un módulo de la stdlib empieza por lo que es y un ejemplo de su uso, un
+  programa completo que un test compila, como cada ejemplo de los `///` de
+  sus declaraciones; con `--json`, `summary` y `example`.
+- Con una declaración de un módulo, `std.http.Client`, `std.json.encode` o
+  `String`, del preludio, muestra solo ella y lo que le pertenece: los
+  métodos y los `impl` de un tipo, o un método por su nombre, `Client.get`.
+- `--search` busca las palabras en los nombres y la documentación de las
+  declaraciones de la stdlib, el proyecto y sus dependencias, primero las que
+  se llaman así, y da cada una con su módulo, su declaración y la primera
+  frase de su documentación; con `--json`, `matches`.
 - Un record con campos privados muestra los públicos y `// private fields`;
   un trait, las firmas de sus métodos; un `impl`, su cabecera. `--private`
   muestra también lo privado, para quien trabaja dentro del paquete.
@@ -457,9 +470,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   función que le dan valor antes de ese punto, o que vale lo que hereda; de una
   anotación del programa (`@binding.Check(...)`, 27.13 del lenguaje), su
   declaración y su documentación; de lo que implementa el runtime, como
-  `text.length()` o `console.println`, lo que muestra `tondo api`.
+  `text.length()` o `console.println`, lo que muestra `tondo api`; de un
+  módulo de la stdlib o su import, lo que es y su ejemplo.
 - Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
-  del proyecto cuyo nombre contiene lo que se busca.
+  del proyecto y de la stdlib cuyo nombre contiene lo que se busca, los de la
+  stdlib con su módulo, en su copia de la caché.
 - La firma de la llamada que se escribe, con su documentación y el argumento
   en que está el cursor.
 - El tipo de cada variable declarada sin escribirlo, y el parámetro al que va
@@ -808,7 +823,8 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
 - Código: `check` da los diagnósticos, cada uno con el id de `check --json`
   (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
-  `expand`, `api`, `graph`, `guide` y `explain`.
+  `expand`, `api` (también de una declaración, y `search`), `graph`, `guide`
+  y `explain`.
 - Navegación: `definition`, `references`, `implementations`, `calls`,
   `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos, con
   lo mismo que el servidor de lenguaje da de cada declaración, las anotaciones

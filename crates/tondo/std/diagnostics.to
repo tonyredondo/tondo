@@ -1,6 +1,15 @@
 // std.diagnostics (standard library 14.25): the program's own counters,
 // which `tondo counters` shows next to the runtime's; both, for the program
 // to send where it wants; and the stack of the task that asks.
+//
+// ```tondo
+// import std.diagnostics
+//
+// let served = diagnostics.counter("app.requests")
+// let queued = diagnostics.gauge("app.queue")
+// served.add()
+// queued.set(3)
+// ```
 
 import std.internal.codec as native
 

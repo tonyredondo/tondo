@@ -1,5 +1,14 @@
 // std.encoding (standard library 14.20): binary data as text and back, in
 // Base64, hexadecimal and the percent-encoding of URLs, and text in HTML.
+//
+// ```tondo
+// import std.console
+// import std.encoding
+//
+// let text = encoding.base64Encode("hello".bytes())
+// let back = String.fromBytes(encoding.base64Decode(text)?)?
+// console.println("{text} {back} {encoding.hexEncode([255, 1])} {encoding.urlEncode("a b&c")}")
+// ```
 
 import std.internal.codec as codecNative
 

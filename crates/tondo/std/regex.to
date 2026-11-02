@@ -1,6 +1,17 @@
 // std.regex (standard library 14.16): Unicode regular expressions that run
 // in time linear in their input, on the runtime's engine. No
 // backreferences or look-around; spans are byte offsets into the input.
+//
+// ```tondo
+// import std.console
+// import std.regex
+//
+// let digits = regex.Regex.compile(r"\d+")?
+// for found in digits.findAll("a1b22c333")? {
+//     console.println(found?.text)
+// }
+// console.println(digits.replaceAll("a1b22", "#")?)
+// ```
 
 import std.internal.regex as regexNative
 
@@ -216,6 +227,20 @@ fn check(phase: RegexPhase): !RegexError {
 }
 
 /// Compiles a pattern; an error says what and where in it.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let date = regex.Regex.compile(r"(?<year>\d{4})-(?<month>\d{2})")?
+/// match date.find("due 2026-11")? {
+///     some(found) => {
+///         let year = found.captureName("year").map((part) { part.text })
+///         console.println("{year} {found.text}")
+///     }
+///     none => console.println("no date")
+/// }
+/// ```
 pub fn Regex.compile(
     pattern: String,
     options: RegexOptions = RegexOptions {

@@ -1,6 +1,17 @@
 // std.toml (standard library 14.11): TOML documents as values of `Value`,
 // and any type read from and written to TOML through the traits of
 // `std.serialization`, on top of the runtime's parser and writer (TOML 1.1).
+//
+// ```tondo
+// import std.console
+// import std.toml
+//
+// type Server = { host: String, port: Int }
+//
+// let server = toml.decode[Server]("host = \"localhost\"\nport = 8080\n")?
+// console.println("{server.host}:{server.port}")
+// console.print(toml.encode(server with { port: 9090 })?)
+// ```
 
 import std.internal.codec as tomlcodec
 import std.internal.toml as tomlnative

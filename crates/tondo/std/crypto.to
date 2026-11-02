@@ -3,6 +3,15 @@
 // data sealed with a secret key, signatures, and the keys and
 // certificates of PEM files. The primitives are ring's, in the runtime;
 // PEM, DER and X.509 are read and written here.
+//
+// ```tondo
+// import std.console
+// import std.crypto
+//
+// let stored = crypto.hashPassword("correct horse")
+// console.println("{crypto.verifyPassword("correct horse", stored)}")
+// console.println("{crypto.equalSecrets("a".bytes(), "b".bytes())}")
+// ```
 
 import std.encoding as __encoding
 import std.internal.codec as codecNative

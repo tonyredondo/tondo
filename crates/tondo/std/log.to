@@ -1,5 +1,12 @@
 // std.log (standard library 14.18): structured logging, a line per event,
 // as text or JSON, through a logger or the one of the context.
+//
+// ```tondo
+// import std.log
+//
+// log.info("server started", ["port": "8080"])
+// log.warn("disk almost full", ["free": "3%"])
+// ```
 
 import std.console as __console
 import std.internal.context as contextNative

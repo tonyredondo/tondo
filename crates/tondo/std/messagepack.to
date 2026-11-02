@@ -2,6 +2,17 @@
 // `Value`, and any type read from and written to MessagePack through the
 // traits of `std.serialization`, on top of the runtime's decoder and
 // encoder.
+//
+// ```tondo
+// import std.console
+// import std.messagepack
+//
+// type Point = { x: Int, y: Int }
+//
+// let bytes = messagepack.encode(Point { x: 1, y: 2 })
+// let point = messagepack.decode[Point](bytes)?
+// console.println("{bytes.length()} bytes: {point.x}, {point.y}")
+// ```
 
 import std.internal.codec as packcodec
 import std.internal.msgpack as packnative

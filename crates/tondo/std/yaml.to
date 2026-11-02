@@ -2,6 +2,15 @@
 // YAML 1.2 as values of `Value`, and any type read from and written to YAML
 // through the traits of `std.serialization`, on top of the runtime's parser
 // and emitter.
+//
+// ```tondo
+// import std.console
+// import std.yaml
+//
+// var doc = yaml.load("# The service.\nport: 8080   # where it listens\n")?
+// doc.set("port", 9090)?
+// console.print(doc.text())
+// ```
 
 import std.internal.codec as yamlcodec
 import std.internal.yaml as yamlnative

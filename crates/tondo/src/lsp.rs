@@ -540,7 +540,11 @@ impl Server {
         if self.std.is_none() {
             let dir = driver::cache_dir().join(format!("std-{}", driver::VERSION));
             if std::fs::create_dir_all(&dir).is_ok() {
-                for (name, text) in crate::stdlib::sources() {
+                // The modules the compiler implements too, by what `tondo
+                // api` shows of them.
+                let _ = std::fs::create_dir_all(dir.join("api"));
+                let intrinsic = crate::api::intrinsic_files().map(|(name, text)| (format!("api/{name}"), text));
+                for (name, text) in crate::stdlib::sources().iter().map(|&(n, t)| (n.to_string(), t)).chain(intrinsic) {
                     let path = dir.join(format!("{name}.to"));
                     if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
                         let _ = std::fs::write(&path, text);
@@ -618,9 +622,7 @@ impl Server {
         self.prepare(params)?;
         if let Some((analyzed, module, _, span)) = self.imported(params) {
             let (_, range) = self.place(analyzed, span)?;
-            return Some(
-                json!({ "contents": { "kind": "markdown", "value": format!("```tondo\nmodule {module}\n```") }, "range": range }),
-            );
+            return Some(json!({ "contents": { "kind": "markdown", "value": module_hover(&module) }, "range": range }));
         }
         let units = self.units;
         let Some((analyzed, def, span)) = self.def_at(params) else { return self.builtin_hover(params) };
@@ -659,7 +661,10 @@ impl Server {
             _ => text.lines().next().unwrap_or_default().trim().to_string(),
         };
         let docs = docs_before(file, def.decl_span.start);
-        let mut value = format!("```tondo\n{header}\n```");
+        let mut value = match def.kind {
+            DefKind::Module => module_hover(&file.module),
+            _ => format!("```tondo\n{header}\n```"),
+        };
         if !docs.is_empty() {
             value.push_str("\n\n");
             value.push_str(&docs);
@@ -799,7 +804,60 @@ impl Server {
                 }
             }
         }
+        symbols.extend(self.std_symbols(&query).into_iter().take(500 - symbols.len()));
         Value::Array(symbols)
+    }
+
+    /// The public declarations of the standard library whose names hold
+    /// `query`, each with its module, where the editor opens them: the
+    /// modules written in Tondo, with the parts they are made of, and those
+    /// the compiler implements.
+    fn std_symbols(&mut self, query: &str) -> Vec<Value> {
+        let Some(dir) = self.std_dir() else { return Vec::new() };
+        let mut found = Vec::new();
+        for module in crate::api::standard_modules() {
+            let name = module.strip_prefix("std.").unwrap_or(&module).to_string();
+            let mut files: Vec<String> = match crate::stdlib::text(&name) {
+                Some(_) => vec![name.clone()],
+                None => vec![format!("api/{name}")],
+            };
+            files.extend(crate::stdlib::companions(&name).iter().map(|c| c.to_string()));
+            if name == "prelude" {
+                files.push("api/builtins".into());
+            }
+            for file in files {
+                let path = dir.join(format!("{file}.to"));
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                for (line, code) in text.lines().enumerate() {
+                    let Some(rest) = code.strip_prefix("pub ") else { continue };
+                    let (word, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+                    let declared: String =
+                        rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.').collect();
+                    let kind = match word {
+                        "fn" if declared.contains('.') => 6,
+                        "fn" => 12,
+                        "type" | "alias" | "context" => 23,
+                        "enum" => 10,
+                        "trait" => 11,
+                        "const" => 14,
+                        _ => continue,
+                    };
+                    if declared.is_empty() || !declared.to_lowercase().contains(query) {
+                        continue;
+                    }
+                    let column = code.find(&declared).unwrap_or(0);
+                    let range = json!({
+                        "start": { "line": line, "character": column },
+                        "end": { "line": line, "character": column + declared.len() },
+                    });
+                    found.push(json!({
+                        "name": declared, "kind": kind, "containerName": module,
+                        "location": { "uri": file_uri(&path), "range": range },
+                    }));
+                }
+            }
+        }
+        found
     }
 
     /// The signature of the call being written, and which argument the
@@ -1864,6 +1922,19 @@ fn imports(text: &str) -> HashMap<String, String> {
 
 /// A completion item of a declaration as `tondo api` gives it: its kind,
 /// name, text and documentation.
+/// What a hover over a module says: its name, and for a standard one
+/// what it is for and its example.
+fn module_hover(module: &str) -> String {
+    let mut value = format!("```tondo\nmodule {module}\n```");
+    if let Some(summary) = crate::api::summary(module) {
+        value.push_str(&format!("\n\n{summary}"));
+    }
+    if let Some(example) = crate::api::example(module) {
+        value.push_str(&format!("\n\n```tondo\n{example}```"));
+    }
+    value
+}
+
 fn declared_item(declared: &Value, call: bool) -> Value {
     let kind = match declared["kind"].as_str().unwrap_or("") {
         "fn" => 3,

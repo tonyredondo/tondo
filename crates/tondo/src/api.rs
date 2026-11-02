@@ -27,6 +27,13 @@ const INTRINSIC: &[(&str, &str)] = &[
 /// prelude's.
 const BUILTINS: &str = include_str!("../std/api/builtins.to");
 
+/// The files of the declarations of the standard modules the compiler
+/// implements, and of the intrinsic types' methods, by name, as an editor
+/// opens them: `console`, `builtins`.
+pub fn intrinsic_files() -> impl Iterator<Item = (&'static str, &'static str)> {
+    INTRINSIC.iter().copied().chain([("builtins", BUILTINS)])
+}
+
 /// The standard modules written in Tondo that only the toolchain uses;
 /// the companions of a module, as `processes` of `process`, are shown as
 /// part of it.
@@ -150,6 +157,124 @@ pub fn summary(module: &str) -> Option<String> {
     Some(text.to_string())
 }
 
+/// The example at the head of a standard module: a program, the `tondo`
+/// block of the comment it starts with.
+pub fn example(module: &str) -> Option<String> {
+    let name = module.strip_prefix("std.")?;
+    let source = match INTRINSIC.iter().find(|(n, _)| *n == name) {
+        Some((_, text)) => text,
+        None => crate::stdlib::text(name).filter(|_| !hidden(name))?,
+    };
+    let header: Vec<&str> =
+        source.lines().map_while(|line| line.strip_prefix("//").map(|l| l.strip_prefix(' ').unwrap_or(l))).collect();
+    let start = header.iter().position(|line| line.trim() == "```tondo")? + 1;
+    let end = start + header[start..].iter().position(|line| line.trim() == "```")?;
+    Some(header[start..end].iter().map(|line| format!("{line}\n")).collect())
+}
+
+/// What `tondo api` shows above a standard module's declarations: what it
+/// is for and its example, as a comment.
+fn heading(module: &str) -> String {
+    let Some(summary) = summary(module) else { return String::new() };
+    let mut out = String::new();
+    let mut line = String::from("//");
+    for word in format!("{module}: {summary}").split_whitespace() {
+        if line.len() + 1 + word.len() > 76 && line != "//" {
+            out.push_str(&line);
+            out.push('\n');
+            line = String::from("//");
+        }
+        line.push(' ');
+        line.push_str(word);
+    }
+    out.push_str(&line);
+    out.push('\n');
+    if let Some(example) = example(module) {
+        out.push_str("//\n// ```tondo\n");
+        for line in example.lines() {
+            out.push_str(format!("// {line}").trim_end());
+            out.push('\n');
+        }
+        out.push_str("// ```\n");
+    }
+    out.push('\n');
+    out
+}
+
+/// One declaration of a module's API, `name`, with what belongs to it: a
+/// type's methods and implementations, or a function or a method by its
+/// name, as `Client`, `Client.get` or `encode`.
+pub fn declared(api: &str, name: &str) -> Option<String> {
+    let method = format!("{name}.");
+    let implemented = format!(" for {name}");
+    let shown: Vec<String> = declarations(api)
+        .into_iter()
+        .filter(|d| {
+            let declared = d["name"].as_str().unwrap_or_default();
+            let generic = declared.split('[').next().unwrap_or(declared);
+            declared == name
+                || generic == name
+                || declared.starts_with(&method)
+                || (d["kind"] == "impl"
+                    && (declared.ends_with(&implemented) || declared.contains(&format!("{implemented}["))))
+        })
+        .map(|d| {
+            let doc = d["doc"].as_str().unwrap_or_default();
+            let doc: String = doc.lines().map(|line| format!("/// {line}").trim_end().to_string() + "\n").collect();
+            format!("{doc}{}\n", d["declaration"].as_str().unwrap_or_default())
+        })
+        .collect();
+    (!shown.is_empty()).then(|| shown.join("\n"))
+}
+
+/// A declaration found by `search`: its module, its name, its declaration
+/// and the first sentence of its documentation.
+pub struct Found {
+    pub module: String,
+    pub name: String,
+    pub declaration: String,
+    pub about: String,
+}
+
+/// The declarations of the modules given, as their APIs, whose names or
+/// documentation hold every word of `query`, those named so first: what
+/// `tondo api --search` shows.
+pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a str)>) -> Vec<Found> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut found: Vec<(u8, Found)> = Vec::new();
+    for (module, api) in modules {
+        for declared in declarations(api) {
+            if declared["kind"] == "impl" {
+                continue;
+            }
+            let name = declared["name"].as_str().unwrap_or_default().to_string();
+            let doc = declared["doc"].as_str().unwrap_or_default();
+            let (named, documented) = (name.to_lowercase(), doc.to_lowercase());
+            let rank = if words.iter().all(|w| named == *w || named.ends_with(&format!(".{w}"))) {
+                0
+            } else if words.iter().all(|w| named.contains(w.as_str())) {
+                1
+            } else if words.iter().all(|w| named.contains(w.as_str()) || documented.contains(w.as_str())) {
+                2
+            } else {
+                continue;
+            };
+            let declaration = declared["declaration"].as_str().unwrap_or_default();
+            let declaration = declaration.split(" {\n").next().unwrap_or(declaration);
+            let declaration = declaration.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+            let declaration = declaration.replace("( ", "(").replace(", )", ")").replace("[ ", "[").replace(", ]", "]");
+            let about = doc.replace('\n', " ");
+            let about = match about.find(". ") {
+                Some(end) => about[..=end].to_string(),
+                None => about,
+            };
+            found.push((rank, Found { module: module.clone(), name, declaration: declaration.to_string(), about }));
+        }
+    }
+    found.sort_by(|a, b| (a.0, &a.1.module, &a.1.name).cmp(&(b.0, &b.1.module, &b.1.name)));
+    found.into_iter().map(|(_, found)| found).collect()
+}
+
 /// The API of a standard module: `std.http`, `std.fs` or `prelude`.
 pub fn standard(name: &str) -> Option<String> {
     if name == "prelude" {
@@ -197,7 +322,8 @@ pub fn standard(name: &str) -> Option<String> {
         }
         return Some(text);
     }
-    crate::stdlib::text(name).filter(|_| !hidden(name)).map(|source| render(source, false))
+    let source = crate::stdlib::text(name).filter(|_| !hidden(name))?;
+    Some(format!("{}{}", heading(&format!("std.{name}")), render(source, false)))
 }
 
 /// The declarations of a module's source: the public ones, or every one

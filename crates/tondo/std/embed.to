@@ -1,6 +1,15 @@
 // std.embed (standard library 14.27): files of the package, read when the
 // program compiles and kept in the executable, which does not read them
 // from the disk when it runs.
+//
+// ```tondo
+// import std.console
+// import std.embed
+//
+// const Source: String = embed.text("main.to")
+//
+// console.println("this program is {Source.lines().length()} lines long")
+// ```
 
 import std.fs as __fs
 

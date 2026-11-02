@@ -2,6 +2,14 @@
 // PNG, JPEG, GIF and WebP, with the sizes and crops a site makes of them;
 // the runtime decodes, encodes and changes the pixels, on the host's
 // threads. An image never changes: each operation gives a new one.
+//
+// ```tondo
+// import std.image
+//
+// let photo = image.open("photo.jpg")?
+// photo.fit(800, 600).save("photo-800.webp")?
+// photo.fill(200, 200).save("avatar.jpg", quality: 80)?
+// ```
 
 import std.fs as __fs
 import std.internal.image as imageNative

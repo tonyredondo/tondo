@@ -3,6 +3,23 @@
 // does, and read as a tree when its shape is unknown. No DTD is read and no
 // entity but the five predefined and the numeric ones, so that a document
 // can neither ask for files nor grow without end.
+//
+// ```tondo
+// import std.console
+// import std.xml
+//
+// @xml.Name("item")
+// pub type Item = {
+//     @xml.Attribute
+//     id: Int
+//     @xml.Text
+//     title: String
+// }
+//
+// let text = xml.encode(Item { id: 1, title: "Tea & cake" })
+// let item = xml.decode[Item](text)?
+// console.println("{text} {item.title} {xml.parse(text)?.attribute("id")}")
+// ```
 
 import std.internal.codec as codecNative
 import std.internal.text as textNative

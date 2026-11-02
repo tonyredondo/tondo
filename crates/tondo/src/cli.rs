@@ -61,8 +61,15 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "api",
-        usage: &["tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>] [--json]"],
-        summary: &["show a module's declarations and documentation"],
+        usage: &[
+            "tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]",
+            "tondo api --search <words> [--project <dir>] [--json]",
+        ],
+        summary: &[
+            "show a module's declarations, documentation and example,",
+            "or one declaration's (std.http.Client, String); find",
+            "declarations by their names and documentation",
+        ],
     },
     Command {
         name: "graph",

@@ -1,8 +1,36 @@
 // std.sync: state shared between tasks (standard library 14.4.4). Every
 // value is a handle: copies share the state. A contended wait stops the
 // task, not the thread.
+//
+// ```tondo
+// import std.console
+// import std.sync
+//
+// fn record(hits: sync.Mutex[Int], counter: sync.Atomic[Int]) {
+//     hits.update((n) { n += 1 })
+//     _ = counter.add(1)
+// }
+//
+// let hits = sync.Mutex(0)
+// let counter = sync.Atomic(0)
+// var group = Group.new[Unit]()
+// for _ in 0..4 {
+//     group.add(spawn record(hits, counter))
+// }
+// group.wait()
+// console.println("{hits.get()} {counter.load()}")
+// ```
 
 /// A value behind a lock; closures see it while they hold the lock.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// let totals = sync.Mutex(["apples": 0])
+/// totals.update((map) { map["apples"] = map["apples"].unwrapOr(0) + 3 })
+/// console.println("{totals.get()}")
+/// ```
 pub fn Mutex(value: T): Mutex[T]
 
 /// Runs `change` with the value locked for this task alone, and gives its

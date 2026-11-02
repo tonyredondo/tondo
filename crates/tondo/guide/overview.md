@@ -93,6 +93,7 @@ tondo fmt <file.to>                canonical layout; --compact prints the fewest
 tondo api <module>                 a module's declarations and docs, no bodies:
                                    std.http, std.fs, prelude, app.models, a dependency
 tondo api --list                   the modules there are
+tondo api --search <words>         declarations by their names and docs
 tondo graph [<path>]               a program's modules, files and imports; with a
                                    directory or file, its project and module
 tondo add <alias> --path <dir>     a dependency (or --git <url> --tag <t>, --url <url>)
@@ -110,8 +111,10 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 ## Working as an agent
 
-1. `tondo api --list`, then `tondo api <module>` to learn what to call;
-   `tondo api prelude` for the methods of `String`, `Array`, `Map`, `Option`.
+1. `tondo api --search <words>` finds what does a job; `tondo api --list`
+   names the modules, and `tondo api <module>` shows what to call, with an
+   example; `tondo api String` one type and its methods, as for `Array`,
+   `Map`, `Option` or `std.http.Client`.
 2. Write the code; layout does not matter.
 3. `tondo check --json`, fix what it reports, repeat; then `tondo test`.
 4. `tondo fmt` the files you wrote. To show a file to a model, `tondo fmt

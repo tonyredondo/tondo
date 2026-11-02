@@ -4,6 +4,21 @@
 // a pool of connections, and `use` around each statement, as `App.use`
 // and `Client.use` do, for traces and metrics. The drivers of SQLite,
 // PostgreSQL and MySQL are std's; a package gives another.
+//
+// ```tondo
+// import std.console
+// import std.sql
+//
+// type User = { id: Int, name: String }
+//
+// let db = sql.open("sqlite::memory:")?
+// _ = db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?
+// let name = "Ada"
+// _ = db.execute("INSERT INTO users (name) VALUES ({name})")?
+// for user in db.query[User]("SELECT id, name FROM users")? {
+//     console.println("{user.id} {user.name}")
+// }
+// ```
 
 import std.crypto as __crypto
 import std.encoding as __encoding
@@ -491,6 +506,17 @@ pub fn Database.queryOne[T: __serialization.Decode](self, query: Query): T ! Sql
 /// runs its statements there, so a function that takes a `Database` works
 /// in it too. It commits when `work` succeeds and rolls back when it fails
 /// or panics; one inside another is a savepoint.
+///
+/// ```tondo
+/// import std.sql
+///
+/// fn transfer(db: sql.Database, from: Int, to: Int, amount: Int): !sql.SqlError {
+///     db.transaction((tx): Unit ! sql.SqlError {
+///         _ = tx.execute("UPDATE accounts SET balance = balance - {amount} WHERE id = {from}")?
+///         _ = tx.execute("UPDATE accounts SET balance = balance + {amount} WHERE id = {to}")?
+///     })?
+/// }
+/// ```
 pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T ! SqlError {
     let database = self
     let held: __sync.Permit? = match self.pinned {

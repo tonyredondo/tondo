@@ -77,6 +77,19 @@ pub fn metadata(path: String): Metadata ! __fs.FsError {
 /// `(entry) { not entry.path.endsWith("/node_modules") }`. With
 /// `skipUnreadable`, a directory below `root` that cannot be read is left
 /// out rather than failing the walk.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// // Every Markdown file under `docs`, but those of hidden directories.
+/// let entries = fs.walk("docs", enter: some((entry: fs.Entry) { not entry.path.contains("/.") }))?
+/// for entry in entries {
+///     if entry.path.endsWith(".md") {
+///         console.println(entry.path)
+///     }
+/// }
+/// ```
 pub fn walk(
     root: String,
     enter: (fn(Entry): Bool)? = none,

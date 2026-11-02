@@ -77,7 +77,7 @@ fn says_errors_as_json() {
         error,
         json!({
             "format": "tondo-error-0.1/1", "ok": false, "status": 3, "usage": false,
-            "message": "there is no standard module `std.nothing`; `tondo api --list` shows them",
+            "message": "there is no module or declaration `std.nothing`; `tondo api --list` shows the modules, and `tondo api --search <words>` finds declarations",
         })
     );
 }
@@ -210,6 +210,38 @@ fn manages_projects() {
     let cleaned: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(cleaned["freed"], 1000);
     assert!(!cache.join("tondo/run").exists() && cache.join("tondo/deps/kept").exists());
+}
+
+/// `tondo api` shows one declaration and what belongs to it, and finds
+/// declarations by their names and documentation.
+#[test]
+fn the_api_of_a_declaration_and_a_search() {
+    let dir = scratch("cli-api");
+    let (client, _, status) = tondo(&dir, &["api", "std.http.Client"]);
+    assert_eq!(status, 0);
+    assert!(client.contains("pub type Client") && client.contains("pub fn Client.get("), "{client}");
+    assert!(!client.contains("pub type App"), "{client}");
+    let (strings, _, _) = tondo(&dir, &["api", "String"]);
+    assert!(strings.contains("pub fn String.split("), "{strings}");
+    let (declared, _) = json(&dir, &["api", "std.json.encode", "--json"]);
+    assert_eq!(declared["declaration"], "std.json.encode");
+    assert_eq!(declared["declarations"][0]["name"], "encode");
+    let (found, _) = json(&dir, &["api", "--search", "base64", "--json"]);
+    let names: Vec<String> = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| format!("{}.{}", m["module"].as_str().unwrap(), m["name"].as_str().unwrap()))
+        .collect();
+    assert!(
+        names.starts_with(&["std.encoding.Base64Alphabet".into(), "std.encoding.base64Decode".into()]),
+        "{names:?}"
+    );
+    let (module, _) = json(&dir, &["api", "std.csv", "--json"]);
+    assert!(module["summary"].as_str().unwrap().starts_with("comma-separated values"), "{module}");
+    let (_, stderr, status) = tondo(&dir, &["api", "std.nothing.Here"]);
+    assert_eq!(status, 3);
+    assert!(stderr.contains("`tondo api --search <words>`"), "{stderr}");
 }
 
 /// Editing a program and running it again keeps its last two builds in

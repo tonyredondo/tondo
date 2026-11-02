@@ -1,6 +1,15 @@
 // std.ffi: what calling C needs (standard library 19.3). C functions are
 // declared with `extern fn` and C structs with `extern type`; this module
 // names C's types and gives memory and strings that C can use.
+//
+// ```tondo
+// import std.console
+// import std.ffi
+//
+// extern fn abs(value: ffi.CInt): ffi.CInt
+//
+// console.println("{unsafe { abs(-42) }}")
+// ```
 
 import std.internal.memory
 

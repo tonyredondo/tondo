@@ -2,6 +2,20 @@
 // itself, in pprof's format, as `tondo profile` writes them: where its
 // processor time goes, what it allocates and holds, and where its tasks
 // are; and labels that divide them, as by endpoint.
+//
+// ```tondo
+// import std.console
+// import std.fs
+// import std.profile
+//
+// let cpu = profile.startCpu()
+// var total = 0
+// for n in 0..1_000_000 {
+//     total += n % 7
+// }
+// fs.writeBytes("cpu.pb.gz", cpu.stop().pprof())?
+// console.println("{total}, profiled in cpu.pb.gz")
+// ```
 
 import std.internal.codec as native
 import std.time as __time

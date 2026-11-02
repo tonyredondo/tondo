@@ -3,6 +3,19 @@
 // implements `Reflect` for every record, enum and newtype whose parts do,
 // with code that reaches each field and method directly; a `Value` keeps a
 // value with those operations of its type.
+//
+// ```tondo
+// import std.console
+// import std.reflect
+//
+// pub type User = { name: String, age: Int }
+//
+// let ada = User { name: "Ada", age: 36 }
+// for field in reflect.typeInfo[User]().fields() {
+//     console.println("{field.name()}")
+// }
+// console.println(reflect.get[String, User](ada, "name")?)
+// ```
 
 import std.internal.reflect as reflectNative
 

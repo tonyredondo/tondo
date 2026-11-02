@@ -1,6 +1,17 @@
 // std.cbor (standard library 14.15): CBOR (RFC 8949) as values of `Value`,
 // and any type read from and written to CBOR through the traits of
 // `std.serialization`, on top of the runtime's decoder and encoder.
+//
+// ```tondo
+// import std.cbor
+// import std.console
+//
+// type Point = { x: Int, y: Int }
+//
+// let bytes = cbor.encode(Point { x: 1, y: 2 })
+// let point = cbor.decode[Point](bytes)?
+// console.println("{bytes.length()} bytes: {point.x}, {point.y}")
+// ```
 
 import std.internal.cbor as cbornative
 import std.internal.codec as cborcodec

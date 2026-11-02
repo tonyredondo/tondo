@@ -3,6 +3,21 @@
 // mailbox. Both build on `spawn`, `Join` and channels, which stay the only
 // tasks: a job is an ordinary task whose `Join` the caller owns, waits for
 // and cancels as any other.
+//
+// ```tondo
+// import std.console
+// import std.executor
+//
+// // Blocking work, as a C library's, runs on a bounded pool, not on the
+// // workers that run tasks.
+// let pool = executor.pool(2, 8)?
+// var squares = Group.new[Int]()
+// for n in 1..=4 {
+//     squares.add(pool.submit(() { n * n })?)
+// }
+// console.println("{squares.wait()}")
+// pool.shutdown()
+// ```
 
 import std.internal.channel as __channel
 import std.sync as __sync

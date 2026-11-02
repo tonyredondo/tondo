@@ -4,6 +4,19 @@
 // `App.grpc` serves, and a client. Messages are `std.protobuf`'s, a call's
 // failure is a `Status`, and what a call carries besides, its metadata, its
 // peer and its deadline, `call()` gives in the method.
+//
+// ```tondo
+// import std.grpc
+// import std.http
+//
+// // A service of a `.proto` file is served the same way:
+// // `app.grpc(users.userService(value))`.
+// let health = grpc.Health.new()
+// var app = http.App.new()
+// app.grpc(health.service())
+// app.grpc(grpc.reflection([health.service()]))
+// app.listen(port: 50051)?
+// ```
 
 import std.encoding as __encoding
 import std.gzip as __gzip
@@ -315,6 +328,28 @@ impl Display for Direction {
 /// with `fail`, give the method contexts with `with`, time it or change
 /// its status; a panic of the method reaches it as `Internal`. The first
 /// added is the outermost.
+///
+/// ```tondo
+/// import std.diagnostics
+/// import std.grpc
+/// import std.http
+/// import std.log
+///
+/// let failed = diagnostics.counter("health.failed")
+/// let health = grpc.Health.new()
+/// var app = http.App.new()
+/// // Every call of the service: logged, and its failures counted.
+/// app.grpc(health.service().onCall((call, next) {
+///     match next() {
+///         ok(_) => log.info("served", ["method": call.method])
+///         err(status) => {
+///             failed.add()
+///             log.warn("failed", ["method": call.method, "status": "{status}"])
+///             fail status
+///         }
+///     }
+/// }))
+/// ```
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service {
     self with { layers: self.layers.concat([interceptor]) }
 }
@@ -1005,6 +1040,24 @@ pub type Channel = {
 }
 
 /// A channel to a server, which connects with its first call.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.time
+///
+/// /// A channel round robin over two servers, with each call timed; a client
+/// /// of a `.proto` service takes it: `users.UserServiceClient.on(channel)`.
+/// fn servers(): grpc.Channel ! grpc.Status {
+///     let balanced = grpc.connect("http://10.0.0.1:50051,10.0.0.2:50051", balancing: grpc.Balancing.RoundRobin)?
+///     balanced.onCall((call, next) {
+///         let started = time.now()
+///         let outcome = next(call)
+///         console.println("{call.method} took {started.elapsed()}")
+///         outcome?
+///     })
+/// }
+/// ```
 pub fn connect(
     target: String,
     trust: String = "",

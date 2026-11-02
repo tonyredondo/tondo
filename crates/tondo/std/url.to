@@ -1,6 +1,14 @@
 // std.url (standard library 14.28): URLs and relative references as RFC
 // 3986 defines them: their parts, resolving one from another, and the
 // query of a form.
+//
+// ```tondo
+// import std.console
+// import std.url
+//
+// let address = url.parse("https://example.com:8443/docs/a%20b?page=2")?
+// console.println("{address.host} {address.port} {address.path} {address.param("page")}")
+// ```
 
 import std.encoding as __encoding
 // Templates and reflection read a URL by its parts.

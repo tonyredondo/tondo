@@ -1,5 +1,13 @@
 // std.hash (standard library 14.21): digests, HMAC, both whole or in parts,
 // and hashes that are not for security.
+//
+// ```tondo
+// import std.console
+// import std.hash
+//
+// console.println("{hash.sha256("hello".bytes())}")
+// console.println("{hash.hmacSha256("key".bytes(), "message".bytes())}")
+// ```
 
 import std.internal.codec as codecNative
 

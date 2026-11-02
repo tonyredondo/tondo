@@ -2,6 +2,24 @@
 // its fields, which no value read from outside breaks: the code the
 // compiler writes for `Decode` checks them, and `check` checks a value the
 // program makes. The rules themselves are in `std/rules.to`.
+//
+// ```tondo
+// import std.console
+// import std.json
+// import std.validate
+//
+// pub type Signup = {
+//     @validate.Length(min: 3, max: 20)
+//     name: String
+//     @validate.Email
+//     email: String
+// }
+//
+// match json.decode[Signup](r"""{"name": "al", "email": "x"}""") {
+//     ok(signup) => console.println("welcome {signup.name}")
+//     err(error) => console.println("{error.violations}")
+// }
+// ```
 
 import std.reflect as __reflect
 import std.rules as __rules

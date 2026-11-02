@@ -2,6 +2,14 @@
 // generator, seeded for a sequence that repeats or from the system's
 // entropy. The generator is not for secrets: keys and tokens take
 // `random.entropy`.
+//
+// ```tondo
+// import std.console
+// import std.random
+//
+// var dice = random.Random.seeded(42)
+// console.println("{dice.int(1..=6)} {dice.choice(["red", "green", "blue"])}")
+// ```
 
 import std.internal.codec as codecNative
 

@@ -4207,3 +4207,16 @@ frame is written in whose frames are below it on its stack, as a
 closure's maker or a test's suites, each with where it is from. What is
 not on the stack, as the maker of a closure called later from elsewhere,
 is not shown: its values are gone.
+
+## 2026-11-02 — Examples in the library, and finding what to call
+
+Every standard declaration was documented, but none showed how it is
+used, nothing searched the library, and an editor showed a module as
+its name alone. Each standard module now starts with an example, a whole
+program, and the entry points that need one carry it in their `///`; a
+test compiles every one, so they cannot rot as the guide's cannot.
+`tondo api std.http.Client` or `tondo api String` shows one declaration
+with its methods, `tondo api --search` finds declarations by their names
+and documentation, the MCP tool `api` does both, and the editor's hover
+of a module and its search of symbols reach the standard library too,
+those the compiler implements included.

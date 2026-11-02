@@ -4,6 +4,27 @@
 // parameters its arguments; the mutation's methods are its mutations.
 // Queries are parsed and run in Tondo over reflection, introspection
 // included, so the tools of GraphQL read the schema.
+//
+// ```tondo
+// import std.graphql
+// import std.http
+//
+// pub type Book = { id: Int, title: String }
+//
+// /// The API: each `pub` method is a field of the query.
+// pub type Library = { books: Array[Book] }
+//
+// /// The books whose title has the text.
+// pub fn Library.search(self, text: String): Array[Book] {
+//     self.books.filter((book) { book.title.contains(text) })
+// }
+//
+// let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }] })
+// var app = http.App.new()
+// app.post("/graphql", schema.handler())
+// app.get("/graphql", schema.handler())
+// app.listen(port: 8080)?
+// ```
 
 import std.http as __http
 import std.json as __json

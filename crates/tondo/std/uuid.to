@@ -1,5 +1,12 @@
 // std.uuid (standard library 14.17): RFC 9562 identifiers, sixteen bytes
 // that display as `8-4-4-4-12` lowercase hexadecimal.
+//
+// ```tondo
+// import std.console
+// import std.uuid
+//
+// console.println("{uuid.Uuid.v4()} {uuid.Uuid.v7()}")
+// ```
 
 import std.internal.codec as codecNative
 import std.reflect as __reflect

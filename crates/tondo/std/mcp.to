@@ -4,6 +4,25 @@
 // route of `std.http`. It speaks the versions `tondo mcp` speaks: each
 // request of 2026-07-28 names its version, and the `initialize` handshake
 // of 2025-11-25 and before.
+//
+// ```tondo
+// import std.mcp
+//
+// /// Small arithmetic, as tools of the Model Context Protocol.
+// pub type Calculator = {}
+//
+// pub type Sum = {
+//     /// The numbers to add.
+//     numbers: Array[Int]
+// }
+//
+// /// Adds numbers.
+// pub fn Calculator.add(self, input: Sum): Int {
+//     input.numbers.reduce(0, (total, n) { total + n })
+// }
+//
+// mcp.serve(Calculator {})?
+// ```
 
 import std.console as __console
 import std.env as __env

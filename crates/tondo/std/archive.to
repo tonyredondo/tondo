@@ -1,6 +1,16 @@
 // std.archive (standard library 14.36): zip, tar, tar.gz and tar.zst behind
 // one API, read and written in Tondo; the runtime deflates, inflates and
 // checks CRC-32.
+//
+// ```tondo
+// import std.archive
+// import std.console
+//
+// let site = archive.open("site.zip")?
+// for entry in site.entries() {
+//     console.println("{entry.name} {entry.size}")
+// }
+// ```
 
 import std.fs as __fs
 import std.gzip as __gzip

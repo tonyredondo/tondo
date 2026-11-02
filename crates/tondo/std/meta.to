@@ -1,6 +1,24 @@
 // std.meta (standard library 14.9): what a `derive` provider receives and
 // how it writes the implementation it gives back. A provider runs while the
 // program compiles, in the `meta` profile, and sees only its request.
+//
+// ```tondo
+// import std.meta
+//
+// /// A `derive` provider: writes `impl Describe` for a record, its fields'
+// /// names.
+// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+//     let target = request.target()
+//     let names = target.fields().map((field) { field.name }).join(", ")
+//     var out = request.sourceBuilder()
+//     out.add(meta.code(r"""
+//         impl $trait for $type {
+//             fn describe(self): String { "$names" }
+//         }
+//         """, ["trait": request.traitName(), "type": target.typeName(), "names": names]))?
+//     out.finishDerive()?
+// }
+// ```
 
 import std.internal.meta as metaNative
 import std.json as __json

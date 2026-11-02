@@ -2,6 +2,14 @@
 // HTTP/1.1 and HTTP/2 over TLS, with bodies that stream both ways,
 // multipart forms, Server-Sent Events and WebSockets, on the runtime's
 // transport.
+//
+// ```tondo
+// import std.http
+//
+// var app = http.App.new()
+// app.get("/hello/:name", (request) { http.Reply.text("Hello, {request.param("name")}!") })
+// app.listen(port: 8080)?
+// ```
 
 import std.console as __console
 import std.crypto as __crypto
@@ -479,6 +487,18 @@ impl Iterator[Event ! HttpError] for Events {
 /// `baseUrl`, and its headers go with every request. `trust` names a PEM
 /// file of certificates it trusts besides the system's, such as a company's
 /// or a development certificate authority.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// type Todo = { id: Int, title: String }
+///
+/// let web = http.Client.new(baseUrl: "https://api.example.com")
+/// let todo = web.get("/todos/1")?.json[Todo]()?
+/// let made = web.post("/todos", body: some(http.Body.json(todo with { id: 0 })))?
+/// console.println("{todo.title} {made.status()}")
+/// ```
 pub type Client = {
     priv native: httpNative.Native
     priv base: String
@@ -1700,6 +1720,18 @@ pub fn Request.text(self): String ! Problem {
 
 /// The body as the JSON of a `T` (`std.json`), decoded as it arrives; a
 /// body that is not one is `400` with the reason.
+///
+/// ```tondo
+/// import std.http
+///
+/// type Signup = { name: String, email: String }
+///
+/// var app = http.App.new()
+/// app.post("/signups", (request) {
+///     let signup = request.json[Signup]()?
+///     http.Reply.json(signup, status: 201)
+/// })
+/// ```
 pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
     match __json.decodeFrom[T](self.body()) {
         ok(value) => value
@@ -2242,6 +2274,22 @@ pub fn App.route(
 /// Middleware, around every route of this app and its answers to paths
 /// with no route: it can answer by itself or call `next`. The first added
 /// is the outermost.
+///
+/// ```tondo
+/// import std.http
+/// import std.log
+/// import std.time
+///
+/// var app = http.App.new()
+/// // Each request through it: timed, and its status logged.
+/// app.use((request, next) {
+///     let started = time.now()
+///     let reply = next(request)?
+///     log.info("served", ["path": request.path(), "status": "{reply.status()}", "took": "{started.elapsed()}"])
+///     reply
+/// })
+/// app.get("/", (_) { http.Reply.text("hello") })
+/// ```
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem) {
     self.layers.push(middleware)
 }

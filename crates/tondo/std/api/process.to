@@ -1,8 +1,25 @@
 // std.process: processes and pipelines (standard library 19.2). `Command`
 // and `Pipeline` are inert plans; `|` joins them, and running one waits
 // without blocking a worker.
+//
+// ```tondo
+// import std.console
+// import std.process
+//
+// let output = process.command("echo", "hello").output()?
+// console.println(output.text()?)
+// ```
 
 /// A program and its arguments, each on its own: no shell, no globbing.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// // `|` joins commands into a pipeline, without a shell.
+/// let counted = (process.command("ls", "-l") | process.command("wc", "-l")).output()?
+/// console.println("{counted.text()?.trim()} lines")
+/// ```
 pub fn command(program: String, arguments: ...String): Command
 
 /// A command that the system's shell runs: `/bin/sh -c text`.

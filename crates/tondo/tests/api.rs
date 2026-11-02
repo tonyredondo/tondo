@@ -136,7 +136,10 @@ impl Sized for User
     let (_, stderr, status) = tondo(&dir, &["api", "std.nothing"]);
     assert_eq!(
         (status, stderr.trim()),
-        (3, "tondo: there is no standard module `std.nothing`; `tondo api --list` shows them")
+        (
+            3,
+            "tondo: there is no module or declaration `std.nothing`; `tondo api --list` shows the modules, and `tondo api --search <words>` finds declarations"
+        )
     );
 }
 
@@ -162,4 +165,86 @@ fn prints_files_compactly() {
         formatted,
         "import std.console\n\n// Says hello.\nfn main() {\n    let total = 1 + 2\n    console.println(\"{total}\")\n}\n"
     );
+}
+
+/// The text of a comment line: what follows `//` or `///` and a space.
+fn comment(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    trimmed.strip_prefix("///").or(trimmed.strip_prefix("//")).map(|l| l.strip_prefix(' ').unwrap_or(l))
+}
+
+/// The examples the standard library's comments carry, a `tondo` block in
+/// a module's header or a declaration's `///`: each, with its file and
+/// the line it starts at.
+fn standard_examples() -> Vec<(String, usize, String)> {
+    let files = tondo::stdlib::sources().iter().copied().chain(tondo::api::intrinsic_files());
+    let mut found = Vec::new();
+    for (name, text) in files {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut at = 0;
+        while at < lines.len() {
+            if comment(lines[at]).is_some_and(|l| l.trim() == "```tondo") {
+                let start = at + 1;
+                let mut code = String::new();
+                at += 1;
+                while at < lines.len() && comment(lines[at]).is_some_and(|l| l.trim() != "```") {
+                    code.push_str(comment(lines[at]).unwrap_or_default());
+                    code.push('\n');
+                    at += 1;
+                }
+                found.push((name.to_string(), start, code));
+            }
+            at += 1;
+        }
+    }
+    found
+}
+
+/// Every example of the standard library's documentation compiles, and
+/// each module that a program imports has one at its head, which `tondo
+/// api` and an editor's hover show.
+#[test]
+fn standard_examples_compile() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std-examples");
+    let _ = std::fs::remove_dir_all(&dir);
+    let examples = standard_examples();
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = examples
+            .chunks(8)
+            .enumerate()
+            .map(|(chunk, examples)| {
+                let dir = dir.clone();
+                scope.spawn(move || {
+                    let mut failures = Vec::new();
+                    for (index, (file, line, code)) in examples.iter().enumerate() {
+                        let case = dir.join(format!("{chunk}-{index}"));
+                        // An example of tests is a test file of a project.
+                        let (_, stderr, status) = match code.lines().any(|l| l.starts_with("test ")) {
+                            true => {
+                                write(case.join("tondo.toml"), "[package]\nname = \"example\"\n");
+                                write(case.join("src/main.to"), "fn main() {}\n");
+                                write(case.join("src/main_test.to"), code);
+                                tondo(&case, &["test", "--list"])
+                            }
+                            false => {
+                                write(case.join("main.to"), code);
+                                tondo(&case, &["check", "main.to"])
+                            }
+                        };
+                        if status != 0 {
+                            failures.push(format!("std/{file}.to:{line}:\n{code}\n{stderr}"));
+                        }
+                    }
+                    failures
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    let missing: Vec<String> = tondo::api::standard_modules()
+        .into_iter()
+        .filter(|module| module != "prelude" && tondo::api::example(module).is_none())
+        .collect();
+    assert!(missing.is_empty(), "these modules have no example at their head: {missing:?}");
 }

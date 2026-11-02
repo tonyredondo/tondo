@@ -1,5 +1,15 @@
 // std.testing: what a test tells the runner (testing 11.2); only in test
 // files.
+//
+// ```tondo
+// import std.testing
+//
+// test addsNumbers {
+//     testing.log("adding")
+//     assert(1 + 1 == 2)
+//     testing.snapshot("sum", [1, 2, 3])
+// }
+// ```
 
 /// A line in the test's report.
 pub fn log(message: String)
