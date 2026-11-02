@@ -580,7 +580,12 @@ struct State {
     next_breakpoint: u32,
     /// The moment of the history shown instead of the present.
     past: Option<usize>,
+    /// The tasks that stay held while the program goes on.
+    frozen: Vec<u64>,
 }
+
+/// Some task is frozen: probes look.
+static FREEZING: AtomicBool = AtomicBool::new(false);
 
 /// An expression a task's frame watches: the task stops on the line after
 /// the one that changed its value, in that frame or a call it makes, until
@@ -655,6 +660,8 @@ struct Breakpoint {
     task: Option<u64>,
     /// `until`'s: it goes at the next stop, wherever that is.
     once: bool,
+    /// The event it stops at, instead of a place.
+    event: Option<Event>,
 }
 
 /// When a breakpoint stops by its count of hits: at the `n`th, from it on,
@@ -728,6 +735,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     watches: Vec::new(),
     next_breakpoint: 1,
     past: None,
+    frozen: Vec::new(),
 });
 static RESUMED: Condvar = Condvar::new();
 /// The tool that debugs the program, which hears when it stops, and the
@@ -783,7 +791,8 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let marked = table.marked.get(site).is_some_and(|m| m.load(Ordering::Relaxed));
     let watching = WATCHING.load(Ordering::Relaxed);
     let recording = RECORDING.load(Ordering::Relaxed) > 0;
-    if !marked && !watching && !recording && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
+    let waiting = STARTED.load(Ordering::Relaxed) || FREEZING.load(Ordering::Relaxed);
+    if !marked && !watching && !recording && !waiting && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
         return restarting(frame, task, site);
     }
     if recording {
@@ -792,9 +801,23 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         record(&table, &Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
     }
     let mut state = state();
-    let why = if state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
-        // Another task stopped, or the debugger asked all to.
-        if state.stopped.is_some() { None } else { Some("pause".to_string()) }
+    let frozen = state.frozen.contains(&task);
+    // A task that started while a breakpoint stops tasks as they start, at
+    // its first line of the program's code.
+    let function = table.sites.get(site).map(|s| table.functions[s.function].name.as_str());
+    let started = STARTED.load(Ordering::Relaxed) && function.is_some_and(|f| !f.starts_with("spawn ")) && {
+        let mut starting = STARTING.lock().unwrap_or_else(|e| e.into_inner());
+        let found = starting.iter().position(|&t| t == task).map(|at| starting.swap_remove(at)).is_some();
+        STARTED.store(!starting.is_empty(), Ordering::Relaxed);
+        found
+    };
+    let why = if frozen || state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
+        // Another task stopped, or the debugger asked all to, or this task
+        // stays where it is.
+        if frozen || state.stopped.is_some() { None } else { Some("pause".to_string()) }
+    } else if started {
+        let from = spawned(task).first().map_or(String::new(), |at| format!(", spawned at {at}"));
+        Some(format!("task {task} starts{from}"))
     } else {
         // A step goes over code the program's files do not have, the
         // standard library's and the derived, unless it started there.
@@ -939,6 +962,7 @@ fn watched(table: &Table, state: &mut State, task: u64, frame: usize, site: usiz
 /// `why`, or as one of those the stop holds.
 fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: Option<String>) {
     let task = stop.task;
+    let frozen = |state: &State| state.frozen.contains(&task);
     if let Some(why) = why {
         stop.why = why;
         tell(&stopped_event(&stop));
@@ -950,7 +974,8 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     // Out of Tondo code while it waits, so collections and dumps go on.
     let paused = super::tasks::pause_here();
     let resumed = state.resumed;
-    while state.resumed == resumed {
+    // A frozen task stays while the others go on.
+    while state.resumed == resumed || frozen(&state) {
         state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
         // A call the debugger asks this task to make, on its own stack.
         let asked = CALL.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, ..)| *t == task);
@@ -1058,6 +1083,83 @@ pub(crate) fn panicked(message: &str) {
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
         return;
     }
+    stop_here(message.to_string());
+}
+
+/// The events breakpoints stop at (`break on ...`), a bit each, and the
+/// least wait in milliseconds that stops: a task's start, a channel's send
+/// or receive, a long wait.
+static EVENTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static LONGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+const ON_SPAWN: u8 = 1;
+const ON_SEND: u8 = 2;
+const ON_RECEIVE: u8 = 4;
+const ON_WAIT: u8 = 8;
+
+/// An event a breakpoint stops at.
+#[derive(Clone, Copy, PartialEq)]
+enum Event {
+    Spawn,
+    Send,
+    Receive,
+    Wait(u64),
+}
+
+/// The tasks that started while a breakpoint stops tasks as they start,
+/// which stop at their first line.
+static STARTING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+static STARTED: AtomicBool = AtomicBool::new(false);
+
+/// A task starts.
+pub(crate) fn began(task: u64) {
+    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_SPAWN != 0 {
+        STARTING.lock().unwrap_or_else(|e| e.into_inner()).push(task);
+        STARTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// A task sends on a channel, or receives from one: a breakpoint on that
+/// stops it there, before.
+pub(crate) fn channel_used(kind: u8, channel: usize) {
+    let event = if kind == super::tasks::SENDING { ON_SEND } else { ON_RECEIVE };
+    if !ATTACHED.load(Ordering::Relaxed) || EVENTS.load(Ordering::Relaxed) & event == 0 || calling_here() {
+        return;
+    }
+    let (count, capacity) = super::tasks::channel_fill(channel);
+    let filled = capacity.map_or(format!("{count}"), |capacity| format!("{count} of {capacity}"));
+    let verb = if event == ON_SEND { "sends on" } else { "receives from" };
+    stop_here(format!("{verb} a channel that holds {filled}"));
+}
+
+/// A task's wait ended after `waited`: a breakpoint on waits longer stops
+/// it there.
+pub(crate) fn waited(task: u64, waited: std::time::Duration) {
+    let longest = LONGEST.load(Ordering::Relaxed);
+    if !ATTACHED.load(Ordering::Relaxed) || waited.as_millis() < u128::from(longest) || calling_here() {
+        return;
+    }
+    use super::tasks::{JOIN, LOCK, RECEIVING, SENDING};
+    let what = match super::tasks::blocked_of(task) {
+        Some((LOCK, _)) => "for a std.sync lock".to_string(),
+        Some((RECEIVING, _)) => "to receive from a channel".to_string(),
+        Some((SENDING, _)) => "to send on a channel".to_string(),
+        Some((JOIN, object)) => {
+            super::tasks::joined(object).map_or("for a task to end".into(), |t| format!("for task {t} to end"))
+        }
+        _ => "in a wait".to_string(),
+    };
+    stop_here(format!("waited {} ms {what}", waited.as_millis()));
+}
+
+/// Whether the running task makes a call the debugger asked for.
+fn calling_here() -> bool {
+    let calling = CALLING.load(Ordering::Relaxed);
+    calling != 0 && calling == super::tasks::current_id()
+}
+
+/// Stops the running task, from inside the runtime, where the program's
+/// own code called it, `why` as why, and the others at their next probe.
+fn stop_here(why: String) {
     let Some(table) = table() else { return };
     let task = super::tasks::current_id();
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
@@ -1081,7 +1183,7 @@ pub(crate) fn panicked(message: &str) {
     }
     drop(table);
     if let Some(stop) = found {
-        hold(state(), stop, Some(message.to_string()));
+        hold(state(), stop, Some(why));
     }
 }
 
@@ -1441,6 +1543,8 @@ pub(crate) fn detach() {
     ATTACHED.store(false, Ordering::Relaxed);
     let mut state = state();
     state.breakpoints.clear();
+    state.frozen.clear();
+    FREEZING.store(false, Ordering::Relaxed);
     unwatch(&mut state, |_| true);
     drop(state);
     if let Some(table) = table() {
@@ -1468,7 +1572,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
     let stopped = || state().stopped.clone();
     let not_stopped = || "{\"error\":\"the program runs: `pause` stops it, or a breakpoint\"}".to_string();
     Some(match word {
-        "break" => breakpoint(table, rest),
+        "break" => match rest.strip_prefix("on ") {
+            Some(event) => event_breakpoint(table, event),
+            None => breakpoint(table, rest),
+        },
         "delete" => {
             let id: u32 = rest.parse().unwrap_or(0);
             let mut state = state();
@@ -1509,6 +1616,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 log: None,
                 task,
                 once: true,
+                event: None,
             });
             remark(table, &state);
             drop(state);
@@ -1626,6 +1734,26 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(text) => format!("{{\"called\":{}}}", quoted(&text)),
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        // `freeze <task>`: it stays held, at its next line if it runs, while
+        // the others go on; `thaw <task>` lets it go on.
+        "freeze" | "thaw" => {
+            let Ok(task) = rest.parse::<u64>() else {
+                return Some(format!(
+                    "{{\"error\":{}}}",
+                    quoted(&format!("{word} takes a task's number, as `tasks` lists them"))
+                ));
+            };
+            let mut state = state();
+            state.frozen.retain(|&t| t != task);
+            if word == "freeze" {
+                state.frozen.push(task);
+            }
+            FREEZING.store(!state.frozen.is_empty(), Ordering::Relaxed);
+            let frozen: Vec<String> = state.frozen.iter().map(u64::to_string).collect();
+            drop(state);
+            RESUMED.notify_all();
+            format!("{{\"frozen\":[{}]}}", frozen.join(","))
+        }
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {
@@ -1830,6 +1958,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 .map(|held| {
                     let why = match &state.stopped {
                         Some(stop) if stop.task == held.task => stop.why.clone(),
+                        _ if state.frozen.contains(&held.task) => "frozen".to_string(),
                         _ => "held".to_string(),
                     };
                     format!(
@@ -2190,7 +2319,7 @@ fn breakpoint(table: &Table, text: &str) -> String {
     state.next_breakpoint += 1;
     let at = &table.sites[sites[0]];
     let answer = format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}}}}}", quoted(&at.file), at.line);
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false });
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event: None });
     remark(table, &state);
     answer
 }
@@ -2392,11 +2521,52 @@ fn printed(table: &Table, frames: &[Frame], index: usize, text: &str) -> String 
     format!("{{\"name\":{},\"type\":{ty},{}{path}}}", quoted(text), described(&evaluated.text))
 }
 
-/// Marks the sites that have a breakpoint.
+/// Marks the sites that have a breakpoint, and the events some stop at.
 fn remark(table: &Table, state: &State) {
     for (site, marked) in table.marked.iter().enumerate() {
         marked.store(state.breakpoints.iter().any(|b| b.sites.contains(&site)), Ordering::Relaxed);
     }
+    let (mut events, mut longest) = (0, u64::MAX);
+    for event in state.breakpoints.iter().filter_map(|b| b.event) {
+        events |= match event {
+            Event::Spawn => ON_SPAWN,
+            Event::Send => ON_SEND,
+            Event::Receive => ON_RECEIVE,
+            Event::Wait(ms) => {
+                longest = longest.min(ms);
+                ON_WAIT
+            }
+        };
+    }
+    EVENTS.store(events, Ordering::Relaxed);
+    LONGEST.store(longest, Ordering::Relaxed);
+    // Tasks that started stop no more once no breakpoint asks.
+    if events & ON_SPAWN == 0 {
+        STARTING.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        STARTED.store(false, Ordering::Relaxed);
+    }
+}
+
+/// `break on spawn|send|receive|wait <ms>`: a breakpoint at an event.
+fn event_breakpoint(table: &Table, text: &str) -> String {
+    let event = match text.split_whitespace().collect::<Vec<_>>()[..] {
+        ["spawn"] => Event::Spawn,
+        ["send"] => Event::Send,
+        ["receive"] => Event::Receive,
+        ["wait", ms] if ms.parse::<u64>().is_ok() => Event::Wait(ms.parse().unwrap_or(0)),
+        _ => {
+            let message = "break on takes `spawn`, `send`, `receive` or `wait <ms>`, as `break on wait 100`";
+            return format!("{{\"error\":{}}}", quoted(message));
+        }
+    };
+    let mut state = state();
+    let id = state.next_breakpoint;
+    state.next_breakpoint += 1;
+    let (sites, condition, hits, log, task) = (Vec::new(), None, None, None, None);
+    let event = Some(event);
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event });
+    remark(table, &state);
+    format!("{{\"breakpoint\":{{\"id\":{id},\"on\":{}}}}}", quoted(text.trim()))
 }
 
 fn quoted(text: &str) -> String {

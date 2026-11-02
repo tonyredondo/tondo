@@ -21,6 +21,8 @@ const OUTER: &str = "@outer ";
 /// The key of the function breakpoints among the breakpoints the adapter
 /// keeps by file, and the start of a watch's, before its data id.
 const FUNCTIONS: &str = "@functions";
+/// The key of the breakpoints at events, which the exception filters set.
+const EVENTS: &str = "@events";
 const DATA: &str = "@data ";
 
 /// The editor's side: messages framed with `Content-Length`, numbered.
@@ -209,7 +211,12 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                     { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true,
                       "supportsCondition": true, "conditionDescription": "Codes or names of panics, as `P0001 checked-overflow`" },
                     { "filter": "error", "label": "Errors", "description": "Stop where an error starts: a fail, or a ? on what the standard library failed with", "default": false,
-                      "supportsCondition": true, "conditionDescription": "Types of errors, as `ConfigError json.DecodeError`" }
+                      "supportsCondition": true, "conditionDescription": "Types of errors, as `ConfigError json.DecodeError`" },
+                    { "filter": "spawn", "label": "Task Starts", "description": "Stop a task at its first line", "default": false },
+                    { "filter": "send", "label": "Channel Sends", "description": "Stop a task as it sends on a channel", "default": false },
+                    { "filter": "receive", "label": "Channel Receives", "description": "Stop a task as it receives from a channel", "default": false },
+                    { "filter": "wait", "label": "Long Waits", "description": "Stop a task that waited long for a lock, a channel or a task", "default": false,
+                      "supportsCondition": true, "conditionDescription": "Milliseconds, 100 by default" }
                 ],
             })),
             "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),
@@ -851,11 +858,29 @@ fn handle(
             let options = arguments["filterOptions"].as_array().into_iter().flatten();
             let options = options.map(|o| (o["filterId"].as_str(), o["condition"].as_str()));
             let mut caught = Vec::new();
+            // The events, breakpoints of their own, set again each time.
+            for id in breakpoints.remove(EVENTS).unwrap_or_default() {
+                program.ask(&format!("delete {id}"))?;
+            }
+            let mut events = Vec::new();
             for (filter, condition) in plain.chain(options) {
+                let event = match (filter, condition) {
+                    (Some(filter @ ("spawn" | "send" | "receive")), _) => filter.to_string(),
+                    (Some("wait"), condition) => {
+                        format!("wait {}", condition.filter(|c| !c.trim().is_empty()).unwrap_or("100").trim())
+                    }
+                    _ => String::new(),
+                };
+                if !event.is_empty() {
+                    let set = program.ask(&format!("break on {event}"))?;
+                    events.extend(set["breakpoint"]["id"].as_u64());
+                    continue;
+                }
                 let Some(filter @ ("panic" | "error")) = filter else { continue };
                 let names = condition.unwrap_or_default().replace(',', " ");
                 caught.push(format!("{filter} {names}").trim_end().to_string());
             }
+            breakpoints.insert(EVENTS.to_string(), events);
             let caught = if caught.is_empty() { "none".to_string() } else { caught.join(" ") };
             program.ask(&format!("catch {caught}")).map(|_| json!({}))
         }

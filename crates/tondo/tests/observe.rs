@@ -1692,6 +1692,77 @@ fn debugger_follows_tasks_and_searches_history() {
     adapter.stop();
 }
 
+const COUNTED: &str = r#"import std.console
+
+fn count(name: String, done: Sender[String]) {
+    var total = 0
+    for i in 0..3 {
+        total += i
+    }
+    done.send("{name} {total}")
+}
+
+fn main() {
+    let (done, finished) = channel[String](1)
+    spawn count("a", done.copy())
+    spawn count("b", done)
+    console.println(finished.receive().unwrapOr(""))
+    console.println(finished.receive().unwrapOr(""))
+}
+"#;
+
+/// Breakpoints at events: a task starts, a channel is used, a wait is long;
+/// a frozen task stays while the others go on.
+#[test]
+fn debugger_stops_at_events_and_freezes_tasks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("counted.to"), COUNTED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "counted.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break on spawn\ncontinue\ndelete 1\nfreeze 2\nbreak on send\ncontinue\ntasks\ndelete 2\nthaw 2\n\
+        break on wait 0\ncontinue\ndelete 3\nbreak on nothing\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<(&str, &Value, &str)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), &s["task"], s["why"].as_str().unwrap()))
+        .collect();
+    assert_eq!(stops[1], ("counted.to:4 in count", &json!(2), "task 2 starts, spawned at counted.to:13 in main"));
+    // Task 2 frozen at its first line, task 3 sends.
+    assert_eq!(stops[2], ("counted.to:8 in count", &json!(3), "sends on a channel that holds 0 of 1"));
+    let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
+    assert!(tasks.iter().any(|t| t["task"] == 2 && t["why"] == "frozen"), "{tasks:?}");
+    // Thawed, a task waits on the channel: main for a value, or task 2 for
+    // room, whichever ends its wait first.
+    let waited = stops[3].2;
+    let on_channel = waited.ends_with(" ms to receive from a channel") || waited.ends_with(" ms to send on a channel");
+    assert!(waited.starts_with("waited ") && on_channel, "{stops:?}");
+    assert!(lines.iter().any(|l| l["error"].as_str().is_some_and(|e| e.starts_with("break on takes"))));
+    assert!(text.contains("a 3\n") && text.contains("b 3\n"), "{text}");
+    // The editor's event filters.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "counted.to", "cwd": dir }));
+    adapter.ask("setExceptionBreakpoints", json!({ "filters": ["spawn"] }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["threadId"], 2, "{stopped}");
+    adapter.ask("setExceptionBreakpoints", json!({ "filters": [] }));
+    adapter.ask("continue", json!({ "threadId": 2 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

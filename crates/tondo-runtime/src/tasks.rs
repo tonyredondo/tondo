@@ -1763,8 +1763,11 @@ pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize)
         task.blocked.store(object, Ordering::Relaxed);
         task.blocked_kind.store(kind, Ordering::Release);
     }
+    let since = Instant::now();
     let fired = block();
     if let Some(task) = unsafe { task.as_ref() } {
+        // A debugger that stops long waits stops this one, as it ends.
+        super::debugger::waited(task.id, since.elapsed());
         task.blocked_kind.store(0, Ordering::Release);
     }
     fired
@@ -2330,9 +2333,15 @@ fn new_task(
     let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
     // `spawn detached` said so just before (11.11).
     let detached = unsafe { current().as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
+    let id = IDS.fetch_add(1, Ordering::Relaxed);
+    // A debugger that stops tasks as they start stops this one, but the
+    // main task.
+    if !join.is_null() {
+        super::debugger::began(id);
+    }
     let task = Task {
         sp,
-        id: IDS.fetch_add(1, Ordering::Relaxed),
+        id,
         slot: 0,
         stack,
         body,
@@ -3821,6 +3830,7 @@ unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Opti
 pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value: *mut u8, location: *const Str) {
     unsafe {
         let c = &mut *(*sender).channel;
+        super::debugger::channel_used(SENDING, c as *const ChannelObject as usize);
         if stops() {
             drop_unsent(c, value);
             return;
@@ -3963,6 +3973,7 @@ unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, out: *mut u8) -> u8 {
     unsafe {
+        super::debugger::channel_used(RECEIVING, channel as usize);
         let c = &mut *channel;
         if stops() {
             return 0;

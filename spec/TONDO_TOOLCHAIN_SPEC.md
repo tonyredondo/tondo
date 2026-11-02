@@ -808,6 +808,13 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `break fn <nombre> ...`, donde empieza cada función con ese nombre, entero
   (`Stack.push`) o el suyo (`push`), y una genérica en cada uno de sus tipos.
   Con `task <id>` tras el lugar, el breakpoint es solo de esa tarea.
+  `break on spawn` para cada tarea que empieza en su primera línea, con
+  dónde se lanzó; `break on send` y `break on receive`, una tarea que va a
+  enviar o recibir por un canal, con lo que tiene; y `break on wait <ms>`,
+  una que esperó más de esos milisegundos un lock, un canal u otra tarea,
+  al acabar la espera. `delete <id>` los quita como a los demás.
+- `freeze <task>` deja una tarea retenida, o la retiene en su siguiente
+  línea si corre, mientras las demás siguen; `thaw <task>` la deja seguir.
   La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
   cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
@@ -959,7 +966,8 @@ llama al código del programa, como `call`, `stepInTargets` con las llamadas de 
 campos de un valor tras su punto y los métodos de las expresiones),
 `setVariable` y `setExpression`, de una parte también, y las excepciones de un
 pánico y de un error (los filtros `panic` y `error`, cuya condición nombra
-códigos o tipos, con `exceptionInfo`) son
+códigos o tipos, con `exceptionInfo`), y los eventos como filtros (`spawn`,
+`send`, `receive` y `wait`, cuya condición son los milisegundos) son
 las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
 que los pasos entren en el código de la librería estándar; con `"record"`

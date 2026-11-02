@@ -4518,3 +4518,17 @@ under the debugger or not, names the cycle of tasks and locks behind it
 with where each lock was taken, which is the fix's first line. A channel
 has no holder to name, as any task with a sender may send; its fill is
 what it says.
+
+## 2026-11-02 — Breakpoints at events, and frozen tasks
+
+Concurrency bugs live between lines: a task that starts, a value sent, a
+wait that lasts. `break on spawn` stops each new task at its first line
+of the program's code, after the wrapper `spawn` makes; `break on send`
+and `break on receive` stop a task inside the runtime as it uses a
+channel, at the program's frame that called it, as a panic's stop does;
+`break on wait <ms>` stops a task whose wait for a lock, a channel or a
+task lasted longer, when it ends. They are breakpoints with ids, and the
+editor sets them as exception filters, as DAP has no events of its own.
+`freeze <task>` keeps a task held while the others go on, to let one
+side of a race run first; a frozen task that runs stops at its next
+line.

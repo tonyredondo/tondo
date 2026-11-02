@@ -35,6 +35,9 @@ break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with 
                                                 stop where that line starts, or write a message there (b)
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
 break <place> task <id> ...                     the same for one task only
+break on spawn|send|receive|wait <ms>           stop a task as it starts, sends or receives on a channel, or once
+                                                it waited longer than that for a lock, a channel or a task
+freeze <task>, thaw <task>                      the task stays held while the others go on, or goes on again
 watch <expression> [if <condition>] [hits <n>]  stop on the line after the one that changes its value, in this
                                                 frame or a call it makes, until the frame returns; a std.sync
                                                 cell's value, as state.value, in whichever task changes it
@@ -273,7 +276,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
-            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" => {
+            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze" | "thaw" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -460,6 +463,12 @@ impl Session {
             }
         } else if let Some(logged) = value["logged"].as_str() {
             println!("{logged}");
+        } else if let Some(frozen) = value["frozen"].as_array() {
+            let tasks: Vec<String> = frozen.iter().map(|t| t.to_string()).collect();
+            match tasks.is_empty() {
+                true => println!("no task is frozen"),
+                false => println!("frozen: task {}", tasks.join(", task ")),
+            }
         } else if let Some(lines) = value.get("recording") {
             match lines.as_u64() {
                 Some(0) => println!("the history is off"),
