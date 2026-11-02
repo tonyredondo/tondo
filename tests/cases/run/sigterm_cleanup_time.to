@@ -1,0 +1,21 @@
+// A cleanup that waits inside a `within` has until its deadline, also past
+// the seconds a program that ends gives its tasks: on SIGTERM, a flush of
+// five and a half seconds within eight ends before the program does.
+
+import std.console
+import std.env
+import std.process
+import std.time
+
+fn main() {
+    defer {
+        _ = within time.seconds(8) { time.sleep(time.milliseconds(5500)) }
+        console.println("flushed after five seconds")
+    }
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    time.sleep(time.seconds(30))
+    console.println("still running after SIGTERM")
+}
+
+// expect-stdout: flushed after five seconds
+// expect-exit: 143

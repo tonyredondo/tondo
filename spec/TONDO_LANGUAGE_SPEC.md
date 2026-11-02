@@ -3843,7 +3843,9 @@ informa el pánico, ejecuta los `defer` pendientes de esa tarea y cancela todas
 las demás (11.15),
 que ejecutan los suyos al llegar a su siguiente espera. El proceso termina
 cuando la tarea principal y las demás han acabado, o a los cinco segundos si
-alguna sigue calculando sin esperar.
+alguna sigue calculando sin esperar; un `defer` que espera dentro de un
+`within` tiene hasta el plazo de este (11.15), también más allá de esos cinco
+segundos. Lo mismo vale al terminar por `SIGINT` o `SIGTERM` (20.10).
 
 ### 11.12 Grupos de tareas
 

@@ -2095,6 +2095,18 @@ pub(crate) fn leaked(before: &std::collections::HashSet<usize>) -> Vec<String> {
 /// How long a panic waits for the other tasks to run their cleanups.
 const PANIC_GRACE: Duration = Duration::from_secs(5);
 
+/// The furthest deadline of a `within` that a cleanup of a cancelled task
+/// entered, which has until then (11.15), in nanoseconds after `EPOCH`: a
+/// program that ends waits for it beyond `PANIC_GRACE`.
+static GRACED: AtomicU64 = AtomicU64::new(0);
+static EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+
+/// When a program that ends may stop waiting for its cleanups: `PANIC_GRACE`
+/// after `from`, or the deadline of a `within` one of them entered.
+fn cleaned_by(from: Instant) -> Instant {
+    (from + PANIC_GRACE).max(*EPOCH + Duration::from_nanos(GRACED.load(Ordering::SeqCst)))
+}
+
 /// The exit status of a panic or a test's skip that ends the program.
 static ENDING: AtomicUsize = AtomicUsize::new(usize::MAX);
 
@@ -2145,8 +2157,11 @@ pub(crate) fn abandon(status: i32) {
     let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
     static WATCHDOG: std::sync::Once = std::sync::Once::new();
     WATCHDOG.call_once(|| {
-        spawn_thread(Some(64 * 1024), || {
-            std::thread::sleep(PANIC_GRACE);
+        let from = Instant::now();
+        spawn_thread(Some(64 * 1024), move || {
+            while Instant::now() < cleaned_by(from) {
+                std::thread::sleep(cleaned_by(from).saturating_duration_since(Instant::now()));
+            }
             flush_stdout();
             super::process::cancel_live();
             std::process::exit(ENDING.load(Ordering::SeqCst) as i32)
@@ -2178,8 +2193,8 @@ pub(crate) fn ending() -> Option<i32> {
     if status == usize::MAX {
         return None;
     }
-    let deadline = Instant::now() + PANIC_GRACE;
-    while live_tasks() > 0 && Instant::now() < deadline {
+    let from = Instant::now();
+    while live_tasks() > 0 && Instant::now() < cleaned_by(from) {
         std::thread::sleep(Duration::from_millis(1));
     }
     Some(status as i32)
@@ -2616,6 +2631,8 @@ pub(crate) fn within_starts(task: &mut Task, level: usize) {
     let cancelled = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire);
     if cancelled && task.deferring > 0 && task.grace.is_none() {
         task.grace = Some(level);
+        let until = task.withins[level].0.saturating_duration_since(*EPOCH);
+        GRACED.fetch_max(until.as_nanos().min(u64::MAX as u128) as u64, Ordering::SeqCst);
     }
 }
 
