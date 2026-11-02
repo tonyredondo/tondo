@@ -5439,6 +5439,16 @@ impl<'a> Checker<'a> {
             if self.types.shown.contains_key(&ty) {
                 return true;
             }
+            // An enum whose variants hold nothing shows the variant's name
+            // (19.6): the compiler's own, and a generic one, which have no
+            // `impl` written for them.
+            if let TyKind::Adt(id) = self.types.kind(ty)
+                && let AdtKind::Enum(variants) = &self.types.adt(*id).kind
+                && !variants.is_empty()
+                && variants.iter().all(|v| matches!(v.payload, Payload::Unit))
+            {
+                return true;
+            }
         }
         // A union is written as the member it holds, and read as the first
         // member that reads the value: the compiler writes both (standard

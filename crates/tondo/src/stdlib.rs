@@ -180,6 +180,7 @@ pub fn add_except(
     replaced: &[&str],
 ) {
     let package = packages.len();
+    let first = modules.len();
     let mut pending: Vec<&str> = vec!["prelude"];
     let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
         for import in &module.imports {
@@ -231,4 +232,6 @@ pub fn add_except(
             modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files: vec![(parsed, false)] });
         }
     }
+    // Their enums of plain variants show their names, as the program's do.
+    crate::derive::derive_display(&mut modules[first..], sources, diags);
 }

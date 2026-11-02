@@ -3397,7 +3397,13 @@ pub fn TypeDescription.of(kind: TypeKind): TypeDescription
 ~~~
 
 `TypeInfo` es un handle inmutable y barato de copiar, que calcula lo que
-describe al pedirlo, así que un tipo recursivo no se expande sin fin. Su
+describe al pedirlo, así que un tipo recursivo no se expande sin fin. Un
+`Ref[T]` se refleja como el valor que guarda, leído a través de él: sus
+campos, elementos, entradas, variante, métodos y cómo se muestra son los del
+valor; su descripción es `TypeKind.Reference(ReferenceKind.Ref)` con `T` como
+argumento; cambiar una parte falla, porque su valor no cambia, y leer un
+valor como `Ref[T]` crea una referencia nueva. Un `Ref` no puede contenerse a
+sí mismo, así que leer a través de él termina. Su
 `Display` es su nombre y los enums de descripción muestran el nombre de su
 variante. Expone:
 
@@ -3525,6 +3531,7 @@ pub fn AnnotationView.to[T: serialization.Decode](self): T ! Error
 pub fn TypeRef.identity(self): String
 
 pub fn code(template: String, values: Map[String, String]): String
+pub fn literal(value: String): String
 pub fn SourceBuilder.renderType(mut self, ty: TypeRef): String ! Error
 pub fn SourceBuilder.add(mut self, source: String): Unit ! Error
 pub fn SourceBuilder.write(mut self, output: String, source: String): Unit ! Error
@@ -3540,6 +3547,10 @@ pub fn SourceBuilder.error(mut self, message: String)
   variantes y tipos envueltos; `module()` dice dónde está cada una.
 - `Input.text()` lee los bytes como UTF-8, y falla con `Error.Provider` si no
   lo son.
+- `literal(value)` es el texto como literal de string de Tondo, que el código
+  generado lee de vuelta como el mismo texto: `"` y `\` escapados, `{` y `}`
+  duplicadas, y saltos de línea, tabuladores y otros caracteres de control
+  como `\n`, `\t` y `\u{...}`.
 - `Declaration.typeName()` es el tipo con sus parámetros, como lo nombra la
   cabecera de un `impl`: `Page[T]`.
 - Una función pública es una declaración `Function`: `parameters()` da sus

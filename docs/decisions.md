@@ -4323,3 +4323,24 @@ editor completes the names of modules the file does not import, the
 standard library's and the project's, writing the module and adding the
 import, and finds symbols by the letters of their words.
 
+## 2026-11-02 — Enums show their variant; references reflect; literals for generators
+
+An enum whose variants hold nothing now implements `Display` without one
+written: it shows its variant's name, as `High` for `Level.High`. Twenty
+enums of the library could not be interpolated, as `hash.Algorithm` or
+`fs.FileKind`, nor could a program's, and writing a `match` only to show
+a name was the commonest friction of writing examples. The compiler
+writes the implementation into the enum's module, for the library's
+modules too, and its own enums, as `fs.FileKind`, show their names in
+the generated code; an `impl Display` the module writes wins, and the
+library's errors still show their words, as `not found`.
+
+`Ref[T]` implements `Reflect`, reading through to its value, so a type
+with a reference can be used by templates, MCP tools and GraphQL, and
+`ReferenceKind.Ref` is what its description says, which nothing produced
+before. A reference cannot hold itself, so reading through ends; setting
+a part fails, as its value never changes.
+
+`meta.literal` writes a text as the Tondo string literal that reads back
+as it, for generators, which wrote their own escaping and missed `{`.
+

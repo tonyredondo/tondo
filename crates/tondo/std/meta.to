@@ -676,6 +676,39 @@ pub type DeriveResponse = {
     priv problems: Array[String]
 }
 
+/// The text as a Tondo string literal, which the code a generator writes
+/// reads back as the same text: `"` and `\` escaped, `{` and `}` doubled,
+/// and lines, tabs and other control characters as `\n`, `\t` and
+/// `\u{...}`.
+///
+/// ```tondo
+/// import std.console
+/// import std.meta
+///
+/// // `pub const Greeting: String = "Say \"hi\" to {{name}}"`
+/// console.println("pub const Greeting: String = {meta.literal("Say \"hi\" to {{name}}")}")
+/// ```
+pub fn literal(value: String): String {
+    var parts: Array[String] = []
+    for character in value.chars() {
+        parts.push(
+            match character {
+                '"' => "\\\""
+                '\\' => "\\\\"
+                '{' => "{{{{"
+                '}' => "}}}}"
+                '\n' => "\\n"
+                '\t' => "\\t"
+                '\r' => "\\r"
+                other if other.code() < 32 or other.code() == 127 =>
+                    "\\u{{{other.code().toString(radix: 16)}}}"
+                other => "{other}"
+            },
+        )
+    }
+    "\"{parts.join("")}\""
+}
+
 /// The template with each `$name` replaced by its value and `$$` by `$`;
 /// with a raw template, the template is literally the code it writes. A
 /// `$name` without a value panics.

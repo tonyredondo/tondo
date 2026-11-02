@@ -1,0 +1,13 @@
+// A text as the string literal that reads back as it: what a generator
+// writes into the code it generates.
+
+import std.console
+import std.meta
+
+fn main() {
+    console.println(meta.literal("Say \"hi\" to {{name}}\\path\n\tnext\u{1}"))
+    console.println(meta.literal(""))
+}
+
+// expect-stdout: "Say \"hi\" to {{name}}\\path\n\tnext\u{1}"
+// expect-stdout: ""

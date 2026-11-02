@@ -1,0 +1,47 @@
+// A `Ref` is reflected as the value it holds: reading, calling, showing
+// and templates go through it, its description is a reference, and its
+// value cannot be set (reflection).
+
+import std.console
+import std.reflect
+import std.template
+
+pub type Author = {
+    name: String
+}
+
+pub fn Author.greet(self, greeting: String): String {
+    "{greeting}, {self.name}"
+}
+
+pub type Post = {
+    title: String
+    author: Ref[Author]
+}
+
+fn main(): !(reflect.ReflectError | template.TemplateError) {
+    let post = Post { title: "Tea", author: Ref(Author { name: "Ada" }) }
+    let value = reflect.valueOf(post)
+    console.println("{value}")
+    console.println(
+        "{value.get("author.name")?} {value.get("author")?.call("greet", reflect.valueOf("Hi"))?}",
+    )
+    let info = reflect.typeInfo[Post]().fields()[1].typeInfo()
+    console.println(
+        "{info.qualifiedName()} {info.kind()} {info.genericArguments()[0].qualifiedName()}",
+    )
+    var changed = value
+    match changed.set("author.name", reflect.valueOf("Bo")) {
+        ok(_) => console.println("set")
+        err(error) => console.println("{error.message}")
+    }
+    var site = template.Set.html()
+    site.add("post.html", r"""<h1>{{ title }}</h1> by {{ author.name }}""")?
+    console.println(site.render("post.html", post)?)
+}
+
+// expect-stdout: Post { title: "Tea", author: Author { name: "Ada" } }
+// expect-stdout: Ada Hi, Ada
+// expect-stdout: Ref[Author] Reference(Ref) Author
+// expect-stdout: the value of a `Ref[Author]` never changes: make another with `Ref(value)`
+// expect-stdout: <h1>Tea</h1> by Ada

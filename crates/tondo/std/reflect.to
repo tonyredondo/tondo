@@ -886,6 +886,55 @@ impl[T: Reflect] Reflect for T? {
     }
 }
 
+/// A reference is reflected as the value it holds, read through it: its
+/// fields, elements, entries, variant and methods are the value's, and so
+/// is how it shows. Its value never changes, so setting a part fails, and
+/// reading one into a `Ref` makes a new reference. A reference cannot hold
+/// itself, as its value is made before it, so reading through it ends.
+impl[T: Reflect] Reflect for Ref[T] {
+    fn reflectDescription(): TypeDescription {
+        TypeDescription.of(TypeKind.Reference(ReferenceKind.Ref)) with { generics: [typeInfo[T]()] }
+    }
+
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        self.value.reflectGet(name)?
+    }
+
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
+        let message =
+            "the value of a `{nameOf(self)}` never changes: make another with `Ref(value)`"
+        fail ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
+    }
+
+    fn reflectFields(self): Array[Field]? {
+        self.value.reflectFields()
+    }
+
+    fn reflectElements(self): Array[Value]? {
+        self.value.reflectElements()
+    }
+
+    fn reflectEntries(self): Array[(Value, Value)]? {
+        self.value.reflectEntries()
+    }
+
+    fn reflectVariant(self): String? {
+        self.value.reflectVariant()
+    }
+
+    fn reflectCall(self, method: String, args: Array[Value]): Value ! ReflectError {
+        self.value.reflectCall(method, args)?
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        self.value.reflectShow(nested)
+    }
+
+    fn reflectFrom(value: Value): Ref[T] ! ReflectError {
+        Ref(value.to[T]()?)
+    }
+}
+
 fn noValue(typeName: String, name: String): ReflectError {
     let message = "this `{typeName}` is `none`, so it has no `{name}`"
     ReflectError { kind: ReflectErrorKind.NoValue, path: name, message }

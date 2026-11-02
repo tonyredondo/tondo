@@ -3320,7 +3320,10 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             && let AdtKind::Enum(variants) = &types.adt(id).kind
         {
             // A standard library error: its variant name in words, or the
-            // system's text of the error a variant holds the number of.
+            // system's text of the error a variant holds the number of;
+            // another enum of plain variants, its variant's name.
+            let in_words = types.shown.get(&ty) == Some(&Shown::Words);
+            let label = |name: &str| if in_words { words(name) } else { name.to_string() };
             let tag = self.tag(ty, value);
             let host = variants.iter().position(
                 |v| matches!(&v.payload, crate::types::Payload::Tuple(items) if items.as_slice() == [Ty::INT]),
@@ -3335,9 +3338,9 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 self.call_rt(Rt::SbOsError, &[builder, number]);
                 self.fb.ins().jump(done, &[]);
                 self.fb.switch_to_block(other);
-                let mut text = self.string_ptr(&words(&variants[0].name));
+                let mut text = self.string_ptr(&label(&variants[0].name));
                 for (index, variant) in variants.iter().enumerate().skip(1) {
-                    let this = self.string_ptr(&words(&variant.name));
+                    let this = self.string_ptr(&label(&variant.name));
                     let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
                     text = self.fb.ins().select(is_this, this, text);
                 }
@@ -3346,9 +3349,9 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 self.fb.switch_to_block(done);
                 return;
             }
-            let mut text = self.string_ptr(&words(&variants[0].name));
+            let mut text = self.string_ptr(&label(&variants[0].name));
             for (index, variant) in variants.iter().enumerate().skip(1) {
-                let this = self.string_ptr(&words(&variant.name));
+                let this = self.string_ptr(&label(&variant.name));
                 let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
                 text = self.fb.ins().select(is_this, this, text);
             }

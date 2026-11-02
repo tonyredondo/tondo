@@ -110,6 +110,11 @@ fn main() {
 }
 ```
 
+An enum whose variants hold nothing shows its variant's name, with no
+`impl Display` to write: `"{level}"` with `Level.High` is `High`, and so
+for the library's, as `"{fs.FileKind.File}"`. Its own `impl Display`, in
+its module, wins.
+
 ## Optional values, results and unions
 
 - `T?` is `Option[T]`: `some(value)` or `none`.

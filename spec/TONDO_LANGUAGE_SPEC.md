@@ -7623,7 +7623,7 @@ reglas ordinarias de coherencia. “Intrínseco” significa aquí que la interp
 lo consulta por contrato del lenguaje, no que el compilador invente
 implementaciones para tipos de usuario.
 
-La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas, `T?` y `T ! E` implementan `Display` cuando sus componentes también lo implementan. Una unión lo implementa cuando todos sus miembros lo implementan, y se muestra como el miembro que contiene: `"{value}"` con un `Int | String` que tiene `12` da `12`. Records, enums y newtypes de usuario deben implementarlo explícitamente si quieren interpolarse como un valor completo.
+La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas, `T?` y `T ! E` implementan `Display` cuando sus componentes también lo implementan. Una unión lo implementa cuando todos sus miembros lo implementan, y se muestra como el miembro que contiene: `"{value}"` con un `Int | String` que tiene `12` da `12`. Un enum cuyas variantes no llevan nada implementa `Display` sin escribirlo, salvo que su módulo lo implemente: se muestra como el nombre de su variante, `"{level}"` con `Level.High` da `High`; el compilador escribe esa implementación en el módulo del enum, también para los de la librería estándar. Records, newtypes y enums con variantes que llevan datos deben implementarlo explícitamente si quieren interpolarse como un valor completo.
 
 La interpolación invoca `Display.display` mediante su receptor `self`: observa la expresión durante la llamada y no mueve un valor afín. Si la expresión es un temporal, ese temporal permanece vivo hasta terminar su conversión.
 

@@ -10,6 +10,7 @@ use crate::modules::ModuleSource;
 use crate::source::SourceMap;
 use crate::stdlib::source;
 use crate::{ast, parser};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// One kind of automatic implementation.
@@ -57,7 +58,7 @@ impl Kind {
                 | "UInt64" | "UInt128" | "Float" | "Float32" | "Float64" | "Bool" | "Char" | "Byte" | "String" | "Unit",
                 [],
             ) => true,
-            (Kind::Reflect, "Array" | "Option" | "Deque" | "Set", [_]) => true,
+            (Kind::Reflect, "Array" | "Option" | "Deque" | "Set" | "Ref", [_]) => true,
             (Kind::Reflect, "Map", [_, _]) => true,
             _ => return None,
         })
@@ -147,12 +148,71 @@ fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
 
 /// Writes the automatic implementations of every kind the program asks for.
 pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
+    derive_display(modules, sources, diags);
     for kind in [Kind::Serialization, Kind::Reflect] {
         if modules.iter().any(|m| m.files.iter().any(|(f, _)| kind.brought(f))) {
             derive_kind(kind, modules, sources, diags);
         }
     }
     crate::protobuf::derive(modules, sources, diags);
+}
+
+/// The last name of a type written as a path: `Display` for `Display`,
+/// `Shape` for `shapes.Shape`.
+fn last_name(ty: &ast::TypeExpr) -> Option<&str> {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, .. } => segments.last().map(|s| s.name.as_str()),
+        _ => None,
+    }
+}
+
+/// `Display` for each enum whose variants hold nothing, as the name of the
+/// variant a value is, unless its module implements `Display` for it
+/// (language 19.6).
+pub(crate) fn derive_display(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
+    let mut texts: Vec<Vec<String>> = modules.iter().map(|m| vec![String::new(); m.files.len()]).collect();
+    for (module_index, module) in modules.iter().enumerate() {
+        // The types its module already shows.
+        let shown: HashSet<&str> = module
+            .files
+            .iter()
+            .flat_map(|(file, _)| &file.items)
+            .filter_map(|item| match item {
+                ast::Item::Impl(i) => {
+                    (last_name(&i.trait_ref) == Some("Display")).then(|| last_name(&i.target)).flatten()
+                }
+                _ => None,
+            })
+            .collect();
+        for (file_index, (file, _)) in module.files.iter().enumerate() {
+            for item in &file.items {
+                let ast::Item::Enum(e) = item else { continue };
+                let plain = e.variants.iter().all(|v| matches!(v.payload, ast::VariantPayload::Unit));
+                if !plain || e.variants.is_empty() || !e.generics.is_empty() || shown.contains(e.name.name.as_str()) {
+                    continue;
+                }
+                let name = &e.name.name;
+                let arms: String =
+                    e.variants.iter().map(|v| format!("            {name}.{0} => \"{0}\"\n", v.name.name)).collect();
+                texts[module_index][file_index].push_str(&format!(
+                    "impl Display for {name} {{\n    fn display(self): String {{\n        match self {{\n{arms}        }}\n    }}\n}}\n"
+                ));
+            }
+        }
+    }
+    for (module_index, module) in modules.iter_mut().enumerate() {
+        for (file_index, (file, _)) in module.files.iter_mut().enumerate() {
+            let text = std::mem::take(&mut texts[module_index][file_index]);
+            if text.is_empty() {
+                continue;
+            }
+            let name = format!("{}.display.derived.to", module.path.join("."));
+            let id = sources.add(Path::new(&name), text);
+            sources.set_identity(id, format!("<derived>/{name}"), module.path.join("."));
+            let generated = parser::parse_file(sources.file(id), diags);
+            file.items.extend(generated.items);
+        }
+    }
 }
 
 fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {

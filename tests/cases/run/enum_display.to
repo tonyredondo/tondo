@@ -1,0 +1,38 @@
+// An enum whose variants hold nothing shows its variant's name: the
+// program's, the library's in Tondo and the compiler's own, unless its
+// module implements `Display`; the library's errors keep their words.
+
+import std.console
+import std.fs
+import std.hash
+import std.http
+
+enum Level {
+    Low
+    High
+}
+
+enum Switch {
+    On
+    Off
+}
+
+impl Display for Switch {
+    fn display(self): String {
+        match self {
+            Switch.On => "switched on"
+            Switch.Off => "switched off"
+        }
+    }
+}
+
+fn main() {
+    let levels = [Level.Low, Level.High]
+    console.println("{levels} {Switch.On}")
+    console.println("{hash.Algorithm.Sha256} {http.SameSite.Strict} {ByteOrder.Little}")
+    console.println("{fs.FileKind.Directory} {fs.OpenMode.Append} {fs.FsError.NotFound}")
+}
+
+// expect-stdout: [Low, High] switched on
+// expect-stdout: Sha256 Strict Little
+// expect-stdout: Directory Append not found
