@@ -69,7 +69,7 @@ fn main(): !sql.SqlError {
     }
     match db.queryOne[String]("SELECT name FROM users WHERE id = {9}") {
         ok(_) => console.println("found")
-        err(error) => console.println("{error.kind == sql.ErrorKind.NoRows}")
+        err(error) => console.println("{error.kind == sql.ErrorKind.NoRows} {error.kind}")
     }
 
     let total = db.transaction((tx): Int ! sql.SqlError {
@@ -103,7 +103,7 @@ fn main(): !sql.SqlError {
 // expect-stdout:   sqlite execute INSERT INTO users (name, email) VALUES (?, ?) [cy, ada@example.com]
 // expect-stdout: true some(users.email)
 // expect-stdout:   sqlite query SELECT name FROM users WHERE id = ? [9]
-// expect-stdout: true
+// expect-stdout: true NoRows
 // expect-stdout:   sqlite begin BEGIN []
 // expect-stdout:   sqlite execute INSERT INTO users (name) VALUES (?) [cy]
 // expect-stdout:   sqlite begin SAVEPOINT tondo_1 []

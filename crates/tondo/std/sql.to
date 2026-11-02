@@ -80,6 +80,25 @@ pub enum ErrorKind {
     Other
 }
 
+/// The kind's name, as `Unique`.
+impl Display for ErrorKind {
+    fn display(self): String {
+        match self {
+            ErrorKind.Connection => "Connection"
+            ErrorKind.NoRows => "NoRows"
+            ErrorKind.Unique => "Unique"
+            ErrorKind.ForeignKey => "ForeignKey"
+            ErrorKind.NotNull => "NotNull"
+            ErrorKind.Check => "Check"
+            ErrorKind.Conflict => "Conflict"
+            ErrorKind.Syntax => "Syntax"
+            ErrorKind.Timeout => "Timeout"
+            ErrorKind.Decode => "Decode"
+            ErrorKind.Other => "Other"
+        }
+    }
+}
+
 /// A failure of a database: its kind, its message, the database's code
 /// (PostgreSQL's SQLSTATE, MySQL's number, SQLite's extended code) and the
 /// constraint or column it names.
@@ -92,10 +111,7 @@ pub enum ErrorKind {
 /// _ = db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, price INTEGER CHECK (price > 0))")?
 /// match db.execute("INSERT INTO items (price) VALUES ({-5})") {
 ///     ok(_) => console.println("added")
-///     err(error) => {
-///         let broken = error.kind == sql.ErrorKind.Check
-///         console.println("check broken: {broken}; {error.message} (code {error.code}, constraint {error.constraint})")
-///     }
+///     err(error) => console.println("{error.kind}: {error.message} (code {error.code}, constraint {error.constraint})")
 /// }
 /// ```
 pub type SqlError = {
