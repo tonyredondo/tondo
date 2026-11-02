@@ -5129,7 +5129,8 @@ pub alias TlsVersion = net.TlsVersion
   archivo, desde el byte que diga `Content-Range: bytes inicio-fin/total`, así
   que una subida se reanuda tras un `HEAD` que dice cuánto llegó; `POST` con un
   formulario multipart guarda cada parte con archivo bajo esa carpeta con su
-  nombre. Ambos responden con el JSON de lo escrito (`path` y `size`), `201`
+  nombre. Ambos responden con el JSON de lo escrito, una lista de `Saved`
+  (`path` y `size`) que un cliente lee con `json[Array[http.Saved]]()`, `201`
   para un archivo nuevo.
 - `Reply.events` envía cada `Event` del canal como Server-Sent Events hasta que
   el canal se cierra o el cliente se va. `App.websocket` acepta WebSockets en

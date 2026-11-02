@@ -75,7 +75,7 @@ impl Kind {
             (Kind::Reflect, "url") => name == "Url",
             (Kind::Reflect, "template") => matches!(name, "Html" | "TemplateError"),
             (Kind::Serialization, "template") => name == "Html",
-            (Kind::Serialization, "http") => name == "UploadedFile",
+            (Kind::Serialization, "http") => matches!(name, "UploadedFile" | "Saved"),
             (Kind::Reflect | Kind::Serialization, "protobuf") => {
                 matches!(name, "Any" | "Empty" | "FieldMask" | "UnknownFields")
             }

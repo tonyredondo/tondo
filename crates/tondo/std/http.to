@@ -2562,9 +2562,8 @@ pub fn App.uploads(mut self, prefix: String, directory: String) {
             if size < 0 {
                 fail Problem.conflict(httpNative.failure(request.native).removePrefix("body\t"))
             }
-            Reply.bytes(
-                savedJson([Saved { path: relative, size }]),
-                contentType: "application/json",
+            Reply.json(
+                [Saved { path: relative, size }],
                 status: if offset == 0 { 201 } else { 200 },
             )
         },
@@ -2588,20 +2587,48 @@ pub fn App.uploads(mut self, prefix: String, directory: String) {
                 let size = upload.saveTo(inside(directory, relative)?)?
                 saved.push(Saved { path: relative, size })
             }
-            Reply.bytes(savedJson(saved), contentType: "application/json", status: 201)
+            Reply.json(saved, status: 201)
         },
     )
 }
 
-/// A file an upload wrote: its path under the directory and its size.
+/// A file an upload wrote: its path under the directory and its size, as
+/// the JSON of the reply gives it to a client.
 pub type Saved = {
     path: String
     size: Int
 }
 
-fn savedJson(saved: Array[Saved]): Array[Byte] {
-    let items = saved.map((file) { "{{\"path\":{__json.encode(file.path)},\"size\":{file.size}}}" })
-    "[{items.join(",")}]".bytes()
+impl __serialization.Encode for Saved {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.beginMap(2)
+        out.key("path")
+        out.text(self.path)
+        out.key("size")
+        out.int(self.size)
+        out.endMap()
+    }
+}
+
+impl __serialization.Decode for Saved {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Saved ! __serialization.Error {
+        input.beginMap(first, "Saved")?
+        var saved = Saved { path: "", size: 0 }
+        for {
+            match input.nextKey()? {
+                some("path") => saved.path =
+                    __serialization.Decode.decode[String](input, input.value()?)?
+                some("size") => saved.size =
+                    __serialization.Decode.decode[Int](input, input.value()?)?
+                some(key) => input.unknownField(key, input.value()?)?
+                none => break
+            }
+        }
+        saved
+    }
 }
 
 /// Answers WebSockets at a path: the handler talks to each until it
