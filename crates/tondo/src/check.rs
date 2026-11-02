@@ -11564,7 +11564,8 @@ impl<'a> Checker<'a> {
                 self.offer_meant(variant.span);
                 Some(None)
             }
-            None if ty == Ty::ERROR => Some(None),
+            // A prelude name declared again is an error already (E1005).
+            None if ty == Ty::ERROR || self.misnamed.contains(&type_name.name) => Some(None),
             None => {
                 let message = format!("`{}` is not an enum", type_name.name);
                 self.diags.error("E1102", type_name.span, message);

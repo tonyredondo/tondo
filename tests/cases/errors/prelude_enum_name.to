@@ -1,0 +1,13 @@
+// An enum cannot take a name of the prelude either, and that is one error:
+// the `Display` an enum of plain variants gets is not written for it, and
+// its uses add none.
+
+enum Failure {
+    Empty
+}
+
+fn main() {
+    _ = Failure.Empty
+}
+
+// expect-error: E1005 `Failure` is a type of the prelude, which every module sees, and cannot be redeclared: give this type another name

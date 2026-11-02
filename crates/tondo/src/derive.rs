@@ -188,11 +188,13 @@ pub(crate) fn derive_display(modules: &mut [ModuleSource], sources: &mut SourceM
             for item in &file.items {
                 let ast::Item::Enum(e) = item else { continue };
                 let plain = e.variants.iter().all(|v| matches!(v.payload, ast::VariantPayload::Unit));
-                // A variant written twice is an error of its own (E1505).
+                // A variant written twice is an error of its own (E1505), as
+                // a prelude name is (E1005).
                 let named: HashSet<&str> = e.variants.iter().map(|v| v.name.name.as_str()).collect();
                 let repeated = named.len() != e.variants.len();
                 if !plain
                     || repeated
+                    || crate::check::PRELUDE_TYPES.contains(&e.name.name.as_str())
                     || e.variants.is_empty()
                     || !e.generics.is_empty()
                     || shown.contains(e.name.name.as_str())
