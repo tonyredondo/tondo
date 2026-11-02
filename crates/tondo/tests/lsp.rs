@@ -440,7 +440,9 @@ fn completion_and_highlighting() {
         let position = json!({ "line": line, "character": 4 + typed.len() });
         let result =
             editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
-        result["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap().to_string()).collect()
+        // The members, without the templates around a value (`.match`...).
+        let members = result["items"].as_array().unwrap().iter().filter(|i| i["kind"] != 15);
+        members.map(|i| i["label"].as_str().unwrap().to_string()).collect()
     };
     assert_eq!(complete(&mut editor, "ada."), ["name", "age", "describe"]);
     assert_eq!(complete(&mut editor, "models."), ["User", "Role", "make"]);
@@ -1197,6 +1199,189 @@ fn explains_counts_and_refactors() {
         repairs(&mut editor, 4, 16),
         [("add the fields `n: Int` and `label: String`".to_string(), " n: 0, label: \"\" ".to_string())]
     );
+    editor.stop();
+}
+
+const SHOWN: &str = "import std.console
+import std.image
+
+pub enum Problem {
+    Empty
+}
+
+fn parse(text: String, base: Int): Int ! Problem {
+    if text.isEmpty() {
+        fail Problem.Empty
+    }
+    let checked = text.length()
+    if checked > 10 {
+        return base
+    }
+    checked + base
+}
+
+fn total(values: Array[Int]): Int {
+    var sum = 0
+    for value in values {
+        sum += value
+    }
+    let doubled = values
+        .map((n) { n * 2 })
+        .filter((n) { n > 2 })
+    let count = doubled.length()
+    sum + count
+}
+
+fn main() {
+    let orange = image.Color.hex(\"#ff8800\")
+    let blue = image.Color.rgb(0, 0, 255)
+    let size: Int = total([1, 2])
+    console.println(\"{orange.red} {blue.blue} {size} {parse(\"a\", 1)}\")
+}
+";
+
+#[test]
+fn writes_tests_completes_and_shows_more() {
+    let dir = project("lsp-more", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", SHOWN)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let line_of = |text: &str, part: &str| text.lines().position(|l| l.contains(part)).unwrap() as u64;
+    let column = |text: &str, part: &str, word: &str| {
+        let line = text.lines().find(|l| l.contains(part)).unwrap();
+        (line.find(part).unwrap() + part.find(word).unwrap()) as u64
+    };
+    let at = |text: &str, part: &str, word: &str| json!({ "line": line_of(text, part), "character": column(text, part, word) });
+    let slice = |text: &str, range: &Value| -> String {
+        let line = text.lines().nth(range["start"]["line"].as_u64().unwrap() as usize).unwrap();
+        let (from, to) = (
+            range["start"]["character"].as_u64().unwrap() as usize,
+            range["end"]["character"].as_u64().unwrap() as usize,
+        );
+        line[from..to].to_string()
+    };
+
+    // A binding that can change is `mutable`, the fourth modifier.
+    let tokens = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
+    let data: Vec<u64> = tokens["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    let (mut line, mut start, mut changing) = (0u64, 0u64, Vec::new());
+    for token in data.chunks(5) {
+        line += token[0];
+        start = if token[0] == 0 { start + token[1] } else { token[1] };
+        if token[4] & 8 != 0 {
+            let text = SHOWN.lines().nth(line as usize).unwrap();
+            changing.push(text[start as usize..(start + token[2]) as usize].to_string());
+        }
+    }
+    assert_eq!(changing, ["sum", "sum", "sum"], "{tokens}");
+
+    // On `fn`, where the function leaves.
+    let found = editor.request(
+        "textDocument/documentHighlight",
+        json!({ "textDocument": { "uri": uri }, "position": at(SHOWN, "fn parse", "fn") }),
+    );
+    let exits: Vec<String> = found.as_array().unwrap().iter().map(|h| slice(SHOWN, &h["range"])).collect();
+    assert_eq!(exits, ["fail", "return"], "{found}");
+
+    // The type of each line of a chain.
+    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 99, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
+    let chained: Vec<(u64, &str)> = hints
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|h| h["paddingLeft"] == true)
+        .map(|h| (h["position"]["line"].as_u64().unwrap(), h["label"].as_str().unwrap()))
+        .collect();
+    assert_eq!(chained, [(line_of(SHOWN, "let doubled"), ": Array[Int]"), (line_of(SHOWN, ".map("), ": Array[Int]")]);
+
+    // A test of a function, in the module's tests.
+    let here = at(SHOWN, "fn parse", "parse");
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": here, "end": here }, "context": { "diagnostics": [] } });
+    let found = editor.request("textDocument/codeAction", params);
+    let test = found.as_array().unwrap().iter().find(|a| a["title"] == "Write a test of `parse`").expect("a test");
+    let changes = &test["edit"]["documentChanges"];
+    let tests = format!("file://{}", dir.join("src/main_test.to").display());
+    assert_eq!(changes[0]["kind"], "create");
+    assert_eq!(changes[0]["uri"], tests.as_str());
+    assert_eq!(
+        changes[1]["edits"][0]["newText"],
+        "import std.testing\n\ntest parseWorks {\n    let result = parse(\"\", 0)?\n    _ = result\n    testing.failNow(\"write what `parse` should do, with `assert`\")\n}\n"
+    );
+
+    // A binding read once in the next statement, written there instead.
+    let here = at(SHOWN, "let count", "count");
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": here, "end": here }, "context": { "diagnostics": [], "triggerKind": 1 } });
+    let found = editor.request("textDocument/codeAction", params);
+    let inline = found.as_array().unwrap().iter().find(|a| a["kind"] == "refactor.inline").expect("an inline");
+    assert_eq!(inline["title"], "Inline `count`");
+    let edits = &inline["edit"]["changes"][&uri];
+    assert_eq!(edits[0]["newText"], "");
+    assert_eq!(edits[1]["newText"], "doubled.length()");
+    // Not a `var`.
+    let here = at(SHOWN, "var sum", "sum");
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": here, "end": here }, "context": { "diagnostics": [], "triggerKind": 1 } });
+    let found = editor.request("textDocument/codeAction", params);
+    assert!(found.as_array().unwrap().iter().all(|a| a["kind"] != "refactor.inline"), "{found}");
+
+    // The colours of `Color.hex` and `Color.rgb`, and how a picked one is written.
+    let colors = editor.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    let colors = colors.as_array().unwrap();
+    assert_eq!(colors.iter().map(|c| slice(SHOWN, &c["range"])).collect::<Vec<_>>(), ["\"#ff8800\"", "0, 0, 255"]);
+    assert_eq!(colors[0]["color"]["red"], 1.0);
+    let picked = json!({ "red": 0.5, "green": 0.0, "blue": 1.0, "alpha": 1.0 });
+    let written = |editor: &mut Editor, range: &Value| {
+        let params = json!({ "textDocument": { "uri": uri }, "color": picked, "range": range });
+        editor.request("textDocument/colorPresentation", params)[0]["label"].as_str().unwrap().to_string()
+    };
+    assert_eq!(written(&mut editor, &colors[0]["range"]), "\"#8000ff\"");
+    assert_eq!(written(&mut editor, &colors[1]["range"]), "128, 0, 255");
+
+    // After a value's dot, what turns it into a construction around it.
+    let text = SHOWN.replace("    let count = doubled.length()\n", "    let count = doubled.length()\n    count.ma\n");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let mut position = at(&text, "count.ma", "ma");
+    position["character"] = json!(position["character"].as_u64().unwrap() + 2);
+    let found =
+        editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+    let postfix: Vec<(&str, &str)> = found["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == 15)
+        .map(|i| (i["label"].as_str().unwrap(), i["textEdit"]["newText"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        postfix,
+        [
+            ("match", "match count {\n\t$0\n}"),
+            ("let", "let ${1:count} = count"),
+            ("some", "some(count)"),
+            ("ok", "ok(count)")
+        ]
+    );
+
+    // What the type written before `=` takes comes first, but not the binding itself.
+    let text = SHOWN
+        .replace("    let size: Int = total([1, 2])\n", "    let size: Int = total([1, 2])\n    let other: Int = \n");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 3 }, "contentChanges": [{ "text": text }] }),
+    );
+    let mut position = at(&text, "let other: Int = ", "= ");
+    position["character"] = json!(position["character"].as_u64().unwrap() + 2);
+    let found =
+        editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+    let first: Vec<&str> = found["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["preselect"] == true)
+        .map(|i| i["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(first, ["size", "total"], "{found}");
     editor.stop();
 }
 

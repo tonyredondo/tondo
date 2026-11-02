@@ -103,6 +103,7 @@ fn check_with<'a>(
         script_bindings: Vec::new(),
         scripting: false,
         naming: String::new(),
+        leaving: None,
         comparing: None,
         panic_datum: None,
         closure_name: None,
@@ -757,6 +758,9 @@ struct Checker<'a> {
     /// The function whose body is checked, as stack traces name it, and
     /// the name the next closure takes instead of `closure in` it.
     naming: String,
+    /// For an editor: the name of the function whose body is checked, which
+    /// its `return`, `fail` and `?` leave.
+    leaving: Option<Span>,
     /// While the operands of a comparison meet, whose mismatch is one:
     /// whether the value coerced is the left one.
     comparing: Option<bool>,
@@ -6246,6 +6250,7 @@ impl<'a> Checker<'a> {
     }
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
+        self.leaving = Some(f.name.span);
         let signature = self.signatures[id.0 as usize].clone();
         let scope = self.fn_scopes[id.0 as usize].clone();
         // A trace names a trait's method by the type: `Cell.display`, and
@@ -6370,6 +6375,7 @@ impl<'a> Checker<'a> {
     /// inferred from the `?` and `fail` in its statements.
     fn script_main(&mut self, statements: &[ast::Stmt]) -> hir::Function {
         self.naming = "main".into();
+        self.leaving = None;
         // The statements are the root module's, as its functions are.
         self.module = 0;
         let mut cx = self.new_cx(Ty::UNIT);
@@ -8856,6 +8862,7 @@ impl<'a> Checker<'a> {
                 None
             }
             ast::StmtKind::Return(value) => {
+                self.note_exit(cx, Span::new(stmt.span.start, stmt.span.start + 6));
                 let result = cx.result;
                 let value = match value {
                     // A closure without a declared result takes it from its first `return`.
@@ -8911,6 +8918,7 @@ impl<'a> Checker<'a> {
                 cx.diverged = true;
                 let error = self.error_channel(cx, value.ty, stmt.span, "E1302")?;
                 self.note_propagation(cx, value.ty, Span::new(stmt.span.start, stmt.span.start + 4), "fail");
+                self.note_exit(cx, Span::new(stmt.span.start, stmt.span.start + 4));
                 let value = self.coerce(value, error);
                 Some(hir::Stmt::Fail(value))
             }
@@ -12204,6 +12212,7 @@ impl<'a> Checker<'a> {
         };
         let value = self.expr(cx, inner, hint);
         self.note_propagation(cx, value.ty, Span::new(span.end - 1, span.end), "?");
+        self.note_exit(cx, Span::new(span.end - 1, span.end));
         match self.types.kind(value.ty).clone() {
             TyKind::Option(payload) => {
                 if !matches!(self.types.kind(cx.result), TyKind::Option(_)) {
@@ -12269,6 +12278,16 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1301", span, message);
                 Self::error_expr(span)
             }
+        }
+    }
+
+    /// For an editor: a place where the function being checked may leave,
+    /// but not a closure in it, which leaves only itself.
+    fn note_exit(&mut self, cx: &FnCx, at: Span) {
+        if cx.parent.is_none()
+            && let (Some(function), Some(index)) = (self.leaving, self.index.as_mut())
+        {
+            index.exits.push((function, at));
         }
     }
 

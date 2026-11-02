@@ -482,14 +482,17 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   declaración y su documentación; de lo que implementa el runtime, como
   `text.length()` o `console.println`, lo que muestra `tondo api`; de un
   módulo de la stdlib o su import, lo que es y su ejemplo.
+- Sobre `fn`, `return`, `fail` o un `?`, cada lugar por el que sale la
+  función: sus `return`, `fail` y `?`, no los de sus closures.
 - Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
   del proyecto y de la stdlib cuyo nombre contiene lo que se busca, los de la
   stdlib con su módulo, en su copia de la caché.
 - La firma de la llamada que se escribe, con su documentación y el argumento
   en que está el cursor.
 - El tipo de cada variable y cada parámetro de un closure declarados sin
-  escribirlo, y el parámetro al que va cada argumento que no lo nombra ni es
-  ya su nombre, como pistas en línea.
+  escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
+  ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
+  varias (la que sigue empieza por `.`), como pistas en línea.
 - Mientras el depurador está parado (`textDocument/inlineValue`), las
   variables y parámetros que usan las líneas de la función donde paró hasta
   esa línea, para que el editor muestre su valor junto a ellas.
@@ -519,7 +522,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   (`match`, `for`, `fn`...). Donde empieza un argumento, los nombres de los
   parámetros de la llamada que no se dieron todavía, `nombre: `; en las
   llaves de un record escrito por el nombre de su tipo, `User { ... }`, sus
-  campos que faltan.
+  campos que faltan. Tras `valor.`, además, lo que lo convierte en una
+  construcción alrededor: `match`, `let`, `some` y `ok`, `if` y `not` si es
+  un `Bool`, y `for` si es una colección o un rango. Tras `let x: T = ` o
+  `var x: T = `, o en un argumento de un parámetro de tipo `T`, lo que da un
+  `T` va primero y preseleccionado, salvo la variable que se declara.
   Tras `@`, las anotaciones visibles, y dentro de sus paréntesis los campos
   que faltan, como los parámetros de una llamada. En la ruta de `std.embed`,
   lo que hay en el directorio escrito hasta el cursor.
@@ -532,7 +539,12 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Resaltado semántico de cada nombre según lo que declara (módulo, tipo, enum,
   trait, parámetro, variable, campo, variante, función, método), de las
   palabras clave, los textos, los números y los comentarios; del archivo
-  entero o de las líneas de un rango.
+  entero o de las líneas de un rango. Una variable `var` o un parámetro
+  `mut` o `var` llevan el modificador `mutable`, que la extensión de VS Code
+  subraya.
+- Los colores escritos como `Color.hex("#rrggbb")` (o `#rrggbbaa`) y
+  `Color.rgb(r, g, b)` con literales, que el editor muestra y deja elegir;
+  el elegido se escribe como estaba: el texto hexadecimal o los números.
 - Hover de una palabra clave: qué hace, un uso y el tema de la guía. El de
   un `?` o un `fail` dice qué da y qué propaga ahí: el valor, y el error o
   `none` que devuelve de la función o el closure, con el error de la
@@ -571,9 +583,17 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   variables de fuera que leen como parámetros y las que se leen después como
   su resultado, que propaga con `?` el error de la función que las contenía.
   No se ofrece si las líneas salen del bloque (`return`, `break`,
-  `continue`, `defer`) o leen una variable `var` o `self` de fuera. Cada
-  refactor se ofrece solo si el programa, con él aplicado, no tiene un error
-  que no tuviera.
+  `continue`, `defer`) o leen una variable `var` o `self` de fuera. Sobre
+  un `let` leído una sola vez, en la sentencia siguiente y no tras lo que
+  pueda saltarlo o retrasarlo, escribir su valor allí y quitar el `let`.
+  Cada refactor se ofrece solo si el programa, con él aplicado, no tiene un
+  error que no tuviera.
+- Sobre el nombre de una función de un proyecto, un test de ella en los
+  tests del módulo (`archivo_test.to`, que crea si no existe, con
+  `import std.testing`): la llama con el valor del que parte cada parámetro
+  sin valor por defecto y termina en `testing.failNow`, que dice qué falta
+  escribir. No se ofrece para una función genérica ni para un parámetro de
+  un tipo sin tal valor.
 - Code lenses *Run*, *Debug*, *Debug Live* y *Profile* sobre el `main` de un
   programa, o sobre la primera sentencia de un script, en el archivo que lo
   contiene, con las órdenes `tondo.run`, `tondo.debug`, `tondo.debugLive` y

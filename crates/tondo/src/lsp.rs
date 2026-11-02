@@ -279,6 +279,8 @@ impl Server {
                 Some(Ok(Value::Array(lenses)))
             }
             "textDocument/foldingRange" => Some(Ok(self.folding_ranges(params).unwrap_or(json!([])))),
+            "textDocument/documentColor" => Some(Ok(self.colors(params).unwrap_or(json!([])))),
+            "textDocument/colorPresentation" => Some(Ok(self.color_presentation(params).unwrap_or(json!([])))),
             "textDocument/selectionRange" => Some(Ok(self.selection_ranges(params).unwrap_or(json!([])))),
             "textDocument/rangeFormatting" => Some(Ok(self.range_formatting(params).unwrap_or(json!([])))),
             "textDocument/implementation" => Some(Ok(self.implementation(params).unwrap_or(Value::Null))),
@@ -356,6 +358,7 @@ impl Server {
                 "inlayHintProvider": true,
                 "codeLensProvider": { "resolveProvider": false },
                 "foldingRangeProvider": true,
+                "colorProvider": true,
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
                 "callHierarchyProvider": true,
@@ -368,7 +371,7 @@ impl Server {
                     },
                 },
                 "semanticTokensProvider": {
-                    "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
+                    "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary", "mutable"] },
                     "full": true,
                     "range": true,
                 },
@@ -864,6 +867,9 @@ impl Server {
 
     fn highlights(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
+        if let Some(exits) = self.exits(params) {
+            return Some(exits);
+        }
         let (analyzed, file, _) = self.at(params)?;
         let (_, def, _) = self.def_at(params)?;
         let index = analyzed.analysis.index.as_ref()?;
@@ -876,6 +882,36 @@ impl Server {
             .map(|span| json!({ "range": self.range(source, span), "kind": if span == own { 3 } else { 2 } }))
             .collect();
         Some(Value::Array(highlights))
+    }
+
+    /// On `fn`, `return`, `fail` or a `?`: every place the function may
+    /// leave.
+    fn exits(&self, params: &Value) -> Option<Value> {
+        let (analyzed, file, offset) = self.at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let source = analyzed.analysis.sources.file(file);
+        let at = (offset - source.base) as usize;
+        let text = &source.text;
+        let word_start = text[..at].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let word_end = text[at..].find(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(text.len(), |i| at + i);
+        let word = &text[word_start..word_end];
+        let question = text[at..].starts_with('?') || text[..at].ends_with('?');
+        if !matches!(word, "fn" | "return" | "fail") && !question {
+            return None;
+        }
+        let function = index
+            .defs
+            .iter()
+            .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+            .filter(|d| d.decl_span.start <= offset && offset <= d.decl_span.end)
+            .min_by_key(|d| d.decl_span.end - d.decl_span.start)?;
+        let exits: Vec<Value> = index
+            .exits
+            .iter()
+            .filter(|(name, _)| *name == function.name_span)
+            .map(|&(_, span)| json!({ "range": self.range(source, span), "kind": 1 }))
+            .collect();
+        (!exits.is_empty()).then_some(Value::Array(exits))
     }
 
     /// The program's declarations whose names contain the query, in every
@@ -1075,6 +1111,25 @@ impl Server {
             }
             let position = position(&source.text, (span.end - source.base) as usize, self.units);
             hints.push(json!({ "position": position, "label": format!(": {ty}"), "kind": 1 }));
+        }
+        // The type of each line of a chain of calls written over several.
+        let text = &source.text;
+        let mut line_start = 0;
+        for line in text.split_inclusive('\n') {
+            let line_end = line_start + line.trim_end().len();
+            let next = &text[line_start + line.len()..];
+            let continued =
+                next.lines().find(|l| !l.trim().is_empty()).is_some_and(|l| l.trim_start().starts_with('.'));
+            let at = source.base + line_end as u32;
+            if continued && !line.trim().is_empty() && at >= from && at <= to {
+                let step = index.types.iter().filter(|(span, _)| span.end == at).min_by_key(|(span, _)| span.start);
+                if let Some(&(_, shape)) = step {
+                    let position = position(text, line_end, self.units);
+                    let label = format!(": {}", index.shapes[shape].name);
+                    hints.push(json!({ "position": position, "label": label, "kind": 1, "paddingLeft": true }));
+                }
+            }
+            line_start += line.len();
         }
         // The parameter each argument goes to, where the call does not name
         // it and the argument is not its name already.
@@ -1326,6 +1381,27 @@ impl Server {
             if first.is_empty() && before.ends_with(['(', ',']) {
                 first = self.named_arguments(params, written).unwrap_or_default();
             }
+            let declaring = expected_type(&text[line..start]);
+            let expected = declaring.clone().map(|(_, ty)| ty).or_else(|| self.argument_type(params));
+            if let Some(expected) = expected {
+                for item in items.iter_mut() {
+                    // Not the binding whose value this is.
+                    if declaring.as_ref().is_some_and(|(name, _)| item["label"] == name.as_str()) {
+                        continue;
+                    }
+                    let detail = item["detail"].as_str().unwrap_or_default();
+                    let gives = if detail.starts_with("fn ") || detail.starts_with("pub fn ") {
+                        returns(detail)
+                    } else {
+                        detail.trim()
+                    };
+                    if gives == expected {
+                        let label = item["label"].as_str().unwrap_or_default().to_string();
+                        item["sortText"] = json!(format!("!{label}"));
+                        item["preselect"] = json!(true);
+                    }
+                }
+            }
             first.extend(items);
             items = first;
             return Some(json!({ "isIncomplete": false, "items": items }));
@@ -1373,8 +1449,68 @@ impl Server {
         let analyzed = self.analyzed(&root, open)?;
         let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
         let base = analyzed.analysis.sources.file(file).base;
-        let items = self.members(&analyzed, base + end as u32, &here, call).unwrap_or_default();
+        let mut items = self.members(&analyzed, base + end as u32, &here, call).unwrap_or_default();
+        items.extend(self.postfix(&analyzed, &text, base, end, cursor));
         Some(json!({ "isIncomplete": false, "items": items }))
+    }
+
+    /// After a value's dot, what turns it into a statement or an
+    /// expression around it: `.match`, `.if`, `.for`, `.let`...
+    fn postfix(&self, analyzed: &Analyzed, text: &str, base: u32, end: usize, cursor: usize) -> Vec<Value> {
+        let Some(index) = analyzed.analysis.index.as_ref() else { return Vec::new() };
+        let at = base + end as u32;
+        let receiver =
+            index.types.iter().filter(|(span, _)| span.end == at).min_by_key(|(span, _)| span.end - span.start);
+        let Some(&(span, shape)) = receiver else { return Vec::new() };
+        let ty = index.shapes[shape].name.as_str();
+        let start = (span.start - base) as usize;
+        let value = &text[start..end];
+        let escaped = value.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}");
+        let boolean = ty == "Bool";
+        let iterable = ["Array[", "Map[", "Set[", "Deque[", "Range["].iter().any(|p| ty.starts_with(p));
+        let name = value_name(value);
+        let templates = [
+            ("if", format!("if {escaped} {{\n\t$0\n}}"), boolean),
+            ("not", format!("not {escaped}"), boolean),
+            ("match", format!("match {escaped} {{\n\t$0\n}}"), true),
+            ("for", format!("for ${{1:item}} in {escaped} {{\n\t$0\n}}"), iterable),
+            ("let", format!("let ${{1:{name}}} = {escaped}"), true),
+            ("some", format!("some({escaped})"), true),
+            ("ok", format!("ok({escaped})"), true),
+        ];
+        let range = json!({ "start": position(text, start, self.units), "end": position(text, cursor, self.units) });
+        templates
+            .into_iter()
+            .filter(|(_, _, applies)| *applies)
+            .map(|(label, snippet, _)| {
+                json!({
+                    "label": label,
+                    "kind": 15,
+                    "detail": format!("{label} {value}"),
+                    "filterText": format!("{value}.{label}"),
+                    "sortText": format!("~{label}"),
+                    "insertTextFormat": 2,
+                    "textEdit": { "range": range, "newText": snippet },
+                })
+            })
+            .collect()
+    }
+
+    /// The type of the parameter whose argument the cursor is in.
+    fn argument_type(&mut self, params: &Value) -> Option<String> {
+        let help = self.signature_help(params)?;
+        let signature = &help["signatures"][0];
+        let active = help["activeParameter"].as_u64().or(signature["activeParameter"].as_u64())? as usize;
+        let label = match &signature["parameters"][active]["label"] {
+            Value::String(label) => label.clone(),
+            Value::Array(range) => {
+                let (from, to) = (range[0].as_u64()? as usize, range[1].as_u64()? as usize);
+                signature["label"].as_str()?.chars().skip(from).take(to - from).collect()
+            }
+            _ => return None,
+        };
+        let ty = label.split_once(':')?.1;
+        Some(ty.split(" = ").next()?.trim().to_string())
     }
 
     /// In the braces of a record written by its type's name, `User { ... }`,
@@ -1819,6 +1955,9 @@ impl Server {
                 if library {
                     modifiers |= 4;
                 }
+                if matches!(found.kind, DefKind::Local | DefKind::Parameter) && changeable(analyzed, found) {
+                    modifiers |= 8;
+                }
                 tokens.push((span.start - base, span.end - base, kind, modifiers));
             }
         }
@@ -1957,7 +2096,138 @@ impl Server {
         if refactor {
             actions.extend(self.refactors(params));
         }
+        if wants("refactor") && params["context"]["triggerKind"].as_u64() != Some(2) {
+            actions.extend(self.inline(params));
+        }
+        if wants("refactor") {
+            actions.extend(self.test_action(params));
+        }
         Some(Value::Array(actions))
+    }
+
+    /// On a function's name: a test of it, in the module's tests, which
+    /// calls it and says what is left to write.
+    fn test_action(&mut self, params: &Value) -> Option<Value> {
+        let at = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let (analyzed, def, span) = self.def_at(&at)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let declared = &index.defs[def];
+        if declared.kind != DefKind::Function || span != declared.name_span || declared.name == "main" {
+            return None;
+        }
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let (_, project) = root_of(&path);
+        let stem = path.file_stem()?.to_str()?;
+        if !project || stem.ends_with("_test") {
+            return None;
+        }
+        let file = analyzed.analysis.sources.file_of(declared.decl_span.start);
+        let header = header(file.slice(declared.decl_span));
+        let (arguments, fails, gives) = call_of(&header)?;
+        let tests = path.with_file_name(format!("{stem}_test.to"));
+        let existing = match self.open.get(&tests) {
+            Some(document) => Some(document.text.clone()),
+            None => std::fs::read_to_string(&tests).ok(),
+        };
+        let name = &declared.name;
+        let test = unused_name(&format!("{name}Works"), existing.as_deref().unwrap_or_default());
+        let question = if fails { "?" } else { "" };
+        let call = format!("{name}({}){question}", arguments.join(", "));
+        let body = match gives {
+            true => format!("    let result = {call}\n    _ = result\n"),
+            false => format!("    {call}\n"),
+        };
+        let written = format!(
+            "test {test} {{\n{body}    testing.failNow(\"write what `{name}` should do, with `assert`\")\n}}\n"
+        );
+        let uri = self.uri(&tests);
+        let zero = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } });
+        let mut changes = Vec::new();
+        let edits = match &existing {
+            None => {
+                changes.push(json!({ "kind": "create", "uri": uri, "options": { "ignoreIfExists": true } }));
+                vec![json!({ "range": zero, "newText": format!("import std.testing\n\n{written}") })]
+            }
+            Some(text) => {
+                let end = position(text, text.len(), self.units);
+                let mut edits = Vec::new();
+                if !text.lines().any(|l| l.trim() == "import std.testing") {
+                    edits.push(json!({ "range": zero, "newText": "import std.testing\n" }));
+                }
+                let gap = if text.ends_with("\n\n") || text.is_empty() {
+                    ""
+                } else if text.ends_with('\n') {
+                    "\n"
+                } else {
+                    "\n\n"
+                };
+                edits.push(json!({ "range": { "start": end, "end": end }, "newText": format!("{gap}{written}") }));
+                edits
+            }
+        };
+        changes.push(json!({ "textDocument": { "uri": uri, "version": Value::Null }, "edits": edits }));
+        Some(
+            json!({ "title": format!("Write a test of `{name}`"), "kind": "refactor", "edit": { "documentChanges": changes } }),
+        )
+    }
+
+    /// On a `let` binding read once, in the statement after it: its value
+    /// written there instead, when the program checks the same.
+    fn inline(&mut self, params: &Value) -> Option<Value> {
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let at = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let (analyzed, def, span) = self.def_at(&at)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let declared = &index.defs[def];
+        if declared.kind != DefKind::Local || span != declared.name_span {
+            return None;
+        }
+        let source = analyzed.analysis.sources.file_of(declared.name_span.start);
+        let (text, base) = (source.text.clone(), source.base);
+        let name_at = (declared.name_span.start - base) as usize;
+        let line = text[..name_at].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = text[name_at..].find('\n').map_or(text.len(), |i| name_at + i);
+        let statement = &text[line..line_end];
+        let indent: String = statement.chars().take_while(|c| *c == ' ').collect();
+        let written = statement.trim_start().strip_prefix("let ")?;
+        let value = written.split_once(" = ")?.1.trim();
+        if !written.starts_with(&declared.name) || value.is_empty() {
+            return None;
+        }
+        let uses: Vec<Span> = index.references(def).into_iter().filter(|s| *s != declared.name_span).collect();
+        let [used] = uses[..] else { return None };
+        // Read in the next statement, before anything there that may skip
+        // it or run it later.
+        let after = line_end + 1;
+        let next = text[after.min(text.len())..].lines().position(|l| !l.trim().is_empty())?;
+        let next_start = after + text[after..].lines().take(next).map(|l| l.len() + 1).sum::<usize>();
+        let next_end = text[next_start..].find('\n').map_or(text.len(), |i| next_start + i);
+        let use_at = (used.start - base) as usize;
+        if use_at < next_start || use_at > next_end || !text[next_start..next_end].starts_with(&indent) {
+            return None;
+        }
+        let head = &text[next_start..use_at];
+        let opened = head.matches('{').count() != head.matches('}').count();
+        if opened || [" and ", " or ", "=>"].iter().any(|w| head.contains(w)) {
+            return None;
+        }
+        let simple = value.chars().all(|c| c.is_alphanumeric() || "._\"()[]".contains(c)) || value.starts_with('"');
+        let replacement = if simple { value.to_string() } else { format!("({value})") };
+        let edits = vec![
+            (Span::new(base + line as u32, base + (line_end + 1).min(text.len()) as u32), String::new()),
+            (used, replacement),
+        ];
+        let before = errors_of(analyzed);
+        let mut edited = text.clone();
+        for (span, new) in edits.iter().rev() {
+            edited.replace_range((span.start - base) as usize..(span.end - base) as usize, new);
+        }
+        if !self.checks_as_before(&path, &before, edited) {
+            return None;
+        }
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let title = format!("Inline `{}`", index_name(analyzed, def));
+        Some(json!({ "title": title, "kind": "refactor.inline", "edit": { "changes": self.edits(analyzed, &edits) } }))
     }
 
     /// Refactors of a selection: an expression into a variable, whole lines
@@ -2479,6 +2749,57 @@ impl Server {
     }
 
     /// Blocks, brackets that span lines, runs of imports and of comments.
+    /// The colours a file writes as `Color.hex("#rrggbb")` or
+    /// `Color.rgb(r, g, b)`, which an editor shows and picks.
+    fn colors(&self, params: &Value) -> Option<Value> {
+        let (_, text) = self.document(params)?;
+        let mut found = Vec::new();
+        for (at, _) in text.match_indices("Color.hex(\"") {
+            let start = at + "Color.hex(".len();
+            let Some(close) = text[start + 1..].find('"').map(|i| start + 1 + i) else { continue };
+            let digits = text[start + 1..close].trim_start_matches('#');
+            let channel = |i: usize| u8::from_str_radix(digits.get(i..i + 2)?, 16).ok();
+            let alpha = if digits.len() == 8 { channel(6) } else { Some(255) };
+            if let (6 | 8, Some(r), Some(g), Some(b), Some(a)) =
+                (digits.len(), channel(0), channel(2), channel(4), alpha)
+            {
+                found.push((start, close + 1, [r, g, b, a]));
+            }
+        }
+        for (at, _) in text.match_indices("Color.rgb(") {
+            let start = at + "Color.rgb(".len();
+            let Some(close) = text[start..].find(')').map(|i| start + i) else { continue };
+            let values: Vec<Option<u8>> = text[start..close].split(',').map(|v| v.trim().parse().ok()).collect();
+            if let [Some(r), Some(g), Some(b)] = values[..] {
+                found.push((start, close, [r, g, b, 255]));
+            }
+        }
+        let colors: Vec<Value> = found
+            .into_iter()
+            .map(|(start, end, [r, g, b, a])| {
+                let range = json!({ "start": position(&text, start, self.units), "end": position(&text, end, self.units) });
+                let color = json!({ "red": r as f64 / 255.0, "green": g as f64 / 255.0, "blue": b as f64 / 255.0, "alpha": a as f64 / 255.0 });
+                json!({ "range": range, "color": color })
+            })
+            .collect();
+        Some(Value::Array(colors))
+    }
+
+    /// How a colour picked is written: the text of `Color.hex`, or the
+    /// numbers of `Color.rgb`, as the range had it.
+    fn color_presentation(&self, params: &Value) -> Option<Value> {
+        let (_, text) = self.document(params)?;
+        let start = offset(&text, &params["range"]["start"], self.units)?;
+        let channel = |name: &str| (params["color"][name].as_f64().unwrap_or(0.0) * 255.0).round() as u8;
+        let (r, g, b, a) = (channel("red"), channel("green"), channel("blue"), channel("alpha"));
+        let label = match (text[start..].starts_with('"'), a) {
+            (true, 255) => format!("\"#{r:02x}{g:02x}{b:02x}\""),
+            (true, _) => format!("\"#{r:02x}{g:02x}{b:02x}{a:02x}\""),
+            (false, _) => format!("{r}, {g}, {b}"),
+        };
+        Some(json!([{ "label": label }]))
+    }
+
     fn folding_ranges(&self, params: &Value) -> Option<Value> {
         let (path, text) = self.document(params)?;
         let mut sources = crate::source::SourceMap::default();
@@ -3276,4 +3597,115 @@ fn extract_function(index: &Index, source: &SourceFile, selected: Span) -> Optio
     let call = format!("{indent}{binding}{name}({}){question}", arguments.join(", "));
     let after = Span::new(scope.end, scope.end);
     Some(vec![(block, call), (after, function)])
+}
+
+/// Whether a binding can change: `var`, or a `mut` or `var` parameter.
+fn changeable(analyzed: &Analyzed, def: &crate::index::Def) -> bool {
+    let file = analyzed.analysis.sources.file_of(def.name_span.start);
+    let (start, end) = ((def.name_span.start - file.base) as usize, (def.name_span.end - file.base) as usize);
+    let (Some(before), Some(after)) = (file.text.get(..start), file.text.get(end..)) else { return false };
+    let before = before.trim_end();
+    let after = after.trim_start();
+    before.ends_with(" var")
+        || before.ends_with("(var")
+        || before == "var"
+        || before.ends_with("\tvar")
+        || before.ends_with("\nvar")
+        || after.starts_with(": var ")
+        || after.starts_with(": mut ")
+}
+
+/// The name of a declaration of an analysis.
+fn index_name(analyzed: &Analyzed, def: usize) -> String {
+    analyzed.analysis.index.as_ref().map(|i| i.defs[def].name.clone()).unwrap_or_default()
+}
+
+/// The arguments that call a function, each the value a new one starts
+/// from, whether the call fails, and whether it gives a value; `none` for a
+/// generic function or a parameter with no such value.
+fn call_of(header: &str) -> Option<(Vec<String>, bool, bool)> {
+    let open = header.find('(')?;
+    if header[..open].contains('[') {
+        return None;
+    }
+    let mut depth = 0;
+    let mut close = None;
+    for (i, c) in header[open..].char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let mut arguments = Vec::new();
+    let mut part = String::new();
+    let mut depth = 0;
+    let mut parameters = Vec::new();
+    for c in header[open + 1..close].chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parameters.push(std::mem::take(&mut part));
+                continue;
+            }
+            _ => {}
+        }
+        part.push(c);
+    }
+    parameters.push(part);
+    for parameter in parameters.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+        // One with a default is left to it.
+        if parameter.contains(" = ") {
+            continue;
+        }
+        let ty = parameter.split_once(':')?.1.trim();
+        arguments.push(empty_value(ty)?.to_string());
+    }
+    let result = header[close + 1..].trim().trim_start_matches(':').trim();
+    let fails = result.contains('!');
+    let gives = !result.is_empty() && !result.starts_with('!');
+    Some((arguments, fails, gives))
+}
+
+/// The value a new value of a type written so starts from.
+fn empty_value(ty: &str) -> Option<&'static str> {
+    Some(match ty {
+        "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "Int128" | "UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
+            "0"
+        }
+        "Float" | "Float32" | "Float64" => "0.0",
+        "Bool" => "false",
+        "String" => "\"\"",
+        _ if ty.ends_with('?') => "none",
+        _ if ty.starts_with("Array[") => "[]",
+        _ if ty.starts_with("Map[") => "[:]",
+        _ => return None,
+    })
+}
+
+/// The binding a `let` or `var` written with a type declares, and the
+/// type, which what follows its `=` gives.
+fn expected_type(line: &str) -> Option<(String, String)> {
+    let line = line.trim_start();
+    let rest = line.strip_prefix("let ").or_else(|| line.strip_prefix("var "))?;
+    let (declared, value) = rest.split_once(" = ")?;
+    if !value.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    let (name, ty) = declared.split_once(':')?;
+    Some((name.trim().to_string(), ty.trim().to_string()))
+}
+
+/// What a function's header says it gives: `Int` for `fn f(): Int`.
+fn returns(header: &str) -> &str {
+    let after = header.rsplit_once(')').map_or("", |(_, after)| after);
+    after.trim().trim_start_matches(':').trim()
 }

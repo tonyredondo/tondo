@@ -4286,3 +4286,17 @@ past an `and`, out of a closure or an arm, nor lines that leave their
 block or change a `var` of their function. They come when asked for, not
 with the light bulb, so that selecting text does not check the program
 again each time.
+
+## 2026-11-02 — More help from the editor, and where a binding is written
+
+A second round of the language server: a test for a function, written
+into the module's tests to fail until it says what it checks; templates
+after a value's dot, as `.match` and `.for`; the exits of a function
+under `fn`, `return`, `fail` and `?`; the type of each line of a chain
+of calls; inlining a `let` read once in the next statement, checked as
+the extractions are; what fits the type expected first; `var` bindings
+marked `mutable`, which VS Code underlines; and the colours of
+`image.Color`. Writing the test of the marks showed that the binding an
+assignment writes was no reference, so a rename left `sum += value` as
+it was; it is one now.
+

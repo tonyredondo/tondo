@@ -90,6 +90,9 @@ pub struct Index {
     /// What a `?` or a `fail` does where it is written: what it gives, what
     /// it propagates and where to, which a hover shows.
     pub notes: Vec<(Span, String)>,
+    /// Each `return`, `fail` and `?` that leaves a function, by the name of
+    /// the function.
+    pub exits: Vec<(Span, Span)>,
     keys: HashMap<Key, usize>,
 }
 

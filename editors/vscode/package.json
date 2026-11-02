@@ -121,6 +121,22 @@
         }
       }
     },
+    "semanticTokenModifiers": [
+      {
+        "id": "mutable",
+        "description": "A binding that can change: a `var`, or a `mut` or `var` parameter."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "tondo",
+        "scopes": {
+          "*.mutable": [
+            "markup.underline"
+          ]
+        }
+      }
+    ],
     "configurationDefaults": {
       "[tondo]": {
         "editor.formatOnSave": true,
