@@ -27,24 +27,15 @@ const INTRINSIC: &[(&str, &str)] = &[
 /// prelude's.
 const BUILTINS: &str = include_str!("../std/api/builtins.to");
 
-/// The standard modules written in Tondo that a program imports, without
-/// the ones only the toolchain uses.
-const HIDDEN: &[&str] = &[
-    "datetime",
-    "zoned",
-    "timetext",
-    "files",
-    "paths",
-    "streams",
-    "texts",
-    "environment",
-    "pacing",
-    "rules",
-    "formats",
-    "shapes",
-    "fuzz",
-    "panics",
-];
+/// The standard modules written in Tondo that only the toolchain uses;
+/// the companions of a module, as `processes` of `process`, are shown as
+/// part of it.
+const HIDDEN: &[&str] = &["timetext", "rules", "formats", "shapes", "fuzz", "panics"];
+
+/// Whether a standard module written in Tondo is not one a program imports.
+fn hidden(name: &str) -> bool {
+    HIDDEN.contains(&name) || crate::stdlib::completed(name).is_some()
+}
 
 /// The methods `std/api/builtins.to` gives `owner`, such as `String`, and
 /// the operations of the numbers (language 18.9).
@@ -132,7 +123,7 @@ pub fn standard_modules() -> Vec<String> {
     for name in crate::stdlib::names() {
         if name == "prelude" {
             names.push("prelude".into());
-        } else if !HIDDEN.contains(&name) {
+        } else if !hidden(name) {
             names.push(format!("std.{name}"));
         }
     }
@@ -146,7 +137,7 @@ pub fn summary(module: &str) -> Option<String> {
     let name = module.strip_prefix("std.")?;
     let source = match INTRINSIC.iter().find(|(n, _)| *n == name) {
         Some((_, text)) => text,
-        None => crate::stdlib::text(name).filter(|_| !HIDDEN.contains(&name))?,
+        None => crate::stdlib::text(name).filter(|_| !hidden(name))?,
     };
     let lines: Vec<&str> = source.lines().map_while(|line| line.strip_prefix("// ")).collect();
     let mut text = lines.join(" ");
@@ -206,7 +197,7 @@ pub fn standard(name: &str) -> Option<String> {
         }
         return Some(text);
     }
-    crate::stdlib::text(name).filter(|_| !HIDDEN.contains(&name)).map(|source| render(source, false))
+    crate::stdlib::text(name).filter(|_| !hidden(name)).map(|source| render(source, false))
 }
 
 /// The declarations of a module's source: the public ones, or every one
