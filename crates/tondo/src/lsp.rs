@@ -2174,6 +2174,13 @@ impl Server {
         }
         tokens.sort_by_key(|t| (t.0, t.1));
         tokens.dedup_by_key(|t| t.0);
+        // Tokens do not overlap: one that starts inside another goes.
+        let mut reached = 0;
+        tokens.retain(|t| {
+            let apart = t.0 >= reached;
+            reached = reached.max(t.1);
+            apart
+        });
         // One line each, as relative positions; the lines counted as the
         // tokens go, once.
         let text = &source.text;

@@ -486,6 +486,29 @@ fn completion_and_highlighting() {
     editor.stop();
 }
 
+/// A route's handler, a closure of several lines, is an expression the
+/// checker names: no use of a name covers it, so its tokens stay its own
+/// and do not overlap.
+#[test]
+fn highlights_a_route_handler() {
+    let routed = "import std.http\n\nfn main(): !http.HttpError {\n    var app = http.App.new()\n    app.get(\n        \"/fail\",\n        (_) {\n            fail http.Problem.notFound(\"none\")\n        },\n    )\n    _ = app.start()?\n}\n";
+    let dir = project("lsp-routes", &[("main.to", routed)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let tokens = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
+    let data: Vec<u64> = tokens["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    // Each token by its line and column, from the relative ones.
+    let (mut line, mut column, mut at) = (0, 0, Vec::new());
+    for token in data.chunks(5) {
+        line += token[0];
+        column = if token[0] == 0 { column + token[1] } else { token[1] };
+        at.push((line, column, token[2], token[3]));
+    }
+    // The texts of the route and of the handler's body are strings.
+    assert!(at.contains(&(5, 8, 7, 13)) && at.contains(&(7, 39, 6, 13)), "{at:?}");
+    editor.stop();
+}
+
 #[test]
 fn repairs_as_code_actions() {
     let dir = project("lsp-repairs", &[("main.to", "fn main() {\n    let x: Int? = None\n    _ = x\n}\n")]);

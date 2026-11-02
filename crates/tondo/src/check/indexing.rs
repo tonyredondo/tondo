@@ -23,6 +23,19 @@ impl Checker<'_> {
         (Some(Span::new(span.start, member.start - 1)), member)
     }
 
+    /// Where a name is written, and the module alias before it, when its
+    /// span holds it as written: a name the checker makes, whose span is the
+    /// expression it stands for, as a route's handler, is in no place of
+    /// its own.
+    fn written(&self, name: &ast::Ident) -> Option<(Option<Span>, Span)> {
+        let text = self.sources.slice(name.span);
+        let simple = name.name.rsplit('.').next().unwrap_or(&name.name);
+        let word = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+        let as_written =
+            text == name.name || text == simple || (text.ends_with(&format!(".{simple}")) && text.chars().all(word));
+        (name.span != Span::default() && as_written).then(|| Self::name_parts(name))
+    }
+
     /// Records a declaration, of a binding with its type.
     pub(super) fn index_define(
         &mut self,
@@ -34,7 +47,8 @@ impl Checker<'_> {
     ) -> Option<usize> {
         self.index.as_ref()?;
         let ty = ty.filter(|&ty| ty != Ty::ERROR).map(|ty| self.types.display(ty));
-        let (_, name_span) = Self::name_parts(name);
+        // A name the checker makes is in no place to lead to.
+        let (_, name_span) = self.written(name)?;
         let simple = name.name.rsplit('.').next().unwrap_or_default().to_string();
         let index = self.index.as_mut()?;
         let def = index.define(key, Def { name: simple, kind, name_span, decl_span: decl, ty: ty.clone() });
@@ -49,7 +63,8 @@ impl Checker<'_> {
     pub(super) fn index_refer(&mut self, name: &ast::Ident, key: Key) {
         let Some(index) = self.index.as_mut() else { return };
         let Some(def) = index.of(&key) else { return };
-        let (alias, member) = Self::name_parts(name);
+        let Some((alias, member)) = self.written(name) else { return };
+        let Some(index) = self.index.as_mut() else { return };
         index.refer(member, def);
         let Some(alias) = alias else { return };
         let file = self.sources.file_of(index.defs[def].decl_span.start);
