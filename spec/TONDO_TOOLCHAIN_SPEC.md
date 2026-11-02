@@ -701,7 +701,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   que el depurador muestra. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
   `log`, no para: escribe el mensaje, cada `{ruta}` cambiada por lo que nombra,
-  y sigue. `delete <id>` lo quita.
+  y sigue. La condición y el mensaje leen lo mismo que `locals`: también lo
+  de las funciones en que está escrito el código de esa línea. `delete <id>`
+  lo quita.
 - Una tarea que entra en pánico para donde el código del programa lo produjo,
   antes de deshacer su pila, con el texto del pánico como motivo; `catch none`
   lo desactiva y `catch panic` lo vuelve a activar.

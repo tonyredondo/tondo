@@ -506,6 +506,24 @@ fn debugger_shows_what_a_block_can_use() {
     );
     let label = lines.iter().find(|l| l["name"] == "label").unwrap();
     assert_eq!(label["value"], "\"total\"");
+    // A breakpoint's condition and message read them too.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "closed.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break closed.to:4 if label == \"total\" log {label}: {item}\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let logged: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|l| l["logged"].as_str().map(String::from))
+        .collect();
+    assert_eq!(logged, ["total: {item?}", "total: 1", "total: 2"]);
 }
 
 /// One message of the Debug Adapter Protocol.

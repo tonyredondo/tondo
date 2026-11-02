@@ -262,14 +262,14 @@ impl Hits {
 
 /// A logpoint's message: each `{path}` in it replaced by what it names
 /// there, a text without its quotes.
-fn logged(table: &Table, frame: &Frame, message: &str) -> String {
+fn logged(table: &Table, frames: &[Frame], message: &str) -> String {
     let mut out = String::new();
     let mut rest = message;
     while let Some(open) = rest.find('{') {
         out.push_str(&rest[..open]);
         let Some(close) = rest[open..].find('}') else { break };
         let path = rest[open + 1..open + close].trim();
-        match resolve(table, std::slice::from_ref(frame), 0, path) {
+        match resolve(table, frames, 0, path) {
             Ok(found) => {
                 let text = &found.text;
                 let unquoted = text.strip_prefix('"').and_then(|t| t.strip_suffix('"'));
@@ -365,14 +365,24 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             }
         };
         // A breakpoint whose condition holds counts the hit; it stops when
-        // its count says so, or writes its message and goes on.
+        // its count says so, or writes its message and goes on. Both read
+        // what the code here can use, as `locals` shows it.
+        let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+        let here = Stop {
+            task,
+            site,
+            frame,
+            bounds,
+            addresses: addresses as usize,
+            alive: alive as usize,
+            why: String::new(),
+        };
+        let stack = std::cell::OnceCell::new();
+        let stack = || stack.get_or_init(|| frames(&table, &here));
         let mut hit = None;
         for breakpoint in state.breakpoints.iter_mut() {
             let here = breakpoint.sites.contains(&site)
-                && breakpoint
-                    .condition
-                    .as_ref()
-                    .is_none_or(|c| holds(c, &table, site, addresses as usize, alive as usize));
+                && breakpoint.condition.as_ref().is_none_or(|c| holds(c, &table, stack()));
             if !here {
                 continue;
             }
@@ -382,10 +392,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             }
             match &breakpoint.log {
                 Some(message) => {
-                    let function = table.sites.get(site).map(|s| s.function);
-                    let frame =
-                        Frame { place: String::new(), function, addresses: addresses as usize, alive: alive as usize };
-                    let text = logged(&table, &frame, message);
+                    let text = logged(&table, stack(), message);
                     tell(&format!(
                         "{{\"logged\":{},\"task\":{task},\"at\":{}}}",
                         quoted(&text),
@@ -666,10 +673,8 @@ fn clip(mut text: String, limit: usize) -> String {
 /// Whether a breakpoint's condition holds at a probe: numbers compare as
 /// numbers, and anything else as the text the debugger shows, a string
 /// without its quotes.
-fn holds(condition: &Condition, table: &Table, site: usize, addresses: usize, alive: usize) -> bool {
-    let function = table.sites.get(site).map(|s| s.function);
-    let frame = Frame { place: String::new(), function, addresses, alive };
-    let Ok(Found { text: value, .. }) = resolve(table, &[frame], 0, &condition.name) else { return false };
+fn holds(condition: &Condition, table: &Table, frames: &[Frame]) -> bool {
+    let Ok(Found { text: value, .. }) = resolve(table, frames, 0, &condition.name) else { return false };
     let unquote = |text: &str| text.strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(text).to_string();
     let (left, right) = (unquote(&value), unquote(&condition.value));
     let order = match (left.parse::<f64>(), right.parse::<f64>()) {
