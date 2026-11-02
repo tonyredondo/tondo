@@ -116,6 +116,80 @@ pub(crate) fn connect(name: &str) -> Result<Program, String> {
     })
 }
 
+/// A connection to a program on another machine, or in a container,
+/// through a command that runs `tondo relay <name>` there, as `ssh host` or
+/// `docker exec -i box`: what the relay reads and writes is the program's
+/// connection, after a first line with its process ID.
+pub(crate) fn via(command: &str, name: &str) -> Result<Program, String> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let Some((program, arguments)) = words.split_first() else {
+        return Err("--via takes the command that reaches the program's machine, as `ssh host`".into());
+    };
+    let mut child = std::process::Command::new(program)
+        .args(arguments)
+        .args(["tondo", "relay", name])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run `{command}`: {e}"))?;
+    let (mut input, output) = (child.stdin.take().expect("piped"), child.stdout.take().expect("piped"));
+    let mut output = BufReader::new(output);
+    let mut first = String::new();
+    let _ = output.read_line(&mut first);
+    let Some(pid) = serde_json::from_str::<Value>(&first).ok().and_then(|v| v["relay"].as_u64()) else {
+        let _ = child.wait();
+        return Err(format!("`{command} tondo relay {name}` did not reach the program: it says what failed above"));
+    };
+    // One end of a pair of sockets is the connection; the other goes to
+    // and from the relay.
+    let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
+    let mut to_relay = theirs.try_clone().map_err(|e| e.to_string())?;
+    let mut from_relay = theirs;
+    std::thread::spawn(move || passed(&mut to_relay, &mut input));
+    std::thread::spawn(move || {
+        passed(&mut output, &mut from_relay);
+        let _ = from_relay.shutdown(std::net::Shutdown::Both);
+        let _ = child.wait();
+    });
+    Ok(Program { pid: pid as u32, reader: BufReader::new(ours.try_clone().map_err(|e| e.to_string())?), writer: ours })
+}
+
+/// `tondo relay <pid|name>`: joins its standard input and output to a
+/// running program's connection, for a debugger on another machine that
+/// reaches this one with `--via`; its first line is the program's process
+/// ID.
+pub fn relay(name: &str) -> Result<(), String> {
+    let program = connect(name)?;
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{}", json!({ "relay": program.pid })).map_err(|e| e.to_string())?;
+    stdout.flush().map_err(|e| e.to_string())?;
+    let Program { reader, mut writer, .. } = program;
+    let mut reader = reader.into_inner();
+    let _ = reader.set_read_timeout(None);
+    std::thread::spawn(move || {
+        passed(&mut std::io::stdin(), &mut writer);
+        let _ = writer.shutdown(std::net::Shutdown::Write);
+    });
+    passed(&mut reader, &mut std::io::stdout());
+    Ok(())
+}
+
+/// Passes what `from` says to `to` until it ends, each piece at once: a
+/// debugger waits for every answer.
+fn passed(from: &mut impl std::io::Read, to: &mut impl Write) {
+    let mut buffer = [0u8; 8192];
+    loop {
+        match from.read(&mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => {
+                if to.write_all(&buffer[..read]).and_then(|_| to.flush()).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// `tondo counters <pid|name> [--interval <seconds>] [--count <n>]
 /// [--json]`: every interval, the counters and the rate of each total
 /// since the last time.

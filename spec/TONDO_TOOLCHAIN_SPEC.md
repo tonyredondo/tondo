@@ -787,7 +787,11 @@ tiene nada de eso, ni su coste.
 `tondo debug` depura un build de depuración: compila con `--debug` un archivo
 `.to` o un proyecto, o arranca un ejecutable, y el programa espera antes de
 `main` a que se le diga que siga; o se adjunta a uno en ejecución, nombrado
-como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. `--test <id>` depura
+como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. Con `--via
+<command>` se adjunta a uno de otra máquina o de un contenedor: ejecuta
+`<command> tondo relay <name>`, como `ssh host` o `docker exec -i caja`, y
+`tondo relay` une su entrada y su salida a la conexión del programa allí,
+sin abrir puertos; el acceso es el del comando. `--test <id>` depura
 un test del proyecto, solo, con sus snapshots y las entradas de su fuzz store
 (10.6 de testing): dice cómo terminó en lugar de los frames del runner. Lee una orden por
 línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
@@ -891,7 +895,7 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 `tondo dap` habla el Debug Adapter Protocol por su entrada y su salida, para
 un editor: `launch` compila y arranca un programa como `tondo debug`, o lo
 arranca si es un ejecutable, y `attach` se adjunta a uno por su proceso o su
-nombre. Con `"test"`, el id de un test del proyecto que `tondo test --list`
+nombre, también con `"via"` como `--via`. Con `"test"`, el id de un test del proyecto que `tondo test --list`
 da, `launch` compila los tests del proyecto como un build de depuración y
 ejecuta ese test solo; la consola dice cómo terminó. Con `"dump"`, un
 volcado (sección 7.5), `launch` lo abre sin programa: sus tareas como hilos,

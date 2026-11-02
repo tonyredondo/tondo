@@ -4432,3 +4432,14 @@ halfway through a change. It stops the task that changed it, which is
 the one that runs on after the change. Watches take a condition and a
 count of hits, as breakpoints do, so that a value changing in a loop
 stops only where it matters.
+
+## 2026-11-02 — Debugging a program elsewhere goes through a relay
+
+A program on another machine or in a container serves the tools on a
+local socket there, and a debugger had no way to it. Rather than a port
+the program would open, with its own authentication, `tondo debug --via
+"ssh host" <name>` runs `tondo relay <name>` through that command, which
+joins its standard input and output to the program's connection. Access
+is the command's: ssh's keys, docker's permissions. The relay passes
+each piece on at once, as `std::io::copy` held pieces back between a
+socket and a pipe and a debugger waits for every answer.

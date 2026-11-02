@@ -72,6 +72,10 @@ fn main() -> ExitCode {
         }
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
+        "relay" => match args.get(1).and_then(|a| a.to_str()) {
+            Some(name) => tondo::observe::relay(name).map(|_| ExitCode::SUCCESS),
+            None => Err(format!("relay takes a running program's process ID or name\n{USAGE}")),
+        },
         "trace" => trace_command(&args[1..]),
         "profile" => profile_command(&args[1..]),
         "dump" => dump_command(&args[1..]),
@@ -918,7 +922,7 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
-    let mut test = None;
+    let (mut test, mut via) = (None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
@@ -930,10 +934,23 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
                         .ok_or_else(|| usage("--test takes the id of a test, as `tondo test --list` gives it"))?,
                 );
             }
+            "--via" => {
+                let command = rest
+                    .next()
+                    .ok_or_else(|| usage("--via takes the command that reaches the program, as `ssh host`"))?;
+                via = Some(command.to_string_lossy().into_owned());
+            }
             "--" => program_args = rest.by_ref().cloned().collect(),
             other if !other.starts_with('-') && target.is_none() => target = Some(arg.clone()),
             other => return Err(usage(&format!("debug does not take `{other}`"))),
         }
+    }
+    // A program on another machine, or in a container, by its name there.
+    if let Some(via) = via {
+        let name = target.ok_or_else(|| usage("--via takes the name or process ID of the program it reaches"))?;
+        let debugged = tondo::debug::Debugged::Remote(via, name.to_string_lossy().into_owned());
+        let status = tondo::debug::debug(debugged, json)?;
+        return Ok(ExitCode::from(status.clamp(0, 255) as u8));
     }
     // A test of a project, alone, built to be debugged.
     if let Some(test) = test {

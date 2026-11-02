@@ -427,7 +427,12 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             (_, Value::String(name)) => name.clone(),
             _ => return Err("`attach` takes a `processId` or a program's name".into()),
         };
-        (observe::connect(&name)?, None, None)
+        // On another machine, or in a container, by the command that
+        // reaches it, as `ssh host`.
+        match arguments["via"].as_str() {
+            Some(via) => (observe::via(via, &name)?, None, None),
+            None => (observe::connect(&name)?, None, None),
+        }
     };
     let pid = program.pid;
     let observe::Program { mut writer, reader, .. } = program;

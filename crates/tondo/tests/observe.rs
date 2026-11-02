@@ -1353,6 +1353,48 @@ fn debugger_steps_into_a_chosen_call() {
     assert_eq!(stops.last().unwrap().0, "into.to:11 in main");
 }
 
+/// A program another machine runs, reached by a command that runs
+/// `tondo relay` there: here, `env`, as `ssh host` would.
+#[test]
+fn debugger_reaches_a_program_through_a_relay() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-relay");
+    std::fs::create_dir_all(&dir).unwrap();
+    let looped = "import std.time\n\nfn main() {\n    var ticks = 0\n    for {\n        ticks += 1\n        time.sleep(time.milliseconds(10))\n    }\n}\n";
+    std::fs::write(dir.join("looped.to"), looped).unwrap();
+    let executable = dir.join("looped");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "looped.to", "--debug", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut program = Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").spawn().unwrap();
+    while !listed(program.id()) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let tools = Path::new(env!("CARGO_BIN_EXE_tondo")).parent().unwrap();
+    let via = format!("env PATH={}", tools.display());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--via", &via, &program.id().to_string()])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break looped.to:6\ncontinue\nprint ticks > 0\ndelete 1\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let _ = program.kill();
+    let _ = program.wait();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap();
+    assert_eq!(stop["at"], "looped.to:6 in main");
+    assert_eq!(lines.iter().find(|l| l["name"] == "ticks > 0").unwrap()["value"], "true");
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

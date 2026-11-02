@@ -16,6 +16,9 @@ use std::time::Duration;
 pub enum Debugged {
     Started(PathBuf, Vec<std::ffi::OsString>),
     Running(String),
+    /// A running program on another machine, or in a container, by the
+    /// command that reaches it (`--via`) and its name there.
+    Remote(String, String),
     /// A test of a project: its tests' executable, the test's node, which
     /// runs alone, and the variables that give it the project's stores.
     Test(PathBuf, u32, Vec<(&'static str, PathBuf)>),
@@ -119,6 +122,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Running(name) => (observe::connect(&name)?, None),
+        Debugged::Remote(via, name) => (observe::via(&via, &name)?, None),
     };
     let pid = program.pid;
     let Program { mut writer, reader, .. } = program;

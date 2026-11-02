@@ -71,7 +71,9 @@ process ID or name. A change it cannot make in place says to start again.
 ## Debugging
 
 `debug_start` debugs a `.to` file or project (built with `--debug`), a
-debug executable or a running debug build, and gives a session; with
+debug executable or a running debug build, also one on another machine or
+in a container with `via` (`ssh host`, `docker exec -i box`, where `tondo`
+is installed too), and gives a session; with
 `live`, `reload` changes its code where it stopped. `debug` sends it one
 command and gives the answers, the events and what the program printed:
 

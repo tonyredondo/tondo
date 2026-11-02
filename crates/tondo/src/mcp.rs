@@ -329,6 +329,9 @@ impl Server {
     fn debug_start(&mut self, args: &Args) -> Result<Reply, String> {
         let target = args.need("target")?;
         let mut argv = vec!["debug".to_string(), "--json".into()];
+        if let Some(via) = args.text("via") {
+            argv.extend(["--via".into(), via]);
+        }
         if args.flag("live") {
             argv.push("--live".into());
         }
@@ -2025,6 +2028,12 @@ debug build's process ID or name. A program it starts waits before main for brea
             ("target", "string!", "The program to debug."),
             ("args", "strings", "The arguments of a program it starts."),
             ("live", "boolean", "Build it live (`--live`), so that `reload` changes its code while it is debugged."),
+            (
+                "via",
+                "string",
+                "The command that reaches a running program on another machine or in a container, \
+as `ssh host` or `docker exec -i box`, where `tondo relay` joins it to this session.",
+            ),
         ],
     },
     Tool {

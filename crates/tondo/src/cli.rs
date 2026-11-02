@@ -178,12 +178,18 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]",
             "tondo debug [--json] --test <id> [<project>]",
+            "tondo debug [--json] --via <command> <pid|name>",
         ],
         summary: &[
             "debug a program built with --debug: breakpoints,",
             "steps, bindings, stacks, tasks; and with --live,",
             "`reload` to change its code where it stopped",
         ],
+    },
+    Command {
+        name: "relay",
+        usage: &["tondo relay <pid|name>"],
+        summary: &["join standard input and output to a running", "program, for `debug --via \"ssh host\"`"],
     },
     Command {
         name: "reload",
