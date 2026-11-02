@@ -1804,10 +1804,11 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.acme` | Capability-gated | `network` | 0.1 | Certificados de una autoridad ACME, como Let's Encrypt, que un servidor obtiene y renueva solo |
 | `std.graphql` | Core | — | 0.1 | Servidores de GraphQL hechos de los tipos del programa, con introspección |
 | `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
-| `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
-| `std.grpc` | Capability-gated | `network` | 0.1 | Servidores y clientes de gRPC de los `service` de los archivos `.proto`, con streaming, metadata, plazos y status |
+| `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events, WebSockets, CORS y parada que drena |
+| `std.grpc` | Capability-gated | `network` | 0.1 | Servidores y clientes de gRPC de los `service` de los archivos `.proto`, con streaming, metadata, plazos, status, compresión, interceptores, health, reflexión y balanceo; los servidores responden también a gRPC-Web y Connect |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
+| `std.collections` | Core | — | 0.1 | `CollectionError`, el error de las operaciones de las colecciones que fallan por sus argumentos; sus métodos están en el preludio |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
 | `std.log` | Core | — | 0.1 | Eventos estructurados con niveles, en texto o JSON, sobre un `io.Writer` |

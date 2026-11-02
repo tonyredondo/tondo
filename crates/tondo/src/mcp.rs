@@ -36,6 +36,11 @@ const INSTRUCTIONS: &str = "Tondo's toolchain. Tondo is a new language: read the
 `run_start` session, whose code `reload` changes after an edit without starting it again. Paths are relative to \
 the server's directory; lines and columns count from 1, columns in characters.";
 
+/// The names of the tools, as `tools/list` gives them.
+pub fn tool_names() -> impl Iterator<Item = &'static str> {
+    TOOLS.iter().map(|tool| tool.name)
+}
+
 pub fn serve() -> Result<(), String> {
     // A session whose debugger ended fails to write, instead of ending the
     // server.

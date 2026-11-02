@@ -105,8 +105,9 @@ tondo expand                       what each `derive` wrote
 tondo guide <topic>                one topic of this guide
 ```
 
-`tondo <command> --help` explains a command; with `--json`, a command
-writes its result as one JSON object.
+`tondo guide cli` goes through every command; `tondo <command> --help`
+explains one, and with `--json` a command writes its result as one JSON
+object.
 
 Every error has a code and says how to fix it, often with the exact code to
 write; `tondo check --json` gives the same as data with spans, and many
@@ -123,7 +124,7 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 `tondo mcp` gives an agent all of this as MCP tools, and more: applying
 the fixes, navigating, running with input, testing, observing and debugging
-programs.
+programs; `tondo guide mcp` goes through every tool.
 
 ## Setting up
 
@@ -153,5 +154,7 @@ templates    text and HTML templates checked against their data
 databases    SQLite, PostgreSQL, MySQL: queries, rows, transactions, migrations
 meta         derive, reflection, generators, annotations
 ffi          calling C: extern fn, unsafe
+cli          every tondo command: write, run, test, observe, debug
+mcp          every tool of tondo mcp, for agents
 pitfalls     mistakes models make in Tondo, with the error each gives
 ```

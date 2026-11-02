@@ -64,6 +64,19 @@ fn examples_compile() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// `tondo guide cli` names every command, and `tondo guide mcp` every tool
+/// of `tondo mcp`, so that neither falls behind the toolchain.
+#[test]
+fn the_cli_and_mcp_topics_cover_everything() {
+    let cli = tondo::guide::topic("cli").unwrap();
+    let commands: Vec<&str> = tondo::cli::COMMANDS.iter().map(|command| command.name).collect();
+    let missing: Vec<&&str> = commands.iter().filter(|name| !cli.contains(&format!("tondo {name}"))).collect();
+    assert!(missing.is_empty(), "`tondo guide cli` does not name: {missing:?}");
+    let mcp = tondo::guide::topic("mcp").unwrap();
+    let missing: Vec<&str> = tondo::mcp::tool_names().filter(|name| !mcp.contains(&format!("`{name}`"))).collect();
+    assert!(missing.is_empty(), "`tondo guide mcp` does not name: {missing:?}");
+}
+
 /// The repository carries the skill for the agents that work in it, where
 /// Claude Code and the Agent Skills standard look; it stays the guide's.
 #[test]

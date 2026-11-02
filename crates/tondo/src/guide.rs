@@ -19,6 +19,8 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("databases", include_str!("../guide/databases.md")),
     ("meta", include_str!("../guide/meta.md")),
     ("ffi", include_str!("../guide/ffi.md")),
+    ("cli", include_str!("../guide/cli.md")),
+    ("mcp", include_str!("../guide/mcp.md")),
     ("pitfalls", include_str!("../guide/pitfalls.md")),
 ];
 

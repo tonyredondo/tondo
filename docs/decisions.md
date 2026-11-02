@@ -4184,3 +4184,12 @@ run and 130 or 143, so a program whose server listens in a task of its
 own still ends. Its channel goes after the first, so a second signal
 ends the program at once, as before. A program that wants to decide by
 itself starts the server with `App.start` and listens for the signals.
+
+## 2026-11-02 — The guide names every command and tool
+
+The guide taught a dozen of `tondo`'s commands and almost none of
+`tondo mcp`'s tools, so an agent learned the rest only by trying them.
+`tondo guide cli` now goes through every command and `tondo guide mcp`
+every tool, grouped by what they are for, and a test fails when the
+table of commands or of tools has one they do not name, so that they
+keep up with the toolchain without anyone remembering to.

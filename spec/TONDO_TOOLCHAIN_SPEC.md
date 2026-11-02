@@ -431,7 +431,10 @@ comandos, un tema cada vez para leer solo lo necesario.
   (`tondo api`, `tondo check --json`, `tondo fmt --compact`) y la lista de
   temas. `tondo guide <tema>` muestra uno (`syntax`, `types`, `errors`,
   `collections`, `text`, `tasks`, `projects`, `testing`, `stdlib`, `http`,
-  `meta`, `ffi`, `pitfalls`) y `--list` los nombra.
+  `templates`, `databases`, `meta`, `ffi`, `cli`, `mcp`, `pitfalls`) y
+  `--list` los nombra.
+- `cli` recorre cada comando de `tondo` y `mcp` cada herramienta de `tondo
+  mcp`: un test comprueba que no falta ninguno.
 - `pitfalls` reúne los errores que traen otros lenguajes, cada uno con el
   diagnóstico que produce y su arreglo.
 - `--skill` da la visión general como skill de un agente, un `SKILL.md` con

@@ -72,3 +72,8 @@ fn main() {
 
 A type becomes an iterator by implementing `Iterator[T]` with
 `fn next(mut self): T?`; `for x in value` then works, and so do the adapters.
+
+An operation that can fail by its arguments, as `array.slice(2, 9)` past
+the end or `sync.Array.set` outside it, fails with a
+`collections.CollectionError` (`import std.collections`): `InvalidIndex`,
+`InvalidStep`, `InvalidCapacity` or `ResourceLimit`.
