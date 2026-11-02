@@ -1,0 +1,20 @@
+// `..` skips the rest of a record or an array, not a variant's values,
+// which take a `_` each.
+
+enum Shape {
+    Dot
+    Circle(Float)
+}
+
+fn name(shape: Shape): String {
+    match shape {
+        Shape.Dot => "dot"
+        Shape.Circle(..) => "circle"
+    }
+}
+
+fn main() {
+    _ = name(Shape.Dot)
+}
+
+// expect-error: E0004 `..` skips the rest of a record's fields or of an array's items; for the values of a variant or a tuple, write `_` for each, as `Circle(_)`

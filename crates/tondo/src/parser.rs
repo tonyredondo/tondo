@@ -1761,6 +1761,11 @@ impl Parser<'_> {
                 return self
                     .error(format!("`{}` is a keyword and cannot name a binding: choose another name", kw.as_str()));
             }
+            Tok::DotDot => {
+                return self.error(
+                    "`..` skips the rest of a record's fields or of an array's items; for the values of a variant or a tuple, write `_` for each, as `Circle(_)`",
+                );
+            }
             _ => return self.expected("pattern"),
         };
         Ok(Pattern { kind, span: start.to(self.prev_span()) })
