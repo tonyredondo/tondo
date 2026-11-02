@@ -203,6 +203,9 @@ derive show.Missing for Point
 derive show.Show for Other
 derive[T] show.Show for Point
 
+pub type Page[T] = { items: Array[T] }
+derive show.Show for Page
+
 fn main() {}
 ";
     let dir = project("derive-errors", main);
@@ -218,6 +221,7 @@ fn main() {}
         "error[E2103]: the module `show` declares no trait `Missing`",
         "error[E2101]: `derive` names `Other`, which is not a record, enum or newtype of this module",
         "error[E2101]: `derive` names `Point`, which must be written with exactly the binders of `derive`",
+        "error[E2101]: `derive` names `Page`, which has the type parameters `T`: write `derive[T] show.Show for Page[T]`",
     ] {
         assert!(stderr.contains(expected), "missing {expected} in {stderr}");
     }

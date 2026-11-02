@@ -720,7 +720,19 @@ fn target(
         return None;
     }
     if view.generics.len() != binders.len() {
-        wrong(diags, &format!("has {} type parameter(s)", view.generics.len()));
+        let params = view.generics.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ");
+        let traits = derive.traits.iter().map(|t| sources.slice(t.span)).collect::<Vec<_>>().join(" + ");
+        let fix = if params.is_empty() {
+            format!("`derive {traits} for {}`", name.name)
+        } else {
+            format!("`derive[{params}] {traits} for {}[{params}]`", name.name)
+        };
+        let has = if params.is_empty() {
+            "no type parameters".to_string()
+        } else {
+            format!("the type parameters `{params}`")
+        };
+        wrong(diags, &format!("has {has}: write {fix}"));
         return None;
     }
     let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
