@@ -1517,6 +1517,76 @@ fn debugger_moves_a_frame_to_another_line() {
     adapter.stop();
 }
 
+const CALLING: &str = r#"import std.console
+
+type User = { name: String, age: Int }
+
+fn describe(user: User): String {
+    "{user.name} ({user.age})"
+}
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    let ada = User { name: "Ada", age: 36 }
+    let count = 21
+    console.println(describe(ada))
+    console.println("{twice(count)}")
+}
+"#;
+
+/// In a live build, `call` runs an expression that calls the program's
+/// code, on the stopped task, through a patch; the editor's console does
+/// for an expression the debugger does not read.
+#[test]
+fn debugger_calls_the_programs_code() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-call");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("calling.to"), CALLING).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--live", "calling.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script =
+        "break calling.to:16\ncontinue\ncall twice(count) + 1\ncall describe(ada)\ncall nothing(count)\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let called: Vec<(&str, &str)> = lines
+        .iter()
+        .filter(|l| l["name"].is_string())
+        .map(|l| (l["name"].as_str().unwrap(), l["value"].as_str().unwrap()))
+        .collect();
+    assert_eq!(called, [("twice(count) + 1", "43"), ("describe(ada)", "Ada (36)")]);
+    let error = lines.iter().find_map(|l| l["error"].as_str()).unwrap();
+    assert!(error.contains("unknown name `nothing`"), "{error}");
+    assert!(text.contains("Ada (36)\n42"), "{text}");
+    // The editor's console.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "calling.to", "cwd": dir, "live": true }));
+    let path = dir.join("calling.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 16 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let evaluated =
+        adapter.ask("evaluate", json!({ "expression": "twice(count)", "frameId": frame, "context": "repl" }));
+    assert_eq!(evaluated["result"], "42");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

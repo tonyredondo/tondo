@@ -802,6 +802,16 @@ pub(crate) fn goto(task: u64, frame: usize, site: i64, bytes: &[u8]) -> Result<(
     Ok(())
 }
 
+/// The code a slot of the image leads to now, for the debugger's `call`.
+pub(crate) fn slot_code(slot: u64) -> Option<u64> {
+    let info = unsafe { INFO.load(Ordering::Acquire).as_ref() }?;
+    (slot < info.capacity).then(|| {
+        unsafe { (info.slots.add(slot as usize) as *const AtomicU64).as_ref() }
+            .expect("the image's slots")
+            .load(Ordering::Acquire)
+    })
+}
+
 /// Whether the frame at a probe is the one the debugger moves to another
 /// line.
 pub(crate) fn going(task: u64, frame: usize, site: i64) -> bool {

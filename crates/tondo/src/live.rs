@@ -646,6 +646,50 @@ pub fn goto(
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// `call`: what `expression` gives in the stopped frame at `place`, `file:line
+/// in function`, of a live build whose bindings there are `bindings`, names
+/// and types. It may call the program's functions: a patch adds a function
+/// that reads the bindings it names and shows its value, which the stopped
+/// task calls.
+pub fn call(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    place: &str,
+    expression: &str,
+    bindings: &[(String, String)],
+) -> Result<String, String> {
+    const CALLED: &str = "tondoDebugCall";
+    let (_, manifest) =
+        manifest_of(pid, ask).map_err(|e| format!("{e}: a call runs in a live build, debugged with --live"))?;
+    let file = place.split_once(" in ").and_then(|(at, _)| at.rsplit_once(':')).map(|(file, _)| file);
+    let file = file.ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let path = std::path::PathBuf::from(manifest["dir"].as_str().unwrap_or(".")).join(file);
+    let mut text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    // The bindings the expression names, read from their addresses.
+    let words: Vec<&str> = expression.split(|c: char| !(c.is_alphanumeric() || c == '_')).collect();
+    let named: Vec<&(String, String)> = bindings.iter().filter(|(name, _)| words.contains(&name.as_str())).collect();
+    text.push_str(&format!("\nfn {CALLED}(at: UInt64): String {{\n"));
+    for (index, (name, ty)) in named.iter().enumerate() {
+        text.push_str(&format!(
+            "    let {name} = unsafe {{ at.toPointer[UInt64]().offset({index}).read().toPointer[{ty}]().read() }}\n"
+        ));
+    }
+    text.push_str(&format!("    let value = {expression}\n    \"{{value}}\"\n}}\n"));
+    let open = std::collections::HashMap::from([(path, text)]);
+    let patched = crate::driver::with_open(open, CALLED, || reload(pid, ask));
+    patched.map_err(|refused| refused.message())?;
+    let (_, manifest) = manifest_of(pid, ask)?;
+    let slots = manifest["slots"].as_object().into_iter().flatten();
+    let slot = slots.into_iter().find(|(identity, _)| osr::shown(identity) == CALLED).and_then(|(_, s)| s.as_u64());
+    let slot = slot.ok_or("the patch did not add the call")?;
+    let names: Vec<&str> = named.iter().map(|(name, _)| name.as_str()).collect();
+    let answer = ask(&format!("call {slot} {}", names.join(" ")))?;
+    match answer["called"].as_str() {
+        Some(value) => Ok(value.to_string()),
+        None => Err(answer["error"].as_str().unwrap_or("the call failed").to_string()),
+    }
+}
+
 /// The rest of a reload, from the directory the program was built in.
 fn patch(
     pid: u32,

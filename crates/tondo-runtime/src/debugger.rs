@@ -150,6 +150,47 @@ fn moved_place(place: &str, line: u32) -> String {
     }
 }
 
+/// A call the debugger asks a held task to make (`call`): the task, the
+/// code, and the addresses of the bindings it reads; and what it gave.
+static CALL: Mutex<Option<(u64, u64, Vec<u64>)>> = Mutex::new(None);
+/// The task that makes such a call, whose probes let it run to its end.
+static CALLING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CALLED: Mutex<Option<Result<String, String>>> = Mutex::new(None);
+static CALLED_DONE: Condvar = Condvar::new();
+
+/// `call <slot> <binding>...`: the stopped task calls the function a live
+/// patch put in the slot, which `tondo` wrote for an expression, with the
+/// addresses of those bindings of the frame looked at; gives what it
+/// returned, or that it still runs after a while, as when it waits for
+/// another task the stop holds.
+fn called(table: &Table, rest: &str) -> Result<String, String> {
+    let mut words = rest.split_whitespace();
+    let slot: u64 = words.next().and_then(|w| w.parse().ok()).ok_or("call takes a slot and the bindings it reads")?;
+    let code = super::live::slot_code(slot).filter(|&c| c != 0).ok_or("the program is not a live build")?;
+    let (frames, index) = selected(table)?;
+    let bound = visible(table, &frames, index);
+    let addresses = words
+        .map(|name| bound.iter().find(|(b, ..)| b.name == name).map(|(_, a, _)| *a as u64).ok_or(missing(name, &bound)))
+        .collect::<Result<Vec<u64>, String>>()?;
+    let task = {
+        let state = state();
+        let stop = state.stopped.as_ref().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+        state.selected.map_or(stop.task, |(task, _)| task)
+    };
+    *CALLED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *CALL.lock().unwrap_or_else(|e| e.into_inner()) = Some((task, code, addresses));
+    RESUMED.notify_all();
+    let called = CALLED.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut called, _) = CALLED_DONE
+        .wait_timeout_while(called, std::time::Duration::from_secs(10), |c| c.is_none())
+        .unwrap_or_else(|e| e.into_inner());
+    match called.take() {
+        Some(Ok(text)) => Ok(text),
+        Some(Err(message)) => Err(message),
+        None => Err("the call still runs after 10 seconds: it may wait for a task the stop holds".into()),
+    }
+}
+
 /// An event the debugger hears once the answer to its command went.
 static TELL_AFTER: Mutex<Option<String>> = Mutex::new(None);
 
@@ -684,6 +725,11 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);
     }
+    // A call the debugger makes runs to its end.
+    let calling = CALLING.load(Ordering::Relaxed);
+    if calling != 0 && calling == super::tasks::current_id() {
+        return 0;
+    }
     let Some(table) = table() else { return 0 };
     let site = site as usize;
     super::live::forget_goto(super::tasks::current_id());
@@ -861,6 +907,27 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     let resumed = state.resumed;
     while state.resumed == resumed {
         state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
+        // A call the debugger asks this task to make, on its own stack.
+        let asked = CALL.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, ..)| *t == task);
+        if let Some((_, code, addresses)) = asked {
+            drop(state);
+            if paused {
+                super::tasks::enter_tondo();
+            }
+            let call: extern "C" fn(u64, u64) -> *mut Str = unsafe { std::mem::transmute(code as usize) };
+            CALLING.store(task, Ordering::Relaxed);
+            let made = call(addresses.as_ptr() as u64, 0);
+            CALLING.store(0, Ordering::Relaxed);
+            let text = (!made.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(made) }).into_owned());
+            unsafe { super::tondo_rt_str_release(made) };
+            if paused {
+                super::tasks::pause_here();
+            }
+            *CALLED.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(text.ok_or_else(|| "the call panicked".to_string()));
+            CALLED_DONE.notify_all();
+            state = self::state();
+        }
     }
     state.held.retain(|held| held.task != task);
     drop(state);
@@ -918,6 +985,10 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH_ERRORS.load(Ordering::Relaxed) {
         return;
     }
+    let calling = CALLING.load(Ordering::Relaxed);
+    if calling != 0 && calling == super::tasks::current_id() {
+        return;
+    }
     let shown = show(glue, error as usize);
     if !caught_error(&String::from_utf8_lossy(unsafe { str_bytes(ty) }), &shown) {
         return;
@@ -935,6 +1006,10 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
 /// where the program's own code panicked, before it unwinds, the panic's
 /// text as why, and the others at their next probe.
 pub(crate) fn panicked(message: &str) {
+    let calling = CALLING.load(Ordering::Relaxed);
+    if calling != 0 && calling == super::tasks::current_id() {
+        return;
+    }
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
         return;
     }
@@ -1404,6 +1479,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 Some(format!("{{\"stopped\":{{\"why\":\"goto\",\"task\":{},\"at\":{}}}}}", stop.task, quoted(&at)));
             format!("{{\"goto\":{line}}}")
         }
+        // What a call of the program's code gives, on the stopped task.
+        "call" => match called(table, rest) {
+            Ok(text) => format!("{{\"called\":{}}}", quoted(&text)),
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {

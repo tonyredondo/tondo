@@ -887,6 +887,13 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
   tarea parada. Las funciones de fuera muestran sus bindings como estaban al
   empezar la línea que llamó.
+- `call <expresión>`, en un build live, da el valor, con su `Display`, de
+  una expresión de Tondo que puede llamar al código del programa: un parche
+  añade una función que lee los bindings que nombra del marco que se mira y
+  la tarea parada la llama en su pila, sin parar en sus líneas. Un error de
+  la expresión es el del compilador; una llamada que espera a otra tarea
+  parada sigue esperando, y la respuesta lo dice a los 10 segundos. Nunca
+  la usan las condiciones, los watches ni los logpoints.
 - `goto <línea>`, en un build live, hace que el marco donde paró la tarea
   siga en la sentencia de esa línea de su función, sin ejecutar las de en
   medio, cuando lo que esa sentencia usa ya tiene valor: si no, un error
@@ -922,7 +929,8 @@ suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
-la tarea, `evaluate` de una expresión, `stepInTargets` con las llamadas de la línea,
+la tarea, `evaluate` de una expresión, y en la consola, en un build live, de una que
+llama al código del programa, como `call`, `stepInTargets` con las llamadas de la línea,
 `gotoTargets` y `goto` en un build live,
 `completions` en la consola (los bindings, los
 campos de un valor tras su punto y los métodos de las expresiones),

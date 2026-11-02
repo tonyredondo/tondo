@@ -4469,3 +4469,16 @@ that holds no value at the current one refuses the move, and says so.
 The runtime keeps the move for the stopped frame only, once, and the
 frame shows at the target line until it goes on; a move the frame cannot
 make where it stands is forgotten at its next line.
+
+## 2026-11-02 — A debugger's call is a live patch
+
+The debugger's expressions read values and never run code. A call of the
+program's own functions needs its code, typed and compiled, so `call` is
+for live builds and uses what a reload does. `tondo` adds a function to
+the stopped function's file, in memory as an editor's unsaved text: it
+reads the bindings the expression names from their addresses, which the
+runtime passes, and returns the value's `Display`. The function is a root
+of that analysis, as nothing calls it, and the patch adds it to a slot.
+The stopped task, waiting in the runtime, calls it on its own stack, and
+its probes let it run to its end. Conditions, watches and logpoints never
+call, so that looking at a program does not change it unless asked.

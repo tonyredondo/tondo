@@ -1090,7 +1090,33 @@ fn handle(
                 }
             };
             program.ask(&format!("select {task} {index}"))?;
-            let value = program.ask(&format!("print {path}"))?;
+            let value = match program.ask(&format!("print {path}")) {
+                Ok(value) => value,
+                // In the console, an expression that calls the program's
+                // code runs, in a live build.
+                Err(read) if arguments["context"] == "repl" && path.contains('(') => {
+                    let stack = program.ask(&format!("stack {task}"))?;
+                    let place = stack["stack"][index as usize].as_str().unwrap_or_default().to_string();
+                    let locals = program.ask("locals")?;
+                    let bindings: Vec<(String, String)> = locals["locals"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|l| {
+                            (
+                                l["name"].as_str().unwrap_or_default().into(),
+                                l["type"].as_str().unwrap_or_default().into(),
+                            )
+                        })
+                        .collect();
+                    let pid = program.pid;
+                    let called =
+                        crate::live::call(pid, &mut |request| program.answer(request), &place, &path, &bindings);
+                    let value = called.map_err(|call| format!("{read}; as a call: {call}"))?;
+                    return Ok(json!({ "result": value, "variablesReference": 0 }));
+                }
+                Err(read) => return Err(read),
+            };
             let mut result = json!({ "result": value["value"], "type": value["type"], "variablesReference": 0 });
             if let Some(path) = value["path"].as_str() {
                 opened(program, task, index, path, &value, &mut result);

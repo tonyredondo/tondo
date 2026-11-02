@@ -140,6 +140,8 @@ pub struct Analysis {
 thread_local! {
     /// The text of the files an editor has open, which may not be saved.
     static OPEN: std::cell::RefCell<std::collections::HashMap<PathBuf, String>> = Default::default();
+    /// A function compiled though nothing calls it: a debugger's call.
+    static ROOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// The system a build is for, when it is not this machine's
     /// (language 6.8).
     static SYSTEM: std::cell::Cell<Option<project::System>> = const { std::cell::Cell::new(None) };
@@ -154,6 +156,19 @@ pub fn system() -> project::System {
 /// Makes the builds of this thread for `system`, as `--target` does.
 pub fn set_system(system: project::System) {
     SYSTEM.set(Some(system));
+}
+
+/// Runs `f` with the files `open` names read as it says, as an editor's
+/// unsaved text, and the function `root` compiled though nothing calls it:
+/// a debugger's `call` adds its function to a file so.
+pub fn with_open<T>(open: std::collections::HashMap<PathBuf, String>, root: &str, f: impl FnOnce() -> T) -> T {
+    let open = open.into_iter().map(|(path, text)| (path.canonicalize().unwrap_or(path), text)).collect();
+    OPEN.with(|o| *o.borrow_mut() = open);
+    ROOT.with(|r| *r.borrow_mut() = Some(root.to_string()));
+    let out = f();
+    OPEN.with(|o| o.borrow_mut().clear());
+    ROOT.with(|r| *r.borrow_mut() = None);
+    out
 }
 
 /// Runs `f` with builds for `system`, as `tondo check` does for each.
@@ -567,8 +582,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         // A test build has every function of the project that is not
         // generic, so that coverage counts those no test calls (testing
         // 10.3).
+        let root = ROOT.with(|r| r.borrow().clone());
         let own = |f: &hir::Function| {
-            tests && f.generics.is_empty() && f.span != Span::default() && sources.file_of(f.span.start).own
+            let called = root.as_ref().is_some_and(|root| f.name == *root || f.name.ends_with(&format!(".{root}")));
+            called || tests && f.generics.is_empty() && f.span != Span::default() && sources.file_of(f.span.start).own
         };
         let roots: Vec<hir::FnId> =
             (0..program.functions.len()).filter(|&i| own(&program.functions[i])).map(|i| hir::FnId(i as u32)).collect();

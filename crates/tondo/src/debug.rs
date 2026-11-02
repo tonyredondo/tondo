@@ -66,6 +66,8 @@ task <id>                                       look at another stopped task, fr
 tasks                                           where each stopped task is
 reload                                          a live build: its code as its files are now (r)
 goto <line>                                     a live build: the stopped frame goes on at that line of its function
+call <expression>                               a live build: what an expression gives that calls the program's
+                                                code, run by the stopped task: total(items), user.describe()
 restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
@@ -213,6 +215,29 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     (Ok(reloaded), false) => println!("{}", reloaded.summary()),
                     (Err(refused), true) => println!("{}", serde_json::json!({ "error": refused.message() })),
                     (Err(refused), false) => println!("{}", refused.message()),
+                }
+            }
+            // What an expression gives, calling the program's code: a live
+            // build's patch.
+            "call" => {
+                let mut ask = |request: &str| {
+                    session.send(request)?;
+                    session.answer()
+                };
+                let place =
+                    ask("stack").ok().and_then(|s| s["stack"][0].as_str().map(String::from)).unwrap_or_default();
+                let locals = ask("locals").unwrap_or_default();
+                let bindings: Vec<(String, String)> = locals["locals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|l| {
+                        (l["name"].as_str().unwrap_or_default().into(), l["type"].as_str().unwrap_or_default().into())
+                    })
+                    .collect();
+                match crate::live::call(pid, &mut ask, &place, rest, &bindings) {
+                    Ok(value) => session.show(&serde_json::json!({ "name": rest, "value": value })),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
             // The stopped frame goes on at another line of its function.
