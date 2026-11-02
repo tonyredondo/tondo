@@ -284,6 +284,11 @@ pub(crate) struct Task {
     /// The `std.sync` locks it holds, whether exclusively, and where it
     /// took them.
     pub(crate) held: Vec<(usize, bool, *const Str)>,
+    /// What it is blocked on, for a debugger and a deadlock: the object,
+    /// and whether a lock, a channel to receive from or send to, or a task
+    /// to finish (`LOCK`…), 0 when it runs.
+    blocked: AtomicUsize,
+    blocked_kind: AtomicU8,
     finished: bool,
     main: bool,
     /// For a task that runs a callback for a thread of C, the call.
@@ -1506,6 +1511,11 @@ fn deadlock() -> ! {
     // A debugger shows where every task waits first.
     super::debugger::deadlocked(headline);
     let mut report = String::from(headline);
+    // The tasks that wait for each other, when locks or joins tie them.
+    let all: Vec<u64> = tasks().iter().map(|&t| unsafe { (*(t as *mut Task)).id }).collect();
+    if let Some(cycle) = super::debugger::cycle(&all) {
+        report.push_str(&format!("\n{cycle}"));
+    }
     // Where each task waits, the same place once, with the main task first.
     let mut waits: Vec<(String, usize)> = Vec::new();
     let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
@@ -1737,6 +1747,62 @@ pub(crate) fn spawned_at(id: u64) -> Vec<usize> {
         origin = *parent;
     }
     out
+}
+
+/// What a task is blocked on (`Task::blocked_kind`).
+pub(crate) const LOCK: u8 = 1;
+pub(crate) const RECEIVING: u8 = 2;
+pub(crate) const SENDING: u8 = 3;
+pub(crate) const JOIN: u8 = 4;
+
+/// Blocks the running task as `block` does, on `object` of the kind
+/// `kind`, which the debugger shows while it waits.
+pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize) -> usize {
+    let task = current();
+    if let Some(task) = unsafe { task.as_ref() } {
+        task.blocked.store(object, Ordering::Relaxed);
+        task.blocked_kind.store(kind, Ordering::Release);
+    }
+    let fired = block();
+    if let Some(task) = unsafe { task.as_ref() } {
+        task.blocked_kind.store(0, Ordering::Release);
+    }
+    fired
+}
+
+/// What the task `id` is blocked on: its kind and the object.
+pub(crate) fn blocked_of(id: u64) -> Option<(u8, usize)> {
+    let task = unsafe { by_id(id)?.as_ref()? };
+    let kind = task.blocked_kind.load(Ordering::Acquire);
+    (kind != 0).then(|| (kind, task.blocked.load(Ordering::Relaxed)))
+}
+
+/// The tasks that hold the lock `object`, whether exclusively, and where
+/// they took it.
+pub(crate) fn holders(object: usize) -> Vec<(u64, bool, String)> {
+    let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    let mut out = Vec::new();
+    for task in all {
+        let task = unsafe { &*task };
+        for &(held, exclusive, at) in task.held.iter().filter(|(held, ..)| *held == object) {
+            let _ = held;
+            out.push((task.id, exclusive, String::from_utf8_lossy(unsafe { super::str_bytes(at) }).into_owned()));
+        }
+    }
+    out
+}
+
+/// The task whose end the join `object` waits for.
+pub(crate) fn joined(object: usize) -> Option<u64> {
+    let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    all.into_iter().map(|t| unsafe { &*t }).find(|t| t.join as usize == object).map(|t| t.id)
+}
+
+/// How many values the channel `object` holds, and how many it takes,
+/// `None` when unbounded.
+pub(crate) fn channel_fill(object: usize) -> (usize, Option<usize>) {
+    let channel = unsafe { &*(object as *const ChannelObject) };
+    (channel.count, (channel.capacity != usize::MAX).then_some(channel.capacity))
 }
 
 /// The tasks switched out that wait, or are ready to run again: each
@@ -2282,6 +2348,8 @@ fn new_task(
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),
         held: Vec::new(),
+        blocked: AtomicUsize::new(0),
+        blocked_kind: AtomicU8::new(0),
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
@@ -3112,10 +3180,10 @@ unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
         j.waiters.push((Arc::as_ptr(&wait), 0));
         unlock(&j.lock);
         if fully {
-            wait.block_fully();
+            blocked_in(JOIN, join as usize, || wait.block_fully());
             return true;
         }
-        if wait.block_on_task() != CANCELLED {
+        if blocked_in(JOIN, join as usize, || wait.block_on_task()) != CANCELLED {
             return true;
         }
         lock(&j.lock);
@@ -3778,7 +3846,8 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value, state: 0 };
         c.sending.push_back(&mut waiter);
         unlock(&c.lock);
-        if wait.block_on_task() == CANCELLED {
+        let channel = c as *const ChannelObject as usize;
+        if blocked_in(SENDING, channel, || wait.block_on_task()) == CANCELLED {
             lock(&c.lock);
             c.sending.retain(|w| *w != &raw mut waiter);
             unlock(&c.lock);
@@ -3908,7 +3977,7 @@ pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, o
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: out, state: 0 };
         c.receiving.push_back(&mut waiter);
         unlock(&c.lock);
-        if wait.block_on_task() == CANCELLED {
+        if blocked_in(RECEIVING, channel as usize, || wait.block_on_task()) == CANCELLED {
             lock(&c.lock);
             c.receiving.retain(|w| *w != &raw mut waiter);
             unlock(&c.lock);

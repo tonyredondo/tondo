@@ -4506,3 +4506,15 @@ debuggers. `locals` marks what changed since it last showed a frame, as
 an editor highlights it; `until` runs to a line; a breakpoint can be one
 task's; and `back until <condition>` searches the history rather than
 stepping through it.
+
+## 2026-11-02 — What a task waits for, and a deadlock's cycle
+
+A task that waits showed where, not for what: a lock, a channel, another
+task. Each task now records what it is blocked on while it blocks in a
+lock, a channel's receive or send, or a join; a lock's holders come from
+the locks each task holds, which the runtime keeps for dumps. `tasks`
+says what each waiting task waits for and who holds it, and a deadlock,
+under the debugger or not, names the cycle of tasks and locks behind it
+with where each lock was taken, which is the fix's first line. A channel
+has no holder to name, as any task with a sender may send; its fill is
+what it says.

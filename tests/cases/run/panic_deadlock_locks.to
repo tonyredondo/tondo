@@ -1,0 +1,31 @@
+// Two tasks that each take a lock the other holds deadlock, and the
+// report says which waits for which, and where each took its lock.
+
+import std.sync
+
+fn other(a: sync.Mutex[Int], b: sync.Mutex[Int], ready: Sender[Bool], go: Receiver[Bool]) {
+    b.update((x) {
+        ready.send(true)
+        _ = go.receive()
+        a.update((y) { y += 1 })
+        x += 1
+    })
+}
+
+fn main() {
+    let a = sync.Mutex(0)
+    let b = sync.Mutex(0)
+    let (ready, started) = channel[Bool](1)
+    let (go, going) = channel[Bool](1)
+    spawn other(a, b, ready, going)
+    a.update((x) {
+        _ = started.receive()
+        go.send(true)
+        b.update((y) { y += 1 })
+        x += 1
+    })
+}
+
+// expect-panic: P0013
+// expect-stderr: panic[P0013]: deadlock: every task waits and none of them can wake the others
+// expect-stderr: task 1 waits for a std.sync lock task 2 holds, taken at panic_deadlock_locks.to:7:5; task 2 waits for a std.sync lock task 1 holds, taken at panic_deadlock_locks.to:21:5

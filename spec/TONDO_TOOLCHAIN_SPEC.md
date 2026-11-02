@@ -848,7 +848,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `json.DecodeError`), lo limitan a esos; de una unión cuenta el miembro que
   es el error. Un deadlock (`P0013`) para el programa antes de terminarlo,
   donde espera la tarea principal, para ver dónde espera cada una; al
-  seguir, termina con su pánico.
+  seguir, termina con su pánico. Cuando locks o tareas que esperan a otras
+  forman un ciclo, el motivo lo nombra, y también el informe del pánico sin
+  depurador: qué tarea espera qué lock que otra tiene, y dónde lo tomó.
 - `continue` sigue hasta un breakpoint; `until <línea>` o `until
   <file>:<line>`, hasta esa línea, o la parada que llegue antes; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
@@ -876,7 +878,10 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
   en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
-  `stack` muestran sus marcos y sus bindings como los de una parada.
+  `stack` muestran sus marcos y sus bindings como los de una parada. De
+  una que espera, `for` dice qué: un lock de `std.sync` y la tarea que lo
+  tiene, con dónde lo tomó; un valor de un canal o sitio en él, con lo que
+  tiene; o el fin de otra tarea.
 - `locals` muestra los bindings que tienen un valor en la función donde paró
   la tarea, lo que un closure capturó entre ellos, y después los de las
   funciones en que está escrita cuyos marcos siguen en su pila, cada uno con

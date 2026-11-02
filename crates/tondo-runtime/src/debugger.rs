@@ -1085,6 +1085,63 @@ pub(crate) fn panicked(message: &str) {
     }
 }
 
+/// What a task waits for, in words, and the tasks that keep it waiting:
+/// those that hold the lock it wants, or the one it waits to finish.
+fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
+    use super::tasks::{JOIN, LOCK, RECEIVING, SENDING};
+    let (kind, object) = super::tasks::blocked_of(task)?;
+    let filled = |object: usize| {
+        let (count, capacity) = super::tasks::channel_fill(object);
+        capacity.map_or(format!("{count}"), |capacity| format!("{count} of {capacity}"))
+    };
+    Some(match kind {
+        LOCK => {
+            let holders = super::tasks::holders(object);
+            let held: Vec<String> = holders.iter().map(|(t, _, at)| format!("task {t} holds, taken at {at}")).collect();
+            let text = match held.is_empty() {
+                true => "a std.sync lock".to_string(),
+                false => format!("a std.sync lock {}", held.join(" and ")),
+            };
+            (text, holders.iter().map(|(t, ..)| *t).collect())
+        }
+        RECEIVING => (format!("a value of a channel that holds {}", filled(object)), Vec::new()),
+        SENDING => (format!("room in a channel that holds {}", filled(object)), Vec::new()),
+        JOIN => match super::tasks::joined(object) {
+            Some(joined) => (format!("task {joined} to end"), vec![joined]),
+            None => ("a task to end".to_string(), Vec::new()),
+        },
+        _ => return None,
+    })
+}
+
+/// A cycle of tasks that wait for each other, through locks and joins, in
+/// words: a deadlock's cause.
+pub(crate) fn cycle(tasks: &[u64]) -> Option<String> {
+    let edges: Vec<(u64, String, Vec<u64>)> =
+        tasks.iter().filter_map(|&t| waits_for(t).map(|(text, on)| (t, text, on))).collect();
+    for &(start, ..) in &edges {
+        let mut path = vec![start];
+        let mut at = start;
+        while let Some((_, _, on)) = edges.iter().find(|(t, ..)| *t == at) {
+            let Some(&next) = on.first() else { break };
+            if next == start {
+                let told: Vec<String> = path
+                    .iter()
+                    .filter_map(|t| edges.iter().find(|(e, ..)| e == t))
+                    .map(|(t, text, _)| format!("task {t} waits for {text}"))
+                    .collect();
+                return Some(told.join("; "));
+            }
+            if path.contains(&next) {
+                break;
+            }
+            path.push(next);
+            at = next;
+        }
+    }
+    None
+}
+
 /// Every task waits and none can wake the others (`P0013`): with a
 /// debugger attached that catches it, the program stops first, where the
 /// main task waits, so that `tasks`, `stack` and `locals` show what each
@@ -1094,7 +1151,15 @@ pub(crate) fn deadlocked(headline: &str) {
         return;
     }
     let Some(table) = table() else { return };
-    let Some((task, _, frame, bounds)) = super::tasks::waiting().into_iter().next() else { return };
+    let waiting = super::tasks::waiting();
+    let Some(&(task, _, frame, bounds)) = waiting.first() else { return };
+    // The tasks that wait for each other, when locks or joins tie them.
+    let ids: Vec<u64> = waiting.iter().map(|(id, ..)| *id).collect();
+    let headline = match cycle(&ids) {
+        Some(cycle) => format!("{headline}: {cycle}"),
+        None => headline.to_string(),
+    };
+    let headline = headline.as_str();
     let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: headline.to_string() };
     let at = frames(&table, &stop).first().map_or(String::new(), |f| f.place.clone());
     drop(table);
@@ -1783,7 +1848,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     let Some(stop) = stop_of(&state, task).filter(|s| s.site == WAITING) else { continue };
                     let at = frames(table, &stop).first().map_or(String::new(), |f| f.place.clone());
                     let (at, why) = (quoted(&at), quoted(&stop.why));
-                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}}}"));
+                    // What it waits for, and who holds that.
+                    let waits =
+                        waits_for(task).map_or(String::new(), |(text, _)| format!(",\"for\":{}", quoted(&text)));
+                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}}}"));
                 }
             }
             format!("{{\"tasks\":[{}]}}", held.into_iter().chain(waiting).collect::<Vec<_>>().join(","))
