@@ -950,6 +950,16 @@ fn debug_adapter_watches_and_pages() {
         "{why}"
     );
     ask("setDataBreakpoints", json!({ "breakpoints": [] }));
+    // Out of `sum`, its frame's scope shows what it returned.
+    ask("stepOut", json!({ "threadId": 1 }));
+    assert_eq!(ask("", Value::Null)["reason"], "step");
+    let trace = ask("stackTrace", json!({ "threadId": 1 }));
+    let scopes = ask("scopes", json!({ "frameId": trace["stackFrames"][0]["id"] }));
+    let locals = ask("variables", json!({ "variablesReference": scopes["scopes"][0]["variablesReference"] }));
+    assert_eq!(
+        (&locals["variables"][0]["name"], &locals["variables"][0]["value"]),
+        (&json!("(sum returned)"), &json!("20"))
+    );
     ask("continue", json!({ "threadId": 1 }));
     let stopped = ask("", Value::Null);
     assert_eq!((&stopped["reason"], &stopped["text"]), (&json!("exception"), &json!("error: Problem.Empty")));
@@ -958,6 +968,76 @@ fn debug_adapter_watches_and_pages() {
     ask("disconnect", json!({}));
     drop(ask);
     child.wait().unwrap();
+}
+
+const WAITED: &str = r#"import std.console
+import std.json
+
+type Point = { x: Int, y: Int }
+
+fn waiter(ready: Sender[Bool], inbox: Receiver[Int]) {
+    let label = "waiter"
+    let (_, got) = (ready.send(true), inbox.receive())
+    console.println("{label} {got}")
+}
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    let (ready, started) = channel[Bool](1)
+    let (outbox, inbox) = channel[Int](1)
+    spawn waiter(ready, inbox)
+    _ = started.receive()
+    let sent = 1
+    let text = json.encode(Point { x: 1, y: 2 })
+    let doubled = twice(21)
+    outbox.send(sent + doubled)
+}
+"#;
+
+/// A task that waits shows where and its bindings; steps go over the
+/// standard library's and derived code, stop on a line that computes
+/// nothing, and say what a function returned.
+#[test]
+fn debugger_shows_waiting_tasks_and_returned_values() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-wait");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("waited.to"), WAITED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "waited.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break waited.to:21\ncontinue\ntasks\nstack 2\ntask 2\nprint label\ntask 1\nnext\nstep\nstep\nfinish\n\
+        continue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
+    // It waits in `receive`, or, sent its value, is ready to go there.
+    assert_eq!((&tasks[1]["task"], &tasks[1]["at"]), (&json!(2), &json!("waited.to:8 in waiter")));
+    assert!(tasks[1]["why"] == "waits" || tasks[1]["why"] == "ready", "{tasks:?}");
+    assert_eq!(lines.iter().find_map(|l| l["stack"].as_array()).unwrap()[0], "waited.to:8 in waiter");
+    assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
+    let stops: Vec<(&str, &Value)> =
+        lines.iter().filter_map(|l| l.get("stopped")).map(|s| (s["at"].as_str().unwrap(), &s["returned"])).collect();
+    assert_eq!(
+        stops[1..],
+        [
+            ("waited.to:21 in main", &Value::Null),
+            ("waited.to:22 in main", &Value::Null),
+            ("waited.to:23 in main", &Value::Null),
+            ("waited.to:13 in twice", &Value::Null),
+            ("waited.to:24 in main", &json!({ "function": "twice", "value": "42" })),
+        ]
+    );
 }
 
 #[test]

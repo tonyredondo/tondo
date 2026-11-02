@@ -139,6 +139,7 @@ enum Rt {
     MetricsWatch,
     DebugLine,
     DebugFailed,
+    DebugReturned,
     SbQuoted,
     BoxNew,
     BoxRetain,
@@ -424,6 +425,7 @@ impl Rt {
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
             Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64], &[]),
+            Rt::DebugReturned => ("tondo_rt_debug_returned", &[I64, I64, I64], &[]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -5324,11 +5326,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// An error leaves the program's own code where it starts: a `fail`, or
     /// a `?` on what the program's code did not fail with already, as a
-    /// call of the standard library. The runtime stops there for a
+    /// call of the standard library or of derived code. The runtime stops there for a
     /// debugger that catches errors, and shows the error.
     fn failing(&mut self, error: &Operand, span: Span, called: Option<Span>) {
         let sources = self.e.cg.sources();
-        let standard = |span: Span| sources.file_of(span.start).logical.starts_with("<std>/");
+        let standard = |span: Span| sources.file_of(span.start).logical.starts_with('<');
         if self.debug.is_none() || standard(span) || called.is_some_and(|called| !standard(called)) {
             return;
         }
@@ -8489,6 +8491,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
             }
             Terminator::Return(value) => match self.operand(value) {
+                // A debugger stepping shows what the function returned.
+                returned if self.debug.is_some() && self.operand_ty(value) != Ty::UNIT => {
+                    let ty = self.operand_ty(value);
+                    let address = self.in_memory(ty, returned);
+                    let glue = self.e.glue_address(Glue::Show, ty);
+                    let Some(debug) = self.debug.take() else { unreachable!("a debug build") };
+                    let (site, ..) = self.debug_place(&debug);
+                    self.debug = Some(debug);
+                    self.e.call_rt(Rt::DebugReturned, &[site, glue, address]);
+                    match returned {
+                        Val::Scalar(value) => self.e.fb.ins().return_(&[value]),
+                        Val::Memory(_) | Val::Zero => self.e.fb.ins().return_(&[]),
+                    };
+                }
                 Val::Scalar(value) => {
                     self.e.fb.ins().return_(&[value]);
                 }

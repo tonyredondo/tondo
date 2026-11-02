@@ -1586,7 +1586,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 20] = [
+    const KEYS: [&str; 21] = [
         "debugging",
         "running",
         "pausing",
@@ -1604,6 +1604,7 @@ fn debugger(value: &Value) -> bool {
         "logged",
         "watch",
         "unwatched",
+        "steps",
         "deleted",
         "reloaded",
         "error",
@@ -2030,7 +2031,8 @@ debug build's process ID or name. A program it starts waits before main for brea
         name: "debug",
         description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
 {expressions}>], break fn <name>, watch <expression> (stops after the line that changes it), delete <id>, \
-catch panic|error|none (stop where a panic, or an error, starts), continue, step, next, finish, pause, locals \
+catch panic|error|none (stop where a panic, or an error, starts), continue, step, next, finish (a step says \
+what a function returned), steps all|program (into the standard library's code or over it), pause, locals \
 (what the code there can use: its bindings, a closure's captures, and those of the functions it is written in, \
 as a test's suites), context (the task's contexts, and the `with` that set each field), print <expression> \
 (bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \

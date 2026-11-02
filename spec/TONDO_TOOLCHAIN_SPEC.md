@@ -830,9 +830,17 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
-  llamó. `pause`, o Ctrl-C, para el programa.
+  llamó. `pause`, o Ctrl-C, para el programa. Cada sentencia empieza una
+  línea donde se para, también una que no calcula nada, como
+  `let ready = true`. Los pasos pasan por encima del código que no está en
+  los archivos del programa, el de la librería estándar y el derivado, salvo
+  uno que empieza en él; `steps all` los hace entrar y `steps program`
+  vuelve a lo de antes. Un paso que sale de una función dice lo que devolvió
+  (`returned`), que `locals` muestra también en el marco donde paró.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
-  siguen juntas. `tasks` dice dónde está cada una.
+  siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
+  en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
+  `stack` muestran sus marcos y sus bindings como los de una parada.
 - `locals` muestra los bindings que tienen un valor en la función donde paró
   la tarea, lo que un closure capturó entre ellos, y después los de las
   funciones en que está escrita cuyos marcos siguen en su pila, cada uno con
@@ -871,14 +879,16 @@ sus pilas, el estado de cada una y la memoria por dónde se creó. Los
 breakpoints, con su condición, sus hits y sus logpoints, los de función
 (`setFunctionBreakpoints`), los de datos, que son watches de una variable o
 una parte suya (`dataBreakpointInfo` y `setDataBreakpoints`), los pasos, la
-pausa, las tareas (`threads`), la pila de cada una, la de un test con sus
+pausa, las tareas (`threads`), también las que esperan, la pila de cada una, la de un test con sus
 suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
 la tarea, `evaluate` de una expresión, `setVariable` y las excepciones de un
 pánico y de un error (los filtros `panic` y `error`, con `exceptionInfo`) son
-las órdenes de `tondo debug`; la salida del programa y los logpoints van a la
+las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
+va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
+que los pasos entren en el código de la librería estándar; la salida del programa y los logpoints van a la
 consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.

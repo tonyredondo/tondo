@@ -43,6 +43,14 @@ struct Site {
     function: usize,
 }
 
+impl Site {
+    /// Whether the site is in code the toolchain wrote, the standard
+    /// library's or derived, as `<std>/json.to`.
+    fn generated(&self) -> bool {
+        self.file.starts_with('<')
+    }
+}
+
 struct Table {
     functions: Vec<Function>,
     sites: Vec<Site>,
@@ -57,6 +65,8 @@ struct Table {
 
 /// An offset not known yet.
 const UNKNOWN: isize = isize::MIN;
+/// The site of a task that waits, switched out at no probe.
+const WAITING: usize = usize::MAX - 1;
 
 /// The program's table, to which a live build's patches add theirs. A
 /// lock taken before `STATE`, and never held while a task waits.
@@ -71,6 +81,33 @@ static ATTACHED: AtomicBool = AtomicBool::new(false);
 static HOLD: AtomicBool = AtomicBool::new(false);
 /// A frame watches an expression: every probe looks.
 static WATCHING: AtomicBool = AtomicBool::new(false);
+/// Steps stop in the standard library's code: always (`steps all`), or
+/// for a step that starts there.
+static STEPS_ALL: AtomicBool = AtomicBool::new(false);
+static STEPS_STD: AtomicBool = AtomicBool::new(false);
+/// The task that steps, or 0; and the function that returned last in it,
+/// with what it returned, which the step's stop shows.
+static STEPPING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RETURNED: Mutex<Option<(u64, String, String)>> = Mutex::new(None);
+
+/// In a debug build, a function returns a value: while its task steps,
+/// the debugger keeps what it returned, from the program's own code or,
+/// for steps that go there, the standard library's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_debug_returned(site: i64, glue: Show, value: *const u8) {
+    let stepping = STEPPING.load(Ordering::Relaxed);
+    if stepping == 0 || stepping != super::tasks::current_id() {
+        return;
+    }
+    let Some(table) = table() else { return };
+    let Some(at) = table.sites.get(site as usize) else { return };
+    if at.generated() && !STEPS_STD.load(Ordering::Relaxed) {
+        return;
+    }
+    let function = table.functions[at.function].name.clone();
+    let shown = clipped(&show(glue, value as usize));
+    *RETURNED.lock().unwrap_or_else(|e| e.into_inner()) = Some((stepping, function, shown));
+}
 
 /// Called by a debug build's process before anything else, or by a
 /// library before its first call.
@@ -376,7 +413,15 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         // Another task stopped, or the debugger asked all to.
         if state.stopped.is_some() { None } else { Some("pause".to_string()) }
     } else {
+        // A step goes over code the program's files do not have, the
+        // standard library's and the derived, unless it started there.
+        let standard = || table.sites.get(site).is_some_and(Site::generated);
         let stepped = match state.mode {
+            Mode::Step { .. } | Mode::Next { .. } | Mode::Finish { .. }
+                if !STEPS_STD.load(Ordering::Relaxed) && standard() =>
+            {
+                false
+            }
             Mode::Run => false,
             Mode::Step { task: t } => t == task,
             Mode::Next { task: t, frame: f } => t == task && frame >= f,
@@ -587,11 +632,23 @@ fn restarting(frame: usize, task: u64, site: usize) -> u8 {
 
 fn stopped_event(stop: &Stop) -> String {
     format!(
-        "{{\"stopped\":{{\"why\":{},\"task\":{},\"at\":{}}}}}",
+        "{{\"stopped\":{{\"why\":{},\"task\":{},\"at\":{}{}}}}}",
         quoted(&stop.why),
         stop.task,
-        quoted(&place(stop.site))
+        quoted(&place(stop.site)),
+        returned(stop)
     )
+}
+
+/// What a function returned in the step that stopped, as an answer's
+/// field.
+fn returned(stop: &Stop) -> String {
+    match RETURNED.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        Some((task, function, value)) if *task == stop.task && stop.why == "step" => {
+            format!(",\"returned\":{{\"function\":{},\"value\":{}}}", quoted(function), quoted(value))
+        }
+        _ => String::new(),
+    }
 }
 
 /// A probe's place: `file:line in function`.
@@ -626,6 +683,12 @@ fn resume(mode: Mode) {
     if !matches!(mode, Mode::Restarted { .. }) {
         RESTART_FRAME.store(0, Ordering::Relaxed);
     }
+    let stepping = match mode {
+        Mode::Step { task } | Mode::Next { task, .. } | Mode::Finish { task, .. } => task,
+        Mode::Run | Mode::Restarted { .. } => 0,
+    };
+    STEPPING.store(stepping, Ordering::Relaxed);
+    *RETURNED.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let mut state = state();
     state.mode = mode;
     state.stopped = None;
@@ -652,11 +715,13 @@ struct Frame {
     alive: usize,
 }
 
-/// The frames of a held task, innermost first, as `stack` lists them.
+/// The frames of a held task, innermost first, as `stack` lists them; of
+/// one that waits, those of the program's functions its stack has.
 fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
     let function = table.sites.get(held.site).map(|s| s.function);
     let place = place_in(table, held.site);
-    let mut out = vec![Frame { place, function, pointer: held.frame, addresses: held.addresses, alive: held.alive }];
+    let first = Frame { place, function, pointer: held.frame, addresses: held.addresses, alive: held.alive };
+    let mut out = if held.site == WAITING { Vec::new() } else { vec![first] };
     if held.site == usize::MAX {
         return out;
     }
@@ -875,6 +940,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
         }
         "step" | "next" | "finish" => {
             let Some(stop) = stopped() else { return Some(not_stopped()) };
+            let in_std = table.sites.get(stop.site).is_some_and(Site::generated);
+            STEPS_STD.store(STEPS_ALL.load(Ordering::Relaxed) || in_std, Ordering::Relaxed);
             let mode = match word {
                 "step" => Mode::Step { task: stop.task },
                 "next" => Mode::Next { task: stop.task, frame: stop.frame },
@@ -910,6 +977,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"name\":{},\"type\":{},{}}}", quoted(name), quoted(&binding.ty), described(&shown))
         }
         // What stops the program: panics, errors, both or none.
+        // Whether steps go into the standard library's code.
+        "steps" => match rest {
+            "all" | "program" => {
+                STEPS_ALL.store(rest == "all", Ordering::Relaxed);
+                format!("{{\"steps\":{}}}", quoted(rest))
+            }
+            _ => "{\"error\":\"steps takes `program`, to step over the standard library's code, or `all`\"}".into(),
+        },
         // An expression the frame looked at watches, until it returns.
         "watch" => {
             let (frames, index) = match selected(table) {
@@ -964,7 +1039,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     );
                 }
             };
-            let Some(held) = state.held.iter().find(|h| h.task == task).cloned() else {
+            let Some(held) = stop_of(&state, task) else {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
             let count = frames(table, &held).len() as u64;
@@ -999,7 +1074,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
                         )
                     })
                     .collect();
-                return Some(format!("{{\"locals\":[{}]}}", items.join(",")));
+                // In the frame a step stopped in, what a function returned.
+                let state = state();
+                let looked = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0)));
+                let returned = match &state.stopped {
+                    Some(stop) if looked == Some((stop.task, 0)) => returned(stop),
+                    _ => String::new(),
+                };
+                return Some(format!("{{\"locals\":[{}]{returned}}}", items.join(",")));
             }
             if word == "print" {
                 return Some(printed(table, &frames, index, rest));
@@ -1073,9 +1155,9 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 Err(_) => state.stopped.as_ref().map(|s| s.task),
             };
             let Some(task) = task else { return Some(not_stopped()) };
-            let held = state.held.iter().find(|h| h.task == task).cloned().or(state.stopped.clone());
+            let held = stop_of(&state, task);
             drop(state);
-            let Some(held) = held.filter(|h| h.task == task) else {
+            let Some(held) = held else {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
             let frames: Vec<String> = frames(table, &held).iter().map(|f| quoted(&f.place)).collect();
@@ -1099,7 +1181,18 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     )
                 })
                 .collect();
-            format!("{{\"tasks\":[{}]}}", held.join(","))
+            // While the program stands still, the tasks that wait, or are
+            // ready to run again, too: where in the program each is.
+            let mut waiting = Vec::new();
+            if state.stopped.is_some() {
+                for (task, ..) in super::tasks::waiting() {
+                    let Some(stop) = stop_of(&state, task).filter(|s| s.site == WAITING) else { continue };
+                    let at = frames(table, &stop).first().map_or(String::new(), |f| f.place.clone());
+                    let (at, why) = (quoted(&at), quoted(&stop.why));
+                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}}}"));
+                }
+            }
+            format!("{{\"tasks\":[{}]}}", held.into_iter().chain(waiting).collect::<Vec<_>>().join(","))
         }
         _ => return None,
     })
@@ -1160,13 +1253,24 @@ unsafe fn write(ty: &str, address: usize, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a task the debugger looks at is: held at a probe, or, while the
+/// program stands still, waiting.
+fn stop_of(state: &State, task: u64) -> Option<Stop> {
+    if let Some(held) = state.held.iter().chain(&state.stopped).find(|h| h.task == task) {
+        return Some(held.clone());
+    }
+    state.stopped.as_ref()?;
+    let (_, why, frame, bounds) = super::tasks::waiting().into_iter().find(|(id, ..)| *id == task)?;
+    Some(Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: why.into() })
+}
+
 /// The frame `locals` and `print` look at: the one `select` chose, or the
 /// stopped task's own.
 fn selected(table: &Table) -> Result<(Vec<Frame>, usize), String> {
     let state = state();
     let not = "the program runs: `pause` stops it, or a breakpoint".to_string();
     let (task, index) = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0))).ok_or(not.clone())?;
-    let held = state.held.iter().find(|h| h.task == task).cloned().or(state.stopped.clone()).ok_or(not)?;
+    let held = stop_of(&state, task).ok_or(not)?;
     drop(state);
     let frames = frames(table, &held);
     match index < frames.len() {

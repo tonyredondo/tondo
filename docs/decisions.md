@@ -4391,3 +4391,16 @@ that travels through several `?` stops once, where it began. `break fn`
 stops where functions of a name start. A value is read whole and opened
 one level at a time, so an array of any size opens, in pages, where the
 answers clipped it at a megabyte before.
+
+## 2026-11-02 — The debugger shows every task, and steps through the program
+
+A task that waited in a channel, a lock or a `sleep` reached no probe, so
+the debugger did not list it, and a hang was the case where it mattered
+most. While the program stands still, `tasks` lists the tasks that wait
+or are ready to run, from the frame pointer each saved as it switched
+out, as dumps read them, and their frames show their bindings. Steps go
+over the code the program's files do not have, the standard library's
+and the derived, unless a step starts there, as other debuggers' "just my
+code"; `steps all` goes in. A function's return tells a debug build's
+runtime its value, which it keeps only while that task steps, so the stop
+after leaving a function says what it returned.

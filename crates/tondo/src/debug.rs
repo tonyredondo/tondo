@@ -38,6 +38,7 @@ continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
+steps program|all                               steps go over the standard library's code (the default), or into it
 pause                                           stop every task, as Ctrl-C does
 catch panic|error|none                          stop where a task panics and no recover stops it (the default), where
                                                 an error starts (a fail, or a ? on what std failed with), both, or none
@@ -202,7 +203,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch" => {
+            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
+            | "steps" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -311,6 +313,10 @@ impl Session {
                 "start" => println!("the program waits before main: set breakpoints, then `continue`"),
                 why => {
                     println!("task {} stopped at {at} ({why})", stop["task"]);
+                    if let Some(returned) = stop.get("returned") {
+                        let function = returned["function"].as_str().unwrap_or_default();
+                        println!("{function} returned {}", returned["value"].as_str().unwrap_or_default());
+                    }
                     if let Some(source) = source_line(at) {
                         println!("{source}");
                     }

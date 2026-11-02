@@ -1699,16 +1699,47 @@ pub(crate) fn stacks() -> Vec<(u64, usize, usize)> {
 
 /// The stack of a task that switched out, from the frame pointer it saved.
 unsafe fn parked_walk(task: *mut Task) -> super::trace::Walk {
+    match unsafe { switched_out(task) } {
+        Some((fp, bounds)) => super::trace::walk(fp, bounds),
+        None => super::trace::walk(0, (0, 0)),
+    }
+}
+
+/// The frame pointer a task that switched out saved, and its stack's
+/// bounds.
+unsafe fn switched_out(task: *mut Task) -> Option<(usize, (usize, usize))> {
     unsafe {
-        let Some(stack) = (*task).stack.as_ref() else { return super::trace::walk(0, (0, 0)) };
+        let stack = (*task).stack.as_ref()?;
         let bounds = (stack.base as usize + GUARD, stack.top() as usize);
         let sp = (*task).sp as *const usize;
         #[cfg(target_arch = "x86_64")]
         let fp = *sp.add(5);
         #[cfg(target_arch = "aarch64")]
         let fp = *sp.add(10);
-        super::trace::walk(fp, bounds)
+        Some((fp, bounds))
     }
+}
+
+/// The tasks switched out that wait, or are ready to run again: each
+/// one's number, which of the two, the frame pointer it saved and its
+/// stack's bounds, for the debugger to show where each is.
+pub(crate) fn waiting() -> Vec<(u64, &'static str, usize, (usize, usize))> {
+    let ready: std::collections::HashSet<usize> =
+        queue().runnable.iter().copied().chain(waiting_next()).chain(waiting_local()).map(|t| t as usize).collect();
+    let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    let mut out = Vec::new();
+    for task in all {
+        let state = match unsafe { (*task).state.load(Ordering::Acquire) } {
+            PARKED => "waits",
+            _ if ready.contains(&(task as usize)) => "ready",
+            _ => continue,
+        };
+        if let Some((fp, bounds)) = unsafe { switched_out(task) } {
+            out.push((unsafe { (*task).id }, state, fp, bounds));
+        }
+    }
+    out.sort_by_key(|(id, ..)| *id);
+    out
 }
 
 /// Starts the other workers, one per core, the first time a task spawns or

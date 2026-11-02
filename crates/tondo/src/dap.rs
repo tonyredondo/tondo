@@ -505,10 +505,14 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         }
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new() };
+    let mut debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new() };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
+    }
+    // Steps go into the standard library's code too.
+    if arguments["justMyCode"] == false {
+        debuggee.ask("steps all")?;
     }
     Ok(debuggee)
 }
@@ -711,7 +715,12 @@ fn handle(
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|t| json!({ "id": t["task"], "name": format!("task {}", t["task"]) }))
+                .map(|t| match t["why"].as_str() {
+                    Some(why @ ("waits" | "ready")) => {
+                        json!({ "id": t["task"], "name": format!("task {} ({why})", t["task"]) })
+                    }
+                    _ => json!({ "id": t["task"], "name": format!("task {}", t["task"]) }),
+                })
                 .collect();
             if threads.is_empty() {
                 threads.push(json!({ "id": 1, "name": "task 1" }));
@@ -792,6 +801,11 @@ fn handle(
             } else if path.is_empty() || path.starts_with(OUTER) {
                 let outer = path.strip_prefix(OUTER);
                 let locals = program.ask("locals")?;
+                // What a function returned in the step that stopped here.
+                if let (Some(returned), None) = (locals.get("returned"), outer) {
+                    let name = format!("({} returned)", returned["function"].as_str().unwrap_or_default());
+                    variables.push(json!({ "name": name, "value": returned["value"], "variablesReference": 0 }));
+                }
                 for local in locals["locals"].as_array().into_iter().flatten() {
                     if local["from"].as_str() != outer {
                         continue;
