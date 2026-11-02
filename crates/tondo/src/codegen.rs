@@ -2638,12 +2638,17 @@ impl Codegen<'_> {
     fn debug_table(&mut self, id: DataId) {
         let mut text = String::new();
         let mut glues = Vec::new();
-        for (name, bindings) in &self.debug_functions {
+        let (mut layouts, mut known) = (Vec::new(), HashMap::new());
+        for (name, bindings) in self.debug_functions.clone() {
             text.push_str(&format!("F\t{name}\n"));
-            for &(ref binding, ty, glue) in bindings {
-                text.push_str(&format!("L\t{binding}\t{}\n", self.types.display(ty)));
+            for (binding, ty, glue) in bindings {
+                let layout = self.write_layout(ty, &mut layouts, &mut known);
+                text.push_str(&format!("L\t{binding}\t{}\t{layout}\n", self.types.display(ty)));
                 glues.push(glue);
             }
+        }
+        for layout in layouts {
+            text.push_str(&format!("D\t{layout}\n"));
         }
         for &(start, function) in &self.debug_sites {
             let (file, line, _) = self.sources.position(start);
@@ -2669,6 +2674,64 @@ impl Codegen<'_> {
         data.write_data_addr(0, text, 0);
         data.write_data_addr(8, array, 0);
         self.module.define_data(id, &data).expect("debug table");
+    }
+
+    /// How the debugger writes into a value of `ty` (toolchain 7.6), as the
+    /// number of its line among `layouts`: a number, a truth, a character
+    /// or a text by its type's name; a record's or a tuple's fields by
+    /// their offsets, and whether each is behind a pointer; a plain enum by
+    /// the size of its tag and its variants; an array by the size of its
+    /// elements; and `-` for what it does not write into.
+    fn write_layout(&mut self, ty: Ty, layouts: &mut Vec<String>, known: &mut HashMap<Ty, usize>) -> usize {
+        if let Some(&id) = known.get(&ty) {
+            return id;
+        }
+        let id = layouts.len();
+        layouts.push("-".into());
+        known.insert(ty, id);
+        let fields = |cg: &mut Self, names: Vec<String>, layouts: &mut Vec<String>, known: &mut HashMap<Ty, usize>| {
+            let mut out = String::from("r");
+            for (index, name) in names.into_iter().enumerate() {
+                let slot = cg.slot(ty, Proj::Field(index as u32));
+                let inner = cg.write_layout(slot.ty, layouts, known);
+                let boxed = if slot.boxed { "*" } else { "" };
+                out.push_str(&format!(" {name}={}:{boxed}{inner}", slot.offset));
+            }
+            out
+        };
+        layouts[id] = match self.types.kind(ty).clone() {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Byte | TyKind::String => {
+                format!("s {}", self.types.display(ty))
+            }
+            TyKind::Tuple(items) => fields(self, (0..items.len()).map(|i| i.to_string()).collect(), layouts, known),
+            TyKind::Array(element) => {
+                let inner = self.write_layout(element, layouts, known);
+                format!("a {} {inner}", self.layout(element).size)
+            }
+            TyKind::Adt(adt) => match self.types.adt(adt).kind.clone() {
+                AdtKind::Record(declared) => {
+                    fields(self, declared.into_iter().map(|f| f.name).collect(), layouts, known)
+                }
+                AdtKind::Newtype(inner) => {
+                    let inner = self.write_layout(inner, layouts, known);
+                    layouts[inner].clone()
+                }
+                AdtKind::Enum(variants)
+                    if variants.iter().all(|v| matches!(v.payload, crate::types::Payload::Unit)) =>
+                {
+                    let layout = self.layout(ty);
+                    let size = match layout.shape {
+                        Shape::Enum { tag, .. } => tag.bytes(),
+                        _ => layout.size,
+                    };
+                    let names: Vec<String> = variants.into_iter().map(|v| v.name).collect();
+                    format!("e {size} {}", names.join(" "))
+                }
+                AdtKind::Enum(_) => "-".into(),
+            },
+            _ => "-".into(),
+        };
+        id
     }
 
     fn test_table(&mut self, tests: &[crate::hir::TestNodeInfo]) -> DataId {

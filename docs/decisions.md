@@ -4404,3 +4404,15 @@ and the derived, unless a step starts there, as other debuggers' "just my
 code"; `steps all` goes in. A function's return tells a debug build's
 runtime its value, which it keeps only while that task steps, so the stop
 after leaving a function says what it returned.
+
+## 2026-11-02 — `set` writes into parts of values
+
+`set` changed whole bindings of a few types. It now takes a target, a
+binding or a part of one, and an expression. The compiler describes in
+the debug table how each binding's type is laid out: a record's or a
+tuple's fields by offset, a plain enum's tag, an array's item size. The
+runtime walks that description, so it writes in place without code of
+the program running. An array another value shares is copied first, as
+the program's own write would, but only when its items hold nothing
+counted, because the runtime has no retain glue for them; otherwise the
+change is refused with what to change instead.

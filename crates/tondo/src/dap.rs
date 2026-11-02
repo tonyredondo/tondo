@@ -191,6 +191,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsRestartFrame": true,
                 "supportsExceptionInfoRequest": true,
                 "supportsSetVariable": true,
+                "supportsSetExpression": true,
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
                 "exceptionBreakpointFilters": [
@@ -517,6 +518,16 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     Ok(debuggee)
 }
 
+/// The path of a variable the editor names in the variables of `path`: a
+/// binding in a frame's scope, or a part of the value `path` names.
+fn part_path(path: &str, name: &str) -> String {
+    match path.is_empty() || path.starts_with(OUTER) {
+        true => name.to_string(),
+        false if name.starts_with('[') => format!("{path}{name}"),
+        false => format!("{path}.{name}"),
+    }
+}
+
 /// A breakpoint's condition, count of hits and message, as `break` takes
 /// them.
 fn options(wanted: &Value) -> String {
@@ -609,11 +620,7 @@ fn handle(
                     .checked_sub(1)
                     .and_then(|r| program.handles.get(r).cloned())
                     .filter(|(.., path)| !path.starts_with(CONTEXT))
-                    .map(|(task, index, path)| match path.is_empty() || path.starts_with(OUTER) {
-                        true => (task, index, name.to_string()),
-                        false if name.starts_with('[') => (task, index, format!("{path}{name}")),
-                        false => (task, index, format!("{path}.{name}")),
-                    }),
+                    .map(|(task, index, path)| (task, index, part_path(&path, name))),
                 None => {
                     arguments["frameId"].as_u64().map(frame_of).map(|(task, index)| (task, index, name.to_string()))
                 }
@@ -837,20 +844,29 @@ fn handle(
             }
             Ok(json!({ "variables": variables }))
         }
-        // A binding of a frame where its task stopped, changed.
+        // A binding of a frame where its task stopped, or a part of one,
+        // changed to what an expression gives.
         "setVariable" => {
             let reference = arguments["variablesReference"].as_u64().unwrap_or(0) as usize;
             let Some((task, index, path)) = reference.checked_sub(1).and_then(|r| program.handles.get(r).cloned())
             else {
                 return Err("no such variables".into());
             };
-            if !path.is_empty() {
-                return Err("a whole binding changes, not a part of it".into());
+            if path.starts_with(CONTEXT) {
+                return Err("a context's field changes with `with`".into());
             }
             program.ask(&format!("select {task} {index}"))?;
-            let name = arguments["name"].as_str().unwrap_or_default();
+            let target = part_path(&path, arguments["name"].as_str().unwrap_or_default());
             let value = arguments["value"].as_str().unwrap_or_default();
-            let set = program.ask(&format!("set {name} {value}"))?;
+            let set = program.ask(&format!("set {target} = {value}"))?;
+            Ok(json!({ "value": set["value"], "type": set["type"], "variablesReference": 0 }))
+        }
+        "setExpression" => {
+            let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
+            program.ask(&format!("select {task} {index}"))?;
+            let target = arguments["expression"].as_str().unwrap_or_default();
+            let value = arguments["value"].as_str().unwrap_or_default();
+            let set = program.ask(&format!("set {target} = {value}"))?;
             Ok(json!({ "value": set["value"], "type": set["type"], "variablesReference": 0 }))
         }
         // What an expression gives in the frame chosen; a binding or a part

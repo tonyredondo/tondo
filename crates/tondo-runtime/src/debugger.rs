@@ -30,6 +30,22 @@ struct Binding {
     name: String,
     ty: String,
     show: Show,
+    /// How `set` writes into it, among the table's layouts.
+    layout: usize,
+}
+
+/// How `set` writes into a value (`codegen::write_layout`).
+enum Layout {
+    /// A number, a `Bool`, a `Char` or a `String`, by its type's name.
+    Scalar(String),
+    /// A record's or a tuple's fields: each one's name, offset, whether a
+    /// pointer to it is there, and its layout.
+    Fields(Vec<(String, usize, bool, usize)>),
+    /// A plain enum: the size of its tag, and its variants.
+    Plain(usize, Vec<String>),
+    /// An array: the size of its elements, and their layout.
+    Array(usize, usize),
+    Other,
 }
 
 struct Function {
@@ -54,6 +70,7 @@ impl Site {
 struct Table {
     functions: Vec<Function>,
     sites: Vec<Site>,
+    layouts: Vec<Layout>,
     /// Whether each site has a breakpoint, which a probe reads first.
     marked: Vec<AtomicBool>,
     /// Where each function keeps the addresses of its bindings and the bits
@@ -113,10 +130,10 @@ pub unsafe extern "C" fn tondo_rt_debug_returned(site: i64, glue: Show, value: *
 /// library before its first call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
-    let (functions, sites) = unsafe { parse(raw) };
+    let (functions, sites, layouts) = unsafe { parse(raw, 0) };
     let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
     let offsets = functions.iter().map(|_| (AtomicIsize::new(UNKNOWN), AtomicIsize::new(UNKNOWN))).collect();
-    let _ = TABLE.set(RwLock::new(Table { functions, sites, marked, offsets }));
+    let _ = TABLE.set(RwLock::new(Table { functions, sites, layouts, marked, offsets }));
     super::heap::track_objects();
 }
 
@@ -124,9 +141,10 @@ pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
 /// after those it numbers from; the breakpoints of its lines mark it too.
 /// Gives how many sites it added.
 pub(crate) fn add_table(raw: *const Raw) -> usize {
-    let (functions, sites) = unsafe { parse(raw) };
     let Some(lock) = TABLE.get() else { return 0 };
     let mut table = lock.write().unwrap_or_else(|e| e.into_inner());
+    let (functions, sites, layouts) = unsafe { parse(raw, table.layouts.len()) };
+    table.layouts.extend(layouts);
     let (offset, first) = (table.functions.len(), table.sites.len());
     let added = functions.iter().map(|_| (AtomicIsize::new(UNKNOWN), AtomicIsize::new(UNKNOWN)));
     table.offsets.extend(added);
@@ -157,21 +175,48 @@ pub(crate) fn sites() -> usize {
     table().map_or(0, |table| table.sites.len())
 }
 
-unsafe fn parse(raw: *const Raw) -> (Vec<Function>, Vec<Site>) {
+/// A table's functions, sites and layouts, the layouts numbered from
+/// `base`, after those of the tables before it.
+unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<Layout>) {
     let raw = unsafe { &*raw };
     let text = String::from_utf8_lossy(unsafe { str_bytes(raw.text) }).into_owned();
     let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
-    let (mut functions, mut sites, mut next) = (Vec::new(), Vec::new(), 0);
+    let (mut functions, mut sites, mut layouts, mut next) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    let number = |text: &str| text.parse::<usize>().unwrap_or(0);
     for line in text.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
         match parts.as_slice() {
             ["F", name] => functions.push(Function { name: name.to_string(), bindings: Vec::new() }),
-            ["L", name, ty] => {
+            ["L", name, ty, layout] => {
                 let show = glues[next];
                 next += 1;
                 if let Some(function) = functions.last_mut() {
-                    function.bindings.push(Binding { name: name.to_string(), ty: ty.to_string(), show });
+                    let (name, ty, layout) = (name.to_string(), ty.to_string(), base + number(layout));
+                    function.bindings.push(Binding { name, ty, show, layout });
                 }
+            }
+            ["D", layout] => {
+                let words: Vec<&str> = layout.split(' ').collect();
+                layouts.push(match words.as_slice() {
+                    ["s", ty] => Layout::Scalar(ty.to_string()),
+                    ["r", fields @ ..] => Layout::Fields(
+                        fields
+                            .iter()
+                            .filter_map(|field| {
+                                let (name, at) = field.split_once('=')?;
+                                let (offset, layout) = at.split_once(':')?;
+                                let boxed = layout.starts_with('*');
+                                let layout = base + number(layout.trim_start_matches('*'));
+                                Some((name.to_string(), number(offset), boxed, layout))
+                            })
+                            .collect(),
+                    ),
+                    ["e", size, variants @ ..] => {
+                        Layout::Plain(number(size), variants.iter().map(|v| v.to_string()).collect())
+                    }
+                    ["a", size, layout] => Layout::Array(number(size), base + number(layout)),
+                    _ => Layout::Other,
+                });
             }
             ["S", file, line, function] => sites.push(Site {
                 file: file.to_string(),
@@ -181,7 +226,7 @@ unsafe fn parse(raw: *const Raw) -> (Vec<Function>, Vec<Site>) {
             _ => {}
         }
     }
-    (functions, sites)
+    (functions, sites, layouts)
 }
 
 /// Under `tondo debug`, a debug build waits a while for the debugger, then
@@ -954,29 +999,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
             HOLD.store(true, Ordering::Relaxed);
             "{\"pausing\":true}".into()
         }
-        "set" => {
-            let Some((name, value)) = rest.split_once(' ') else {
-                return Some("{\"error\":\"set takes a binding and its new value, as `set count 3`\"}".into());
-            };
-            if state().selected.is_some_and(|(_, frame)| frame != 0) {
-                let message = "a binding changes in the frame where its task stopped: `frame 0`";
-                return Some(format!("{{\"error\":{}}}", quoted(message)));
-            }
-            let frame = match selected(table) {
-                Ok((frames, index)) => frames.into_iter().nth(index).expect("a selected frame"),
-                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
-            };
-            let bound = bound(table, &frame);
-            let Some((binding, address)) = bound.iter().find(|(b, _)| b.name == name) else {
-                return Some(format!("{{\"error\":{}}}", quoted(&format!("no binding `{name}` holds a value here"))));
-            };
-            if let Err(message) = unsafe { write(&binding.ty, *address, value.trim()) } {
-                return Some(format!("{{\"error\":{}}}", quoted(&message)));
-            }
-            let shown = show(binding.show, *address);
-            format!("{{\"name\":{},\"type\":{},{}}}", quoted(name), quoted(&binding.ty), described(&shown))
-        }
-        // What stops the program: panics, errors, both or none.
+        "set" => match set(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {
@@ -1012,6 +1038,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             WATCHING.store(true, Ordering::Relaxed);
             answer
         }
+        // What stops the program: panics, errors, both or none.
         "catch" => {
             let kinds: Vec<&str> = rest.split_whitespace().collect();
             let known = |kinds: &[&str]| kinds.iter().all(|k| matches!(*k, "panic" | "error"));
@@ -1198,57 +1225,163 @@ pub(crate) fn command(line: &str) -> Option<String> {
     })
 }
 
-/// Changes a binding of a type the debugger writes, at `address`, to the
-/// value `text` says: a number, `true` or `false`, a character, or a text,
-/// in quotes or not.
-unsafe fn write(ty: &str, address: usize, text: &str) -> Result<(), String> {
-    let wrong = || format!("`{text}` is not a value of type {ty}");
-    macro_rules! number {
+/// `set <target> [=] <value>`: changes a binding of the frame where the
+/// task stopped, or a part of one, `user.age` or `items[i]`, to what the
+/// expression gives: a number, a `Bool`, a `Char`, a `String` or a plain
+/// enum's variant, as `Role.Admin`. An array's item changes when no other
+/// value shares the array. Gives what the target is now.
+fn set(table: &Table, text: &str) -> Result<String, String> {
+    let usage =
+        || "set takes what changes and its new value, as `set count count + 1` or `set user.age = 37`".to_string();
+    // The target ends at a space outside brackets and quotes.
+    let (mut depth, mut quoted) = (0i32, false);
+    let space = text.char_indices().find_map(|(at, c)| {
+        match c {
+            '"' => quoted = !quoted,
+            '[' | '(' if !quoted => depth += 1,
+            ']' | ')' if !quoted => depth -= 1,
+            ' ' if !quoted && depth == 0 => return Some(at),
+            _ => {}
+        }
+        None
+    });
+    let (target, value) = text.split_once(" = ").or_else(|| space.map(|at| text.split_at(at))).ok_or_else(usage)?;
+    let (target, value) = (target.trim(), value.trim());
+    if state().selected.is_some_and(|(_, frame)| frame != 0) {
+        return Err("a binding changes in the frame where its task stopped: `frame 0`".into());
+    }
+    let (frames, index) = selected(table)?;
+    let mut steps = Vec::new();
+    let mut place = &expression::parse(target)?;
+    let root = loop {
+        match place {
+            Expr::Name(name) => break name.clone(),
+            Expr::Field(inner, field) => {
+                steps.push(Ok(field.clone()));
+                place = inner;
+            }
+            Expr::Index(inner, index) => {
+                steps.push(Err(&**index));
+                place = inner;
+            }
+            _ => return Err(format!("`{target}` is not a binding or a part of one")),
+        }
+    };
+    let bound = bound(table, &frames[index]);
+    let Some(&(binding, mut address)) = bound.iter().find(|(b, _)| b.name == root) else {
+        return Err(format!("no binding `{root}` holds a value here"));
+    };
+    let mut layout = binding.layout;
+    for step in steps.into_iter().rev() {
+        match (step, &table.layouts[layout]) {
+            (Ok(field), Layout::Fields(fields)) => {
+                let Some(&(_, offset, boxed, inner)) = fields.iter().find(|(name, ..)| *name == field) else {
+                    return Err(format!("`{target}` has no field `{field}`"));
+                };
+                address += offset;
+                if boxed {
+                    address = unsafe { *(address as *const usize) };
+                }
+                layout = inner;
+            }
+            (Err(at), Layout::Array(size, inner)) => {
+                let at = match evaluating(table, &frames, index, |e| e.evaluate(at))?.value {
+                    expression::Value::Int(at) => at,
+                    other => return Err(format!("an index is an Int, not {}", other.shown())),
+                };
+                let slot = address as *mut *mut super::ArrayHeader;
+                let length = if unsafe { *slot }.is_null() { 0 } else { unsafe { (**slot).len } };
+                let Some(at) = usize::try_from(at).ok().filter(|&at| at < length) else {
+                    return Err(format!("{at} is not an index of `{target}`, which has {length} items"));
+                };
+                // An array another value shares is copied first, as the
+                // program does, when its items hold nothing counted.
+                if !unsafe { super::unique(*slot) } {
+                    let plain = match &table.layouts[*inner] {
+                        Layout::Scalar(ty) => ty != "String",
+                        Layout::Plain(..) => true,
+                        _ => false,
+                    };
+                    if !plain {
+                        let message = "another value shares this array, which a change here would change too";
+                        return Err(format!("{message}: change the binding that holds it"));
+                    }
+                    unsafe { super::tondo_rt_array_unique(slot, *size, 0, None, None) };
+                }
+                address = unsafe { super::element(*slot, *size, at) } as usize;
+                layout = *inner;
+            }
+            _ => {
+                return Err(format!(
+                    "the debugger does not change `{target}`: it changes numbers, Bool, Char, String and plain enums, in records, tuples and arrays"
+                ));
+            }
+        }
+    }
+    let evaluated = evaluating(table, &frames, index, |e| e.evaluate(&expression::parse(value)?));
+    match (&table.layouts[layout], evaluated) {
+        (Layout::Scalar(ty), Ok(evaluated)) => unsafe { write(ty, address, &evaluated.value)? },
+        // A text without its quotes, as it was written before.
+        (Layout::Scalar(ty), Err(_)) if ty == "String" => unsafe {
+            write(ty, address, &expression::Value::Text(value.to_string()))?
+        },
+        (Layout::Plain(size, variants), Ok(evaluated)) => {
+            let shown = evaluated.value.shown();
+            let name = shown.rsplit('.').next().unwrap_or_default();
+            let Some(tag) = variants.iter().position(|v| v == name) else {
+                return Err(format!("`{value}` is none of its variants: {}", variants.join(", ")));
+            };
+            unsafe { std::ptr::copy_nonoverlapping(&(tag as u64).to_le_bytes()[0], address as *mut u8, *size) };
+        }
+        (_, Err(message)) => return Err(message),
+        _ => return Err(format!("the debugger does not change `{target}`, a value of type {}", binding.ty)),
+    }
+    Ok(printed(table, &frames, index, target))
+}
+
+/// Writes a number, a `Bool`, a `Char` or a `String` of the type `ty` at
+/// `address`.
+unsafe fn write(ty: &str, address: usize, value: &expression::Value) -> Result<(), String> {
+    use expression::Value;
+    let wrong = || format!("{} is not a value of type {ty}", value.shown());
+    macro_rules! int {
         ($t:ty) => {{
-            let value: $t = text.parse().map_err(|_| wrong())?;
-            unsafe { (address as *mut $t).write_unaligned(value) };
+            let Value::Int(n) = value else { return Err(wrong()) };
+            let n = <$t>::try_from(*n).map_err(|_| wrong())?;
+            unsafe { (address as *mut $t).write_unaligned(n) };
         }};
     }
-    match ty {
-        "Int" => number!(i64),
-        "Int32" => number!(i32),
-        "Int16" => number!(i16),
-        "Int8" => number!(i8),
-        "Int128" => number!(i128),
-        "UInt" => number!(u64),
-        "UInt128" => number!(u128),
-        "UInt32" => number!(u32),
-        "UInt16" => number!(u16),
-        "UInt8" | "Byte" => number!(u8),
-        "Float" => number!(f64),
-        "Float32" => number!(f32),
-        "Bool" => {
-            let value: bool = text.parse().map_err(|_| wrong())?;
-            unsafe { *(address as *mut u8) = value as u8 };
-        }
-        "Char" => {
-            let inner = text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')).unwrap_or(text);
-            let mut chars = inner.chars();
-            let (Some(c), None) = (chars.next(), chars.next()) else { return Err(wrong()) };
-            unsafe { *(address as *mut u32) = c as u32 };
-        }
-        "String" => {
-            let inner = text.strip_prefix('"').and_then(|t| t.strip_suffix('"'));
-            let value = match inner {
-                Some(inner) => {
-                    inner.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\\\", "\\")
-                }
-                None => text.to_string(),
+    macro_rules! float {
+        ($t:ty) => {{
+            let x = match value {
+                Value::Float(x) => *x,
+                Value::Int(n) => *n as f64,
+                _ => return Err(wrong()),
             };
+            unsafe { (address as *mut $t).write_unaligned(x as $t) };
+        }};
+    }
+    match (ty, value) {
+        ("Int", _) => int!(i64),
+        ("Int32", _) => int!(i32),
+        ("Int16", _) => int!(i16),
+        ("Int8", _) => int!(i8),
+        ("Int128", _) => int!(i128),
+        ("UInt", _) => int!(u64),
+        ("UInt128", _) => int!(u128),
+        ("UInt32", _) => int!(u32),
+        ("UInt16", _) => int!(u16),
+        ("UInt8" | "Byte", _) => int!(u8),
+        ("Float", _) => float!(f64),
+        ("Float32", _) => float!(f32),
+        ("Bool", Value::Bool(b)) => unsafe { *(address as *mut u8) = *b as u8 },
+        ("Char", Value::Char(c)) => unsafe { *(address as *mut u32) = *c as u32 },
+        ("String", Value::Text(text)) => {
             let old = unsafe { *(address as *const *mut Str) };
-            unsafe { *(address as *mut *mut Str) = super::str_new(value.as_bytes()) };
+            unsafe { *(address as *mut *mut Str) = super::str_new(text.as_bytes()) };
             unsafe { super::tondo_rt_str_release(old) };
         }
-        _ => {
-            return Err(format!(
-                "a binding of type {ty} does not change here: numbers, Bool, Char, Byte and String do"
-            ));
-        }
+        _ => return Err(wrong()),
     }
     Ok(())
 }

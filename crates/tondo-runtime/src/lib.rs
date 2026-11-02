@@ -827,6 +827,12 @@ pub(crate) unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> 
     unsafe { position(a, size, (*a).head + index) }
 }
 
+/// Whether no other value shares the array, so that a change of an item in
+/// place changes it alone.
+pub(crate) unsafe fn unique(a: *mut ArrayHeader) -> bool {
+    unsafe { (*a).rc.load(Ordering::Acquire) == 1 }
+}
+
 /// Visits an array's elements for the cycle collector.
 pub(crate) unsafe fn visit_array(visitor: &mut cycles::Visitor, a: *mut u8, size: usize, visit: Option<cycles::Visit>) {
     let a = a as *mut ArrayHeader;

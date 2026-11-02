@@ -859,8 +859,13 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
   tarea parada. Las funciones de fuera muestran sus bindings como estaban al
   empezar la línea que llamó.
-- `set <name> <value>` cambia un binding de la función donde paró la tarea:
-  un número, `Bool`, `Char`, `Byte` o `String`.
+- `set <destino> [=] <expresión>` cambia un binding de la función donde paró
+  la tarea, o una parte suya (`user.age`, `items[i]`, `pair.0`), al valor de
+  la expresión: un número, `Bool`, `Char`, `Byte`, `String` o la variante de
+  un enum sin datos (`Role.Admin`), dentro de records, tuplas y arrays. Un
+  array que otro valor comparte se copia antes, como hace el programa, si
+  sus elementos no tienen nada contado; si no, el cambio es un error. Un
+  texto sin comillas que no es una expresión es el texto mismo.
 - `context` muestra los contextos de la tarea parada (11.16 del lenguaje), con
   sus campos como `locals`, y para cada campo que no tiene su valor inicial,
   el `with` que se lo dio: el archivo, la línea y la función, o que lo heredó
@@ -884,7 +889,7 @@ suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
-la tarea, `evaluate` de una expresión, `setVariable` y las excepciones de un
+la tarea, `evaluate` de una expresión, `setVariable` y `setExpression`, de una parte también, y las excepciones de un
 pánico y de un error (los filtros `panic` y `error`, con `exceptionInfo`) son
 las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace

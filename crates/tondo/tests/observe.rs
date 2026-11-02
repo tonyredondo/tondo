@@ -960,6 +960,10 @@ fn debug_adapter_watches_and_pages() {
         (&locals["variables"][0]["name"], &locals["variables"][0]["value"]),
         (&json!("(sum returned)"), &json!("20"))
     );
+    // An item changed in place, by what an expression gives.
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let set = ask("setExpression", json!({ "expression": "many[1]", "value": "many[2] * 10", "frameId": frame }));
+    assert_eq!(set["value"], "20");
     ask("continue", json!({ "threadId": 1 }));
     let stopped = ask("", Value::Null);
     assert_eq!((&stopped["reason"], &stopped["text"]), (&json!("exception"), &json!("error: Problem.Empty")));
@@ -1038,6 +1042,76 @@ fn debugger_shows_waiting_tasks_and_returned_values() {
             ("waited.to:24 in main", &json!({ "function": "twice", "value": "42" })),
         ]
     );
+}
+
+const CHANGED: &str = r#"import std.console
+
+enum Role {
+    Guest
+    Admin
+}
+
+type User = { name: String, age: Int, role: Role, scores: Array[Int], pair: (Int, Bool) }
+
+fn main() {
+    var count = 1
+    var user = User { name: "Ada", age: 36, role: Role.Guest, scores: [1, 2, 3], pair: (1, false) }
+    let copy = user.scores
+    var role = Role.Guest
+    console.println("{count} {user.name} {user.age} {user.role} {user.scores} {copy} {role} {user.pair.1}")
+}
+"#;
+
+/// `set` changes a binding or a part of one to what an expression gives;
+/// an array another value shares is copied first.
+#[test]
+fn debugger_changes_parts_of_values() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-set");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("changed.to"), CHANGED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "changed.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break changed.to:15\ncontinue\nset count count + 41\nset user.age = user.age + 1\n\
+        set user.name \"Ada L\"\nset user.role Role.Admin\nset role Admin\nset user.pair.1 true\n\
+        set user.scores[count - 42] 9\nset user.nope 1\nset count \"x\"\nset user.scores[3] 1\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let set: Vec<(&str, &str)> = lines
+        .iter()
+        .filter(|l| l["name"].is_string())
+        .map(|l| (l["name"].as_str().unwrap(), l["value"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        set,
+        [
+            ("count", "42"),
+            ("user.age", "37"),
+            ("user.name", "\"Ada L\""),
+            ("user.role", "Role.Admin"),
+            ("role", "Role.Admin"),
+            ("user.pair.1", "true"),
+            ("user.scores[count - 42]", "9")
+        ]
+    );
+    let errors: Vec<&str> = lines.iter().filter_map(|l| l["error"].as_str()).collect();
+    assert_eq!(
+        errors,
+        [
+            "`user.nope` has no field `nope`",
+            "\"x\" is not a value of type Int",
+            "3 is not an index of `user.scores[3]`, which has 3 items"
+        ]
+    );
+    assert!(text.contains("42 Ada L 37 Admin [9, 2, 3] [1, 2, 3] Admin true"), "{text}");
 }
 
 #[test]

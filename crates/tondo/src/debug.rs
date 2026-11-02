@@ -42,7 +42,8 @@ steps program|all                               steps go over the standard libra
 pause                                           stop every task, as Ctrl-C does
 catch panic|error|none                          stop where a task panics and no recover stops it (the default), where
                                                 an error starts (a fail, or a ? on what std failed with), both, or none
-set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
+set <target> [=] <expression>                   change a binding of the frame where the task stopped, or a part of it:
+                                                set count count + 1, set user.age = 37, set items[i] 0, set role Role.Admin
 locals                                          the bindings that hold a value here, and those of the
                                                 functions this one is written in, as a test's suites (l)
 context                                         the task's contexts, and the `with` that set each field

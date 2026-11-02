@@ -2037,7 +2037,8 @@ what a function returned), steps all|program (into the standard library's code o
 as a test's suites), context (the task's contexts, and the `with` that set each field), print <expression> \
 (bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \
 length(), isEmpty(), isSome(), contains(), which read and never run the program's code), children <path> \
-[<start> <count>], stack, frame <n>, tasks, reload (a program started with `live`: \
+[<start> <count>], set <target> <expression> (a binding or a part, as user.age or items[i]), stack, frame <n>, \
+tasks, reload (a program started with `live`: \
 its code as its files are now, even while it is stopped), restart (live: the stopped function returns and is \
 called again with the same arguments, from its start, as its code is now); and wait, which waits for a running \
 program to stop. Gives the debugger's answers and events, and what the program printed.",
