@@ -45,6 +45,8 @@ enum Layout {
     Plain(usize, Vec<String>),
     /// An array: the size of its elements, and their layout.
     Array(usize, usize),
+    /// A `std.sync` cell, shared by every task that has it.
+    Shared,
     Other,
 }
 
@@ -106,6 +108,16 @@ static STEPS_STD: AtomicBool = AtomicBool::new(false);
 /// with what it returned, which the step's stop shows.
 static STEPPING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RETURNED: Mutex<Option<(u64, String, String)>> = Mutex::new(None);
+
+/// Where the value of a `Ref` (`reference`), or of a `std.sync` cell, is,
+/// for the debugger to show it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_debug_state(handle: usize, reference: u8) -> *const u8 {
+    match reference {
+        1 => super::ref_payload(handle as *mut u8),
+        _ => unsafe { super::sync::tondo_rt_sync_value(handle) },
+    }
+}
 
 /// In a debug build, a function returns a value: while its task steps,
 /// the debugger keeps what it returned, from the program's own code or,
@@ -215,6 +227,7 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
                         Layout::Plain(number(size), variants.iter().map(|v| v.to_string()).collect())
                     }
                     ["a", size, layout] => Layout::Array(number(size), base + number(layout)),
+                    ["h"] => Layout::Shared,
                     _ => Layout::Other,
                 });
             }
@@ -308,7 +321,8 @@ struct State {
 
 /// An expression a task's frame watches: the task stops on the line after
 /// the one that changed its value, in that frame or a call it makes, until
-/// the frame returns.
+/// the frame returns. One of a `std.sync` cell's value watches it from
+/// every task, for as long as the watch lasts.
 struct Watch {
     id: u32,
     task: u64,
@@ -319,6 +333,50 @@ struct Watch {
     /// The value as it was, and the site of the task's last probe.
     value: String,
     last: usize,
+    /// When a change stops: its condition holds, and its count of such
+    /// changes reaches `hits`.
+    condition: Option<Expr>,
+    count: u64,
+    hits: Option<Hits>,
+    /// The cell, which the watch keeps alive, the binding it was read from
+    /// and how that shows it.
+    shared: Option<(usize, String, Show)>,
+}
+
+impl Watch {
+    /// Its value now, and whether its condition holds; `None` when it
+    /// cannot be read now, as while a task changes a cell.
+    fn now(&self, table: &Table) -> Option<(String, bool)> {
+        let evaluate = |e: &mut Evaluator| {
+            let value = e.evaluate(&self.expr).ok()?.text;
+            Some((value, self.condition.as_ref().is_none_or(|c| e.holds(c))))
+        };
+        match &self.shared {
+            None => evaluating(table, &self.frames, 0, evaluate),
+            Some((cell, root, glue)) => {
+                let read = |name: &str| match name == root {
+                    true => Ok(show(*glue, cell as *const usize as usize)),
+                    false => Err(format!("a watch of a shared value reads `{root}` only")),
+                };
+                unsafe {
+                    super::sync::reading(*cell as *mut super::sync::SyncObject, || evaluate(&mut Evaluator::new(&read)))
+                }
+                .flatten()
+            }
+        }
+    }
+}
+
+/// Removes the watches `unwanted` says, letting go of the cells they kept.
+fn unwatch(state: &mut State, unwanted: impl Fn(&Watch) -> bool) {
+    state.watches.retain(|watch| {
+        let keep = !unwanted(watch);
+        if let Some((cell, ..)) = watch.shared.as_ref().filter(|_| !keep) {
+            unsafe { super::sync::tondo_rt_sync_release(*cell as *mut super::sync::SyncObject) };
+        }
+        keep
+    });
+    WATCHING.store(!state.watches.is_empty(), Ordering::Relaxed);
 }
 
 struct Breakpoint {
@@ -543,30 +601,40 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
 /// its values, and the line that changed it.
 fn watched(table: &Table, state: &mut State, task: u64, frame: usize, site: usize) -> Option<String> {
     let mut changed = None;
-    state.watches.retain_mut(|watch| {
-        if watch.task != task {
-            return true;
+    let mut ended = Vec::new();
+    for watch in state.watches.iter_mut() {
+        if watch.shared.is_none() {
+            if watch.task != task {
+                continue;
+            }
+            // The frame returned when the task runs in an outer one, or
+            // another call took its place.
+            let watched = &watch.frames[0];
+            let function = table.sites.get(site).map(|s| s.function);
+            if frame > watched.pointer || (frame == watched.pointer && function != watched.function) {
+                tell(&format!("{{\"unwatched\":{},\"why\":\"its frame returned\"}}", watch.id));
+                ended.push(watch.id);
+                continue;
+            }
         }
-        // The frame returned when the task runs in an outer one, or another
-        // call took its place.
-        let watched = &watch.frames[0];
-        let function = table.sites.get(site).map(|s| s.function);
-        if frame > watched.pointer || (frame == watched.pointer && function != watched.function) {
-            tell(&format!("{{\"unwatched\":{},\"why\":\"its frame returned\"}}", watch.id));
-            return false;
-        }
-        let now = evaluating(table, &watch.frames, 0, |e| e.evaluate(&watch.expr).map(|v| v.text));
-        if let Some(now) = now.ok().filter(|now| *now != watch.value) {
+        if let Some((now, holds)) = watch.now(table).filter(|(now, _)| *now != watch.value) {
             let (before, after) = (clipped(&watch.value), clipped(&now));
-            let at = place_in(table, watch.last);
-            let why = format!("watch {}: {} changed from {before} to {after} at {at}", watch.id, watch.text);
-            changed.get_or_insert(why);
             watch.value = now;
+            watch.count += u64::from(holds);
+            if holds && watch.hits.as_ref().is_none_or(|hits| hits.reached(watch.count)) {
+                // A shared value changes in some task: the line is that of
+                // the frame's own changes only.
+                let at = match watch.shared {
+                    None => format!(" at {}", place_in(table, watch.last)),
+                    Some(_) => String::new(),
+                };
+                changed
+                    .get_or_insert(format!("watch {}: {} changed from {before} to {after}{at}", watch.id, watch.text));
+            }
         }
         watch.last = site;
-        true
-    });
-    WATCHING.store(!state.watches.is_empty(), Ordering::Relaxed);
+    }
+    unwatch(state, |watch| ended.contains(&watch.id));
     changed
 }
 
@@ -920,8 +988,7 @@ pub(crate) fn detach() {
     ATTACHED.store(false, Ordering::Relaxed);
     let mut state = state();
     state.breakpoints.clear();
-    state.watches.clear();
-    WATCHING.store(false, Ordering::Relaxed);
+    unwatch(&mut state, |_| true);
     drop(state);
     if let Some(table) = table() {
         table.marked.iter().for_each(|m| m.store(false, Ordering::Relaxed));
@@ -953,8 +1020,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let id: u32 = rest.parse().unwrap_or(0);
             let mut state = state();
             state.breakpoints.retain(|b| b.id != id);
-            state.watches.retain(|w| w.id != id);
-            WATCHING.store(!state.watches.is_empty(), Ordering::Relaxed);
+            unwatch(&mut state, |w| w.id == id);
             remark(table, &state);
             format!("{{\"deleted\":{id}}}")
         }
@@ -1012,32 +1078,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
             _ => "{\"error\":\"steps takes `program`, to step over the standard library's code, or `all`\"}".into(),
         },
         // An expression the frame looked at watches, until it returns.
-        "watch" => {
-            let (frames, index) = match selected(table) {
-                Ok(selected) => selected,
-                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
-            };
-            let expr = match expression::parse(rest) {
-                Ok(expr) => expr,
-                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
-            };
-            let value = match evaluating(table, &frames, index, |e| e.evaluate(&expr)) {
-                Ok(evaluated) => evaluated.text,
-                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
-            };
-            let mut state = state();
-            let Some((task, _)) = state.selected.or(state.stopped.as_ref().map(|s| (s.task, 0))) else {
-                return Some(not_stopped());
-            };
-            let last = state.held.iter().find(|h| h.task == task).map_or(usize::MAX, |h| h.site);
-            let id = state.next_breakpoint;
-            state.next_breakpoint += 1;
-            let frames = frames[index..].to_vec();
-            let answer = format!("{{\"watch\":{{\"id\":{id},{}}}}}", described(&value));
-            state.watches.push(Watch { id, task, expr, text: rest.to_string(), frames, value, last });
-            WATCHING.store(true, Ordering::Relaxed);
-            answer
-        }
+        "watch" => match watch(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // What stops the program: panics, errors, both or none.
         "catch" => {
             let kinds: Vec<&str> = rest.split_whitespace().collect();
@@ -1223,6 +1267,50 @@ pub(crate) fn command(line: &str) -> Option<String> {
         }
         _ => return None,
     })
+}
+
+/// `watch <expression> [if <condition>] [hits <count>]`, in the frame
+/// looked at: of a binding that holds a `std.sync` cell, or a part of its
+/// value, from every task.
+fn watch(table: &Table, text: &str) -> Result<String, String> {
+    let (text, hits) = match text.split_once(" hits ") {
+        Some((text, hits)) => (text, Some(Hits::parse(hits)?)),
+        None => (text, None),
+    };
+    let (text, condition) = match text.split_once(" if ") {
+        Some((text, condition)) => {
+            (text.trim(), Some(expression::parse(condition).map_err(|m| format!("the condition: {m}"))?))
+        }
+        None => (text.trim(), None),
+    };
+    let (frames, index) = selected(table)?;
+    let expr = expression::parse(text)?;
+    let evaluated = evaluating(table, &frames, index, |e| e.evaluate(&expr))?;
+    // A binding of a cell, as `hits` in `hits.value`.
+    let root = evaluated.path.as_deref().map(|path| path.split(['.', '[']).next().unwrap_or(path));
+    let bound = visible(table, &frames, index);
+    let shared = root.and_then(|root| bound.iter().find(|(b, ..)| b.name == root)).and_then(|(binding, address, _)| {
+        matches!(table.layouts[binding.layout], Layout::Shared).then(|| {
+            let cell = unsafe { *(*address as *const usize) };
+            unsafe { super::sync::retain(cell as *mut super::sync::SyncObject) };
+            (cell, binding.name.clone(), binding.show)
+        })
+    });
+    let mut state = state();
+    let (task, _) = state
+        .selected
+        .or(state.stopped.as_ref().map(|s| (s.task, 0)))
+        .ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let last = state.held.iter().find(|h| h.task == task).map_or(usize::MAX, |h| h.site);
+    let id = state.next_breakpoint;
+    state.next_breakpoint += 1;
+    let everywhere = if shared.is_some() { ",\"everywhere\":true" } else { "" };
+    let answer = format!("{{\"watch\":{{\"id\":{id},{}{everywhere}}}}}", described(&evaluated.text));
+    let (frames, value) = (frames[index..].to_vec(), evaluated.text);
+    let text = text.to_string();
+    state.watches.push(Watch { id, task, expr, text, frames, value, last, condition, count: 0, hits, shared });
+    WATCHING.store(true, Ordering::Relaxed);
+    Ok(answer)
 }
 
 /// `set <target> [=] <value>`: changes a binding of the frame where the

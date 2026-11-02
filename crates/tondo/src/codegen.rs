@@ -140,6 +140,7 @@ enum Rt {
     DebugLine,
     DebugFailed,
     DebugReturned,
+    DebugState,
     SbQuoted,
     BoxNew,
     BoxRetain,
@@ -426,6 +427,7 @@ impl Rt {
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
             Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64], &[]),
             Rt::DebugReturned => ("tondo_rt_debug_returned", &[I64, I64, I64], &[]),
+            Rt::DebugState => ("tondo_rt_debug_state", &[I64, I8], &[I64]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -2681,7 +2683,8 @@ impl Codegen<'_> {
     /// or a text by its type's name; a record's or a tuple's fields by
     /// their offsets, and whether each is behind a pointer; a plain enum by
     /// the size of its tag and its variants; an array by the size of its
-    /// elements; and `-` for what it does not write into.
+    /// elements; a `std.sync` cell, which a watch follows into every task;
+    /// and `-` for what it does not write into.
     fn write_layout(&mut self, ty: Ty, layouts: &mut Vec<String>, known: &mut HashMap<Ty, usize>) -> usize {
         if let Some(&id) = known.get(&ty) {
             return id;
@@ -2708,6 +2711,7 @@ impl Codegen<'_> {
                 let inner = self.write_layout(element, layouts, known);
                 format!("a {} {inner}", self.layout(element).size)
             }
+            TyKind::Handle(Handle::Mutex | Handle::RwLock | Handle::Atomic, _) => "h".into(),
             TyKind::Adt(adt) => match self.types.adt(adt).kind.clone() {
                 AdtKind::Record(declared) => {
                     fields(self, declared.into_iter().map(|f| f.name).collect(), layouts, known)
@@ -3600,6 +3604,21 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 }
                 self.fb.ins().jump(done, &[]);
                 self.fb.switch_to_block(done);
+            }
+            // What a value with an identity holds, read in place, as a
+            // record whose field is what `.value` reads in the program.
+            TyKind::Handle(handle @ (Handle::Ref | Handle::Mutex | Handle::RwLock | Handle::Atomic), state) => {
+                let Val::Scalar(value) = value else { unreachable!("a handle is a pointer") };
+                text(self, &format!("{} {{ value: ", handle.name()));
+                let kind = self.fb.ins().iconst(types::I8, i64::from(handle == Handle::Ref));
+                let at = self.call_rt(Rt::DebugState, &[value, kind]).expect("an address");
+                match self.cg.class(state) {
+                    Class::Zero => text(self, "()"),
+                    _ => {
+                        self.call_glue(Glue::Show, state, &[builder, at]);
+                    }
+                }
+                text(self, " }");
             }
             _ => text(self, &types.display(ty)),
         }

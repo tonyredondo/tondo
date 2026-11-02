@@ -415,6 +415,37 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
     }
 }
 
+/// Another handle of a cell, which the debugger keeps while it watches
+/// the cell's value.
+pub(crate) unsafe fn retain(object: *mut SyncObject) {
+    unsafe { (*object).rc.fetch_add(1, Ordering::Relaxed) };
+}
+
+/// Runs `read` with the cell held to read, as the debugger reads its value
+/// while the program runs; `None`, without waiting, while a task holds it
+/// to change it, or tasks wait for it in order.
+pub(crate) unsafe fn reading<T>(object: *mut SyncObject, read: impl FnOnce() -> T) -> Option<T> {
+    let o = unsafe { &mut *object };
+    let mut state = o.state.load(Ordering::Acquire);
+    loop {
+        if state & (WRITER | STARVING) != 0 {
+            return None;
+        }
+        match o.state.compare_exchange_weak(state, state + READER, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(now) => state = now,
+        }
+    }
+    let out = read();
+    if o.state.fetch_sub(READER, Ordering::Release) & PARKED != 0 {
+        lock(&o.queue);
+        let (lockers, _) = unsafe { wake_lockers(o) };
+        unlock(&o.queue);
+        lockers.into_iter().for_each(notify);
+    }
+    Some(out)
+}
+
 /// Releases a handle; the last one frees the value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {

@@ -31,8 +31,9 @@ pub const HELP: &str = "\
 break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with {expressions}>]
                                                 stop where that line starts, or write a message there (b)
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
-watch <expression>                              stop on the line after the one that changes its value, in this
-                                                frame or a call it makes, until the frame returns
+watch <expression> [if <condition>] [hits <n>]  stop on the line after the one that changes its value, in this
+                                                frame or a call it makes, until the frame returns; a std.sync
+                                                cell's value, as state.value, in whichever task changes it
 delete <id>                                     remove a breakpoint or a watch
 continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)

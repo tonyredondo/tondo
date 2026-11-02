@@ -4416,3 +4416,19 @@ the program running. An array another value shares is copied first, as
 the program's own write would, but only when its items hold nothing
 counted, because the runtime has no retain glue for them; otherwise the
 change is refused with what to change instead.
+
+## 2026-11-02 — Watches of shared values follow the value
+
+The debugger showed a `Ref` or a `std.sync` cell as its type's name, so
+shared state, where races hide, could not be seen. It shows what they
+hold, as a record whose `value` is what the program's `.value` reads.
+
+A watch belongs to a frame, as a local's value lives there; a cell's
+value does not, and any task may change it. A watch whose binding holds
+a `Mutex`, `RwLock` or `Atomic` keeps the cell alive and reads it at
+every task's probes, taking it to read without waiting, and skipping a
+check while a task holds it to change it, so it never reads a value
+halfway through a change. It stops the task that changed it, which is
+the one that runs on after the change. Watches take a condition and a
+count of hits, as breakpoints do, so that a value changing in a loop
+stops only where it matters.

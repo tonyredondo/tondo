@@ -1124,6 +1124,74 @@ fn debugger_changes_parts_of_values() {
     assert!(text.contains("42 Ada L 37 Admin [9, 2, 3] [1, 2, 3] Admin true"), "{text}");
 }
 
+const SHARED: &str = r#"import std.console
+import std.sync
+
+type Box = { count: Int }
+
+fn worker(state: sync.Mutex[Box], done: Sender[Bool]) {
+    for i in 0..3 {
+        state.update((box) { box.count += 10 })
+    }
+    done.send(true)
+}
+
+fn main() {
+    let state = sync.Mutex(Box { count: 1 })
+    let (done, finished) = channel[Bool](1)
+    spawn worker(state, done)
+    _ = finished.receive()
+    var total = 0
+    for i in 0..10 {
+        total += i
+    }
+    console.println("{total} {state.get().count}")
+}
+"#;
+
+/// A `std.sync` cell shows its value, and a watch of it stops the task
+/// that changed it; a watch's condition and count of hits choose which
+/// changes stop.
+#[test]
+fn debugger_watches_shared_values() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-shared");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("shared.to"), SHARED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "shared.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break shared.to:17\ncontinue\nprint state\nwatch state.value.count hits 2\ndelete 1\ncontinue\n\
+        delete 2\nbreak shared.to:20\ncontinue\nwatch total if total > 10\ndelete 3\ncontinue\ndelete 4\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let state = lines.iter().find(|l| l["name"] == "state").unwrap();
+    assert_eq!(state["value"], "sync.Mutex { value: Box { count: 1 } }");
+    let watch = lines.iter().find_map(|l| l.get("watch")).unwrap();
+    assert_eq!((&watch["value"], &watch["everywhere"]), (&json!("1"), &json!(true)));
+    let stops: Vec<(&str, &str, &Value)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), s["why"].as_str().unwrap(), &s["task"]))
+        .collect();
+    assert_eq!(
+        stops[2..],
+        [
+            ("shared.to:7 in worker", "watch 2: state.value.count changed from 11 to 21", &json!(2)),
+            ("shared.to:20 in main", "breakpoint 3", &json!(1)),
+            ("shared.to:19 in main", "watch 4: total changed from 10 to 15 at shared.to:20 in main", &json!(1)),
+        ]
+    );
+    assert!(text.contains("45 31"), "{text}");
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

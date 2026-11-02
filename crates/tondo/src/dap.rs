@@ -656,12 +656,8 @@ fn handle(
         // Watches: a new one looks at its frame from now on, until it
         // returns; one no longer wanted goes.
         "setDataBreakpoints" => {
-            let wanted: Vec<String> = arguments["breakpoints"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|b| b["dataId"].as_str().map(String::from))
-                .collect();
+            let asked: Vec<&Value> = arguments["breakpoints"].as_array().into_iter().flatten().collect();
+            let wanted: Vec<String> = asked.iter().filter_map(|b| b["dataId"].as_str().map(String::from)).collect();
             let known: Vec<String> = breakpoints.keys().filter(|k| k.starts_with(DATA)).cloned().collect();
             for key in known.into_iter().filter(|key| !wanted.iter().any(|w| key[DATA.len()..] == *w)) {
                 for id in breakpoints.remove(&key).unwrap_or_default() {
@@ -669,7 +665,7 @@ fn handle(
                 }
             }
             let mut set = Vec::new();
-            for data in wanted {
+            for (data, options) in wanted.into_iter().zip(asked.iter().map(|b| self::options(b))) {
                 let key = format!("{DATA}{data}");
                 if let Some(&id) = breakpoints.get(&key).and_then(|ids| ids.first()) {
                     set.push(json!({ "verified": true, "id": id }));
@@ -678,7 +674,7 @@ fn handle(
                 let mut parts = data.splitn(3, ' ');
                 let (task, index, path) = (parts.next(), parts.next(), parts.next().unwrap_or_default());
                 let selected = program.ask(&format!("select {} {}", task.unwrap_or("1"), index.unwrap_or("0")));
-                match selected.and_then(|_| program.ask(&format!("watch {path}"))) {
+                match selected.and_then(|_| program.ask(&format!("watch {path}{options}"))) {
                     Ok(answer) => {
                         let id = answer["watch"]["id"].as_u64().unwrap_or(0);
                         breakpoints.insert(key, vec![id]);

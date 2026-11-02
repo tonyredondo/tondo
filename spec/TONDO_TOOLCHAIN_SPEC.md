@@ -816,10 +816,16 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   no cambian nada. Un `Int` y un `Float` se operan como `Float`; un valor que
   no es un número, un `Bool`, un texto ni un carácter es igual a otro si se
   muestran igual, y operar dos de esos tipos distintos es un error.
-- `watch <expresión>` vigila su valor en el marco que se mira: la tarea para
-  en la línea siguiente a la que lo cambió, en ese marco o en una llamada
-  suya, con la expresión, sus dos valores y esa línea como motivo. Acaba
-  cuando el marco vuelve; `delete <id>` la quita antes.
+- `watch <expresión> [if <condición>] [hits <count>]` vigila su valor en el
+  marco que se mira: la tarea para en la línea siguiente a la que lo cambió,
+  en ese marco o en una llamada suya, con la expresión, sus dos valores y
+  esa línea como motivo. Acaba cuando el marco vuelve; `delete <id>` la
+  quita antes. Con `if`, para solo en los cambios tras los que la condición
+  se cumple, y `hits` cuenta esos cambios como en un breakpoint. La de un
+  binding que tiene una celda de `std.sync` (`Mutex`, `RwLock`, `Atomic`), o
+  una parte de su valor, la vigila desde todas las tareas y más allá de su
+  marco: para la tarea que la cambió, en su siguiente línea, y lee la celda
+  mientras nadie la tiene para cambiarla.
 - Una tarea que entra en pánico para donde el código del programa lo produjo,
   antes de deshacer su pila, con el texto del pánico como motivo. Con
   `catch error`, también para donde empieza un error: un `fail` del código
@@ -846,7 +852,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   funciones en que está escrita cuyos marcos siguen en su pila, cada uno con
   la función de la que es (`from`): las de un closure, la que lo hizo; las de
   un test, sus suites. Así se ve todo lo que el código de ese bloque puede
-  usar. `print <path>` muestra uno, o una parte suya por su ruta: `user.name`,
+  usar. Un `Ref` y una celda de `std.sync` muestran lo que tienen como un
+  record con `value`, que es lo que lee el programa: `Ref { value: 3 }`.
+  `print <path>` muestra uno, o una parte suya por su ruta: `user.name`,
   `items[2]`, `scores["x"]`, `pair.0`. Los textos van entre comillas, los
   registros con sus campos, los enums con su variante y las colecciones con
   sus elementos; `children <path> [<start> <count>]` da las partes de un
