@@ -610,18 +610,6 @@ fn calls(line: &str) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn finds_the_calls_of_a_line() {
-        let line = r#"    let total = plus(twice(1), twice[Int](2)) + [1, 2].map((x) { x * 3 }).length() // keep(1)"#;
-        assert_eq!(super::calls(line), ["plus", "twice", "map", "length"]);
-        let line = r#"    console.println("{sum(items)} \"f(x)\" {json.encode(p)}")"#;
-        assert_eq!(super::calls(line), ["console.println", "sum", "json.encode"]);
-        assert_eq!(super::calls("    if ready(x) and not done() {"), ["ready", "done"]);
-    }
-}
-
 /// The value whose part the console writes after a dot that ends `text`:
 /// the path or expression before it, as `user.address` or `items[i]`.
 fn owner(text: &str) -> Option<&str> {
@@ -1084,5 +1072,17 @@ fn handle(
         }
         "disconnect" | "terminate" => Ok(json!({})),
         other => Err(format!("tondo dap does not do `{other}`")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn finds_the_calls_of_a_line() {
+        let line = r#"    let total = plus(twice(1), twice[Int](2)) + [1, 2].map((x) { x * 3 }).length() // keep(1)"#;
+        assert_eq!(super::calls(line), ["plus", "twice", "map", "length"]);
+        let line = r#"    console.println("{sum(items)} \"f(x)\" {json.encode(p)}")"#;
+        assert_eq!(super::calls(line), ["console.println", "sum", "json.encode"]);
+        assert_eq!(super::calls("    if ready(x) and not done() {"), ["ready", "done"]);
     }
 }
