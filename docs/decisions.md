@@ -4312,3 +4312,14 @@ the module offers. Extracting lines lends a `var` of the function with
 offered only when the program checks with them. Imports and embedded
 paths are links.
 
+## 2026-11-02 — Names from modules a file does not import
+
+`Uuid.v4()` without `import std.uuid` said only `unknown name`, and a
+model or a person had to know where `Uuid` lives. The compiler now says
+which standard modules declare a name and repairs it with the module
+and its import: safely when one module declares it, as a decision for
+each when several do, as `encode`, those the file imports first. The
+editor completes the names of modules the file does not import, the
+standard library's and the project's, writing the module and adding the
+import, and finds symbols by the letters of their words.
+

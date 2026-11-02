@@ -6567,6 +6567,33 @@ impl<'a> Checker<'a> {
     /// Where an import of `path` goes in the file of `at`: before the first
     /// import that sorts after it, as the formatter orders them, or after
     /// the last one, or at the file's start.
+    /// The standard modules that declare `name`, those the file of `at`
+    /// imports first.
+    fn declaring(&self, at: Span, name: &str) -> Vec<String> {
+        let mut owners = crate::api::declaring(name);
+        owners.sort_by_key(|owner| !self.imported(at, owner));
+        owners
+    }
+
+    /// Whether the file of `at` imports the module `path`.
+    fn imported(&self, at: Span, path: &str) -> bool {
+        let file = self.sources.file_of(at.start);
+        file.text
+            .lines()
+            .any(|line| line.strip_prefix("import ").and_then(|w| w.split_whitespace().next()) == Some(path))
+    }
+
+    /// The name the file of `at` gives the module `path`: its alias, or its
+    /// last segment.
+    fn imported_as(&self, at: Span, path: &str) -> String {
+        let file = self.sources.file_of(at.start);
+        let alias = file.text.lines().find_map(|line| {
+            let mut words = line.strip_prefix("import ")?.split_whitespace();
+            (words.next()? == path).then(|| (words.next() == Some("as")).then(|| words.next()).flatten()).flatten()
+        });
+        alias.map(str::to_string).unwrap_or_else(|| path.rsplit('.').next().unwrap_or(path).to_string())
+    }
+
     fn import_place(&self, at: Span, path: &str) -> Span {
         let file = self.sources.file_of(at.start);
         let mut place = None;
@@ -14740,6 +14767,25 @@ impl<'a> Checker<'a> {
                     ),
                 }
             }
+            // A declaration of a standard module, written without it.
+            _ if !crate::api::declaring(name).is_empty() => {
+                let owners = self.declaring(span, name);
+                let first = &owners[0];
+                let written = format!("{}.{name}", self.imported_as(span, first));
+                let imported = self.imported(span, first);
+                match owners.len() {
+                    1 if imported => format!("`{name}` is declared by `{first}`: write `{written}`"),
+                    1 => format!("`{name}` is declared by `{first}`: write `{written}`, after `import {first}`"),
+                    count => {
+                        let shown: Vec<String> = owners.iter().take(3).map(|o| format!("`{o}`")).collect();
+                        let more = if count > 3 { format!(" and {} more", count - 3) } else { String::new() };
+                        format!(
+                            "`{name}` is declared by {}{more}: write it with its module, as `{written}`",
+                            shown.join(", ")
+                        )
+                    }
+                }
+            }
             _ => {
                 // The bindings in sight and the module's names.
                 let mut names: Vec<&str> = self.names.keys().map(String::as_str).collect();
@@ -14770,8 +14816,20 @@ impl<'a> Checker<'a> {
                 .and_then(|h| h.strip_suffix("`?"))
                 .map(|near| (false, near.to_string())),
         };
+        let owners = self.declaring(span, name);
         if let Some((safe, replacement)) = replacement {
             self.diags.fix(format!("write `{replacement}`"), safe, vec![(span, replacement)]);
+        } else if !owners.is_empty() {
+            // Each module that declares it, with its import when the file
+            // lacks it; the one meaning there is when only one does.
+            for owner in owners.iter().take(6) {
+                let written = format!("{}.{name}", self.imported_as(span, owner));
+                let mut edits = vec![(span, written.clone())];
+                if !self.imported(span, owner) {
+                    edits.push((self.import_place(span, owner), format!("import {owner}\n")));
+                }
+                self.diags.fix(format!("write `{written}`"), owners.len() == 1, edits);
+            }
         } else if let Some(path) = module
             .or_else(|| crate::api::standard_modules().contains(&format!("std.{name}")).then(|| format!("std.{name}")))
         {

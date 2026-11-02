@@ -540,6 +540,49 @@ fn skip_brackets(text: &str) -> &str {
     text
 }
 
+/// A public declaration of a standard module other than the prelude: its
+/// name, its module, its kind and the first line of its declaration.
+pub struct Declared {
+    pub name: String,
+    pub module: String,
+    pub kind: String,
+    pub head: String,
+}
+
+/// What the standard modules declare that a program names once it imports
+/// them, gathered once.
+pub fn standard_declarations() -> &'static [Declared] {
+    static FOUND: std::sync::OnceLock<Vec<Declared>> = std::sync::OnceLock::new();
+    FOUND.get_or_init(|| {
+        let mut found = Vec::new();
+        for module in standard_modules().into_iter().filter(|m| m != "prelude") {
+            let Some(text) = standard(&module) else { continue };
+            for declaration in declarations(&text) {
+                let kind = declaration["kind"].as_str().unwrap_or_default();
+                let name = declaration["name"].as_str().unwrap_or_default();
+                let named =
+                    matches!(kind, "fn" | "type" | "enum" | "trait" | "alias" | "const" | "context" | "annotation");
+                if !named || name.is_empty() || name.contains('.') {
+                    continue;
+                }
+                let head = declaration["declaration"].as_str().unwrap_or_default().lines().next().unwrap_or_default();
+                found.push(Declared {
+                    name: name.to_string(),
+                    module: module.clone(),
+                    kind: kind.to_string(),
+                    head: head.trim_end_matches(" {").to_string(),
+                });
+            }
+        }
+        found
+    })
+}
+
+/// The standard modules that declare `name`: `std.uuid` for `Uuid`.
+pub fn declaring(name: &str) -> Vec<String> {
+    standard_declarations().iter().filter(|d| d.name == name).map(|d| d.module.clone()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

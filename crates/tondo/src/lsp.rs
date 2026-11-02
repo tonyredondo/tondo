@@ -935,30 +935,28 @@ impl Server {
                     DefKind::Const => 14,
                     _ => continue,
                 };
-                if !def.name.to_lowercase().contains(&query) {
-                    continue;
-                }
+                let Some(score) = matched(&def.name, &query) else { continue };
                 let Some((path, range)) = self.place(analyzed, def.name_span) else { continue };
                 if std.as_ref().is_some_and(|std| path.starts_with(std)) {
                     continue;
                 }
-                symbols.push(
-                    json!({ "name": def.name, "kind": kind, "location": { "uri": self.uri(&path), "range": range } }),
-                );
-                if symbols.len() >= 500 {
-                    return Value::Array(symbols);
-                }
+                let symbol =
+                    json!({ "name": def.name, "kind": kind, "location": { "uri": self.uri(&path), "range": range } });
+                symbols.push((score, symbol));
             }
         }
-        symbols.extend(self.std_symbols(&query).into_iter().take(500 - symbols.len()));
-        Value::Array(symbols)
+        symbols.extend(self.std_symbols(&query));
+        // The closest matches first: the same name, its start, a part of
+        // it, then its letters in order.
+        symbols.sort_by_key(|(score, _)| *score);
+        Value::Array(symbols.into_iter().take(500).map(|(_, symbol)| symbol).collect())
     }
 
     /// The public declarations of the standard library whose names hold
     /// `query`, each with its module, where the editor opens them: the
     /// modules written in Tondo, with the parts they are made of, and those
     /// the compiler implements.
-    fn std_symbols(&mut self, query: &str) -> Vec<Value> {
+    fn std_symbols(&mut self, query: &str) -> Vec<(u8, Value)> {
         let Some(dir) = self.std_dir() else { return Vec::new() };
         let mut found = Vec::new();
         for module in crate::api::standard_modules() {
@@ -988,18 +986,19 @@ impl Server {
                         "const" => 14,
                         _ => continue,
                     };
-                    if declared.is_empty() || !declared.to_lowercase().contains(query) {
-                        continue;
-                    }
+                    let Some(score) = matched(&declared, query).filter(|_| !declared.is_empty()) else { continue };
                     let column = code.find(&declared).unwrap_or(0);
                     let range = json!({
                         "start": { "line": line, "character": column },
                         "end": { "line": line, "character": column + declared.len() },
                     });
-                    found.push(json!({
-                        "name": declared, "kind": kind, "containerName": module,
-                        "location": { "uri": file_uri(&path), "range": range },
-                    }));
+                    found.push((
+                        score,
+                        json!({
+                            "name": declared, "kind": kind, "containerName": module,
+                            "location": { "uri": file_uri(&path), "range": range },
+                        }),
+                    ));
                 }
             }
         }
@@ -1376,6 +1375,7 @@ impl Server {
         }
         if !text[..start].ends_with('.') {
             let mut items = self.names(latest, offset);
+            items.extend(self.unimported(latest, offset, &text[start..cursor]));
             // In a record's braces, its fields not written yet; where a
             // call's argument starts, its parameters' names.
             let (before, written) = (text[..start].trim_end(), &text[..cursor]);
@@ -1513,6 +1513,81 @@ impl Server {
         };
         let ty = label.split_once(':')?.1;
         Some(ty.split(" = ").next()?.trim().to_string())
+    }
+
+    /// What other modules declare whose names start with what is written,
+    /// as `uuid.Uuid` for `Uui`, with the import the file lacks: the
+    /// standard modules' and the project's own.
+    fn unimported(&self, analyzed: &Analyzed, offset: u32, typed: &str) -> Vec<Value> {
+        if typed.chars().count() < 2 {
+            return Vec::new();
+        }
+        let sources = &analyzed.analysis.sources;
+        let here = sources.file_of(offset);
+        let imported = imports(&here.text);
+        let mut after = 0;
+        let mut at = 0;
+        for line in here.text.split_inclusive('\n') {
+            at += line.len();
+            if line.starts_with("import ") {
+                after = at;
+            }
+        }
+        let place = position(&here.text, after, self.units);
+        let lower = typed.to_lowercase();
+        let mut items = Vec::new();
+        let mut offer = |name: &str, module: &str, kind: u64, detail: &str| {
+            let alias = imported.iter().find(|(_, m)| m.as_str() == module).map(|(a, _)| a.clone());
+            let shown = alias.clone().unwrap_or_else(|| module.rsplit('.').next().unwrap_or(module).to_string());
+            let mut item = json!({
+                "label": name,
+                "kind": kind,
+                "labelDetails": { "description": module },
+                "detail": detail,
+                "filterText": name,
+                "insertText": format!("{shown}.{name}"),
+                "sortText": format!("~~{name}"),
+            });
+            if alias.is_none() {
+                let edit =
+                    json!({ "range": { "start": place, "end": place }, "newText": format!("import {module}\n") });
+                item["additionalTextEdits"] = json!([edit]);
+            }
+            items.push(item);
+        };
+        if let Some(index) = analyzed.analysis.index.as_ref() {
+            for def in &index.defs {
+                let kind = match def.kind {
+                    DefKind::Function => 3,
+                    DefKind::Type => 22,
+                    DefKind::Enum => 13,
+                    DefKind::Trait => 8,
+                    DefKind::Const => 21,
+                    _ => continue,
+                };
+                let file = sources.file_of(def.decl_span.start);
+                let text = file.slice(def.decl_span);
+                let public = text.starts_with("pub ");
+                if !file.own || file.module == here.module || !public || !def.name.to_lowercase().starts_with(&lower) {
+                    continue;
+                }
+                offer(&def.name, &file.module, kind, text.lines().next().unwrap_or_default().trim_end_matches(" {"));
+            }
+        }
+        for declared in crate::api::standard_declarations() {
+            if declared.name.to_lowercase().starts_with(&lower) {
+                let kind = match declared.kind.as_str() {
+                    "fn" => 3,
+                    "enum" => 13,
+                    "trait" => 8,
+                    "const" => 21,
+                    _ => 22,
+                };
+                offer(&declared.name, &declared.module, kind, &declared.head);
+            }
+        }
+        items.truncate(60);
+        items
     }
 
     /// In the braces of a record written by its type's name, `User { ... }`,
@@ -3770,4 +3845,22 @@ fn expected_type(line: &str) -> Option<(String, String)> {
 fn returns(header: &str) -> &str {
     let after = header.rsplit_once(')').map_or("", |(_, after)| after);
     after.trim().trim_start_matches(':').trim()
+}
+
+/// How a name matches what is searched, lower is closer: 0 the same name,
+/// 1 its start, 2 a part of it, 3 its letters in order, as `hRq` for
+/// `handleRequest`; `none` when it does not. Case does not count.
+fn matched(name: &str, query: &str) -> Option<u8> {
+    let (name, query) = (name.to_lowercase(), query.to_lowercase());
+    if name == query {
+        return Some(0);
+    }
+    if name.starts_with(&query) {
+        return Some(1);
+    }
+    if name.contains(&query) {
+        return Some(2);
+    }
+    let mut rest = name.chars();
+    query.chars().all(|wanted| rest.any(|c| c == wanted)).then_some(3)
 }

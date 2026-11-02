@@ -1502,3 +1502,47 @@ fn fills_arms_publishes_extracts_and_links() {
     assert!(targets.contains(&greeting.as_str()), "{links}");
     editor.stop();
 }
+
+#[test]
+fn completes_and_finds_what_is_not_imported() {
+    let dir = project(
+        "lsp-unimported",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/handlers/handlers.to", "pub fn handleRequest(path: String): String {\n    path\n}\n"),
+            ("src/main.to", "import std.console\n\nfn main() {\n    console.println(\"x\")\n}\n"),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    // A name of a module the file does not import, with the import.
+    let complete = |editor: &mut Editor, typed: &str| -> Vec<(String, String, String)> {
+        let text = format!("import std.console\n\nfn main() {{\n    console.println(\"x\")\n    let v = {typed}\n}}\n");
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let position = json!({ "line": 4, "character": 12 + typed.len() });
+        let found =
+            editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+        let items = found["items"].as_array().unwrap().iter().filter(|i| i["labelDetails"]["description"].is_string());
+        items
+            .map(|i| {
+                let import = i["additionalTextEdits"][0]["newText"].as_str().unwrap_or_default().to_string();
+                (i["label"].as_str().unwrap().to_string(), i["insertText"].as_str().unwrap().to_string(), import)
+            })
+            .collect()
+    };
+    let uuid = complete(&mut editor, "Uui");
+    assert_eq!(uuid[0], ("Uuid".to_string(), "uuid.Uuid".to_string(), "import std.uuid\n".to_string()), "{uuid:?}");
+    let own = complete(&mut editor, "handleR");
+    assert_eq!(
+        own[0],
+        ("handleRequest".into(), "handlers.handleRequest".into(), "import app.handlers\n".into()),
+        "{own:?}"
+    );
+    // Symbols by the letters of their words.
+    let found = editor.request("workspace/symbol", json!({ "query": "hRq" }));
+    assert_eq!(found[0]["name"], "handleRequest", "{found}");
+    editor.stop();
+}

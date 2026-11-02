@@ -485,8 +485,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Sobre `fn`, `return`, `fail` o un `?`, cada lugar por el que sale la
   función: sus `return`, `fail` y `?`, no los de sus closures.
 - Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
-  del proyecto y de la stdlib cuyo nombre contiene lo que se busca, los de la
-  stdlib con su módulo, en su copia de la caché.
+  del proyecto y de la stdlib cuyo nombre es lo que se busca, empieza por
+  ello, lo contiene o tiene sus letras en orden (`hRq` para
+  `handleRequest`), en ese orden, los de la stdlib con su módulo, en su
+  copia de la caché.
 - La firma de la llamada que se escribe, con su documentación y el argumento
   en que está el cursor.
 - El tipo de cada variable y cada parámetro de un closure declarados sin
@@ -522,7 +524,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   (`match`, `for`, `fn`...). Donde empieza un argumento, los nombres de los
   parámetros de la llamada que no se dieron todavía, `nombre: `; en las
   llaves de un record escrito por el nombre de su tipo, `User { ... }`, sus
-  campos que faltan. Tras `valor.`, además, lo que lo convierte en una
+  campos que faltan. Lo que declaran los módulos que el archivo no importa
+  y empieza por lo escrito, de la stdlib y del proyecto, se escribe con su
+  módulo (`uuid.Uuid` para `Uui`) y añade su `import`. Tras `valor.`, además, lo que lo convierte en una
   construcción alrededor: `match`, `let`, `some` y `ok`, `if` y `not` si es
   un `Bool`, y `for` si es una colección o un rango. Tras `let x: T = ` o
   `var x: T = `, o en un argumento de un parámetro de tipo `T`, lo que da un
@@ -580,7 +584,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   los casos (`E1204`) ofrece, además del brazo del primero que falta, uno
   para cada caso que falta, hasta 32; y un nombre privado de otro módulo
   (`E1501`), declararlo `pub` en el archivo que lo declara, como decisión
-  porque cambia lo que el módulo ofrece.
+  porque cambia lo que el módulo ofrece. Un nombre desconocido que declara
+  un módulo estándar (`Uuid`, `encode`) dice cuál y se escribe con él,
+  añadiendo su `import` si falta: segura si solo uno lo declara, y una
+  decisión por módulo si son varios, primero los que el archivo importa.
 - Refactors de una selección, cuando el editor los pide y no para la
   bombilla (`triggerKind` 2): extraer una expresión a una variable, con un
   `let` antes de su sentencia, salvo si ahí podría evaluarse cuando antes no

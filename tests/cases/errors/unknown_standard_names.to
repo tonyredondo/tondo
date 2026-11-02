@@ -1,0 +1,14 @@
+// A name of a standard module written without it: the module that
+// declares it, with its import; one with an import already comes first.
+
+import std.json as j
+
+fn main() {
+    let id = Uuid.v4()
+    let text = encode([1])
+    _ = (id, text)
+}
+
+// expect-error: E1001 unknown name `Uuid`; `Uuid` is declared by `std.uuid`: write `uuid.Uuid`, after `import std.uuid`
+// expect-error: E1001 unknown name `encode`; `encode` is declared by `std.json`, `std.cbor`, `std.messagepack` and 4 more: write it with its module, as `j.encode`
+// expect-warning: W1001 `j` is imported but never used
