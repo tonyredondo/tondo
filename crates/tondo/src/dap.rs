@@ -197,6 +197,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsSetExpression": true,
                 "supportsCompletionsRequest": true,
                 "supportsStepInTargetsRequest": true,
+                "supportsStepBack": true,
                 "completionTriggerCharacters": ["."],
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
@@ -459,7 +460,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                 let why = stop["why"].as_str().unwrap_or_default();
                 let reason = match why {
                     "start" => "entry",
-                    "step" => "step",
+                    "step" | "history" => "step",
                     "pause" => "pause",
                     _ if why.starts_with("panic[") || why.starts_with("error: ") => "exception",
                     _ if why.starts_with("watch ") => "data breakpoint",
@@ -527,6 +528,12 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     // Steps go into the standard library's code too.
     if arguments["justMyCode"] == false {
         debuggee.ask("steps all")?;
+    }
+    // A history of the lines run, which Step Back goes through.
+    match &arguments["record"] {
+        Value::Bool(true) => drop(debuggee.ask("record")?),
+        Value::Number(lines) => drop(debuggee.ask(&format!("record {lines}"))?),
+        _ => {}
     }
     Ok(debuggee)
 }
@@ -794,6 +801,13 @@ fn handle(
                 _ => "finish".to_string(),
             };
             program.ask(&asked).map(|_| json!({}))
+        }
+        // Back in the history `record` keeps: a line, or to the last line
+        // at a breakpoint.
+        "stepBack" | "reverseContinue" => {
+            program.handles.clear();
+            let asked = if command == "stepBack" { "back" } else { "reverse" };
+            program.ask(asked).map(|_| json!({}))
         }
         // The calls of the line a frame is at, which `stepIn` goes into.
         "stepInTargets" => {

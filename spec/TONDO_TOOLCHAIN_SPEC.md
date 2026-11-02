@@ -854,6 +854,15 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   uno que empieza en él; `steps all` los hace entrar y `steps program`
   vuelve a lo de antes. Un paso que sale de una función dice lo que devolvió
   (`returned`), que `locals` muestra también en el marco donde paró.
+- `record [<lines>]` guarda desde entonces cada línea del programa que
+  ejecuta cada tarea, con su pila y los bindings que su código puede usar
+  como estaban al empezarla, mostrados y recortados, en un historial de las
+  últimas `lines` (10000); `record off` lo deja. Con el programa parado,
+  `back [<n>]` va `n` líneas atrás en el historial de la tarea parada,
+  `reverse` a la última anterior con un breakpoint, y `forward [<n>]`, o un
+  paso, hacia delante; pasada la última, al presente. Mientras muestra el
+  pasado, `locals`, `print`, `children` y `stack` lo leen, de su marco más
+  interior, y `continue` sigue desde el presente.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
   en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
@@ -916,7 +925,9 @@ pánico y de un error (los filtros `panic` y `error`, cuya condición nombra
 códigos o tipos, con `exceptionInfo`) son
 las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
-que los pasos entren en el código de la librería estándar; la salida del programa y los logpoints van a la
+que los pasos entren en el código de la librería estándar; con `"record"`
+(`true` o cuántas líneas) guarda el historial, por el que van `stepBack` y
+`reverseContinue`; la salida del programa y los logpoints van a la
 consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.

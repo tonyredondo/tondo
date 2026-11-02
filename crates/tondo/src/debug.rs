@@ -44,6 +44,10 @@ step into <name>                                into the call of that name the l
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
 steps program|all                               steps go over the standard library's code (the default), or into it
+record [<lines>|off]                            keep each line the tasks run, with the bindings as it started (10000)
+back [<n>]                                      n lines back in the stopped task's history: locals, print, stack
+forward [<n>]                                   n lines forward in it, as steps do there; past the last, the present
+reverse                                         back to the last line at a breakpoint, or the first kept
 pause                                           stop every task, as Ctrl-C does
 catch panic [<code>...] error [<type>...]|none  stop where a task panics and no recover stops it (the default), where
                                                 an error starts (a fail, or a ? on what std failed with), both, or none;
@@ -212,7 +216,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
-            | "steps" => {
+            | "steps" | "record" | "back" | "forward" | "reverse" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -319,6 +323,15 @@ impl Session {
             let at = stop["at"].as_str().unwrap_or_default();
             match stop["why"].as_str().unwrap_or_default() {
                 "start" => println!("the program waits before main: set breakpoints, then `continue`"),
+                "history" => match stop["back"].as_u64().unwrap_or(0) {
+                    0 => println!("back in the present, at {at}"),
+                    back => {
+                        println!("{back} lines back in task {}'s history, at {at}", stop["task"]);
+                        if let Some(source) = source_line(at) {
+                            println!("{source}");
+                        }
+                    }
+                },
                 why => {
                     println!("task {} stopped at {at} ({why})", stop["task"]);
                     if let Some(returned) = stop.get("returned") {
@@ -376,6 +389,11 @@ impl Session {
             }
         } else if let Some(logged) = value["logged"].as_str() {
             println!("{logged}");
+        } else if let Some(lines) = value.get("recording") {
+            match lines.as_u64() {
+                Some(0) => println!("the history is off"),
+                _ => println!("the history keeps the last {lines} lines"),
+            }
         } else if let Some(watch) = value.get("watch") {
             println!("watch {} = {}", watch["id"], watch["value"].as_str().unwrap_or_default());
         } else if let Some(id) = value.get("unwatched") {

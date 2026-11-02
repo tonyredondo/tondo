@@ -923,7 +923,7 @@ fn debug_adapter_watches_and_pages() {
         }
     };
     ask("initialize", json!({ "adapterID": "tondo" }));
-    ask("launch", json!({ "program": "watched.to", "cwd": dir }));
+    ask("launch", json!({ "program": "watched.to", "cwd": dir, "record": 1000 }));
     let set = ask("setFunctionBreakpoints", json!({ "breakpoints": [{ "name": "sum" }] }));
     assert_eq!((&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"]), (&json!(true), &json!(12)));
     let caught = json!({ "filters": ["panic"], "filterOptions": [{ "filterId": "error", "condition": "Problem" }] });
@@ -964,6 +964,14 @@ fn debug_adapter_watches_and_pages() {
         why.starts_with("watch 2: total changed from 0 to 1 at ") && why.ends_with("watched.to:17 in sum"),
         "{why}"
     );
+    // A line back in the history, where `total` changed, and forward to
+    // the present again.
+    ask("stepBack", json!({ "threadId": 1 }));
+    assert_eq!(ask("", Value::Null)["reason"], "step");
+    assert_eq!(ask("stackTrace", json!({ "threadId": 1 }))["stackFrames"][0]["line"], 17);
+    ask("next", json!({ "threadId": 1 }));
+    ask("", Value::Null);
+    assert_eq!(ask("stackTrace", json!({ "threadId": 1 }))["stackFrames"][0]["line"], 13);
     ask("setDataBreakpoints", json!({ "breakpoints": [] }));
     // Out of `sum`, its frame's scope shows what it returned.
     ask("stepOut", json!({ "threadId": 1 }));
@@ -1393,6 +1401,50 @@ fn debugger_reaches_a_program_through_a_relay() {
     let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap();
     assert_eq!(stop["at"], "looped.to:6 in main");
     assert_eq!(lines.iter().find(|l| l["name"] == "ticks > 0").unwrap()["value"], "true");
+}
+
+/// `record` keeps each line a task runs with its bindings; `back`,
+/// `reverse` and `forward` go through them, and the present comes back.
+#[test]
+fn debugger_goes_back_in_history() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-history");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("watched.to"), WATCHED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "watched.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "record 1000\nbreak watched.to:17\ncontinue\ncontinue\nback\nprint item\nreverse\nprint total\nstack\n\
+        forward 100\nprint total\nrecord off\ndelete 1\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<(&str, &Value)> =
+        lines.iter().filter_map(|l| l.get("stopped")).map(|s| (s["at"].as_str().unwrap(), &s["back"])).collect();
+    assert_eq!(
+        stops[1..4],
+        [
+            ("watched.to:17 in sum", &Value::Null),
+            ("watched.to:17 in sum", &Value::Null),
+            ("watched.to:14 in sum", &json!(1))
+        ]
+    );
+    // Back to the breakpoint's line before, then forward to the present.
+    assert!(stops[4].0 == "watched.to:17 in sum" && stops[4].1.as_u64() > Some(1), "{stops:?}");
+    assert_eq!(stops[5], ("watched.to:17 in sum", &json!(0)));
+    let printed: Vec<(&str, &str)> = lines
+        .iter()
+        .filter(|l| l["name"].is_string())
+        .map(|l| (l["name"].as_str().unwrap(), l["value"].as_str().unwrap()))
+        .collect();
+    assert_eq!(printed, [("item", "2"), ("total", "0"), ("total", "1")]);
+    let stack = lines.iter().find_map(|l| l["stack"].as_array()).unwrap();
+    assert_eq!(stack[..2], [json!("watched.to:17 in sum"), json!("watched.to:39 in main")]);
 }
 
 #[test]

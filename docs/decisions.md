@@ -4443,3 +4443,16 @@ joins its standard input and output to the program's connection. Access
 is the command's: ssh's keys, docker's permissions. The relay passes
 each piece on at once, as `std::io::copy` held pieces back between a
 socket and a pipe and a debugger waits for every answer.
+
+## 2026-11-02 — Going back is a history of values
+
+Going back in a program can mean running it backwards, which needs every
+source of nondeterminism recorded, as rr does, or running a frame again,
+which repeats its effects. He chose a history instead: `record` keeps,
+at each line of the program's own code a task runs, its stack and the
+bindings its code can use, as the debugger shows them, clipped, in a
+ring of the last lines. `back`, `forward` and `reverse` move through it
+while the program stands still, and `locals`, `print` and `stack` read
+the moment shown; nothing runs backwards, and `continue` goes on from the
+present. It is slower while it records, as every line renders its
+bindings, and it keeps the innermost frame's bindings only.

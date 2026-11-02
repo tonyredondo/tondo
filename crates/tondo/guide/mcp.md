@@ -81,6 +81,7 @@ command and gives the answers, the events and what the program printed:
 break src/main.to:12 [if count > 3 and name != ""] [hits 5] [log at {i}: {total / i}]
 break fn parse   watch total   delete <id>   catch panic bounds error ConfigError
 continue   step   next   finish   steps all   pause   wait
+record   back 3   forward   reverse   record off
 locals   print items[i + 1].name   print total / count   children items 100 50
 set count count + 1   set user.age = 37   context   stack   frame 1   task 2
 tasks   reload   restart
@@ -101,6 +102,8 @@ failed with. `children` gives a page of a large value's parts from
 `start`. Steps go over the standard library's code unless `steps all`,
 and one that leaves a function says what it `returned`. `tasks` lists the
 tasks that wait too, whose frames `task 2` and `stack 2` show.
+`record` keeps each line the tasks run with its bindings, which `back`,
+`forward` and `reverse` go through while the program is stopped.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling

@@ -10,7 +10,7 @@ use super::{Builder, Str, str_bytes};
 use expression::{Evaluator, Expr};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, RwLock};
 
 mod expression;
@@ -104,6 +104,152 @@ static WATCHING: AtomicBool = AtomicBool::new(false);
 /// for a step that starts there.
 static STEPS_ALL: AtomicBool = AtomicBool::new(false);
 static STEPS_STD: AtomicBool = AtomicBool::new(false);
+/// A line a task ran while the debugger recorded (`record`): where, its
+/// stack, and the bindings its code could use as the line started, as the
+/// debugger shows them, clipped.
+struct Moment {
+    task: u64,
+    site: usize,
+    stack: Vec<String>,
+    bindings: Vec<(String, String, String)>,
+}
+
+/// How many lines the history keeps, or 0 while it does not record; and
+/// those lines, oldest first.
+static RECORDING: AtomicUsize = AtomicUsize::new(0);
+static HISTORY: Mutex<std::collections::VecDeque<Moment>> = Mutex::new(std::collections::VecDeque::new());
+
+/// Keeps the line a task starts in the history: the program's own lines,
+/// as steps go.
+fn record(table: &Table, here: &Stop) {
+    if table.sites.get(here.site).is_none_or(Site::generated) {
+        return;
+    }
+    let frames = frames(table, here);
+    let bindings = visible(table, &frames, 0)
+        .into_iter()
+        .map(|(b, address, _)| (b.name.clone(), b.ty.clone(), clipped(&show(b.show, address))))
+        .collect();
+    let stack = frames.iter().map(|f| f.place.clone()).collect();
+    let mut history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    while history.len() >= RECORDING.load(Ordering::Relaxed).max(1) {
+        history.pop_front();
+    }
+    history.push_back(Moment { task: here.task, site: here.site, stack, bindings });
+}
+
+/// An event the debugger hears once the answer to its command went.
+static TELL_AFTER: Mutex<Option<String>> = Mutex::new(None);
+
+/// `back [n]`, `forward [n]` and `reverse`: the moment of the stopped task's
+/// history `locals`, `print` and `stack` show, n lines before or after the
+/// one shown, or the last before it at a breakpoint; forward past the last
+/// is the present again.
+fn moved(table: &Table, word: &str, count: usize) -> Result<String, String> {
+    let mut state = state();
+    let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let task = state.selected.map_or(stop.task, |(task, _)| task);
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mine: Vec<usize> = (0..history.len()).filter(|&i| history[i].task == task).collect();
+    if mine.is_empty() {
+        return Err("the history has no line of this task: `record` keeps them from now on".into());
+    }
+    // The last line recorded is where the task is now.
+    let present = mine.len() - 1;
+    let at = state.past.and_then(|past| mine.iter().position(|&i| i == past)).unwrap_or(present);
+    let to = match word {
+        "back" => at.saturating_sub(count),
+        "reverse" => {
+            let marked = |&&i: &&usize| table.marked.get(history[i].site).is_some_and(|m| m.load(Ordering::Relaxed));
+            mine[..at].iter().rposition(|i| marked(&i)).unwrap_or(0)
+        }
+        _ => (at + count).min(present),
+    };
+    state.past = (to < present).then_some(mine[to]);
+    state.selected = None;
+    let moment = &history[mine[to]];
+    let at = place_in(table, moment.site);
+    let back = present - to;
+    *TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(format!("{{\"stopped\":{{\"why\":\"history\",\"task\":{task},\"at\":{},\"back\":{back}}}}}", quoted(&at)));
+    Ok("{\"running\":true}".into())
+}
+
+/// The moment of the history the debugger shows, while it shows one.
+fn past(state: &State) -> Option<(usize, std::sync::MutexGuard<'static, std::collections::VecDeque<Moment>>)> {
+    state.past.map(|past| (past, HISTORY.lock().unwrap_or_else(|e| e.into_inner())))
+}
+
+/// `locals`, `print` and `children` in a moment of the history: the
+/// bindings of its innermost frame, as they were.
+fn in_past(moment: &Moment, word: &str, rest: &str, frame: usize) -> String {
+    if frame != 0 {
+        let message = "the history keeps the bindings of the innermost frame: `frame 0`";
+        return format!("{{\"error\":{}}}", quoted(message));
+    }
+    let read = |name: &str| match moment.bindings.iter().find(|(n, ..)| n == name) {
+        Some((.., text)) => Ok(text.clone()),
+        None => Err(format!("no binding `{name}` held a value there")),
+    };
+    match word {
+        "locals" => {
+            let items: Vec<String> = moment
+                .bindings
+                .iter()
+                .map(|(name, ty, text)| {
+                    format!("{{\"name\":{},\"type\":{},{}}}", quoted(name), quoted(ty), described(text))
+                })
+                .collect();
+            format!("{{\"locals\":[{}]}}", items.join(","))
+        }
+        "print" => {
+            let evaluated = expression::parse(rest).and_then(|expr| Evaluator::new(&read).evaluate(&expr));
+            match evaluated {
+                Ok(evaluated) => {
+                    let ty = moment.bindings.iter().find(|(n, ..)| n == rest).map(|(_, ty, _)| ty.as_str());
+                    let ty = ty.or(evaluated.value.ty()).map_or("null".to_string(), quoted);
+                    let path = evaluated.path.as_deref().map_or(String::new(), |p| format!(",\"path\":{}", quoted(p)));
+                    format!("{{\"name\":{},\"type\":{ty},{}{path}}}", quoted(rest), described(&evaluated.text))
+                }
+                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+            }
+        }
+        _ => {
+            let root = rest.find(['.', '[']).map_or(rest, |i| &rest[..i]);
+            let found = read(root).and_then(|whole| {
+                super::shown::find(&whole, &rest[root.len()..])
+                    .map(str::to_string)
+                    .ok_or(format!("`{rest}` is not a part of `{root}`"))
+            });
+            match found {
+                Ok(text) => children_of(rest, &text, None),
+                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+            }
+        }
+    }
+}
+
+/// The parts of a value's text, all or a page of them, each with its path.
+fn children_of(path: &str, text: &str, page: Option<(usize, usize)>) -> String {
+    let parts = super::shown::parse(text).parts;
+    let total = parts.len();
+    let (start, count) = page.unwrap_or((0, total));
+    let items: Vec<String> = parts
+        .iter()
+        .skip(start)
+        .take(count)
+        .map(|(name, part)| {
+            format!(
+                "{{\"name\":{},\"path\":{},{}}}",
+                quoted(name),
+                quoted(&format!("{path}{name}")),
+                described(part.text)
+            )
+        })
+        .collect();
+    format!("{{\"children\":[{}],\"total\":{total}}}", items.join(","))
+}
+
 /// The task that steps, or 0; and the function that returned last in it,
 /// with what it returned, which the step's stop shows.
 static STEPPING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -346,6 +492,8 @@ struct State {
     breakpoints: Vec<Breakpoint>,
     watches: Vec<Watch>,
     next_breakpoint: u32,
+    /// The moment of the history shown instead of the present.
+    past: Option<usize>,
 }
 
 /// An expression a task's frame watches: the task stops on the line after
@@ -489,6 +637,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     breakpoints: Vec::new(),
     watches: Vec::new(),
     next_breakpoint: 1,
+    past: None,
 });
 static RESUMED: Condvar = Condvar::new();
 /// The tool that debugs the program, which hears when it stops, and the
@@ -537,8 +686,14 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     }
     let marked = table.marked.get(site).is_some_and(|m| m.load(Ordering::Relaxed));
     let watching = WATCHING.load(Ordering::Relaxed);
-    if !marked && !watching && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
+    let recording = RECORDING.load(Ordering::Relaxed) > 0;
+    if !marked && !watching && !recording && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
         return restarting(frame, task, site);
+    }
+    if recording {
+        let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+        let (addresses, alive) = (addresses as usize, alive as usize);
+        record(&table, &Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
     }
     let mut state = state();
     let why = if state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
@@ -878,6 +1033,9 @@ fn go_after_answer(mode: Mode) {
 
 /// Called once an answer went to the debugger.
 pub(crate) fn answered() {
+    if let Some(event) = TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        tell(&event);
+    }
     let mode = AFTER_ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(mode) = mode {
         resume(mode);
@@ -899,6 +1057,7 @@ fn resume(mode: Mode) {
     state.mode = mode;
     state.stopped = None;
     state.selected = None;
+    state.past = None;
     HOLD.store(false, Ordering::Relaxed);
     state.resumed += 1;
     RESUMED.notify_all();
@@ -1121,6 +1280,39 @@ pub(crate) fn command(line: &str) -> Option<String> {
             go_after_answer(Mode::Run);
             "{\"running\":true}".into()
         }
+        // The history: kept from now on, or no longer.
+        "record" => {
+            let lines = match rest {
+                "off" => 0,
+                "" => 10_000,
+                lines => match lines.parse::<usize>() {
+                    Ok(lines) if lines > 0 => lines,
+                    _ => {
+                        return Some(
+                            "{\"error\":\"record takes how many lines it keeps, as `record 10000`, or `off`\"}".into(),
+                        );
+                    }
+                },
+            };
+            RECORDING.store(lines, Ordering::Relaxed);
+            if lines == 0 {
+                HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                state().past = None;
+            }
+            format!("{{\"recording\":{lines}}}")
+        }
+        "back" | "forward" | "reverse" => {
+            let count = rest.parse().unwrap_or(1);
+            match moved(table, word, count) {
+                Ok(answer) => answer,
+                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+            }
+        }
+        // A step in the past goes forward in the history.
+        "step" | "next" | "finish" if state().past.is_some() => match moved(table, "forward", 1) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         "restart" => {
             let Some(stop) = stopped() else { return Some(not_stopped()) };
             let Some(at) = table.sites.get(stop.site) else {
@@ -1238,6 +1430,12 @@ pub(crate) fn command(line: &str) -> Option<String> {
             state.selected = Some((task, frame as usize));
             format!("{{\"selected\":{{\"task\":{task},\"frame\":{frame}}}}}")
         }
+        "locals" | "print" | "children" if state().past.is_some() => {
+            let state = state();
+            let frame = state.selected.map_or(0, |(_, frame)| frame);
+            let Some((past, history)) = past(&state) else { return Some(not_stopped()) };
+            in_past(&history[past], word, rest, frame)
+        }
         "locals" | "print" | "children" => {
             let (frames, index) = match selected(table) {
                 Ok(selected) => selected,
@@ -1288,23 +1486,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 Ok(found) => found,
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
-            let parts = super::shown::parse(&found.text).parts;
-            let total = parts.len();
-            let (start, count) = page.unwrap_or((0, total));
-            let items: Vec<String> = parts
-                .iter()
-                .skip(start)
-                .take(count)
-                .map(|(name, part)| {
-                    format!(
-                        "{{\"name\":{},\"path\":{},{}}}",
-                        quoted(name),
-                        quoted(&format!("{path}{name}")),
-                        described(part.text)
-                    )
-                })
-                .collect();
-            format!("{{\"children\":[{}],\"total\":{total}}}", items.join(","))
+            children_of(path, &found.text, page)
         }
         // The contexts of the task looked at, and which `with` set each
         // field (language 11.16).
@@ -1336,6 +1518,22 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 })
                 .collect();
             format!("{{\"contexts\":[{}]}}", contexts.join(","))
+        }
+        "stack" if state().past.is_some() => {
+            let state = state();
+            let Some((past, history)) = past(&state) else { return Some(not_stopped()) };
+            let moment = &history[past];
+            // Another task than the one whose history it shows is as now.
+            if rest.parse::<u64>().is_ok_and(|task| task != moment.task) {
+                let task: u64 = rest.parse().unwrap_or(0);
+                let Some(held) = stop_of(&state, task) else {
+                    return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
+                };
+                let frames: Vec<String> = frames(table, &held).iter().map(|f| quoted(&f.place)).collect();
+                return Some(format!("{{\"stack\":[{}]}}", frames.join(",")));
+            }
+            let frames: Vec<String> = moment.stack.iter().map(|f| quoted(f)).collect();
+            format!("{{\"stack\":[{}]}}", frames.join(","))
         }
         "stack" => {
             let state = state();
