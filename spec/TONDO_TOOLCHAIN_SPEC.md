@@ -889,7 +889,9 @@ suites, con los bindings de cada función, desplegables por partes
 (`variables`), los elementos de un array o un set por páginas
 (`indexedVariables`), en cada marco un ámbito por cada función en que está
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
-la tarea, `evaluate` de una expresión, `setVariable` y `setExpression`, de una parte también, y las excepciones de un
+la tarea, `evaluate` de una expresión, `completions` en la consola (los bindings, los
+campos de un valor tras su punto y los métodos de las expresiones),
+`setVariable` y `setExpression`, de una parte también, y las excepciones de un
 pánico y de un error (los filtros `panic` y `error`, con `exceptionInfo`) son
 las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace

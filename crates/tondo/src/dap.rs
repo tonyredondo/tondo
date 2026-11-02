@@ -192,6 +192,8 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsExceptionInfoRequest": true,
                 "supportsSetVariable": true,
                 "supportsSetExpression": true,
+                "supportsCompletionsRequest": true,
+                "completionTriggerCharacters": ["."],
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
                 "exceptionBreakpointFilters": [
@@ -516,6 +518,24 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         debuggee.ask("steps all")?;
     }
     Ok(debuggee)
+}
+
+/// The value whose part the console writes after a dot that ends `text`:
+/// the path or expression before it, as `user.address` or `items[i]`.
+fn owner(text: &str) -> Option<&str> {
+    let before = text.strip_suffix('.')?;
+    let mut depth = 0;
+    let mut start = before.len();
+    for (at, c) in before.char_indices().rev() {
+        match c {
+            ']' | ')' => depth += 1,
+            '[' | '(' if depth > 0 => depth -= 1,
+            _ if depth > 0 || c.is_alphanumeric() || c == '_' || c == '.' => {}
+            _ => break,
+        }
+        start = at;
+    }
+    Some(&before[start..]).filter(|owner| !owner.is_empty())
 }
 
 /// The path of a variable the editor names in the variables of `path`: a
@@ -868,6 +888,52 @@ fn handle(
             let value = arguments["value"].as_str().unwrap_or_default();
             let set = program.ask(&format!("set {target} = {value}"))?;
             Ok(json!({ "value": set["value"], "type": set["type"], "variablesReference": 0 }))
+        }
+        // What the console can write next: the bindings of the frame, the
+        // fields of a value after its dot and the methods expressions call,
+        // or the words of expressions.
+        "completions" => {
+            let text = arguments["text"].as_str().unwrap_or_default();
+            let column = arguments["column"].as_u64().map_or(usize::MAX, |c| c.saturating_sub(1) as usize);
+            let before: String = text.chars().take(column).collect();
+            let start = before.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+            let word = &before[start..];
+            let (task, index) = match arguments["frameId"].as_u64() {
+                Some(id) => frame_of(id),
+                None => (1, 0),
+            };
+            program.ask(&format!("select {task} {index}"))?;
+            let mut found: Vec<(String, &str)> = Vec::new();
+            match owner(&before[..start]) {
+                Some(owner) => {
+                    let value = program.ask(&format!("print {owner}")).unwrap_or_default();
+                    if let Some(path) = value["path"].as_str() {
+                        let parts = program.ask(&format!("children {path} 0 1000")).unwrap_or_default();
+                        for part in parts["children"].as_array().into_iter().flatten() {
+                            if let Some(field) = part["name"].as_str().and_then(|n| n.strip_prefix('.')) {
+                                found.push((field.to_string(), "field"));
+                            }
+                        }
+                    }
+                    let methods = ["length", "isEmpty", "isSome", "isNone", "isOk", "isErr", "contains", "startsWith"];
+                    found.extend(methods.iter().chain(&["endsWith"]).map(|m| (format!("{m}()"), "method")));
+                }
+                None => {
+                    let locals = program.ask("locals").unwrap_or_default();
+                    for local in locals["locals"].as_array().into_iter().flatten() {
+                        found.push((local["name"].as_str().unwrap_or_default().to_string(), "variable"));
+                    }
+                    found.extend(["and", "or", "not", "true", "false", "none"].map(|k| (k.to_string(), "keyword")));
+                }
+            }
+            let length = word.chars().count();
+            let first = before[..start].chars().count() + 1;
+            let targets: Vec<Value> = found
+                .into_iter()
+                .filter(|(label, _)| label.starts_with(word))
+                .map(|(label, kind)| json!({ "label": label, "type": kind, "start": first, "length": length }))
+                .collect();
+            Ok(json!({ "targets": targets }))
         }
         // What an expression gives in the frame chosen; a binding or a part
         // of one opens by its path.

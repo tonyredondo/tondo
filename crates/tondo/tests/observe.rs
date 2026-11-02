@@ -727,6 +727,16 @@ fn debug_adapter() {
     send("evaluate", json!({ "expression": "names[1]", "frameId": frame }));
     let evaluated = response(&mut output, "evaluate", &mut events);
     assert_eq!(evaluated["body"]["result"], "\"b\"");
+    // The console completes bindings, a value's fields and methods.
+    let mut complete = |text: &str| {
+        let column = text.chars().count() + 1;
+        send("completions", json!({ "text": text, "column": column, "frameId": frame }));
+        let targets = response(&mut output, "completions", &mut events)["body"]["targets"].clone();
+        targets.as_array().unwrap().iter().map(|t| t["label"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(complete("1 + na"), ["names"]);
+    assert_eq!(complete("ada.a"), ["age"]);
+    assert_eq!(complete("names[0].is"), ["isEmpty()", "isSome()", "isNone()", "isOk()", "isErr()"]);
     // Into the call: the caller's frame still shows its bindings.
     send("stepIn", json!({ "threadId": thread }));
     response(&mut output, "stepIn", &mut events);
