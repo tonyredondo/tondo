@@ -759,6 +759,29 @@ pub(crate) fn panicked(message: &str) {
     }
 }
 
+/// Every task waits and none can wake the others (`P0013`): with a
+/// debugger attached that catches it, the program stops first, where the
+/// main task waits, so that `tasks`, `stack` and `locals` show what each
+/// one waits for; it ends when the debugger goes on.
+pub(crate) fn deadlocked(headline: &str) {
+    if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(headline) {
+        return;
+    }
+    let Some(table) = table() else { return };
+    let Some((task, _, frame, bounds)) = super::tasks::waiting().into_iter().next() else { return };
+    let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: headline.to_string() };
+    let at = frames(&table, &stop).first().map_or(String::new(), |f| f.place.clone());
+    drop(table);
+    let mut state = state();
+    tell(&format!("{{\"stopped\":{{\"why\":{},\"task\":{task},\"at\":{}}}}}", quoted(headline), quoted(&at)));
+    state.stopped = Some(stop);
+    HOLD.store(true, Ordering::Relaxed);
+    let resumed = state.resumed;
+    while state.resumed == resumed {
+        state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
 /// The frame the debugger asked to restart, and its task; and the function
 /// whose new call stops at its first line.
 static RESTART_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

@@ -874,15 +874,18 @@ fn park() {
 /// only C could wake the program.
 fn wait_pinned(task: *mut Task) {
     let state = unsafe { &(*task).state };
-    let check = |queue: &Queue| {
-        if matches!(stalled(queue), Stalled::Deadlock) {
+    // The queue is let go first: a debugger reads it while it shows the
+    // deadlock.
+    let check = |queue: MutexGuard<'static, Queue>| {
+        if matches!(stalled(&queue), Stalled::Deadlock) {
+            drop(queue);
             deadlock();
         }
     };
     {
         let mut queue = queue();
         queue.pinned.push(task);
-        check(&queue);
+        check(queue);
     }
     // Waiting, the thread runs no Tondo code that a collection could meet.
     leave_tondo();
@@ -896,7 +899,7 @@ fn wait_pinned(task: *mut Task) {
             break;
         }
         drop(lock);
-        check(&queue());
+        check(queue());
     }
     enter_tondo();
     queue().pinned.retain(|&t| t != task);
@@ -1499,7 +1502,10 @@ fn deadlock() -> ! {
         }
     }
     flush_stdout();
-    let mut report = String::from("panic[P0013]: deadlock: every task waits and none of them can wake the others");
+    let headline = "panic[P0013]: deadlock: every task waits and none of them can wake the others";
+    // A debugger shows where every task waits first.
+    super::debugger::deadlocked(headline);
+    let mut report = String::from(headline);
     // Where each task waits, the same place once, with the main task first.
     let mut waits: Vec<(String, usize)> = Vec::new();
     let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();

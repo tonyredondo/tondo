@@ -835,7 +835,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `panic`. Tras `panic`, códigos o nombres de pánicos (`P0001`, `bounds`), y
   tras `error`, tipos de errores, con su módulo o sin él (`ConfigError`,
   `json.DecodeError`), lo limitan a esos; de una unión cuenta el miembro que
-  es el error.
+  es el error. Un deadlock (`P0013`) para el programa antes de terminarlo,
+  donde espera la tarea principal, para ver dónde espera cada una; al
+  seguir, termina con su pánico.
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la

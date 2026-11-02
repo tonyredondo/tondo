@@ -1263,6 +1263,52 @@ fn debugger_catches_chosen_errors_and_panics() {
     assert!(stops[2].1.starts_with("panic[P0001]: bounds"), "{stops:?}");
 }
 
+const DEADLOCKED: &str = r#"fn waiter(inbox: Receiver[Int]) {
+    let label = "waiter"
+    _ = inbox.receive()
+}
+
+fn main() {
+    let (outbox, inbox) = channel[Int](1)
+    let (other, never) = channel[Int](1)
+    spawn waiter(never)
+    _ = inbox.receive()
+    outbox.send(1)
+    other.send(1)
+}
+"#;
+
+/// A deadlock stops the program before it ends, where each task waits,
+/// with their bindings.
+#[test]
+fn debugger_stops_at_a_deadlock() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-deadlock");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("deadlocked.to"), DEADLOCKED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "deadlocked.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "continue\ntasks\ntask 2\nprint label\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stop = lines.iter().filter_map(|l| l.get("stopped")).nth(1).unwrap();
+    assert_eq!(stop["at"], "deadlocked.to:10 in main");
+    assert!(stop["why"].as_str().unwrap().starts_with("panic[P0013]: deadlock"), "{stop}");
+    let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
+    assert_eq!(tasks[1], json!({ "task": 2, "at": "deadlocked.to:3 in waiter", "why": "waits" }));
+    assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
+    // Going on, the program ends with the deadlock.
+    assert!(String::from_utf8_lossy(&output.stderr).contains("panic[P0013]: deadlock"));
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");
