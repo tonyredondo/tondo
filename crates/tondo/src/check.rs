@@ -67,6 +67,7 @@ fn check_with<'a>(
         impls: Vec::new(),
         impl_heads: HashMap::new(),
         heads_indexed: 0,
+        errors_counted: std::cell::Cell::new((0, 0)),
         bounds: HashMap::new(),
         call_bounds: HashMap::new(),
         cursor_templates: HashMap::new(),
@@ -818,6 +819,10 @@ struct Checker<'a> {
     /// trait looks only at those that may match; and how many are there.
     impl_heads: HashMap<(TraitId, Option<Head>), Vec<usize>>,
     heads_indexed: usize,
+    /// How many diagnostics were counted for `error_count`, and how many of
+    /// them are errors: the list only grows while a program is checked, the
+    /// standard library's warnings with it, so each is counted once.
+    errors_counted: std::cell::Cell<(usize, usize)>,
     /// The traits each type parameter is bound by, with their arguments.
     bounds: HashMap<Ty, Vec<(TraitId, Vec<Ty>)>>,
     /// The call protocol bounding a type parameter (11.8), and its
@@ -6255,7 +6260,14 @@ impl<'a> Checker<'a> {
     /// A context for a body whose declared result is `result`. A `T ! E`
     /// result makes the body fallible: it is written in terms of `T` (9.8).
     fn error_count(&self) -> usize {
-        self.diags.list.iter().filter(|d| d.severity == crate::diag::Severity::Error).count()
+        let list = &self.diags.list;
+        let (seen, errors) = match self.errors_counted.get() {
+            (seen, errors) if seen <= list.len() => (seen, errors),
+            _ => (0, 0),
+        };
+        let errors = errors + list[seen..].iter().filter(|d| d.severity == crate::diag::Severity::Error).count();
+        self.errors_counted.set((list.len(), errors));
+        errors
     }
 
     fn new_cx(&self, result: Ty) -> FnCx {
@@ -15492,6 +15504,7 @@ impl<'a> Checker<'a> {
                     index += 1;
                     index <= before || d.code == Some("E1001")
                 });
+                self.errors_counted.set((0, 0));
                 Self::error_expr(span)
             }
             _ => self.unsupported_expr(callee.span, "calling this expression"),
