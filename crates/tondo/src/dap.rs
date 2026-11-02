@@ -197,8 +197,10 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsFunctionBreakpoints": true,
                 "supportsDataBreakpoints": true,
                 "exceptionBreakpointFilters": [
-                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true },
-                    { "filter": "error", "label": "Errors", "description": "Stop where an error starts: a fail, or a ? on what the standard library failed with", "default": false }
+                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true,
+                      "supportsCondition": true, "conditionDescription": "Codes or names of panics, as `P0001 checked-overflow`" },
+                    { "filter": "error", "label": "Errors", "description": "Stop where an error starts: a fail, or a ? on what the standard library failed with", "default": false,
+                      "supportsCondition": true, "conditionDescription": "Types of errors, as `ConfigError json.DecodeError`" }
                 ],
             })),
             "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),
@@ -700,14 +702,17 @@ fn handle(
         }
         "pause" => program.ask("pause").map(|_| json!({})),
         "setExceptionBreakpoints" => {
-            let filters: Vec<&str> = arguments["filters"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .filter(|f| matches!(*f, "panic" | "error"))
-                .collect();
-            let caught = if filters.is_empty() { "none".to_string() } else { filters.join(" ") };
+            // Each filter, with the codes or types its condition names.
+            let plain = arguments["filters"].as_array().into_iter().flatten().map(|f| (f.as_str(), None));
+            let options = arguments["filterOptions"].as_array().into_iter().flatten();
+            let options = options.map(|o| (o["filterId"].as_str(), o["condition"].as_str()));
+            let mut caught = Vec::new();
+            for (filter, condition) in plain.chain(options) {
+                let Some(filter @ ("panic" | "error")) = filter else { continue };
+                let names = condition.unwrap_or_default().replace(',', " ");
+                caught.push(format!("{filter} {names}").trim_end().to_string());
+            }
+            let caught = if caught.is_empty() { "none".to_string() } else { caught.join(" ") };
             program.ask(&format!("catch {caught}")).map(|_| json!({}))
         }
         // Why the task stopped at a panic or an error: its message, with

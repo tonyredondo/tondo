@@ -2233,8 +2233,10 @@ impl Builder<'_> {
                     self.emit_return(none, e.span);
                 } else {
                     let TyKind::Result(_, error_ty) = *self.types.kind(inner.ty) else { unreachable!() };
-                    let error = self.widen(Operand::Copy(place.variant_field(ERR, 0)), error_ty, e.span);
-                    self.note_failure(e.span, &error, Some(inner));
+                    // The error as it came, before a union takes it in.
+                    let came = Operand::Copy(place.variant_field(ERR, 0));
+                    self.note_failure(e.span, &came, Some(inner));
+                    let error = self.widen(came, error_ty, e.span);
                     self.emit_fail(error, e.span);
                 }
                 self.switch_to(next);

@@ -832,7 +832,10 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   del programa, o un `?` que propaga uno de una función de la librería
   estándar; un `?` que propaga el de una función del programa no vuelve a
   parar. `catch` toma `panic`, `error`, los dos o `none`; por defecto,
-  `panic`.
+  `panic`. Tras `panic`, códigos o nombres de pánicos (`P0001`, `bounds`), y
+  tras `error`, tipos de errores, con su módulo o sin él (`ConfigError`,
+  `json.DecodeError`), lo limitan a esos; de una unión cuenta el miembro que
+  es el error.
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
@@ -900,7 +903,8 @@ escrita, como la suite de un test, y un ámbito `Context` con los contextos de
 la tarea, `evaluate` de una expresión, `completions` en la consola (los bindings, los
 campos de un valor tras su punto y los métodos de las expresiones),
 `setVariable` y `setExpression`, de una parte también, y las excepciones de un
-pánico y de un error (los filtros `panic` y `error`, con `exceptionInfo`) son
+pánico y de un error (los filtros `panic` y `error`, cuya condición nombra
+códigos o tipos, con `exceptionInfo`) son
 las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
 que los pasos entren en el código de la librería estándar; la salida del programa y los logpoints van a la

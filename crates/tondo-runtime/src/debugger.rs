@@ -668,6 +668,33 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
 /// (`catch error`).
 static CATCH: AtomicBool = AtomicBool::new(true);
 static CATCH_ERRORS: AtomicBool = AtomicBool::new(false);
+/// The panics `catch panic` names, by code or name, and the errors `catch
+/// error` names, by type; none names, all.
+static CAUGHT: Mutex<(Vec<String>, Vec<String>)> = Mutex::new((Vec::new(), Vec::new()));
+
+/// Whether a panic's headline, `panic[P0001]: bounds: ...`, is of a code
+/// or name `catch` named.
+fn caught_panic(headline: &str) -> bool {
+    let wanted = &CAUGHT.lock().unwrap_or_else(|e| e.into_inner()).0;
+    let Some((code, rest)) = headline.strip_prefix("panic[").and_then(|h| h.split_once("]: ")) else {
+        return wanted.is_empty();
+    };
+    let name = rest.split(':').next().unwrap_or_default();
+    wanted.is_empty() || wanted.iter().any(|w| w == code || w == name)
+}
+
+/// Whether an error of the type `ty`, shown as `shown`, is of one `catch`
+/// named: by the type's name, with its module or without, or for a union,
+/// by the member it is.
+fn caught_error(ty: &str, shown: &str) -> bool {
+    let wanted = &CAUGHT.lock().unwrap_or_else(|e| e.into_inner()).1;
+    let ty = match ty.contains(" | ") {
+        true => shown.split_once(": ").map_or(ty, |(member, _)| member),
+        false => ty,
+    };
+    let own = ty.rsplit('.').next().unwrap_or(ty);
+    wanted.is_empty() || wanted.iter().any(|w| w == ty || w == own)
+}
 
 /// In a debug build, an error leaves a function where it starts: a `fail`
 /// of the program's code, or a `?` that passes one on from the standard
@@ -680,8 +707,13 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     alive: *const u64,
     glue: Show,
     error: *const u8,
+    ty: *const Str,
 ) {
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH_ERRORS.load(Ordering::Relaxed) {
+        return;
+    }
+    let shown = show(glue, error as usize);
+    if !caught_error(&String::from_utf8_lossy(unsafe { str_bytes(ty) }), &shown) {
         return;
     }
     let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
@@ -689,7 +721,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     let (addresses, alive) = (addresses as usize, alive as usize);
     let stop = Stop { task, site: site as usize, frame, bounds, addresses, alive, why: String::new() };
-    let why = format!("error: {}", clipped(&show(glue, error as usize)));
+    let why = format!("error: {}", clipped(&shown));
     hold(state(), stop, Some(why));
 }
 
@@ -697,7 +729,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
 /// where the program's own code panicked, before it unwinds, the panic's
 /// text as why, and the others at their next probe.
 pub(crate) fn panicked(message: &str) {
-    if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) {
+    if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
         return;
     }
     let Some(table) = table() else { return };
@@ -1083,17 +1115,37 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
         // What stops the program: panics, errors, both or none.
+        // `catch panic [<code or name>...] error [<type>...]`, or `none`.
         "catch" => {
-            let kinds: Vec<&str> = rest.split_whitespace().collect();
-            let known = |kinds: &[&str]| kinds.iter().all(|k| matches!(*k, "panic" | "error"));
-            if !(known(&kinds) && !kinds.is_empty() || kinds == ["none"]) {
-                let message =
-                    "catch takes `panic`, to stop where a task panics, `error`, where an error starts, both, or `none`";
-                return Some(format!("{{\"error\":{}}}", quoted(message)));
+            let (mut panics, mut errors): (Option<Vec<String>>, Option<Vec<String>>) = (None, None);
+            let mut last = None;
+            for word in rest.split_whitespace() {
+                match (word, last) {
+                    ("panic", _) => (panics, last) = (Some(Vec::new()), Some(true)),
+                    ("error", _) => (errors, last) = (Some(Vec::new()), Some(false)),
+                    ("none", None) => last = Some(true),
+                    (name, Some(true)) if panics.is_some() => panics.get_or_insert_default().push(name.into()),
+                    (name, Some(false)) => errors.get_or_insert_default().push(name.into()),
+                    _ => {
+                        let message = "catch takes `panic` and its codes or names, as `panic bounds P0005`, to stop where \
+                            a task panics, `error` and its types, as `error ConfigError`, where an error starts, or `none`";
+                        return Some(format!("{{\"error\":{}}}", quoted(message)));
+                    }
+                }
             }
-            CATCH.store(kinds.contains(&"panic"), Ordering::Relaxed);
-            CATCH_ERRORS.store(kinds.contains(&"error"), Ordering::Relaxed);
-            let kinds: Vec<String> = kinds.iter().filter(|k| **k != "none").map(|k| quoted(k)).collect();
+            if last.is_none() {
+                return Some("{\"error\":\"catch takes `panic`, `error`, both, or `none`\"}".into());
+            }
+            CATCH.store(panics.is_some(), Ordering::Relaxed);
+            CATCH_ERRORS.store(errors.is_some(), Ordering::Relaxed);
+            let kinds: Vec<String> = [("panic", &panics), ("error", &errors)]
+                .iter()
+                .filter_map(|(kind, names)| {
+                    names.as_ref().map(|names| quoted(format!("{kind} {}", names.join(" ")).trim_end()))
+                })
+                .collect();
+            *CAUGHT.lock().unwrap_or_else(|e| e.into_inner()) =
+                (panics.unwrap_or_default(), errors.unwrap_or_default());
             format!("{{\"catch\":[{}]}}", kinds.join(","))
         }
         "select" => {

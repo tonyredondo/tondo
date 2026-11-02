@@ -922,7 +922,8 @@ fn debug_adapter_watches_and_pages() {
     ask("launch", json!({ "program": "watched.to", "cwd": dir }));
     let set = ask("setFunctionBreakpoints", json!({ "breakpoints": [{ "name": "sum" }] }));
     assert_eq!((&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"]), (&json!(true), &json!(12)));
-    ask("setExceptionBreakpoints", json!({ "filters": ["panic", "error"] }));
+    let caught = json!({ "filters": ["panic"], "filterOptions": [{ "filterId": "error", "condition": "Problem" }] });
+    ask("setExceptionBreakpoints", caught);
     ask("configurationDone", json!({}));
     assert_eq!(ask("", Value::Null)["reason"], "breakpoint");
     let trace = ask("stackTrace", json!({ "threadId": 1 }));
@@ -1190,6 +1191,76 @@ fn debugger_watches_shared_values() {
         ]
     );
     assert!(text.contains("45 31"), "{text}");
+}
+
+const CAUGHT: &str = r#"enum Problem {
+    Empty
+}
+
+enum Other {
+    Bad
+}
+
+fn first(items: Array[Int]): Int ! Problem {
+    if items.isEmpty() {
+        fail Problem.Empty
+    }
+    items[0]
+}
+
+fn second(): Int ! Other {
+    fail Other.Bad
+}
+
+fn main() {
+    _ = first([]).unwrapOr(0)
+    _ = second().unwrapOr(0)
+    let values = [1, 2]
+    _ = values[5]
+}
+"#;
+
+/// `catch` stops at the errors of the types it names and the panics of
+/// the codes or names it names.
+#[test]
+fn debugger_catches_chosen_errors_and_panics() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-caught");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("caught.to"), CAUGHT).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "caught.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "catch panic P0005\ncatch error\ncatch panic bounds error Other\ncatch panic\ncatch nothing\n\
+        catch panic bounds error Other\ncontinue\ncontinue\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let caught: Vec<&Value> = lines.iter().filter_map(|l| l.get("catch")).collect();
+    assert_eq!(
+        caught,
+        [
+            &json!(["panic P0005"]),
+            &json!(["error"]),
+            &json!(["panic bounds", "error Other"]),
+            &json!(["panic"]),
+            &json!(["panic bounds", "error Other"])
+        ][..]
+    );
+    assert!(lines.iter().any(|l| l["error"].as_str().is_some_and(|e| e.starts_with("catch takes"))));
+    let stops: Vec<(&str, &str)> = lines
+        .iter()
+        .filter_map(|l| l.get("stopped"))
+        .map(|s| (s["at"].as_str().unwrap(), s["why"].as_str().unwrap()))
+        .collect();
+    assert_eq!(stops[1], ("caught.to:17 in second", "error: Other.Bad"));
+    assert_eq!(stops[2].0, "caught.to:24 in main");
+    assert!(stops[2].1.starts_with("panic[P0001]: bounds"), "{stops:?}");
 }
 
 #[test]

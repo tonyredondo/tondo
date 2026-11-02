@@ -41,8 +41,9 @@ next                                            to the next line of this functio
 finish                                          until this function returns (f)
 steps program|all                               steps go over the standard library's code (the default), or into it
 pause                                           stop every task, as Ctrl-C does
-catch panic|error|none                          stop where a task panics and no recover stops it (the default), where
-                                                an error starts (a fail, or a ? on what std failed with), both, or none
+catch panic [<code>...] error [<type>...]|none  stop where a task panics and no recover stops it (the default), where
+                                                an error starts (a fail, or a ? on what std failed with), both, or none;
+                                                only those codes or names (P0001, bounds) and types (ConfigError)
 set <target> [=] <expression>                   change a binding of the frame where the task stopped, or a part of it:
                                                 set count count + 1, set user.age = 37, set items[i] 0, set role Role.Admin
 locals                                          the bindings that hold a value here, and those of the

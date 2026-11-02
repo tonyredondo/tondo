@@ -77,7 +77,7 @@ command and gives the answers, the events and what the program printed:
 
 ```text
 break src/main.to:12 [if count > 3 and name != ""] [hits 5] [log at {i}: {total / i}]
-break fn parse   watch total   delete <id>   catch panic error   catch none
+break fn parse   watch total   delete <id>   catch panic bounds error ConfigError
 continue   step   next   finish   steps all   pause   wait
 locals   print items[i + 1].name   print total / count   children items 100 50
 set count count + 1   set user.age = 37   context   stack   frame 1   task 2

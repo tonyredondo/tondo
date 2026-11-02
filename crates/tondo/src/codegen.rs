@@ -425,7 +425,7 @@ impl Rt {
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
-            Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64], &[]),
+            Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::DebugReturned => ("tondo_rt_debug_returned", &[I64, I64, I64], &[]),
             Rt::DebugState => ("tondo_rt_debug_state", &[I64, I8], &[I64]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
@@ -5424,7 +5424,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let value = self.operand(error);
         let address = self.in_memory(ty, value);
         let glue = self.e.glue_address(Glue::Show, ty);
-        self.e.call_rt(Rt::DebugFailed, &[site, addresses, alive, glue, address]);
+        let name = self.e.cg.types().display(ty);
+        let name = self.e.string_ptr(&name);
+        self.e.call_rt(Rt::DebugFailed, &[site, addresses, alive, glue, address, name]);
     }
 
     /// A live build's state at a point: each local live there, how it is
