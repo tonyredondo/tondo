@@ -824,7 +824,7 @@ fn debugger_evaluates_watches_and_catches_errors() {
         .unwrap();
     let script = "break watched.to:17 if totl > 1\nbreak watched.to:17 if total >\nbreak fn nothing\n\
         break fn sum\ncatch panic error\ncontinue\nprint items.length() * 2 + items[items.length() - 1]\n\
-        print items[0] == 1 and not items.isEmpty()\nframe 1\nchildren many 248 5\nframe 0\nwatch total\ndelete 1\n\
+        print items[0] == 1 and not items.isEmpty()\nframe 1\nchildren many 248 5\nframe 0\nnext\nwatch total\ndelete 1\n\
         continue\ncontinue\ncontinue\ndelete 2\ncontinue\ncontinue\ncontinue\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
@@ -853,7 +853,8 @@ fn debugger_evaluates_watches_and_catches_errors() {
     assert_eq!(
         stops[1..],
         [
-            ("watched.to:13 in sum", "breakpoint 1"),
+            ("watched.to:12 in sum", "breakpoint 1"),
+            ("watched.to:13 in sum", "step"),
             ("watched.to:13 in sum", "watch 2: total changed from 0 to 1 at watched.to:17 in sum"),
             ("watched.to:13 in sum", "watch 2: total changed from 1 to 3 at watched.to:17 in sum"),
             ("watched.to:17 in sum", "watch 2: total changed from 3 to 13 at watched.to:8 in bump"),
@@ -910,7 +911,7 @@ fn debug_adapter_watches_and_pages() {
     ask("initialize", json!({ "adapterID": "tondo" }));
     ask("launch", json!({ "program": "watched.to", "cwd": dir }));
     let set = ask("setFunctionBreakpoints", json!({ "breakpoints": [{ "name": "sum" }] }));
-    assert_eq!((&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"]), (&json!(true), &json!(13)));
+    assert_eq!((&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"]), (&json!(true), &json!(12)));
     ask("setExceptionBreakpoints", json!({ "filters": ["panic", "error"] }));
     ask("configurationDone", json!({}));
     assert_eq!(ask("", Value::Null)["reason"], "breakpoint");
@@ -928,6 +929,11 @@ fn debug_adapter_watches_and_pages() {
     assert_eq!(names, ["[248]", "[249]"]);
     let evaluated = ask("evaluate", json!({ "expression": "items.length() + 1", "frameId": frames[0]["id"] }));
     assert_eq!((&evaluated["result"], &evaluated["type"]), (&json!("5"), &json!("Int")));
+    // `total` holds a value from the next line on.
+    ask("next", json!({ "threadId": 1 }));
+    ask("", Value::Null);
+    let trace = ask("stackTrace", json!({ "threadId": 1 }));
+    let frames = trace["stackFrames"].as_array().unwrap().clone();
     let scopes = ask("scopes", json!({ "frameId": frames[0]["id"] }));
     let reference = scopes["scopes"][0]["variablesReference"].clone();
     let info = ask("dataBreakpointInfo", json!({ "variablesReference": reference, "name": "total" }));

@@ -4573,10 +4573,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().stack_store(POINTER, word, alive, offset);
             }
         }
-        if self.e.cg.coverage().is_some() {
+        // Where statements start: coverage counts them, and a debug build
+        // has a probe at each, also one that computes nothing, as
+        // `let ready = true`.
+        if self.e.cg.coverage().is_some() || self.debug.is_some() {
             for &(block, at, span) in &self.body.starts {
                 self.starts.entry((block.0 as usize, at)).or_default().push(span);
             }
+        }
+        if self.e.cg.coverage().is_some() {
             for (n, way) in self.body.ways.iter().enumerate() {
                 self.ways.entry((way.block.0 as usize, way.at)).or_default().push(n);
             }
@@ -5216,11 +5221,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
-    /// With coverage, the statements and the ways of branches that start
-    /// at this statement of the block.
+    /// The statements that start at this statement of the block: a debug
+    /// build's probe, and with coverage, their lines and the ways of
+    /// branches that start there.
     fn count_ways(&mut self, block: usize, at: usize) {
         for span in self.starts.remove(&(block, at)).unwrap_or_default() {
-            self.count_line(span);
+            self.probe(span);
+            if self.e.cg.coverage().is_some() {
+                self.count_line(span);
+            }
         }
         let Some(ways) = self.ways.remove(&(block, at)) else { return };
         for n in ways {
