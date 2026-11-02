@@ -81,6 +81,18 @@ impl __reflect.Reflect for Rest {
 
 /// Why a command line was not read, with the usage of its command, or the
 /// help that it asked for.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Options = { count: Int = 1 }
+///
+/// match cli.parseArgs[Options](["--count", "many"]) {
+///     ok(options) => console.println("{options.count}")
+///     err(error) => console.println("{error.message}")
+/// }
+/// ```
 pub type CliError = {
     message: String
     help: Bool
@@ -93,6 +105,16 @@ impl Display for CliError {
 }
 
 /// A shell whose completion `completions` writes.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Options = { verbose: Bool = false }
+///
+/// // What `myapp completions zsh` prints, for the shell to load.
+/// console.print(cli.completions[Options](cli.Shell.Zsh))
+/// ```
 pub enum Shell {
     Bash
     Zsh
@@ -1128,6 +1150,17 @@ fn cellOf(value: __reflect.Value): String {
 
 /// A bar of the progress of some work, or a spinner when it has no total,
 /// that the console's output shows on a terminal.
+///
+/// ```tondo
+/// import std.cli
+///
+/// let files = ["a.txt", "b.txt", "c.txt"]
+/// let bar = cli.progress("copying", total: some(files.length()))
+/// for _ in files {
+///     bar.advance()
+/// }
+/// bar.finish()
+/// ```
 pub type Progress = {
     priv state: __sync.Mutex[Bar]
 }

@@ -16,6 +16,19 @@ import std.internal.image as imageNative
 import std.time as __time
 
 /// A format of image.
+///
+/// ```tondo
+/// import std.console
+/// import std.image
+///
+/// let photo = image.blank(2, 2, image.Color.rgb(200, 100, 50))
+/// for path in ["a.png", "b.webp", "c.txt"] {
+///     match image.Format.of(path) {
+///         some(format) => console.println("{path}: {photo.encode(format)?.length()} bytes")
+///         none => console.println("{path}: not an image format")
+///     }
+/// }
+/// ```
 pub enum Format {
     Png
     Jpeg
@@ -53,6 +66,16 @@ pub fn Format.of(path: String): Format? {
 }
 
 /// Why an image could not be read or written.
+///
+/// ```tondo
+/// import std.console
+/// import std.image
+///
+/// match image.read([1, 2, 3]) {
+///     ok(picture) => console.println("{picture.width()}x{picture.height()}")
+///     err(error) => console.println("not an image: {error.message}")
+/// }
+/// ```
 pub type ImageError = {
     message: String
 }
@@ -64,6 +87,15 @@ impl Display for ImageError {
 }
 
 /// What the header of an image says, read without its pixels.
+///
+/// ```tondo
+/// import std.console
+/// import std.image
+///
+/// let bytes = image.blank(640, 480, image.Color.rgb(0, 0, 0)).encode(image.Format.Png)?
+/// let info = image.info(bytes)?
+/// console.println("{info.width}x{info.height}, png: {info.format == image.Format.Png}")
+/// ```
 pub type Info = {
     format: Format
     width: Int
@@ -71,6 +103,17 @@ pub type Info = {
 }
 
 /// A color: red, green, blue and alpha, each from 0 to 255.
+///
+/// ```tondo
+/// import std.console
+/// import std.image
+///
+/// let orange = image.Color.hex("#ff8800")?
+/// let canvas = image.blank(8, 8, orange).overlay(image.blank(4, 4, image.Color.rgb(0, 0, 255)), 0, 0)
+/// for color in canvas.colors(count: 2) {
+///     console.println("{color.red} {color.green} {color.blue} {color.alpha}")
+/// }
+/// ```
 pub type Color = {
     red: Int
     green: Int
@@ -121,6 +164,14 @@ fn packed(color: Color): Int {
 
 /// How a resize samples the pixels: `Lanczos`, the sharpest, is the
 /// default; `Nearest` keeps hard edges, as pixel art wants.
+///
+/// ```tondo
+/// import std.image
+///
+/// // Pixel art keeps its hard edges with `Nearest`; photos look best with `Lanczos`.
+/// let sprite = image.open("sprite.png")?
+/// sprite.resize(width: some(sprite.width() * 4), filter: image.Filter.Nearest).save("sprite-4x.png")?
+/// ```
 pub enum Filter {
     Nearest
     Linear
@@ -129,6 +180,14 @@ pub enum Filter {
 }
 
 /// The part of an image a crop to another shape keeps.
+///
+/// ```tondo
+/// import std.image
+///
+/// // A square avatar that keeps the top of a portrait, where the face is.
+/// let portrait = image.open("portrait.jpg")?
+/// portrait.fill(256, 256, anchor: image.Anchor.Top).save("avatar.webp", quality: 80)?
+/// ```
 pub enum Anchor {
     Center
     Top
@@ -142,6 +201,15 @@ pub enum Anchor {
 }
 
 /// An image, whose pixels never change.
+///
+/// ```tondo
+/// import std.image
+///
+/// let photo = image.open("photo.jpg")?
+/// photo.fit(1200, 1200).sharpen().save("large.jpg", quality: 85)?
+/// photo.fill(300, 200).grayscale().save("thumbnail.webp")?
+/// photo.crop(0, 0, photo.width() / 2, photo.height()).flipHorizontal().save("half.png")?
+/// ```
 pub type Image = {
     priv native: imageNative.Native
     priv columns: Int
@@ -205,6 +273,24 @@ pub fn info(bytes: Array[Byte]): Info ! ImageError {
 /// south and west below zero; its camera; how it is turned, 1 upright to
 /// 8 as EXIF numbers it, which `read` applies; and every tag by its name,
 /// as text: `tags["FNumber"]` is `f/2.8`.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.image
+///
+/// let bytes = fs.readBytes("photo.jpg")?
+/// match image.exif(bytes) {
+///     some(exif) => {
+///         console.println("taken {exif.date} with {exif.camera.unwrapOr("an unknown camera")}")
+///         match (exif.latitude, exif.longitude) {
+///             (some(latitude), some(longitude)) => console.println("at {latitude}, {longitude}")
+///             _ => console.println("no place")
+///         }
+///     }
+///     none => console.println("no EXIF data")
+/// }
+/// ```
 pub type Exif = {
     date: __time.DateTime?
     latitude: Float?

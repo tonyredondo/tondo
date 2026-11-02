@@ -48,6 +48,26 @@ pub annotation Field = {
 }
 
 /// How a field is written, where protobuf has several ways for its type.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// pub type Reading = {
+///     // A sensor's id, written in 4 bytes: fixed32.
+///     @protobuf.Field(1, encoding: protobuf.Encoding.Fixed)
+///     sensor: UInt32 = 0
+///     // Often negative: a zigzag varint, sint32.
+///     @protobuf.Field(2, encoding: protobuf.Encoding.ZigZag)
+///     delta: Int32 = 0
+///     // An optional number that keeps zero apart from absent: Int32Value.
+///     @protobuf.Field(3, encoding: protobuf.Encoding.Wrapper)
+///     limit: Int32? = none
+/// }
+///
+/// let bytes = protobuf.encode(Reading { sensor: 7u32, delta: -2, limit: some(0) })
+/// console.println("{bytes.length()} bytes: {protobuf.decode[Reading](bytes)?.limit}")
+/// ```
 pub enum Encoding {
     /// As its type says: an integer as a varint, int32 to uint64.
     Default
@@ -84,6 +104,16 @@ pub annotation Unknown = {}
 /// A `.proto` file as reflection gives it to tools: its path, the full
 /// names it declares, its `FileDescriptorProto` and the files it imports.
 /// The module of a `.proto` file gives its own as `fileDescriptor()`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+///
+/// // The `.proto` files a service comes from, which reflection gives tools.
+/// for file in grpc.Health.new().service().files {
+///     console.println("{file.name}: {file.symbols.length()} names, {file.imports.length()} imports")
+/// }
+/// ```
 pub type FileDescriptor = {
     name: String
     symbols: Array[String] = []
@@ -92,6 +122,31 @@ pub type FileDescriptor = {
 }
 
 /// The fields of a message that its type does not know, as they were read.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// pub type UserV2 = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @protobuf.Field(2)
+///     email: String = ""
+/// }
+///
+/// /// An older reader that keeps what it does not know, and writes it back.
+/// pub type UserV1 = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @ignore
+///     @protobuf.Unknown
+///     unknown: protobuf.UnknownFields = protobuf.UnknownFields {}
+/// }
+///
+/// let old = protobuf.decode[UserV1](protobuf.encode(UserV2 { name: "Ada", email: "ada@example.com" }))?
+/// let again = protobuf.decode[UserV2](protobuf.encode(old with { name: "Ada L." }))?
+/// console.println("{old.unknown.isEmpty()} {again.name} {again.email}")
+/// ```
 pub type UnknownFields = {
     priv bytes: Array[Byte] = []
 }
@@ -107,6 +162,47 @@ pub fn UnknownFields.isEmpty(self): Bool {
 
 /// A message: the compiler implements it for a record whose fields carry
 /// `@protobuf.Field`.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// // The compiler implements `Message` for records with `@protobuf.Field`; a
+/// // type can also write it by hand.
+/// pub type Point = { x: Int, y: Int }
+///
+/// impl protobuf.Message for Point {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         if self.x != 0 {
+///             out.sint64(1, self.x)
+///         }
+///         if self.y != 0 {
+///             out.sint64(2, self.y)
+///         }
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Point ! protobuf.ProtobufError {
+///         var point = Point { x: 0, y: 0 }
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 => point.x = input.sint64("x")?
+///                 2 => point.y = input.sint64("y")?
+///                 _ => input.skip()?
+///             }
+///         }
+///         point
+///     }
+///
+///     fn protobufName(): String {
+///         "geo.Point"
+///     }
+/// }
+///
+/// let bytes = protobuf.encode(Point { x: -3, y: 4 })
+/// let point = protobuf.decode[Point](bytes)?
+/// console.println("{bytes} {point.x},{point.y} {protobuf.pack(point).typeUrl}")
+/// ```
 pub trait Message {
     fn writeTo(self, out: Writer)
 
@@ -130,6 +226,34 @@ pub trait Message {
 /// A protobuf enum: the compiler implements it for an enum whose variants
 /// carry `@protobuf.Value`. One with an `Unrecognized(Int32)` variant is
 /// open, and keeps a number it does not know there.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// pub enum Status {
+///     @protobuf.Value(0)
+///     Unspecified
+///     @protobuf.Value(1)
+///     Active
+///     @protobuf.Value(2)
+///     Suspended
+///     // Open: a number this program does not know is kept here.
+///     Unrecognized(Int32)
+/// }
+///
+/// pub type Account = {
+///     @protobuf.Field(1)
+///     status: Status = Status.Unspecified
+/// }
+///
+/// let account = protobuf.decode[Account](protobuf.encode(Account { status: Status.Suspended }))?
+/// console.println("{protobuf.Enum.number(account.status)} {protobuf.toJson(account)?}")
+/// match protobuf.Enum.fromNumber[Status](7) {
+///     some(Status.Unrecognized(number)) => console.println("unknown {number}")
+///     _ => console.println("known")
+/// }
+/// ```
 pub trait Enum {
     fn number(self): Int32
 
@@ -149,6 +273,24 @@ pub trait Enum {
 
 /// A failure to read protobuf, with the path of the field and the byte it
 /// starts at, as `column`: the error of every format.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// pub type User = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @protobuf.Field(2)
+///     id: Int = 0
+/// }
+///
+/// // Field 1 says 10 bytes of text follow, but only 2 do.
+/// match protobuf.decode[User]([0x0a, 0x0a, 0x41, 0x64]) {
+///     ok(user) => console.println(user.name)
+///     err(error) => console.println("{error.kind} at {error.path}: {error.message}")
+/// }
+/// ```
 pub alias ProtobufError = serialization.Error
 
 /// The bytes of a message: its fields in the order of their numbers, map
@@ -191,6 +333,70 @@ pub fn decodeFrom[T: Message](input: __io.Reader): T ! ProtobufError {
 
 /// Writes the fields of messages, each after the tag of its number; the
 /// number 0 writes a value with no tag, as an element of a packed field.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// pub type Tag = { name: String }
+///
+/// /// A message written by hand: a string, a repeated string and a nested
+/// /// message, each with its field number.
+/// pub type Post = { title: String, labels: Array[String], tag: Tag }
+///
+/// impl protobuf.Message for Tag {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         out.string(1, self.name)
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Tag ! protobuf.ProtobufError {
+///         var tag = Tag { name: "" }
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 => tag.name = input.string("name")?
+///                 _ => input.skip()?
+///             }
+///         }
+///         tag
+///     }
+///
+///     fn protobufName(): String {
+///         "blog.Tag"
+///     }
+/// }
+///
+/// impl protobuf.Message for Post {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         out.string(1, self.title)
+///         for label in self.labels {
+///             out.string(2, label)
+///         }
+///         out.message(3, self.tag)
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Post ! protobuf.ProtobufError {
+///         var post = Post { title: "", labels: [], tag: Tag { name: "" } }
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 => post.title = input.string("title")?
+///                 2 => post.labels.push(input.string("labels")?)
+///                 3 => post.tag = input.message[Tag]("tag")?
+///                 _ => input.skip()?
+///             }
+///         }
+///         post
+///     }
+///
+///     fn protobufName(): String {
+///         "blog.Post"
+///     }
+/// }
+///
+/// let post = protobuf.decode[Post](protobuf.encode(Post { title: "Tea", labels: ["a", "b"], tag: Tag { name: "food" } }))?
+/// console.println("{post.title} {post.labels} {post.tag.name}")
+/// ```
 pub type Writer = {
     priv native: pbNative.Native
 }
@@ -387,6 +593,49 @@ pub fn Writer.unknown(self, fields: UnknownFields) {
 
 /// Reads the fields of messages: `next` gives the number of each, and a
 /// method of its type its value; `name` says the field in an error.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// /// Numbers that come packed, as proto3 writes repeated numbers, or one
+/// /// field each, as proto2 did: a reader takes both.
+/// pub type Samples = { values: Array[Int] }
+///
+/// impl protobuf.Message for Samples {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         for value in self.values {
+///             out.int64(1, value)
+///         }
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Samples ! protobuf.ProtobufError {
+///         var values: Array[Int] = []
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 if input.isPacked() => {
+///                     input.enterPacked("values")?
+///                     for input.more() {
+///                         values.push(input.int64("values")?)
+///                     }
+///                 }
+///                 1 => values.push(input.int64("values")?)
+///                 _ => input.skip()?
+///             }
+///         }
+///         Samples { values }
+///     }
+///
+///     fn protobufName(): String {
+///         "stats.Samples"
+///     }
+/// }
+///
+/// console.println("{protobuf.decode[Samples](protobuf.encode(Samples { values: [3, 270] }))?.values}")
+/// // The same numbers packed: field 1, length 3, then the varints.
+/// console.println("{protobuf.decode[Samples]([0x0a, 0x03, 0x03, 0x8e, 0x02])?.values}")
+/// ```
 pub type Reader = {
     priv native: pbNative.Native
 }
@@ -742,6 +991,15 @@ pub fn nullValue(): __json.Value {
 // ---------------------------------------------------------------------------
 
 /// `google.protobuf.Empty`, the message with no fields.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// // The message of a call that takes or gives nothing.
+/// let bytes = protobuf.encode(protobuf.Empty {})
+/// console.println("{bytes.length()} bytes, JSON {protobuf.toJson(protobuf.Empty {})?}")
+/// ```
 pub type Empty = {}
 
 impl Message for Empty {
@@ -773,6 +1031,23 @@ impl Message for Empty {
 
 /// `google.protobuf.Any`: a message of any type, as its bytes and the URL
 /// of its type's name.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// @protobuf.Name("errors.v1.RetryInfo")
+/// pub type RetryInfo = {
+///     @protobuf.Field(1)
+///     seconds: Int = 0
+/// }
+///
+/// // A message of any type, with the name that says which.
+/// let detail = protobuf.pack(RetryInfo { seconds: 30 })
+/// console.println(detail.typeUrl)
+/// let retry = detail.unpack[RetryInfo]()?
+/// console.println("retry in {retry.seconds}s")
+/// ```
 pub type Any = {
     typeUrl: String = ""
     value: Array[Byte] = []
@@ -894,6 +1169,26 @@ impl Message for Any {
 
 /// `google.protobuf.FieldMask`: the paths of the fields an update sets,
 /// as `user.display_name`.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// /// An update that says which fields it changes, as APIs of Google do.
+/// pub type UpdateUser = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @protobuf.Field(2)
+///     email: String = ""
+///     @protobuf.Field(3)
+///     mask: protobuf.FieldMask = protobuf.FieldMask {}
+/// }
+///
+/// let update = UpdateUser { email: "ada@example.com", mask: protobuf.FieldMask { paths: ["email"] } }
+/// console.println(protobuf.toJson(update)?)
+/// let read = protobuf.fromJson[UpdateUser](r"""{"email": "x@example.com", "mask": "email,name"}""")?
+/// console.println("{read.mask.paths}")
+/// ```
 pub type FieldMask = {
     paths: Array[String] = []
 }
@@ -1189,6 +1484,45 @@ fn jsonError(kind: serialization.ErrorKind, path: String, message: String): Prot
 }
 
 /// Where a message writes itself as JSON.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// /// A message written by hand, whose JSON is a `"x,y"` text rather than an
+/// /// object.
+/// pub type Point = { x: Int, y: Int }
+///
+/// impl protobuf.Message for Point {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         out.sint64(1, self.x)
+///         out.sint64(2, self.y)
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Point ! protobuf.ProtobufError {
+///         var point = Point { x: 0, y: 0 }
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 => point.x = input.sint64("x")?
+///                 2 => point.y = input.sint64("y")?
+///                 _ => input.skip()?
+///             }
+///         }
+///         point
+///     }
+///
+///     fn protobufName(): String {
+///         "geo.Point"
+///     }
+///
+///     fn writeJson(self, out: protobuf.JsonWriter): !protobuf.ProtobufError {
+///         out.string("{self.x},{self.y}")
+///     }
+/// }
+///
+/// console.println(protobuf.toJson(Point { x: 3, y: -4 })?)
+/// ```
 pub type JsonWriter = {
     priv json: __json.Writer
     priv protoNames: Bool
@@ -1504,11 +1838,78 @@ fn wellKnownFromJson(
 }
 
 /// What reads a message's JSON.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.protobuf
+///
+/// /// A message written by hand that reads its JSON with either name of a
+/// /// field, as proto3's mapping does.
+/// pub type Point = { x: Int, y: Int }
+///
+/// impl protobuf.Message for Point {
+///     fn writeTo(self, out: protobuf.Writer) {
+///         out.sint64(1, self.x)
+///         out.sint64(2, self.y)
+///     }
+///
+///     fn readFrom(input: protobuf.Reader): Point ! protobuf.ProtobufError {
+///         var point = Point { x: 0, y: 0 }
+///         for {
+///             match input.next()? {
+///                 0 => break
+///                 1 => point.x = input.sint64("x")?
+///                 2 => point.y = input.sint64("y")?
+///                 _ => input.skip()?
+///             }
+///         }
+///         point
+///     }
+///
+///     fn protobufName(): String {
+///         "geo.Point"
+///     }
+///
+///     fn readJson(input: protobuf.JsonReader, value: json.Value): Point ! protobuf.ProtobufError {
+///         var point = Point { x: 0, y: 0 }
+///         for (key, field) in input.fields(value, "$")? {
+///             match key {
+///                 "x" => point.x = input.int64(field, "$.x")?
+///                 "y" => point.y = input.int64(field, "$.y")?
+///                 _ => input.unknown(key, "$")?
+///             }
+///         }
+///         point
+///     }
+/// }
+///
+/// let point = protobuf.fromJson[Point](r"""{"x": "12", "y": -5}""")?
+/// console.println("{point.x},{point.y}")
+/// ```
 pub type JsonReader = {
     priv ignoreUnknown: Bool
 }
 
 /// A JSON value, which a message's `readJson` reads.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.protobuf
+///
+/// /// A field of any JSON, `google.protobuf.Value` in a `.proto`.
+/// pub type Event = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @protobuf.Field(2)
+///     payload: protobuf.JsonValue = json.Value.Null
+/// }
+///
+/// let event = Event { name: "signup", payload: json.parse(r"""{"plan": "pro", "seats": 3}""")? }
+/// let read = protobuf.decode[Event](protobuf.encode(event))?
+/// console.println("{read.payload}")
+/// ```
 pub alias JsonValue = __json.Value
 
 /// A key of a map's object as a value, to read as the map's key.

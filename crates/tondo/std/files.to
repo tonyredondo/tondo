@@ -14,6 +14,14 @@ import std.time as __time
 /// `0o644`; its number in its file system, its hard links, and the ids of
 /// its owner and its group. A tree that is not the disk's has no numbers:
 /// 0, and one link.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// let about = fs.metadata("notes.txt")?
+/// console.println("{about.size} bytes, changed {about.modified}, a file: {about.kind == fs.FileKind.File}")
+/// ```
 pub type Metadata = {
     kind: __fs.FileKind
     size: Int
@@ -28,6 +36,14 @@ pub type Metadata = {
 
 /// The space of a file system: its bytes, those free, and those free that
 /// the program may use, which leaves out what the system keeps for itself.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// let space = fs.space(".")?
+/// console.println("{space.available / 1024 / 1024} MiB free of {space.total / 1024 / 1024}")
+/// ```
 pub type Space = {
     total: Int
     free: Int
@@ -35,12 +51,36 @@ pub type Space = {
 }
 
 /// An entry under the root of `walk`: its path, from the root, and kind.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// for entry in fs.walk("src")? {
+///     if entry.kind == fs.FileKind.File and entry.path.endsWith(".to") {
+///         console.println(entry.path)
+///     }
+/// }
+/// ```
 pub type Entry = {
     path: String
     kind: __fs.FileKind
 }
 
 /// What happened to a path while it was watched.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// for batch in fs.watch(["src"])? {
+///     for change in batch {
+///         if change.kind == fs.ChangeKind.Removed {
+///             console.println("gone: {change.path}")
+///         }
+///     }
+/// }
+/// ```
 pub enum ChangeKind {
     Created
     Modified
@@ -48,6 +88,22 @@ pub enum ChangeKind {
 }
 
 /// A path that changed while it was watched, and what happened to it.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.time
+///
+/// let changes = fs.watch(["content"], settle: some(time.milliseconds(200)))?
+/// for change in changes.receive().unwrapOr([]) {
+///     let what = match change.kind {
+///         fs.ChangeKind.Created => "new"
+///         fs.ChangeKind.Modified => "changed"
+///         fs.ChangeKind.Removed => "gone"
+///     }
+///     console.println("{what} {change.path}")
+/// }
+/// ```
 pub type Change = {
     path: String
     kind: ChangeKind
@@ -332,6 +388,16 @@ fn kind(index: Int): __fs.FileKind {
 /// executable (`embed.files`), an archive's (`archive.Archive.files`), the
 /// part under a directory of another (`sub`), or several in layers
 /// (`fs.overlay`). Its copies share it: what one writes the others read.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// // Files in memory over those on disk: what a test writes leaves the disk as it was.
+/// let files = fs.overlay(fs.memory(), fs.disk("."))
+/// files.writeText("draft.txt", "only in memory")?
+/// console.println("{files.readText("draft.txt")?} {files.list()?.length()}")
+/// ```
 pub type FileSystem = {
     priv tree: Tree
 }

@@ -26,6 +26,17 @@ import std.serialization
 
 /// A MessagePack value of unknown shape. Map keys are text, or integers as
 /// their digits.
+///
+/// ```tondo
+/// import std.console
+/// import std.messagepack
+///
+/// type Point = { x: Int, y: Int }
+///
+/// let value = messagepack.parse(messagepack.encode(Point { x: 1, y: 2 }))?
+/// let x = value.get("x").andThen((x) { x.asInt() })
+/// console.println("x is {x.unwrapOr(0)}, z is set: {value.get("z").isSome()}")
+/// ```
 pub enum Value {
     Nil
     Bool(Bool)
@@ -161,9 +172,35 @@ impl Display for Value {
 
 /// A failure to read MessagePack, with where it happened: the error of
 /// every format.
+///
+/// ```tondo
+/// import std.console
+/// import std.messagepack
+///
+/// type Point = { x: Int, y: Int }
+///
+/// match messagepack.decode[Point]([0x92, 0x01]) {
+///     ok(point) => console.println("{point.x}, {point.y}")
+///     err(error) => console.println("{error.path}: {error.message}")
+/// }
+/// ```
 pub alias MessagePackError = serialization.Error
 
 /// What reading does with a member that the type has no field for.
+///
+/// ```tondo
+/// import std.console
+/// import std.messagepack
+///
+/// type Point = { x: Int, y: Int }
+/// type Point3 = { x: Int, y: Int, z: Int }
+///
+/// let bytes = messagepack.encode(Point3 { x: 1, y: 2, z: 3 })
+/// match messagepack.decode[Point](bytes, unknownFields: messagepack.UnknownFields.Reject) {
+///     ok(point) => console.println("{point.x}, {point.y}")
+///     err(error) => console.println("rejected: {error.message}")
+/// }
+/// ```
 pub alias UnknownFields = serialization.UnknownFields
 
 // ---------------------------------------------------------------------------
@@ -277,6 +314,21 @@ fn Reader.error(self, kind: serialization.ErrorKind): MessagePackError {
 /// count the items of a header it writes, so an array can come in pieces: a
 /// payload that gathers its items with `value` and only learns how many at
 /// the end writes their header in another writer and puts it first.
+///
+/// ```tondo
+/// import std.console
+/// import std.messagepack
+///
+/// let out = messagepack.writer()
+/// out.beginMap(2)
+/// out.string("name")
+/// out.string("Ada")
+/// out.string("tags")
+/// out.beginArray(1)
+/// out.string("math")
+/// let bytes = out.finish()
+/// console.println("{bytes.length()} bytes: {messagepack.parse(bytes)?.get("name").andThen((name) { name.asText() })}")
+/// ```
 pub type Writer = {
     priv native: packnative.Native
 }

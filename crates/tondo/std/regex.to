@@ -16,6 +16,19 @@
 import std.internal.regex as regexNative
 
 /// How a pattern matches.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// var options = regex.RegexOptions.defaults()
+/// options.caseInsensitive = true
+/// options.multiLine = true
+/// let heading = regex.Regex.compile(r"^# (\w+)$", options: options)?
+/// for found in heading.findAll("# Intro\ntext\n# USAGE\n")? {
+///     console.println(found?.capture(1).map((title) { title.text }).unwrapOr(""))
+/// }
+/// ```
 pub type RegexOptions = {
     caseInsensitive: Bool
     multiLine: Bool
@@ -37,6 +50,19 @@ pub fn RegexOptions.defaults(): RegexOptions {
 }
 
 /// How much a pattern and its inputs may take.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// var limits = regex.RegexLimits.defaults()
+/// limits.maxInputBytes = 1024
+/// let word = regex.Regex.compile(r"\w+", limits: limits)?
+/// match word.isMatch("x".repeat(2048)) {
+///     ok(found) => console.println("{found}")
+///     err(error) => console.println("refused: {error}")
+/// }
+/// ```
 pub type RegexLimits = {
     maxPatternBytes: Int
     maxSyntaxDepth: Int
@@ -64,6 +90,22 @@ pub fn RegexLimits.defaults(): RegexLimits {
 }
 
 /// What went wrong with a pattern, an input or a replacement.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// // Patterns a user typed, which only fail when the program runs.
+/// for pattern in [r"(?<year>\d+)-(?<year>\d+)", r"\d{3"] {
+///     match regex.Regex.compile(pattern) {
+///         ok(_) => console.println("compiled")
+///         err(error) if error.kind == regex.RegexErrorKind.DuplicateCaptureName => {
+///             console.println("two groups have the same name, at byte {error.offset}")
+///         }
+///         err(error) => console.println("{error.kind}")
+///     }
+/// }
+/// ```
 pub enum RegexErrorKind {
     InvalidSyntax
     UnexpectedEnd
@@ -87,6 +129,24 @@ pub enum RegexErrorKind {
 }
 
 /// When an error happened: compiling the pattern, matching or replacing.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let digits = regex.Regex.compile(r"\d+")?
+/// match digits.replaceAll("a1b2", r"${missing}") {
+///     ok(text) => console.println(text)
+///     err(error) => {
+///         let when = match error.phase {
+///             regex.RegexPhase.Compile => "compiling"
+///             regex.RegexPhase.Match => "matching"
+///             regex.RegexPhase.Replace => "replacing"
+///         }
+///         console.println("failed while {when}: {error.kind}")
+///     }
+/// }
+/// ```
 pub enum RegexPhase {
     Compile
     Match
@@ -95,6 +155,20 @@ pub enum RegexPhase {
 
 /// What went wrong, in which phase, at which byte of the pattern, input or
 /// replacement.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// fn search(pattern: String, input: String): Bool ! regex.RegexError {
+///     regex.Regex.compile(pattern)?.isMatch(input)?
+/// }
+///
+/// match search(r"[a-", "abc") {
+///     ok(found) => console.println("{found}")
+///     err(error) => console.println("{error.kind} in {error.phase} at byte {error.offset}: {error}")
+/// }
+/// ```
 pub type RegexError = {
     kind: RegexErrorKind
     phase: RegexPhase
@@ -144,6 +218,16 @@ impl Display for RegexError {
 }
 
 /// A half-open range of bytes of an input.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let input = "total: 42 EUR"
+/// let amount = regex.Regex.compile(r"\d+")?.find(input)?.expect("a number")
+/// let span = amount.span
+/// console.println("bytes {span.start}..{span.end}: {span.slice(input)?}")
+/// ```
 pub type RegexSpan = {
     start: Int
     end: Int
@@ -157,12 +241,37 @@ pub fn RegexSpan.slice(self, input: String): String ! RegexError {
 }
 
 /// A capture that took part in a match: where, and its text.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let date = regex.Regex.compile(r"(?<year>\d{4})-(?<month>\d{2})")?
+/// let found = date.find("since 2026-11")?.expect("a date")
+/// match found.captureName("month") {
+///     some(month) => console.println("month {month.text} at {month.span.start}")
+///     none => console.println("no month")
+/// }
+/// ```
 pub type RegexCapture = {
     span: RegexSpan
     text: String
 }
 
 /// A match, with its captures; capture `0` is the whole match.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let pair = regex.Regex.compile(r"(\w+)=(\w+)")?
+/// for found in pair.findAll("a=1 b=2")? {
+///     let item = found?
+///     let key = item.capture(1).map((capture) { capture.text }).unwrapOr("")
+///     let value = item.capture(2).map((capture) { capture.text }).unwrapOr("")
+///     console.println("{item.text}: {key} is {value}")
+/// }
+/// ```
 pub type RegexMatch = {
     span: RegexSpan
     text: String
@@ -188,6 +297,16 @@ pub fn RegexMatch.captureName(self, name: String): RegexCapture? {
 }
 
 /// A compiled pattern, immutable and shared.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let email = regex.Regex.compile(r"(?<user>[\w.]+)@(?<host>[\w.]+)")?
+/// console.println("{email.captureCount()} groups: {email.captureNames()}")
+/// console.println("{email.isFullMatch("ada@example.com")?} {email.isMatch("no address")?}")
+/// console.println(email.replaceAll("ada@example.com, bo@example.org", r"${user} at ${host}")?)
+/// ```
 pub type Regex = {
     priv native: regexNative.NativeRegex
 }
@@ -425,6 +544,21 @@ pub fn Regex.escape(text: String): String {
 }
 
 /// The matches of `findAll`, found as they are asked for.
+///
+/// ```tondo
+/// import std.console
+/// import std.regex
+///
+/// let words = regex.Regex.compile(r"\w+")?
+/// var count = 0
+/// for found in words.findAll("the quick brown fox")? {
+///     count += 1
+///     if found?.text == "brown" {
+///         break
+///     }
+/// }
+/// console.println("{count} words up to brown")
+/// ```
 pub type RegexFindIterator = {
     priv regex: Regex
     priv input: String

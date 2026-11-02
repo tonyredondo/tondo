@@ -60,6 +60,23 @@ impl __reflect.Reflect for Prompt {
 }
 
 /// Why serving stopped: the protocol's stream failed.
+///
+/// ```tondo
+/// import std.console
+/// import std.mcp
+///
+/// pub type Tools = {}
+///
+/// /// Says hello.
+/// pub fn Tools.hello(self): String {
+///     "hello"
+/// }
+///
+/// match mcp.serve(Tools {}) {
+///     ok(_) => {}
+///     err(error) => console.eprintln("the server stopped: {error.message}")
+/// }
+/// ```
 pub type McpError = {
     message: String
 }

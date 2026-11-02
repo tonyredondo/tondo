@@ -20,6 +20,22 @@
 import std.internal.reflect as reflectNative
 
 /// What went wrong.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type User = { name: String, age: Int }
+///
+/// let user = User { name: "Ada", age: 36 }
+/// for path in ["name", "email", "age.years"] {
+///     match reflect.valueOf(user).get(path) {
+///         ok(value) => console.println("{path} = {value}")
+///         err(error) if error.kind == reflect.ReflectErrorKind.NoField => console.println("{path}: no such field")
+///         err(error) => console.println("{path}: {error.message}")
+///     }
+/// }
+/// ```
 pub enum ReflectErrorKind {
     NoField
     NoMethod
@@ -30,6 +46,23 @@ pub enum ReflectErrorKind {
 }
 
 /// The path or method that failed, and how to fix the call.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type User = { name: String, age: Int }
+///
+/// // A path the program reads at run time, as from a template or a query.
+/// fn read(user: User, path: String): String ! reflect.ReflectError {
+///     "{reflect.valueOf(user).get(path)?}"
+/// }
+///
+/// match read(User { name: "Ada", age: 36 }, "agee") {
+///     ok(text) => console.println(text)
+///     err(error) => console.println("{error.kind} at `{error.path}`: {error.message}")
+/// }
+/// ```
 pub type ReflectError = {
     kind: ReflectErrorKind
     path: String
@@ -43,12 +76,42 @@ impl Display for ReflectError {
 }
 
 /// A field of a value: its name and its value.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Config = { host: String, port: Int, debug: Bool }
+///
+/// // Each field of any record, by name, as a value of any type.
+/// for field in reflect.valueOf(Config { host: "localhost", port: 8080, debug: false }).fields() {
+///     console.println("{field.name} = {field.value} ({field.value.typeName()})")
+/// }
+/// ```
 pub type Field = {
     name: String
     value: Value
 }
 
 /// Any value, with the operations of its type.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Address = { city: String }
+/// pub type User = { name: String, address: Address }
+///
+/// pub fn User.greet(self, greeting: String): String {
+///     "{greeting}, {self.name}"
+/// }
+///
+/// var value = reflect.valueOf(User { name: "Ada", address: Address { city: "London" } })
+/// value.set("address.city", reflect.valueOf("Paris"))?
+/// let greeting = value.call("greet", reflect.valueOf("Hello"))?
+/// let user: User = value.to()?
+/// console.println("{value.get("address.city")?} {greeting} {user.address.city}")
+/// ```
 pub type Value = {
     priv box: reflectNative.Box
     priv ops: fn(reflectNative.Box, Op): Reply ! ReflectError
@@ -84,6 +147,25 @@ enum Reply {
 /// The operations reflection has on a type. The compiler implements it for
 /// every record, enum and newtype whose parts implement it; a program can
 /// also implement it.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// /// A secret that reflection shows masked: templates, logs and the
+/// /// debugger see `***` rather than its text.
+/// pub type Secret = { priv text: String }
+///
+/// impl reflect.Reflect for Secret {
+///     fn reflectShow(self, _: Bool): String {
+///         "***"
+///     }
+/// }
+///
+/// pub type Login = { user: String, password: Secret }
+///
+/// console.println("{reflect.valueOf(Login { user: "ada", password: Secret { text: "hunter2" } })}")
+/// ```
 pub trait Reflect {
     /// The value of a field, element or key.
     fn reflectGet(self, name: String): Value ! ReflectError {
@@ -1002,11 +1084,44 @@ impl[T: Reflect + Key] Reflect for Set[T] {
 
 /// The identity of a type in this executable: equal for the same type, and
 /// meaningless outside it.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Celsius = { degrees: Float }
+/// pub type Fahrenheit = { degrees: Float }
+///
+/// fn isCelsius(value: reflect.Value): Bool {
+///     value.typeInfo().id() == reflect.typeInfo[Celsius]().id()
+/// }
+///
+/// console.println("{isCelsius(reflect.valueOf(Celsius { degrees: 21.0 }))} {isCelsius(reflect.valueOf(Fahrenheit { degrees: 70.0 }))}")
+/// ```
 pub type TypeId = {
     priv value: Int
 }
 
 /// Which primitive type a type is.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Row = { id: Int, name: String, score: Float, active: Bool }
+///
+/// // A column type of SQL for each field, from its primitive kind.
+/// for field in reflect.typeInfo[Row]().fields() {
+///     let column = match field.typeInfo().kind() {
+///         reflect.TypeKind.Primitive(reflect.PrimitiveKind.Int) => "BIGINT"
+///         reflect.TypeKind.Primitive(reflect.PrimitiveKind.Float) => "DOUBLE"
+///         reflect.TypeKind.Primitive(reflect.PrimitiveKind.Bool) => "BOOLEAN"
+///         reflect.TypeKind.Primitive(reflect.PrimitiveKind.String) => "TEXT"
+///         _ => "BLOB"
+///     }
+///     console.println("{field.name()} {column}")
+/// }
+/// ```
 pub enum PrimitiveKind {
     Bool
     Int
@@ -1029,6 +1144,24 @@ pub enum PrimitiveKind {
 }
 
 /// Which generic type a type applies: `Array[T]`, `Map[K, V]`, `T?`.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Order = { items: Array[String], prices: Map[String, Float], note: String? }
+///
+/// for field in reflect.typeInfo[Order]().fields() {
+///     let info = field.typeInfo()
+///     let shape = match info.kind() {
+///         reflect.TypeKind.Applied(reflect.AppliedKind.Array) => "a list of {info.genericArguments()[0].qualifiedName()}"
+///         reflect.TypeKind.Applied(reflect.AppliedKind.Map) => "a map"
+///         reflect.TypeKind.Applied(reflect.AppliedKind.Option) => "optional"
+///         _ => "something else"
+///     }
+///     console.println("{field.name()}: {shape}")
+/// }
+/// ```
 pub enum AppliedKind {
     Array
     Map
@@ -1040,6 +1173,24 @@ pub enum AppliedKind {
 }
 
 /// Which reference a type is: a `Ref[T]` or a `Pointer[T]`.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// /// How a tool that walks types names each kind, references included.
+/// fn kindName(kind: reflect.TypeKind): String {
+///     match kind {
+///         reflect.TypeKind.Reference(reflect.ReferenceKind.Ref) => "a shared reference, `Ref[T]`"
+///         reflect.TypeKind.Reference(reflect.ReferenceKind.Pointer) => "a raw address, `Pointer[T]`"
+///         reflect.TypeKind.Primitive(primitive) => "the primitive {primitive}"
+///         other => "{other}"
+///     }
+/// }
+///
+/// console.println(kindName(reflect.typeInfo[Int]().kind()))
+/// console.println(kindName(reflect.TypeKind.Reference(reflect.ReferenceKind.Ref)))
+/// ```
 pub enum ReferenceKind {
     Ref
     Pointer
@@ -1048,6 +1199,32 @@ pub enum ReferenceKind {
 /// What kind of type a type is: a primitive, a record, an enum, a newtype,
 /// a tuple, a union, a function, a generic type applied, a reference, or
 /// one whose inside is hidden.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Point = { x: Int, y: Int }
+/// pub enum Shape {
+///     Dot
+///     Circle(Float)
+/// }
+/// pub type Meters = Float
+///
+/// fn describe(info: reflect.TypeInfo): String {
+///     match info.kind() {
+///         reflect.TypeKind.Record => "a record of {info.fields().length()} fields"
+///         reflect.TypeKind.Enum => "an enum of {info.variants().length()} variants"
+///         reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }).unwrapOr("?")}"
+///         reflect.TypeKind.Primitive(_) => "a primitive"
+///         _ => "another kind"
+///     }
+/// }
+///
+/// for info in [reflect.typeInfo[Point](), reflect.typeInfo[Shape](), reflect.typeInfo[Meters](), reflect.typeInfo[Int]()] {
+///     console.println("{info.qualifiedName()}: {describe(info)}")
+/// }
+/// ```
 pub enum TypeKind {
     Primitive(PrimitiveKind)
     Record
@@ -1062,6 +1239,17 @@ pub enum TypeKind {
 }
 
 /// A capability a type has: `Copy`, `Equatable`, `Key`, `Send` or `Share`.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Point = { x: Int, y: Int }
+///
+/// let capabilities = reflect.typeInfo[Point]().capabilities()
+/// console.println("{capabilities}")
+/// console.println("a map key: {capabilities.contains(reflect.TypeCapability.Key)}, to another task: {capabilities.contains(reflect.TypeCapability.Send)}")
+/// ```
 pub enum TypeCapability {
     Copy
     Equatable
@@ -1071,6 +1259,26 @@ pub enum TypeCapability {
 }
 
 /// What a variant holds: nothing, a tuple, or fields.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub enum Event {
+///     Started
+///     Moved(Int, Int)
+///     Renamed { from: String, to: String }
+/// }
+///
+/// for variant in reflect.typeInfo[Event]().variants() {
+///     let holds = match variant.payloadKind() {
+///         reflect.VariantPayloadKind.Unit => "nothing"
+///         reflect.VariantPayloadKind.Tuple => "{variant.tupleElements().length()} values"
+///         reflect.VariantPayloadKind.Record => "fields {variant.fields().map((field) { field.name() })}"
+///     }
+///     console.println("{variant.name()} holds {holds}")
+/// }
+/// ```
 pub enum VariantPayloadKind {
     Unit
     Tuple
@@ -1079,6 +1287,27 @@ pub enum VariantPayloadKind {
 
 /// How a parameter receives its argument: by value, or lent as `ref`,
 /// `mut` or `var`.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Counter = { count: Int }
+///
+/// pub fn Counter.value(self): Int {
+///     self.count
+/// }
+///
+/// pub fn Counter.add(mut self, amount: Int) {
+///     self.count += amount
+/// }
+///
+/// // Which methods change the value, as `Value.callMut` must call them.
+/// for method in reflect.typeInfo[Counter]().methods() {
+///     let changes = method.receiver() == reflect.ParameterMode.Mut
+///     console.println("{method.name()} changes the counter: {changes}")
+/// }
+/// ```
 pub enum ParameterMode {
     Value
     Ref
@@ -1087,6 +1316,30 @@ pub enum ParameterMode {
 }
 
 /// What a type is made of, as the code the compiler writes for it says.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// /// A handle whose reflection shows one field of its own making: what
+/// /// `reflectDescription` says the type is made of.
+/// pub type Handle = { priv id: Int }
+///
+/// impl reflect.Reflect for Handle {
+///     fn reflectShow(self, _: Bool): String {
+///         "Handle #{self.id}"
+///     }
+///
+///     fn reflectDescription(): reflect.TypeDescription {
+///         reflect.TypeDescription.of(reflect.TypeKind.Record) with {
+///             fields: [reflect.FieldInfo.of("id", 0, some("Its number."), reflect.typeInfo[Int]())]
+///         }
+///     }
+/// }
+///
+/// let info = reflect.typeInfo[Handle]()
+/// console.println("{info.fields().map((field) { field.name() })} {info.fields()[0].docs()}")
+/// ```
 pub type TypeDescription = {
     kind: TypeKind
     generics: Array[TypeInfo]
@@ -1135,6 +1388,23 @@ fn annotationOf[A: Reflect](annotations: Array[Value]): A? {
 
 /// A type: its identity, name and capabilities, and what it is made of,
 /// worked out when asked for.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// /// A person of the system.
+/// pub type User = { name: String, age: Int }
+///
+/// pub fn User.greet(self, greeting: String): String {
+///     "{greeting}, {self.name}"
+/// }
+///
+/// let info = reflect.typeInfo[User]()
+/// console.println("{info.qualifiedName()}: {info.docs().unwrapOr("")}")
+/// console.println("fields {info.fields().map((field) { field.name() })}, methods {info.methods().map((method) { method.name() })}")
+/// console.println("{reflect.typeOf(User { name: "Ada", age: 36 }).id() == info.id()}")
+/// ```
 pub type TypeInfo = {
     priv typeId: TypeId
     priv name: String
@@ -1252,6 +1522,26 @@ impl Display for TypeInfo {
 
 /// A visible field: its name, type, position among all the fields and
 /// documentation.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub annotation Column = { name: String = "", indexed: Bool = false }
+///
+/// pub type User = {
+///     /// The name people see.
+///     @Column(name: "display_name", indexed: true)
+///     name: String
+///     @name("years")
+///     age: Int = 18
+/// }
+///
+/// for field in reflect.typeInfo[User]().fields() {
+///     let column = field.annotation[Column]().map((column) { column.name }).unwrapOr(field.externalName())
+///     console.println("{field.ordinal()} {field.name()} -> {column}, default {field.default()}, docs {field.docs()}")
+/// }
+/// ```
 pub type FieldInfo = {
     priv fieldName: String
     priv position: Int
@@ -1329,6 +1619,23 @@ pub fn FieldInfo.typeInfo(self): TypeInfo {
 }
 
 /// A variant: its name, position and payload.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub enum Level {
+///     /// Nothing to do.
+///     Low
+///     /// Look at it today.
+///     @name("urgent")
+///     High
+/// }
+///
+/// for variant in reflect.typeInfo[Level]().variants() {
+///     console.println("{variant.ordinal()} {variant.name()} as {variant.externalName()}: {variant.docs().unwrapOr("")}")
+/// }
+/// ```
 pub type VariantInfo = {
     priv variantName: String
     priv position: Int
@@ -1425,6 +1732,28 @@ pub fn VariantInfo.fields(self): Array[FieldInfo] {
 }
 
 /// A `pub` method that reflection can call.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Account = { balance: Int }
+///
+/// /// What the account holds.
+/// pub fn Account.total(self): Int {
+///     self.balance
+/// }
+///
+/// /// Puts money in.
+/// pub fn Account.deposit(mut self, amount: Int) {
+///     self.balance += amount
+/// }
+///
+/// for method in reflect.typeInfo[Account]().methods() {
+///     let function = method.function()
+///     console.println("{method.name()}: {function.parameters().length()} parameters, gives {function.outcome().qualifiedName()}; {method.docs().unwrapOr("")}")
+/// }
+/// ```
 pub type MethodInfo = {
     priv methodName: String
     priv mode: ParameterMode
@@ -1482,6 +1811,25 @@ pub fn MethodInfo.function(self): FunctionInfo {
 }
 
 /// A parameter: its position, type and how it is passed.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub annotation Bounds = { min: Int = 0, max: Int = 100 }
+///
+/// pub type Volume = { level: Int }
+///
+/// pub fn Volume.set(mut self, @Bounds(min: 0, max: 11) level: Int, fade: Bool) {
+///     self.level = if fade { level / 2 } else { level }
+/// }
+///
+/// let method = reflect.typeInfo[Volume]().methods()[0]
+/// for parameter in method.function().parameters() {
+///     let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }).unwrapOr("")
+///     console.println("{parameter.position()} {parameter.name()}: {parameter.typeInfo().qualifiedName()}{range}")
+/// }
+/// ```
 pub type ParameterInfo = {
     priv index: Int
     priv info: TypeInfo
@@ -1538,6 +1886,22 @@ pub fn ParameterInfo.mode(self): ParameterMode {
 }
 
 /// A signature: the parameters after the receiver and the whole outcome.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// pub type Logger = { prefix: String }
+///
+/// pub fn Logger.log(self, message: String, values: ...Int): String {
+///     "{self.prefix} {message} {values}"
+/// }
+///
+/// let function = reflect.typeInfo[Logger]().methods()[0].function()
+/// console.println("variadic {function.variadic()}, unsafe {function.isUnsafe()}, gives {function.outcome().qualifiedName()}")
+/// let logged = reflect.valueOf(Logger { prefix: ">" }).call("log", reflect.valueOf("sizes"), reflect.valueOf(1), reflect.valueOf(2))?
+/// console.println("{logged}")
+/// ```
 pub type FunctionInfo = {
     priv params: Array[ParameterInfo]
     priv result: TypeInfo

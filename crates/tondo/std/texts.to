@@ -8,6 +8,14 @@ import std.internal.text as textNative
 /// A normalization form of Unicode (UAX #15): NFC and NFD compose and
 /// decompose characters; NFKC and NFKD also replace those of compatibility
 /// with what they stand for, as `ﬁ` with `fi`.
+///
+/// ```tondo
+/// import std.console
+/// import std.text
+///
+/// let decomposed = text.normalize("é", form: text.Normalization.Nfd)
+/// console.println("{decomposed.length()} {text.isNormalized(decomposed)}")
+/// ```
 pub enum Normalization {
     Nfc
     Nfd
@@ -40,6 +48,14 @@ fn code(form: Normalization): Int {
 // ---------------------------------------------------------------------------
 
 /// The general category of a character in Unicode.
+///
+/// ```tondo
+/// import std.console
+/// import std.text
+///
+/// let letters = "a1B".chars().filter((c) { text.category(c) == text.Category.UppercaseLetter }).collect()
+/// console.println("{letters}")
+/// ```
 pub enum Category {
     UppercaseLetter
     LowercaseLetter
@@ -77,6 +93,13 @@ pub enum Category {
 /// that many share, as digits and punctuation, `Inherited` for marks that
 /// take the script of the character before, and `Unknown` for unassigned
 /// ones.
+///
+/// ```tondo
+/// import std.console
+/// import std.text
+///
+/// console.println("{text.script('λ') == text.Script.Greek} {text.script('ж')}")
+/// ```
 pub enum Script {
     Adlam
     Ahom
@@ -710,6 +733,15 @@ pub fn script(c: Char): Script {
 /// Which differences a collator counts: `Primary`, only the letters, so
 /// `a`, `á` and `A` are equal; `Secondary`, also the accents; `Tertiary`,
 /// also the case.
+///
+/// ```tondo
+/// import std.console
+/// import std.text
+///
+/// // Primary strength: `a`, `á` and `A` compare equal.
+/// let loose = text.collator("es", strength: text.Strength.Primary)
+/// console.println("{loose.compare("canon", "CAÑÓN")}")
+/// ```
 pub enum Strength {
     Primary
     Secondary
@@ -719,6 +751,15 @@ pub enum Strength {
 /// Compares texts as a language orders them, as the Unicode Collation
 /// Algorithm and CLDR define it: `ñ` after `n` in Spanish, `ä` with `a` in
 /// German and after `z` in Swedish, `ch` after `h` in Czech.
+///
+/// ```tondo
+/// import std.console
+/// import std.text
+///
+/// let spanish = text.collator("es", numeric: true)
+/// let sorted = ["ñu", "nube", "file10", "file9"].sortedWith((a, b) { spanish.compare(a, b) })
+/// console.println("{sorted}")
+/// ```
 pub type Collator = {
     priv native: textNative.Native
 }

@@ -11,12 +11,39 @@
 // ```
 
 /// A signed interval in nanoseconds; it displays as Go writes it: `1h2m3.5s`.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let timeout = time.seconds(90)
+/// console.println("{timeout} = {timeout.minutes()} min {timeout.seconds() % 60} s, twice {timeout.multiply(2)}")
+/// ```
 pub type Duration
 
 /// A moment of the monotonic clock, which never goes back.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let started = time.now()
+/// time.sleep(time.milliseconds(5))
+/// let later = time.now()
+/// console.println("{later.since(started)} {started.elapsed()}")
+/// ```
 pub type Instant
 
 /// A date and time in UTC; it displays in RFC 3339: `2026-10-22T06:38:28Z`.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let now = time.utcNow()
+/// let due = now.addDays(30)
+/// console.println("{due.format("%Y-%m-%d")} is a {due.weekday()}, day {due.dayOfYear()}")
+/// ```
 pub type DateTime = {
     year: Int
     month: Int
@@ -30,6 +57,17 @@ pub type DateTime = {
 /// Why a date, a duration or a zone could not be made: a date that does
 /// not exist, as February 30, or a text that is not one; a text that is not
 /// a duration; a name the tz database does not have.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// match time.zone("Mars/Olympus") {
+///     ok(zone) => console.println(zone.name())
+///     err(time.TimeError.UnknownZone) => console.println("no such zone")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum TimeError {
     InvalidDateTime
     InvalidDuration

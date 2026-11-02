@@ -37,6 +37,24 @@ import std.sync as __sync
 // ---------------------------------------------------------------------------
 
 /// A GraphQL schema made from the types of its roots.
+///
+/// ```tondo
+/// import std.console
+/// import std.graphql
+///
+/// pub type Book = { id: Int, title: String }
+///
+/// pub type Library = { books: Array[Book] }
+///
+/// pub fn Library.search(self, text: String): Array[Book] {
+///     self.books.filter((book) { book.title.contains(text) })
+/// }
+///
+/// let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }, Book { id: 2, title: "Go" }] })
+/// let result = schema.execute(r"""{ search(text: "Ton") { id title } }""")
+/// console.println("{result}")
+/// console.print(schema.sdl())
+/// ```
 pub type Schema = {
     priv query: __reflect.Value
     priv mutations: __reflect.Value?

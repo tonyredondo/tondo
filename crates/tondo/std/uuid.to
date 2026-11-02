@@ -14,6 +14,15 @@ import std.serialization as __serialization
 
 /// A UUID. Equal, ordered and usable as a key by its sixteen bytes, as
 /// unsigned numbers in network order.
+///
+/// ```tondo
+/// import std.console
+/// import std.uuid
+///
+/// let id = uuid.Uuid.v5(uuid.Uuid.namespaceDns(), "example.com")
+/// let again = uuid.Uuid.parse("{id}")?
+/// console.println("{id} {again == id} {uuid.Uuid.nil()}")
+/// ```
 pub type Uuid = {
     // Its bytes in lowercase hexadecimal, which order as the bytes do.
     priv hex: String
@@ -21,6 +30,17 @@ pub type Uuid = {
 
 /// Why a UUID could not be read: a text that is not one, or other than
 /// sixteen bytes.
+///
+/// ```tondo
+/// import std.console
+/// import std.uuid
+///
+/// match uuid.Uuid.fromBytes([1, 2, 3]) {
+///     ok(id) => console.println("{id}")
+///     err(uuid.UuidError.WrongLength) => console.println("a UUID has sixteen bytes")
+///     err(uuid.UuidError.InvalidText) => console.println("not 8-4-4-4-12")
+/// }
+/// ```
 pub enum UuidError {
     /// A text other than `8-4-4-4-12` hexadecimal, after an optional
     /// `urn:uuid:`.

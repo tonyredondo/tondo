@@ -15,6 +15,15 @@ import std.internal.codec as codecNative
 
 /// A generator of pseudo-random values: SplitMix64 from a seed. The same
 /// seed gives the same values on every machine.
+///
+/// ```tondo
+/// import std.console
+/// import std.random
+///
+/// // The same seed gives the same values; `Random.new()` a different seed.
+/// var generator = random.Random.seeded(7)
+/// console.println("{generator.int(1..=100)} {generator.float()} {generator.shuffled([1, 2, 3])}")
+/// ```
 pub type Random = {
     priv seed: Int
     priv drawn: Int

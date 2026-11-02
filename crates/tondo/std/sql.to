@@ -40,6 +40,21 @@ import std.url as __url
 // ---------------------------------------------------------------------------
 
 /// What kind of failure a database met.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE users (email TEXT PRIMARY KEY, name TEXT NOT NULL)")?
+/// for email in ["ada@example.com", "ada@example.com"] {
+///     match db.execute("INSERT INTO users (email, name) VALUES ({email}, {"Ada"})") {
+///         ok(_) => console.println("added {email}")
+///         err(error) if error.kind == sql.ErrorKind.Unique => console.println("{email} is taken")
+///         err(error) => console.println("{error}")
+///     }
+/// }
+/// ```
 pub enum ErrorKind {
     /// It could not connect, or lost the connection.
     Connection
@@ -68,6 +83,21 @@ pub enum ErrorKind {
 /// A failure of a database: its kind, its message, the database's code
 /// (PostgreSQL's SQLSTATE, MySQL's number, SQLite's extended code) and the
 /// constraint or column it names.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, price INTEGER CHECK (price > 0))")?
+/// match db.execute("INSERT INTO items (price) VALUES ({-5})") {
+///     ok(_) => console.println("added")
+///     err(error) => {
+///         let broken = error.kind == sql.ErrorKind.Check
+///         console.println("check broken: {broken}; {error.message} (code {error.code}, constraint {error.constraint})")
+///     }
+/// }
+/// ```
 pub type SqlError = {
     kind: ErrorKind
     message: String
@@ -99,6 +129,29 @@ pub fn SqlError.of(kind: ErrorKind, message: String): SqlError {
 // ---------------------------------------------------------------------------
 
 /// A value of a database: a parameter or a column of a row.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // The parameters of each statement, as the driver receives them.
+/// db.use((statement, next) {
+///     let shown = statement.parameters.map((parameter) {
+///         match parameter {
+///             sql.Value.Null => "NULL"
+///             sql.Value.Int(number) => "int {number}"
+///             sql.Value.Text(text) => "text {text}"
+///             _ => "other"
+///         }
+///     })
+///     console.println("{shown}")
+///     let outcome = next(statement)
+///     outcome?
+/// })
+/// let name: String? = none
+/// _ = db.queryOne[Int]("SELECT {42} + length({"tea"}) + coalesce({name}, 0)")?
+/// ```
 pub enum Value {
     Null
     Bool(Bool)
@@ -133,6 +186,27 @@ impl Display for Value {
 /// each `{value}` it interpolates is a parameter, never text, so it cannot
 /// be injected; a `{query}` is spliced in, and an `{array}` is the list
 /// `($1, $2, …)` of its elements, for `IN`.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// pub type User = { id: Int, name: String }
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?
+/// for name in ["Ada", "Bo", "Cy"] {
+///     _ = db.execute("INSERT INTO users (name) VALUES ({name})")?
+/// }
+/// // Pieces made apart and joined, each `{value}` still a parameter.
+/// let table = sql.identifier("users")
+/// var conditions: Array[sql.Query] = ["id > {0}"]
+/// conditions.push("name IN {["Ada", "Cy"]}")
+/// let order = sql.raw("ORDER BY name DESC")
+/// for user in db.query[User]("SELECT id, name FROM {table} WHERE {sql.join(conditions, " AND ")} {order}")? {
+///     console.println("{user.id} {user.name}")
+/// }
+/// ```
 pub type Query = {
     priv pieces: Array[Piece]
 }
@@ -324,6 +398,29 @@ fn write(query: Query, driver: Driver, out: var String, parameters: var Array[Va
 
 /// What a statement does: reads, writes, or begins, commits or rolls back a
 /// transaction.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// db.use((statement, next) {
+///     let what = match statement.operation {
+///         sql.Operation.Query => "query"
+///         sql.Operation.Execute => "execute"
+///         sql.Operation.Begin => "begin"
+///         sql.Operation.Commit => "commit"
+///         sql.Operation.Rollback => "rollback"
+///     }
+///     console.println(what)
+///     let outcome = next(statement)
+///     outcome?
+/// })
+/// db.transaction((tx): Unit ! sql.SqlError {
+///     _ = tx.execute("CREATE TABLE notes (text TEXT)")?
+///     _ = tx.query[String]("SELECT text FROM notes")?
+/// })?
+/// ```
 pub enum Operation {
     Query
     Execute
@@ -348,6 +445,22 @@ impl Display for Operation {
 /// to add a comment with the trace's context: its text with the driver's
 /// placeholders, its parameters, what it does, and the database's system as
 /// OpenTelemetry names it (`postgresql`, `mysql`, `sqlite`), name and host.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+/// import std.time
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // Each statement, timed, with where it went.
+/// db.use((statement, next) {
+///     let started = time.now()
+///     let outcome = next(statement)
+///     console.println("{statement.system} {statement.database}: {statement.text} {statement.parameters.length()} parameters in {started.elapsed()}")
+///     outcome?
+/// })
+/// _ = db.queryOne[Int]("SELECT {1} + {2}")?
+/// ```
 pub type Statement = {
     text: String
     parameters: Array[Value]
@@ -359,6 +472,20 @@ pub type Statement = {
 
 /// What a statement gave: the names of its columns and its rows, or the
 /// rows it changed and the id of the last one it added.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // What a statement gave, as a middleware sees it before the rows are read.
+/// db.use((statement, next) {
+///     let outcome = next(statement)?
+///     console.println("{outcome.columns} {outcome.rows.length()} rows, {outcome.affected} changed")
+///     outcome
+/// })
+/// _ = db.query[Int]("SELECT 1 AS one UNION SELECT 2")?
+/// ```
 pub type Outcome = {
     columns: Array[String]
     rows: Array[Array[Value]]
@@ -368,6 +495,18 @@ pub type Outcome = {
 
 /// What `execute` did: how many rows it changed, and the id of the last one
 /// it added, where the database tells it.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, done INTEGER DEFAULT 0)")?
+/// let added = db.execute("INSERT INTO tasks (done) VALUES ({0}), ({0})")?
+/// console.println("{added.affected} added, last id {added.lastId}")
+/// let finished = db.execute("UPDATE tasks SET done = 1 WHERE id = {1}")?
+/// console.println("{finished.affected} finished")
+/// ```
 pub type Done = {
     affected: Int
     lastId: Int?
@@ -375,6 +514,32 @@ pub type Done = {
 
 /// A connection a driver opened: what runs a statement on it, and what ends
 /// it.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// /// A connection that answers every statement with its own text, as a
+/// /// test double of a database does.
+/// fn echoing(_: String): sql.Connection ! sql.SqlError {
+///     sql.Connection {
+///         run: (statement) {
+///             sql.Outcome { columns: ["text"], rows: [[sql.Value.Text(statement.text)]], affected: 0, lastId: none }
+///         }
+///         close: () {}
+///     }
+/// }
+///
+/// let driver = sql.Driver {
+///     system: "echo"
+///     placeholder: (index) { "${index}" }
+///     identifier: (name) { "\"{name}\"" }
+///     connect: echoing
+///     place: (_) { ("echo", none) }
+/// }
+/// let db = sql.open("echo:", driver: some(driver))?
+/// console.println(db.queryOne[String]("SELECT * FROM {sql.identifier("users")} WHERE id = {7}")?)
+/// ```
 pub type Connection = {
     run: fn(Statement): Outcome ! SqlError
     close: fn()
@@ -385,6 +550,25 @@ pub type Connection = {
 /// to a URL; `placeholder` writes the parameter at a position from 1, as
 /// `$1` or `?`; `identifier` quotes a name; `system` names the database for
 /// `use`.
+///
+/// ```tondo
+/// import std.sql
+///
+/// /// A driver for another database, as a package gives one: how it writes
+/// /// parameters and names, how it connects, and where a URL points.
+/// fn oracle(): sql.Driver {
+///     sql.Driver {
+///         system: "oracle"
+///         placeholder: (index) { ":{index}" }
+///         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+///         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
+///         place: (url) { (url.split("/").last().unwrapOr(""), none) }
+///     }
+/// }
+///
+/// let db = sql.open("oracle://scott@db.example.com/orders", driver: some(oracle()))?
+/// db.close()
+/// ```
 pub type Driver = {
     system: String
     placeholder: fn(Int): String
@@ -400,6 +584,28 @@ pub type Driver = {
 
 /// A database, through a pool of connections that its copies share: tasks
 /// run statements on it at once, each on a connection of its own.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// pub type Account = { id: Int, owner: String, balance: Int }
+///
+/// let db = sql.open("sqlite::memory:", connections: 4)?
+/// _ = db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")?
+/// _ = db.execute("INSERT INTO accounts (owner, balance) VALUES ({"Ada"}, {100}), ({"Bo"}, {0})")?
+/// // Both changes or neither.
+/// db.transaction((tx): Unit ! sql.SqlError {
+///     _ = tx.execute("UPDATE accounts SET balance = balance - {30} WHERE owner = {"Ada"}")?
+///     _ = tx.execute("UPDATE accounts SET balance = balance + {30} WHERE owner = {"Bo"}")?
+/// })?
+/// for account in db.query[Account]("SELECT id, owner, balance FROM accounts ORDER BY id")? {
+///     console.println("{account.owner}: {account.balance}")
+/// }
+/// let missing = db.queryOne[Account?]("SELECT id, owner, balance FROM accounts WHERE owner = {"Cy"}")?
+/// console.println("{missing.isSome()}")
+/// db.close()
+/// ```
 pub type Database = {
     priv driver: Driver
     priv url: String

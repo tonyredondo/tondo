@@ -10,6 +10,23 @@ import std.time as __time
 /// Lets work happen at a steady rate, `rate` times each `per`, and up to
 /// `burst` at once after a quiet while, as a token bucket does. Its copies
 /// share it, so the tasks of a server share one.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+/// import std.time
+///
+/// let limiter = sync.RateLimiter(5, per: time.seconds(1), burst: 2)
+/// var allowed = 0
+/// for _ in 0..10 {
+///     if limiter.allow() {
+///         allowed += 1
+///     }
+/// }
+/// console.println("{allowed} of 10 at once")
+/// limiter.wait()
+/// console.println("one more after waiting")
+/// ```
 pub type RateLimiter = {
     priv due: __sync.Mutex[Int]
     priv start: __time.Instant

@@ -15,6 +15,15 @@ import std.json as __json
 import std.time as __time
 
 /// How much an event matters, from least to most.
+///
+/// ```tondo
+/// import std.log
+///
+/// let logger = log.Logger.new(level: log.Level.Debug)
+/// if logger.isEnabled(log.Level.Debug) {
+///     logger.debug("details", ["step": "2"])
+/// }
+/// ```
 pub enum Level {
     Trace
     Debug
@@ -37,6 +46,14 @@ impl Display for Level {
 
 /// `Text` writes `time LEVEL message key=value ...`, quoting values with
 /// spaces; `Json` writes an object per line.
+///
+/// ```tondo
+/// import std.log
+///
+/// // One JSON object a line, for a collector of logs.
+/// let logger = log.Logger.new(format: log.Format.Json)
+/// logger.info("started", ["port": "8080"])
+/// ```
 pub enum Format {
     Text
     Json
@@ -44,6 +61,14 @@ pub enum Format {
 
 /// Writes events of its level or above, with its fields: a program makes
 /// one and passes it on, or puts it in `Context`.
+///
+/// ```tondo
+/// import std.log
+///
+/// let logger = log.Logger.new().withFields(["service": "billing"])
+/// logger.info("invoice sent", ["id": "42"])
+/// logger.flush()?
+/// ```
 pub type Logger = {
     priv output: __io.Writer
     priv minimum: Level
@@ -144,6 +169,18 @@ pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
 
 /// The logger of the work that runs, which the functions of the module
 /// write with: `main` puts one there, and code below adds its fields.
+///
+/// ```tondo
+/// import std.log
+///
+/// fn work() {
+///     // The logger of the context, with the request's fields.
+///     log.info("working")
+/// }
+///
+/// with log.Context { logger: some(log.Logger.new().withFields(["request": "r1"])) }
+/// work()
+/// ```
 pub context Context = {
     logger: Logger? = none
 }

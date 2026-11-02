@@ -15,11 +15,28 @@ import std.internal.codec as native
 
 /// A count that only grows, such as the requests served; `tondo counters`
 /// shows it with its rate per second.
+///
+/// ```tondo
+/// import std.diagnostics
+///
+/// // `tondo counters <program>` shows it as `program.orders.placed`.
+/// let placed = diagnostics.counter("orders.placed")
+/// placed.add()
+/// placed.add(2)
+/// ```
 pub type Counter = {
     priv id: Int
 }
 
 /// A level that goes up and down, such as the length of a queue.
+///
+/// ```tondo
+/// import std.diagnostics
+///
+/// let queued = diagnostics.gauge("jobs.queued")
+/// queued.set(10)
+/// queued.add(-1)
+/// ```
 pub type Gauge = {
     priv id: Int
 }
@@ -84,6 +101,15 @@ pub fn Gauge.value(self): Int {
 /// A counter as `tondo counters` shows it: its name, value and unit,
 /// `bytes`, `us` or empty, and whether it is a level or a total that only
 /// grows.
+///
+/// ```tondo
+/// import std.console
+/// import std.diagnostics
+///
+/// for metric in diagnostics.metrics().filter((m) { m.name.startsWith("tasks.") }) {
+///     console.println("{metric.name} = {metric.value}{metric.unit}")
+/// }
+/// ```
 pub type Metric = {
     name: String
     value: Int
@@ -111,6 +137,15 @@ pub fn metrics(): Array[Metric] {
 }
 
 /// A frame of a stack: the function and where in it.
+///
+/// ```tondo
+/// import std.console
+/// import std.diagnostics
+///
+/// for frame in diagnostics.stack() {
+///     console.println("{frame.function} at {frame.file}:{frame.line}")
+/// }
+/// ```
 pub type Frame = {
     function: String
     file: String

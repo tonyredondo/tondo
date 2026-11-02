@@ -17,6 +17,20 @@ import std.io as __io
 /// Why a CSV stream could not be read: a quote out of place, a quoted field
 /// that does not end, a record with other than the header's number of
 /// fields, or the stream failed.
+///
+/// ```tondo
+/// import std.console
+/// import std.csv
+/// import std.io
+///
+/// for row in csv.rows(io.reader("a,\"b\nc\n")) {
+///     match row {
+///         ok(fields) => console.println("{fields}")
+///         err(csv.CsvError.Unterminated(line)) => console.println("a quote opened at line {line} does not close")
+///         err(error) => console.println("{error}")
+///     }
+/// }
+/// ```
 pub enum CsvError {
     /// A quote inside a field that does not start with one, or text after a
     /// closing quote, at this line and column.
@@ -45,6 +59,17 @@ impl Display for CsvError {
 /// The records of a CSV stream, each as its fields, read as they are asked
 /// for: `for row in csv.rows(file) { let fields = row? }`. Blank lines are
 /// skipped; after an error there are no more.
+///
+/// ```tondo
+/// import std.console
+/// import std.csv
+/// import std.fs
+///
+/// let file = fs.open("people.csv", fs.OpenMode.Read)?
+/// for row in csv.rows(file.reader(), separator: ';') {
+///     console.println(row?.join(" | "))
+/// }
+/// ```
 pub type Rows = {
     priv input: __io.Reader
     priv separator: Char
@@ -111,6 +136,17 @@ fn Rows.stop(mut self, error: CsvError): (Array[String] ! CsvError)? {
 
 /// The records of a CSV stream whose first record is the header, each as a
 /// map from the header's names to its fields, in the header's order.
+///
+/// ```tondo
+/// import std.console
+/// import std.csv
+/// import std.io
+///
+/// for record in csv.records(io.reader("name,age\nAda,36\n")) {
+///     let fields = record?
+///     console.println("{fields["name"]} is {fields["age"]}")
+/// }
+/// ```
 pub type Records = {
     priv source: Rows
     priv header: Array[String]?
@@ -167,6 +203,16 @@ pub fn parseRecords(input: String, separator: Char = ','): Array[Map[String, Str
 
 /// Writes records to a stream, a line each; a field with the separator, a
 /// quote or a line break goes in quotes.
+///
+/// ```tondo
+/// import std.csv
+/// import std.fs
+///
+/// let file = fs.open("people.csv", fs.OpenMode.Write)?
+/// let out = csv.Writer.new(file.writer())
+/// out.write(["name", "age"])?
+/// out.write(["Ada", "36"])?
+/// ```
 pub type Writer = {
     priv output: __io.Writer
     priv separator: Char

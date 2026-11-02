@@ -14,6 +14,19 @@
 
 /// Why a stream failed: it is closed, its data is not UTF-8 where text was
 /// wanted, or the host failed.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+///
+/// let (writer, reader) = io.pipe()
+/// reader.close()?
+/// match writer.writeLine("nobody reads") {
+///     ok(_) => console.println("written")
+///     err(io.IoError.Closed) => console.println("the reader is gone")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum IoError {
     Closed
     InvalidData
@@ -21,12 +34,47 @@ pub enum IoError {
 }
 
 /// Where data goes.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+///
+/// fn greet(out: io.Writer): !io.IoError {
+///     out.writeLine("hello")?
+/// }
+///
+/// let buffer = io.Buffer()
+/// greet(buffer.writer())?
+/// console.print(buffer.text()?)
+/// ```
 pub type Writer
 
 /// Where data comes from.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+///
+/// let input = io.reader("first\nsecond\n")
+/// for {
+///     match input.readLine()? {
+///         some(line) => console.println("> {line}")
+///         none => break
+///     }
+/// }
+/// ```
 pub type Reader
 
 /// Shared memory a writer appends to and a reader reads.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+///
+/// let buffer = io.Buffer()
+/// buffer.writer().write("in memory")?
+/// console.println("{buffer.length()} bytes: {buffer.text()?}")
+/// ```
 pub type Buffer
 
 /// Writes the text.

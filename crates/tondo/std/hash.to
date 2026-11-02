@@ -12,6 +12,14 @@
 import std.internal.codec as codecNative
 
 /// The digest of some data. It displays as lowercase hexadecimal.
+///
+/// ```tondo
+/// import std.console
+/// import std.hash
+///
+/// let digest = hash.sha256("hello".bytes())
+/// console.println("{digest.hex()} {digest.bytes().length()} bytes")
+/// ```
 pub type Digest = {
     priv value: Array[Byte]
 }
@@ -70,6 +78,15 @@ pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest {
 }
 
 /// The digests a `Hasher` computes.
+///
+/// ```tondo
+/// import std.console
+/// import std.hash
+///
+/// let signer = hash.hmac(hash.Algorithm.Sha512, "key".bytes())
+/// signer.update("message".bytes())
+/// console.println("{signer.finish()}")
+/// ```
 pub enum Algorithm {
     Md5
     Sha1
@@ -90,6 +107,18 @@ fn kind(algorithm: Algorithm): Int {
 
 /// A digest or an HMAC computed in parts, without the data together: each
 /// part to `update`, then `finish`. Its copies share the computation.
+///
+/// ```tondo
+/// import std.console
+/// import std.hash
+///
+/// // A digest of data that comes in parts.
+/// let hasher = hash.hasher(hash.Algorithm.Sha256)
+/// for part in ["hel", "lo"] {
+///     hasher.update(part.bytes())
+/// }
+/// console.println("{hasher.finish() == hash.sha256("hello".bytes())}")
+/// ```
 pub type Hasher = {
     priv native: codecNative.Native
 }

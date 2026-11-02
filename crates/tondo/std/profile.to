@@ -22,11 +22,34 @@ import std.time as __time
 
 /// A profile: in pprof's format, for a file or a service, and as folded
 /// stacks.
+///
+/// ```tondo
+/// import std.fs
+/// import std.profile
+///
+/// profile.startMemory()
+/// let lists = (0..1000).map((n) { [n] }).collect()
+/// fs.writeBytes("memory.pb.gz", profile.memory().pprof())?
+/// _ = lists
+/// ```
 pub type Profile = {
     priv native: native.Native
 }
 
 /// A profile of the processor time, which runs until `stop`.
+///
+/// ```tondo
+/// import std.console
+/// import std.profile
+///
+/// let cpu = profile.startCpu()
+/// var total = 0
+/// for n in 0..100_000 {
+///     total += n % 3
+/// }
+/// console.println("{total}")
+/// console.print(cpu.stop().folded())
+/// ```
 pub type CpuProfile = {
     priv started: Bool
 }
@@ -155,6 +178,14 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T {
 }
 
 /// The labels a task had before `setLabels`, which `restore` puts back.
+///
+/// ```tondo
+/// import std.profile
+///
+/// // Samples taken until `restore` carry these labels, as `tondo profile show` reads them.
+/// let labels = profile.setLabels(["endpoint": "/users"])
+/// labels.restore()
+/// ```
 pub type Labels = {
     priv mark: Int
 }

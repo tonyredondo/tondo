@@ -10,6 +10,16 @@ import std.timetext as __text
 
 /// The error of a `within` whose deadline passed first (11.17): the limit
 /// it had.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// match within time.milliseconds(50) { time.sleep(time.seconds(1)) } {
+///     ok(_) => console.println("in time")
+///     err(late) => console.println("gave up after {late.limit}")
+/// }
+/// ```
 pub type TimedOut = {
     limit: __time.Duration
 }
@@ -163,6 +173,15 @@ impl serialization.Decode for __time.DateTime {
 
 /// A time zone: the offsets from UTC its clocks have had through the
 /// years. Equal and a key by its name, which `Display` writes.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let madrid = time.zone("Europe/Madrid")?
+/// let meeting = madrid.at(2026, 11, 2, hour: 9)?
+/// console.println("{meeting} is {meeting.utc()} in UTC")
+/// ```
 pub type Zone = {
     priv id: String
 }
@@ -175,6 +194,15 @@ impl Display for Zone {
 
 /// A date and time as the clocks of a zone show it, with their offset from
 /// UTC then.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let here = time.localNow()
+/// let tomorrow = here.addDays(1)
+/// console.println("{tomorrow.format("%A %H:%M")} week {tomorrow.isoWeek().week}")
+/// ```
 pub type ZonedDateTime = {
     year: Int
     month: Int
@@ -397,6 +425,15 @@ impl __reflect.Reflect for __time.Duration {
 // ---------------------------------------------------------------------------
 
 /// A day of the week, Monday first, as ISO 8601 counts them.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let today = time.utcNow().weekday()
+/// let weekend = today == time.Weekday.Saturday or today == time.Weekday.Sunday
+/// console.println("{today}: weekend {weekend}")
+/// ```
 pub enum Weekday {
     Monday
     Tuesday
@@ -424,6 +461,14 @@ impl Display for Weekday {
 /// A week of ISO 8601: its number, from 1 to 53, and the year it is of,
 /// which for the days near January 1 may be the year before theirs or the
 /// one after. `Display` writes it as ISO 8601 does: `2026-W44`.
+///
+/// ```tondo
+/// import std.console
+/// import std.time
+///
+/// let week = time.localNow().isoWeek()
+/// console.println("{week.year}-W{week.week:02}")
+/// ```
 pub type IsoWeek = {
     year: Int
     week: Int

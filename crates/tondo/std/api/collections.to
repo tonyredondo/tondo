@@ -14,6 +14,19 @@
 
 /// Why a collection operation failed: a capacity or a step that is not
 /// allowed, an index outside the collection, or a limit reached.
+///
+/// ```tondo
+/// import std.collections
+/// import std.console
+///
+/// match [1, 2, 3].slice(2, 1) {
+///     ok(part) => console.println("{part}")
+///     err(error) => {
+///         let failure: collections.CollectionError = error
+///         console.println("{failure}")
+///     }
+/// }
+/// ```
 pub enum CollectionError {
     InvalidCapacity
     InvalidIndex

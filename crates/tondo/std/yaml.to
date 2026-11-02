@@ -24,6 +24,16 @@ import std.serialization
 // ---------------------------------------------------------------------------
 
 /// A YAML value of unknown shape.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// let config = yaml.parse("server:\n  host: localhost\n  ports: [8080, 8081]\n")?
+/// let host = config.find("server.host").andThen((value) { value.asText() })
+/// let ports = config.find("server.ports").andThen((value) { value.asArray() }).unwrapOr([])
+/// console.println("{host.unwrapOr("?")} with {ports.length()} ports")
+/// ```
 pub enum Value {
     Null
     Bool(Bool)
@@ -208,9 +218,33 @@ fn reflected(value: Value): __reflect.Value {
 
 /// A failure to read YAML, with where it happened: the error of every
 /// format.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// type Server = { port: Int }
+///
+/// match yaml.decode[Server]("port: eighty\n") {
+///     ok(server) => console.println("port {server.port}")
+///     err(error) => console.println("{error.line}:{error.column} {error.path}: {error.message}")
+/// }
+/// ```
 pub alias YamlError = serialization.Error
 
 /// What reading does with a member that the type has no field for.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// type Server = { port: Int }
+///
+/// match yaml.decode[Server]("port: 8080\nprot: 8081\n", unknownFields: yaml.UnknownFields.Reject) {
+///     ok(server) => console.println("port {server.port}")
+///     err(error) => console.println("rejected: {error.message}")
+/// }
+/// ```
 pub alias UnknownFields = serialization.UnknownFields
 
 // ---------------------------------------------------------------------------
@@ -515,6 +549,17 @@ fn untagged[S: serialization.Source](input: S, first: serialization.Event): Valu
 /// the text as it was, byte for byte; `writeTo` writes it as it is, with no
 /// copy. A config of a project is what it is for: the whole document is in
 /// memory, as its text and its outline.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// var doc = yaml.load("# The service.\nname: api\nhosts:\n  - a.example.com   # main\n")?
+/// doc.set("name", "gateway")?
+/// doc.insert("hosts", 1, "b.example.com")?
+/// doc.remove("hosts[0]")?
+/// console.print(doc.text())
+/// ```
 pub type Document = {
     priv source: String
     priv root: Value
@@ -530,6 +575,15 @@ pub type Document = {
 /// from 1, and the comment on its line, or else on the lines right above
 /// it, without `#`; what it is and how it is written, with its tag and the
 /// name of its anchor as the text has them.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// let doc = yaml.load("port: 8080   # where it listens\n")?
+/// let port = doc.find("port").expect("port is set")
+/// console.println("line {port.line}, column {port.column}: {port.comment.unwrapOr("")}")
+/// ```
 pub type Node = {
     value: Value
     line: Int
@@ -542,6 +596,22 @@ pub type Node = {
 }
 
 /// What a node is; an alias is what its anchor's value is.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// let doc = yaml.load("name: api\nhosts: [a, b]\nlimits: {{cpu: 2}}\n")?
+/// for path in ["name", "hosts", "limits"] {
+///     let node = doc.find(path).expect("{path} is set")
+///     let kind = match node.kind {
+///         yaml.NodeKind.Scalar => "a scalar"
+///         yaml.NodeKind.Sequence => "a sequence"
+///         yaml.NodeKind.Map => "a map"
+///     }
+///     console.println("{path} is {kind}")
+/// }
+/// ```
 pub enum NodeKind {
     Scalar
     Sequence
@@ -561,6 +631,19 @@ impl Display for NodeKind {
 /// How a node is written: a scalar plain, in `'...'`, in `"..."`, as a
 /// literal block `|` or a folded one `>`; a sequence or a map in block
 /// style, or in flow style, `[...]` and `{...}`; or as an alias, `*name`.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// let doc = yaml.load("plain: tea\nquoted: \"cake\"\nhosts: [a, b]\n")?
+/// for path in ["plain", "quoted", "hosts"] {
+///     let style = doc.find(path).expect("{path} is set").style
+///     let flow = style == yaml.NodeStyle.Flow
+///     let quoted = style == yaml.NodeStyle.DoubleQuoted
+///     console.println("{path}: flow {flow}, double-quoted {quoted}")
+/// }
+/// ```
 pub enum NodeStyle {
     Plain
     SingleQuoted

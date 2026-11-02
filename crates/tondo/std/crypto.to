@@ -19,6 +19,17 @@ import std.random as __random
 import std.time as __time
 
 /// Why a key, a PEM text, a certificate or sealed data could not be used.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.SecretKey.generate()
+/// match key.open("not sealed".bytes()) {
+///     ok(data) => console.println("{data.length()}")
+///     err(error) => console.println("refused: {error.message}")
+/// }
+/// ```
 pub type CryptoError = {
     message: String
 }
@@ -134,6 +145,14 @@ pub fn pbkdf2(
 // ---------------------------------------------------------------------------
 
 /// An AEAD cipher: it encrypts and authenticates.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.SecretKey.generate(cipher: crypto.Cipher.ChaCha20Poly1305)
+/// console.println("{key.bytes().length()} bytes")
+/// ```
 pub enum Cipher {
     Aes256Gcm
     ChaCha20Poly1305
@@ -141,6 +160,16 @@ pub enum Cipher {
 
 /// A secret key that seals data: encrypts it so that only its holder reads
 /// it, and so that any change is found when it opens.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.SecretKey.generate()
+/// let sealed = key.seal("the secret".bytes(), context: "user 7".bytes())
+/// let opened = key.open(sealed, context: "user 7".bytes())?
+/// console.println(String.fromBytes(opened)?)
+/// ```
 pub type SecretKey = {
     priv cipher: Cipher
     priv key: Array[Byte]
@@ -208,6 +237,14 @@ fn cipherCode(cipher: Cipher): Int {
 // ---------------------------------------------------------------------------
 
 /// A curve that `PrivateKey.generate` makes keys on.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.PrivateKey.generate(curve: crypto.Curve.P256)
+/// console.println("{key.kind()}")
+/// ```
 pub enum Curve {
     Ed25519
     P256
@@ -216,6 +253,17 @@ pub enum Curve {
 
 /// What signs with a key: Ed25519, ECDSA on P-256 with SHA-256 or on
 /// P-384 with SHA-384, or RSA with PKCS #1 v1.5 and SHA-256.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.PrivateKey.generate()
+/// match key.kind() {
+///     crypto.KeyKind.Ed25519 => console.println("Ed25519")
+///     other => console.println("{other}")
+/// }
+/// ```
 pub enum KeyKind {
     Ed25519
     EcdsaP256
@@ -224,12 +272,31 @@ pub enum KeyKind {
 }
 
 /// A private key, which signs.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let key = crypto.PrivateKey.generate()
+/// let signature = key.sign("message".bytes())
+/// console.println("{key.publicKey().verify("message".bytes(), signature)}")
+/// console.print(key.pem())
+/// ```
 pub type PrivateKey = {
     priv signs: KeyKind
     priv pkcs8: Array[Byte]
 }
 
 /// A public key, which verifies what its private key signed.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+///
+/// let signer = crypto.PrivateKey.generate()
+/// let shared = crypto.PublicKey.fromPem(signer.publicKey().pem())?
+/// console.println("{shared.verify("data".bytes(), signer.sign("data".bytes()))}")
+/// ```
 pub type PublicKey = {
     priv signs: KeyKind
     priv raw: Array[Byte]
@@ -446,6 +513,16 @@ const OidEd25519: String = "1.3.101.112"
 
 /// An X.509 certificate: whom it names and who signed it, the names it is
 /// for, its serial number in hexadecimal, when it is valid, and its DER.
+///
+/// ```tondo
+/// import std.console
+/// import std.crypto
+/// import std.fs
+///
+/// for certificate in crypto.certificates(fs.readText("server.pem")?)? {
+///     console.println("{certificate.subject} until {certificate.validUntil} for {certificate.names}")
+/// }
+/// ```
 pub type Certificate = {
     subject: String
     issuer: String

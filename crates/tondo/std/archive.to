@@ -22,6 +22,14 @@ import std.time as __time
 import std.zstd as __zstd
 
 /// A kind of archive.
+///
+/// ```tondo
+/// import std.archive
+/// import std.fs
+///
+/// // A `.tar.gz` of a directory; without a format, the path's extension says.
+/// archive.create("site.tar.gz", fs.disk("site"), format: some(archive.Format.TarGzip))?
+/// ```
 pub enum Format {
     Zip
     Tar
@@ -42,6 +50,19 @@ impl Display for Format {
 }
 
 /// What an entry of an archive is.
+///
+/// ```tondo
+/// import std.archive
+/// import std.console
+///
+/// for entry in archive.open("site.zip")?.entries() {
+///     match entry.kind {
+///         archive.EntryKind.Directory => console.println("{entry.name}/")
+///         archive.EntryKind.Symlink => console.println("{entry.name} -> {entry.target}")
+///         archive.EntryKind.File => console.println("{entry.name} {entry.size} bytes")
+///     }
+/// }
+/// ```
 pub enum EntryKind {
     File
     Directory
@@ -50,6 +71,14 @@ pub enum EntryKind {
 
 /// An entry of an archive: its path, with `/`, what it is, its size, when
 /// it changed, its Unix permissions, and the target of a link.
+///
+/// ```tondo
+/// import std.archive
+/// import std.console
+///
+/// let largest = archive.open("site.zip")?.entries().sortedBy((entry) { -entry.size }).first()
+/// console.println("{largest.map((entry) { entry.name })}")
+/// ```
 pub type Entry = {
     name: String
     kind: EntryKind
@@ -60,6 +89,16 @@ pub type Entry = {
 }
 
 /// Why an archive could not be read, written or extracted.
+///
+/// ```tondo
+/// import std.archive
+/// import std.console
+///
+/// match archive.open("missing.zip") {
+///     ok(found) => console.println("{found.entries().length()} entries")
+///     err(error) => console.println("cannot open it: {error.message}")
+/// }
+/// ```
 pub type ArchiveError = {
     message: String
 }
@@ -75,6 +114,15 @@ fn problem(message: String): ArchiveError {
 }
 
 /// An archive read whole, its entries and their contents.
+///
+/// ```tondo
+/// import std.archive
+/// import std.console
+///
+/// let site = archive.open("site.zip")?
+/// console.println(site.readText("index.html")?)
+/// site.extract("out")?
+/// ```
 pub type Archive = {
     priv shape: Format
     priv listed: Array[Entry]
@@ -285,6 +333,17 @@ fn formatOf(path: String): Format ! ArchiveError {
 // ---------------------------------------------------------------------------
 
 /// Writes an archive to a stream entry by entry; `finish` ends it.
+///
+/// ```tondo
+/// import std.archive
+/// import std.fs
+///
+/// let file = fs.open("notes.zip", fs.OpenMode.Write)?
+/// let zip = archive.writer(file.writer(), archive.Format.Zip)
+/// zip.add("hello.txt", "hello".bytes())?
+/// zip.addDirectory("empty")?
+/// zip.finish()?
+/// ```
 pub type Writer = {
     priv out: __io.Writer
     priv format: Format

@@ -23,6 +23,17 @@ import std.internal.channel as __channel
 import std.sync as __sync
 
 /// Why a pool or an actor cannot be made.
+///
+/// ```tondo
+/// import std.console
+/// import std.executor
+///
+/// match executor.pool(0, 8) {
+///     ok(pool) => pool.shutdown()
+///     err(executor.ExecutorError.InvalidWorkers(given)) => console.println("{given} workers is too few")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum ExecutorError {
     /// A pool runs at least one job at a time: the number given.
     InvalidWorkers(Int)
@@ -41,6 +52,21 @@ impl Display for ExecutorError {
 }
 
 /// Why a pool did not take a job.
+///
+/// ```tondo
+/// import std.console
+/// import std.executor
+///
+/// let pool = executor.pool(1, 0)?
+/// let first = pool.trySubmit(() { 1 })?
+/// match pool.trySubmit(() { 2 }) {
+///     ok(job) => console.println("{job.wait()}")
+///     err(executor.SubmitError.Saturated) => console.println("busy: try later")
+///     err(executor.SubmitError.Closed) => console.println("shut down")
+/// }
+/// console.println("{first.wait()}")
+/// pool.shutdown()
+/// ```
 pub enum SubmitError {
     /// Every worker is busy and the queue is full; only `trySubmit` says it.
     Saturated
@@ -58,6 +84,24 @@ impl Display for SubmitError {
 }
 
 /// Why an actor did not take a message.
+///
+/// ```tondo
+/// import std.console
+/// import std.executor
+///
+/// let printer = executor.actor(0, 4, (count: var Int, line: String) {
+///     count += 1
+///     console.println("{count}: {line}")
+/// })?
+/// let address = printer.reference()
+/// address.send("first")?
+/// printer.stop()?
+/// match address.send("late") {
+///     ok(_) => console.println("sent")
+///     err(executor.SendError.Stopped) => console.println("the actor stopped")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum SendError {
     /// The mailbox is full; only `trySend` says it.
     Saturated
@@ -83,6 +127,17 @@ impl Display for SendError {
 /// waiting for a worker; a handle its copies share. Jobs are tasks whose
 /// `Join` the caller owns: the block that holds one waits for it, and
 /// `job.cancel()` or a `Group` cancel it, also while it waits for a worker.
+///
+/// ```tondo
+/// import std.console
+/// import std.executor
+///
+/// // Blocking work, as a C library's, on two threads of its own.
+/// let pool = executor.pool(2, 16)?
+/// let checksum = pool.submit(() { 6 * 7 })?
+/// console.println("{checksum.wait()}")
+/// pool.shutdown()
+/// ```
 pub type Pool = {
     priv admission: __sync.Semaphore
     priv workers: __sync.Semaphore
@@ -157,6 +212,18 @@ fn run[T](workers: __sync.Semaphore, admitted: __sync.Permit, job: fn(): T): T {
 /// order they arrived. `stop` ends it; so does the end of the block that
 /// owns it, as that block waits for a `Join` nobody consumed: the actor
 /// handles what its mailbox holds, and the block waits for that.
+///
+/// ```tondo
+/// import std.console
+/// import std.executor
+///
+/// let totals = executor.actor(0, 16, (total: var Int, amount: Int) {
+///     total += amount
+///     console.println("total {total}")
+/// })?
+/// totals.reference().send(5)?
+/// totals.stop()?
+/// ```
 pub type Actor[M, E] = {
     priv mailbox: Ref[
         Sender[
@@ -171,6 +238,18 @@ pub type Actor[M, E] = {
 
 /// Where an actor's messages go, a handle its copies share; it does not
 /// keep the actor alive.
+///
+/// ```tondo
+/// import std.executor
+///
+/// fn report(to: executor.ActorRef[String]): !executor.SendError {
+///     to.send("done")?
+/// }
+///
+/// let log = executor.actor(0, 8, (_: var Int, _: String) {})?
+/// report(log.reference())?
+/// log.stop()?
+/// ```
 pub type ActorRef[M] = {
     priv mailbox: WeakRef[Sender[M]]
 }

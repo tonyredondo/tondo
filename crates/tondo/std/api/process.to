@@ -31,6 +31,18 @@ pub fn exit(code: Int): Never
 /// The signals a program receives. Without `signals`, `Interrupt` (Ctrl-C)
 /// and `Terminate` cancel the program: its tasks run their `defer`s and it
 /// ends with 130 or 143; a second one ends it at once.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// // Hangup reloads the settings; Interrupt and Terminate still end the program.
+/// for signal in process.signals(process.Signal.Hangup) {
+///     if signal == process.Signal.Hangup {
+///         console.println("reloading")
+///     }
+/// }
+/// ```
 pub enum Signal {
     Interrupt
     Terminate
@@ -53,6 +65,14 @@ pub fn signals(wanted: ...Signal): Receiver[Signal]
 /// Where a process reads its standard input from: the program's (`Inherit`),
 /// nothing (`Null`), a fixed text or bytes, a file (`<`), a stream of
 /// `std.io`, or the program through the `Process` (`Pipe`).
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// let sorted = process.command("sort").stdin(process.Input.Text("b\na\n")).output()?
+/// console.print(sorted.text()?)
+/// ```
 pub enum Input {
     Inherit
     Null
@@ -67,6 +87,13 @@ pub enum Input {
 /// (`Null`), into the `ProcessOutput` (`Capture`), a file (`>`), the end of
 /// one (`>>`), a stream of `std.io`, standard output (`Stdout`, for standard
 /// error: `2>&1`), or the program through the `Process` (`Pipe`).
+///
+/// ```tondo
+/// import std.process
+///
+/// // Standard error into a file, and standard output as it is.
+/// _ = process.command("make").stderr(process.Output.File("build.log")).run()?
+/// ```
 pub enum Output {
     Inherit
     Null
@@ -80,6 +107,14 @@ pub enum Output {
 
 /// How a process ended: its exit code, `128 + signal` when a signal ended
 /// it, and whether it succeeded; a pipeline succeeds when every stage does.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// let status = process.command("test", "-d", "/tmp").status()?
+/// console.println("{status.success} {status.code}")
+/// ```
 pub type ExitStatus = {
     code: Int
     success: Bool
@@ -87,6 +122,14 @@ pub type ExitStatus = {
 
 /// What a process wrote: its standard output, its standard error, both in
 /// the order they came, and the status of each stage.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// let listed = process.command("ls", "-la").output()?
+/// console.println("{listed.statuses[0].code}: {String.fromBytes(listed.stdout)?.lines().length()} lines")
+/// ```
 pub type ProcessOutput = {
     stdout: Array[Byte]
     stderr: Array[Byte]
@@ -97,6 +140,17 @@ pub type ProcessOutput = {
 /// Why a process could not run: its program was not found or not allowed,
 /// its output was not UTF-8, a stage failed under `check`, or the host
 /// failed otherwise.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// match process.command("false").check() {
+///     ok(_) => console.println("it worked")
+///     err(process.ProcessError.Failed(status, _)) => console.println("it ended with {status.code}")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum ProcessError {
     NotFound
     PermissionDenied
@@ -107,6 +161,16 @@ pub enum ProcessError {
 }
 
 /// A process started and not yet waited for.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// let child = process.command("cat").stdin(process.Input.Pipe).stdout(process.Output.Capture).start()?
+/// child.stdin().writeLine("through the pipe")?
+/// child.stdin().close()?
+/// console.print(child.output()?.text()?)
+/// ```
 pub type Process
 
 /// The command run in the directory `path`.

@@ -4245,3 +4245,15 @@ checkout, and offer an arm for what a `match` misses, which the
 compiler gives as a fix that requires a decision, since its body
 panics until written. The tokens are also counted in one pass now: a
 large file took time quadratic in its lines.
+
+## 2026-11-02 — An example for every type of the library
+
+A module's example showed where to start, but a type met later, as the
+`Response` a call gives or the `Event` a stream yields, still had only
+its declaration. Every public type of the standard library now carries
+an example in its `///`, a whole program that uses it as a program
+would, compiled with the rest; a test fails when a new type has none.
+Writing them ran each one, and what they showed was fixed on the way:
+a URL host that RFC 3986 does not allow, `http.Saved` without a
+decoder, protobuf fields typed with an alias, reflection without `Send`
+and `Share`, and a `derive` error that did not say what to write.

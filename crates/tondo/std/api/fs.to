@@ -14,6 +14,17 @@
 // ```
 
 /// It names no path and no content.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// match fs.readText("missing.txt") {
+///     ok(text) => console.println(text)
+///     err(fs.FsError.NotFound) => console.println("there is no such file")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum FsError {
     NotFound
     PermissionDenied
@@ -29,6 +40,17 @@ pub enum FsError {
 }
 
 /// What an entry is: a file, a directory, a symbolic link or something else.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// for entry in fs.walk(".")? {
+///     if entry.kind == fs.FileKind.Directory {
+///         console.println("{entry.path}/")
+///     }
+/// }
+/// ```
 pub enum FileKind {
     File
     Directory
@@ -39,6 +61,15 @@ pub enum FileKind {
 /// `Read` an existing file; `Write` creates or empties it; `Append` creates it
 /// if missing and writes at the end; `CreateNew` fails if it exists;
 /// `ReadWrite` reads and writes an existing one.
+///
+/// ```tondo
+/// import std.fs
+///
+/// // `Append` adds at the end, creating the file when it is missing.
+/// var log = fs.open("app.log", fs.OpenMode.Append)?
+/// log.write("started\n")?
+/// log.close()?
+/// ```
 pub enum OpenMode {
     Read
     Write
@@ -48,6 +79,20 @@ pub enum OpenMode {
 }
 
 /// An open file, with one owner; it closes when abandoned.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// var file = fs.open("notes.txt", fs.OpenMode.Read)?
+/// for {
+///     match file.readLine()? {
+///         some(line) => console.println(line)
+///         none => break
+///     }
+/// }
+/// file.close()?
+/// ```
 pub type File
 
 /// The content of the file as text; one that is not UTF-8 is

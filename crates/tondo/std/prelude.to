@@ -21,6 +21,23 @@ pub alias Panic = __panics.Panic
 
 /// A type whose values are in order: `compare` is negative, zero or
 /// positive as `self` goes before, with or after `other`.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// A version, in order by its parts.
+/// pub type Version = { major: Int, minor: Int }
+///
+/// impl Ordered for Version {
+///     fn compare(self, other: Version): Int {
+///         if self.major != other.major { self.major.compare(other.major) } else { self.minor.compare(other.minor) }
+///     }
+/// }
+///
+/// let versions = [Version { major: 1, minor: 10 }, Version { major: 1, minor: 2 }, Version { major: 0, minor: 9 }]
+/// let newest = versions.sortedBy((version) { version }).last().expect("versions")
+/// console.println("{newest.major}.{newest.minor} {Version { major: 1, minor: 2 } < Version { major: 1, minor: 10 }}")
+/// ```
 pub trait Ordered {
     fn compare(self, other: Self): Int
 }
@@ -28,6 +45,31 @@ pub trait Ordered {
 /// A type whose values add and subtract, from a zero: `a + b`, `a - b`
 /// and `values.sum()` (language 18.10). Every number is one, and so is a
 /// duration; a program's type, as an amount of money, may be one too.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// An amount of money, in cents, which adds as numbers do.
+/// pub type Money = { cents: Int }
+///
+/// impl Additive for Money {
+///     fn zero(): Money {
+///         Money { cents: 0 }
+///     }
+///
+///     fn plus(self, other: Money): Money {
+///         Money { cents: self.cents + other.cents }
+///     }
+///
+///     fn minus(self, other: Money): Money {
+///         Money { cents: self.cents - other.cents }
+///     }
+/// }
+///
+/// let prices = [Money { cents: 250 }, Money { cents: 199 }]
+/// let total = prices.sum() - Money { cents: 49 }
+/// console.println("{total.cents / 100}.{"{total.cents % 100}".padStart(2, "0")}")
+/// ```
 pub trait Additive {
     fn zero(): Self
 
@@ -39,6 +81,50 @@ pub trait Additive {
 /// A type whose values also multiply and divide, and that integer literals
 /// write: `a * b`, `a / b` and `x * 2`. Every number is one; a program's
 /// type, as a decimal or a fraction, may be one too.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// A fraction, which integer literals write and arithmetic keeps exact.
+/// pub type Fraction = { top: Int, bottom: Int }
+///
+/// impl Additive for Fraction {
+///     fn zero(): Fraction {
+///         Fraction { top: 0, bottom: 1 }
+///     }
+///
+///     fn plus(self, other: Fraction): Fraction {
+///         Fraction { top: self.top * other.bottom + other.top * self.bottom, bottom: self.bottom * other.bottom }
+///     }
+///
+///     fn minus(self, other: Fraction): Fraction {
+///         Fraction { top: self.top * other.bottom - other.top * self.bottom, bottom: self.bottom * other.bottom }
+///     }
+/// }
+///
+/// impl Number for Fraction {
+///     fn one(): Fraction {
+///         Fraction { top: 1, bottom: 1 }
+///     }
+///
+///     fn fromInt(value: Int): Fraction {
+///         Fraction { top: value, bottom: 1 }
+///     }
+///
+///     fn times(self, other: Fraction): Fraction {
+///         Fraction { top: self.top * other.top, bottom: self.bottom * other.bottom }
+///     }
+///
+///     fn dividedBy(self, other: Fraction): Fraction {
+///         Fraction { top: self.top * other.bottom, bottom: self.bottom * other.top }
+///     }
+/// }
+///
+/// let third = Fraction { top: 1, bottom: 3 }
+/// // The literals become fractions through `fromInt`.
+/// let result = third * 2 + 1
+/// console.println("{result.top}/{result.bottom}")
+/// ```
 pub trait Number: Additive {
     fn one(): Self
 
@@ -51,6 +137,23 @@ pub trait Number: Additive {
 
 /// The language's integers, of every width: on a `T: Integer`, generic code
 /// has everything a concrete integer has. A program does not implement it.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// Works for an integer of any width, with what every integer has.
+/// fn digits[T: Integer](value: T): Int {
+///     var rest = value / 10
+///     var count = 1
+///     for rest != 0 {
+///         rest = rest / 10
+///         count += 1
+///     }
+///     count
+/// }
+///
+/// console.println("{digits(12345)} {digits(255u8)} {digits(-7i16)}")
+/// ```
 pub trait Integer: Number + Ordered + Display {}
 
 fn order[T: Ordered](a: T, b: T): Int {
@@ -392,6 +495,15 @@ pub fn Char.from(code: Int): Char? {
 
 /// Which byte of a number comes first: the highest, as networks send it,
 /// or the lowest, as most processors keep it.
+///
+/// ```tondo
+/// import std.console
+///
+/// let length = 513
+/// let big = length.toBytes()
+/// let little = Int32(length).unwrapOr(0).toBytes(order: ByteOrder.Little)
+/// console.println("{big} {little} {Int32.fromBytes(little, order: ByteOrder.Little)}")
+/// ```
 pub enum ByteOrder {
     Big
     Little
@@ -569,6 +681,34 @@ pub fn Option[T].context(self, message: String): T ! Failure {
 /// `with captured` gives back until its block ends, in this task or
 /// another: what a queue keeps with each message, so that the task that
 /// handles it does so with the contexts of the one that sent it.
+///
+/// ```tondo
+/// import std.console
+///
+/// context Request = {
+///     id: String = "-"
+/// }
+///
+/// fn handle(jobs: Receiver[(Contexts, String)]) {
+///     for (captured, job) in jobs {
+///         work(captured, job)
+///     }
+/// }
+///
+/// fn work(captured: Contexts, job: String) {
+///     // The sender's contexts, for this block, in the worker's task.
+///     with captured
+///     console.println("{job} for request {Request.id}")
+/// }
+///
+/// with Request { id: "r-42" }
+/// let captured = Contexts.current()
+/// let (sender, jobs) = channel[(Contexts, String)](4)
+/// sender.send((captured, "resize"))
+/// sender.close()
+/// let worker = spawn handle(jobs)
+/// worker.wait()
+/// ```
 pub type Contexts = {
     priv native: contextNative.Native
 }
@@ -592,6 +732,23 @@ fn activateContexts(captured: Contexts): Int {
 /// An error that says what the program was doing when it happened, with
 /// the error that caused it (language 15.10): `reading config.yaml: no
 /// such file`. `Failure { message: "..." }` is one with no cause.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+///
+/// fn load(path: String): String ! Failure {
+///     fs.readText(path).context("reading {path}")?
+/// }
+///
+/// match load("/missing/app.toml").context("starting the server") {
+///     ok(text) => console.println(text)
+///     err(failure) => {
+///         console.println("{failure}")
+///         console.println("not found: {failure.find[fs.FsError]() == some(fs.FsError.NotFound)}")
+///     }
+/// }
+/// ```
 pub type Failure = {
     message: String
     priv cause: reflectNative.Box? = none
@@ -1082,6 +1239,26 @@ pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool {
 /// What every iterator can do besides `next`. The adapters are lazy: they
 /// take elements from their source only as they are asked for theirs. Each
 /// method works on a copy of the iterator, so its type is `Copy`.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// The numbers of Fibonacci, as many as asked for: an iterator of its own,
+/// /// which every adapter takes.
+/// pub type Fibonacci = { a: Int, b: Int }
+///
+/// impl Iterator[Int] for Fibonacci {
+///     fn next(mut self): Int? {
+///         let current = self.a
+///         self.a = self.b
+///         self.b = current + self.b
+///         some(current)
+///     }
+/// }
+///
+/// let evens = Fibonacci { a: 0, b: 1 }.filter((n) { n % 2 == 0 }).take(5).collect()
+/// console.println("{evens}")
+/// ```
 pub trait Iterator[T] {
     fn map[U](self, transform: fn(T): U): MapIterator[Self, T, U] {
         MapIterator { source: self, transform }
@@ -1197,6 +1374,15 @@ pub trait Iterator[T] {
 }
 
 /// The iterator `map` gives: each value of the source through the function.
+///
+/// ```tondo
+/// import std.console
+///
+/// // Each line's length, computed as the loop asks, with no array between.
+/// for size in "tea\ncake\nbiscuits".lines().iter().map((line) { line.length() }) {
+///     console.println("{size}")
+/// }
+/// ```
 pub type MapIterator[I, T, U] = {
     priv source: I
     priv transform: fn(T): U
@@ -1212,6 +1398,14 @@ impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U] {
 }
 
 /// The iterator `filter` gives: the values of the source that pass the test.
+///
+/// ```tondo
+/// import std.console
+///
+/// let words = ["apple", "Banana", "cherry", "Date"]
+/// let capitalized = words.iter().filter((word) { word.chars().take(1).any((c) { c.isUpper() }) })
+/// console.println("{capitalized.collect()}")
+/// ```
 pub type FilterIterator[I, T] = {
     priv source: I
     priv keep: fn(T): Bool
@@ -1233,6 +1427,14 @@ impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T] {
 }
 
 /// The iterator `take` gives: the first values of the source, up to a count.
+///
+/// ```tondo
+/// import std.console
+///
+/// // The first three squares above 50: the rest are never computed.
+/// let squares = (1..=1000).map((n) { n * n }).filter((square) { square > 50 }).take(3).collect()
+/// console.println("{squares}")
+/// ```
 pub type TakeIterator[I, T] = {
     priv source: I
     priv remaining: Int
@@ -1250,6 +1452,16 @@ impl[I: Iterator[T], T] Iterator[T] for TakeIterator[I, T] {
 }
 
 /// The iterator `skip` gives: the values of the source after a count.
+///
+/// ```tondo
+/// import std.console
+///
+/// let csv = "name,age\nAda,36\nBo,41"
+/// // The rows after the header.
+/// for row in csv.lines().iter().skip(1) {
+///     console.println(row.split(",")[0])
+/// }
+/// ```
 pub type SkipIterator[I, T] = {
     priv source: I
     priv count: Int
@@ -1270,6 +1482,14 @@ impl[I: Iterator[T], T] Iterator[T] for SkipIterator[I, T] {
 
 /// The iterator `takeWhile` gives: the values of the source until one fails
 /// the test.
+///
+/// ```tondo
+/// import std.console
+///
+/// let log = ["boot", "load config", "ERROR disk", "retry"]
+/// let before = log.iter().takeWhile((line) { not line.startsWith("ERROR") }).collect()
+/// console.println("{before}")
+/// ```
 pub type TakeWhileIterator[I, T] = {
     priv source: I
     priv predicate: fn(T): Bool
@@ -1293,6 +1513,14 @@ impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T] {
 
 /// The iterator `skipWhile` gives: the values of the source from the first
 /// that fails the test.
+///
+/// ```tondo
+/// import std.console
+///
+/// let text = "   \n\n  first line\nsecond"
+/// let content = text.lines().iter().skipWhile((line) { line.trim().isEmpty() }).collect()
+/// console.println("{content}")
+/// ```
 pub type SkipWhileIterator[I, T] = {
     priv source: I
     priv predicate: fn(T): Bool
@@ -1319,6 +1547,14 @@ impl[I: Iterator[T], T] Iterator[T] for SkipWhileIterator[I, T] {
 }
 
 /// The iterator `enumerate` gives: each value of the source with its index.
+///
+/// ```tondo
+/// import std.console
+///
+/// for (index, name) in ["Ada", "Bo", "Cy"].iter().enumerate() {
+///     console.println("{index + 1}. {name}")
+/// }
+/// ```
 pub type EnumerateIterator[I, T] = {
     priv source: I
     priv index: Int
@@ -1340,6 +1576,17 @@ impl[I: Iterator[T], T] Iterator[(Int, T)] for EnumerateIterator[I, T] {
 
 /// The iterator `zip` gives: the values of two iterators in pairs, until
 /// either ends.
+///
+/// ```tondo
+/// import std.console
+///
+/// let names = ["Ada", "Bo", "Cy"]
+/// let scores = [91, 78]
+/// // Pairs while both have one: Cy has no score.
+/// for (name, score) in names.iter().zip(scores.iter()) {
+///     console.println("{name}: {score}")
+/// }
+/// ```
 pub type ZipIterator[I, J, T, U] = {
     priv first: I
     priv second: J
@@ -1359,6 +1606,14 @@ impl[I: Iterator[T], J: Iterator[U], T, U] Iterator[(T, U)] for ZipIterator[I, J
 }
 
 /// The iterator `chain` gives: the values of one iterator, then another's.
+///
+/// ```tondo
+/// import std.console
+///
+/// let defaults = ["--color", "--quiet"]
+/// let given = ["--verbose"]
+/// console.println("{defaults.iter().chain(given.iter()).collect()}")
+/// ```
 pub type ChainIterator[I, J, T] = {
     priv first: I
     priv second: J
@@ -1380,6 +1635,14 @@ impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T] {
 
 /// The iterator `flatMap` gives: the elements of each array the function
 /// makes of a value of the source.
+///
+/// ```tondo
+/// import std.console
+///
+/// let sentences = ["a quick fox", "jumps over"]
+/// let words = sentences.iter().flatMap((sentence) { sentence.split(" ") }).collect()
+/// console.println("{words.length()} words: {words}")
+/// ```
 pub type FlatMapIterator[I, T, U] = {
     priv source: I
     priv transform: fn(T): Array[U]
@@ -1482,6 +1745,15 @@ impl Discrete for Char {
 
 /// `start..end`, without `end`, or `start..=end`, with it: the values from
 /// `start` on, one after another; none when `start` is past the end.
+///
+/// ```tondo
+/// import std.console
+///
+/// let hours = 9..17
+/// let week = 1..=7
+/// console.println("{hours.start()}..{hours.end()} has 12: {hours.contains(12)}, inclusive: {week.isInclusive()}")
+/// console.println("{(0..10).filter((n) { n % 3 == 0 }).collect()} {(5..5).isEmpty()}")
+/// ```
 pub type Range[T] = {
     priv lower: T
     priv upper: T
@@ -1551,6 +1823,14 @@ fn textHas(value: Char, text: String): Bool {
 }
 
 /// The characters of a string, as `String.chars()` gives them.
+///
+/// ```tondo
+/// import std.console
+///
+/// let word = "Año"
+/// let vowels = word.chars().filter((c) { "aeiouáéíóú".contains("{c.toLower()}") }).count()
+/// console.println("{word.chars().count()} characters, {vowels} vowels, {word.byteLength()} bytes")
+/// ```
 pub type CharIterator = {
     priv text: String
     priv offset: Int
@@ -1582,6 +1862,16 @@ pub fn String.chars(self): CharIterator {
 }
 
 /// The elements of an array, as `Array.iter()` gives them.
+///
+/// ```tondo
+/// import std.console
+///
+/// let prices = [3, 12, 7, 25]
+/// // Stops at the first match without looking at the rest.
+/// let firstExpensive = prices.iter().find((price) { price > 10 })
+/// let total = prices.iter().reduce(0, (sum, price) { sum + price })
+/// console.println("{firstExpensive} {total} {prices.iter().all((price) { price > 0 })}")
+/// ```
 pub type ArrayIterator[T] = {
     priv items: Array[T]
     priv position: Int

@@ -30,6 +30,16 @@ import std.shapes as __shapes
 // ---------------------------------------------------------------------------
 
 /// A template compiled with the program, which writes a `T`.
+///
+/// ```tondo
+/// import std.console
+/// import std.template
+///
+/// pub type Post = { title: String, tags: Array[String] }
+///
+/// let page = template.html[Post](r"""<h1>{{ title }}</h1>{{ for tag in tags }}<em>{{ tag }}</em>{{ end }}""")
+/// console.println(page.render(Post { title: "Tea & cake", tags: ["food", "<b>"] }))
+/// ```
 pub type Template[T] = {
     priv code: fn(T): String
 }
@@ -64,6 +74,17 @@ pub fn Template[T].write(self, data: T, out: __io.Writer): !__io.IoError {
 
 /// HTML that the program trusts, which a template writes as it is in the
 /// text of HTML, and escapes anywhere else.
+///
+/// ```tondo
+/// import std.console
+/// import std.template
+///
+/// pub type Page = { title: String, body: template.Html }
+///
+/// let page = template.html[Page](r"""<h1>{{ title }}</h1>{{ body }}""")
+/// let body = template.Html { value: "<p>Written by the program, <b>trusted</b>.</p>" }
+/// console.println(page.render(Page { title: "<Tea>", body: body }))
+/// ```
 pub type Html = {
     value: String
 }
@@ -110,6 +131,20 @@ impl __serialization.Decode for Html {
 
 /// Why a template does not read, or could not be written: what, in which
 /// template, and where.
+///
+/// ```tondo
+/// import std.console
+/// import std.template
+///
+/// pub type Post = { title: String }
+///
+/// var site = template.Set.html()
+/// site.add("post.html", r"""<h1>{{ title }}</h1><p>{{ author }}</p>""")?
+/// match site.render("post.html", Post { title: "Tea" }) {
+///     ok(page) => console.println(page)
+///     err(error) => console.println("{error.template} at {error.line}:{error.column}: {error.message}")
+/// }
+/// ```
 pub type TemplateError = {
     message: String
     template: String

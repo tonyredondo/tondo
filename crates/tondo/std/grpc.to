@@ -34,6 +34,42 @@ import std.time as __time
 // ---------------------------------------------------------------------------
 
 /// The code of a call's status, as gRPC numbers them from 0.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     if request.name.isEmpty() {
+///         fail grpc.Status { code: grpc.Code.InvalidArgument, message: "a name is needed" }
+///     }
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest {}) {
+///     ok(reply) => console.println(reply.message)
+///     err(status) if status.code == grpc.Code.InvalidArgument => console.println("fix the request ({status.code.number()}): {status.message}")
+///     err(status) => console.println("{status}")
+/// }
+/// console.println("{grpc.Code.of(5)}")
+/// server.stop()
+/// ```
 pub enum Code {
     Ok
     Cancelled
@@ -162,6 +198,42 @@ impl Display for Code {
 
 /// How a call failed: its code, a message for people and details for
 /// programs, as `google.rpc.Status` carries them.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     match Int.parse(request.name) {
+///         ok(_) => fail grpc.Status { code: grpc.Code.InvalidArgument, message: "a name is not a number" }
+///         err(_) => HelloReply { message: "Hello, {request.name}!" }
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// for name in ["Ada", "42"] {
+///     match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name }) {
+///         ok(reply) => console.println(reply.message)
+///         err(status) => console.println("{status.code}: {status.message}")
+///     }
+/// }
+/// server.stop()
+/// ```
 pub type Status = {
     code: Code
     message: String = ""
@@ -247,6 +319,40 @@ fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
 /// What a call carries besides its messages: the method, as
 /// `/users.v1.UserService/Get`, its metadata, the peer's address and the
 /// time left before its deadline.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     // What the call carries besides its message.
+///     let call = grpc.call()
+///     if call.metadata.get("authorization") != some("Bearer secret") {
+///         fail grpc.Status { code: grpc.Code.Unauthenticated, message: "who are you?" }
+///     }
+///     HelloReply { message: "Hello, {request.name}, through {call.method}" }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// let metadata = ["authorization": "Bearer secret"]
+/// console.println(client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" }, metadata: metadata)?.message)
+/// server.stop()
+/// ```
 pub type Call = {
     method: String = ""
     metadata: Map[String, String] = [:]
@@ -287,6 +393,41 @@ pub fn setTrailer(name: String, value: String) {
 
 /// A service a server serves: its full name and its methods, which a
 /// `.proto` file's service gives as `users.userService(value)`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// // A service written by hand; a `.proto` file under `src` makes one too.
+/// let greeter = grpc.Service {
+///     name: "demo.Greeter"
+///     methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }]
+/// }
+/// var app = http.App.new()
+/// app.grpc(greeter.onCall((call, next) {
+///     console.println("serving {call.method}")
+///     next()?
+/// }))
+/// let server = app.start()?
+/// console.println(grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
+/// server.stop()
+/// ```
 pub type Service = {
     name: String
     methods: Array[Method]
@@ -301,6 +442,35 @@ pub type Service = {
 
 /// A method of a service: its name, what serves it, and whether it has no
 /// side effects, which lets Connect call it with a `GET`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// // With no side effects, Connect clients may call it with a `GET`, which caches.
+/// let method = grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? }, noSideEffects: true }
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [method] })
+/// let server = app.start()?
+/// console.println(grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
+/// server.stop()
+/// ```
 pub type Method = {
     name: String
     handler: fn(ServerCall): !Status
@@ -308,6 +478,41 @@ pub type Method = {
 }
 
 /// Whether a message was received or sent by the side that sees it.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] }
+/// var app = http.App.new()
+/// // Each message of each call, as the service receives or sends it.
+/// app.grpc(greeter.onMessage((call, direction, message) {
+///     let arrow = match direction {
+///         grpc.Direction.Received => "<-"
+///         grpc.Direction.Sent => "->"
+///     }
+///     console.println("{call.method} {arrow} {message}")
+/// }))
+/// let server = app.start()?
+/// _ = grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?
+/// server.stop()
+/// ```
 pub enum Direction {
     Received
     Sent
@@ -390,6 +595,46 @@ impl __http.GrpcService for Service {
 }
 
 /// A call being served: the messages it receives and sends.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// // A handler that reads and writes the call's messages itself: here, an
+/// // answer to every request until the client stops sending.
+/// fn chat(call: grpc.ServerCall): !grpc.Status {
+///     for {
+///         match call.receive[HelloRequest]()? {
+///             some(request) => call.send(HelloReply { message: "Hi, {request.name}" })?
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Chat", handler: chat }] })
+/// let server = app.start()?
+/// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Greeter/Chat")
+/// talk.send(HelloRequest { name: "Ada" })?
+/// talk.send(HelloRequest { name: "Bo" })?
+/// talk.closeSend()
+/// for reply in talk.replies() {
+///     console.println(reply?.message)
+/// }
+/// server.stop()
+/// ```
 pub type ServerCall = {
     priv frames: grpcNative.Native
     priv output: __io.Writer
@@ -978,6 +1223,38 @@ enum Source {
 
 /// The messages of a stream, each as it arrives: `for each in stream { let
 /// message = each? }`. A failure ends it.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn countdown(request: HelloRequest, replies: Sender[HelloReply]): !grpc.Status {
+///     for n in [3, 2, 1] {
+///         replies.send(HelloReply { message: "{request.name} in {n}" })
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: (call) { grpc.serverStream(call, countdown)? } }] })
+/// let server = app.start()?
+/// let replies = grpc.connect(server.url())?.serverStream[HelloRequest, HelloReply]("/demo.Launch/Countdown", HelloRequest { name: "lift-off" })
+/// for reply in replies {
+///     console.println(reply?.message)
+/// }
+/// server.stop()
+/// ```
 pub type Stream[T] = {
     priv source: Source
     priv ended: Bool = false
@@ -1012,12 +1289,28 @@ impl[T: __protobuf.Message + __reflect.Reflect] Iterator[T ! Status] for Stream[
 
 /// How a client compresses the messages it sends; every client reads
 /// compressed ones.
+///
+/// ```tondo
+/// import std.grpc
+///
+/// // Each message gzipped, worth it for large ones over a slow network.
+/// let client = grpc.connect("https://api.example.com", compression: grpc.Compression.Gzip)?
+/// _ = client
+/// ```
 pub enum Compression {
     None
     Gzip
 }
 
 /// How a channel spreads its calls over the addresses of its target.
+///
+/// ```tondo
+/// import std.grpc
+///
+/// // The calls spread over the addresses the name resolves to, again as they change.
+/// let client = grpc.connect("dns:///users.internal:50051", balancing: grpc.Balancing.RoundRobin)?
+/// _ = client
+/// ```
 pub enum Balancing {
     /// All on the first address that answers, in order, until it drops.
     PickFirst
@@ -1032,6 +1325,41 @@ pub enum Balancing {
 /// sends. A target may name several servers, `http://a:50051,b:50051`,
 /// and a host's name may resolve to several addresses: `balancing` says
 /// which one each call goes to.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+/// import std.time
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// // A channel keeps its connection for every call; its interceptors see each.
+/// let client = grpc.connect(server.url())?.onCall((call, next) {
+///     let started = time.now()
+///     let outcome = next(call)
+///     console.println("{call.method} took {started.elapsed()}")
+///     outcome?
+/// })
+/// console.println(client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
+/// server.stop()
+/// ```
 pub type Channel = {
     priv native: grpcNative.Native
     priv target: String
@@ -1288,6 +1616,41 @@ pub fn Channel.serverStream[
 
 /// A call that sends a stream: `send` each request, then `finish` for the
 /// reply.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn greetAll(requests: grpc.Stream[HelloRequest]): HelloReply ! grpc.Status {
+///     var names: Array[String] = []
+///     for request in requests {
+///         names.push(request?.name)
+///     }
+///     HelloReply { message: "Hello, {names.join(" and ")}!" }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: (call) { grpc.clientStream(call, greetAll)? } }] })
+/// let server = app.start()?
+/// let upload = grpc.connect(server.url())?.clientStream[HelloRequest, HelloReply]("/demo.Greeter/GreetAll")
+/// for name in ["Ada", "Bo", "Cy"] {
+///     upload.send(HelloRequest { name })?
+/// }
+/// console.println(upload.finish()?.message)
+/// server.stop()
+/// ```
 pub type Upload[In, Out] = {
     priv outgoing: Outgoing
 }
@@ -1319,6 +1682,42 @@ pub fn Upload[
 
 /// A call that sends and receives streams: `send` requests, `closeSend`
 /// after the last, and read the replies as a `Stream`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn echo(requests: grpc.Stream[HelloRequest], replies: Sender[HelloReply]): !grpc.Status {
+///     for request in requests {
+///         replies.send(HelloReply { message: "echo {request?.name}" })
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: (call) { grpc.bidiStream(call, echo)? } }] })
+/// let server = app.start()?
+/// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Echo/Echo")
+/// talk.send(HelloRequest { name: "one" })?
+/// talk.send(HelloRequest { name: "two" })?
+/// talk.closeSend()
+/// for reply in talk.replies() {
+///     console.println(reply?.message)
+/// }
+/// console.println("trailers: {talk.trailers()}")
+/// server.stop()
+/// ```
 pub type Duplex[In, Out] = {
     priv outgoing: Outgoing
 }
@@ -1383,6 +1782,21 @@ fn pairs(list: Array[String]): Map[String, String] {
 // ---------------------------------------------------------------------------
 
 /// Whether a server serves a service, as `grpc.health.v1` tells it.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+/// import std.time
+///
+/// let health = grpc.Health.new()
+/// health.set("demo.Greeter", grpc.ServingStatus.Serving)
+/// var app = http.App.new()
+/// app.grpc(health.service())
+/// let server = app.start(port: 50051)?
+/// // While it drains for a stop, load balancers stop sending it calls.
+/// health.set("demo.Greeter", grpc.ServingStatus.NotServing)
+/// server.stop(grace: time.seconds(10))
+/// ```
 pub enum ServingStatus {
     Unknown
     Serving
@@ -1408,6 +1822,20 @@ impl Display for ServingStatus {
 /// `app.grpc(health.service())`, then `health.set("users.v1.UserService",
 /// grpc.ServingStatus.NotServing)` as it changes. The server, `""`,
 /// starts `Serving`.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// // The standard health service, which load balancers and Kubernetes ask;
+/// // the empty name is the whole server.
+/// let health = grpc.Health.new()
+/// health.set("", grpc.ServingStatus.Serving)
+/// var app = http.App.new()
+/// app.grpc(health.service())
+/// app.grpc(grpc.reflection([health.service()]))
+/// app.listen(port: 50051)?
+/// ```
 pub type Health = {
     priv statuses: __sync.Mutex[Map[String, ServingStatus]]
 }

@@ -14,12 +14,31 @@ import std.internal.codec as codecNative
 
 /// The alphabets of Base64 (RFC 4648): `Standard`, with `+`, `/` and `=`
 /// padding, and `Url`, with `-` and `_` and without padding.
+///
+/// ```tondo
+/// import std.console
+/// import std.encoding
+///
+/// let token = encoding.base64Encode([251, 255], alphabet: encoding.Base64Alphabet.Url)
+/// console.println("{token} {encoding.base64Decode(token, alphabet: encoding.Base64Alphabet.Url)?}")
+/// ```
 pub enum Base64Alphabet {
     Standard
     Url
 }
 
 /// Why a text does not decode.
+///
+/// ```tondo
+/// import std.console
+/// import std.encoding
+///
+/// match encoding.hexDecode("0g") {
+///     ok(bytes) => console.println("{bytes}")
+///     err(encoding.EncodingError.InvalidCharacter(at)) => console.println("not hexadecimal at byte {at}")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum EncodingError {
     /// A character the encoding does not use, at this byte offset.
     InvalidCharacter(Int)

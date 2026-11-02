@@ -18,6 +18,15 @@ import std.reflect as __reflect
 /// A URL, `https://ada@example.com:8443/docs/a?q=1#intro`, or a relative
 /// reference, `../a.png`. `Display` writes it back, encoding what the path
 /// and the fragment need, so one changed with `with` is a valid URL.
+///
+/// ```tondo
+/// import std.console
+/// import std.url
+///
+/// let base = url.parse("https://example.com/docs/guide/?lang=en")?
+/// let next = base.resolve("../api?page=2&page=3")?
+/// console.println("{base.isAbsolute()} {base.param("lang")} {next.path} {next.params("page")}")
+/// ```
 pub type Url = {
     /// `https`; empty in a relative reference.
     scheme: String
@@ -38,6 +47,16 @@ pub type Url = {
 }
 
 /// Why a text is not a URL: what to fix, and where, in characters.
+///
+/// ```tondo
+/// import std.console
+/// import std.url
+///
+/// match url.parse("http://[::1/") {
+///     ok(address) => console.println(address.host)
+///     err(error) => console.println("at {error.offset}: {error.message}")
+/// }
+/// ```
 pub type UrlError = {
     message: String
     offset: Int

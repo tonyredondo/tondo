@@ -6,6 +6,14 @@ import std.env as __env
 import std.internal.env as envNative
 
 /// What a program was built from, which `env.build()` gives.
+///
+/// ```tondo
+/// import std.console
+/// import std.env
+///
+/// let build = env.build()
+/// console.println("{build.name} {build.version} ({build.commit})")
+/// ```
 pub type Build = {
     /// The package's name, or the file's without `.to`.
     name: String
@@ -25,6 +33,15 @@ pub type Build = {
 
 /// A package a program uses: its name and the `version` of its
 /// `tondo.toml`, or `0.0.0`.
+///
+/// ```tondo
+/// import std.console
+/// import std.env
+///
+/// for dependency in env.build().dependencies {
+///     console.println("{dependency.name} {dependency.version}")
+/// }
+/// ```
 pub type Dependency = {
     name: String
     version: String
@@ -67,6 +84,14 @@ pub fn processors(physical: Bool = false): Int {
 /// The user the program runs as: its id, its group's, its name and its
 /// home, as the system's accounts say; a name or a home they do not have
 /// is empty.
+///
+/// ```tondo
+/// import std.console
+/// import std.env
+///
+/// let user = env.user()
+/// console.println("{user.name} ({user.id}) at {user.home}")
+/// ```
 pub type User = {
     id: Int
     group: Int
@@ -76,6 +101,14 @@ pub type User = {
 
 /// The system the program runs on, as `uname` says: its name, `Linux` or
 /// `Darwin`, its release and the machine, as `x86_64` or `arm64`.
+///
+/// ```tondo
+/// import std.console
+/// import std.env
+///
+/// let system = env.system()
+/// console.println("{system.name} {system.release} on {system.machine}")
+/// ```
 pub type System = {
     name: String
     release: String

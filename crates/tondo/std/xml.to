@@ -68,6 +68,16 @@ impl __reflect.Reflect for Text {
 
 /// Why a text is not XML, or not of the type it is read as: what is wrong,
 /// and where.
+///
+/// ```tondo
+/// import std.console
+/// import std.xml
+///
+/// match xml.parse("<note>\n  <to>Ada</from>\n</note>") {
+///     ok(note) => console.println(note.name)
+///     err(error) => console.println("{error.line}:{error.column}: {error.message}")
+/// }
+/// ```
 pub type XmlError = {
     message: String
     line: Int
@@ -82,6 +92,17 @@ impl Display for XmlError {
 
 /// An element: its name, with its prefix, as `atom:link`, its attributes
 /// in their order, and its nodes.
+///
+/// ```tondo
+/// import std.console
+/// import std.xml
+///
+/// let feed = xml.parse(r"""<feed><entry id="1"><title>Tea</title></entry><entry id="2"><title>Cake</title></entry></feed>""")?
+/// for entry in feed.children("entry") {
+///     let title = entry.child("title").map((title) { title.text() }).unwrapOr("")
+///     console.println("{entry.attribute("id").unwrapOr("?")}: {title}")
+/// }
+/// ```
 pub type Element = {
     name: String
     attributes: Map[String, String]
@@ -90,6 +111,19 @@ pub type Element = {
 
 /// What an element holds: elements and text, without comments or
 /// processing instructions.
+///
+/// ```tondo
+/// import std.console
+/// import std.xml
+///
+/// let paragraph = xml.parse("<p>Tea and <b>cake</b>.</p>")?
+/// for node in paragraph.nodes {
+///     match node {
+///         xml.Node.Element(element) => console.println("element {element.name}")
+///         xml.Node.Text(text) => console.println("text \"{text}\"")
+///     }
+/// }
+/// ```
 pub enum Node {
     Element(Element)
     Text(String)

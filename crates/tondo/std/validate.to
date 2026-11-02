@@ -82,17 +82,74 @@ impl __reflect.Reflect for Email {
 }
 
 /// A rule a value breaks: the path of its field and what the rule asks.
+///
+/// ```tondo
+/// import std.console
+/// import std.validate
+///
+/// pub type Account = {
+///     @validate.Min(18)
+///     age: Int
+/// }
+///
+/// match validate.check(Account { age: 12 }) {
+///     ok(_) => console.println("valid")
+///     err(invalid) => {
+///         for violation in invalid.violations {
+///             console.println("{violation.path} {violation.message}")
+///         }
+///     }
+/// }
+/// ```
 pub alias Violation = __serialization.Violation
 
 /// Rules of a type of its own, which its fields' annotations cannot say:
 /// between its fields, on each element of a list, or any other. The code
 /// the compiler writes for `Decode` checks them after the fields' rules,
 /// and so does `check`. A path names a field from the value: `"end"`.
+///
+/// ```tondo
+/// import std.console
+/// import std.validate
+///
+/// pub type Booking = { start: Int, end: Int }
+///
+/// impl validate.Rules for Booking {
+///     fn violations(self): Array[validate.Violation] {
+///         if self.end < self.start {
+///             return [validate.Violation { path: "end", message: "must not be before start" }]
+///         }
+///         []
+///     }
+/// }
+///
+/// match validate.check(Booking { start: 5, end: 1 }) {
+///     ok(_) => console.println("valid")
+///     err(invalid) => console.println("{invalid}")
+/// }
+/// ```
 pub trait Rules {
     fn violations(self): Array[Violation]
 }
 
 /// The rules a value breaks.
+///
+/// ```tondo
+/// import std.console
+/// import std.validate
+///
+/// pub type Signup = {
+///     @validate.Length(min: 3)
+///     name: String
+///     @validate.Email
+///     email: String
+/// }
+///
+/// match validate.check(Signup { name: "al", email: "nowhere" }) {
+///     ok(_) => console.println("valid")
+///     err(invalid) => console.println("{invalid.violations.length()} rules broken: {invalid}")
+/// }
+/// ```
 pub type Invalid = {
     violations: Array[Violation]
 }

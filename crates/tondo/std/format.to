@@ -17,6 +17,17 @@ import std.internal.text as textNative
 
 /// Text built piece by piece: `add` appends a value's `Display`, in place
 /// when nothing else holds the text.
+///
+/// ```tondo
+/// import std.console
+/// import std.format
+///
+/// var text = format.Builder.new()
+/// for n in 1..=3 {
+///     text.addLine("line {n}")
+/// }
+/// console.print(text.text())
+/// ```
 pub type Builder = {
     priv built: String
 }
@@ -58,6 +69,16 @@ impl Display for Builder {
 
 /// Why `apply` could not write a value: its format does not read, or does
 /// not go with the value's type.
+///
+/// ```tondo
+/// import std.console
+/// import std.format
+///
+/// match format.apply(3.14159, ".2") {
+///     ok(text) => console.println(text)
+///     err(error) => console.println(error.message)
+/// }
+/// ```
 pub type FormatError = {
     message: String
 }
@@ -283,6 +304,20 @@ pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "
 
 /// A plural form of CLDR: the form of a word that a count takes in a
 /// language.
+///
+/// ```tondo
+/// import std.console
+/// import std.format
+///
+/// fn files(count: Int): String {
+///     match format.plural(count) {
+///         format.Plural.One => "1 file"
+///         _ => "{count} files"
+///     }
+/// }
+///
+/// console.println("{files(1)}, {files(3)}")
+/// ```
 pub enum Plural {
     Zero
     One

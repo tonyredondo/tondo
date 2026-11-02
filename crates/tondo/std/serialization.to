@@ -27,6 +27,32 @@ import std.internal.text as serialtext
 
 /// A value as every format reads it: scalars, and the bounds of lists and
 /// maps with the keys of their members.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// /// A temperature, written as a number or as a text such as `"21C"`.
+/// pub type Celsius = { degrees: Float }
+///
+/// impl serialization.Decode for Celsius {
+///     fn decode[S: serialization.Source](input: S, first: serialization.Event): Celsius ! serialization.Error {
+///         match first {
+///             serialization.Event.Text(text) if text.endsWith("C") => match Float.parse(text.removeSuffix("C")) {
+///                 ok(value) => Celsius { degrees: value }
+///                 err(_) => fail input.mismatch(first, "a temperature, as `21C`")
+///             }
+///             // Any number, as `Float` reads them: `Int`, `Float`, or the
+///             // `Number` a text format gives to keep its precision.
+///             _ => Celsius { degrees: serialization.Decode.decode[Float](input, first)? }
+///         }
+///     }
+/// }
+///
+/// let readings = json.decode[Array[Celsius]](r"""[21, 19.5, "22C"]""")?
+/// console.println("{readings.map((reading) { reading.degrees })}")
+/// ```
 pub enum Event {
     Null
     Bool(Bool)
@@ -57,6 +83,30 @@ pub enum Event {
 // ---------------------------------------------------------------------------
 
 /// What kind of error reading or writing a value met.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// type Server = { host: String, port: Int }
+///
+/// for text in [r"""{"host": "a"}""", r"""{"host": "a", "port": "x"}""", r"""{"host": """] {
+///     match json.decode[Server](text) {
+///         ok(_) => console.println("read")
+///         err(error) => {
+///             let failure: serialization.Error = error
+///             let advice = match failure.kind {
+///                 serialization.ErrorKind.Missing => "add the field"
+///                 serialization.ErrorKind.Type => "fix the value's type"
+///                 serialization.ErrorKind.Syntax => "fix the JSON"
+///                 _ => "see the message"
+///             }
+///             console.println("{failure.kind}: {advice}")
+///         }
+///     }
+/// }
+/// ```
 pub enum ErrorKind {
     /// The input is not in the format.
     Syntax
@@ -97,6 +147,45 @@ impl Display for ErrorKind {
 /// code the compiler writes for `Encode` and `Decode` gives the format:
 /// `@xml.Name("item")` is `Note { format: "xml", name: "Name", value:
 /// "item" }`. A format reads its own notes and no other.
+///
+/// ```tondo
+/// import std.console
+/// import std.serialization
+/// import std.xml
+///
+/// /// A sink that prints the notes a type's annotations give each format.
+/// pub type Notes = { lines: Array[String] }
+///
+/// impl serialization.Sink for Notes {
+///     fn null(self) {}
+///     fn bool(self, _: Bool) {}
+///     fn int(self, _: Int) {}
+///     fn float(self, _: Float) {}
+///     fn number(self, _: String) {}
+///     fn text(self, _: String) {}
+///     fn bytes(self, _: Array[Byte]) {}
+///     fn beginList(self, _: Int) {}
+///     fn endList(self) {}
+///     fn beginMap(self, _: Int) {}
+///     fn key(self, _: String) {}
+///     fn endMap(self) {}
+///
+///     fn field(self, notes: Array[serialization.Note]) {
+///         for note in notes {
+///             console.println("{note.format}.{note.name}({note.value})")
+///         }
+///     }
+/// }
+///
+/// pub type Item = {
+///     @xml.Attribute
+///     id: Int
+///     @xml.Name("label")
+///     title: String
+/// }
+///
+/// serialization.Encode.encode(Item { id: 1, title: "Tea" }, Notes { lines: [] })
+/// ```
 pub type Note = {
     format: String
     name: String
@@ -106,12 +195,38 @@ pub type Note = {
 
 /// What reading does with a member of a map that the type has no field
 /// for.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// type Server = { port: Int }
+///
+/// let strict = serialization.UnknownFields.Reject
+/// match json.decode[Server](r"""{"port": 80, "prot": 81}""", unknownFields: strict) {
+///     ok(server) => console.println("port {server.port}")
+///     err(error) => console.println("{error.message}")
+/// }
+/// ```
 pub enum UnknownFields {
     Ignore
     Reject
 }
 
 /// A failure to read or write a format, and where.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// type User = { name: String, age: Int }
+///
+/// match yaml.decode[Array[User]]("- name: Ada\n  age: 36\n- name: Bo\n  age: old\n") {
+///     ok(users) => console.println("{users.length()} users")
+///     err(error) => console.println("{error.kind} at {error.path}, line {error.line}: {error.message}")
+/// }
+/// ```
 pub type Error = {
     kind: ErrorKind
     message: String
@@ -125,6 +240,26 @@ pub type Error = {
 
 /// A rule of its type that a value breaks: the path of the field, from the
 /// value, and what the rule asks, as `age` and `must be at least 18`.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.validate
+///
+/// pub type Account = {
+///     @validate.Min(18)
+///     age: Int
+/// }
+///
+/// match json.decode[Account](r"""{"age": 12}""") {
+///     ok(account) => console.println("age {account.age}")
+///     err(error) => {
+///         for violation in error.violations {
+///             console.println("{violation.path}: {violation.message}")
+///         }
+///     }
+/// }
+/// ```
 pub type Violation = {
     path: String
     message: String
@@ -153,6 +288,43 @@ impl Display for Error {
 // ---------------------------------------------------------------------------
 
 /// A document read event by event: the reader of a format.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// /// Every number in a document, wherever it is, read from its events.
+/// pub type Numbers = { values: Array[Float] }
+///
+/// impl serialization.Decode for Numbers {
+///     fn decode[S: serialization.Source](input: S, first: serialization.Event): Numbers ! serialization.Error {
+///         var values: Array[Float] = []
+///         var depth = 0
+///         var event = first
+///         for {
+///             match event {
+///                 serialization.Event.Int(_) => values.push(serialization.Decode.decode[Float](input, event)?)
+///                 serialization.Event.Float(value) => values.push(value)
+///                 serialization.Event.Number(_) => values.push(serialization.Decode.decode[Float](input, event)?)
+///                 serialization.Event.BeginList => depth += 1
+///                 serialization.Event.BeginMap => depth += 1
+///                 serialization.Event.EndList => depth -= 1
+///                 serialization.Event.EndMap => depth -= 1
+///                 _ => {}
+///             }
+///             if depth == 0 {
+///                 break
+///             }
+///             event = input.value()?
+///         }
+///         Numbers { values }
+///     }
+/// }
+///
+/// let found = json.decode[Numbers](r"""{"a": 1, "b": [2.5, {"c": 3}], "d": "x"}""")?
+/// console.println("{found.values}")
+/// ```
 pub trait Source {
     /// The next event, or `none` after the whole document.
     fn next(self): Event? ! Error
@@ -306,6 +478,26 @@ pub trait Source {
 
 /// A document written value by value: the writer of a format. A value it
 /// cannot hold is an error that the format reports when it finishes.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// /// A point written as `[x, y]` rather than as a map.
+/// pub type Point = { x: Int, y: Int }
+///
+/// impl serialization.Encode for Point {
+///     fn encode[S: serialization.Sink](self, out: S) {
+///         out.beginList(2)
+///         out.int(self.x)
+///         out.int(self.y)
+///         out.endList()
+///     }
+/// }
+///
+/// console.println(json.encode([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]))
+/// ```
 pub trait Sink {
     fn null(self)
 
@@ -372,12 +564,65 @@ pub trait Sink {
 
 /// A type that writes itself to any format. The compiler implements it for
 /// every record, enum and newtype whose parts implement it.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+/// import std.yaml
+///
+/// /// A level written as its name in every format.
+/// pub enum Level {
+///     Low
+///     High
+/// }
+///
+/// impl serialization.Encode for Level {
+///     fn encode[S: serialization.Sink](self, out: S) {
+///         out.text(match self {
+///             Level.Low => "low"
+///             Level.High => "high"
+///         })
+///     }
+/// }
+///
+/// pub type Alarm = { name: String, level: Level }
+///
+/// let alarm = Alarm { name: "disk", level: Level.High }
+/// console.println(json.encode(alarm))
+/// console.print(yaml.encode(alarm))
+/// ```
 pub trait Encode {
     fn encode[S: Sink](self, out: S)
 }
 
 /// A type that reads itself from any format, given the first event of its
 /// value. The compiler implements it as `Encode`.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.serialization
+///
+/// /// A version written as `"1.2"`, read into its two numbers.
+/// pub type Version = { major: Int, minor: Int }
+///
+/// impl serialization.Decode for Version {
+///     fn decode[S: serialization.Source](input: S, first: serialization.Event): Version ! serialization.Error {
+///         let text = serialization.Decode.decode[String](input, first)?
+///         let parts = text.split(".")
+///         match (Int.parse(parts[0]), Int.parse(parts.get(1).unwrapOr(""))) {
+///             (ok(major), ok(minor)) => Version { major, minor }
+///             _ => fail input.mismatch(first, "a version, as `1.2`")
+///         }
+///     }
+/// }
+///
+/// pub type Package = { name: String, version: Version }
+///
+/// let package = json.decode[Package](r"""{"name": "tondo", "version": "0.1"}""")?
+/// console.println("{package.name} {package.version.major}.{package.version.minor}")
+/// ```
 pub trait Decode {
     fn decode[S: Source](input: S, first: Event): Self ! Error
 }
@@ -1032,6 +1277,19 @@ impl[S: Source] Source for Replay[S] {
 
 /// Bytes as every format holds them: natively in a binary format, as a
 /// base64 string in a text one.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+/// import std.messagepack
+/// import std.serialization
+///
+/// pub type Blob = { name: String, data: serialization.Bytes }
+///
+/// let blob = Blob { name: "key", data: serialization.Bytes([1, 2, 255]) }
+/// console.println(json.encode(blob))
+/// console.println("{messagepack.encode(blob).length()} bytes in MessagePack")
+/// ```
 pub type Bytes = Array[Byte]
 
 impl Encode for Bytes {

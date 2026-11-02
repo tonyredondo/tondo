@@ -7,6 +7,23 @@ import std.internal.panic as panicNative
 /// A panic that a `recover` stopped (15.9): its code, `P0001` or the
 /// program's own, its message, its data, where it happened and its stack,
 /// as its report shows them.
+///
+/// ```tondo
+/// import std.console
+///
+/// /// One job of many: a bug in it ends the job, not the worker.
+/// fn run(job: Int): Int {
+///     let sizes = [10, 20]
+///     sizes[job]
+/// }
+///
+/// for job in 0..3 {
+///     match recover { run(job) } {
+///         ok(size) => console.println("job {job}: {size}")
+///         err(crash) => console.println("job {job} failed with {crash.code}: {crash.message}")
+///     }
+/// }
+/// ```
 pub type Panic = {
     code: String
     message: String

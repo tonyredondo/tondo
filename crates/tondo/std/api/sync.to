@@ -122,6 +122,28 @@ pub fn Atomic.add(self, delta: T): T
 
 /// What `compareExchange` did: `Exchanged(previous)` when the value was the
 /// one expected and was replaced, `Mismatch(observed)` when it was not.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// let highest = sync.Atomic(10)
+/// let offered = 25
+/// for {
+///     let current = highest.load()
+///     if offered <= current {
+///         break
+///     }
+///     match highest.compareExchange(current, offered) {
+///         sync.CompareExchange.Exchanged(previous) => {
+///             console.println("raised from {previous}")
+///             break
+///         }
+///         sync.CompareExchange.Mismatch(_) => {}
+///     }
+/// }
+/// console.println("highest {highest.load()}")
+/// ```
 pub enum CompareExchange[T] {
     Exchanged(T)
     Mismatch(T)
@@ -132,20 +154,114 @@ pub enum CompareExchange[T] {
 // (`sync.Array(values)`). `for value in shared` walks a snapshot.
 
 /// Fixed length.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// fn count(slots: sync.Array[Int], index: Int) {
+///     _ = slots.set(index, index * index)
+/// }
+///
+/// let slots = sync.Array([0, 0, 0, 0])
+/// var group = Group.new[Unit]()
+/// for index in 0..4 {
+///     group.add(spawn count(slots, index))
+/// }
+/// group.wait()
+/// console.println("{slots.snapshot()} of {slots.length()}")
+/// ```
 pub type Array[T]
 
 /// A map that tasks share, read without locks: `sync.Map["a": 1]`,
 /// `sync.Map.new[K, V]()` or `sync.Map(entries)`.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// fn visit(seen: sync.Map[String, Int], page: String) {
+///     for {
+///         let before = seen.get(page)
+///         let after = some(before.unwrapOr(0) + 1)
+///         match seen.compareExchange(page, before, after) {
+///             sync.CompareExchange.Exchanged(_) => break
+///             sync.CompareExchange.Mismatch(_) => {}
+///         }
+///     }
+/// }
+///
+/// let seen = sync.Map.new[String, Int]()
+/// var group = Group.new[Unit]()
+/// for page in ["/", "/docs", "/"] {
+///     group.add(spawn visit(seen, page))
+/// }
+/// group.wait()
+/// console.println("{seen.get("/")} {seen.contains("/docs")} {seen.length()}")
+/// ```
 pub type Map[K: Key, V]
 
 /// A set that tasks share, read without locks: `sync.Set["a"]`,
 /// `sync.Set.new[K]()` or `sync.Set(keys)`.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// fn claim(taken: sync.Set[String], name: String): Bool {
+///     taken.insert(name)
+/// }
+///
+/// let taken = sync.Set.new[String]()
+/// var group = Group.new[Bool]()
+/// for name in ["ada", "bo", "ada"] {
+///     group.add(spawn claim(taken, name))
+/// }
+/// let claimed = group.wait()
+/// console.println("{claimed.filter((won) { won }).length()} claimed, {taken.snapshot()}")
+/// ```
 pub type Set[K: Key]
 
 /// LIFO, the top at the end.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// let undo = sync.Stack.new[String]()
+/// undo.push("type a")
+/// undo.push("type b")
+/// console.println("{undo.pop()} then {undo.get(-1)}; left {undo.snapshot()}")
+/// ```
 pub type Stack[T]
 
 /// FIFO with many producers and consumers.
+///
+/// ```tondo
+/// import std.console
+/// import std.sync
+///
+/// fn work(jobs: sync.Queue[Int], done: sync.Atomic[Int]) {
+///     for {
+///         match jobs.popFront() {
+///             some(job) => _ = done.add(job)
+///             none => break
+///         }
+///     }
+/// }
+///
+/// let jobs = sync.Queue.new[Int]()
+/// for job in 1..=10 {
+///     jobs.push(job)
+/// }
+/// let done = sync.Atomic(0)
+/// var group = Group.new[Unit]()
+/// for _ in 0..3 {
+///     group.add(spawn work(jobs, done))
+/// }
+/// group.wait()
+/// console.println("sum {done.load()}")
+/// ```
 pub type Queue[T]
 
 /// The number of elements, which never changes.

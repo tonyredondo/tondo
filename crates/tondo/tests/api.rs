@@ -200,6 +200,24 @@ fn standard_examples() -> Vec<(String, usize, String)> {
     found
 }
 
+/// Every public type of the standard library shows how it is used: an
+/// example in its `///`, which `standard_examples_compile` compiles.
+#[test]
+fn every_standard_type_has_an_example() {
+    let mut missing = Vec::new();
+    for module in tondo::api::standard_modules() {
+        let Some(text) = tondo::api::standard(&module) else { continue };
+        for declaration in tondo::api::declarations(&text) {
+            let kind = declaration["kind"].as_str().unwrap_or_default();
+            let doc = declaration["doc"].as_str().unwrap_or_default();
+            if ["type", "enum", "trait", "alias", "context"].contains(&kind) && !doc.contains("```tondo") {
+                missing.push(format!("{module}.{}", declaration["name"].as_str().unwrap_or_default()));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "these types have no example in their `///`: {missing:?}");
+}
+
 /// Every example of the standard library's documentation compiles, and
 /// each module that a program imports has one at its head, which `tondo
 /// api` and an editor's hover show.

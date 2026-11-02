@@ -25,6 +25,22 @@ import std.json as __json
 import std.serialization
 
 /// Why a provider cannot give its response.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// A generator whose input may be missing from the manifest.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     let colors = match request.input("colors.txt") {
+///         ok(input) => input.text()?
+///         err(meta.Error.UnknownInput(name)) => fail meta.Error.Provider("add `{name}` to the generator's `inputs` in tondo.toml")
+///         err(error) => fail error
+///     }
+///     var out = request.sourceBuilder()
+///     out.write("palette", "pub const Count: Int = {colors.lines().length()}")?
+///     out.finish()?
+/// }
+/// ```
 pub enum Error {
     UnknownInput(String)
     UnknownOutput(String)
@@ -50,6 +66,27 @@ impl Display for Error {
 }
 
 /// A type as the program writes it where the declaration is.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// Writes `impl Schema` with each field's type as the program writes it.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     var out = request.sourceBuilder()
+///     var lines: Array[String] = []
+///     for field in target.fields() {
+///         let written = out.renderType(field.typeRef)?
+///         lines.push("\"{field.name}: {written}\"")
+///     }
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn schema(self): Array[String] { [$lines] }
+///         }
+///         """, ["trait": request.traitName(), "type": target.typeName(), "lines": lines.join(", ")]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type TypeRef = {
     priv text: String
 }
@@ -67,6 +104,35 @@ impl Display for TypeRef {
 
 /// An annotation the program writes on a declaration, a variant, a field or
 /// a parameter (language 27.13), with every field's value.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// The annotation `@db.Column(name: "...")` as this provider reads it.
+/// type Column = { name: String }
+///
+/// /// Writes `impl Columns`: each field's column, its own name without one.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     var columns: Array[String] = []
+///     for field in request.target().fields() {
+///         var column = field.name
+///         for annotation in field.annotations {
+///             if annotation.name().endsWith("Column") {
+///                 let given: Column = annotation.to()?
+///                 column = given.name
+///             }
+///         }
+///         columns.push("\"{column}\"")
+///     }
+///     var out = request.sourceBuilder()
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn columns(self): Array[String] { [$columns] }
+///         }
+///         """, ["trait": request.traitName(), "type": request.target().typeName(), "columns": columns.join(", ")]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type AnnotationView = {
     priv annotationName: String
     priv value: __json.Value
@@ -90,6 +156,22 @@ pub fn AnnotationView.to[T: serialization.Decode](self): T ! Error {
 }
 
 /// A field of the declaration, private ones included.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// Writes `impl Describe`: the public fields with their values.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let shown = request.target().fields().filter((field) { not field.private }).map((field) { "{field.name}={{self.{field.name}}}" })
+///     var out = request.sourceBuilder()
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn describe(self): String { "$shown" }
+///         }
+///         """, ["trait": request.traitName(), "type": request.target().typeName(), "shown": shown.join(" ")]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type FieldView = {
     name: String
     typeRef: TypeRef
@@ -98,6 +180,38 @@ pub type FieldView = {
 }
 
 /// A variant: its name and the fields or elements of its payload.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// Writes `impl Named` for an enum: the name of the variant a value is.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     var arms: Array[String] = []
+///     for variant in target.variants() {
+///         // A payload is matched without its values: `{ .. }` or a `_` each.
+///         let pattern = if not variant.fields.isEmpty() {
+///             " {{ .. }}"
+///         } else if variant.elements.isEmpty() {
+///             ""
+///         } else {
+///             "({variant.elements.map((_) { "_" }).join(", ")})"
+///         }
+///         arms.push("{target.name()}.{variant.name}{pattern} => \"{variant.name}\"")
+///     }
+///     var out = request.sourceBuilder()
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn variantName(self): String {
+///                 match self {
+///                     $arms
+///                 }
+///             }
+///         }
+///         """, ["trait": request.traitName(), "type": target.typeName(), "arms": arms.join("\n            ")]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type VariantView = {
     name: String
     fields: Array[FieldView]
@@ -106,6 +220,26 @@ pub type VariantView = {
 }
 
 /// A parameter of a function.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// A generator that lists the functions annotated `@routes.Get(...)`, with
+/// /// the parameters each takes from the path.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     var routes: Array[String] = []
+///     for declaration in request.declarations() {
+///         if declaration.kind() != meta.DeclarationKind.Function {
+///             continue
+///         }
+///         let parameters = declaration.parameters().map((parameter) { "{parameter.name}: {parameter.typeRef.identity()}" })
+///         routes.push("\"{declaration.name()}({parameters.join(", ")})\"")
+///     }
+///     var out = request.sourceBuilder()
+///     out.write("routes", "pub const Routes: Array[String] = [{routes.join(", ")}]")?
+///     out.finish()?
+/// }
+/// ```
 pub type ParameterView = {
     name: String
     typeRef: TypeRef
@@ -113,12 +247,52 @@ pub type ParameterView = {
 }
 
 /// A type parameter and the bounds written on it.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// Writes `impl Show` for a generic type, asking `Show` of each parameter:
+/// /// `impl[T: Show] Show for Box[T]`.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     let binders = target.generics().map((generic) { "{generic.name}: {request.traitName()}" })
+///     let header = if binders.isEmpty() { "impl" } else { "impl[{binders.join(", ")}]" }
+///     var out = request.sourceBuilder()
+///     out.add(meta.code(r"""
+///         $header $trait for $type {
+///             fn show(self): String { "$name" }
+///         }
+///         """, ["header": header, "trait": request.traitName(), "type": target.typeName(), "name": target.name()]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type GenericView = {
     name: String
     bounds: Array[String]
 }
 
 /// What a declaration is: a record, an enum, a newtype or a function.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// A provider for records only, which says so of anything else.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     var out = request.sourceBuilder()
+///     match target.kind() {
+///         meta.DeclarationKind.Record => out.add(meta.code(r"""
+///             impl $trait for $type {
+///                 fn fieldCount(self): Int { $count }
+///             }
+///             """, ["trait": request.traitName(), "type": target.typeName(), "count": "{target.fields().length()}"]))?
+///         meta.DeclarationKind.Enum => out.error("`{target.name()}` is an enum: derive it for a record")
+///         meta.DeclarationKind.Newtype => out.error("`{target.name()}` is a newtype: derive it for a record")
+///         meta.DeclarationKind.Function => out.error("`{target.name()}` is a function")
+///     }
+///     out.finishDerive()?
+/// }
+/// ```
 pub enum DeclarationKind {
     Record
     Enum
@@ -128,6 +302,25 @@ pub enum DeclarationKind {
 
 /// The record, enum or newtype a `derive` names, or a declaration a
 /// generator sees.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// A generator that writes a constant naming each record it may read, with
+/// /// its module and fields.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     var names: Array[String] = []
+///     for declaration in request.declarations() {
+///         if declaration.kind() == meta.DeclarationKind.Record {
+///             let fields = declaration.fields().map((field) { field.name }).join(" ")
+///             names.push("\"{declaration.module()}.{declaration.typeName()}: {fields}\"")
+///         }
+///     }
+///     var out = request.sourceBuilder()
+///     out.write(request.outputs()[0], "pub const Records: Array[String] = [{names.join(", ")}]")?
+///     out.finish()?
+/// }
+/// ```
 pub type Declaration = {
     priv declared: String
     priv path: String
@@ -206,6 +399,24 @@ pub fn Declaration.annotations(self): Array[AnnotationView] {
 
 /// What `derive` asks of a provider: an `impl` of the trait, as the program
 /// writes its name, for the declaration.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// A `derive` provider, which the package that declares the trait names in
+/// /// its tondo.toml, as `[derive] Identify = "derive/identify.to"`: writes
+/// /// `impl Identify` with the type's module and name.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     var out = request.sourceBuilder()
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn identify(self): String { "$module.$name" }
+///         }
+///         """, ["trait": request.traitName(), "type": target.typeName(), "module": target.module(), "name": target.name()]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type DeriveRequest = {
     priv traitText: String
     priv declaration: Declaration
@@ -237,6 +448,23 @@ pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
 
 /// A file a generator is given: its name in the manifest, its bytes and
 /// their SHA-256.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// The size and hash of each input file, which change when the file does.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     var lines: Array[String] = []
+///     for (index, input) in request.inputs().enumerate() {
+///         lines.push("// {input.name}")
+///         lines.push("pub const Size{index}: Int = {input.bytes.length()}")
+///         lines.push("pub const Hash{index}: String = \"{input.sha256}\"")
+///     }
+///     var out = request.sourceBuilder()
+///     out.write("files", lines.join("\n"))?
+///     out.finish()?
+/// }
+/// ```
 pub type Input = {
     name: String
     bytes: Array[Byte]
@@ -253,6 +481,27 @@ pub fn Input.text(self): String ! Error {
 
 /// What a generator is asked for: the modules it declares, from its inputs
 /// and the public declarations it may look at.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// The generator of tondo.toml's `[generators.messages]`, with
+/// /// `program = "gen/messages.to"`, `inputs = ["messages.txt"]` and
+/// /// `outputs = ["messages"]`: an enum with a variant for the key of each
+/// /// `Key = text` line.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     var keys: Array[String] = []
+///     for line in request.input("messages.txt")?.text()?.lines() {
+///         match line.find(" = ") {
+///             some(at) => keys.push(line.slice(0, at).unwrapOr("").trim())
+///             none => {}
+///         }
+///     }
+///     var out = request.sourceBuilder()
+///     out.write(request.outputs()[0], "pub enum Message {{\n    {keys.join("\n    ")}\n}}")?
+///     out.finish()?
+/// }
+/// ```
 pub type GenerateRequest = {
     priv inputList: Array[Input]
     priv outputList: Array[String]
@@ -298,6 +547,31 @@ pub fn GenerateRequest.sourceBuilder(self): SourceBuilder {
 }
 
 /// The source a provider or generator gives back, and what went wrong.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// Writes `impl Validate` for records whose fields are all `String`, and
+/// /// says which field stops it otherwise.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     let target = request.target()
+///     var out = request.sourceBuilder()
+///     var checks: Array[String] = []
+///     for field in target.fields() {
+///         if out.renderType(field.typeRef)? != "String" {
+///             out.error("the field `{field.name}` is not a `String`")
+///             continue
+///         }
+///         checks.push("not self.{field.name}.isEmpty()")
+///     }
+///     out.add(meta.code(r"""
+///         impl $trait for $type {
+///             fn isComplete(self): Bool { $checks }
+///         }
+///         """, ["trait": request.traitName(), "type": target.typeName(), "checks": checks.join(" and ")]))?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type SourceBuilder = {
     priv written: String?
     priv problems: Array[String]
@@ -337,6 +611,18 @@ pub fn SourceBuilder.finish(self): GenerateResponse ! Error {
 }
 
 /// What a generator gives back.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// The smallest generator: one module, with one constant.
+/// pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+///     var out = request.sourceBuilder()
+///     out.write("built", "pub const Generated: Bool = true")?
+///     // Every output the manifest names must be written, once.
+///     out.finish()?
+/// }
+/// ```
 pub type GenerateResponse = {
     priv files: Map[String, String]
     priv problems: Array[String]
@@ -374,6 +660,17 @@ pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error {
 }
 
 /// What a provider gives back.
+///
+/// ```tondo
+/// import std.meta
+///
+/// /// The smallest provider: an `impl` whose method names the type.
+/// pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+///     var out = request.sourceBuilder()
+///     out.add("impl {request.traitName()} for {request.target().typeName()} {{\n    fn typeName(self): String {{ \"{request.target().name()}\" }}\n}}")?
+///     out.finishDerive()?
+/// }
+/// ```
 pub type DeriveResponse = {
     priv source: String
     priv problems: Array[String]

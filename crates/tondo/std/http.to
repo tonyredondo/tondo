@@ -30,6 +30,20 @@ import std.url as __url
 import std.zstd as __zstd
 
 /// Why a request has no response a program can use.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/missing", (_) { fail http.Problem.notFound("no such page") })
+/// match app.client().get("/missing") {
+///     ok(response) => console.println("{response.status()}")
+///     err(http.HttpError.Status(response)) => console.println("{response.status()}: {response.text()?}")
+///     err(http.HttpError.Timeout) => console.println("no answer in time")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum HttpError {
     /// A URL that does not parse, or whose scheme is not `http` or `https`.
     InvalidUrl(String)
@@ -72,6 +86,20 @@ enum Content {
 }
 
 /// What a request sends.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.post("/echo", (request) {
+///     http.Reply.text("{request.header("Content-Type").unwrapOr("")}: {request.text()?}")
+/// })
+/// let client = app.client()
+/// for body in [http.Body.text("hi"), http.Body.json(["a": 1]), http.Body.form(["q": "tea & cake"])] {
+///     console.println(client.post("/echo", body: some(body))?.text()?)
+/// }
+/// ```
 pub type Body = {
     priv content: Content
 }
@@ -123,6 +151,26 @@ enum Source {
 }
 
 /// A part of a multipart form.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.post("/albums", (request) {
+///     var parts: Array[String] = []
+///     for upload in request.uploads() {
+///         let part = upload?
+///         parts.push("{part.name()} ({part.fileName()}, {part.bytes()?.length()} bytes)")
+///     }
+///     http.Reply.text(parts.join(", "))
+/// })
+/// let form = http.Body.multipart([
+///     http.Part.field("title", "Holidays"),
+///     http.Part.bytes("photo", [1, 2, 3], fileName: "beach.jpg", contentType: "image/jpeg"),
+/// ])
+/// console.println(app.client().post("/albums", body: some(form))?.text()?)
+/// ```
 pub type Part = {
     priv name: String
     priv source: Source
@@ -168,6 +216,17 @@ pub fn Part.stream(
 
 /// A response, whose head has arrived; its body arrives as it is read,
 /// once, by `text`, `bytes`, `json`, `body`, `lines`, `events` or `copyTo`.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/", (_) { http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc") })
+/// let response = app.client().get("/")?
+/// console.println("{response.status()} {response.reason()} {response.version()}")
+/// console.println("{response.header("x-version")} {response.cookie("session")} {response.text()?}")
+/// ```
 pub type Response = {
     priv native: httpNative.Native
     priv verb: String
@@ -389,6 +448,18 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
 }
 
 /// The lines of a body, as `Response.lines()` gives them.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/log", (_) { http.Reply.text("one\ntwo\nthree\n") })
+/// // Each line as it arrives, without the whole body in memory.
+/// for line in app.client().get("/log")?.lines() {
+///     console.println("> {line?}")
+/// }
+/// ```
 pub type Lines = {
     priv input: __io.Reader
     priv response: httpNative.Native
@@ -430,6 +501,28 @@ impl Iterator[String ! HttpError] for Lines {
 
 /// A Server-Sent Event: its type, `message` unless the server names one,
 /// its data, with a `\n` between data lines, and its id.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn tick(out: Sender[http.Event]) {
+///     for n in 1..=3 {
+///         out.send(http.Event { event: "tick", data: "{n}", id: some("{n}") })
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// // Server-Sent Events: each event the channel gives, until it closes.
+/// app.get("/ticks", (_) {
+///     let (sender, receiver) = channel[http.Event](4)
+///     spawn detached tick(sender)
+///     http.Reply.events(receiver)
+/// })
+/// for event in app.client().get("/ticks")?.events() {
+///     console.println(event?.data)
+/// }
+/// ```
 pub type Event = {
     event: String
     data: String
@@ -437,6 +530,17 @@ pub type Event = {
 }
 
 /// The events of a body, as `Response.events()` gives them.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// let stream = http.get("https://stream.example.com/updates", headers: ["Accept": "text/event-stream"])?
+/// for received in stream.events() {
+///     let event = received?
+///     console.println("{event.event} #{event.id.unwrapOr("-")}: {event.data}")
+/// }
+/// ```
 pub type Events = {
     priv source: Lines
 }
@@ -512,6 +616,23 @@ pub type Client = {
 /// A request a client sends, as its hooks see it (`Client.use`): its
 /// method, its final URL, with the client's base and the query, its
 /// headers, the client's and its own, and its body.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/me", (request) { http.Reply.text(request.header("Authorization").unwrapOr("anonymous")) })
+/// var client = app.client()
+/// // Every request of the client through this hook: logged and authorized.
+/// client.use((request, next) {
+///     console.println("{request.method} {request.url}")
+///     var signed = request
+///     signed.headers["Authorization"] = "Bearer secret"
+///     next(signed)?
+/// })
+/// console.println(client.get("/me")?.text()?)
+/// ```
 pub type ClientRequest = {
     method: String
     url: String
@@ -787,6 +908,33 @@ pub fn patch(
 // ---------------------------------------------------------------------------
 
 /// A message of a WebSocket.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn echo(_: http.Request, socket: http.WebSocket): !http.HttpError {
+///     for {
+///         match socket.receive()? {
+///             some(http.Message.Text(text)) => socket.send(http.Message.Text("echo: {text}"))?
+///             some(http.Message.Binary(bytes)) => socket.send(http.Message.Binary(bytes.reversed()))?
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.websocket("/echo", echo)
+/// let server = app.start()?
+/// let socket = http.WebSocket.connect("ws://{server.address()}/echo")?
+/// socket.sendBytes([1, 2, 3])?
+/// match socket.receive()? {
+///     some(http.Message.Binary(bytes)) => console.println("{bytes}")
+///     other => console.println("unexpected {other.isSome()}")
+/// }
+/// socket.close()?
+/// server.stop()
+/// ```
 pub enum Message {
     Text(String)
     Binary(Array[Byte])
@@ -805,6 +953,36 @@ impl Display for Message {
 /// A WebSocket connection (RFC 6455), over TLS for `wss://`. One task can
 /// send while another receives; pings are answered on their own. Iterating
 /// it receives messages until the connection closes.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn chat(_: http.Request, socket: http.WebSocket): !http.HttpError {
+///     socket.sendText("welcome")?
+///     for {
+///         match socket.receive()? {
+///             some(http.Message.Text(text)) => socket.sendText("you said {text}")?
+///             some(_) => {}
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App.new()
+/// app.websocket("/chat", chat)
+/// let server = app.start()?
+/// let socket = http.WebSocket.connect("ws://{server.address()}/chat")?
+/// socket.sendText("hello")?
+/// for _ in 0..2 {
+///     match socket.receive()? {
+///         some(http.Message.Text(text)) => console.println(text)
+///         _ => {}
+///     }
+/// }
+/// socket.close()?
+/// server.stop()
+/// ```
 pub type WebSocket = {
     priv native: httpNative.Native
     priv closed: Bool
@@ -992,6 +1170,29 @@ fn failed(sent: httpNative.Native): !HttpError {
 /// the client, which receives it as `application/problem+json` (RFC 9457).
 /// For a status of 500 or more the client sees only `internal server
 /// error`, and the message goes to standard error.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn order(request: http.Request): http.Reply ! http.Problem {
+///     let id = request.intParam("id")?
+///     if id > 100 {
+///         fail http.Problem.notFound("there is no order {id}")
+///     }
+///     http.Reply.json(["id": id])
+/// }
+///
+/// var app = http.App.new()
+/// app.get("/orders/:id", order)
+/// for path in ["/orders/7", "/orders/500", "/orders/x"] {
+///     match app.client().get(path) {
+///         ok(response) => console.println("{response.status()} {response.text()?}")
+///         err(http.HttpError.Status(response)) => console.println("{response.status()} {response.text()?}")
+///         err(error) => console.println("{error}")
+///     }
+/// }
+/// ```
 pub type Problem = {
     status: Int
     message: String
@@ -1050,6 +1251,20 @@ pub fn Problem.from[E: Display](error: E): Problem {
 }
 
 /// A request a server received.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/users/:id", (request) {
+///     let id = request.intParam("id")?
+///     let fields = request.query("fields").unwrapOr("all")
+///     let route = request.route().unwrapOr("")
+///     http.Reply.text("{request.method()} {route} {request.path()}: user {id}, fields {fields}")
+/// })
+/// console.println(app.client().get("/users/42", query: ["fields": "name"])?.text()?)
+/// ```
 pub type Request = {
     priv native: httpNative.Native
     priv verb: String
@@ -1310,6 +1525,25 @@ pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
 /// A file of a multipart form, in memory, as `Request.formAs` gives it to
 /// a field of its type: its field's name, the file's name and content type
 /// the client gave, and its bytes.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// pub type Avatar = { user: String, picture: http.UploadedFile }
+///
+/// var app = http.App.new()
+/// app.post("/avatar", (request) {
+///     let form = request.formAs[Avatar]()?
+///     let picture = form.picture
+///     http.Reply.text("{form.user}: {picture.fileName}, {picture.bytes.length()} bytes of {picture.contentType}")
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.field("user", "ada"),
+///     http.Part.bytes("picture", [137, 80, 78, 71], fileName: "ada.png", contentType: "image/png"),
+/// ])
+/// console.println(app.client().post("/avatar", body: some(body))?.text()?)
+/// ```
 pub type UploadedFile = {
     name: String
     fileName: String
@@ -1812,6 +2046,34 @@ fn formDecoded(text: String): String {
 
 /// A part of a multipart body. Parts arrive in order: reading one skips
 /// what the ones before left unread.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.http
+/// import std.path
+///
+/// let directory = fs.createTemporaryDirectory()?
+/// var app = http.App.new()
+/// app.post("/documents", (request) {
+///     var saved: Array[String] = []
+///     for received in request.uploads() {
+///         let upload = received?
+///         if upload.fileName().isEmpty() {
+///             saved.push("{upload.name()}={upload.text()?}")
+///         } else {
+///             let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()).unwrapOr("upload")))?
+///             saved.push("{upload.fileName()} ({upload.contentType()}, {size} bytes)")
+///         }
+///     }
+///     http.Reply.text(saved.join("; "))
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.field("owner", "ada"),
+///     http.Part.bytes("file", "report".bytes(), fileName: "report.txt", contentType: "text/plain"),
+/// ])
+/// console.println(app.client().post("/documents", body: some(body))?.text()?)
+/// ```
 pub type Upload = {
     priv native: httpNative.Native
     priv request: httpNative.Native
@@ -1867,6 +2129,29 @@ pub fn Upload.saveTo(self, path: String): Int ! Problem {
 }
 
 /// The parts of a multipart body, as `Request.uploads()` gives them.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// // The parts of a multipart body, read one at a time as they arrive.
+/// app.post("/count", (request) {
+///     var files = 0
+///     var bytes = 0
+///     for received in request.uploads() {
+///         let upload = received?
+///         files += 1
+///         bytes += upload.bytes()?.length()
+///     }
+///     http.Reply.text("{files} parts, {bytes} bytes")
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.bytes("a", [1, 2], fileName: "a.bin"),
+///     http.Part.bytes("b", [3, 4, 5], fileName: "b.bin"),
+/// ])
+/// console.println(app.client().post("/count", body: some(body))?.text()?)
+/// ```
 pub type Uploads = {
     priv form: httpNative.Native
     priv request: httpNative.Native
@@ -1919,6 +2204,22 @@ enum Payload {
 }
 
 /// What a handler answers.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/", (_) { http.Reply.html("<h1>Home</h1>") })
+/// app.get("/old", (_) { http.Reply.redirect("/", status: 301) })
+/// app.get("/data", (_) { http.Reply.json(["ok": true]).header("Cache-Control", "no-store") })
+/// app.delete("/items/:id", (_) { http.Reply.empty() })
+/// let client = app.client()
+/// console.println(client.get("/old")?.text()?)
+/// let data = client.get("/data")?
+/// console.println("{data.text()?} {data.header("cache-control")}")
+/// console.println("{client.delete("/items/1")?.status()}")
+/// ```
 pub type Reply = {
     priv code: Int
     priv headerList: Array[String]
@@ -1982,6 +2283,20 @@ pub fn Reply.stream(
 
 /// The headers that follow the last bytes of a streamed reply, as gRPC's
 /// status does, which its handler sets before the stream ends.
+///
+/// ```tondo
+/// import std.http
+/// import std.io
+///
+/// var app = http.App.new()
+/// // Headers after the body, as a checksum known only once it is written.
+/// app.get("/report", (_) {
+///     let trailers = http.Trailers.new()
+///     trailers.set("X-Checksum", "9a0364b9")
+///     http.Reply.stream(io.reader("line 1\nline 2\n"), contentType: "text/plain", trailers: some(trailers))
+/// })
+/// app.listen(port: 8080)?
+/// ```
 pub type Trailers = {
     priv native: httpNative.Native
 }
@@ -2095,6 +2410,23 @@ pub fn Reply.problem(problem: Problem): Reply {
 /// When a browser sends a cookie from another site's page: `Lax` with the
 /// links that lead to this one, `Strict` never, `None` always, which takes
 /// `Secure`.
+///
+/// ```tondo
+/// import std.http
+/// import std.time
+///
+/// var app = http.App.new()
+/// app.post("/login", (_) {
+///     http.Reply.redirect("/").cookie(
+///         "session",
+///         "token",
+///         maxAge: some(time.hours(8)),
+///         secure: true,
+///         sameSite: http.SameSite.Strict,
+///     )
+/// })
+/// app.listen(port: 8080)?
+/// ```
 pub enum SameSite {
     Lax
     Strict
@@ -2199,6 +2531,24 @@ type Route = {
 /// method and a path whose `:name` segments are parameters and whose last
 /// may be `*name`, the rest of the path; a route with fixed segments wins
 /// over one with parameters.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// pub type Todo = { id: Int, title: String }
+///
+/// var api = http.App.new()
+/// api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
+/// api.post("/todos", (request) { http.Reply.json(request.json[Todo]()?, status: 201) })
+///
+/// var app = http.App.new()
+/// app.cors(["https://example.com"])
+/// app.compress()
+/// app.mount("/api", api)
+/// app.get("/health", (_) { http.Reply.text("ok") })
+/// console.println(app.client().get("/api/todos/1")?.text()?)
+/// ```
 pub type App = {
     priv routes: Array[Route]
     priv layers: Array[fn(Request, fn(Request): Reply ! Problem): Reply ! Problem]
@@ -2417,6 +2767,17 @@ pub fn App.grpc[S: GrpcService](mut self, service: S) {
 }
 
 /// What `App.grpc` serves, which `std.grpc` implements.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// // A service of a `.proto` file, or one of std.grpc, is served by an app.
+/// let health = grpc.Health.new()
+/// var app = http.App.new()
+/// app.grpc(health.service())
+/// app.listen(port: 50051)?
+/// ```
 pub trait GrpcService {
     fn serveOn(self, app: mut App)
 }
@@ -2594,6 +2955,20 @@ pub fn App.uploads(mut self, prefix: String, directory: String) {
 
 /// A file an upload wrote: its path under the directory and its size, as
 /// the JSON of the reply gives it to a client.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.uploads("/files", fs.createTemporaryDirectory()?)
+/// let client = app.client()
+/// let saved = client.put("/files/notes/today.txt", body: some(http.Body.text("buy tea")))?.json[Array[http.Saved]]()?
+/// for file in saved {
+///     console.println("{file.path}: {file.size} bytes")
+/// }
+/// ```
 pub type Saved = {
     path: String
     size: Int
@@ -2888,6 +3263,17 @@ pub fn App.client(self): Client {
 /// reply, after which the connection closes and the handler is cancelled.
 /// `Limits.standard() with { body: 100_000_000 }` changes one;
 /// `Request.limitBody` changes the body's for a route.
+///
+/// ```tondo
+/// import std.http
+/// import std.time
+///
+/// var app = http.App.new()
+/// // Videos up to 1 GB on this route; 10 MiB on the others.
+/// app.post("/videos", (request) { http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes") })
+/// let limits = http.Limits.standard() with { headTimeout: time.seconds(10) }
+/// app.listen(port: 8080, limits: some(limits))?
+/// ```
 pub type Limits = {
     body: Int
     head: Int
@@ -2909,6 +3295,19 @@ pub fn Limits.standard(): Limits {
 }
 
 /// A server that `App.start` started.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+/// import std.time
+///
+/// var app = http.App.new()
+/// app.get("/health", (_) { http.Reply.text("ok") })
+/// // A server that runs while the program goes on, as a test's.
+/// let server = app.start()?
+/// console.println("{server.url()}: {http.get("{server.url()}/health")?.text()?}")
+/// server.stop(grace: time.seconds(5))
+/// ```
 pub type Server = {
     priv native: httpNative.Native
     priv secure: Bool
@@ -3046,9 +3445,26 @@ fn peerIp(address: String): String {
 }
 
 /// What a server shows and asks of TLS: `net.Tls`.
+///
+/// ```tondo
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/", (_) { http.Reply.text("hello over HTTPS") })
+/// app.listen(port: 8443, tls: some(http.Tls.files("cert.pem", "key.pem")))?
+/// ```
 pub alias Tls = __net.Tls
 
 /// A version of TLS: `net.TlsVersion`.
+///
+/// ```tondo
+/// import std.http
+///
+/// var app = http.App.new()
+/// app.get("/", (_) { http.Reply.text("TLS 1.3 only") })
+/// let tls = http.Tls.files("cert.pem", "key.pem", minimumVersion: http.TlsVersion.Tls13)
+/// app.listen(port: 8443, tls: some(tls))?
+/// ```
 pub alias TlsVersion = __net.TlsVersion
 
 /// What the runtime takes of a `Tls`: certificate, key, the clients'

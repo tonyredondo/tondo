@@ -415,7 +415,9 @@ $ tondo api --list
   `--list` nombra los módulos disponibles.
 - Un módulo de la stdlib empieza por lo que es y un ejemplo de su uso, un
   programa completo que un test compila, como cada ejemplo de los `///` de
-  sus declaraciones; con `--json`, `summary` y `example`.
+  sus declaraciones; con `--json`, `summary` y `example`. Cada tipo público
+  de la stdlib (record, enum, trait, alias o contexto) lleva en sus `///` un
+  ejemplo así, y un test falla si a uno le falta.
 - Con una declaración de un módulo, `std.http.Client`, `std.json.encode` o
   `String`, del preludio, muestra solo ella y lo que le pertenece: los
   métodos y los `impl` de un tipo, o un método por su nombre, `Client.get`.

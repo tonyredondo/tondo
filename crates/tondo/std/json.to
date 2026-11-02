@@ -45,6 +45,15 @@ pub enum Value {
 
 /// A JSON number as written, so that no precision is lost before the
 /// program chooses a type for it.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// // A number as JSON wrote it, beyond what Int or Float hold.
+/// let big = json.number("123456789012345678901234567890")?
+/// console.println("{big.text()} {big.toInt()} {big.toFloat()}")
+/// ```
 pub type Number = {
     priv digits: String
 }
@@ -275,10 +284,38 @@ fn reflected(value: Value): __reflect.Value {
 // ---------------------------------------------------------------------------
 
 /// The kinds of failure, which every format shares.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// type User = { name: String }
+///
+/// match json.decode[User]("{{\"age\": 3}}") {
+///     ok(user) => console.println(user.name)
+///     err(error) => {
+///         let kind: json.ErrorKind = error.kind
+///         console.println("{kind} at {error.path}")
+///     }
+/// }
+/// ```
 pub alias ErrorKind = serialization.ErrorKind
 
 /// A failure to read or write JSON, with where it happened: the error of
 /// every format.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// match json.parse("[1, 2,") {
+///     ok(value) => console.println("{value}")
+///     err(error) => {
+///         let failure: json.JsonError = error
+///         console.println("line {failure.line}, column {failure.column}: {failure.message}")
+///     }
+/// }
+/// ```
 pub alias JsonError = serialization.Error
 
 // ---------------------------------------------------------------------------
@@ -286,6 +323,22 @@ pub alias JsonError = serialization.Error
 // ---------------------------------------------------------------------------
 
 /// What a `Reader` finds next.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// // A document read as it streams, a token at a time.
+/// let reader = json.reader("[1, \"two\"]")
+/// for {
+///     match reader.next()? {
+///         some(json.Event.Text(text)) => console.println("text {text}")
+///         some(json.Event.Number(number)) => console.println("number {number.text()}")
+///         some(_) => {}
+///         none => break
+///     }
+/// }
+/// ```
 pub enum Event {
     Null
     Bool(Bool)
@@ -299,9 +352,38 @@ pub enum Event {
 }
 
 /// What reading does with a member that the type has no field for.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// type Point = { x: Int }
+///
+/// let text = "{{\"x\": 1, \"z\": 3}}"
+/// console.println("{json.decode[Point](text).isOk()}")
+/// console.println("{json.decode[Point](text, unknownFields: json.UnknownFields.Reject).isOk()}")
+/// ```
 pub alias UnknownFields = serialization.UnknownFields
 
 /// A JSON document read event by event.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// let reader = json.reader("{{\"name\": \"Ada\", \"age\": 36}}")
+/// let first = reader.value()?
+/// reader.beginObject(first, "a person")?
+/// for {
+///     match reader.nextKey()? {
+///         some(key) => {
+///             console.println(key)
+///             reader.skip(reader.value()?)?
+///         }
+///         none => break
+///     }
+/// }
+/// ```
 pub type Reader = {
     priv native: jsonnative.NativeReader
     priv rejectUnknown: Bool
@@ -467,6 +549,22 @@ fn Reader.error(self, kind: ErrorKind): JsonError {
 // ---------------------------------------------------------------------------
 
 /// A JSON document written value by value.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// let out = json.writer(pretty: true)
+/// out.beginObject()
+/// out.key("name")
+/// out.string("Ada")
+/// out.key("tags")
+/// out.beginArray()
+/// out.string("a")
+/// out.endArray()
+/// out.endObject()
+/// console.println(out.finish())
+/// ```
 pub type Writer = {
     priv native: jsonnative.NativeWriter
 }
@@ -782,6 +880,19 @@ pub fn decodeAll[T: serialization.Decode](
 /// each read as it is asked for and as it arrives: `for each in
 /// json.values[Package](output) { let package = each? }`. After an error
 /// there are no more.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+/// import std.json
+///
+/// type Event = { kind: String }
+///
+/// // One value after another, as a log of JSON lines.
+/// for event in json.values[Event](io.reader("{{\"kind\": \"a\"}}\n{{\"kind\": \"b\"}}\n")) {
+///     console.println(event?.kind)
+/// }
+/// ```
 pub type Values[T] = {
     priv input: Reader
     priv done: Bool
@@ -867,6 +978,17 @@ fn streamError(message: String): JsonError {
 
 /// JSON text kept as it is, validated: a member whose content another part
 /// of the program reads, or one that must round-trip byte for byte.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// // Text kept as it was written, inside a value written as JSON.
+/// type Envelope = { kind: String, payload: json.Raw }
+///
+/// let envelope = json.decode[Envelope]("{{\"kind\": \"user\", \"payload\": {{\"name\": \"Ada\"}}}}")?
+/// console.println(envelope.payload.text())
+/// ```
 pub type Raw = {
     priv json: String
 }

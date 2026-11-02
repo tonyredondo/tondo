@@ -15,6 +15,17 @@ import std.reflect as __reflect
 import std.serialization as __serialization
 
 /// Why an operation has no result.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// match math.sqrt(-1.0) {
+///     ok(root) => console.println("{root}")
+///     err(math.MathError.Domain) => console.println("no real square root")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub enum MathError {
     /// The value is outside the operation's domain, such as the square root
     /// of a negative number.
@@ -184,6 +195,14 @@ pub fn lcm[T: Integer](a: T, b: T): T {
 /// An integer of any size, which never overflows: `+`, `-`, `*` and `/`
 /// (truncated toward zero) as for `Int`, and literals of any size where
 /// one is expected, `let n: math.BigInt = 340282366920938463463374607431768211456`.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// let big = math.BigInt.parse("123456789012345678901234567890")?
+/// console.println("{big.pow(2)} {big.toString(16)}")
+/// ```
 pub type BigInt = {
     priv negative: Bool
     /// Base 2³², the least significant first, without zeros at the top;
@@ -697,6 +716,15 @@ fn shiftRight(a: Array[UInt], shift: Int): Array[UInt] {
 /// rounds. `+`, `-` and `*` are exact; `/` gives 34 significant digits,
 /// rounded half to even, and `divide` as many decimals as asked. A literal
 /// where one is expected is exact: `let price: math.Decimal = 19.99`.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// let price = math.Decimal.parse("19.99")?
+/// let share = price.divide(math.Decimal.parse("3")?, 2)
+/// console.println("{share} {share.scale()}")
+/// ```
 pub type Decimal = {
     /// The value is `coefficient` divided by 10 to `scale`, without zeros
     /// to spare at the end.
@@ -707,6 +735,14 @@ pub type Decimal = {
 /// How a value is rounded to fewer decimals: half to even, as banks do;
 /// half away from zero; toward zero (`Down`) or away from it (`Up`); or
 /// toward minus or plus infinity (`Floor`, `Ceiling`).
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// let amount = math.Decimal.parse("2.345")?
+/// console.println("{amount.round(2, mode: math.Rounding.HalfUp)} {amount.round(2, mode: math.Rounding.Down)}")
+/// ```
 pub enum Rounding {
     HalfEven
     HalfUp

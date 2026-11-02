@@ -38,6 +38,19 @@ pub const LetsEncryptStaging: String = "https://acme-staging-v02.api.letsencrypt
 const AlpnProtocol: String = "acme-tls/1"
 
 /// Why a certificate could not be obtained.
+///
+/// ```tondo
+/// import std.acme
+/// import std.console
+/// import std.http
+///
+/// var app = http.App.new()
+/// // A certificate the authority does not give fails the server's start.
+/// match app.start(port: 0, tls: acme.tls(["example.com"], email: "me@example.com")) {
+///     ok(server) => server.stop()
+///     err(error) => console.println("{error}")
+/// }
+/// ```
 pub type AcmeError = {
     message: String
 }

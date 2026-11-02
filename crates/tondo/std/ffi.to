@@ -17,57 +17,301 @@ import std.internal.memory
 // Tondo supports. They are aliases, so their values are ordinary numbers.
 
 /// C's `char`, a byte.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn snprintf(buffer: Pointer[ffi.CChar], size: ffi.CSize, format: ffi.CString, ...): ffi.CInt
+///
+/// // A buffer of C characters that C writes into.
+/// let buffer = ffi.allocate[ffi.CChar](32)
+/// unsafe {
+///     _ = snprintf(buffer, 32u64, "%s has %d items", "cart", 3i32)
+///     console.println(ffi.fromCString(buffer))
+///     ffi.free(buffer)
+/// }
+/// ```
 pub alias CChar = Byte
 
 /// C's `short`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern type PollFd = {
+///     fd: ffi.CInt
+///     events: ffi.CShort
+///     revents: ffi.CShort
+/// }
+///
+/// extern fn poll(fds: Pointer[PollFd], count: ffi.CULong, timeout: ffi.CInt): ffi.CInt
+///
+/// // Whether standard input has something to read, without waiting.
+/// let readable: ffi.CShort = 1
+/// let watched = ffi.allocate[PollFd]()
+/// unsafe {
+///     watched.write(PollFd { fd: 0, events: readable, revents: 0 })
+///     let ready = poll(watched, 1u64, 0)
+///     console.println("ready: {ready}, events: {watched.read().revents}")
+///     ffi.free(watched)
+/// }
+/// ```
 pub alias CShort = Int16
 
 /// C's `unsigned short`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn htons(value: ffi.CUShort): ffi.CUShort
+///
+/// // A port in the byte order of the network, as a C socket address holds it.
+/// let port: ffi.CUShort = 8080
+/// console.println("{port} is {unsafe { htons(port) }} in network order on this machine")
+/// ```
 pub alias CUShort = UInt16
 
 /// C's `int`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// @symbol("atoi")
+/// extern fn parseInt(text: ffi.CString): ffi.CInt
+///
+/// extern fn getpid(): ffi.CInt
+///
+/// let count: ffi.CInt = unsafe { parseInt("42") }
+/// // A narrower result widens where an `Int` is expected.
+/// let total: Int = count + 1
+/// console.println("{total} in process {unsafe { getpid() } > 0}")
+/// ```
 pub alias CInt = Int32
 
 /// C's `unsigned int`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn htonl(value: ffi.CUInt): ffi.CUInt
+///
+/// let address: ffi.CUInt = 0x7f000001u32
+/// console.println("127.0.0.1 is {address} here and {unsafe { htonl(address) }} on the wire")
+/// ```
 pub alias CUInt = UInt32
 
 /// C's `long`, of 64 bits on the supported targets.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn strtol(text: ffi.CString, end: Pointer[ffi.CString]?, base: ffi.CInt): ffi.CLong
+///
+/// console.println("{unsafe { strtol("ff", none, 16) }} {unsafe { strtol("-777", none, 8) }}")
+/// ```
 pub alias CLong = Int
 
 /// C's `unsigned long`, of 64 bits on the supported targets.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn strtoul(text: ffi.CString, end: Pointer[ffi.CString]?, base: ffi.CInt): ffi.CULong
+///
+/// let mask: ffi.CULong = unsafe { strtoul("11110000", none, 2) }
+/// console.println("{mask}")
+/// ```
 pub alias CULong = UInt64
 
 /// C's `long long`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn atoll(text: ffi.CString): ffi.CLongLong
+///
+/// extern fn llabs(value: ffi.CLongLong): ffi.CLongLong
+///
+/// let bytes = unsafe { atoll("-9000000000") }
+/// console.println("{unsafe { llabs(bytes) }}")
+/// ```
 pub alias CLongLong = Int
 
 /// C's `unsigned long long`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn strtoull(text: ffi.CString, end: Pointer[ffi.CString]?, base: ffi.CInt): ffi.CULongLong
+///
+/// let largest: ffi.CULongLong = unsafe { strtoull("18446744073709551615", none, 10) }
+/// console.println("{largest}")
+/// ```
 pub alias CULongLong = UInt64
 
 /// C's `size_t`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn strlen(text: ffi.CString): ffi.CSize
+///
+/// // The bytes of UTF-8, which is what C counts.
+/// let size: ffi.CSize = unsafe { strlen("año") }
+/// console.println("{size} bytes")
+/// ```
 pub alias CSize = UInt64
 
 /// C's `ssize_t`.
+///
+/// ```tondo
+/// import std.ffi
+///
+/// extern fn write(fd: ffi.CInt, data: ffi.CString, count: ffi.CSize): ffi.CSSize
+///
+/// // The bytes written, or -1 when it fails.
+/// let text = "written by C\n"
+/// let written: ffi.CSSize = unsafe { write(1, text, UInt64(text.length()).unwrapOr(0u64)) }
+/// if written < 0 {
+///     panic("write failed")
+/// }
+/// ```
 pub alias CSSize = Int
 
 /// C's `float`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn strtof(text: ffi.CString, end: Pointer[ffi.CString]?): ffi.CFloat
+///
+/// let ratio: ffi.CFloat = unsafe { strtof("0.75", none) }
+/// console.println("{ratio * 2.0f32}")
+/// ```
 pub alias CFloat = Float32
 
 /// C's `double`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn atof(text: ffi.CString): ffi.CDouble
+///
+/// extern fn frexp(value: ffi.CDouble, exponent: Pointer[ffi.CInt]): ffi.CDouble
+///
+/// let exponent = ffi.allocate[ffi.CInt]()
+/// unsafe {
+///     let fraction = frexp(atof("48.0"), exponent)
+///     console.println("48 = {fraction} * 2^{exponent.read()}")
+///     ffi.free(exponent)
+/// }
+/// ```
 pub alias CDouble = Float
 
 /// C's `bool`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// /// The options a C library takes, with C's `bool`.
+/// extern type Options = {
+///     verbose: ffi.CBool
+///     level: ffi.CInt
+/// }
+///
+/// /// A function C can call back, as a library's filter.
+/// extern fn accept(options: Options, value: ffi.CInt): ffi.CBool {
+///     options.verbose or value <= options.level
+/// }
+///
+/// let options = Options { verbose: false, level: 3 }
+/// console.println("{unsafe { accept(options, 2) }} {ffi.sizeOf[Options]()}")
+/// ```
 pub alias CBool = Bool
 
 /// A C string: the address of bytes that end with a zero byte. A `String`
 /// passed to a C function that takes one becomes such a copy for the call.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn getenv(name: ffi.CString): ffi.CString?
+///
+/// extern fn strdup(text: ffi.CString): ffi.CString
+///
+/// unsafe {
+///     // A C string C may return as null is an option.
+///     match getenv("HOME") {
+///         some(home) => console.println("home is {ffi.fromCString(home)}")
+///         none => console.println("no home")
+///     }
+///     // A copy C made with its allocator, given back with `free`.
+///     let copy = strdup("hello")
+///     console.println(ffi.fromCString(copy))
+///     ffi.free(copy)
+/// }
+/// let kept = ffi.toCString("for C to keep")
+/// unsafe { ffi.free(kept) }
+/// ```
 pub alias CString = memory.CString
 
 /// What C's `void*` points to: any `Pointer[T]` converts to
 /// `Pointer[ffi.Void]`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn memset(target: Pointer[ffi.Void], value: ffi.CInt, count: ffi.CSize): Pointer[ffi.Void]
+///
+/// let numbers = ffi.allocate[Int32](4)
+/// unsafe {
+///     // Any pointer goes where C takes a `void*`.
+///     _ = memset(numbers, 0xff, 16u64)
+///     console.println("{numbers.read()}")
+///     ffi.free(numbers)
+/// }
+/// ```
 pub alias Void = memory.Void
 
 /// A `va_list` of C, which only C makes: a function C calls may receive a
 /// `Pointer[VaList]` and pass it along, as to `vsnprintf`.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// extern fn vsnprintf(buffer: Pointer[ffi.CChar], size: ffi.CSize, format: ffi.CString, args: Pointer[ffi.VaList]): ffi.CInt
+///
+/// /// A library's log callback, which receives the arguments of its `printf`
+/// /// format as a `va_list` and lets C format them.
+/// extern fn logged(level: ffi.CInt, format: ffi.CString, args: Pointer[ffi.VaList]) {
+///     let buffer = ffi.allocate[ffi.CChar](512)
+///     unsafe {
+///         _ = vsnprintf(buffer, 512u64, format, args)
+///         console.println("[{level}] {ffi.fromCString(buffer)}")
+///         ffi.free(buffer)
+///     }
+/// }
+///
+/// extern fn library_set_log(callback: extern fn(ffi.CInt, ffi.CString, Pointer[ffi.VaList]))
+///
+/// unsafe { library_set_log(logged) }
+/// ```
 pub extern type VaList
 
 @symbol("free")
