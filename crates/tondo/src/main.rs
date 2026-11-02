@@ -2005,7 +2005,8 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
     }
     let key = driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    let dir = driver::cache_entry("run", &key);
+    let program = std::path::absolute(path).map_err(|e| e.to_string())?;
+    let dir = driver::build_entry("run", &[program.as_os_str().as_encoded_bytes(), parts[2].as_slice()], &key);
     let executable = dir.join(program_name(path)?);
     if !executable.exists() {
         let Some(analysis) = analyze(path, false, options.shown)? else {

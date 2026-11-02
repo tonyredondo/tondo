@@ -212,6 +212,29 @@ fn manages_projects() {
     assert!(!cache.join("tondo/run").exists() && cache.join("tondo/deps/kept").exists());
 }
 
+/// Editing a program and running it again keeps its last two builds in
+/// the cache, not one per version.
+#[test]
+fn the_cache_keeps_a_programs_last_builds() {
+    let dir = scratch("cli-builds");
+    let cache = dir.join("cache");
+    let run = |text: &str| {
+        std::fs::write(dir.join("main.to"), format!("import std.console\n\nconsole.println(\"{text}\")\n")).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["run", "main.to"])
+            .current_dir(&dir)
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), format!("{text}\n"));
+    };
+    for text in ["one", "two", "three", "four"] {
+        run(text);
+    }
+    let builds = std::fs::read_dir(cache.join("tondo/run")).unwrap().flatten();
+    assert_eq!(builds.filter(|entry| entry.path().is_dir()).count(), 2);
+}
+
 /// Every code a diagnostic of the compiler gives has its explanation.
 #[test]
 fn every_code_is_explained() {

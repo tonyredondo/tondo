@@ -67,6 +67,30 @@ fn forget_others(dir: &Path, name: &str, own: &str, now: std::time::SystemTime) 
 /// The cache entry `key` of `kind` (`run`, `test` or `meta`), which holds
 /// what a build can make again: using it marks it, and an entry no one
 /// used in 30 days is removed, looking at most once a day.
+/// The entry `key` of the builds of one program, as `run` and `test` keep
+/// them, `owner` naming the program and how it is built: a new one lets go
+/// of its older builds but the last, so that editing a program does not
+/// fill the cache with every version of it.
+pub fn build_entry(kind: &str, owner: &[&[u8]], key: &str) -> PathBuf {
+    const KEPT: usize = 1;
+    let prefix = format!("{}-", fingerprint(owner));
+    let entry = cache_entry(kind, &format!("{prefix}{key}"));
+    if !entry.exists() {
+        let mut older: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(cache_dir().join(kind))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_str().is_some_and(|name| name.starts_with(&prefix)))
+            .filter_map(|e| Some((e.metadata().and_then(|m| m.modified()).ok()?, e.path())))
+            .collect();
+        older.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        for (_, path) in older.into_iter().skip(KEPT) {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+    entry
+}
+
 pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
     let dir = cache_dir().join(kind);
     let entry = dir.join(key);

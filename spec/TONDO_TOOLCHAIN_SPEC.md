@@ -232,7 +232,10 @@ inputs, y los archivos que embebe (14.27 de la librería estándar). Usar su
 runtime lo marca; al escribirlo, un compilador borra los de otras versiones
 que ningún build ha usado en un día, así que dos versiones a la vez, como la
 del editor y la de la terminal, no se quitan el runtime la una a la otra. Una
-entrada de esos directorios que nadie usa en 30 días se borra.
+entrada de esos directorios que nadie usa en 30 días se borra, y de un mismo
+programa, o proyecto en `test/`, compilado del mismo modo (debug, live,
+estático o para otro target), un build nuevo deja solo el anterior más
+reciente: editar un programa no llena la caché con cada versión suya.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
 Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché

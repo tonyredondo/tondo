@@ -1178,5 +1178,6 @@ pub fn build_dir(
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
     }
     let key = crate::driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    Ok(crate::driver::cache_entry("test", &key))
+    let project = std::path::absolute(path).map_err(|e| e.to_string())?;
+    Ok(crate::driver::build_entry("test", &[project.as_os_str().as_encoded_bytes(), linking.as_bytes()], &key))
 }
