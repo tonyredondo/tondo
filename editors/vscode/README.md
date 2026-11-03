@@ -47,8 +47,10 @@ project, running, debugging and testing it.
   replay whose marks take the program there; beside each line run, with
   `"record"`, what it changed the last time; *Show What the Tasks Wait For*
   in the call stack's menu, the tasks as a graph that points at who holds
-  what each waits for; and *Debug a Dump*, which opens a dump of a crashed
-  program at its tasks and stacks.
+  what each waits for; with `"followChildren": true`, each program it
+  starts in a session of its own, which a debug build of Tondo waits for;
+  and *Debug a Dump*, which opens a dump of a crashed program at its tasks
+  and stacks.
 - **Live builds**: *Tondo: Debug Live* starts a build whose code changes
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.

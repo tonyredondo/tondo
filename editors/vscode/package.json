@@ -205,6 +205,23 @@
               "dump": {
                 "type": "string",
                 "description": "A dump of a program (`tondo dump`, or `TONDO_DUMP=<dir>` at a crash), opened at its tasks and stacks instead of running a program."
+              },
+              "replay": {
+                "type": "string",
+                "description": "A recording of `tondo run --record <dir>`, run again the same, which steps back to the whole program as it was."
+              },
+              "record": {
+                "type": [
+                  "boolean",
+                  "number"
+                ],
+                "description": "Keep a history of the lines run, `true` or how many, which Step Back goes through and what each line changed shows beside it.",
+                "default": true
+              },
+              "followChildren": {
+                "type": "boolean",
+                "description": "Debug the programs it starts too, each in a session of its own: a debug build of Tondo waits for it.",
+                "default": true
               }
             }
           },

@@ -976,6 +976,21 @@ static CLIENT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 /// The program started under `tondo debug`, which it waits for before
 /// `main`; and it has not reached `main` yet.
 pub(crate) static WAIT: AtomicBool = AtomicBool::new(false);
+
+/// The debugger debugs the children the program starts too (`follow`).
+static FOLLOW: AtomicBool = AtomicBool::new(false);
+
+/// Whether a child the program starts is for the debugger too: one that is
+/// a debug build of Tondo waits for it before its `main`, as `tondo debug`
+/// starts a program.
+pub(crate) fn following() -> bool {
+    ATTACHED.load(Ordering::Relaxed) && FOLLOW.load(Ordering::Relaxed) && !super::replay::replaying()
+}
+
+/// The program started a child the debugger follows.
+pub(crate) fn child_started(pid: u32, program: &str) {
+    tell(&format!("{{\"child\":{{\"pid\":{pid},\"program\":{}}}}}", quoted(program)));
+}
 static BEFORE_MAIN: AtomicBool = AtomicBool::new(true);
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -2411,8 +2426,10 @@ pub(crate) fn attach(client: &UnixStream) -> String {
 
 /// The debugger went away: the program goes on as if it never came.
 pub(crate) fn detach() {
-    // A replay without a debugger keeps no more checkpoints.
+    // A replay without a debugger keeps no more checkpoints, nor does the
+    // program start children for it.
     EVERY.store(0, Ordering::Relaxed);
+    FOLLOW.store(false, Ordering::Relaxed);
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CLIENT_FD.store(-1, Ordering::Relaxed);
     ATTACHED.store(false, Ordering::Relaxed);
@@ -2574,6 +2591,12 @@ pub(crate) fn command(line: &str) -> Option<String> {
             drop(state);
             go_after_answer(Mode::Run);
             "{\"running\":true}".into()
+        }
+        // The children the program starts, debugged too, or no longer.
+        "follow" => {
+            let on = rest.trim() != "off";
+            FOLLOW.store(on, Ordering::Relaxed);
+            format!("{{\"following\":{on}}}")
         }
         // The history: kept from now on, or no longer.
         "record" => {

@@ -4636,6 +4636,17 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — Following children
+
+A program that starts others, as a server its workers, is debugged in
+pieces. With `follow`, the children it starts get `TONDO_DEBUG=1`, which
+makes a debug build of Tondo wait before `main` for a debugger, as
+`tondo debug` starts one, and leaves any other program as it was; the
+debugger hears of each. The editor's adapter asks for a session of the
+editor's own for each child, with DAP's `startDebugging`, and that
+session attaches: a session is one process, as the editor shows it,
+rather than one adapter that mixes the threads of several.
+
 ## 2026-11-03 — A `tondo` command in lldb and gdb
 
 dotnet's SOS teaches lldb the runtime's structures. Tondo's dump already

@@ -2138,6 +2138,51 @@ fn debugger_finds_who_changed_a_value_in_a_replay() {
     adapter.stop();
 }
 
+/// With `followChildren`, a child the program starts is debugged too: the
+/// adapter asks the editor for a session of its own, which attaches to the
+/// child, a debug build of Tondo that waited for it.
+#[test]
+fn debug_adapter_follows_children() {
+    if !cfg!(unix) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-children");
+    std::fs::create_dir_all(&dir).unwrap();
+    let child = "import std.console\n\nfn main() {\n    let greeting = \"hi\"\n    console.println(greeting)\n}\n";
+    std::fs::write(dir.join("child.to"), child).unwrap();
+    let parent =
+        "import std.process\n\nfn main(): !process.ProcessError {\n    _ = process.command(\"./child\").run()?\n}\n";
+    std::fs::write(dir.join("parent.to"), parent).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "child.to", "--debug", "--output", "child"])
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(built.success());
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": dir.join("parent.to"), "cwd": dir, "followChildren": true }));
+    adapter.ask("configurationDone", json!({}));
+    let asked = adapter.asked("startDebugging");
+    assert_eq!(asked["request"], "attach", "{asked}");
+    let pid = asked["configuration"]["processId"].clone();
+    assert!(asked["configuration"]["name"].as_str().unwrap().starts_with("child ("), "{asked}");
+    let mut followed = Adapter::start();
+    followed.ask("initialize", json!({ "adapterID": "tondo" }));
+    followed.ask("attach", json!({ "processId": pid, "cwd": dir }));
+    let path = dir.join("child.to");
+    followed.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 5 }] }));
+    followed.ask("configurationDone", json!({}));
+    followed.until("stopped");
+    let trace = followed.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(trace["stackFrames"][0]["line"], 5, "{trace}");
+    followed.ask("continue", json!({ "threadId": 1 }));
+    followed.until("terminated");
+    followed.stop();
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {
@@ -2600,6 +2645,17 @@ impl Adapter {
             let message = dap_read(&mut self.output);
             if message["type"] == "response" && message["command"] == command {
                 return message;
+            }
+            self.events.push(message);
+        }
+    }
+
+    /// The arguments of a request the adapter makes of the editor.
+    fn asked(&mut self, command: &str) -> Value {
+        loop {
+            let message = dap_read(&mut self.output);
+            if message["type"] == "request" && message["command"] == command {
+                return message["arguments"].clone();
             }
             self.events.push(message);
         }

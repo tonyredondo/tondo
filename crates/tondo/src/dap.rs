@@ -45,6 +45,11 @@ impl Editor {
         self.send(json!({ "type": "event", "event": event, "body": body }));
     }
 
+    /// A request to the editor, whose response the adapter does not wait for.
+    fn request(&self, command: &str, arguments: Value) {
+        self.send(json!({ "type": "request", "command": command, "arguments": arguments }));
+    }
+
     fn respond(&self, request: &Value, body: Result<Value, String>) {
         let mut response = json!({
             "type": "response", "request_seq": request["seq"], "command": request["command"], "success": body.is_ok(),
@@ -264,6 +269,10 @@ pub fn serve(builds: Builds) -> Result<(), String> {
     let mut dumped: Option<Dumped> = None;
     let mut breakpoints: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
     while let Some(request) = read_message(&mut input) {
+        // The editor's answers to the adapter's own requests.
+        if request["type"] == "response" {
+            continue;
+        }
         let arguments = &request["arguments"];
         let command = request["command"].as_str().unwrap_or_default();
         // A dump: tasks to look at, which do not run.
@@ -534,6 +543,16 @@ impl Pumped {
                 (value["checkpointed"]["tick"].as_u64(), value["checkpointed"]["pid"].as_u64())
             {
                 checkpointed.lock().unwrap_or_else(|e| e.into_inner()).push((tick, pid as u32));
+            } else if let Some(pid) = value["child"]["pid"].as_u64() {
+                // A child it follows, which the editor debugs in a session
+                // of its own; a debug build of Tondo waits for it.
+                let program = value["child"]["program"].as_str().unwrap_or_default();
+                let name = format!(
+                    "{} ({pid})",
+                    Path::new(program).file_name().map_or(program.into(), |n| n.to_string_lossy())
+                );
+                let configuration = json!({ "type": "tondo", "request": "attach", "name": name, "processId": pid });
+                events.request("startDebugging", json!({ "request": "attach", "configuration": configuration }));
             } else if let Some(id) = value.get("unwatched") {
                 let why = value["why"].as_str().unwrap_or_default();
                 let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
@@ -730,6 +749,11 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     // Steps go into the standard library's code too.
     if arguments["justMyCode"] == false {
         debuggee.ask("steps all")?;
+    }
+    // The children the program starts, each debugged in a session of its
+    // own.
+    if arguments["followChildren"] == true {
+        debuggee.ask("follow")?;
     }
     // A history of the lines run, which Step Back goes through.
     match &arguments["record"] {

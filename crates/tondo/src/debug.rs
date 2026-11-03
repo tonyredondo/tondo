@@ -61,6 +61,7 @@ snapshot                                        why the task stopped, each frame
                                                 spawned, the other tasks and the last lines of its history
 finish                                          until this function returns (f)
 steps program|all                               steps go over the standard library's code (the default), or into it
+follow [off]                                    debug the children the program starts too: a debug build waits for it
 record [<lines>|off]                            keep each line the tasks run, with the bindings as it started (10000)
 back [<n> | until <condition>]                  back in the stopped task's history, n lines or to the nearest where
                                                 the condition held: locals, print, stack show it
@@ -435,7 +436,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "why" | "tick" | "timeline" | "ran" | "tasks" | "restart" | "select" | "children" | "task" | "catch"
             | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
-            | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" => {
+            | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" | "follow" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -1205,7 +1206,11 @@ impl Session {
             }
             // A logpoint's message, a capture or a watch that ended, as it
             // comes.
-            if value.get("logged").is_some() || value.get("unwatched").is_some() || value.get("captured").is_some() {
+            if value.get("logged").is_some()
+                || value.get("unwatched").is_some()
+                || value.get("captured").is_some()
+                || value.get("child").is_some()
+            {
                 self.show(&value);
                 continue;
             }
@@ -1230,6 +1235,7 @@ impl Session {
                 }
                 Ok(value)
                     if value.get("logged").is_some()
+                        || value.get("child").is_some()
                         || value.get("unwatched").is_some()
                         || value.get("captured").is_some() =>
                 {
@@ -1383,6 +1389,11 @@ impl Session {
             }
         } else if let Some(logged) = value["logged"].as_str() {
             println!("{logged}");
+        } else if let Some(pid) = value["child"]["pid"].as_u64() {
+            let program = value["child"]["program"].as_str().unwrap_or_default();
+            println!(
+                "the program started {program}, process {pid}: `tondo debug {pid}` debugs it, which waits 5 s for it"
+            );
         } else if let Some(retainers) = value.get("retainers") {
             println!("{}", retainers["object"].as_str().unwrap_or_default());
             let stacks: Vec<String> =

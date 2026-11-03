@@ -585,7 +585,14 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
                 sink(error, Some(index), &mut running, 2)?
             };
             command.stdout(stdout.stdio()).stderr(stderr.stdio());
+            let followed = super::debugger::following();
+            if followed {
+                command.env("TONDO_DEBUG", "1");
+            }
             let child = command.spawn()?;
+            if followed {
+                super::debugger::child_started(child.id(), &stage.program.to_string_lossy());
+            }
             super::diagnostics::PROCESSES_STARTED.add(1);
             running.pids.push(child.id());
             if stage.group && running.group.is_none() {

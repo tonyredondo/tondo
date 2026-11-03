@@ -903,6 +903,11 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   uno que empieza en él; `steps all` los hace entrar y `steps program`
   vuelve a lo de antes. Un paso que sale de una función dice lo que devolvió
   (`returned`), que `locals` muestra también en el marco donde paró.
+- `follow` hace que los procesos que el programa empieza desde entonces
+  lleven `TONDO_DEBUG=1`: uno que es un build de depuración de Tondo espera
+  antes de `main`, hasta 5 segundos, a que un depurador se adjunte, y el
+  depurador dice cuál empezó (`child`, con su `pid` y su programa); `follow
+  off` lo deja. En una reproducción no hay hijos que seguir.
 - `record [<lines>]` guarda desde entonces cada línea del programa que
   ejecuta cada tarea, con su pila y los bindings que su código puede usar
   como estaban al empezarla, mostrados y recortados, en un historial de las
@@ -1015,7 +1020,9 @@ las órdenes de `tondo debug`; lo que devolvió una función al salir de ella
 va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
 que los pasos entren en el código de la librería estándar; con `"record"`
 (`true` o cuántas líneas) guarda el historial, por el que van `stepBack` y
-`reverseContinue`; la salida del programa y los logpoints van a la
+`reverseContinue`; con `"followChildren": true` sigue a los hijos, y por
+cada uno pide al editor otra sesión con la petición `startDebugging`, un
+`attach` a su `processId`; la salida del programa y los logpoints van a la
 consola del editor. La petición `table`, propia de Tondo, da una página de
 las partes de un valor, como un array o un map de records, por su
 `variablesReference`: una fila por parte, con su nombre, y una columna por
