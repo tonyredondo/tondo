@@ -852,7 +852,7 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
         &object,
         &partial,
         &analysis.libraries,
-        driver::Linking { strip: false, statically: build.statically, target: build.target },
+        driver::Linking { strip: false, statically: build.statically, target: build.target, debug: build.debug },
     )?;
     std::fs::rename(&partial, &executable).map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
     tree.save(&tree_file)?;
@@ -934,12 +934,16 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
-    let (mut test, mut via, mut schedule) = (None, None, None);
+    let (mut test, mut via, mut schedule, mut replay) = (None, None, None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
             "--json" => json = true,
             "--live" => live = true,
+            "--replay" => {
+                let dir = rest.next().ok_or_else(|| usage("--replay takes the directory of a recording"))?;
+                replay = Some(PathBuf::from(dir));
+            }
             "--schedule" => {
                 let seed = rest.next().and_then(|s| u64::from_str_radix(s.to_str()?, 16).ok());
                 let seed = seed.ok_or_else(|| {
@@ -966,6 +970,11 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if schedule.is_some() && test.is_none() {
         return Err(usage("--schedule orders the tasks of a test: it goes with --test"));
+    }
+    // A recorded run, again.
+    if let Some(dir) = replay {
+        let status = tondo::debug::debug(tondo::debug::Debugged::Replayed(dir), json)?;
+        return Ok(ExitCode::from(status.clamp(0, 255) as u8));
     }
     // A program on another machine, or in a container, by its name there.
     if let Some(via) = via {
@@ -1943,7 +1952,8 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let object = object(&analysis, &path, &options)?;
     let libraries = [analysis.libraries.clone(), options.libraries].concat();
-    let linking = driver::Linking { strip, statically: options.statically, target: options.target };
+    let linking =
+        driver::Linking { strip, statically: options.statically, target: options.target, debug: options.debug };
     driver::link(&object, &output, &libraries, linking)?;
     if json {
         print_json("build", true, serde_json::json!({ "output": output, "diagnostics": diagnostics }));
@@ -2024,17 +2034,92 @@ fn target_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let (path, rest) = source_argument(args);
+    // `--record <dir>`, before the program's arguments.
+    let mut args = args.to_vec();
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let record = match args[..end].iter().position(|a| a == "--record") {
+        Some(at) if at + 1 < end => {
+            let dir = args.remove(at + 1);
+            args.remove(at);
+            Some(PathBuf::from(dir))
+        }
+        Some(_) => return Err(format!("--record takes the directory the recording goes to\n{USAGE}")),
+        None => None,
+    };
+    let (path, rest) = source_argument(&args);
     let (options, rest) = link_options(rest)?;
     let program_args = match rest.as_slice() {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
+    if let Some(dir) = record {
+        return record_run(&path, program_args, options, &dir);
+    }
     if options.watch {
         return watch(&path, program_args, &options);
     }
     run(&path, program_args, &options)
+}
+
+/// `tondo run --record <dir>` (toolchain 7.6): a debug build of the
+/// program runs with its tasks on one thread, in the order of a seed, and
+/// the runtime writes what each call of the C library gave it to the
+/// recording, with the program and how it ran it, which `tondo debug
+/// --replay <dir>` runs again.
+fn record_run(
+    path: &Path,
+    program_args: &[OsString],
+    mut options: BuildOptions,
+    dir: &Path,
+) -> Result<ExitCode, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("a run is recorded on Linux".into());
+    }
+    if options.watch || options.live || options.target.is_some() {
+        return Err("--record goes with none of --watch, --live and --target".into());
+    }
+    options.debug = true;
+    let Some(executable) = cached_executable(path, &options)? else { return Ok(ExitCode::FAILURE) };
+    let cannot = |e: std::io::Error| format!("cannot write the recording in {}: {e}", dir.display());
+    std::fs::create_dir_all(dir).map_err(cannot)?;
+    let program = dir.join("program");
+    let _ = std::fs::remove_file(&program);
+    std::fs::copy(&executable, &program).map_err(cannot)?;
+    let seed = match std::env::var("TONDO_RT_SCHEDULE") {
+        Ok(seed) => {
+            u64::from_str_radix(&seed, 16).map_err(|_| format!("TONDO_RT_SCHEDULE is not a seed in hex: {seed}"))?
+        }
+        Err(_) => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            now.as_nanos() as u64 ^ u64::from(std::process::id())
+        }
+    };
+    let environment: serde_json::Map<String, serde_json::Value> =
+        std::env::vars_os().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into())).collect();
+    let run = serde_json::json!({
+        "source": path,
+        "arguments": program_args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(),
+        "environment": environment,
+        "directory": std::env::current_dir().unwrap_or_default(),
+        "seed": format!("{seed:x}"),
+        "tondo": driver::VERSION,
+    });
+    std::fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&run).unwrap_or_default()).map_err(cannot)?;
+    let mut child = std::process::Command::new(&program)
+        .args(program_args)
+        .env("TONDO_RT_RECORD", dir.join("calls"))
+        .env("TONDO_RT_SCHEDULE", format!("{seed:x}"))
+        .spawn()
+        .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
+    // Ctrl-C is the program's to handle; the recording ends with it.
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+    let status = child.wait().map_err(|e| e.to_string())?;
+    eprintln!("tondo: the run is recorded in {0}: `tondo debug --replay {0}` runs it again", dir.display());
+    // A program a signal ended, as a shell says it.
+    use std::os::unix::process::ExitStatusExt;
+    let code = status.code().or_else(|| status.signal().map(|signal| 128 + signal)).unwrap_or(1);
+    Ok(ExitCode::from(code.clamp(0, 255) as u8))
 }
 
 /// `tondo run --watch` (toolchain 7.10): runs a live build of the program
@@ -2138,7 +2223,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
-        let linking = driver::Linking { strip: false, statically: *statically, target: *target };
+        let linking = driver::Linking { strip: false, statically: *statically, target: *target, debug: *debug };
         driver::link(&object, &partial, &libraries, linking)?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }

@@ -384,7 +384,19 @@ impl Dumped {
 fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> Result<Debuggee, String> {
     let root =
         arguments["cwd"].as_str().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let (program, child, tested) = if command == "launch" {
+    let (program, child, tested) = if let Some(dir) = arguments["replay"].as_str().filter(|_| command == "launch") {
+        // A recorded run, again (`tondo debug --replay`).
+        use std::os::unix::process::CommandExt;
+        let (executable, mut command) = crate::debug::replayed(&root.join(dir))?;
+        let child = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+        (observe::started(&executable, child.id())?, Some(child), None)
+    } else if command == "launch" {
         let program = arguments["program"]
             .as_str()
             .ok_or("`launch` takes a `program`: a .to file, a project or an executable")?;

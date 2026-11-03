@@ -15,11 +15,13 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]",
             "          [--target <target>] [--diagnostic-format human|json] [-- <argument>...]",
+            "tondo run --record <recording> [<project>|<file.to>] [--link <library>]... [-- <argument>...]",
         ],
         summary: &[
             "compile and run a program (under qemu for another",
             "machine; live: its code changes as it runs, with",
-            "`tondo reload`, or by itself as its files change)",
+            "`tondo reload`, or by itself as its files change;",
+            "recorded, for `tondo debug --replay`)",
         ],
     },
     Command {
@@ -182,6 +184,7 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]",
             "tondo debug [--json] --test <id> [--schedule <seed>] [<project>]",
+            "tondo debug [--json] --replay <recording>",
             "tondo debug [--json] --via <command> <pid|name>",
         ],
         summary: &[

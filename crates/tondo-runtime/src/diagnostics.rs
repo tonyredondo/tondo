@@ -600,6 +600,8 @@ pub(crate) fn start() {
         fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
     }
     extern "C" fn remove(_: *mut u8) {
+        // The tools' business, which a replay does again.
+        let _outside = super::replay::Outside::enter();
         end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
         super::debugger::exited();
         if let Some(path) = SOCKET.get() {

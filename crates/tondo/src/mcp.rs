@@ -336,6 +336,10 @@ impl Server {
         if let Some(seed) = args.text("schedule") {
             argv.extend(["--schedule".into(), seed]);
         }
+        // A recorded run, again: `target` is its directory.
+        if args.flag("replay") {
+            argv.push("--replay".into());
+        }
         if let Some(via) = args.text("via") {
             argv.extend(["--via".into(), via]);
         }
@@ -1024,6 +1028,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "run" => {
             push(&["run", &path]);
             building(&mut argv);
+            // Recorded, for `debug_start` with `replay`.
+            if let Some(dir) = args.text("record") {
+                argv.extend(["--record".into(), dir]);
+            }
             let program_args = args.list("args");
             if !program_args.is_empty() {
                 argv.push("--".into());
@@ -1917,6 +1925,12 @@ message, data, source and stack, as data.",
             ("args", "strings", "The program's arguments."),
             ("stdin", "string", "What the program reads on its standard input."),
             ("timeout", "number", "Seconds before it is ended; 60 by default."),
+            (
+                "record",
+                "string",
+                "A directory to record the run to, on Linux: what each call to the system gave the program, which \
+`debug_start` with `replay` runs again, the same, to debug a failure that happened once.",
+            ),
             STATIC,
             DEBUG,
             TARGET,
@@ -2060,6 +2074,12 @@ debug build's process ID or name. A program it starts waits before main for brea
                 "string",
                 "The id of a test of the project `target` names, as `test` lists it: the session debugs that test \
 alone, and says how it ended.",
+            ),
+            (
+                "replay",
+                "boolean",
+                "`target` is the directory of a run `run` recorded with `record`: the session replays it, the \
+same each time, with what the world gave it then, and never touches the world.",
             ),
             (
                 "schedule",

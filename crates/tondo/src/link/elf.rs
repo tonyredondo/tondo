@@ -90,6 +90,168 @@ pub struct Inputs<'a> {
     pub library: Option<(String, Vec<String>)>,
     /// Without a symbol table.
     pub strip: bool,
+    /// The C library's functions that `RECORDED` names are the runtime's
+    /// wrappers.
+    pub recordable: bool,
+}
+
+/// What the runtime records of a run, and replays (toolchain 7.6): in an
+/// executable that can record, a reference to one of these functions of the
+/// C library is to its wrapper, `tondo_rr_<name>`, which calls it as
+/// `tondo_real_<name>`.
+const RECORDED: &[&str] = &[
+    "accept",
+    "accept4",
+    "access",
+    "bind",
+    "chdir",
+    "chmod",
+    "chown",
+    "clock_gettime",
+    "clock_nanosleep",
+    "close",
+    "closedir",
+    "connect",
+    "copy_file_range",
+    "dirfd",
+    "dlsym",
+    "dup",
+    "dup2",
+    "epoll_create1",
+    "epoll_ctl",
+    "epoll_wait",
+    "eventfd",
+    "fchmod",
+    "fcntl",
+    "fdopendir",
+    "fcntl64",
+    "fdatasync",
+    "fork",
+    "freeaddrinfo",
+    "fstat",
+    "fstat64",
+    "fstatat",
+    "fstatat64",
+    "fsync",
+    "ftruncate",
+    "ftruncate64",
+    "futimens",
+    "getaddrinfo",
+    "getcwd",
+    "geteuid",
+    "gethostname",
+    "getpeername",
+    "getpid",
+    "getppid",
+    "getrandom",
+    "getsockname",
+    "getsockopt",
+    "gettimeofday",
+    "getuid",
+    "inotify_add_watch",
+    "inotify_init1",
+    "inotify_rm_watch",
+    "ioctl",
+    "kill",
+    "killpg",
+    "linkat",
+    "listen",
+    "lseek",
+    "lseek64",
+    "lstat",
+    "lstat64",
+    "mkdir",
+    "nanosleep",
+    "open",
+    "open64",
+    "openat",
+    "openat64",
+    "opendir",
+    "pipe",
+    "pipe2",
+    "poll",
+    "posix_spawnp",
+    "pread",
+    "pread64",
+    "preadv",
+    "pthread_create",
+    "pwrite",
+    "pwrite64",
+    "pwritev",
+    "read",
+    "readdir",
+    "readdir64",
+    "readlink",
+    "readv",
+    "realpath",
+    "recv",
+    "recvfrom",
+    "recvmsg",
+    "rename",
+    "rmdir",
+    "sched_getaffinity",
+    "send",
+    "sendfile",
+    "sendfile64",
+    "sendmsg",
+    "sendto",
+    "setpgid",
+    "setsid",
+    "setsockopt",
+    "socket",
+    "socketpair",
+    "splice",
+    "stat",
+    "stat64",
+    "statvfs",
+    "statx",
+    "symlink",
+    "syscall",
+    "sysconf",
+    "tcgetattr",
+    "tcsetattr",
+    "time",
+    "uname",
+    "unlink",
+    "unlinkat",
+    "utimensat",
+    "utimes",
+    "waitid",
+    "waitpid",
+    "write",
+    "writev",
+    "flock",
+    "shutdown",
+    "sleep",
+    "pause",
+    "isatty",
+    "sysinfo",
+    "getrusage",
+    "getgid",
+    "chroot",
+    "fchown",
+    "lchown",
+    "mkfifo",
+    "pathconf",
+    "setuid",
+    "setgid",
+    "setgroups",
+    "getpwuid_r",
+];
+
+/// What a reference to `name` is to: the wrapper of a recorded function,
+/// or, for the wrapper's own call, the function.
+fn redirected(name: &[u8], recordable: bool) -> &[u8] {
+    static WRAPPERS: std::sync::OnceLock<HashMap<&'static [u8], Vec<u8>>> = std::sync::OnceLock::new();
+    if let Some(real) = name.strip_prefix(b"tondo_real_") {
+        return real;
+    }
+    if !recordable {
+        return name;
+    }
+    let wrappers = WRAPPERS
+        .get_or_init(|| RECORDED.iter().map(|n| (n.as_bytes(), format!("tondo_rr_{n}").into_bytes())).collect());
+    wrappers.get(name).map_or(name, Vec::as_slice)
 }
 
 /// The parts of the executable, in the order they are laid out: what is
@@ -391,6 +553,8 @@ struct Linker<'a> {
     relr: bool,
     /// A shared library, not an executable.
     library: bool,
+    /// Its references to `RECORDED` functions are to their wrappers.
+    recordable: bool,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -421,6 +585,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         unaligned_words: 0,
         relr: false,
         library: inputs.library.is_some(),
+        recordable: inputs.recordable,
     };
     // What the output starts from: the entry, or what a library publishes.
     let roots: Vec<usize> = match &inputs.library {
@@ -498,8 +663,15 @@ impl<'a> Linker<'a> {
         let index = self.inputs.len() as u32;
         let mut globals = vec![None; symbol_count + 1];
         let mut undefined = Vec::new();
+        // The allocator's object asks the system for memory, and for the
+        // time it uses to give memory back, as its own business, which a
+        // replay does again.
+        let allocator = symbols.iter().any(|s| s.name == b"mi_malloc" && s.section != SymbolSection::Undefined);
         for symbol in symbols {
-            let symbol_name = symbol.name;
+            let symbol_name = match symbol.section {
+                SymbolSection::Undefined => redirected(symbol.name, self.recordable && !allocator),
+                _ => symbol.name,
+            };
             let id = self.intern(symbol_name);
             globals[symbol.index] = Some(id);
             let weak = symbol.weak;
@@ -518,6 +690,15 @@ impl<'a> Linker<'a> {
                     }
                     if self.globals[id].def == Def::Undefined {
                         undefined.push(id);
+                    }
+                    // The wrapper calls the function itself, which comes in
+                    // as if this reference were to it.
+                    if symbol_name != symbol.name && !weak {
+                        let real = self.intern(symbol.name);
+                        self.globals[real].required = true;
+                        if self.globals[real].def == Def::Undefined {
+                            undefined.push(real);
+                        }
                     }
                     continue;
                 }

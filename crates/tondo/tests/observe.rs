@@ -1760,6 +1760,87 @@ fn debugger_gives_a_values_table() {
     adapter.stop();
 }
 
+const RECORDED: &str = r#"import std.console
+import std.fs
+import std.random
+import std.time
+
+fn main() {
+    var dice = random.Random.new()
+    let rolled = dice.int(0..1000000)
+    let name = console.readLine().unwrapOr("nobody")
+    let path = "{name}.txt"
+    fs.writeText(path, "{rolled} at {time.unixTime().nanoseconds()}").expect("written")
+    let kept = fs.readText(path).expect("read")
+    fs.remove(path).expect("removed")
+    console.println("{name} {kept}")
+}
+"#;
+
+/// On Linux, a run is recorded and replayed under the debugger the same
+/// each time, its random numbers, time, input and files as they were, and
+/// the replay touches no file.
+#[test]
+fn debugger_replays_a_recorded_run() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-replay");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("recorded.to"), RECORDED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "recorded.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"ada\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(printed.starts_with("ada "), "{printed}");
+    for _ in 0..2 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["debug", "--json", "--replay", "run"])
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let mut text = String::new();
+        let mut until = |key: &str| loop {
+            let mut line = String::new();
+            assert!(output.read_line(&mut line).unwrap() > 0, "the debugger ended before `{key}`: {text}");
+            text.push_str(&line);
+            let value: Value = serde_json::from_str(&line).unwrap_or_default();
+            assert!(value.get("error").is_none(), "{text}");
+            if value.get(key).is_some() {
+                return value;
+            }
+        };
+        let mut send = |line: &str| std::io::Write::write_all(&mut input, format!("{line}\n").as_bytes()).unwrap();
+        until("stopped");
+        send("break recorded.to:13");
+        until("breakpoint");
+        send("continue");
+        until("stopped");
+        // The program wrote the file in the recorded run only.
+        assert!(!dir.join("ada.txt").exists());
+        send("print kept");
+        let kept = until("value")["value"].as_str().unwrap().trim_matches('"').to_string();
+        assert_eq!(format!("ada {kept}\n"), printed);
+        send("continue");
+        until("exited");
+        drop(input);
+        child.wait().unwrap();
+        assert!(text.contains(&printed), "{text}");
+    }
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {

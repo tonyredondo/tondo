@@ -29,9 +29,11 @@ static WORK: Condvar = Condvar::new();
 const MOST_THREADS: usize = 64;
 
 /// Runs a host operation on a thread of the pool while the current task
-/// waits; directly outside a task. `long` work may wait indefinitely.
+/// waits; directly outside a task, and in a recorded run, whose calls are
+/// those of its one thread (toolchain 7.6), where a wait holds the other
+/// tasks. `long` work may wait indefinitely.
 pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send + 'static) -> R {
-    if current().is_null() {
+    if current().is_null() || super::replay::on() {
         return job();
     }
     let result = Arc::new(Mutex::new(None));
@@ -67,7 +69,7 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
     job: impl FnOnce() -> R + Send + 'static,
     on_cancel: impl FnOnce(),
 ) -> R {
-    if current().is_null() {
+    if current().is_null() || super::replay::on() {
         return job();
     }
     let result = Arc::new((Mutex::new(None), Condvar::new()));
@@ -303,6 +305,22 @@ impl Host for Stdin {
         }
         if let Some(kind) = self.gave_up {
             return Err(kind.into());
+        }
+        // A recorded run reads on its one thread, whose calls it records,
+        // and the other tasks wait meanwhile.
+        if super::replay::on() {
+            drop(input);
+            super::flush_stdout();
+            let mut chunk = vec![0; READ_CHUNK];
+            let read = std::io::stdin().read(&mut chunk);
+            let mut input = console_input();
+            match read {
+                Ok(0) => input.end = true,
+                Ok(count) => input.bytes.extend_from_slice(&chunk[..count]),
+                Err(failure) => input.failure = Some(failure),
+            }
+            drop(input);
+            return self.read(buffer);
         }
         if !input.reading {
             input.reading = true;

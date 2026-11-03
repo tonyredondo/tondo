@@ -60,8 +60,10 @@ impl Drop for Mapped {
 pub enum Product<'a> {
     /// An executable: without its symbol table, or static, with the C
     /// library in it; for a target, a static Linux one for its
-    /// architecture, whatever the machine.
-    Executable { strip: bool, statically: bool, target: Option<crate::target::Target> },
+    /// architecture, whatever the machine; one whose runs can be recorded
+    /// calls the runtime's wrappers of the C library's functions
+    /// (`elf::RECORDED`).
+    Executable { strip: bool, statically: bool, target: Option<crate::target::Target>, recordable: bool },
     /// A shared library that publishes `exports` (toolchain 7.7).
     Library { exports: &'a [String] },
 }
@@ -78,9 +80,9 @@ pub fn link(
     output: &Path,
     product: Product,
 ) -> Result<(), String> {
-    let (strip, statically, target) = match product {
-        Product::Executable { strip, statically, target } => (strip, statically, target),
-        Product::Library { .. } => (false, false, None),
+    let (strip, statically, target, recordable) = match product {
+        Product::Executable { strip, statically, target, recordable } => (strip, statically, target, recordable),
+        Product::Library { .. } => (false, false, None, false),
     };
     let exports = match product {
         Product::Library { exports } => Some(exports.to_vec()),
@@ -179,6 +181,7 @@ pub fn link(
         entry: if statically { "_start" } else { "tondo_rt_start" }.into(),
         library: exports.map(|exports| (name, exports)),
         strip,
+        recordable,
     };
     let bytes = elf::link(inputs).map_err(|message| match message.strip_prefix("undefined: ") {
         Some(names) => {

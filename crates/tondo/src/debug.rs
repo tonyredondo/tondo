@@ -6,7 +6,7 @@
 use crate::observe::{self, Program};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -23,6 +23,8 @@ pub enum Debugged {
     /// runs alone, the variables that give it the project's stores, and the
     /// seed of the order of its tasks (`--schedule`).
     Test(PathBuf, u32, Vec<(&'static str, PathBuf)>, Option<u64>),
+    /// A run `tondo run --record` recorded in this directory, replayed.
+    Replayed(PathBuf),
 }
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
@@ -87,6 +89,32 @@ call <expression>                               a live build: what an expression
 restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
+/// The program of a recording, `tondo run --record`'s directory, to replay
+/// under the debugger: with the arguments and the environment it had, in
+/// the order of tasks of its seed. The debugger finds it where its own
+/// temporary directory is.
+pub fn replayed(dir: &Path) -> Result<(PathBuf, std::process::Command), String> {
+    let read = std::fs::read(dir.join("run.json"))
+        .map_err(|e| format!("{} is not a recording of `tondo run --record`: {e}", dir.display()))?;
+    let run: Value = serde_json::from_slice(&read).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let executable = dir.join("program");
+    let arguments: Vec<&str> = run["arguments"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let environment = run["environment"].as_object().into_iter().flatten().filter_map(|(k, v)| Some((k, v.as_str()?)));
+    let mut command = std::process::Command::new(&executable);
+    command
+        .args(&arguments)
+        .env_clear()
+        .envs(environment)
+        .env("TMPDIR", std::env::temp_dir())
+        .env("TONDO_RT_REPLAY", dir.join("calls"))
+        .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap_or("0"))
+        .env("TONDO_DEBUG", "1");
+    if let Some(directory) = run["directory"].as_str().map(PathBuf::from).filter(|d| d.is_dir()) {
+        command.current_dir(directory);
+    }
+    Ok((executable, command))
+}
+
 /// The debugger, until its input ends or `quit`; gives the exit status of
 /// a program it started.
 pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
@@ -139,6 +167,16 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             let child = std::process::Command::new(&executable)
                 .args(&arguments)
                 .env("TONDO_DEBUG", "1")
+                .stdin(std::process::Stdio::null())
+                .process_group(0)
+                .spawn()
+                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            (observe::started(&executable, child.id())?, Some(child))
+        }
+        Debugged::Replayed(dir) => {
+            use std::os::unix::process::CommandExt;
+            let (executable, mut command) = replayed(&dir)?;
+            let child = command
                 .stdin(std::process::Stdio::null())
                 .process_group(0)
                 .spawn()

@@ -723,6 +723,12 @@ tasks | task 2 | pause | delete 1 | quit
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
 may call the program's code: `break app.to:12 if isLate(order)`.
 
+`tondo run --record rec app.to` records a run, on Linux: its time, input,
+files and random numbers, and the order of its tasks; `tondo debug --replay
+rec` runs it again, the same each time, without touching the world, to debug
+a failure that happened once. The network and processes are not recorded:
+the replay stops where the program starts them.
+
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames
 are below it, marked with which: a closure's maker, a test's suites.

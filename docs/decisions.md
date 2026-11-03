@@ -4610,3 +4610,28 @@ and long ones. The algorithm's name in the report changed with it, as a
 seed of the old one gives another order. A failure also names the
 command that debugs the test in its order, `tondo debug --test <id>
 --schedule <seed>`.
+
+## 2026-11-03 — Recording a run, and replaying it
+
+A failure that happens once, as one that depends on the time, the input
+or the order of the tasks, cannot be debugged by running the program
+again. rr records every call to the system and every switch between
+threads, from outside the process, with `ptrace` and the processor's
+counters; Tondo's debugger lives inside the process, which `ptrace`
+would freeze. So the runtime records: a recorded run puts its tasks on
+one thread, in the order of a seed (as `tondo test --schedules` does),
+and every function of the C library that reads the world is a wrapper
+in a debug build, which `tondo`'s linker gives the program in place of
+the function. The wrapper writes what the call gave, its result,
+`errno` and the bytes it wrote, and in a replay gives them back without
+making the call. Linking them rather than calling them from the runtime
+reaches every call, the Rust library's and C's as well; the functions
+the Rust library looks up as it runs come through a wrapper of `dlsym`.
+The allocator's own calls, the debugger's, and the runtime's threads'
+are not the program's, and run in a replay as in any run. What the
+program waits for on the host runs on the program's thread while it
+records, and signals arrive at the worker's turns, which the recording
+numbers. What runs on threads of its own, as tokio's for the network,
+cannot be put in that order from inside the process: the recording
+marks where such a thread starts, and a replay ends there, saying why,
+as it does where the program makes another call than the one recorded.

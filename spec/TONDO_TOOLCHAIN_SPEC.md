@@ -1005,6 +1005,29 @@ breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.
 
+`tondo run --record <dir>` ejecuta un build de depuración del programa y lo
+graba en el directorio `<dir>`: sus tareas corren en un solo thread, en el
+orden de una seed (8.10 de testing), y el runtime escribe lo que dio cada
+llamada a la librería de C que hizo ese thread (el reloj, los bytes
+aleatorios, los archivos, la entrada estándar, el sistema) y en qué turno
+del planificador llegó cada señal. El directorio guarda además el
+ejecutable, sus argumentos, su entorno y el directorio en que corrió.
+`tondo debug --replay <dir>` lo ejecuta otra vez bajo el depurador: cada
+llamada da lo que dio entonces sin hacerse, salvo escribir en la salida
+estándar y de error, que se ve, y cada señal llega en el mismo turno. La
+ejecución es la misma cada vez, con sus horas y sus datos, y no toca el
+mundo: un fallo que pasó una vez se depura con todas las órdenes de esta
+sección. El editor lo hace con `"replay"` en `launch`, y el servidor MCP con
+`record` en `run` y `replay` en `debug_start`. Solo en Linux. Mientras se
+graba, una lectura de la entrada estándar o de un archivo detiene las demás
+tareas. Lo que corre en threads propios no se graba: la red y HTTP
+(`std.net`, `std.http` y los módulos que los usan), los procesos
+(`std.process`), `fs.watch` y las funciones de C que llaman al programa desde
+sus threads. La reproducción para donde el programa empieza uno de esos
+threads, o donde hace una llamada distinta de la grabada, y dice por qué. El
+directorio tiene el entorno del programa y lo que leyó, y se guarda como esos
+datos.
+
 ### 7.7 Librerías para C
 
 `tondo build --library` compila un proyecto, o un archivo, como una librería

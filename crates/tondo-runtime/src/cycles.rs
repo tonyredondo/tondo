@@ -101,8 +101,13 @@ fn registry() -> MutexGuard<'static, Registry> {
 
 /// Registers a new cell whose state may refer back to it.
 pub(crate) fn remember(cell: *const u8, kind: Kind) {
-    // The collector's thread exists before memory may run short.
-    start_collector();
+    // The collector's thread exists before memory may run short; with the
+    // tasks on one thread in a given order, that thread collects, at its
+    // next safe point, so that what a collection frees goes where it went.
+    let deterministic = super::tasks::deterministic();
+    if !deterministic {
+        start_collector();
+    }
     let mut registry = registry();
     registry.cells.insert(cell as usize, kind);
     registry.created += 1;
@@ -113,7 +118,11 @@ pub(crate) fn remember(cell: *const u8, kind: Kind) {
     }
     if registry.created == registry.threshold {
         drop(registry);
-        wake_collector();
+        match deterministic {
+            true if !OWES.with(|owes| owes.replace(true)) => super::tasks::attend(true),
+            true => {}
+            false => wake_collector(),
+        }
     }
 }
 
@@ -134,6 +143,10 @@ pub(crate) fn owed() -> bool {
 pub(crate) fn assist() {
     if OWES.with(|owes| owes.replace(false)) {
         super::tasks::attend(false);
+    }
+    if super::tasks::deterministic() {
+        collect();
+        return;
     }
     let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     let seen = *done;

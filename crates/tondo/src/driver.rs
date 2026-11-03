@@ -1057,13 +1057,15 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
 }
 
 /// How an executable links: `strip` leaves out its symbol table,
-/// `statically` links the C library into it, and a `target` makes it for
-/// another machine, statically.
+/// `statically` links the C library into it, a `target` makes it for
+/// another machine, statically, and a debug build's runs can be recorded
+/// (toolchain 7.6).
 #[derive(Clone, Copy, Default)]
 pub struct Linking {
     pub strip: bool,
     pub statically: bool,
     pub target: Option<Target>,
+    pub debug: bool,
 }
 
 /// Links an object file with the embedded runtime and the native
@@ -1109,7 +1111,12 @@ pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
     if let Some(target) = linking.target.filter(|t| !t.native()) {
         let archives = target.pack(RUNTIME_IDENTITY.trim())?;
-        let product = crate::link::Product::Executable { strip: linking.strip, statically: true, target: Some(target) };
+        let product = crate::link::Product::Executable {
+            strip: linking.strip,
+            statically: true,
+            target: Some(target),
+            recordable: linking.debug,
+        };
         return crate::link::link(object, &archives, &[], libraries, output, product);
     }
     if linking.statically || linking.target.is_some() {
@@ -1122,7 +1129,12 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
             return Err(why.into());
         }
         let archives = STATIC.iter().map(|(name, bytes)| carried(name, bytes)).collect::<Result<Vec<_>, _>>()?;
-        let product = crate::link::Product::Executable { strip: linking.strip, statically: true, target: None };
+        let product = crate::link::Product::Executable {
+            strip: linking.strip,
+            statically: true,
+            target: None,
+            recordable: linking.debug,
+        };
         return crate::link::link(object, &archives, &[], libraries, output, product);
     }
     let runtime = carried("libtondo_runtime", RUNTIME)?;
@@ -1140,7 +1152,12 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         let mut archives = vec![runtime];
         let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
         archives.extend(unwind.map(PathBuf::from));
-        let product = crate::link::Product::Executable { strip: linking.strip, statically: false, target: None };
+        let product = crate::link::Product::Executable {
+            strip: linking.strip,
+            statically: false,
+            target: None,
+            recordable: linking.debug,
+        };
         return crate::link::link(object, &archives, &runtime_args, libraries, output, product);
     };
     let dir = cache_dir().join("runtime");

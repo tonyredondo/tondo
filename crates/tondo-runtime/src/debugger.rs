@@ -690,6 +690,7 @@ fn compiled_holds(table: &Table, frames: &[Frame], code: u64, names: &[String]) 
         names.iter().map(|name| bound.iter().find(|(b, ..)| b.name == *name).map(|(_, a, _)| *a as u64)).collect();
     let addresses = addresses?;
     let condition: extern "C" fn(u64, u64) -> u8 = unsafe { std::mem::transmute(code as usize) };
+    let _outside = super::replay::Outside::enter();
     let before = SHOWING.replace(true);
     let held = condition(addresses.as_ptr() as u64, 0) != 0;
     SHOWING.set(before);
@@ -784,6 +785,7 @@ fn state() -> std::sync::MutexGuard<'static, State> {
 }
 
 fn tell(event: &str) {
+    let _outside = super::replay::Outside::enter();
     if let Some(client) = CLIENT.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         let _ = writeln!(client, "{event}");
     }
@@ -794,6 +796,9 @@ fn tell(event: &str) {
 /// statement after the probe then returns and calls its function again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) -> u8 {
+    if super::replay::on() {
+        super::replay::tick();
+    }
     // A reload that converts values with identity stops every task at a
     // statement first.
     if super::live::barrier() {
@@ -1012,6 +1017,8 @@ fn watched(table: &Table, state: &mut State, task: u64, frame: usize, site: usiz
 /// Holds the task until the program goes on: as the one that stopped,
 /// `why`, or as one of those the stop holds.
 fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: Option<String>) {
+    // What the debugger has the task do meanwhile is not the program's.
+    let _outside = super::replay::Outside::enter();
     let task = stop.task;
     let frozen = |state: &State| state.frozen.contains(&task);
     if let Some(why) = why {
@@ -1223,10 +1230,25 @@ fn calling_here() -> bool {
     (calling != 0 && calling == super::tasks::current_id()) || SHOWING.get()
 }
 
+#[cfg_attr(not(all(tondo_staticlib, target_os = "linux")), allow(dead_code))]
+/// Stops the running task where it is for good: each `continue` stops it
+/// there again. Without a debugger the program ends, saying why.
+pub(crate) fn stop_for_good(why: String) -> ! {
+    // Each stop holds the task until the debugger lets it go.
+    loop {
+        if !ATTACHED.load(Ordering::Relaxed) || !stop_here(why.clone()) {
+            break;
+        }
+    }
+    let _ = writeln!(std::io::stderr(), "tondo: {why}");
+    std::process::exit(70);
+}
+
 /// Stops the running task, from inside the runtime, where the program's
-/// own code called it, `why` as why, and the others at their next probe.
-fn stop_here(why: String) {
-    let Some(table) = table() else { return };
+/// own code called it, `why` as why, and the others at their next probe;
+/// gives whether it did, which it cannot outside the program's code.
+fn stop_here(why: String) -> bool {
+    let Some(table) = table() else { return false };
     let task = super::tasks::current_id();
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     let mut found = None;
@@ -1248,9 +1270,9 @@ fn stop_here(why: String) {
         break;
     }
     drop(table);
-    if let Some(stop) = found {
-        hold(state(), stop, Some(why));
-    }
+    let Some(stop) = found else { return false };
+    hold(state(), stop, Some(why));
+    true
 }
 
 /// What a task waits for, in words, and the tasks that keep it waiting:

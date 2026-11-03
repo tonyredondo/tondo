@@ -7,7 +7,7 @@
 use super::tasks::{ChannelObject, SenderObject, tondo_rt_channel_new, tondo_rt_sender_new, tondo_rt_sender_release};
 use super::{ArrayHeader, element};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 /// The signals of `process.Signal`, in the order of its variants.
 pub(crate) const SIGNALS: [i32; 7] =
@@ -31,6 +31,43 @@ struct Subscriber {
 
 unsafe impl Send for Subscriber {}
 
+/// A signal came that cancels the program: a second one ends it at once.
+static ENDING: AtomicBool = AtomicBool::new(false);
+/// In a recorded run, the signals that came and the worker has not taken.
+static PENDING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// What a signal does: goes to the channels that take it, or cancels the
+/// program, or ends it.
+fn handle(signal: i32) {
+    if routed(signal) {
+        deliver(signal);
+    } else if ENDING.swap(true, Ordering::SeqCst) {
+        super::replay::ending();
+        unsafe { libc::_exit(128 + signal) };
+    } else {
+        super::tasks::abandon(128 + signal);
+    }
+}
+
+/// The worker's turn, in a recorded run: the signals that came since
+/// arrive here, where the recording keeps them, and a replay gives them at
+/// the same turn (toolchain 7.6).
+pub(crate) fn at_turn() {
+    static TURNS: AtomicU64 = AtomicU64::new(0);
+    let turn = TURNS.fetch_add(1, Ordering::Relaxed);
+    if super::replay::replaying() {
+        while let Some(signal) = super::replay::signal_at(turn) {
+            handle(signal);
+        }
+        return;
+    }
+    let pending = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|e| e.into_inner()));
+    for signal in pending {
+        super::replay::signal_came(turn, signal);
+        handle(signal);
+    }
+}
+
 extern "C" fn caught(signal: i32) {
     let byte = signal as u8;
     unsafe { libc::write(PIPE.load(Ordering::Relaxed), (&raw const byte).cast(), 1) };
@@ -51,7 +88,6 @@ pub(crate) fn start() {
         PIPE.store(fds[1], Ordering::Relaxed);
         let reader = fds[0];
         let watching = std::thread::Builder::new().name("signals".into()).stack_size(64 * 1024).spawn(move || {
-            let mut ending = false;
             loop {
                 let mut byte = 0u8;
                 match unsafe { libc::read(reader, (&raw mut byte).cast(), 1) } {
@@ -60,14 +96,16 @@ pub(crate) fn start() {
                     _ => return,
                 }
                 let signal = byte as i32;
-                if routed(signal) {
-                    deliver(signal);
-                } else if ending {
-                    unsafe { libc::_exit(128 + signal) };
-                } else {
-                    ending = true;
-                    super::tasks::abandon(128 + signal);
+                // A recorded run takes it at the worker's next turn; a
+                // replay, where its recording does.
+                if super::replay::on() {
+                    if !super::replay::replaying() {
+                        PENDING.lock().unwrap_or_else(|e| e.into_inner()).push(signal);
+                        super::tasks::wake_worker();
+                    }
+                    continue;
                 }
+                handle(signal);
             }
         });
         if watching.is_ok() {

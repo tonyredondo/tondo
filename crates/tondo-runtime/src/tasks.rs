@@ -743,6 +743,11 @@ thread_local! {
     static LOOKS_NEXT: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Wakes a worker to look at the queue, as for a signal that came.
+pub(crate) fn wake_worker() {
+    wake_one(queue());
+}
+
 /// Wakes a worker to look at the queue: one that sleeps, or the one that
 /// waits for the network's events if none sleeps.
 fn wake_one(queue: MutexGuard<'static, Queue>) {
@@ -762,7 +767,11 @@ fn claim(queue: &mut Queue) -> Option<(&'static super::poll::Poller, MutexGuard<
     let poll = poller.claim()?;
     queue.polling = true;
     queue.polls += 1;
-    WATCHER.get_or_init(|| spawn_thread(Some(64 * 1024), watch).thread().clone());
+    // One worker, exploring orders, waits for the events itself: nothing
+    // else wakes it.
+    if exploring().is_none() {
+        WATCHER.get_or_init(|| spawn_thread(Some(64 * 1024), watch).thread().clone());
+    }
     Some((poller, poll))
 }
 
@@ -1193,6 +1202,9 @@ pub(crate) fn os_threads() -> Option<usize> {
 
 /// Fires the timers that are due; their tasks join `runnable`.
 fn fire_timers(queue: &mut Queue) {
+    if queue.timers.is_empty() {
+        return;
+    }
     let now = Instant::now();
     while queue.timers.peek().is_some_and(|t| t.at <= now) {
         let timer = queue.timers.pop().unwrap();
@@ -1301,6 +1313,12 @@ fn work(main: bool) -> i32 {
                     }
                     return 0;
                 }
+                // The signals of a recorded run come at the worker's turns.
+                if super::replay::on() {
+                    drop(queue);
+                    super::signals::at_turn();
+                    queue = self::queue();
+                }
                 fire_timers(&mut queue);
                 // Now and then a worker with tasks to run looks at the
                 // network first, so that what it woke does not wait behind
@@ -1396,12 +1414,20 @@ fn work(main: bool) -> i32 {
                     looked = false;
                     continue;
                 }
-                queue = match next {
-                    Some(at) => {
-                        let delay = at.saturating_duration_since(Instant::now());
-                        READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0
+                let delay = next.map(|at| at.saturating_duration_since(Instant::now()));
+                queue = if super::replay::replaying() {
+                    // A replay waits for nothing: what woke the recorded
+                    // run comes next in its recording.
+                    super::replay::waiting();
+                    queue
+                } else {
+                    // The wait's own reading of the clock is not the
+                    // program's.
+                    let _outside = super::replay::Outside::enter();
+                    match delay {
+                        Some(delay) => READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0,
+                        None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
                     }
-                    None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
                 };
                 queue.idle -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
@@ -1929,6 +1955,10 @@ pub extern "C" fn tondo_rt_foreign_enter() {
         returns.store(address, Ordering::Relaxed);
         state.started[depth].store(if recorder::on() { recorder::now() } else { 0 }, Ordering::Relaxed);
     }
+    // One worker, exploring orders, starts no other in its place.
+    if exploring().is_some() {
+        return;
+    }
     let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
         monitor.unpark();
@@ -2276,8 +2306,14 @@ pub(crate) fn end_all(status: i32) -> ! {
 /// after `PANIC_GRACE`.
 pub(crate) fn abandon(status: i32) {
     let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
+    // The program ends after a while, unless it replays a recording, which
+    // ends where the recording does.
     static WATCHDOG: std::sync::Once = std::sync::Once::new();
     WATCHDOG.call_once(|| {
+        if super::replay::replaying() {
+            return;
+        }
+        let _outside = super::replay::Outside::enter();
         let from = Instant::now();
         spawn_thread(Some(64 * 1024), move || {
             while Instant::now() < cleaned_by(from) {
@@ -2844,7 +2880,8 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
 fn exploring() -> Option<&'static AtomicU64> {
     static SEED: std::sync::OnceLock<Option<AtomicU64>> = std::sync::OnceLock::new();
     SEED.get_or_init(|| {
-        let text = std::env::var("TONDO_RT_SCHEDULE").ok()?;
+        // A recorded run, and its replay, run in one order.
+        let text = std::env::var("TONDO_RT_SCHEDULE").ok().or_else(|| super::replay::on().then(|| "0".into()))?;
         let seed = u64::from_str_radix(&text, 16).ok()?;
         // Every call that may wait gives way.
         attend(true);
@@ -2878,6 +2915,12 @@ fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
         return (0..runnable.len()).max_by_key(|&at| priority(at)).unwrap_or(0);
     }
     highest
+}
+
+/// Whether the tasks run on one thread in an order a seed gives, where
+/// nothing that runs meanwhile on another thread may change what they do.
+pub(crate) fn deterministic() -> bool {
+    exploring().is_some()
 }
 
 /// The next number of the seed's sequence (SplitMix64).

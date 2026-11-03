@@ -980,6 +980,8 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         };
         let frames = std::iter::once(pc).chain(first).chain(walk).collect();
         crate::diagnostics::crash_dump("fault", &message, frames, false);
+        // A recorded run ends here, its recording as it was.
+        crate::replay::ending();
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;
         libc::sigaction(signal, &action, std::ptr::null_mut());

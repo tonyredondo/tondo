@@ -54,6 +54,7 @@ mod recorder;
 mod reflect;
 mod regex;
 mod regex_dialect;
+mod replay;
 mod server;
 mod shared;
 mod shown;
@@ -2920,10 +2921,12 @@ pub unsafe extern "C" fn tondo_rt_main(
     argv: *const *const u8,
 ) -> i32 {
     unsafe { env::keep_arguments(argc, argv) };
+    replay::start();
     meta::start();
     diagnostics::start();
     signals::start();
     debugger::start_stopped();
+    replay::begin();
     let mut status = tasks::run_main(tondo_main);
     if let Some(status) = tasks::ending() {
         process::cancel_live();
