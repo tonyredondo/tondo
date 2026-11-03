@@ -10,7 +10,7 @@ use super::{Builder, Str, str_bytes};
 use expression::{Evaluator, Expr};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, RwLock};
 
 mod expression;
@@ -987,6 +987,25 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let recording = RECORDING.load(Ordering::Relaxed) > 0;
     let waiting = STARTED.load(Ordering::Relaxed) || FREEZING.load(Ordering::Relaxed);
     let aiming = AIM.load(Ordering::Relaxed) != u64::MAX;
+    // A replay that runs keeps a checkpoint now and then, looked at every
+    // so many probes.
+    let every = EVERY.load(Ordering::Relaxed);
+    if every > 0 && super::replay::ticks().is_multiple_of(1 << 14) {
+        let _outside = super::replay::Outside::enter();
+        periodic(
+            &table,
+            Stop {
+                task,
+                site,
+                frame,
+                bounds: (0, 0),
+                addresses: addresses as usize,
+                alive: alive as usize,
+                why: String::new(),
+            },
+            every,
+        );
+    }
     if !marked
         && !watching
         && !recording
@@ -1015,6 +1034,12 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         // Breakpoints count their hits, as they would have, and stop
         // nowhere before the probe it goes to.
         scanned(&table, &mut state, task, site, frame, (addresses as usize, alive as usize), tick);
+        let at = (addresses as usize, alive as usize);
+        tracking(
+            &table,
+            Stop { task, site, frame, bounds: (0, 0), addresses: at.0, alive: at.1, why: String::new() },
+            tick,
+        );
         if AIM.load(Ordering::Relaxed) == tick {
             AIM.store(u64::MAX, Ordering::Relaxed);
             SCANNING.store(false, Ordering::Relaxed);
@@ -1166,9 +1191,20 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
 /// In a replay, the probe of the program's thread a `seek` or a `scan` goes
 /// to; while scanning, the probes where breakpoints would have stopped,
 /// and those where the lines of one task start.
-static AIM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+static AIM: AtomicU64 = AtomicU64::new(u64::MAX);
 static SCANNING: AtomicBool = AtomicBool::new(false);
-static SCANNED: Mutex<(u64, Vec<u64>, Vec<u64>)> = Mutex::new((0, Vec::new(), Vec::new()));
+static SCANNED: Mutex<(u64, std::collections::VecDeque<u64>, std::collections::VecDeque<u64>)> =
+    Mutex::new((0, std::collections::VecDeque::new(), std::collections::VecDeque::new()));
+
+/// What a scan keeps of each list, the last: what going back needs.
+const KEPT: usize = 10_000;
+
+fn kept_last(list: &mut std::collections::VecDeque<u64>, tick: u64) {
+    if list.len() == KEPT {
+        list.pop_front();
+    }
+    list.push_back(tick);
+}
 
 /// Forks the replay where its task stopped, on that task: the copy keeps
 /// the program as it is here, without the debugger, and waits on a socket
@@ -1182,6 +1218,54 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
             Ok(0)
         }
         pid => Ok(pid as u32),
+    }
+}
+
+/// In a replay, how often, in milliseconds, a program that runs keeps a
+/// checkpoint at a probe (`checkpoints <ms>`), or never; and when it last
+/// did.
+static EVERY: AtomicU64 = AtomicU64::new(0);
+static LAST: Mutex<Option<(std::time::Instant, u64)>> = Mutex::new(None);
+/// So many probes make a checkpoint due too, as a replay may run them
+/// faster than the time does.
+const PROBES: u64 = 1 << 22;
+
+/// A checkpoint at a probe of a replay that runs, when one is due: the
+/// debugger's state and connection held across the fork, so that the copy
+/// has none another thread held; the debugger hears where it is. A replay
+/// forked from it later stops at that probe.
+fn periodic(table: &Table, mut here: Stop, every: u64) {
+    let (now, tick) = (std::time::Instant::now(), super::replay::ticks());
+    {
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        let due = |(at, probe): (std::time::Instant, u64)| {
+            now.duration_since(at).as_millis() >= every as u128 || tick - probe >= PROBES
+        };
+        if last.is_some_and(|last| !due(last)) {
+            return;
+        }
+        *last = Some((now, tick));
+    }
+    let state = state();
+    let client = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+    // A debugger that left would never hear of it.
+    if client.is_none() {
+        return;
+    }
+    match unsafe { libc::fork() } {
+        0 => {
+            drop(client);
+            drop(state);
+            kept(table);
+            here.bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+            hold(self::state(), here, Some("checkpoint".into()));
+        }
+        -1 => {}
+        pid => {
+            drop(client);
+            drop(state);
+            tell(&format!("{{\"checkpointed\":{{\"pid\":{pid},\"tick\":{}}}}}", super::replay::ticks()));
+        }
     }
 }
 
@@ -1200,6 +1284,7 @@ fn kept(table: &Table) {
         remark(table, &state);
     }
     WATCHING.store(false, Ordering::Relaxed);
+    EVERY.store(0, Ordering::Relaxed);
     RECORDING.store(0, Ordering::Relaxed);
     HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clear();
     CATCH.store(true, Ordering::Relaxed);
@@ -1304,6 +1389,139 @@ fn received(stream: &std::os::unix::net::UnixStream) -> (String, Vec<i32>) {
     (String::from_utf8_lossy(&data[..read.max(0) as usize]).into_owned(), given)
 }
 
+/// What a scan follows as it goes (`track`, `count`): for one task, the
+/// expressions whose values it keeps when they change, each change with
+/// the probe and the line before it, which gave it; and for one line, each
+/// time a task starts it, with an expression's value then, the last ones.
+#[derive(Default)]
+struct Tracked {
+    task: u64,
+    followed: Vec<Followed>,
+    before: Option<(u64, usize)>,
+    line: Option<Counted>,
+}
+
+/// An expression a scan follows: its text, its last value, and its last
+/// changes, each with the probe and the site of the line that gave it.
+struct Followed {
+    expr: Expr,
+    text: String,
+    last: Option<String>,
+    changes: std::collections::VecDeque<(Option<(u64, usize)>, String)>,
+}
+
+/// A line a scan counts: its sites, the expression it shows, and its last
+/// runs, each with the probe, the task and the value.
+struct Counted {
+    sites: Vec<usize>,
+    expr: Option<Expr>,
+    runs: std::collections::VecDeque<(u64, u64, Option<String>)>,
+    times: u64,
+}
+
+static TRACKED: Mutex<Option<Tracked>> = Mutex::new(None);
+
+/// At a probe of a scan, what it follows.
+fn tracking(table: &Table, here: Stop, tick: u64) {
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(tracked) = tracked.as_mut() else { return };
+    let (task, site) = (here.task, here.site);
+    // The innermost frame alone, which is what the expressions read, at
+    // every probe of the run: not the callers, whose names are looked up.
+    let function = table.sites.get(site).map(|s| s.function);
+    let innermost =
+        Frame { place: String::new(), function, pointer: here.frame, addresses: here.addresses, alive: here.alive };
+    let innermost = [innermost];
+    let stack = || &innermost[..];
+    if let Some(line) = tracked.line.as_mut()
+        && line.sites.contains(&site)
+    {
+        let value =
+            line.expr.as_ref().and_then(|e| evaluating(table, stack(), 0, |ev| ev.evaluate(e)).ok().map(|v| v.text));
+        line.times += 1;
+        if line.runs.len() == LISTED {
+            line.runs.pop_front();
+        }
+        line.runs.push_back((tick, task, value));
+    }
+    if task != tracked.task || table.sites.get(site).is_none_or(Site::generated) {
+        return;
+    }
+    let before = tracked.before.replace((tick, site));
+    for followed in tracked.followed.iter_mut() {
+        let now = evaluating(table, stack(), 0, |ev| ev.evaluate(&followed.expr)).ok().map(|v| v.text);
+        if now.is_some() && now != followed.last {
+            if followed.changes.len() == LISTED {
+                followed.changes.pop_front();
+            }
+            followed.changes.push_back((before, now.clone().unwrap_or_default()));
+        }
+        followed.last = now;
+    }
+}
+
+/// `track <task> <expression>`, `count <file>:<line> [<expression>]` and
+/// `tracked`: what the next scan follows, and what it found.
+fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    match word {
+        "track" => {
+            let (task, text) = rest.split_once(' ').ok_or("track takes a task and an expression")?;
+            let task: u64 = task.parse().map_err(|_| "track takes a task's number first")?;
+            let expr = expression::parse(text.trim()).map_err(|m| format!("the expression: {m}"))?;
+            let followed = tracked.get_or_insert_with(Tracked::default);
+            followed.task = task;
+            followed.followed.push(Followed {
+                expr,
+                text: text.trim().to_string(),
+                last: None,
+                changes: Default::default(),
+            });
+            Ok("{\"tracking\":true}".into())
+        }
+        "count" => {
+            let (at, text) = rest.split_once(' ').map_or((rest, None), |(at, text)| (at, Some(text.trim())));
+            let sites = line_sites(table, at)?;
+            let expr = text.map(expression::parse).transpose().map_err(|m| format!("the expression: {m}"))?;
+            tracked.get_or_insert_with(Tracked::default).line =
+                Some(Counted { sites, expr, runs: Default::default(), times: 0 });
+            Ok("{\"counting\":true}".into())
+        }
+        _ => {
+            let found = tracked.take().unwrap_or_default();
+            let followed: Vec<String> = found
+                .followed
+                .iter()
+                .map(|Followed { text, changes, .. }| {
+                    let changes: Vec<String> = changes
+                        .iter()
+                        .map(|(before, value)| {
+                            let (at, tick) = match before {
+                                Some((tick, site)) => (quoted(&place_in(table, *site)), tick.to_string()),
+                                None => ("null".into(), "null".into()),
+                            };
+                            format!("{{\"at\":{at},\"tick\":{tick},\"value\":{}}}", quoted(&clipped(value)))
+                        })
+                        .collect();
+                    format!("{{\"expression\":{},\"changes\":[{}]}}", quoted(text), changes.join(","))
+                })
+                .collect();
+            let line = found.line.map_or(String::new(), |Counted { sites, runs, times, .. }| {
+                let runs: Vec<String> = runs
+                    .iter()
+                    .map(|(tick, task, value)| {
+                        let value =
+                            value.as_ref().map_or(String::new(), |v| format!(",\"value\":{}", quoted(&clipped(v))));
+                        format!("{{\"task\":{task},\"tick\":{tick}{value}}}")
+                    })
+                    .collect();
+                format!(",\"ran\":[{}],\"times\":{times},\"at\":{}", runs.join(","), quoted(&place_in(table, sites[0])))
+            });
+            Ok(format!("{{\"tracked\":[{}]{line}}}", followed.join(",")))
+        }
+    }
+}
+
 /// What a scan keeps at a probe: the tick, when the scanned task's line
 /// starts there or a breakpoint that stops would stop there.
 fn scanned(
@@ -1317,7 +1535,7 @@ fn scanned(
 ) {
     let mut scan = SCANNED.lock().unwrap_or_else(|e| e.into_inner());
     if scan.0 == task && table.sites.get(site).is_some_and(|s| !s.generated()) {
-        scan.2.push(tick);
+        kept_last(&mut scan.2, tick);
     }
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     let here = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
@@ -1330,7 +1548,7 @@ fn scanned(
         if here {
             breakpoint.count += 1;
             if breakpoint.hits.as_ref().is_none_or(|hits| hits.reached(breakpoint.count)) {
-                scan.1.push(tick);
+                kept_last(&mut scan.1, tick);
             }
         }
     }
@@ -2064,6 +2282,8 @@ pub(crate) fn attach(client: &UnixStream) -> String {
 
 /// The debugger went away: the program goes on as if it never came.
 pub(crate) fn detach() {
+    // A replay without a debugger keeps no more checkpoints.
+    EVERY.store(0, Ordering::Relaxed);
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CLIENT_FD.store(-1, Ordering::Relaxed);
     ATTACHED.store(false, Ordering::Relaxed);
@@ -2131,7 +2351,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 );
             }
             let task = words.next().and_then(|t| t.parse().ok()).unwrap_or(0);
-            *SCANNED.lock().unwrap_or_else(|e| e.into_inner()) = (task, Vec::new(), Vec::new());
+            *SCANNED.lock().unwrap_or_else(|e| e.into_inner()) = (task, Default::default(), Default::default());
             SCANNING.store(word == "scan", Ordering::Relaxed);
             AIM.store(tick, Ordering::Relaxed);
             go_after_answer(Mode::Run);
@@ -2148,12 +2368,23 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 None => "{\"error\":\"the stopped task did not take the checkpoint\"}".into(),
             }
         }
+        "checkpoints" if super::replay::replaying() => {
+            let every: u64 = rest.parse().unwrap_or(0);
+            EVERY.store(every, Ordering::Relaxed);
+            format!("{{\"checkpoints\":{every}}}")
+        }
         "scanned" => {
             let scan = SCANNED.lock().unwrap_or_else(|e| e.into_inner());
-            let list = |ticks: &[u64]| ticks.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+            let list = |ticks: &std::collections::VecDeque<u64>| {
+                ticks.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+            };
             format!("{{\"hits\":[{}],\"lines\":[{}]}}", list(&scan.1), list(&scan.2))
         }
         "why" => match why(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "track" | "count" | "tracked" => match track(table, word, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },

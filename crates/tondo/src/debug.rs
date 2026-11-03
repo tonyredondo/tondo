@@ -249,7 +249,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     };
     let pid = program.pid;
     let (writer, said) = attach(program)?;
-    let mut session = Session { said, writer, json, events: Vec::new(), ended: false, task: 0 };
+    let mut session =
+        Session { said, writer, json, events: Vec::new(), ended: false, task: 0, checkpointed: Vec::new() };
     // A replay goes back by running its recording again (`back`, `reverse`,
     // `why`): it keeps the commands that set how the program stops.
     let mut replaying = replay.map(|dir| Replaying {
@@ -277,6 +278,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     session.show(&attached);
     if child.is_some() || replaying.is_some() {
         session.wait_event();
+    }
+    // A replay keeps checkpoints as it runs, to go back from.
+    if replaying.is_some() {
+        let _ = ask(&mut session, CHECKPOINTING);
     }
     unsafe { libc::signal(libc::SIGINT, interrupted as *const () as libc::sighandler_t) };
     let terminal = std::io::stdin().is_terminal();
@@ -397,9 +402,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             // Over the whole run: a replay runs it again from the start.
             "timeline" | "ran" if replaying.is_some() => {
-                let replaying = replaying.as_ref().expect("a replay");
+                let replaying = replaying.as_mut().expect("a replay");
+                let task = session.task;
                 let surveyed = ask(&mut session, "tick")
-                    .and_then(|t| replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0)));
+                    .and_then(|t| replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0), task));
                 match surveyed {
                     Ok(answer) => session.show(&answer),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
@@ -452,9 +458,13 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 session.show(&answer);
                 if answer["running"] == true {
                     session.wait_event();
-                    // A replay keeps a checkpoint where it stops.
-                    if let Some(replaying) = replaying.as_mut().filter(|_| !session.ended) {
-                        replaying.keep(&mut |command| ask(&mut session, command));
+                    // A replay keeps those checkpoints it kept as it ran, and
+                    // one where it stops.
+                    if let Some(replaying) = replaying.as_mut() {
+                        replaying.gather(&mut session);
+                        if !session.ended {
+                            replaying.keep(&mut |command| ask(&mut session, command));
+                        }
                     }
                 }
             }
@@ -469,11 +479,17 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     }
     // The input ended: the program goes on without the debugger, which
     // closes its side of the connection for good. `quit` ends the program
-    // it started.
+    // it started. A replay's checkpoints end with it, those it just said
+    // it kept too.
+    if let Some(replaying) = replaying.as_mut() {
+        while let Ok(value) = session.said.try_recv() {
+            session.checkpointed(&value);
+        }
+        replaying.gather(&mut session);
+    }
     let _ = session.writer.shutdown(std::net::Shutdown::Both);
     drop(session);
-    // A replay's checkpoints end with it; its process too, at `quit`, or
-    // it goes on to its end.
+    // Its process ends too at `quit`, or goes on to its end.
     if let Some(replaying) = replaying {
         for (_, pid) in replaying.checkpoints {
             Running::Forked(pid, None).end();
@@ -529,7 +545,7 @@ pub(crate) struct Replaying {
     dir: PathBuf,
     settings: Vec<String>,
     current: Option<Running>,
-    checkpoints: Vec<(u64, u32)>,
+    checkpoints: Vec<Checkpoint>,
     /// What a replay started from the start writes goes to a pipe the
     /// caller reads, as the editor's adapter does, not to this process's.
     piped: bool,
@@ -576,6 +592,12 @@ impl Running {
 
 /// The checkpoints a replay keeps; past them, the oldest go.
 const CHECKPOINTS: usize = 32;
+
+/// A checkpoint: the probe it is at, and its process.
+type Checkpoint = (u64, u32);
+
+/// A replay that runs keeps a checkpoint once a second.
+pub(crate) const CHECKPOINTING: &str = "checkpoints 1000";
 
 impl Replaying {
     /// The recording run again, attached and stopped: from its start, or
@@ -659,7 +681,8 @@ impl Replaying {
                 return Err(message);
             }
         };
-        let mut session = Session { said, writer, json, events: Vec::new(), ended: false, task: 0 };
+        let mut session =
+            Session { said, writer, json, events: Vec::new(), ended: false, task: 0, checkpointed: Vec::new() };
         session.answer()?;
         // A replay from the start waits there; a checkpoint's stopped where
         // it was taken.
@@ -680,12 +703,34 @@ impl Replaying {
         else {
             return;
         };
+        self.adopt(tick, pid as u32);
+    }
+
+    /// The checkpoints a replay that ended kept as it ran: those it said
+    /// before it ended, read to the end of what it said.
+    fn gather_ended(&mut self, session: &mut Session) {
+        while let Ok(value) = session.said.recv_timeout(Duration::from_secs(2)) {
+            session.checkpointed(&value);
+        }
+        self.gather(session);
+    }
+
+    /// The checkpoints a replay said it kept as it ran.
+    fn gather(&mut self, session: &mut Session) {
+        for (tick, pid) in std::mem::take(&mut session.checkpointed) {
+            self.adopt(tick, pid);
+        }
+    }
+
+    /// A checkpoint at probe `tick`, kept unless one is there already; the
+    /// oldest go past `CHECKPOINTS`.
+    pub(crate) fn adopt(&mut self, tick: u64, pid: u32) {
         // One kept there already is the same.
         if self.checkpoints.iter().any(|&(t, _)| t == tick) {
-            Running::Forked(pid as u32, None).end();
+            Running::Forked(pid, None).end();
             return;
         }
-        self.checkpoints.push((tick, pid as u32));
+        self.checkpoints.push((tick, pid));
         self.checkpoints.sort_unstable();
         while self.checkpoints.len() > CHECKPOINTS {
             let (_, oldest) = self.checkpoints.remove(0);
@@ -693,12 +738,32 @@ impl Replaying {
         }
     }
 
+    /// A replay started at the nearest checkpoint before probe `tick`, or
+    /// at it with `at`, or from the start: one that is gone, as one that
+    /// went unused too long, goes from the list.
+    fn start_before(
+        &mut self,
+        tick: u64,
+        at: bool,
+        shown: u64,
+        json: bool,
+    ) -> Result<(Option<Checkpoint>, Running, Session), String> {
+        for base in self.bases(tick, at) {
+            match self.start(base, shown, json) {
+                Ok((running, session)) => return Ok((base, running, session)),
+                Err(_) if base.is_some() => self.checkpoints.retain(|&c| Some(c) != base),
+                Err(message) => return Err(message),
+            }
+        }
+        Err("the replay cannot start".into())
+    }
+
     /// Where a replay may start to reach probe `tick`: the checkpoints
     /// before it, the nearest first, then the start. A breakpoint that
     /// counts its hits counts them from the start.
-    fn bases(&self, tick: u64, at: bool) -> Vec<Option<(u64, u32)>> {
+    fn bases(&self, tick: u64, at: bool) -> Vec<Option<Checkpoint>> {
         let counted = self.settings.iter().any(|s| s.contains(" hits "));
-        let mut bases: Vec<Option<(u64, u32)>> = match counted {
+        let mut bases: Vec<Option<Checkpoint>> = match counted {
             true => Vec::new(),
             false => self
                 .checkpoints
@@ -719,14 +784,18 @@ impl Replaying {
     /// that gives, and takes over.
     fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
-        let (to, why, causes) = self.find(word, rest, tick, session.task)?;
+        let task = session.task;
+        let (to, why, _) = self.find(word, rest, tick, task)?;
         let (running, mut next, mut stop) = self.reach(to, why, session.json)?;
-        if !causes.is_null() {
-            stop["stopped"]["causes"] = causes;
+        if word == "why" {
+            let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+            stop["stopped"]["causes"] = self.causes(&mut next, &at, to, task);
         }
         if let Some(old) = self.current.replace(running) {
             old.end();
         }
+        // The one the debugger talks to keeps checkpoints as it runs.
+        let _ = ask(&mut next, CHECKPOINTING);
         std::mem::swap(session, &mut next);
         self.keep(&mut |command| ask(session, command));
         Ok(stop)
@@ -735,13 +804,26 @@ impl Replaying {
     /// The probe `back`, `reverse` or `why` goes to from probe `tick`,
     /// where `task` stopped, and why: what a replay from the nearest
     /// checkpoint before, or an earlier one, finds on its way there.
-    pub(crate) fn find(&self, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String, Value), String> {
+    pub(crate) fn find(
+        &mut self,
+        word: &str,
+        rest: &str,
+        tick: u64,
+        task: u64,
+    ) -> Result<(u64, String, Value), String> {
         let mut failed = String::new();
         for base in self.bases(tick, false) {
-            let (running, mut scan) = self.start(base, u64::MAX, true)?;
+            let (running, mut scan) = match self.start(base, u64::MAX, true) {
+                Ok(started) => started,
+                Err(_) if base.is_some() => {
+                    self.checkpoints.retain(|&c| Some(c) != base);
+                    continue;
+                }
+                Err(message) => return Err(message),
+            };
             let scanned = self.scan(&mut scan, word, rest, tick, task);
-            let _ = scan.send("quit");
             running.end();
+            self.gather_ended(&mut scan);
             match scanned {
                 Ok(target) => return Ok(target),
                 Err(message) => failed = message,
@@ -752,9 +834,8 @@ impl Replaying {
 
     /// A replay stopped at probe `to`, from the nearest checkpoint, and the
     /// stop, which says `why`.
-    pub(crate) fn reach(&self, to: u64, why: String, json: bool) -> Result<(Running, Session, Value), String> {
-        let base = self.bases(to, true).into_iter().next().flatten();
-        let (running, mut next) = self.start(base, to, json)?;
+    pub(crate) fn reach(&mut self, to: u64, why: String, json: bool) -> Result<(Running, Session, Value), String> {
+        let (base, running, mut next) = self.start_before(to, true, to, json)?;
         let stop = match to {
             _ if base.is_some_and(|(t, _)| t == to) => {
                 let snapshot = ask(&mut next, "snapshot")?;
@@ -810,17 +891,77 @@ impl Replaying {
     /// `timeline <expression>` or `ran <file>:<line> [<expression>]` in a
     /// replay: what the history of a replay from the start to probe `tick`
     /// says, as `record` would have kept from the start.
-    fn survey(&self, word: &str, rest: &str, tick: u64) -> Result<Value, String> {
+    fn survey(&mut self, word: &str, rest: &str, tick: u64, task: u64) -> Result<Value, String> {
         let (running, mut scan) = self.start(None, u64::MAX, true)?;
         let surveyed = (|| {
-            ask(&mut scan, "record 1000000")?;
+            match word {
+                "timeline" => ask(&mut scan, &format!("track {task} {rest}"))?,
+                _ => ask(&mut scan, &format!("count {rest}"))?,
+            };
             ask(&mut scan, &format!("scan {tick}"))?;
             scan.next_event()?;
-            ask(&mut scan, &format!("{word} {rest}"))
+            let tracked = ask(&mut scan, "tracked")?;
+            Ok(match word {
+                "timeline" => {
+                    let changes = tracked["tracked"][0]["changes"].as_array().cloned().unwrap_or_default();
+                    let changes: Vec<Value> = changes
+                        .into_iter()
+                        .map(|mut change| {
+                            if change["at"].is_null() {
+                                change["at"] = "the start".into();
+                            }
+                            change
+                        })
+                        .collect();
+                    serde_json::json!({ "timeline": changes })
+                }
+                _ => serde_json::json!({ "ran": tracked["ran"], "times": tracked["times"], "at": tracked["at"] }),
+            })
         })();
-        let _ = scan.send("quit");
         running.end();
+        self.gather_ended(&mut scan);
         surveyed
+    }
+
+    /// Where each binding the line at probe `to` reads got the value it has
+    /// there, found by a replay from a checkpoint before that follows them;
+    /// `session` is stopped there, and says which bindings it has.
+    fn causes(&mut self, session: &mut Session, at: &str, to: u64, task: u64) -> Value {
+        let Some(text) = line_text(at) else { return Value::Array(Vec::new()) };
+        let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
+        let bound: Vec<&str> =
+            locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
+        let read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
+        if read.is_empty() {
+            return Value::Array(Vec::new());
+        }
+        let Ok((_, running, mut scan)) = self.start_before(to, false, u64::MAX, true) else {
+            return Value::Array(Vec::new());
+        };
+        let found = (|| -> Result<Value, String> {
+            for name in &read {
+                ask(&mut scan, &format!("track {task} {name}"))?;
+            }
+            ask(&mut scan, &format!("scan {to}"))?;
+            scan.next_event()?;
+            Ok(ask(&mut scan, "tracked")?["tracked"].clone())
+        })();
+        running.end();
+        self.gather_ended(&mut scan);
+        // The last change of each before the line, by the line before it.
+        let causes: Vec<Value> = found
+            .unwrap_or_default()
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|followed| {
+                let change = followed["changes"].as_array()?.iter().rev().find(|c| c["tick"].as_u64().is_some_and(|t| t < to))?;
+                Some(serde_json::json!({
+                    "name": followed["expression"], "value": change["value"], "at": change["at"], "tick": change["tick"],
+                }))
+            })
+            .collect();
+        Value::Array(causes)
     }
 
     /// `seek <tick>` in a replay: on to that probe, or back to it from the
@@ -830,11 +971,13 @@ impl Replaying {
         if to > tick {
             ask(session, &format!("seek {to}"))?;
             let stop = session.next_event()?;
+            self.gather(session);
             self.keep(&mut |command| ask(session, command));
             return Ok(stop);
         }
         let (running, mut next, stop) = self.reach(to, format!("probe {to}"), session.json)?;
         self.take_over(running);
+        let _ = ask(&mut next, CHECKPOINTING);
         std::mem::swap(session, &mut next);
         self.keep(&mut |command| ask(session, command));
         Ok(stop)
@@ -851,7 +994,7 @@ impl Replaying {
         task: u64,
     ) -> Result<(u64, String, Value), String> {
         if word == "why" {
-            ask(scan, "record 1000000")?;
+            ask(scan, &format!("track {task} {rest}"))?;
         }
         let scanning = match word {
             "back" => format!("scan {tick} {task}"),
@@ -875,12 +1018,15 @@ impl Replaying {
                 Some(&to) => Ok((to, "reverse".into(), Value::Null)),
                 None => Err("no breakpoint stops before here".into()),
             },
+            // The line before the last change of its value, which gave it;
+            // one that came before this replay started is earlier.
             _ => {
-                ask(scan, &format!("why {rest}"))?;
-                let stop = scan.next_event()?;
-                let to = stop["stopped"]["tick"].as_u64().ok_or("the history has no line of that")?;
-                let causes = causes_here(scan, stop["stopped"]["at"].as_str().unwrap_or_default());
-                Ok((to, stop["stopped"]["because"].as_str().unwrap_or("why").to_string(), causes))
+                let tracked = ask(scan, "tracked")?;
+                let last = tracked["tracked"][0]["changes"].as_array().and_then(|c| c.last()).cloned();
+                let last = last.ok_or(format!("`{rest}` has no value here"))?;
+                let to = last["tick"].as_u64().ok_or(format!("`{rest}` had this value before"))?;
+                let value = last["value"].as_str().unwrap_or_default();
+                Ok((to, format!("`{rest}` became {value} on this line"), Value::Null))
             }
         }
     }
@@ -976,6 +1122,8 @@ pub(crate) struct Session {
     ended: bool,
     /// The task of the last stop.
     task: u64,
+    /// The checkpoints a replay kept as it ran, by probe and process.
+    checkpointed: Vec<(u64, u32)>,
 }
 
 impl Session {
@@ -993,6 +1141,19 @@ impl Session {
             if value.get("stopped").is_some() || value.get("exited").is_some() {
                 return Ok(value);
             }
+            self.checkpointed(&value);
+        }
+    }
+
+    /// A checkpoint a replay kept as it ran, which it says as it comes.
+    fn checkpointed(&mut self, value: &Value) -> bool {
+        let checkpoint = &value["checkpointed"];
+        match (checkpoint["tick"].as_u64(), checkpoint["pid"].as_u64()) {
+            (Some(tick), Some(pid)) => {
+                self.checkpointed.push((tick, pid as u32));
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1002,6 +1163,9 @@ impl Session {
             let value = self.said.recv().map_err(|_| "the program ended".to_string())?;
             if value.get("stopped").is_some() || value.get("exited").is_some() {
                 self.events.push(value);
+                continue;
+            }
+            if self.checkpointed(&value) {
                 continue;
             }
             // A logpoint's message, a capture or a watch that ended, as it
@@ -1036,6 +1200,7 @@ impl Session {
                 {
                     self.show(&value)
                 }
+                Ok(value) if self.checkpointed(&value) => {}
                 // The answer to `pause`.
                 Ok(_) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1056,13 +1221,15 @@ impl Session {
         }
         let causes = || {
             for cause in value["stopped"]["causes"].as_array().into_iter().flatten() {
-                let back = cause["back"].as_u64().unwrap_or(0);
+                let back = match cause["back"].as_u64() {
+                    Some(back) => format!(", {back} line{} back", if back == 1 { "" } else { "s" }),
+                    None => tick_of(cause),
+                };
                 println!(
-                    "  `{}` was {}, from {}, {back} line{} back",
+                    "  `{}` was {}, from {}{back}",
                     cause["name"].as_str().unwrap_or_default(),
                     cause["value"].as_str().unwrap_or_default(),
                     cause["at"].as_str().unwrap_or_default(),
-                    if back == 1 { "" } else { "s" }
                 );
             }
         };
@@ -1108,11 +1275,11 @@ impl Session {
                 println!("no line of the history gave it a value");
             }
             for change in timeline {
+                let back = change["back"].as_u64().map_or(String::new(), |back| format!(", {back} lines back"));
                 println!(
-                    "{}  at {}, {} lines back{}",
+                    "{}  at {}{back}{}",
                     change["value"].as_str().unwrap_or_default(),
                     change["at"].as_str().unwrap_or_default(),
-                    change["back"],
                     tick_of(change)
                 );
             }

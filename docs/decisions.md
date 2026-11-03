@@ -4654,6 +4654,19 @@ counts its hits counts them from the start, so they start there. `why`
 reads the history: the last line that began with another value is the
 line that gave the value, in any session that records.
 
+## 2026-11-03 — Checkpoints as a replay runs, and scans that follow
+
+A checkpoint at each stop leaves a long `continue` without one: going
+back from its end ran the replay again from the start. A replay that
+runs keeps one every second, or every 4,194,304 probes, which it checks
+every 16,384 so that the probe stays cheap; 32 at most, the oldest let
+go. A scan kept the whole history, every binding of every line as text:
+a loop of 12 million lines took minutes and gigabytes. It follows now
+what it was asked, the changes of one expression or the runs of one
+line, and keeps the last of them. A checkpoint ends when the debugger
+that started the replay does, gone or not yet waited for, as one killed
+left its checkpoints an hour, each with a copy of the program.
+
 ## 2026-11-03 — Recording the tests that fail
 
 A test that fails once in CI and passes on the next run is the failure

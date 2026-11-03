@@ -154,6 +154,8 @@ impl Debuggee {
         std::thread::spawn(move || pumped.pump(said.into_iter(), answer));
         self.writer = session.writer;
         self.answers = answers;
+        // It keeps checkpoints as it runs, to go back from.
+        let _ = self.ask(crate::debug::CHECKPOINTING);
         self.pid = running.pid();
         // The first process is the adapter's; those after, the replay's.
         if let Some(mut child) = self.child.take() {
@@ -169,8 +171,19 @@ impl Debuggee {
             "description": stop["why"], "text": stop["why"] }));
     }
 
+    /// The checkpoints the replay kept as it ran, kept for going back.
+    fn adopt(&mut self) {
+        let kept = std::mem::take(&mut *self.pumped.checkpointed.lock().unwrap_or_else(|e| e.into_inner()));
+        if let Some(replaying) = self.replaying.as_mut() {
+            for (tick, pid) in kept {
+                replaying.adopt(tick, pid);
+            }
+        }
+    }
+
     /// A checkpoint where a replay stopped, once.
     fn keep(&mut self) {
+        self.adopt();
         if self.kept || self.replaying.is_none() {
             return;
         }
@@ -345,6 +358,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
+                program.adopt();
                 if let Some(replaying) = program.replaying.as_mut() {
                     replaying.end();
                 }
@@ -469,11 +483,13 @@ struct Pumped {
     drained: Arc<(Mutex<usize>, std::sync::Condvar)>,
     /// The program's output streams, as replays that take over add theirs.
     streams: Arc<std::sync::atomic::AtomicUsize>,
+    /// The checkpoints a replay kept as it ran, by probe and process.
+    checkpointed: Arc<Mutex<Vec<(u64, u32)>>>,
 }
 
 impl Pumped {
     fn pump(self, values: impl Iterator<Item = Value>, answer: mpsc::Sender<Value>) {
-        let Pumped { events, entry, drained: read_out, streams } = self;
+        let Pumped { events, entry, drained: read_out, streams, checkpointed } = self;
         for value in values {
             if let Some(stop) = value.get("stopped") {
                 if stop["why"] == "start" && !entry {
@@ -514,6 +530,10 @@ impl Pumped {
                 let at = captured["at"].as_str().unwrap_or_default();
                 let output = format!("captured at {at}: {}\n", locals.join(", "));
                 events.event("output", json!({ "category": "console", "output": output, "data": captured }));
+            } else if let (Some(tick), Some(pid)) =
+                (value["checkpointed"]["tick"].as_u64(), value["checkpointed"]["pid"].as_u64())
+            {
+                checkpointed.lock().unwrap_or_else(|e| e.into_inner()).push((tick, pid as u32));
             } else if let Some(id) = value.get("unwatched") {
                 let why = value["why"].as_str().unwrap_or_default();
                 let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
@@ -680,8 +700,9 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     let read_out = drained.clone();
     // What the program says: events go to the editor as they come; answers
     // to the command waiting for them.
+    let checkpointed = Arc::new(Mutex::new(Vec::new()));
     let streams = Arc::new(std::sync::atomic::AtomicUsize::new(streams));
-    let pumped = Pumped { events, entry, drained: read_out, streams };
+    let pumped = Pumped { events, entry, drained: read_out, streams, checkpointed };
     let values = reader.lines().map_while(|line| serde_json::from_str::<Value>(&line.ok()?).ok());
     let pumping = pumped.clone();
     std::thread::spawn(move || pumping.pump(values, answer));
@@ -701,6 +722,10 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
+    }
+    // A replay keeps checkpoints as it runs, to go back from.
+    if debuggee.replaying.is_some() {
+        debuggee.ask(crate::debug::CHECKPOINTING)?;
     }
     // Steps go into the standard library's code too.
     if arguments["justMyCode"] == false {
@@ -1022,7 +1047,8 @@ fn handle(
             let word = if command == "stepBack" { "back" } else { "reverse" };
             let task = arguments["threadId"].as_u64().unwrap_or(1);
             let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
-            let replaying = program.replaying.as_ref().expect("a replay");
+            program.adopt();
+            let replaying = program.replaying.as_mut().expect("a replay");
             let (to, why, _) = replaying.find(word, "1", tick, task)?;
             let (running, session, stop) = replaying.reach(to, why, true)?;
             program.take_over(running, session, &stop);

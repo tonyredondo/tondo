@@ -1039,18 +1039,23 @@ datos.
 En una reproducción, `back [<n>]`, `reverse` y `why <expresión>` vuelven al
 programa entero como estaba, no a un historial: otra reproducción corre
 hasta donde está el programa, y guarda dónde empiezan las líneas de la tarea
-parada, dónde habrían parado los breakpoints o el historial, y una tercera
+parada, dónde habrían parado los breakpoints o cada valor nuevo de la
+expresión con la línea que lo dio, y una tercera
 corre hasta la línea que eso da, `n` líneas atrás, la última parada de un
 breakpoint o la línea que dio a la expresión su valor, y toma el relevo, con
 los breakpoints y los ajustes de la sesión. Cada parada de la reproducción
 guarda un checkpoint, una copia del proceso hecha con `fork` donde paró, y
-las reproducciones que vuelven atrás empiezan en el más cercano anterior, o
+mientras corre guarda otro cada segundo, o cada 4.194.304 probes, hasta 32,
+que dejan ir los más viejos; un checkpoint termina con el depurador que lo
+pidió, o tras una hora sin usarse. Las reproducciones que vuelven atrás
+empiezan en el más cercano anterior, o
 en otro anterior si ahí no encuentran lo que buscan, en lugar del principio;
 un breakpoint que cuenta sus hits hace empezar desde el principio, donde
 empezó a contarlos. En el editor, `stepBack` y `reverseContinue` de una
 reproducción son `back` y `reverse`. Allí `timeline` y `ran` miran la
 ejecución entera hasta donde está el programa, con otra reproducción desde el
-principio que guarda el historial, y dan el probe de cada línea: `seek
+principio que sigue la expresión o cuenta las veces que corre la línea, y
+dan el probe de cada línea: `seek
 <probe>` lleva el programa a ese punto, antes o después del de ahora.
 
 ### 7.7 Librerías para C
