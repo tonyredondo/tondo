@@ -707,20 +707,33 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
 /// runtime meanwhile, which polls the child's pidfd: what drains the
 /// child's pipes runs there.
 fn exited(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
-    if recorded().is_some() {
-        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as libc::pid_t, 0) };
-        if fd >= 0 {
-            let fd = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) };
-            super::http::wait(async move {
-                let interest = tokio::io::Interest::READABLE;
-                // The pidfd, open until the wait ends.
-                if let Ok(fd) = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, interest) } {
-                    let _ = fd.readable().await;
-                }
-            });
-        }
+    if recorded().is_some()
+        && let Some(fd) = pidfd(child.id())
+    {
+        super::http::wait(async move {
+            let interest = tokio::io::Interest::READABLE;
+            // The pidfd, open until the wait ends.
+            if let Ok(fd) = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, interest) } {
+                let _ = fd.readable().await;
+            }
+        });
     }
     child.wait()
+}
+
+/// A descriptor that becomes readable when the child `pid` ends: Linux's,
+/// where a run is recorded.
+fn pidfd(pid: u32) -> Option<OwnedFd> {
+    #[cfg(target_os = "linux")]
+    {
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+        (fd >= 0).then(|| unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
 }
 
 /// The status of the whole plan: success when every stage succeeds, and
@@ -1007,9 +1020,7 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
         // A recorded run waits for each child as it ends, on its worker.
         Some(runtime) => {
             for child in std::mem::take(&mut gone.children) {
-                let pid = child.id();
-                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
-                let fd = (fd >= 0).then(|| unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) });
+                let fd = pidfd(child.id());
                 let mut child = child;
                 let _entered = runtime.enter();
                 let ready = fd.map(|fd| unsafe {
