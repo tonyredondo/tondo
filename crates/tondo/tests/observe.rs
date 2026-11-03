@@ -1142,7 +1142,8 @@ import std.sync
 
 type Box = { count: Int }
 
-fn worker(state: sync.Mutex[Box], done: Sender[Bool]) {
+fn worker(state: sync.Mutex[Box], go: Receiver[Bool], done: Sender[Bool]) {
+    _ = go.receive()
     for i in 0..3 {
         state.update((box) { box.count += 10 })
     }
@@ -1151,8 +1152,10 @@ fn worker(state: sync.Mutex[Box], done: Sender[Bool]) {
 
 fn main() {
     let state = sync.Mutex(Box { count: 1 })
+    let (go, going) = channel[Bool](1)
     let (done, finished) = channel[Bool](1)
-    spawn worker(state, done)
+    spawn worker(state, going, done)
+    go.send(true)
     _ = finished.receive()
     var total = 0
     for i in 0..10 {
@@ -1177,8 +1180,10 @@ fn debugger_watches_shared_values() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break shared.to:17\ncontinue\nprint state\nwatch state.value.count hits 2\ndelete 1\ncontinue\n\
-        delete 2\nbreak shared.to:20\ncontinue\nwatch total if total > 10\ndelete 3\ncontinue\ndelete 4\ncontinue\n";
+    // The worker changes the cell only once main sends `go`, after the
+    // watch is set.
+    let script = "break shared.to:19\ncontinue\nprint state\nwatch state.value.count hits 2\ndelete 1\ncontinue\n\
+        delete 2\nbreak shared.to:23\ncontinue\nwatch total if total > 10\ndelete 3\ncontinue\ndelete 4\ncontinue\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
@@ -1197,9 +1202,9 @@ fn debugger_watches_shared_values() {
     assert_eq!(
         stops[2..],
         [
-            ("shared.to:7 in worker", "watch 2: state.value.count changed from 11 to 21", &json!(2)),
-            ("shared.to:20 in main", "breakpoint 3", &json!(1)),
-            ("shared.to:19 in main", "watch 4: total changed from 10 to 15 at shared.to:20 in main", &json!(1)),
+            ("shared.to:8 in worker", "watch 2: state.value.count changed from 11 to 21", &json!(2)),
+            ("shared.to:23 in main", "breakpoint 3", &json!(1)),
+            ("shared.to:22 in main", "watch 4: total changed from 10 to 15 at shared.to:23 in main", &json!(1)),
         ]
     );
     assert!(text.contains("45 31"), "{text}");
