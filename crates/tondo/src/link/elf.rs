@@ -595,15 +595,17 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
     for &root in &roots {
         linker.globals[root].required = true;
     }
-    for (name, data) in &inputs.objects {
-        linker.add(name.clone(), data)?;
-    }
-    linker.archives(&inputs.archives)?;
+    // The shared libraries first: a weak reference to a function one of
+    // them has is to its wrapper in an executable that records.
     for (index, (name, data)) in inputs.shared.iter().enumerate() {
         let mut library = library(name, data)?;
         library.needed = index < inputs.always_needed;
         linker.libraries.push(library);
     }
+    for (name, data) in &inputs.objects {
+        linker.add(name.clone(), data)?;
+    }
+    linker.archives(&inputs.archives)?;
     linker.dynamic = inputs.interpreter.is_some() || linker.library;
     linker.relr = linker.dynamic && linker.libraries.iter().any(|l| l.soname == "libc.so.6" && l.relr);
     linker.resolve()?;
@@ -669,9 +671,14 @@ impl<'a> Linker<'a> {
         let allocator = symbols.iter().any(|s| s.name == b"mi_malloc" && s.section != SymbolSection::Undefined);
         for symbol in symbols {
             // A weak reference asks whether the function is there, which
-            // the wrapper always is: it stays the function's.
+            // the wrapper always is: it is to the wrapper only where a
+            // shared library has the function, and the function's in a
+            // static executable, whose archives bring it only when needed.
+            let shared = || self.libraries.iter().any(|l| l.exports.contains_key(symbol.name));
             let symbol_name = match symbol.section {
-                SymbolSection::Undefined if !symbol.weak => redirected(symbol.name, self.recordable && !allocator),
+                SymbolSection::Undefined if !symbol.weak || shared() => {
+                    redirected(symbol.name, self.recordable && !allocator)
+                }
                 SymbolSection::Undefined => redirected(symbol.name, false),
                 _ => symbol.name,
             };
