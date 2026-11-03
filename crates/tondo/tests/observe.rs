@@ -1979,6 +1979,38 @@ fn a_recording_replays_elsewhere() {
     assert!(output.contains("`roll` was "), "{output}");
 }
 
+/// lldb stops a debug build at a line of its DWARF, on Linux and macOS,
+/// and the `tondo` command that `tondo dump plugin lldb` writes shows the
+/// bindings of the frame it shows.
+#[test]
+fn lldb_stops_at_a_line_and_shows_the_bindings() {
+    if Command::new("lldb").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-lldb");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program =
+        "fn square(n: Int): Int {\n    let result = n * n\n    result\n}\n\nfn main() {\n    _ = square(3)\n}\n";
+    std::fs::write(dir.join("app.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let status = Command::new(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
+    assert!(status.unwrap().success());
+    let plugin = Command::new(tondo).args(["dump", "plugin", "lldb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
+    let load = String::from_utf8_lossy(&plugin.stdout).trim().to_string();
+    let ran = Command::new("lldb")
+        .args(["--batch", "-o", &load, "-o", "breakpoint set --file app.to --line 2", "-o", "run", "-o", "bt"])
+        .args(["-o", "tondo locals", "-o", "up", "-o", "tondo print 3 * 2", "--", "./app"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let shown = String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
+    assert!(shown.contains("square at app.to:2"), "{shown}");
+    assert!(shown.contains("main at app.to:7"), "{shown}");
+    assert!(shown.contains("n: Int = 3"), "{shown}");
+    assert!(shown.contains("3 * 2 = 6"), "{shown}");
+}
+
 /// A program that watches files and profiles itself, whose watch and
 /// samples come from threads and signals of the runtime.
 const OBSERVED: &str = r#"import std.console

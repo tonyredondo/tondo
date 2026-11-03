@@ -739,7 +739,7 @@ what the program read. A recording keeps the program's sources, so the
 directory replays the same on another Linux machine, as one CI uploads;
 with `--static` it does not depend on that machine's C library either.
 
-A debug build has DWARF on Linux, so gdb and lldb stop at `app.to:12` and
+A debug build has DWARF, on Linux and macOS, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
 `tondo` command for them that shows the stopped program's tasks and memory,
 and with `tondo locals` and `tondo print user.name` the selected frame's

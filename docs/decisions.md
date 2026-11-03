@@ -4847,3 +4847,14 @@ a debug build of Tondo records its own run in the parent's recording,
 `children/<pid>`, written as `tondo run --record` writes one, so a replay
 of the parent, where the child does not run, names it to be replayed in
 a session of its own. Callbacks from threads of C remain unrecorded.
+
+## 2026-11-03 — DWARF in a Mach-O executable
+
+On macOS a linker leaves DWARF in the objects and writes a map of them,
+which `dsymutil` gathers into a `.dSYM` bundle beside the executable.
+Tondo's objects are temporary and its linker its own: it puts the
+program's DWARF in the executable instead, in a `__DWARF` segment that is
+mapped with no access, as Go's linker does, with the functions'
+addresses resolved and nothing for the loader to rebase. lldb reads it
+there, so a debug build is debugged where it is, as on Linux; `--strip`
+leaves it out.

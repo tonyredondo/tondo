@@ -2,7 +2,7 @@
 //! unit with each of the program's functions, its name and its code, and
 //! the line each run of its code comes from, as the table of the trace
 //! has them. Its addresses are the functions' symbols, which the linker
-//! gives.
+//! gives, on Linux and on macOS.
 
 use cranelift_object::object;
 use gimli::write::{
@@ -131,7 +131,13 @@ pub(crate) fn write(object: &mut Object<'static>, name: &str, functions: &[Funct
         if section.len() == 0 {
             return Ok(());
         }
-        let at = object.add_section(Vec::new(), id.name().as_bytes().to_vec(), object::SectionKind::Debug);
+        // Mach-O names `.debug_info` `__debug_info`, in the segment `__DWARF`.
+        let segment = object.segment_name(object::write::StandardSegment::Debug).to_vec();
+        let name = match segment.is_empty() {
+            true => id.name().to_string(),
+            false => id.name().replacen('.', "__", 1),
+        };
+        let at = object.add_section(segment, name.into_bytes(), object::SectionKind::Debug);
         object.append_section_data(at, section.bytes.slice(), 1);
         for &(offset, index, addend) in &section.addresses {
             let flags = object::RelocationFlags::Generic {

@@ -34,6 +34,7 @@ mod raw {
     pub const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
     pub const S_ATTR_LIVE_SUPPORT: u32 = 0x0800_0000;
     pub const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x400;
+    pub const S_ATTR_DEBUG: u32 = 0x0200_0000;
     pub const N_STAB: u8 = 0xe0;
     pub const N_TYPE: u8 = 0x0e;
     pub const N_EXT: u8 = 0x01;
@@ -249,6 +250,8 @@ struct OutSection {
 const TEXT: &str = "__TEXT";
 const DATA_CONST: &str = "__DATA_CONST";
 const DATA: &str = "__DATA";
+/// The DWARF of a debug build, which lldb reads from the executable.
+const DWARF: &str = "__DWARF";
 
 struct Linker<'a> {
     arch: Arch,
@@ -1033,6 +1036,16 @@ fn output_segment(segname: &[u8], sectname: &[u8], kind: u8) -> Option<&'static 
     })
 }
 
+/// The rank of a segment: code, constant data, data, then the DWARF.
+fn segment_rank(segment: &str) -> u32 {
+    match segment {
+        TEXT => 0,
+        DATA_CONST => 1,
+        DWARF => 3,
+        _ => 2,
+    }
+}
+
 /// The rank of a section in its segment: code first, zero-filled last,
 /// thread-local data before thread-local zero fill.
 fn rank(segment: &str, sectname: &[u8], kind: u8) -> u32 {
@@ -1147,6 +1160,21 @@ impl<'a> Linker<'a> {
                 }
             }
         }
+        // The program's DWARF, unless stripped: its sections whole, in a
+        // segment of their own that is mapped with no access, as Go's.
+        let mut dwarf = Vec::new();
+        for i in (0..inputs.objects.len()).filter(|_| !inputs.strip) {
+            for s in 0..self.inputs[i].sections.len() {
+                let section = &self.inputs[i].sections[s];
+                if section.segname != b"__DWARF" {
+                    continue;
+                }
+                let (sectname, size) = (section.sectname.clone(), section.data.len() as u64);
+                let out = self.out(DWARF, &sectname, S_REGULAR, S_ATTR_DEBUG);
+                self.outs[out].size = size;
+                dwarf.push((out, i, s));
+            }
+        }
         // Synthesized sections.
         self.out(TEXT, b"__text", S_REGULAR, S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS);
         if !self.stubs.is_empty() {
@@ -1207,11 +1235,6 @@ impl<'a> Linker<'a> {
 
         // Segments and their sections.
         let mut order: Vec<usize> = (0..self.outs.len()).collect();
-        let segment_rank = |s: &str| match s {
-            TEXT => 0,
-            DATA_CONST => 1,
-            _ => 2,
-        };
         order.sort_by_key(|&o| {
             let out = &self.outs[o];
             (segment_rank(out.segname), rank(out.segname, &out.sectname, out.kind), o)
@@ -1224,7 +1247,7 @@ impl<'a> Linker<'a> {
         let mut offset = header_size as u64;
         let mut addr = self.base + offset;
         let mut segments: Vec<(&'static str, u64, u64, u64, u64)> = Vec::new();
-        for segment in [TEXT, DATA_CONST, DATA] {
+        for segment in [TEXT, DATA_CONST, DATA, DWARF] {
             let sections: Vec<usize> = order.iter().copied().filter(|&o| self.outs[o].segname == segment).collect();
             if sections.is_empty() && segment != TEXT {
                 continue;
@@ -1293,6 +1316,17 @@ impl<'a> Linker<'a> {
                         &mut binds,
                     )?;
                 }
+            }
+        }
+        // The DWARF, with the addresses of the functions as laid out, which
+        // the loader neither rebases nor binds.
+        for (out, i, s) in dwarf {
+            let (file, base) = (self.outs[out].offset, self.outs[out].addr);
+            let section = &self.inputs[i].sections[s];
+            image.put(file, section.data);
+            let relocations: Vec<Reloc> = section.relocations_in(0, section.data.len() as u64).copied().collect();
+            for reloc in relocations {
+                self.apply(&mut image, i, s, &reloc, file, base, &mut Vec::new(), &mut Vec::new())?;
             }
         }
         // The thread-local descriptors: `offset` from the template's start.
@@ -1455,6 +1489,7 @@ impl<'a> Linker<'a> {
             let (maxprot, initprot) = match name {
                 TEXT => (5, 5),
                 "__LINKEDIT" => (1, 1),
+                DWARF => (0, 0),
                 _ => (3, 3),
             };
             let flags = if name == DATA_CONST { SG_READ_ONLY } else { 0 };
@@ -1758,7 +1793,7 @@ impl Linker<'_> {
 /// The size of the load commands.
 impl Linker<'_> {
     fn commands_size(&self, order: &[usize], dylibs: &[String], rpaths: &[String], library: Option<&String>) -> usize {
-        let segments = [TEXT, DATA_CONST, DATA];
+        let segments = [TEXT, DATA_CONST, DATA, DWARF];
         let mut size = if library.is_some() { 0 } else { 72 }; // __PAGEZERO
         for segment in segments {
             let count = order.iter().filter(|&&o| self.outs[o].segname == segment).count();
@@ -2043,11 +2078,6 @@ impl Linker<'_> {
         let section_number: HashMap<usize, u8> = {
             let mut order: Vec<usize> =
                 (0..self.outs.len()).filter(|&o| self.outs[o].size > 0 || self.outs[o].sectname == b"__text").collect();
-            let segment_rank = |s: &str| match s {
-                TEXT => 0,
-                DATA_CONST => 1,
-                _ => 2,
-            };
             order.sort_by_key(|&o| {
                 (
                     segment_rank(self.outs[o].segname),

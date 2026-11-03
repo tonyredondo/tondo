@@ -801,8 +801,9 @@ compilador anota junto a cada llamada sin coste al ejecutar.
 
 `--debug`, en `run`, `build` y `test`, compila un build de depuración: sin
 optimizar, con una sonda donde empieza cada línea y lo que el depurador
-necesita para leer los bindings de cada función. En Linux, el ejecutable
-tiene además su DWARF, que gdb y lldb leen: cada función del programa, con
+necesita para leer los bindings de cada función. El ejecutable tiene además
+su DWARF, que gdb y lldb leen, en macOS en un segmento `__DWARF` del propio
+ejecutable, sin `dsymutil` (salvo con `--strip`): cada función del programa, con
 su nombre y su código, y la línea de la que viene cada parte de su código,
 una por sentencia, así que paran en `archivo.to:línea`, avanzan por líneas
 y nombran en sus pilas la línea de cada marco. Una línea empieza para ellos
