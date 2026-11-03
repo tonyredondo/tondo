@@ -4567,13 +4567,3 @@ event, and the program goes on, as dynamic instrumentation does in
 production tools; `hits 1` takes the first time only. It is a logpoint
 that writes what `snapshot` would, and the editor writes it in its
 console.
-
-## 2026-11-02 — Captures that do not stop
-
-A server that stops at a breakpoint stops serving, and its clients time
-out while one looks. A breakpoint ending in `capture` gives, where its
-condition holds and its count says, the stack and the bindings as an
-event, and the program goes on, as dynamic instrumentation does in
-production tools; `hits 1` takes the first time only. It is a logpoint
-that writes what `snapshot` would, and the editor writes it in its
-console.

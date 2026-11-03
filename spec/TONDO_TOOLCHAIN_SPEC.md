@@ -813,14 +813,6 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   enviar o recibir por un canal, con lo que tiene; y `break on wait <ms>`,
   una que esperó más de esos milisegundos un lock, un canal u otra tarea,
   al acabar la espera. `delete <id>` los quita como a los demás.
-- `retainers <path>` dice qué mantiene vivo el objeto del heap que tiene un
-  binding, o una parte suya: las pilas de las tareas que apuntan a él y las
-  cadenas de objetos más cortas desde una pila hasta él, cada objeto con su
-  tamaño y dónde se hizo. `memory` da los objetos del programa por dónde se
-  hicieron, los lugares con más bytes primero, y cuánto creció cada uno
-  desde el último `memory`: entre dos paradas, lo que se acumula.
-- `freeze <task>` deja una tarea retenida, o la retiene en su siguiente
-  línea si corre, mientras las demás siguen; `thaw <task>` la deja seguir.
   La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
   cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
@@ -832,6 +824,14 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   también lo de las funciones en que está escrito el código de esa línea; un
   nombre que no es un binding de ellas, o una expresión mal escrita, es un
   error al poner el breakpoint. `delete <id>` lo quita.
+- `retainers <path>` dice qué mantiene vivo el objeto del heap que tiene un
+  binding, o una parte suya: las pilas de las tareas que apuntan a él y las
+  cadenas de objetos más cortas desde una pila hasta él, cada objeto con su
+  tamaño y dónde se hizo. `memory` da los objetos del programa por dónde se
+  hicieron, los lugares con más bytes primero, y cuánto creció cada uno
+  desde el último `memory`: entre dos paradas, lo que se acumula.
+- `freeze <task>` deja una tarea retenida, o la retiene en su siguiente
+  línea si corre, mientras las demás siguen; `thaw <task>` la deja seguir.
 - Las expresiones de las condiciones, de los mensajes, de `print` y de
   `watch` leen bindings y sus partes, con índices y claves que también son
   expresiones (`items[i + 1].name`), literales (números, textos, caracteres,
