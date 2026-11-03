@@ -17,6 +17,7 @@ import std.encoding as __encoding
 import std.fs as __fs
 import std.gzip as __gzip
 import std.hash as __hash
+import std.internal.codec as codecNative
 import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
@@ -3611,11 +3612,11 @@ fn send(incoming: httpNative.Native, reply: Reply) {
             tag,
         )
         Payload.Events(events) => {
-            let pipe = httpNative.pipe()
-            let output = httpNative.pipeWriter(pipe)
+            let pipe = codecNative.pipe(65536)
+            let output = codecNative.pipeWriter(pipe)
             var headers = reply.headerList
             headers.extend(["content-type", "text/event-stream"])
-            httpNative.respondStream(incoming, 200, headers, httpNative.pipeReader(pipe))
+            httpNative.respondStream(incoming, 200, headers, codecNative.pipeReader(pipe))
             for event in events {
                 var lines: Array[String] = []
                 if event.event != "message" {

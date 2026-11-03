@@ -1569,33 +1569,3 @@ pub extern "C" fn tondo_rt_http_accept_websocket(object: *mut NativeObject) -> *
         None => failed("the task was cancelled"),
     }
 }
-
-/// A pipe whose writer feeds what its reader gives, for event streams.
-struct Pipe {
-    reader: Mutex<Option<std::io::PipeReader>>,
-    writer: Mutex<Option<std::io::PipeWriter>>,
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_pipe() -> *mut NativeObject {
-    let (reader, writer) = std::io::pipe().map_or((None, None), |(r, w)| (Some(r), Some(w)));
-    native::new(Pipe { reader: Mutex::new(reader), writer: Mutex::new(writer) })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_pipe_reader(pipe: *mut NativeObject) -> *mut StreamObject {
-    let reader = native::get::<Pipe>(pipe).and_then(|p| lock(&p.reader).take());
-    match reader {
-        Some(reader) => crate::io::stream(Box::new(reader), Mode::Long, false),
-        None => crate::io::stream(Box::new(std::io::Cursor::new(Vec::new())), Mode::Inline, false),
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_pipe_writer(pipe: *mut NativeObject) -> *mut StreamObject {
-    let writer = native::get::<Pipe>(pipe).and_then(|p| lock(&p.writer).take());
-    match writer {
-        Some(writer) => crate::io::stream(Box::new(writer), Mode::Long, false),
-        None => crate::io::stream(Box::new(std::io::Cursor::new(Vec::new())), Mode::Inline, false),
-    }
-}
