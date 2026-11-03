@@ -1070,7 +1070,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         false => Vec::new(),
     };
     let mut product = cg.module.finish();
-    if debug {
+    // Linux's executables keep it; Mach-O's linker leaves it in the
+    // objects, for `dsymutil`.
+    if debug && product.object.format() == cranelift_object::object::BinaryFormat::Elf {
         let functions: Vec<crate::debuginfo::Function> = debugged
             .into_iter()
             .zip(&cg.traced)
