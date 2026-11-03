@@ -470,6 +470,7 @@ mod calls {
         "getpwuid_r",
         "signal",
         "kept",
+        "readdir_r",
         "kqueue",
         "kevent",
         "CCRandomGenerateBytes",
@@ -1656,6 +1657,40 @@ mod calls {
     }
 
     // macOS's own calls.
+
+    #[cfg(target_os = "macos")]
+    weak!("readdir_r");
+
+    /// The way the Rust library reads a directory on macOS, as some of its
+    /// versions do: an entry, and whether there was one.
+    #[cfg(target_os = "macos")]
+    #[unsafe(export_name = "tondo_rr_readdir_r")]
+    pub unsafe extern "C" fn readdir_r_wrapper(
+        dir: *mut libc::DIR,
+        entry: *mut libc::dirent,
+        found: *mut *mut libc::dirent,
+    ) -> c_int {
+        unsafe extern "C" {
+            #[link_name = "tondo_real_readdir_r"]
+            fn real(dir: *mut libc::DIR, entry: *mut libc::dirent, found: *mut *mut libc::dirent) -> c_int;
+        }
+        const ID: u32 = id("readdir_r");
+        match here() {
+            Here::Pass => unsafe { real(dir, entry, found) },
+            Here::Record => {
+                let result = inside(|| unsafe { real(dir, entry, found) });
+                let mut there = u8::from(!unsafe { *found }.is_null());
+                record(ID, result as i64, &[of(entry), of(&mut there)]);
+                result
+            }
+            Here::Replay => {
+                let mut there = 0u8;
+                let result = replay(ID, "readdir_r", |_| vec![of(entry), of(&mut there)]);
+                unsafe { *found = if there != 0 { entry } else { std::ptr::null_mut() } };
+                result as c_int
+            }
+        }
+    }
 
     #[cfg(target_os = "macos")]
     wrap!(kqueue() -> c_int, |r| {

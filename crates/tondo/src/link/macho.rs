@@ -250,6 +250,7 @@ const RECORDED: &[&str] = &[
     "write",
     "writev",
     // macOS's own.
+    "readdir_r",
     "kqueue",
     "kevent",
     "CCRandomGenerateBytes",
@@ -271,7 +272,8 @@ const RECORDED: &[&str] = &[
 /// The name libSystem gives a function the runtime wraps, where it is not
 /// the function's: the variant its headers choose.
 fn imported(function: &str) -> String {
-    let inode64 = ["stat", "lstat", "fstat", "fstatat", "opendir", "fdopendir", "readdir", "statfs", "fstatfs"];
+    let inode64 =
+        ["stat", "lstat", "fstat", "fstatat", "opendir", "fdopendir", "readdir", "readdir_r", "statfs", "fstatfs"];
     match function {
         "realpath" => "realpath$DARWIN_EXTSN".into(),
         _ if cfg!(target_arch = "x86_64") && inode64.contains(&function) => format!("{function}$INODE64"),
