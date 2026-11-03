@@ -63,10 +63,6 @@ toml_edit = { version = "0.25", default-features = false, features = ["parse", "
 unicode-normalization = "0.1"
 webpki-roots = "1.0.10"
 
-# Linux watches with inotify itself (`files.rs`).
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
-
 [build-dependencies]
 flate2 = "1"
 

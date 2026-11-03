@@ -12,7 +12,7 @@
 //! thread the program starts runs where the recording cannot follow: the
 //! recording marks it, and a replay ends there.
 
-#![cfg_attr(not(all(tondo_staticlib, target_os = "linux")), allow(dead_code))]
+#![cfg_attr(not(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))), allow(dead_code))]
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -110,8 +110,8 @@ impl Drop for Outside {
 /// to, or the recording to replay. Gives whether either is on.
 pub(crate) fn start() -> bool {
     let asked = std::env::var_os("TONDO_RT_RECORD").is_some() || std::env::var_os("TONDO_RT_REPLAY").is_some();
-    if asked && !cfg!(all(tondo_staticlib, target_os = "linux")) {
-        super::runtime_fault("a run is recorded and replayed on Linux");
+    if asked && !cfg!(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))) {
+        super::runtime_fault("a run is recorded and replayed on Linux and macOS");
     }
     let able = unsafe { libc::getpid() } != 0 && WRAPPED.load(Ordering::Relaxed);
     if asked && !able {
@@ -225,9 +225,17 @@ pub(crate) fn orphaned() -> bool {
     }
     let _outside = Outside::enter();
     // Gone, or ended and not yet waited for.
-    match std::fs::read_to_string(format!("/proc/{debugger}/stat")) {
+    #[cfg(target_os = "linux")]
+    return match std::fs::read_to_string(format!("/proc/{debugger}/stat")) {
         Ok(stat) => stat.rsplit_once(") ").is_some_and(|(_, state)| state.starts_with(['Z', 'X'])),
         Err(_) => true,
+    };
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let found = unsafe { libc::proc_pidinfo(debugger, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+        found != size || info.pbi_status == libc::SZOMB
     }
 }
 
@@ -248,31 +256,31 @@ pub(crate) fn begin() {
 /// a recorded run keeps the bytes `make` gives, and its replay gives them
 /// back without making them.
 pub(crate) fn kept(make: impl FnOnce() -> Vec<u8>) -> Vec<u8> {
-    #[cfg(all(tondo_staticlib, target_os = "linux"))]
+    #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
     return calls::kept(make);
-    #[cfg(not(all(tondo_staticlib, target_os = "linux")))]
+    #[cfg(not(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))))]
     make()
 }
 
 /// The worker would wait for a task to run: a replay has nothing to wait
 /// for once its recording ends.
 pub(crate) fn waiting() {
-    #[cfg(all(tondo_staticlib, target_os = "linux"))]
+    #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
     calls::waiting();
 }
 
 /// A signal the worker takes at its turn `turn`, in the recording.
 pub(crate) fn signal_came(turn: u64, signal: i32) {
-    #[cfg(all(tondo_staticlib, target_os = "linux"))]
+    #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
     calls::signal_came(turn, signal);
     let _ = (turn, signal);
 }
 
 /// The signal the recording has at the worker's turn `turn`, if any.
 pub(crate) fn signal_at(turn: u64) -> Option<i32> {
-    #[cfg(all(tondo_staticlib, target_os = "linux"))]
+    #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
     return calls::signal_at(turn);
-    #[cfg(not(all(tondo_staticlib, target_os = "linux")))]
+    #[cfg(not(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = turn;
         None
@@ -302,7 +310,7 @@ pub(crate) fn flush() {
 
 /// The wrappers, in what `tondo` links on Linux, where the linker gives
 /// them the C library's calls.
-#[cfg(all(tondo_staticlib, target_os = "linux"))]
+#[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
 mod calls {
     use super::*;
     use libc::{c_char, c_int, c_long, c_uint, c_ulong, c_void, size_t, ssize_t};
@@ -462,6 +470,22 @@ mod calls {
         "getpwuid_r",
         "signal",
         "kept",
+        "kqueue",
+        "kevent",
+        "CCRandomGenerateBytes",
+        "getentropy",
+        "sysctl",
+        "sysctlbyname",
+        "confstr",
+        "statfs",
+        "fstatfs",
+        "futimes",
+        "fsetattrlist",
+        "fclonefileat",
+        "fcopyfile",
+        "copyfile_state_get",
+        "proc_pidinfo",
+        "gethostuuid",
     ];
 
     /// The number a function's calls have in a recording.
@@ -478,7 +502,20 @@ mod calls {
     }
 
     fn errno() -> *mut c_int {
-        unsafe { libc::__errno_location() }
+        #[cfg(target_os = "linux")]
+        return unsafe { libc::__errno_location() };
+        #[cfg(target_os = "macos")]
+        return unsafe { libc::__error() };
+    }
+
+    /// Declares the real functions weak, which a C library may not have.
+    macro_rules! weak {
+        ($($name:expr),* $(,)?) => {
+            #[cfg(target_os = "linux")]
+            std::arch::global_asm!($(concat!(".weak tondo_real_", $name)),*);
+            #[cfg(target_os = "macos")]
+            std::arch::global_asm!($(concat!(".weak_reference _tondo_real_", $name)),*);
+        };
     }
 
     /// Runs the real function, its own calls not recorded.
@@ -659,7 +696,7 @@ mod calls {
                 use super::*;
                 // Weak: a C library without it, as musl without the `*64`
                 // functions, leaves it out.
-                std::arch::global_asm!(concat!(".weak tondo_real_", stringify!($name)));
+                weak!(stringify!($name));
                 unsafe extern "C" {
                     #[link_name = concat!("tondo_real_", stringify!($name))]
                     pub fn real($($arg: $ty),*) -> $ret;
@@ -690,6 +727,58 @@ mod calls {
         };
     }
 
+    /// `wrap!` for a function of C whose last argument is variadic, as
+    /// `open`'s mode and `fcntl`'s argument: the real one is called so. On
+    /// Apple's arm64 such an argument is on the stack, where a function of
+    /// Rust does not look: `tondo_rr_<name>` loads it into `$register`, the
+    /// one after the fixed arguments, and goes on to the wrapper.
+    macro_rules! wrap_variadic {
+        ($register:literal, $name:ident ($($arg:ident: $ty:ty),*; $last:ident: $lty:ty) -> $ret:ty, |$result:ident| $outs:expr) => {
+            #[allow(non_snake_case, clippy::missing_safety_doc)]
+            pub mod $name {
+                use super::*;
+                weak!(stringify!($name));
+                unsafe extern "C" {
+                    #[link_name = concat!("tondo_real_", stringify!($name))]
+                    pub fn real($($arg: $ty),*, ...) -> $ret;
+                }
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                std::arch::global_asm!(concat!(
+                    ".globl _tondo_rr_", stringify!($name), "\n",
+                    ".p2align 2\n",
+                    "_tondo_rr_", stringify!($name), ":\n",
+                    "ldr ", $register, ", [sp]\n",
+                    "b _tondo_rr_", stringify!($name), "_fixed\n",
+                ));
+                #[cfg_attr(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    unsafe(export_name = concat!("tondo_rr_", stringify!($name), "_fixed"))
+                )]
+                #[cfg_attr(
+                    not(all(target_os = "macos", target_arch = "aarch64")),
+                    unsafe(export_name = concat!("tondo_rr_", stringify!($name)))
+                )]
+                pub unsafe extern "C" fn wrapper($($arg: $ty),*, $last: $lty) -> $ret {
+                    const ID: u32 = id(stringify!($name));
+                    let outs = |$result: i64| -> Vec<(*mut u8, usize)> {
+                        let _ = $result;
+                        $outs.into_iter().collect()
+                    };
+                    match here() {
+                        Here::Pass => unsafe { real($($arg),*, $last) },
+                        Here::Record => {
+                            let result = inside(|| unsafe { real($($arg),*, $last) });
+                            let _outside = Outside::enter();
+                            record(ID, result as i64, &outs(result as i64));
+                            result
+                        }
+                        Here::Replay => replay(ID, stringify!($name), outs) as $ret,
+                    }
+                }
+            }
+        };
+    }
+
     /// What a call writes nowhere.
     fn none(_: i64) -> [(*mut u8, usize); 0] {
         []
@@ -704,6 +793,7 @@ mod calls {
 
     wrap!(read(fd: c_int, buf: *mut c_void, count: size_t) -> ssize_t, |r| [filled(buf, r)]);
     wrap!(pread(fd: c_int, buf: *mut c_void, count: size_t, offset: libc::off_t) -> ssize_t, |r| [filled(buf, r)]);
+    #[cfg(target_os = "linux")]
     wrap!(pread64(fd: c_int, buf: *mut c_void, count: size_t, offset: libc::off_t) -> ssize_t, |r| [filled(buf, r)]);
     wrap!(readv(fd: c_int, iov: *const libc::iovec, count: c_int) -> ssize_t, |r| spread(iov, count, r));
     wrap!(preadv(fd: c_int, iov: *const libc::iovec, count: c_int, offset: libc::off_t) -> ssize_t, |r| spread(iov, count, r));
@@ -736,6 +826,7 @@ mod calls {
         unsafe { real(fd, iov, count) };
     }));
     wrap!(pwrite(fd: c_int, buf: *const c_void, count: size_t, offset: libc::off_t) -> ssize_t, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(pwrite64(fd: c_int, buf: *const c_void, count: size_t, offset: libc::off_t) -> ssize_t, |r| none(r));
     wrap!(pwritev(fd: c_int, iov: *const libc::iovec, count: c_int, offset: libc::off_t) -> ssize_t, |r| none(r));
     wrap!(send(fd: c_int, buf: *const c_void, length: size_t, flags: c_int) -> ssize_t, |r| none(r));
@@ -751,8 +842,11 @@ mod calls {
         |r| none(r)
     );
     wrap!(sendmsg(fd: c_int, message: *const libc::msghdr, flags: c_int) -> ssize_t, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(sendfile(out: c_int, input: c_int, offset: *mut libc::off_t, count: size_t) -> ssize_t, |r| [of(offset)]);
+    #[cfg(target_os = "linux")]
     wrap!(sendfile64(out: c_int, input: c_int, offset: *mut libc::off_t, count: size_t) -> ssize_t, |r| [of(offset)]);
+    #[cfg(target_os = "linux")]
     wrap!(
         splice(
             input: c_int,
@@ -765,6 +859,7 @@ mod calls {
         |r| [of(input_offset), of(out_offset)]
     );
     wrap!(accept(fd: c_int, from: *mut libc::sockaddr, length: *mut libc::socklen_t) -> c_int, |r| address(from, length));
+    #[cfg(target_os = "linux")]
     wrap!(
         accept4(fd: c_int, from: *mut libc::sockaddr, length: *mut libc::socklen_t, flags: c_int) -> c_int,
         |r| address(from, length)
@@ -784,18 +879,24 @@ mod calls {
         setsockopt(fd: c_int, level: c_int, name: c_int, value: *const c_void, length: libc::socklen_t) -> c_int,
         |r| none(r)
     );
-    wrap!(open(path: *const c_char, flags: c_int, mode: c_uint) -> c_int, |r| none(r));
-    wrap!(open64(path: *const c_char, flags: c_int, mode: c_uint) -> c_int, |r| none(r));
-    wrap!(openat(dir: c_int, path: *const c_char, flags: c_int, mode: c_uint) -> c_int, |r| none(r));
-    wrap!(openat64(dir: c_int, path: *const c_char, flags: c_int, mode: c_uint) -> c_int, |r| none(r));
+    wrap_variadic!("x2", open(path: *const c_char, flags: c_int; mode: c_uint) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
+    wrap_variadic!("x2", open64(path: *const c_char, flags: c_int; mode: c_uint) -> c_int, |r| none(r));
+    wrap_variadic!("x3", openat(dir: c_int, path: *const c_char, flags: c_int; mode: c_uint) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
+    wrap_variadic!("x3", openat64(dir: c_int, path: *const c_char, flags: c_int; mode: c_uint) -> c_int, |r| none(r));
     wrap!(close(fd: c_int) -> c_int, |r| none(r));
     wrap!(stat(path: *const c_char, out: *mut libc::stat) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "linux")]
     wrap!(stat64(path: *const c_char, out: *mut libc::stat) -> c_int, |r| [of(out)]);
     wrap!(lstat(path: *const c_char, out: *mut libc::stat) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "linux")]
     wrap!(lstat64(path: *const c_char, out: *mut libc::stat) -> c_int, |r| [of(out)]);
     wrap!(fstat(fd: c_int, out: *mut libc::stat) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "linux")]
     wrap!(fstat64(fd: c_int, out: *mut libc::stat) -> c_int, |r| [of(out)]);
     wrap!(fstatat(dir: c_int, path: *const c_char, out: *mut libc::stat, flags: c_int) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "linux")]
     wrap!(fstatat64(dir: c_int, path: *const c_char, out: *mut libc::stat, flags: c_int) -> c_int, |r| [of(out)]);
     wrap!(statvfs(path: *const c_char, out: *mut libc::statvfs) -> c_int, |r| [of(out)]);
     wrap!(access(path: *const c_char, mode: c_int) -> c_int, |r| none(r));
@@ -815,10 +916,13 @@ mod calls {
     );
     wrap!(readlink(path: *const c_char, buf: *mut c_char, size: size_t) -> ssize_t, |r| [filled(buf.cast(), r)]);
     wrap!(ftruncate(fd: c_int, length: libc::off_t) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(ftruncate64(fd: c_int, length: libc::off_t) -> c_int, |r| none(r));
     wrap!(fsync(fd: c_int) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(fdatasync(fd: c_int) -> c_int, |r| none(r));
     wrap!(lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(lseek64(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t, |r| none(r));
     wrap!(
         utimensat(dir: c_int, path: *const c_char, times: *const libc::timespec, flags: c_int) -> c_int,
@@ -834,34 +938,41 @@ mod calls {
         duplicated(from, r);
         none(r)
     });
-    wrap!(fcntl(fd: c_int, command: c_int, argument: usize) -> c_int, |r| {
+    wrap_variadic!("x2", fcntl(fd: c_int, command: c_int; argument: usize) -> c_int, |r| {
         if matches!(command, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC) {
             duplicated(fd, r);
         }
         none(r)
     });
-    wrap!(fcntl64(fd: c_int, command: c_int, argument: usize) -> c_int, |r| {
+    #[cfg(target_os = "linux")]
+    wrap_variadic!("x2", fcntl64(fd: c_int, command: c_int; argument: usize) -> c_int, |r| {
         if matches!(command, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC) {
             duplicated(fd, r);
         }
         none(r)
     });
-    wrap!(ioctl(fd: c_int, request: c_ulong, argument: *mut c_void) -> c_int, |r| [(
+    wrap_variadic!("x2", ioctl(fd: c_int, request: c_ulong; argument: *mut c_void) -> c_int, |r| [(
         argument.cast::<u8>(),
         // What the requests the runtime makes write: a count, a terminal's
         // size or settings.
-        match request as libc::Ioctl {
-            libc::FIONREAD => std::mem::size_of::<c_int>(),
-            libc::TIOCGWINSZ => std::mem::size_of::<libc::winsize>(),
-            libc::TCGETS => std::mem::size_of::<libc::termios>(),
+        match request {
+            r if r == libc::FIONREAD as c_ulong => std::mem::size_of::<c_int>(),
+            r if r == libc::TIOCGWINSZ as c_ulong => std::mem::size_of::<libc::winsize>(),
+            #[cfg(target_os = "linux")]
+            r if r == libc::TCGETS as c_ulong => std::mem::size_of::<libc::termios>(),
+            #[cfg(target_os = "macos")]
+            r if r == libc::TIOCGETA as c_ulong => std::mem::size_of::<libc::termios>(),
             _ => 0,
         }
     )]);
     wrap!(tcgetattr(fd: c_int, out: *mut libc::termios) -> c_int, |r| [of(out)]);
     wrap!(tcsetattr(fd: c_int, when: c_int, settings: *const libc::termios) -> c_int, |r| none(r));
     wrap!(pipe(fds: *mut [c_int; 2]) -> c_int, |r| [of(fds)]);
+    #[cfg(target_os = "linux")]
     wrap!(pipe2(fds: *mut [c_int; 2], flags: c_int) -> c_int, |r| [of(fds)]);
+    #[cfg(target_os = "linux")]
     wrap!(eventfd(initial: c_uint, flags: c_int) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(epoll_create1(flags: c_int) -> c_int, |r| {
         if r >= 0 {
             let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
@@ -869,6 +980,7 @@ mod calls {
         }
         none(r)
     });
+    #[cfg(target_os = "linux")]
     wrap!(epoll_ctl(epoll: c_int, op: c_int, fd: c_int, event: *mut libc::epoll_event) -> c_int, |r| {
         if r == 0 {
             registered(epoll, op, fd, event);
@@ -879,39 +991,45 @@ mod calls {
         fds.cast::<u8>(),
         count as usize * std::mem::size_of::<libc::pollfd>()
     )]);
+    #[cfg(target_os = "linux")]
     wrap!(inotify_init1(flags: c_int) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(inotify_rm_watch(fd: c_int, watch: c_int) -> c_int, |r| none(r));
     wrap!(clock_gettime(clock: libc::clockid_t, out: *mut libc::timespec) -> c_int, |r| [of(out)]);
     wrap!(gettimeofday(out: *mut libc::timeval, zone: *mut c_void) -> c_int, |r| [of(out)]);
     wrap!(time(out: *mut libc::time_t) -> libc::time_t, |r| [of(out)]);
     wrap!(nanosleep(wanted: *const libc::timespec, left: *mut libc::timespec) -> c_int, |r| [of(left)]);
+    #[cfg(target_os = "linux")]
     wrap!(
         clock_nanosleep(clock: libc::clockid_t, flags: c_int, wanted: *const libc::timespec, left: *mut libc::timespec) -> c_int,
         |r| [of(left)]
     );
+    #[cfg(target_os = "linux")]
     wrap!(getrandom(buf: *mut c_void, length: size_t, flags: c_uint) -> ssize_t, |r| [filled(buf, r)]);
     wrap!(uname(out: *mut libc::utsname) -> c_int, |r| [of(out)]);
     wrap!(gethostname(name: *mut c_char, length: size_t) -> c_int, |r| [(name.cast::<u8>(), length)]);
     wrap!(sysconf(name: c_int) -> c_long, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(sched_getaffinity(pid: libc::pid_t, size: size_t, mask: *mut libc::cpu_set_t) -> c_int, |r| [(
         mask.cast::<u8>(),
         size
     )]);
-    std::arch::global_asm!(
-        ".weak tondo_real_getpid",
-        ".weak tondo_real_fork",
-        ".weak tondo_real_syscall",
-        ".weak tondo_real_getcwd",
-        ".weak tondo_real_realpath",
-        ".weak tondo_real_opendir",
-        ".weak tondo_real_fdopendir",
-        ".weak tondo_real_readdir",
-        ".weak tondo_real_readdir64",
-        ".weak tondo_real_getaddrinfo",
-        ".weak tondo_real_freeaddrinfo",
-        ".weak tondo_real_pthread_create",
-        ".weak tondo_real_epoll_wait",
+    weak!(
+        "getpid",
+        "fork",
+        "syscall",
+        "getcwd",
+        "realpath",
+        "opendir",
+        "fdopendir",
+        "readdir",
+        "readdir64",
+        "getaddrinfo",
+        "freeaddrinfo",
+        "pthread_create",
+        "epoll_wait"
     );
 
     /// The process's ID; the first call says the linker gave the program
@@ -985,6 +1103,7 @@ mod calls {
         Vec::new()
     }
 
+    #[cfg(target_os = "linux")]
     /// The raw system calls the Rust library makes itself: those that read the
     /// world are recorded; those of memory and of the threads' own waits are
     /// not.
@@ -1163,6 +1282,7 @@ mod calls {
         read_entry("readdir", || unsafe { real(dir) })
     }
 
+    #[cfg(target_os = "linux")]
     #[unsafe(export_name = "tondo_rr_readdir64")]
     pub unsafe extern "C" fn readdir64_wrapper(dir: *mut libc::DIR) -> *mut libc::dirent {
         unsafe extern "C" {
@@ -1178,6 +1298,7 @@ mod calls {
     wrap!(sleep(seconds: c_uint) -> c_uint, |r| none(r));
     wrap!(pause() -> c_int, |r| none(r));
     wrap!(isatty(fd: c_int) -> c_int, |r| none(r));
+    #[cfg(target_os = "linux")]
     wrap!(sysinfo(out: *mut libc::sysinfo) -> c_int, |r| [of(out)]);
     wrap!(getrusage(who: c_int, out: *mut libc::rusage) -> c_int, |r| [of(out)]);
     wrap!(getgid() -> libc::gid_t, |r| none(r));
@@ -1190,7 +1311,7 @@ mod calls {
     wrap!(setgid(group: libc::gid_t) -> c_int, |r| none(r));
     wrap!(setgroups(count: size_t, groups: *const libc::gid_t) -> c_int, |r| none(r));
 
-    std::arch::global_asm!(".weak tondo_real_getpwuid_r");
+    weak!("getpwuid_r");
 
     /// A user's entry, whose strings are in `buffer`: in a replay, where
     /// the recorded buffer was, moved to where this one is.
@@ -1241,6 +1362,10 @@ mod calls {
                     e.pw_gecos = moved(e.pw_gecos);
                     e.pw_dir = moved(e.pw_dir);
                     e.pw_shell = moved(e.pw_shell);
+                    #[cfg(target_os = "macos")]
+                    {
+                        e.pw_class = moved(e.pw_class);
+                    }
                     *found = if missing != 0 { std::ptr::null_mut() } else { entry };
                 }
                 result as c_int
@@ -1248,10 +1373,12 @@ mod calls {
         }
     }
     // `struct statx`, 256 bytes.
+    #[cfg(target_os = "linux")]
     wrap!(
         statx(dir: c_int, path: *const c_char, flags: c_int, mask: c_uint, out: *mut c_void) -> c_int,
         |r| [(out.cast::<u8>(), 256)]
     );
+    #[cfg(target_os = "linux")]
     wrap!(
         copy_file_range(
             input: c_int,
@@ -1264,8 +1391,9 @@ mod calls {
         |r| [of(input_offset), of(out_offset)]
     );
 
-    std::arch::global_asm!(".weak tondo_real_dlsym");
+    weak!("dlsym");
 
+    #[cfg(target_os = "linux")]
     /// The functions the Rust library looks up as it runs, as `statx`,
     /// which the linker cannot give their wrappers: the lookup gives them.
     #[unsafe(export_name = "tondo_rr_dlsym")]
@@ -1394,6 +1522,9 @@ mod calls {
         instances: std::collections::BTreeMap<c_int, c_int>,
         data: std::collections::BTreeMap<(c_int, c_int), u64>,
         fds: std::collections::BTreeMap<(c_int, u64), c_int>,
+        /// A kqueue's: what each descriptor and filter is registered with.
+        #[cfg(target_os = "macos")]
+        filters: std::collections::BTreeMap<(c_int, usize, i16), usize>,
     }
 
     impl Registry {
@@ -1415,6 +1546,7 @@ mod calls {
         };
     }
 
+    #[cfg(target_os = "linux")]
     fn registered(epoll: c_int, op: c_int, fd: c_int, event: *mut libc::epoll_event) {
         let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
         let registry = registry.get_or_insert_with(Registry::default);
@@ -1429,6 +1561,7 @@ mod calls {
         }
     }
 
+    #[cfg(target_os = "linux")]
     /// Each event's data as its descriptor, or `back` as what this run
     /// registered for the descriptor.
     fn translated(epoll: c_int, events: *mut libc::epoll_event, count: c_int, back: bool) {
@@ -1450,6 +1583,7 @@ mod calls {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[unsafe(export_name = "tondo_rr_epoll_wait")]
     pub unsafe extern "C" fn epoll_wait_wrapper(
         epoll: c_int,
@@ -1517,6 +1651,151 @@ mod calls {
                     "the program starts a thread, as fs.watch, the profiler and C libraries do, \
                      whose calls the recording does not have",
                 )
+            }
+        }
+    }
+
+    // macOS's own calls.
+
+    #[cfg(target_os = "macos")]
+    wrap!(kqueue() -> c_int, |r| {
+        if r >= 0 {
+            let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+            registry.get_or_insert_with(Registry::default).instances.insert(r as c_int, r as c_int);
+        }
+        none(r)
+    });
+    #[cfg(target_os = "macos")]
+    wrap!(CCRandomGenerateBytes(bytes: *mut c_void, count: size_t) -> c_int, |r| [(bytes.cast::<u8>(), count)]);
+    #[cfg(target_os = "macos")]
+    wrap!(getentropy(buf: *mut c_void, length: size_t) -> c_int, |r| [(buf.cast::<u8>(), length)]);
+    #[cfg(target_os = "macos")]
+    wrap!(
+        sysctl(name: *mut c_int, count: c_uint, old: *mut c_void, length: *mut size_t, new: *mut c_void, new_length: size_t) -> c_int,
+        |r| [of(length), (old.cast::<u8>(), if length.is_null() { 0 } else { unsafe { *length } })]
+    );
+    #[cfg(target_os = "macos")]
+    wrap!(
+        sysctlbyname(name: *const c_char, old: *mut c_void, length: *mut size_t, new: *mut c_void, new_length: size_t) -> c_int,
+        |r| [of(length), (old.cast::<u8>(), if length.is_null() { 0 } else { unsafe { *length } })]
+    );
+    #[cfg(target_os = "macos")]
+    wrap!(confstr(name: c_int, buf: *mut c_char, length: size_t) -> size_t, |r| [(
+        buf.cast::<u8>(),
+        length.min(r.max(0) as usize)
+    )]);
+    #[cfg(target_os = "macos")]
+    wrap!(statfs(path: *const c_char, out: *mut libc::statfs) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "macos")]
+    wrap!(fstatfs(fd: c_int, out: *mut libc::statfs) -> c_int, |r| [of(out)]);
+    #[cfg(target_os = "macos")]
+    wrap!(futimes(fd: c_int, times: *const libc::timeval) -> c_int, |r| none(r));
+    #[cfg(target_os = "macos")]
+    wrap!(
+        fsetattrlist(fd: c_int, list: *mut c_void, buffer: *mut c_void, size: size_t, options: c_ulong) -> c_int,
+        |r| none(r)
+    );
+    #[cfg(target_os = "macos")]
+    wrap!(fclonefileat(from: c_int, dir: c_int, to: *const c_char, flags: u32) -> c_int, |r| none(r));
+    #[cfg(target_os = "macos")]
+    wrap!(fcopyfile(from: c_int, to: c_int, state: *mut c_void, flags: u32) -> c_int, |r| none(r));
+    #[cfg(target_os = "macos")]
+    wrap!(copyfile_state_get(state: *mut c_void, flag: u32, out: *mut c_void) -> c_int, |r| [(
+        out.cast::<u8>(),
+        std::mem::size_of::<libc::off_t>()
+    )]);
+    #[cfg(target_os = "macos")]
+    wrap!(proc_pidinfo(pid: c_int, flavor: c_int, argument: u64, buffer: *mut c_void, size: c_int) -> c_int, |r| [
+        filled(buffer, r)
+    ]);
+    #[cfg(target_os = "macos")]
+    wrap!(gethostuuid(id: *mut [u8; 16], wait: *const libc::timespec) -> c_int, |r| [of(id)]);
+
+    /// The registrations of a kqueue's changes, as this run makes them.
+    #[cfg(target_os = "macos")]
+    fn noted(kq: c_int, changes: *const libc::kevent, count: c_int) {
+        let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        let registry = registry.get_or_insert_with(Registry::default);
+        let kq = registry.instance(kq);
+        for at in 0..count.max(0) as usize {
+            let change = unsafe { changes.add(at).read_unaligned() };
+            let key = (kq, change.ident, change.filter);
+            if change.flags & libc::EV_DELETE != 0 {
+                registry.filters.remove(&key);
+            } else {
+                registry.filters.insert(key, change.udata as usize);
+            }
+        }
+    }
+
+    /// The events a replay gives, with what this run registered for each
+    /// descriptor and filter: what a program registers may be an address,
+    /// as tokio's are, which another run has elsewhere.
+    #[cfg(target_os = "macos")]
+    fn given(kq: c_int, events: *mut libc::kevent, count: c_int) {
+        let registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(registry) = registry.as_ref() else { return };
+        let kq = registry.instance(kq);
+        for at in 0..count.max(0) as usize {
+            let mut event = unsafe { events.add(at).read_unaligned() };
+            if let Some(&udata) = registry.filters.get(&(kq, event.ident, event.filter)) {
+                event.udata = udata as *mut c_void;
+                unsafe { events.add(at).write_unaligned(event) };
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    weak!("kevent");
+
+    /// A kqueue's changes and events, in one call: the changes are noted
+    /// before the call, which may write its events over them, as mio's
+    /// receipts are.
+    #[cfg(target_os = "macos")]
+    #[unsafe(export_name = "tondo_rr_kevent")]
+    pub unsafe extern "C" fn kevent_wrapper(
+        kq: c_int,
+        changes: *const libc::kevent,
+        change_count: c_int,
+        events: *mut libc::kevent,
+        event_count: c_int,
+        timeout: *const libc::timespec,
+    ) -> c_int {
+        unsafe extern "C" {
+            #[link_name = "tondo_real_kevent"]
+            fn real(
+                kq: c_int,
+                changes: *const libc::kevent,
+                change_count: c_int,
+                events: *mut libc::kevent,
+                event_count: c_int,
+                timeout: *const libc::timespec,
+            ) -> c_int;
+        }
+        const ID: u32 = id("kevent");
+        let size = std::mem::size_of::<libc::kevent>();
+        let real = || unsafe { real(kq, changes, change_count, events, event_count, timeout) };
+        match here() {
+            Here::Pass => real(),
+            Here::Record => {
+                {
+                    let _outside = Outside::enter();
+                    noted(kq, changes, change_count);
+                }
+                let result = inside(real);
+                let _outside = Outside::enter();
+                record(ID, result as i64, &[(events.cast(), result.max(0) as usize * size)]);
+                result
+            }
+            Here::Replay => {
+                {
+                    let _outside = Outside::enter();
+                    noted(kq, changes, change_count);
+                }
+                let result = replay(ID, "kevent", |r| vec![(events.cast::<u8>(), r.max(0) as usize * size)]) as c_int;
+                let _outside = Outside::enter();
+                given(kq, events, result);
+                result
             }
         }
     }

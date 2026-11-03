@@ -111,7 +111,7 @@ tasks that wait too, whose frames `task 2` and `stack 2` show.
 (`changed` where a value changed), where the task was spawned, the other
 tasks and the last lines run; `until 30` runs to a line, and
 `back until total > 10` finds where a value went wrong in the history.
-On Linux, `run` with `record` keeps a run in a directory, and `debug_start`
+`run` with `record` keeps a run in a directory, and `debug_start`
 with `replay` debugs it again, the same each time: a failure that happened
 once, with its time, input and files. There `back`, `reverse` and
 `why total` go back to the program as it was: `why` finds the line that gave

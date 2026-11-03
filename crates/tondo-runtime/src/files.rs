@@ -389,38 +389,13 @@ fn stamps(directory: &Path, depth: Option<usize>, out: &mut HashMap<PathBuf, Sta
     }
 }
 
-// The system's watcher, which sends each path it says changed: on Linux,
-// inotify's, whose events a task of the runtime reads, so that a recorded
-// run makes its calls on the program's thread; elsewhere, notify's.
+// The system's watcher, which sends each path it says changed: inotify's
+// or kqueue's, whose events a task of the runtime reads, so that a recorded
+// run makes its calls on the program's thread.
 #[cfg(target_os = "linux")]
 use inotify::{Watcher, watch, watcher};
-
-#[cfg(not(target_os = "linux"))]
-type Watcher = notify::RecommendedWatcher;
-
-#[cfg(not(target_os = "linux"))]
-fn watcher(send: tokio::sync::mpsc::UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
-    notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else { return };
-        if !matches!(event.kind, notify::EventKind::Access(_)) {
-            for path in event.paths {
-                let _ = send.send(path);
-            }
-        }
-    })
-    .map_err(|_| 8)
-}
-
-/// Watches `path`, and all it holds.
-#[cfg(not(target_os = "linux"))]
-fn watch(watcher: &mut Watcher, path: &Path) -> Result<(), i64> {
-    use notify::Watcher as _;
-    watcher.watch(path, notify::RecursiveMode::Recursive).map_err(|e| match e.kind {
-        notify::ErrorKind::Io(e) => failure(&e),
-        notify::ErrorKind::PathNotFound => 1,
-        _ => 8,
-    })
-}
+#[cfg(target_os = "macos")]
+use kqueue::{Watcher, watch, watcher};
 
 #[cfg(target_os = "linux")]
 mod inotify {
@@ -556,6 +531,149 @@ mod inotify {
                     if send.send(path).is_err() {
                         return;
                     }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod kqueue {
+    use super::failure;
+    use std::collections::{BTreeMap, HashMap};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, MutexGuard};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    const NOTES: u32 = libc::NOTE_WRITE
+        | libc::NOTE_EXTEND
+        | libc::NOTE_ATTRIB
+        | libc::NOTE_DELETE
+        | libc::NOTE_RENAME
+        | libc::NOTE_REVOKE;
+
+    /// A watch, and the task that reads its events, which ends with it.
+    pub(super) struct Watcher {
+        watches: Arc<Watches>,
+        reading: tokio::task::AbortHandle,
+    }
+
+    impl Drop for Watcher {
+        fn drop(&mut self) {
+            self.reading.abort();
+        }
+    }
+
+    /// The kqueue, and what it watches: kqueue watches open files, each
+    /// entry by itself.
+    struct Watches {
+        fd: OwnedFd,
+        open: Mutex<Open>,
+    }
+
+    #[derive(Default)]
+    struct Open {
+        files: BTreeMap<PathBuf, OwnedFd>,
+        paths: HashMap<RawFd, PathBuf>,
+    }
+
+    pub(super) fn watcher(send: UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
+        let fd = unsafe { libc::kqueue() };
+        if fd < 0 {
+            return Err(failure(&std::io::Error::last_os_error()));
+        }
+        let watches = Arc::new(Watches { fd: unsafe { OwnedFd::from_raw_fd(fd) }, open: Mutex::default() });
+        let reading = crate::http::runtime().spawn(read(watches.clone(), send)).abort_handle();
+        Ok(Watcher { watches, reading })
+    }
+
+    pub(super) fn watch(watcher: &mut Watcher, path: &Path) -> Result<(), i64> {
+        watcher.watches.add(path).map_err(|e| failure(&e))
+    }
+
+    impl Watches {
+        fn open(&self) -> MutexGuard<'_, Open> {
+            self.open.lock().unwrap_or_else(|e| e.into_inner())
+        }
+
+        /// Watches `path` and what it holds, unless it does already.
+        fn add(&self, path: &Path) -> std::io::Result<()> {
+            if !self.open().files.contains_key(path) {
+                let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+                let fd = unsafe { libc::open(name.as_ptr(), libc::O_EVTONLY | libc::O_SYMLINK | libc::O_CLOEXEC) };
+                if fd < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let file = unsafe { OwnedFd::from_raw_fd(fd) };
+                let mut change: libc::kevent = unsafe { std::mem::zeroed() };
+                change.ident = fd as usize;
+                change.filter = libc::EVFILT_VNODE;
+                change.flags = libc::EV_ADD | libc::EV_CLEAR;
+                change.fflags = NOTES;
+                let none = std::ptr::null_mut();
+                if unsafe { libc::kevent(self.fd.as_raw_fd(), &change, 1, none, 0, std::ptr::null()) } < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut open = self.open();
+                open.files.insert(path.to_path_buf(), file);
+                open.paths.insert(fd, path.to_path_buf());
+            }
+            self.entries(path);
+            Ok(())
+        }
+
+        /// Watches the entries of `path`, when it is a directory.
+        fn entries(&self, path: &Path) {
+            for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
+                let _ = self.add(&entry.path());
+            }
+        }
+
+        /// The path an event says changed, watching what a directory
+        /// gained, and what is at a path now instead of what went from it.
+        fn changed(&self, event: &libc::kevent) -> Option<PathBuf> {
+            let path = self.open().paths.get(&(event.ident as RawFd)).cloned()?;
+            if event.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE) != 0 {
+                let mut open = self.open();
+                let gone: Vec<PathBuf> = open.files.keys().filter(|p| p.starts_with(&path)).cloned().collect();
+                for at in gone {
+                    if let Some(file) = open.files.remove(&at) {
+                        open.paths.remove(&file.as_raw_fd());
+                    }
+                }
+                drop(open);
+                let _ = self.add(&path);
+            } else if event.fflags & libc::NOTE_WRITE != 0 {
+                self.entries(&path);
+            }
+            Some(path)
+        }
+    }
+
+    /// Sends the path of each event, until the watch or its receiver ends.
+    async fn read(watches: Arc<Watches>, send: UnboundedSender<PathBuf>) {
+        let fd = watches.fd.as_raw_fd();
+        // The descriptor is the watch's, open while this task holds it.
+        let ready = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE) };
+        let Ok(ready) = ready else { return };
+        loop {
+            let Ok(mut guard) = ready.readable().await else { return };
+            let mut events: [libc::kevent; 64] = unsafe { std::mem::zeroed() };
+            let now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let count = unsafe { libc::kevent(fd, std::ptr::null(), 0, events.as_mut_ptr(), 64, &now) };
+            if count < 0 {
+                return;
+            }
+            if count == 0 {
+                guard.clear_ready();
+            }
+            for event in &events[..count as usize] {
+                if let Some(path) = watches.changed(event)
+                    && send.send(path).is_err()
+                {
+                    return;
                 }
             }
         }

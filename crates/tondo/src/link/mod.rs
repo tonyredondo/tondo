@@ -90,7 +90,7 @@ pub fn link(
     };
     let name = output.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
     if cfg!(target_os = "macos") && target.is_none() {
-        return link_macho(object, archives, runtime, native, output, strip, exports);
+        return link_macho(object, archives, runtime, native, output, &product);
     }
     let arch = match target {
         Some(crate::target::Target::Aarch64) => elf::Arch::Aarch64,
@@ -341,9 +341,12 @@ fn link_macho(
     runtime: &[String],
     native: &[String],
     output: &Path,
-    strip: bool,
-    exports: Option<Vec<String>>,
+    product: &Product,
 ) -> Result<(), String> {
+    let (strip, exports, recordable) = match product {
+        Product::Executable { strip, recordable, .. } => (*strip, None, *recordable),
+        Product::Library { exports } => (false, Some(exports.to_vec()), false),
+    };
     let arch = if cfg!(target_arch = "aarch64") { macho::Arch::Arm64 } else { macho::Arch::X86_64 };
     let mut archive_paths: Vec<PathBuf> = archives.to_vec();
     let mut dylibs: Vec<String> = vec!["/usr/lib/libSystem.B.dylib".into()];
@@ -419,6 +422,7 @@ fn link_macho(
             .map(|exports| (format!("@rpath/{identifier}"), exports.iter().map(|e| format!("_{e}")).collect())),
         strip,
         identifier,
+        recordable,
     };
     let bytes = macho::link(inputs)?;
     std::fs::write(output, bytes).map_err(|e| format!("cannot write {}: {e}", output.display()))?;

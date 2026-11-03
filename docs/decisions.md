@@ -4858,3 +4858,19 @@ mapped with no access, as Go's linker does, with the functions'
 addresses resolved and nothing for the loader to rebase. lldb reads it
 there, so a debug build is debugged where it is, as on Linux; `--strip`
 leaves it out.
+
+## 2026-11-03 — Recording on macOS
+
+Record and replay rest on one idea, that the linker gives the program
+wrappers of the C library's functions, and Tondo's Mach-O linker is its
+own as the ELF one is: it redirects the same references, to libSystem's
+names, as `realpath$DARWIN_EXTSN` and Intel's `$INODE64` variants. What
+differs is what macOS calls. `kevent` replaces `epoll_wait`: its events
+name their descriptor and filter, so a replay gives each event what this
+run registered, where addresses differ. A child's end is a kqueue with
+`EVFILT_PROC`, as the pidfd is on Linux. `fs.watch` watches with kqueue
+in a task of the runtime, as with inotify on Linux, which leaves no use
+for notify. On Apple's arm64 a variadic argument is on the stack, where a
+function of Rust does not look, and stable Rust cannot define a variadic
+function: `open`, `openat`, `fcntl` and `ioctl` enter through a few
+instructions that load it into the next register.

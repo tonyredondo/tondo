@@ -729,18 +729,29 @@ fn exited(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
     child.wait()
 }
 
-/// A descriptor that becomes readable when the child `pid` ends: Linux's,
-/// where a run is recorded.
+/// A descriptor that becomes readable when the child `pid` ends, where a
+/// run is recorded: a pidfd, or a kqueue that has only that event; none
+/// when the child ended already.
 fn pidfd(pid: u32) -> Option<OwnedFd> {
     #[cfg(target_os = "linux")]
     {
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
         (fd >= 0).then(|| unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = pid;
-        None
+        let fd = unsafe { libc::kqueue() };
+        if fd < 0 {
+            return None;
+        }
+        let queue = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+        let mut change: libc::kevent = unsafe { std::mem::zeroed() };
+        change.ident = pid as usize;
+        change.filter = libc::EVFILT_PROC;
+        change.flags = libc::EV_ADD;
+        change.fflags = libc::NOTE_EXIT;
+        let added = unsafe { libc::kevent(fd, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+        (added == 0).then_some(queue)
     }
 }
 

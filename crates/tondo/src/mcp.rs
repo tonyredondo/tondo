@@ -1928,7 +1928,7 @@ message, data, source and stack, as data.",
             (
                 "record",
                 "string",
-                "A directory to record the run to, on Linux: what each call to the system gave the program, which \
+                "A directory to record the run to: what each call to the system gave the program, which \
 `debug_start` with `replay` runs again, the same, to debug a failure that happened once.",
             ),
             STATIC,

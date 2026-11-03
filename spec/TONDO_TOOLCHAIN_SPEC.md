@@ -1073,12 +1073,12 @@ estándar y de error, que se ve, y cada señal llega en el mismo turno. La
 ejecución es la misma cada vez, con sus horas y sus datos, y no toca el
 mundo: un fallo que pasó una vez se depura con todas las órdenes de esta
 sección. El editor lo hace con `"replay"` en `launch`, y el servidor MCP con
-`record` en `run` y `replay` en `debug_start`. Solo en Linux. Mientras se
+`record` en `run` y `replay` en `debug_start`. En Linux y en macOS. Mientras se
 graba, una lectura de la entrada estándar o de un archivo detiene las demás
 tareas. La red y HTTP (`std.net`, `std.http`, `std.grpc` y los módulos que
 los usan) y los procesos (`std.process`) se graban también: lo que el
 runtime hace con ellos en threads propios lo hace ese mismo thread entre
-tareas, y `fs.watch` también, que en Linux lee inotify en ese thread. En
+tareas, y `fs.watch` también, que lee inotify o kqueue en ese thread. En
 la reproducción los procesos hijos no corren otra vez: el programa recibe
 lo que le dieron, pero lo que escribieron directamente en la terminal no se
 ve. Un hijo que es un build de depuración de Tondo graba su propia
@@ -1092,9 +1092,9 @@ esos threads, o donde hace una llamada distinta de la grabada, y dice por
 qué. El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que
-se repite igual en otra máquina Linux, desde cualquier directorio; con
-`--static` el ejecutable tampoco depende de la librería de C de esa
-máquina. Tiene el entorno del programa y lo que leyó, y se guarda y se
+se repite igual en otra máquina del mismo sistema, desde cualquier
+directorio; con `--static`, en Linux, el ejecutable tampoco depende de la
+librería de C de esa máquina. Tiene el entorno del programa y lo que leyó, y se guarda y se
 comparte como esos datos.
 
 En una reproducción, `back [<n>]`, `reverse` y `why <expresión>` vuelven al

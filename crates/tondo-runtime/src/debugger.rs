@@ -2145,7 +2145,7 @@ fn calling_here() -> bool {
     (calling != 0 && calling == super::tasks::current_id()) || SHOWING.get()
 }
 
-#[cfg_attr(not(all(tondo_staticlib, target_os = "linux")), allow(dead_code))]
+#[cfg_attr(not(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))), allow(dead_code))]
 /// Stops the running task where it is for good: each `continue` stops it
 /// there again. Without a debugger the program ends, saying why.
 pub(crate) fn stop_for_good(why: String) -> ! {

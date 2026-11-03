@@ -135,6 +135,171 @@ pub struct Inputs<'a> {
     pub strip: bool,
     /// The file's name, which the signature identifies it by.
     pub identifier: String,
+    /// The C library's functions that `RECORDED` names are the runtime's
+    /// wrappers.
+    pub recordable: bool,
+}
+
+/// What the runtime records of a run, and replays (toolchain 7.6): in an
+/// executable that can record, a reference to one of these functions of
+/// libSystem is to its wrapper, `_tondo_rr_<name>`, which calls it as
+/// `_tondo_real_<name>`.
+const RECORDED: &[&str] = &[
+    "accept",
+    "access",
+    "bind",
+    "chdir",
+    "chmod",
+    "chown",
+    "chroot",
+    "clock_gettime",
+    "close",
+    "closedir",
+    "connect",
+    "dirfd",
+    "dup",
+    "dup2",
+    "fchmod",
+    "fchown",
+    "fcntl",
+    "fdopendir",
+    "flock",
+    "fork",
+    "freeaddrinfo",
+    "fstat",
+    "fstatat",
+    "fsync",
+    "ftruncate",
+    "futimens",
+    "getaddrinfo",
+    "getcwd",
+    "geteuid",
+    "getgid",
+    "gethostname",
+    "getpeername",
+    "getpid",
+    "getppid",
+    "getpwuid_r",
+    "getrusage",
+    "getsockname",
+    "getsockopt",
+    "gettimeofday",
+    "getuid",
+    "ioctl",
+    "isatty",
+    "kill",
+    "killpg",
+    "lchown",
+    "linkat",
+    "listen",
+    "lseek",
+    "lstat",
+    "mkdir",
+    "mkfifo",
+    "nanosleep",
+    "open",
+    "openat",
+    "opendir",
+    "pathconf",
+    "pause",
+    "pipe",
+    "poll",
+    "posix_spawnp",
+    "pread",
+    "preadv",
+    "pthread_create",
+    "pwrite",
+    "pwritev",
+    "read",
+    "readdir",
+    "readlink",
+    "readv",
+    "realpath",
+    "recv",
+    "recvfrom",
+    "recvmsg",
+    "rename",
+    "rmdir",
+    "send",
+    "sendmsg",
+    "sendto",
+    "setgid",
+    "setgroups",
+    "setpgid",
+    "setsid",
+    "setsockopt",
+    "setuid",
+    "shutdown",
+    "sleep",
+    "socket",
+    "socketpair",
+    "stat",
+    "statvfs",
+    "symlink",
+    "sysconf",
+    "tcgetattr",
+    "tcsetattr",
+    "time",
+    "uname",
+    "unlink",
+    "unlinkat",
+    "utimensat",
+    "utimes",
+    "waitid",
+    "waitpid",
+    "write",
+    "writev",
+    // macOS's own.
+    "kqueue",
+    "kevent",
+    "CCRandomGenerateBytes",
+    "getentropy",
+    "sysctl",
+    "sysctlbyname",
+    "confstr",
+    "statfs",
+    "fstatfs",
+    "futimes",
+    "fsetattrlist",
+    "fclonefileat",
+    "fcopyfile",
+    "copyfile_state_get",
+    "proc_pidinfo",
+    "gethostuuid",
+];
+
+/// The name libSystem gives a function the runtime wraps, where it is not
+/// the function's: the variant its headers choose.
+fn imported(function: &str) -> String {
+    let inode64 = ["stat", "lstat", "fstat", "fstatat", "opendir", "fdopendir", "readdir", "statfs", "fstatfs"];
+    match function {
+        "realpath" => "realpath$DARWIN_EXTSN".into(),
+        _ if cfg!(target_arch = "x86_64") && inode64.contains(&function) => format!("{function}$INODE64"),
+        _ => function.into(),
+    }
+}
+
+/// What a reference to `name` is to: the wrapper of a recorded function,
+/// or, for the wrapper's own call, the function.
+fn redirected(name: &[u8], recordable: bool) -> &[u8] {
+    type Names = HashMap<Vec<u8>, Vec<u8>>;
+    static NAMES: std::sync::OnceLock<(Names, Names)> = std::sync::OnceLock::new();
+    let (wrappers, reals) = NAMES.get_or_init(|| {
+        let wrapped = RECORDED.iter().map(|n| (format!("_{}", imported(n)).into_bytes(), n));
+        let wrappers = wrapped.clone().map(|(import, n)| (import, format!("_tondo_rr_{n}").into_bytes())).collect();
+        let reals = wrapped.map(|(import, n)| (format!("_tondo_real_{n}").into_bytes(), import)).collect();
+        (wrappers, reals)
+    });
+    if let Some(real) = reals.get(name) {
+        return real;
+    }
+    if let Some(real) = name.strip_prefix(b"_tondo_real_") {
+        return &name[name.len() - real.len() - 1..];
+    }
+    match recordable {
+        true => wrappers.get(name).map_or(name, Vec::as_slice),
+        false => name,
+    }
 }
 
 const PAGE: u64 = 0x4000;
@@ -277,6 +442,8 @@ struct Linker<'a> {
     base: u64,
     /// What a library publishes; none for an executable.
     exports: Option<Vec<usize>>,
+    /// Its references to `RECORDED` functions are to their wrappers.
+    recordable: bool,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -434,6 +601,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         unwind_refs: HashMap::new(),
         base: if inputs.library.is_some() { 0 } else { BASE },
         exports: None,
+        recordable: inputs.recordable,
     };
     let roots: Vec<usize> = match &inputs.library {
         Some((_, exports)) => exports.iter().map(|name| linker.intern(name.as_bytes())).collect(),
@@ -491,13 +659,24 @@ impl<'a> Linker<'a> {
         let Parsed { name, sections, mut symbols, names, kinds, atoms } = parsed;
         let index = self.inputs.len() as u32;
         let mut undefined = Vec::new();
+        // The allocator's object asks the system for memory, and for the
+        // time it uses to give memory back, as its own business, which a
+        // replay does again.
+        let allocator = names
+            .iter()
+            .zip(&kinds)
+            .any(|(name, &(n_type, _))| *name == b"_mi_malloc" && n_type & N_EXT != 0 && n_type & N_TYPE == N_SECT);
         for (n, sym) in symbols.iter_mut().enumerate() {
             let (n_type, desc) = kinds[n];
             let stab = n_type & N_STAB != 0;
             let external = n_type & N_EXT != 0;
             let kind = n_type & N_TYPE;
             if !stab && external {
-                let id = self.intern(names[n]);
+                let name = match kind == N_UNDF && sym.value == 0 {
+                    true => redirected(names[n], self.recordable && !allocator),
+                    false => names[n],
+                };
+                let id = self.intern(name);
                 sym.global = Some(id);
                 let def = match kind {
                     N_SECT => Some(Def::Atom { input: index, atom: u32::MAX, offset: sym.value }),
@@ -2451,6 +2630,7 @@ pub(crate) fn example(strip: bool) -> Vec<u8> {
         library: None,
         strip,
         identifier: "example".into(),
+        recordable: false,
     })
     .unwrap()
 }

@@ -975,7 +975,7 @@ test firstArrivesFirst {
 /// replays the same: the random number that made it fail, again.
 #[test]
 fn records_the_tests_that_fail() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let tests = "\

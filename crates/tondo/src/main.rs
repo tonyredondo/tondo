@@ -594,8 +594,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     // Recorded, the tests run in a debug build, which records its runs.
     if options.record.is_some() {
-        if !cfg!(target_os = "linux") {
-            return Err("a run is recorded on Linux".into());
+        if !cfg!(any(target_os = "linux", target_os = "macos")) {
+            return Err("a run is recorded on Linux and macOS".into());
         }
         let measuring = ["--bench", "--fuzz", "--coverage", "--list", "--watch", "--target", "--profile"];
         if let Some(flag) = measuring.iter().find(|f| given(f)) {
@@ -2087,8 +2087,8 @@ fn record_run(
     mut options: BuildOptions,
     dir: &Path,
 ) -> Result<ExitCode, String> {
-    if !cfg!(target_os = "linux") {
-        return Err("a run is recorded on Linux".into());
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return Err("a run is recorded on Linux and macOS".into());
     }
     if options.watch || options.live || options.target.is_some() {
         return Err("--record goes with none of --watch, --live and --target".into());

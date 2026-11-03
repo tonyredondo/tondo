@@ -1806,7 +1806,7 @@ fn main() {
 /// the replay touches no file.
 #[test]
 fn debugger_replays_a_recorded_run() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-replay");
@@ -1907,7 +1907,7 @@ fn main() {
 /// sent it, which `why` and `origins` follow into that task.
 #[test]
 fn a_replay_follows_values_through_channels() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-sent");
@@ -1949,7 +1949,7 @@ fn a_replay_follows_values_through_channels() {
 /// on another machine, with the lines it shows and reads.
 #[test]
 fn a_recording_replays_elsewhere() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-elsewhere");
@@ -2007,6 +2007,10 @@ fn lldb_stops_at_a_line_and_shows_the_bindings() {
         .output()
         .unwrap();
     let shown = String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
+    // macOS lets no session without a person debug, as one over SSH.
+    if shown.contains("cannot get permission to debug") {
+        return;
+    }
     assert!(shown.contains("square at app.to:2"), "{shown}");
     assert!(shown.contains("main at app.to:7"), "{shown}");
     assert!(shown.contains("n: Int = 3"), "{shown}");
@@ -2047,7 +2051,7 @@ fn main() {
 /// the recorded run, without watching or sampling.
 #[test]
 fn a_replay_gives_watches_and_profiles_back() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-watched");
@@ -2077,7 +2081,7 @@ fn a_replay_gives_watches_and_profiles_back() {
 /// own run, which a replay of its parent names, to replay it too.
 #[test]
 fn a_replay_names_the_recordings_of_children() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-children");
@@ -2133,7 +2137,7 @@ fn a_replay_names_the_recordings_of_children() {
 /// the program as it was there, every value of it.
 #[test]
 fn debugger_goes_back_in_a_replay() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-back");
@@ -2311,7 +2315,7 @@ fn main() {
 
 #[test]
 fn debugger_finds_who_changed_a_value_in_a_replay() {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-changed");

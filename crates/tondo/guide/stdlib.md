@@ -723,7 +723,7 @@ tasks | task 2 | pause | delete 1 | quit
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
 may call the program's code: `break app.to:12 if isLate(order)`.
 
-`tondo run --record rec app.to` records a run, on Linux: its time, input,
+`tondo run --record rec app.to` records a run, on Linux and macOS: its time, input,
 files and random numbers, and the order of its tasks; `tondo debug --replay
 rec` runs it again, the same each time, without touching the world, to debug
 a failure that happened once. There `back`, `reverse` and `why total` go back
@@ -736,8 +736,9 @@ the terminal does not show, but a child that is a debug build of Tondo
 records its own run, which `follow` in the replay names to replay it. `origins total` gives the whole chain at once: the line
 that gave `total`, what that line read and where each came from, back to
 what the program read. A recording keeps the program's sources, so the
-directory replays the same on another Linux machine, as one CI uploads;
-with `--static` it does not depend on that machine's C library either.
+directory replays the same on another machine of the same system, as one
+CI uploads; with `--static`, on Linux, it does not depend on that machine's
+C library either.
 
 A debug build has DWARF, on Linux and macOS, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
