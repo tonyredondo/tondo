@@ -728,8 +728,10 @@ files and random numbers, and the order of its tasks; `tondo debug --replay
 rec` runs it again, the same each time, without touching the world, to debug
 a failure that happened once. There `back`, `reverse` and `why total` go back
 to the whole program as it was: a line back, the last breakpoint's stop, or
-the line that gave `total` its value. The network and processes are not
-recorded: the replay stops where the program starts them.
+the line that gave `total` its value, in whichever function or task changed
+it, as a method with `mut self` or another task through a `sync.Mutex`. The
+network and processes are not recorded: the replay stops where the program
+starts them.
 
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames

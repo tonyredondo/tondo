@@ -1043,7 +1043,11 @@ parada, dónde habrían parado los breakpoints o cada valor nuevo de la
 expresión con la línea que lo dio, y una tercera
 corre hasta la línea que eso da, `n` líneas atrás, la última parada de un
 breakpoint o la línea que dio a la expresión su valor, y toma el relevo, con
-los breakpoints y los ajustes de la sesión. Cada parada de la reproducción
+los breakpoints y los ajustes de la sesión. La expresión se sigue en el marco
+que tiene su binding, el que se mira o uno donde está escrito, como el que
+hizo un closure, y su línea es la que la cambió en cualquier función o
+tarea: un método con `mut self`, una función con un parámetro `var`, u otra
+tarea a través de un `sync.Mutex`. Cada parada de la reproducción
 guarda un checkpoint, una copia del proceso hecha con `fork` donde paró, y
 mientras corre guarda otro cada segundo, o cada 4.194.304 probes, hasta 32,
 que dejan ir los más viejos; un checkpoint termina con el depurador que lo
@@ -1054,7 +1058,8 @@ un breakpoint que cuenta sus hits hace empezar desde el principio, donde
 empezó a contarlos. En el editor, `stepBack` y `reverseContinue` de una
 reproducción son `back` y `reverse`. Allí `timeline` y `ran` miran la
 ejecución entera hasta donde está el programa, con otra reproducción desde el
-principio que sigue la expresión o cuenta las veces que corre la línea, y
+principio que sigue la expresión, igual que `why`, o cuenta las veces que
+corre la línea, y
 dan el probe de cada línea: `seek
 <probe>` lleva el programa a ese punto, antes o después del de ahora.
 

@@ -1981,6 +1981,109 @@ fn debugger_goes_back_in_a_replay() {
     adapter.stop();
 }
 
+const CHANGED_ELSEWHERE: &str = r#"import std.console
+import std.sync
+
+type Counter = { hits: Int }
+
+fn Counter.bump(mut self) {
+    self.hits += 10
+}
+
+fn add(items: var Array[Int]) {
+    items.push(7)
+}
+
+fn record(stats: sync.Mutex[Counter]) {
+    stats.update((s) { s.hits += 1 })
+}
+
+fn main() {
+    var counter = Counter { hits: 0 }
+    counter.bump()
+    var items = [1, 2]
+    add(var items)
+    let stats = sync.Mutex(Counter { hits: 0 })
+    var group = Group.new[Unit]()
+    for _ in 0..3 {
+        group.add(spawn record(stats))
+    }
+    group.wait()
+    console.println("{counter.hits} {items} {stats.get().hits}")
+}
+"#;
+
+#[test]
+fn debugger_finds_who_changed_a_value_in_a_replay() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-changed");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("changed.to"), CHANGED_ELSEWHERE).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "changed.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&recorded.stdout).lines().next(), Some("10 [1, 2, 7] 3"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut text = String::new();
+    let mut ask = |line: &str, key: &str| {
+        if !line.is_empty() {
+            std::io::Write::write_all(&mut input, format!("{line}\n").as_bytes()).unwrap();
+        }
+        loop {
+            let mut read = String::new();
+            assert!(output.read_line(&mut read).unwrap() > 0, "the debugger ended: {text}");
+            text.push_str(&read);
+            let value: Value = serde_json::from_str(&read).unwrap_or_default();
+            assert!(value.get("error").is_none(), "{text}");
+            if value.get(key).is_some() {
+                return value;
+            }
+        }
+    };
+    ask("", "stopped");
+    ask("break changed.to:29", "breakpoint");
+    ask("continue", "stopped");
+    // Each change of the shared value, made by the other tasks.
+    let timeline = ask("timeline stats", "timeline");
+    let changes = timeline["timeline"].as_array().unwrap();
+    let at: Vec<&str> = changes.iter().map(|c| c["at"].as_str().unwrap()).collect();
+    assert_eq!(
+        at,
+        [
+            "changed.to:23 in main",
+            "changed.to:15 in closure in record",
+            "changed.to:15 in closure in record",
+            "changed.to:15 in closure in record"
+        ],
+        "{timeline}"
+    );
+    // The line of the function that changed the value, wherever it is.
+    for (expression, line) in [
+        ("counter.hits", "changed.to:7 in Counter.bump"),
+        ("items", "changed.to:11 in add"),
+        ("stats", "changed.to:15 in closure in record"),
+    ] {
+        let stop = ask(&format!("why {expression}"), "stopped");
+        assert_eq!(stop["stopped"]["at"], line, "{stop}");
+        ask("continue", "stopped");
+    }
+    drop(input);
+    child.wait().unwrap();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {

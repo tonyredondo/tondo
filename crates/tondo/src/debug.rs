@@ -403,9 +403,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             // Over the whole run: a replay runs it again from the start.
             "timeline" | "ran" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
-                let task = session.task;
-                let surveyed = ask(&mut session, "tick")
-                    .and_then(|t| replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0), task));
+                let surveyed = ask(&mut session, "tick").and_then(|t| {
+                    let anchor = if word == "timeline" { anchor(&mut session, rest)? } else { String::new() };
+                    replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0), &anchor)
+                });
                 match surveyed {
                     Ok(answer) => session.show(&answer),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
@@ -780,16 +781,18 @@ impl Replaying {
     /// `back [<n>]`, `reverse` or `why <expression>` in a replay: a replay
     /// from the nearest checkpoint, or an earlier one, runs to where the
     /// program is, keeping where the stopped task's lines start, where
-    /// breakpoints would stop, or the history; another runs to the probe
-    /// that gives, and takes over.
+    /// breakpoints would stop, or the changes of the expression in the
+    /// frame the debugger looks at; another runs to the probe that gives,
+    /// and takes over.
     fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
         let task = session.task;
-        let (to, why, _) = self.find(word, rest, tick, task)?;
+        let anchor = if word == "why" { anchor(session, rest)? } else { String::new() };
+        let (to, why, _) = self.find(word, rest, tick, task, &anchor)?;
         let (running, mut next, mut stop) = self.reach(to, why, session.json)?;
         if word == "why" {
             let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
-            stop["stopped"]["causes"] = self.causes(&mut next, &at, to, task);
+            stop["stopped"]["causes"] = self.causes(&mut next, &at, to);
         }
         if let Some(old) = self.current.replace(running) {
             old.end();
@@ -803,13 +806,15 @@ impl Replaying {
 
     /// The probe `back`, `reverse` or `why` goes to from probe `tick`,
     /// where `task` stopped, and why: what a replay from the nearest
-    /// checkpoint before, or an earlier one, finds on its way there.
+    /// checkpoint before, or an earlier one, finds on its way there; `why`
+    /// follows its expression in the frame `anchor` gives.
     pub(crate) fn find(
         &mut self,
         word: &str,
         rest: &str,
         tick: u64,
         task: u64,
+        anchor: &str,
     ) -> Result<(u64, String, Value), String> {
         let mut failed = String::new();
         for base in self.bases(tick, false) {
@@ -821,7 +826,7 @@ impl Replaying {
                 }
                 Err(message) => return Err(message),
             };
-            let scanned = self.scan(&mut scan, word, rest, tick, task);
+            let scanned = self.scan(&mut scan, word, rest, (tick, task), anchor);
             running.end();
             self.gather_ended(&mut scan);
             match scanned {
@@ -889,13 +894,14 @@ impl Replaying {
     }
 
     /// `timeline <expression>` or `ran <file>:<line> [<expression>]` in a
-    /// replay: what the history of a replay from the start to probe `tick`
-    /// says, as `record` would have kept from the start.
-    fn survey(&mut self, word: &str, rest: &str, tick: u64, task: u64) -> Result<Value, String> {
+    /// replay: what a replay from the start to probe `tick` finds, the
+    /// changes of the expression in the frame `anchor` gives, or the runs
+    /// of the line.
+    fn survey(&mut self, word: &str, rest: &str, tick: u64, anchor: &str) -> Result<Value, String> {
         let (running, mut scan) = self.start(None, u64::MAX, true)?;
         let surveyed = (|| {
             match word {
-                "timeline" => ask(&mut scan, &format!("track {task} {rest}"))?,
+                "timeline" => ask(&mut scan, &format!("track {anchor} {rest}"))?,
                 _ => ask(&mut scan, &format!("count {rest}"))?,
             };
             ask(&mut scan, &format!("scan {tick}"))?;
@@ -926,7 +932,7 @@ impl Replaying {
     /// Where each binding the line at probe `to` reads got the value it has
     /// there, found by a replay from a checkpoint before that follows them;
     /// `session` is stopped there, and says which bindings it has.
-    fn causes(&mut self, session: &mut Session, at: &str, to: u64, task: u64) -> Value {
+    fn causes(&mut self, session: &mut Session, at: &str, to: u64) -> Value {
         let Some(text) = line_text(at) else { return Value::Array(Vec::new()) };
         let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
         let bound: Vec<&str> =
@@ -935,12 +941,15 @@ impl Replaying {
         if read.is_empty() {
             return Value::Array(Vec::new());
         }
+        let Ok(anchors) = read.iter().map(|name| anchor(session, name)).collect::<Result<Vec<_>, _>>() else {
+            return Value::Array(Vec::new());
+        };
         let Ok((_, running, mut scan)) = self.start_before(to, false, u64::MAX, true) else {
             return Value::Array(Vec::new());
         };
         let found = (|| -> Result<Value, String> {
-            for name in &read {
-                ask(&mut scan, &format!("track {task} {name}"))?;
+            for (name, anchor) in read.iter().zip(&anchors) {
+                ask(&mut scan, &format!("track {anchor} {name}"))?;
             }
             ask(&mut scan, &format!("scan {to}"))?;
             scan.next_event()?;
@@ -990,11 +999,11 @@ impl Replaying {
         scan: &mut Session,
         word: &str,
         rest: &str,
-        tick: u64,
-        task: u64,
+        (tick, task): (u64, u64),
+        anchor: &str,
     ) -> Result<(u64, String, Value), String> {
         if word == "why" {
-            ask(scan, &format!("track {task} {rest}"))?;
+            ask(scan, &format!("track {anchor} {rest}"))?;
         }
         let scanning = match word {
             "back" => format!("scan {tick} {task}"),
@@ -1054,6 +1063,13 @@ fn tick_of(line: &Value) -> String {
         Some(tick) if tick > 0 => format!(" (probe {tick})"),
         _ => String::new(),
     }
+}
+
+/// The frame that has the binding `expression` reads, the one the
+/// debugger looks at or one its code can read, as a scan of another replay
+/// of the run finds it.
+fn anchor(session: &mut Session, expression: &str) -> Result<String, String> {
+    Ok(ask(session, &format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string())
 }
 
 /// The text of the line of `file:line in function`.

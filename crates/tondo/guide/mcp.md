@@ -115,7 +115,7 @@ On Linux, `run` with `record` keeps a run in a directory, and `debug_start`
 with `replay` debugs it again, the same each time: a failure that happened
 once, with its time, input and files. There `back`, `reverse` and
 `why total` go back to the program as it was: `why` finds the line that gave
-a value its value, and its `causes` say where each binding that line reads
+a value its value, in whichever function or task changed it, and its `causes` say where each binding that line reads
 got its own, to ask `why` of next. `timeline total` lists each value it took
 and the line that gave it, `ran app.to:12 total` each time that line ran,
 and in a replay `seek <probe>` goes to any of them.

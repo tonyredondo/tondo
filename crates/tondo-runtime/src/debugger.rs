@@ -1389,21 +1389,76 @@ fn received(stream: &std::os::unix::net::UnixStream) -> (String, Vec<i32>) {
     (String::from_utf8_lossy(&data[..read.max(0) as usize]).into_owned(), given)
 }
 
-/// What a scan follows as it goes (`track`, `count`): for one task, the
-/// expressions whose values it keeps when they change, each change with
-/// the probe and the line before it, which gave it; and for one line, each
-/// time a task starts it, with an expression's value then, the last ones.
+/// What a scan follows as it goes (`track`, `count`): expressions, each in
+/// a frame, whose values it keeps when they change, each change with the
+/// probe and the line before it, which gave it, whatever task ran it; and
+/// for one line, each time a task starts it, with an expression's value
+/// then, the last ones.
 #[derive(Default)]
 struct Tracked {
-    task: u64,
     followed: Vec<Followed>,
     before: Option<(u64, usize)>,
     line: Option<Counted>,
 }
 
-/// An expression a scan follows: its text, its last value, and its last
-/// changes, each with the probe and the site of the line that gave it.
+/// A frame as another replay of the same run finds it, where addresses
+/// may differ: its task, how far its frame is from the top of the task's
+/// stack, and its function; and where it is while it lives.
+struct Anchor {
+    task: u64,
+    depth: usize,
+    function: usize,
+    live: Option<usize>,
+}
+
+impl Anchor {
+    fn parse(text: &str) -> Option<Anchor> {
+        let mut parts = text.split(':').map(str::parse::<u64>);
+        let (Some(Ok(task)), Some(Ok(depth)), Some(Ok(function)), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return None;
+        };
+        Some(Anchor { task, depth: depth as usize, function: function as usize, live: None })
+    }
+}
+
+/// `anchor [<expression>]`: the frame `locals` looks at, as `track` takes
+/// it; or the one further down the stack that has the binding the
+/// expression reads, as a closure's maker.
+fn anchor(table: &Table, text: &str) -> Result<String, String> {
+    let (frames, mut index) = selected(table)?;
+    if !text.is_empty() {
+        let expr = expression::parse(text).map_err(|m| format!("the expression: {m}"))?;
+        let mut read = Vec::new();
+        expression::names(&expr, &mut read);
+        let name = |frame: &Frame| frame.function.map(|f| table.functions[f].name.as_str());
+        let has = |frame: &Frame| read.first().is_some_and(|r| bound(table, frame).iter().any(|(b, _)| &b.name == r));
+        // As `visible` finds it.
+        while !has(&frames[index]) {
+            let Some((outer, prefix)) = name(&frames[index]).and_then(written_in) else { break };
+            let below = (index + 1..frames.len()).find(|&below| {
+                name(&frames[below]).is_some_and(|n| if prefix { n.starts_with(outer) } else { n == outer })
+            });
+            let Some(below) = below else { break };
+            index = below;
+        }
+    }
+    let state = state();
+    let task = state.selected.map_or(state.stopped.as_ref().map_or(0, |s| s.task), |(task, _)| task);
+    let high = stop_of(&state, task).map_or(0, |held| held.bounds.1);
+    let frame = &frames[index];
+    match (frame.function, high.checked_sub(frame.pointer)) {
+        (Some(function), Some(depth)) if high != 0 => Ok(format!("{{\"anchor\":\"{task}:{depth}:{function}\"}}")),
+        _ => Err("this frame is not one of the program's that a replay finds again".into()),
+    }
+}
+
+/// An expression a scan follows in a frame: its text, its last value, and
+/// its last changes, each with the probe and the site of the line that
+/// gave it.
 struct Followed {
+    anchor: Anchor,
     expr: Expr,
     text: String,
     last: Option<String>,
@@ -1426,30 +1481,61 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     let Some(tracked) = tracked.as_mut() else { return };
     let (task, site) = (here.task, here.site);
-    // The innermost frame alone, which is what the expressions read, at
-    // every probe of the run: not the callers, whose names are looked up.
+    // The innermost frame alone, which is what a line's expression reads:
+    // not the callers, whose names are looked up.
     let function = table.sites.get(site).map(|s| s.function);
-    let innermost =
-        Frame { place: String::new(), function, pointer: here.frame, addresses: here.addresses, alive: here.alive };
-    let innermost = [innermost];
-    let stack = || &innermost[..];
     if let Some(line) = tracked.line.as_mut()
         && line.sites.contains(&site)
     {
+        let innermost = [Frame {
+            place: String::new(),
+            function,
+            pointer: here.frame,
+            addresses: here.addresses,
+            alive: here.alive,
+        }];
         let value =
-            line.expr.as_ref().and_then(|e| evaluating(table, stack(), 0, |ev| ev.evaluate(e)).ok().map(|v| v.text));
+            line.expr.as_ref().and_then(|e| evaluating(table, &innermost, 0, |ev| ev.evaluate(e)).ok().map(|v| v.text));
         line.times += 1;
         if line.runs.len() == LISTED {
             line.runs.pop_front();
         }
         line.runs.push_back((tick, task, value));
     }
-    if task != tracked.task || table.sites.get(site).is_none_or(Site::generated) {
+    // A followed frame lives from a probe of its own until its task runs
+    // in a caller, or another call takes its place.
+    let mut depth = None;
+    for anchor in tracked.followed.iter_mut().map(|f| &mut f.anchor).filter(|a| a.task == task) {
+        let depth = *depth
+            .get_or_insert_with(|| super::tasks::stack_bounds().map_or(0, |(_, high)| high).wrapping_sub(here.frame));
+        if depth == anchor.depth && function == Some(anchor.function) {
+            anchor.live = Some(here.frame);
+        } else if depth <= anchor.depth {
+            anchor.live = None;
+        }
+    }
+    // A value changes between two lines of the program's code, of any task:
+    // the first of them gave it, or a call it made.
+    if table.sites.get(site).is_none_or(Site::generated) {
         return;
     }
     let before = tracked.before.replace((tick, site));
     for followed in tracked.followed.iter_mut() {
-        let now = evaluating(table, stack(), 0, |ev| ev.evaluate(&followed.expr)).ok().map(|v| v.text);
+        let anchor = &followed.anchor;
+        let Some(pointer) = anchor.live else { continue };
+        let Some((addressed, living)) = table.offsets.get(anchor.function) else { continue };
+        if addressed.load(Ordering::Relaxed) == UNKNOWN {
+            continue;
+        }
+        let at = |offset: &AtomicIsize| (pointer as isize + offset.load(Ordering::Relaxed)) as usize;
+        let frame = [Frame {
+            place: String::new(),
+            function: Some(anchor.function),
+            pointer,
+            addresses: at(addressed),
+            alive: at(living),
+        }];
+        let now = evaluating(table, &frame, 0, |ev| ev.evaluate(&followed.expr)).ok().map(|v| v.text);
         if now.is_some() && now != followed.last {
             if followed.changes.len() == LISTED {
                 followed.changes.pop_front();
@@ -1460,18 +1546,18 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
     }
 }
 
-/// `track <task> <expression>`, `count <file>:<line> [<expression>]` and
+/// `track <frame> <expression>`, `count <file>:<line> [<expression>]` and
 /// `tracked`: what the next scan follows, and what it found.
 fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     match word {
         "track" => {
-            let (task, text) = rest.split_once(' ').ok_or("track takes a task and an expression")?;
-            let task: u64 = task.parse().map_err(|_| "track takes a task's number first")?;
+            let (anchor, text) =
+                rest.split_once(' ').ok_or("track takes a frame, as `anchor` gives it, and an expression")?;
+            let anchor = Anchor::parse(anchor).ok_or("track takes a frame first, as `anchor` gives it")?;
             let expr = expression::parse(text.trim()).map_err(|m| format!("the expression: {m}"))?;
-            let followed = tracked.get_or_insert_with(Tracked::default);
-            followed.task = task;
-            followed.followed.push(Followed {
+            tracked.get_or_insert_with(Tracked::default).followed.push(Followed {
+                anchor,
                 expr,
                 text: text.trim().to_string(),
                 last: None,
@@ -2381,6 +2467,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"hits\":[{}],\"lines\":[{}]}}", list(&scan.1), list(&scan.2))
         }
         "why" => match why(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "anchor" => match anchor(table, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },

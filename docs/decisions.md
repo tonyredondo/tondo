@@ -4667,6 +4667,20 @@ line, and keeps the last of them. A checkpoint ends when the debugger
 that started the replay does, gone or not yet waited for, as one killed
 left its checkpoints an hour, each with a copy of the program.
 
+## 2026-11-03 — Why follows a frame, not the innermost one
+
+A value changes where the code that changes it runs: in a method with
+`mut self`, a function with a `var` parameter, or another task through a
+`sync.Mutex`. A scan that read the expression in the innermost frame
+lost it there, or read another binding of the same name. `why` and
+`timeline` follow it in the frame that has its binding, found again in
+another replay by its task, its distance from the top of the task's
+stack and its function, as addresses may differ; that frame lives from
+its first probe until its task runs in a caller. A replay runs one
+thread, so a change shows at the next probe of any task, and the line
+that gave it is the line of the program's code before it, whichever
+task ran it.
+
 ## 2026-11-03 — Recording the tests that fail
 
 A test that fails once in CI and passes on the next run is the failure

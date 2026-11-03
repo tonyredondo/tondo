@@ -2114,7 +2114,7 @@ reverse, back until <condition> (move through that history; locals, print and st
 (back to the line that gave it its value, with `causes`: where each binding that line reads got its own), \
 timeline <expression> (each value it took, from which line), ran <file>:<line> [<expression>] (each time a task \
 started that line, with the value then) (in a session of `replay`, seek <probe> goes to a probe they give, and back, reverse and why go back to the whole \
-program as it was), context (the task's contexts, and the `with` that set each field), print <expression> \
+program as it was, why to the line of whichever function or task changed the value), context (the task's contexts, and the `with` that set each field), print <expression> \
 (bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \
 length(), isEmpty(), isSome(), contains(), which read and never run the program's code), children <path> \
 [<start> <count>], set <target> <expression> (a binding or a part, as user.age or items[i]), stack, frame <n>, \

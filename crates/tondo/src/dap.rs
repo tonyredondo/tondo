@@ -1049,7 +1049,7 @@ fn handle(
             let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
             program.adopt();
             let replaying = program.replaying.as_mut().expect("a replay");
-            let (to, why, _) = replaying.find(word, "1", tick, task)?;
+            let (to, why, _) = replaying.find(word, "1", tick, task, "")?;
             let (running, session, stop) = replaying.reach(to, why, true)?;
             program.take_over(running, session, &stop);
             Ok(json!({}))
