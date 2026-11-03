@@ -92,6 +92,40 @@ call <expression>                               a live build: what an expression
 restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
+/// What a test writes, with the runner's frames as what they say: how the
+/// test ended, and its logs.
+fn tested(child: &mut std::process::Child, node: u32) {
+    for (stream, stdout) in [
+        (child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), true),
+        (child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), false),
+    ] {
+        let Some(stream) = stream else { continue };
+        std::thread::spawn(move || {
+            let mut stream = std::io::BufReader::new(stream);
+            let mut line = String::new();
+            while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
+                let shown = match line.strip_prefix('\x1e') {
+                    Some(frame) => crate::dap::test_frame(frame, &mut stream, Some(node)),
+                    None => Some(std::mem::take(&mut line)),
+                };
+                match (shown, stdout) {
+                    (Some(text), true) => print!("{text}"),
+                    (Some(text), false) => eprint!("{text}"),
+                    _ => {}
+                }
+                line.clear();
+            }
+        });
+    }
+}
+
+/// The test a recording of `tondo test --record` is of.
+pub(crate) fn replayed_test(dir: &Path) -> Option<u32> {
+    let read = std::fs::read(dir.join("run.json")).ok()?;
+    let run: Value = serde_json::from_slice(&read).ok()?;
+    run["test"].as_u64().map(|node| node as u32)
+}
+
 /// The program of a recording, `tondo run --record`'s directory, to replay
 /// under the debugger: with the arguments and the environment it had, in
 /// the order of tasks of its seed. The debugger finds it where its own
@@ -108,6 +142,7 @@ pub fn replayed(dir: &Path) -> Result<(PathBuf, std::process::Command), String> 
         .args(&arguments)
         .env_clear()
         .envs(environment)
+        .env_remove("TONDO_RT_RECORD")
         .env("TMPDIR", std::env::temp_dir())
         .env("TONDO_RT_REPLAY", dir.join("calls"))
         .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap_or("0"))
@@ -141,30 +176,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-            // What the test writes, with the runner's frames as what they
-            // say: how the test ended, and its logs.
-            for (stream, stdout) in [
-                (child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), true),
-                (child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), false),
-            ] {
-                let Some(stream) = stream else { continue };
-                std::thread::spawn(move || {
-                    let mut stream = std::io::BufReader::new(stream);
-                    let mut line = String::new();
-                    while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
-                        let shown = match line.strip_prefix('\x1e') {
-                            Some(frame) => crate::dap::test_frame(frame, &mut stream, Some(node)),
-                            None => Some(std::mem::take(&mut line)),
-                        };
-                        match (shown, stdout) {
-                            (Some(text), true) => print!("{text}"),
-                            (Some(text), false) => eprint!("{text}"),
-                            _ => {}
-                        }
-                        line.clear();
-                    }
-                });
-            }
+            tested(&mut child, node);
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Started(executable, arguments) => {
@@ -183,11 +195,19 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         Debugged::Replayed(dir) => {
             use std::os::unix::process::CommandExt;
             let (executable, mut command) = replayed(&dir)?;
-            let child = command
+            // A test's run, whose frames say how it ended.
+            let test = replayed_test(&dir);
+            if test.is_some() {
+                command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            }
+            let mut child = command
                 .stdin(std::process::Stdio::null())
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            if let Some(node) = test {
+                tested(&mut child, node);
+            }
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Running(name) => (observe::connect(&name)?, None),
@@ -199,6 +219,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     // A replay goes back by running its recording again (`back`, `reverse`,
     // `why`): it keeps the commands that set how the program stops.
     let mut replaying = replay.map(|dir| Replaying {
+        test: replayed_test(&dir),
         dir,
         settings: Vec::new(),
         current: child.take().map(Running::Started),
@@ -442,6 +463,9 @@ pub(crate) struct Replaying {
     /// What a replay started from the start writes goes to a pipe the
     /// caller reads, as the editor's adapter does, not to this process's.
     piped: bool,
+    /// The test a recording of `tondo test --record` is of, whose frames
+    /// say how it ended.
+    pub(crate) test: Option<u32>,
 }
 
 /// A process of a replay: one the debugger started, or one a checkpoint
@@ -487,12 +511,12 @@ impl Replaying {
         use std::os::unix::process::CommandExt;
         let (executable, mut command) = replayed(&self.dir)?;
         // One that only looks writes nothing.
-        let output = || match (shown, self.piped) {
+        let output = || match (shown, self.piped || self.test.is_some()) {
             (u64::MAX, _) => std::process::Stdio::null(),
             (_, true) => std::process::Stdio::piped(),
             (_, false) => std::process::Stdio::inherit(),
         };
-        let running = match from {
+        let mut running = match from {
             None => Running::Started(
                 command
                     .env("TONDO_RT_SHOWN_FROM", shown.to_string())
@@ -513,10 +537,10 @@ impl Replaying {
                 Running::Forked(line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?)
             }
         };
-        let pid = match &running {
-            Running::Started(child) => child.id(),
-            Running::Forked(pid) => *pid,
-        };
+        if let (Running::Started(child), Some(node), false) = (&mut running, self.test, self.piped) {
+            tested(child, node);
+        }
+        let pid = running.pid();
         let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
             Ok(attached) => attached,
             Err(message) => {
@@ -642,7 +666,8 @@ impl Replaying {
     /// what its replays write goes to pipes, and the adapter ends its first
     /// process.
     pub(crate) fn for_editor(dir: PathBuf) -> Replaying {
-        Replaying { dir, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true }
+        let test = replayed_test(&dir);
+        Replaying { dir, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true, test }
     }
 
     /// A command that sets how the program stops, which replays take too.

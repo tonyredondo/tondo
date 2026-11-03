@@ -1733,6 +1733,23 @@ los archivos y los procesos siguen siendo los reales.
 de campaña de 8.8: cualquier intento que no pase da exit `1`. Sin seed, el
 runner elige una y la muestra.
 
+### 8.11 Grabar los tests que fallan
+
+`--record <dir>`, en Linux, ejecuta cada test seleccionado solo, en su
+propio trabajador, y lo graba como `tondo run --record` (7.6 de la
+toolchain): sus tareas en un solo thread, en el orden de la seed de
+`--schedules` si la hay, o en el de la seed `0`, y lo que dio cada llamada
+a la librería de C. Los tests se compilan como con `--debug`. Al final, la
+grabación de cada test que falla queda en `<dir>/<id>`, el id con `.` en
+lugar de `::` y `_` en lugar de lo que no es una letra, un dígito o un
+punto, seguido de `-<iteración>` con más de una y de `-retry<ronda>` en un
+reintento; las de los que pasan o se saltan se borran. La salida humana
+nombra, tras el resumen, `tondo debug --replay <dir>/<id>` de cada una, y
+con `--json` lo dice en la salida de error. Esa orden depura el test otra
+vez, igual, con lo que leyó entonces: un fallo intermitente de CI se
+depura en local. `--record` es incompatible con `--bench`, `--fuzz`,
+`--coverage`, `--list`, `--watch`, `--target` y `--profile`.
+
 ## 9. Resultados, diagnósticos y salida
 
 ### 9.1 Estados de test y suite

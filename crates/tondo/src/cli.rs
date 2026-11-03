@@ -128,7 +128,8 @@ pub const COMMANDS: &[Command] = &[
         name: "test",
         usage: &[
             "tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>...] [--shard <i/n>] [--watch]",
-            "          [--order canonical|random] [--schedules <n>] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]",
+            "          [--order canonical|random] [--schedules <n>] [--seed <hex>] [--record <dir>] [--list] [--jobs <n>]",
+            "          [--timeout <seconds>]",
             "          [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]",
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>",

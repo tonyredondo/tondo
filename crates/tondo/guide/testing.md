@@ -66,6 +66,10 @@ suite slow {
   find one that depends on which task runs first; a failure prints the
   command that runs that order again, `--schedules 1 --seed hex`, and the
   one that debugs the test in it, `tondo debug --test <id> --schedule hex`.
+- `tondo test --record target/recordings`, on Linux, records each test and
+  keeps the runs of those that fail: `tondo debug --replay
+  target/recordings/<id>` debugs one again, the same, with what it read
+  then, as a test that fails once in CI.
 
 ## Benchmarks
 

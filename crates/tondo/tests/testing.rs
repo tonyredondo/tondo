@@ -971,6 +971,52 @@ test firstArrivesFirst {
     assert!(stderr.contains("--schedules runs everything once per order; it does not go with --repeat"), "{stderr}");
 }
 
+/// `--record` keeps the runs of the tests that fail, which the debugger
+/// replays the same: the random number that made it fail, again.
+#[test]
+fn records_the_tests_that_fail() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let tests = "\
+import std.random
+
+test passes {
+    assert(1 + 1 == 2)
+}
+
+test fails {
+    var dice = random.Random.new()
+    let rolled = dice.int(0..1000000)
+    assert(rolled < 0, \"rolled {rolled}\")
+}
+";
+    let dir = project("records-failures", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--record", "target/recordings"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    let rolled = stdout.split("rolled ").nth(1).and_then(|r| r.split_whitespace().next()).expect(&stdout).to_string();
+    let replay = "tondo debug --replay target/recordings/app.unit.app.fails";
+    assert!(stdout.contains(replay), "{stdout}");
+    assert!(!dir.join("target/recordings/app.unit.app.passes").exists());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--replay", "target/recordings/app.unit.app.fails"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"continue\nprint rolled\ncontinue\n").unwrap();
+    drop(child.stdin.take());
+    let replayed = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let values: Vec<serde_json::Value> = replayed
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v.get("value").is_some())
+        .collect();
+    assert_eq!(values[0]["value"], rolled.as_str(), "{replayed}");
+}
+
 #[test]
 fn fails_tests_that_leave_tasks_running() {
     let tests = "\

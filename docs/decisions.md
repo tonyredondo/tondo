@@ -4653,3 +4653,13 @@ earlier one when it does not have what they look for. A breakpoint that
 counts its hits counts them from the start, so they start there. `why`
 reads the history: the last line that began with another value is the
 line that gave the value, in any session that records.
+
+## 2026-11-03 — Recording the tests that fail
+
+A test that fails once in CI and passes on the next run is the failure
+a replay is for. `tondo test --record` runs each test alone in its own
+worker, as a recording is of one process, records it, and keeps the
+recordings of those that fail, with the tests' executable and the plan
+that runs that test: `tondo debug --replay` debugs it as `--test` would,
+its frames read as they are there. A recording of a test that passed is
+deleted at once, so the directory holds only what is worth looking at.

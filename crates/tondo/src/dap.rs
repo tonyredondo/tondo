@@ -131,7 +131,8 @@ impl Debuggee {
     /// hears the stop after the answer.
     fn take_over(&mut self, mut running: crate::debug::Running, session: crate::debug::Session, stop: &Value) {
         if let crate::debug::Running::Started(child) = &mut running {
-            forward(child, &self.pumped.events, &self.pumped.drained, None);
+            let tested = self.replaying.as_ref().and_then(|r| r.test);
+            forward(child, &self.pumped.events, &self.pumped.drained, tested);
         }
         let (answer, answers) = mpsc::channel();
         let pumped = self.pumped.clone();
@@ -567,7 +568,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .process_group(0)
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-        (observe::started(&executable, child.id())?, Some(child), None)
+        (observe::started(&executable, child.id())?, Some(child), crate::debug::replayed_test(dir))
     } else if command == "launch" {
         let program = arguments["program"]
             .as_str()

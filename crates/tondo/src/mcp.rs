@@ -1942,7 +1942,9 @@ message, data, source and stack, as data.",
         description: "Run a project's tests: what failed and why, and the report of each test as data. `filter`, \
 `glob` or `exact` selects them, `list` only lists them, `bench` measures the benchmarks (tests that call \
 `testing.bench`) and compares them with `baseline` or `against` a git revision, `fuzz` searches for inputs that \
-fail the tests that call `testing.fuzz`, and `flags` takes the other options of `tondo test`.",
+fail the tests that call `testing.fuzz`, and `flags` takes the other options of `tondo test`: on Linux, \
+[\"--record\", \"dir\"] keeps the runs of the tests that fail, which `debug_start` with `replay` debugs again, the \
+same.",
         kind: Kind::Runs,
         params: &[
             ("path", "string", "The project directory; the server's directory by default."),

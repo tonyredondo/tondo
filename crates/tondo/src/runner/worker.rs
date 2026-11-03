@@ -173,9 +173,24 @@ fn worker(
 ) -> Result<(), String> {
     let (executable, dir, tree, mut timeout, stores) =
         (run.executable, run.dir, run.tree, run.options.timeout, &run.stores);
-    let plan =
-        std::env::temp_dir().join(format!("tondo-plan-{}-{:?}", std::process::id(), std::thread::current().id()));
-    let text: Vec<String> = remaining.iter().map(|t| t.to_string()).collect();
+    // Recorded, each test runs alone, its plan kept with its recording.
+    let recorded =
+        run.options.record.as_ref().zip(remaining.front()).map(|(recordings, &test)| {
+            (recordings.join(recording(tree, test, context.iteration, context.round)), test)
+        });
+    let plan = match &recorded {
+        Some((dir, _)) => {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            dir.join("plan")
+        }
+        None => {
+            std::env::temp_dir().join(format!("tondo-plan-{}-{:?}", std::process::id(), std::thread::current().id()))
+        }
+    };
+    let text: Vec<String> = match &recorded {
+        Some((_, test)) => vec![test.to_string()],
+        None => remaining.iter().map(|t| t.to_string()).collect(),
+    };
     std::fs::write(&plan, text.join("\n")).map_err(|e| format!("cannot write {}: {e}", plan.display()))?;
     let nonce = crate::driver::fingerprint(&[
         &std::process::id().to_le_bytes(),
@@ -236,8 +251,36 @@ fn worker(
         }
         timeout = Duration::from_secs(10 * 365 * 24 * 3600);
     }
-    if let Some(seed) = run.options.schedule(context.iteration) {
+    let seed = run.options.schedule(context.iteration);
+    if let Some(seed) = seed {
         command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));
+    }
+    if let Some((recording, test)) = &recorded {
+        command.env("TONDO_RT_RECORD", recording.join("calls"));
+        // How it ran, for `tondo debug --replay`: the environment the
+        // worker had, with the runner's variables.
+        let mut environment: serde_json::Map<String, serde_json::Value> =
+            std::env::vars_os().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into())).collect();
+        for (name, value) in command.get_envs() {
+            let name = name.to_string_lossy().into_owned();
+            match value {
+                Some(value) => environment.insert(name, value.to_string_lossy().into()),
+                None => environment.remove(&name),
+            };
+        }
+        environment.remove("TONDO_RT_RECORD");
+        let run = serde_json::json!({
+            "source": dir,
+            "arguments": [],
+            "environment": environment,
+            "directory": dir,
+            "seed": format!("{:x}", seed.unwrap_or(0)),
+            "test": test,
+            "tondo": crate::driver::VERSION,
+        });
+        let file = recording.join("run.json");
+        let written = serde_json::to_vec_pretty(&run).unwrap_or_default();
+        std::fs::write(&file, written).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
     }
     // Its own process group, so that a timeout ends what it started too.
     #[cfg(unix)]
@@ -306,7 +349,9 @@ fn worker(
     #[cfg(not(unix))]
     let killed = false;
     interrupt::ended(&child, killed);
-    let _ = std::fs::remove_file(&plan);
+    if recorded.is_none() {
+        let _ = std::fs::remove_file(&plan);
+    }
     session.flush_output();
     for (note, _) in std::mem::take(&mut session.done) {
         send(tree, remaining, note, sender);
@@ -338,6 +383,23 @@ fn worker(
         send(tree, remaining, Note::Ended(Box::new(outcome)), sender);
     }
     Ok(())
+}
+
+/// The directory of a test's recording under `--record`: its id, and the
+/// run of the selection and the round of retries it is of, when there are
+/// more.
+pub(super) fn recording(tree: &Tree, test: u32, iteration: u32, round: u32) -> String {
+    let id: String = tree
+        .id(test)
+        .replace("::", ".")
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
+        .collect();
+    match (iteration, round) {
+        (1, 0) => id,
+        (iteration, 0) => format!("{id}-{iteration}"),
+        (iteration, round) => format!("{id}-{iteration}-retry{round}"),
+    }
 }
 
 /// Reports a start, or an outcome and takes its tests out of the plan: a

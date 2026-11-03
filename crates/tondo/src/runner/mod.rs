@@ -58,6 +58,9 @@ pub struct Options {
     /// tasks in another order (8.10), from a seed, and whether `tondo test`
     /// chose it.
     pub schedules: Option<(u32, u64, bool)>,
+    /// `--record dir`: each test runs alone, recorded (toolchain 7.6), and
+    /// the recordings of those that fail stay in the directory.
+    pub record: Option<PathBuf>,
     pub codeowners: Codeowners,
     pub show_output: bool,
     pub allow_empty: bool,
@@ -607,6 +610,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     }
     let aggregates = aggregates(tree, &attempts);
     let mut failed = failed(&aggregates, &attempts, options);
+    // The runs of the tests that failed stay recorded, to replay.
+    let recordings = match &options.record {
+        Some(recordings) => recorded(recordings, executable, tree, &attempts).map_err(Failure::Output)?,
+        None => Vec::new(),
+    };
     let profiles = match &collected {
         Some((kind, from)) => {
             let written = profiled(tree, executable, *kind, from, dir, Path::new("target/profiles"));
@@ -689,8 +697,17 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         .then(|| format!("Not built on {}, so not counted: {}.", system.shown(), elsewhere.join(", ")));
     if options.json {
         say!("{}", json::reported(&report, options));
+        for recording in &recordings {
+            eprintln!("tondo: recorded: tondo debug --replay {}", recording.display());
+        }
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+        if !recordings.is_empty() {
+            say!("\nthe runs that failed, recorded, to debug the same again:");
+            for recording in &recordings {
+                say!("  tondo debug --replay {}", recording.display());
+            }
+        }
         if !profiles.is_empty() {
             say!("\nprofiles, for `tondo profile show <file>`:");
             for (_, _, path) in &profiles {
@@ -1122,6 +1139,25 @@ impl Options {
     pub(super) fn schedule(&self, iteration: u32) -> Option<u64> {
         self.schedules.map(|(_, seed, _)| schedule_seed(seed, iteration))
     }
+}
+
+/// The recordings of the attempts that failed, made a whole with the tests'
+/// executable; those of the attempts that did not fail go.
+fn recorded(recordings: &Path, executable: &Path, tree: &Tree, attempts: &[Attempt]) -> Result<Vec<PathBuf>, String> {
+    let mut kept = Vec::new();
+    for attempt in attempts.iter().filter(|a| !tree.suite(a.node)) {
+        let dir = recordings.join(worker::recording(tree, attempt.node, attempt.iteration, attempt.round));
+        if !dir.join("run.json").is_file() {
+            continue;
+        }
+        if matches!(attempt.status, Status::Passed | Status::Skipped(_)) {
+            let _ = std::fs::remove_dir_all(&dir);
+            continue;
+        }
+        std::fs::copy(executable, dir.join("program")).map_err(|e| format!("cannot write {}: {e}", dir.display()))?;
+        kept.push(dir);
+    }
+    Ok(kept)
 }
 
 /// The seed of iteration `iteration` of `--schedules` from `seed`: the

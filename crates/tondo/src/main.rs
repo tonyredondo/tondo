@@ -296,6 +296,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         retry: 0,
         repeat: 1,
         schedules: None,
+        record: None,
         codeowners: Codeowners::Auto,
         show_output: false,
         allow_empty: false,
@@ -443,6 +444,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .filter(|&n: &u32| n > 0)
                     .ok_or_else(|| usage("--repeat takes a positive number".into()))?
             }
+            "--record" => options.record = Some(PathBuf::from(value()?)),
             "--schedules" => {
                 schedules = Some(
                     count(&value()?, "--schedules")?
@@ -589,6 +591,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             ));
         }
         options.bench = Some(std::time::Duration::from_secs_f64(bench_time));
+    }
+    // Recorded, the tests run in a debug build, which records its runs.
+    if options.record.is_some() {
+        if !cfg!(target_os = "linux") {
+            return Err("a run is recorded on Linux".into());
+        }
+        let measuring = ["--bench", "--fuzz", "--coverage", "--list", "--watch", "--target", "--profile"];
+        if let Some(flag) = measuring.iter().find(|f| given(f)) {
+            return Err(usage(format!("--record replays the tests that fail; it does not go with {flag}")));
+        }
+        debug = true;
     }
     let fuzz_flags = ["--fuzz-time", "--fuzz-timeout", "--fuzz-memory", "--fuzz-corpus"];
     if !fuzzing && let Some(flag) = fuzz_flags.iter().find(|f| given(f)) {
