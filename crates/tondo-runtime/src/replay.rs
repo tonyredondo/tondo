@@ -16,7 +16,7 @@
 
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU64, Ordering};
 
 const OFF: u8 = 0;
 const RECORD: u8 = 1;
@@ -30,6 +30,8 @@ static TICKS: AtomicU64 = AtomicU64::new(0);
 /// A replay shows what the program writes from this probe on: the debugger
 /// that goes back runs it again from the start, and has shown the rest.
 static SHOWN_FROM: AtomicU64 = AtomicU64::new(0);
+/// The debugger that started the replay: its checkpoints end when it does.
+static DEBUGGER: AtomicI32 = AtomicI32::new(0);
 
 thread_local! {
     /// This is the program's thread, whose calls are recorded.
@@ -150,8 +152,23 @@ pub(crate) fn start() -> bool {
         let from = std::env::var("TONDO_RT_SHOWN_FROM").ok().and_then(|t| t.parse().ok()).unwrap_or(0);
         SHOWN_FROM.store(from, Ordering::Relaxed);
         unsafe { std::env::remove_var("TONDO_RT_SHOWN_FROM") };
+        DEBUGGER.store(unsafe { libc::getppid() }, Ordering::Relaxed);
     }
     on()
+}
+
+/// The debugger that started this replay is gone.
+pub(crate) fn orphaned() -> bool {
+    let debugger = DEBUGGER.load(Ordering::Relaxed);
+    if debugger <= 1 {
+        return false;
+    }
+    let _outside = Outside::enter();
+    // Gone, or ended and not yet waited for.
+    match std::fs::read_to_string(format!("/proc/{debugger}/stat")) {
+        Ok(stat) => stat.rsplit_once(") ").is_some_and(|(_, state)| state.starts_with(['Z', 'X'])),
+        Err(_) => true,
+    }
 }
 
 /// From here on, this thread's calls are the program's.

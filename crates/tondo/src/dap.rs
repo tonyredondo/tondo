@@ -130,10 +130,24 @@ impl Debuggee {
     /// over: the debugger talks to it, the old one ends, and the editor
     /// hears the stop after the answer.
     fn take_over(&mut self, mut running: crate::debug::Running, session: crate::debug::Session, stop: &Value) {
-        if let crate::debug::Running::Started(child) = &mut running {
-            let tested = self.replaying.as_ref().and_then(|r| r.test);
-            forward(child, &self.pumped.events, &self.pumped.drained, tested);
-        }
+        // Its output, to the editor's console: the end of each stream counts
+        // toward the program's.
+        let tested = self.replaying.as_ref().and_then(|r| r.test);
+        let streams = match &mut running {
+            crate::debug::Running::Started(child) => (
+                child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+                child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+            ),
+            crate::debug::Running::Forked(_, output) => match output.take() {
+                Some((out, error)) => {
+                    (Some(Box::new(out) as Box<dyn Read + Send>), Some(Box::new(error) as Box<dyn Read + Send>))
+                }
+                None => (None, None),
+            },
+        };
+        let opened = usize::from(streams.0.is_some()) + usize::from(streams.1.is_some());
+        self.pumped.streams.fetch_add(opened, std::sync::atomic::Ordering::SeqCst);
+        forward(streams, &self.pumped.events, &self.pumped.drained, tested);
         let (answer, answers) = mpsc::channel();
         let pumped = self.pumped.clone();
         let said = session.said;
@@ -453,7 +467,8 @@ struct Pumped {
     events: Editor,
     entry: bool,
     drained: Arc<(Mutex<usize>, std::sync::Condvar)>,
-    streams: usize,
+    /// The program's output streams, as replays that take over add theirs.
+    streams: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Pumped {
@@ -507,7 +522,8 @@ impl Pumped {
                 let (count, ended) = &*read_out;
                 let count = count.lock().unwrap_or_else(|e| e.into_inner());
                 let wait = std::time::Duration::from_secs(2);
-                drop(ended.wait_timeout_while(count, wait, |count| *count < streams));
+                let opened = streams.load(std::sync::atomic::Ordering::SeqCst);
+                drop(ended.wait_timeout_while(count, wait, |count| *count < opened));
                 events.event("terminated", json!({}));
             } else if answer.send(value).is_err() {
                 break;
@@ -518,16 +534,14 @@ impl Pumped {
 
 /// The program's output, to the editor's console as it comes; each stream
 /// counts in `drained` once read to its end.
+#[allow(clippy::type_complexity)]
 fn forward(
-    child: &mut std::process::Child,
+    (stdout, stderr): (Option<Box<dyn Read + Send>>, Option<Box<dyn Read + Send>>),
     editor: &Editor,
     drained: &Arc<(Mutex<usize>, std::sync::Condvar)>,
     tested: Option<u32>,
 ) {
-    for (stream, category) in [
-        (child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stdout"),
-        (child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stderr"),
-    ] {
+    for (stream, category) in [(stdout, "stdout"), (stderr, "stderr")] {
         let Some(stream) = stream else { continue };
         let editor = editor.clone();
         let drained = drained.clone();
@@ -666,13 +680,18 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     let read_out = drained.clone();
     // What the program says: events go to the editor as they come; answers
     // to the command waiting for them.
+    let streams = Arc::new(std::sync::atomic::AtomicUsize::new(streams));
     let pumped = Pumped { events, entry, drained: read_out, streams };
     let values = reader.lines().map_while(|line| serde_json::from_str::<Value>(&line.ok()?).ok());
     let pumping = pumped.clone();
     std::thread::spawn(move || pumping.pump(values, answer));
     let mut child = child;
     if let Some(child) = child.as_mut() {
-        forward(child, &editor_events, &drained, tested);
+        let streams = (
+            child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+            child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+        );
+        forward(streams, &editor_events, &drained, tested);
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
     let replaying = replay.map(crate::debug::Replaying::for_editor);

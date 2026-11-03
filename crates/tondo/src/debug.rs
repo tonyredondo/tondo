@@ -98,10 +98,14 @@ quit                                            end the program and the debugger
 
 /// What a test writes, with the runner's frames as what they say: how the
 /// test ended, and its logs.
-fn tested(child: &mut std::process::Child, node: u32) {
+fn tested(
+    out: Option<impl std::io::Read + Send + 'static>,
+    error: Option<impl std::io::Read + Send + 'static>,
+    node: u32,
+) {
     for (stream, stdout) in [
-        (child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), true),
-        (child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), false),
+        (out.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), true),
+        (error.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), false),
     ] {
         let Some(stream) = stream else { continue };
         std::thread::spawn(move || {
@@ -120,6 +124,32 @@ fn tested(child: &mut std::process::Child, node: u32) {
                 line.clear();
             }
         });
+    }
+}
+
+/// Sends a line to a checkpoint with descriptors along, which the replay it
+/// forks writes its output to.
+fn given(stream: &std::os::unix::net::UnixStream, line: &str, fds: &[i32]) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut data = line.as_bytes().to_vec();
+    let mut part = libc::iovec { iov_base: data.as_mut_ptr().cast(), iov_len: data.len() };
+    let size = std::mem::size_of_val(fds) as u32;
+    let mut control = vec![0u8; unsafe { libc::CMSG_SPACE(size) } as usize];
+    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+    message.msg_iov = &mut part;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = control.len() as _;
+    unsafe {
+        let header = libc::CMSG_FIRSTHDR(&message);
+        (*header).cmsg_level = libc::SOL_SOCKET;
+        (*header).cmsg_type = libc::SCM_RIGHTS;
+        (*header).cmsg_len = libc::CMSG_LEN(size) as _;
+        std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(header).cast::<i32>(), fds.len());
+    }
+    match unsafe { libc::sendmsg(stream.as_raw_fd(), &message, 0) } {
+        -1 => Err(std::io::Error::last_os_error()),
+        _ => Ok(()),
     }
 }
 
@@ -180,7 +210,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-            tested(&mut child, node);
+            tested(child.stdout.take(), child.stderr.take(), node);
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Started(executable, arguments) => {
@@ -210,7 +240,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
             if let Some(node) = test {
-                tested(&mut child, node);
+                tested(child.stdout.take(), child.stderr.take(), node);
             }
             (observe::started(&executable, child.id())?, Some(child))
         }
@@ -446,13 +476,13 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     // it goes on to its end.
     if let Some(replaying) = replaying {
         for (_, pid) in replaying.checkpoints {
-            Running::Forked(pid).end();
+            Running::Forked(pid, None).end();
         }
         match replaying.current {
             Some(Running::Started(started)) => child = Some(started),
-            Some(Running::Forked(pid)) => {
+            Some(Running::Forked(pid, _)) => {
                 if quit {
-                    Running::Forked(pid).end();
+                    Running::Forked(pid, None).end();
                 }
                 while unsafe { libc::kill(pid as i32, 0) } == 0 {
                     std::thread::sleep(Duration::from_millis(20));
@@ -512,14 +542,19 @@ pub(crate) struct Replaying {
 /// forked, which only ends when it is ended.
 pub(crate) enum Running {
     Started(std::process::Child),
-    Forked(u32),
+    /// One a checkpoint forked, which only ends when it is ended, and the
+    /// pipes of what it writes, when the caller reads them.
+    Forked(u32, Option<Output>),
 }
+
+/// The pipes a replay's standard output and error go to.
+pub(crate) type Output = (std::io::PipeReader, std::io::PipeReader);
 
 impl Running {
     pub(crate) fn pid(&self) -> u32 {
         match self {
             Running::Started(child) => child.id(),
-            Running::Forked(pid) => *pid,
+            Running::Forked(pid, _) => *pid,
         }
     }
 
@@ -530,7 +565,7 @@ impl Running {
                 let _ = child.wait();
             }
             // Ended at once, it leaves its sockets behind.
-            Running::Forked(pid) => {
+            Running::Forked(pid, _) => {
                 unsafe { libc::kill(pid as i32, libc::SIGKILL) };
                 let _ = std::fs::remove_file(observe::directory().join(pid.to_string()));
                 let _ = std::fs::remove_file(observe::directory().join(format!("{pid}.checkpoint")));
@@ -568,17 +603,53 @@ impl Replaying {
                     .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
             ),
             Some((_, checkpoint)) => {
+                // A checkpoint just forked may not listen yet.
                 let path = observe::directory().join(format!("{checkpoint}.checkpoint"));
-                let mut stream = std::os::unix::net::UnixStream::connect(&path)
-                    .map_err(|e| format!("the checkpoint {checkpoint} is gone: {e}"))?;
-                writeln!(stream, "resume {shown}").map_err(|e| e.to_string())?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let stream = loop {
+                    match std::os::unix::net::UnixStream::connect(&path) {
+                        Ok(stream) => break stream,
+                        Err(_)
+                            if std::time::Instant::now() < deadline
+                                && unsafe { libc::kill(checkpoint as i32, 0) } == 0 =>
+                        {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => return Err(format!("the checkpoint {checkpoint} is gone: {e}")),
+                    }
+                };
+                // What the replay writes goes where this one's does, to
+                // pipes the caller reads, or nowhere when nothing shows.
+                use std::os::fd::AsRawFd;
+                let cannot = |e: std::io::Error| e.to_string();
+                let (fds, output, _ends) = match (shown, self.piped || self.test.is_some()) {
+                    (u64::MAX, _) => {
+                        let null = std::fs::OpenOptions::new().write(true).open("/dev/null").map_err(cannot)?;
+                        (vec![null.as_raw_fd(), null.as_raw_fd()], None, (Some(null), None))
+                    }
+                    (_, true) => {
+                        let ((out, out_end), (error, error_end)) =
+                            (std::io::pipe().map_err(cannot)?, std::io::pipe().map_err(cannot)?);
+                        let fds = vec![out_end.as_raw_fd(), error_end.as_raw_fd()];
+                        (fds, Some((out, error)), (None, Some((out_end, error_end))))
+                    }
+                    (_, false) => (vec![1, 2], None, (None, None)),
+                };
+                given(&stream, &format!("resume {shown}\n"), &fds).map_err(cannot)?;
                 let mut line = String::new();
                 std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
-                Running::Forked(line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?)
+                let pid = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
+                Running::Forked(pid, output)
             }
         };
-        if let (Running::Started(child), Some(node), false) = (&mut running, self.test, self.piped) {
-            tested(child, node);
+        match (&mut running, self.test, self.piped) {
+            (Running::Started(child), Some(node), false) => tested(child.stdout.take(), child.stderr.take(), node),
+            (Running::Forked(_, output), Some(node), false) => {
+                if let Some((out, error)) = output.take() {
+                    tested(Some(out), Some(error), node);
+                }
+            }
+            _ => {}
         }
         let pid = running.pid();
         let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
@@ -611,14 +682,14 @@ impl Replaying {
         };
         // One kept there already is the same.
         if self.checkpoints.iter().any(|&(t, _)| t == tick) {
-            Running::Forked(pid as u32).end();
+            Running::Forked(pid as u32, None).end();
             return;
         }
         self.checkpoints.push((tick, pid as u32));
         self.checkpoints.sort_unstable();
         while self.checkpoints.len() > CHECKPOINTS {
             let (_, oldest) = self.checkpoints.remove(0);
-            Running::Forked(oldest).end();
+            Running::Forked(oldest, None).end();
         }
     }
 
@@ -729,7 +800,7 @@ impl Replaying {
     /// to unless `keep`.
     pub(crate) fn end(&mut self) {
         for (_, pid) in std::mem::take(&mut self.checkpoints) {
-            Running::Forked(pid).end();
+            Running::Forked(pid, None).end();
         }
         if let Some(current) = self.current.take() {
             current.end();

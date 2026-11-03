@@ -1189,7 +1189,7 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
 /// returns. Only this thread is left: the debugger's connection and its
 /// settings were the parent's.
 fn kept(table: &Table) {
-    use std::io::{BufRead, Write};
+    use std::io::Write;
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     ATTACHED.store(false, Ordering::Relaxed);
     {
@@ -1205,15 +1205,44 @@ fn kept(table: &Table) {
     CATCH.store(true, Ordering::Relaxed);
     CATCH_ERRORS.store(false, Ordering::Relaxed);
     STEPS_STD.store(false, Ordering::Relaxed);
-    // The replays it forks end without it waiting for them.
+    // The replays it forks end without it waiting for them. What it has
+    // open but its standard streams is its parent's: the sockets of the
+    // tools, which would seem to listen once the parent ended.
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+    for fd in 3..1024 {
+        unsafe { libc::close(fd) };
+    }
+    // Nor does it keep its parent's output open: each replay it forks
+    // writes where the one that asks for it says.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        libc::dup2(null, 1);
+        libc::dup2(null, 2);
+        libc::close(null);
+    }
     let path = super::diagnostics::sockets().join(format!("{}.checkpoint", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { unsafe { libc::_exit(0) } };
+    // One the debugger never heard of, or forgot, ends after an hour
+    // unused; any, once the debugger is gone.
+    let mut idle = libc::pollfd { fd: std::os::fd::AsRawFd::as_raw_fd(&listener), events: libc::POLLIN, revents: 0 };
+    let mut unused = std::time::Duration::ZERO;
     loop {
+        match unsafe { libc::poll(&mut idle, 1, 10_000) } {
+            0 => {
+                unused += std::time::Duration::from_secs(10);
+                if unused >= std::time::Duration::from_secs(3600) || super::replay::orphaned() {
+                    let _ = std::fs::remove_file(&path);
+                    unsafe { libc::_exit(0) };
+                }
+                continue;
+            }
+            // A signal came.
+            ..0 => continue,
+            _ => unused = std::time::Duration::ZERO,
+        }
         let Ok((mut stream, _)) = listener.accept() else { continue };
-        let mut line = String::new();
-        let _ = std::io::BufReader::new(&stream).read_line(&mut line);
+        let (line, given) = received(&stream);
         let Some(shown) = line.trim().strip_prefix("resume ").and_then(|t| t.parse::<u64>().ok()) else {
             let _ = std::fs::remove_file(&path);
             unsafe { libc::_exit(0) };
@@ -1222,15 +1251,57 @@ fn kept(table: &Table) {
             0 => {
                 drop(listener);
                 unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) };
+                // Its output, where the one that asked for it said.
+                if let [out, error] = given[..] {
+                    unsafe {
+                        libc::dup2(out, 1);
+                        libc::dup2(error, 2);
+                    }
+                }
+                given.iter().for_each(|&fd| unsafe {
+                    libc::close(fd);
+                });
                 super::replay::shown_from(shown);
                 super::diagnostics::listen_again();
                 return;
             }
             pid => {
+                given.iter().for_each(|&fd| unsafe {
+                    libc::close(fd);
+                });
                 let _ = writeln!(stream, "{pid}");
             }
         }
     }
+}
+
+/// A line a checkpoint was sent, with the descriptors that came with it.
+fn received(stream: &std::os::unix::net::UnixStream) -> (String, Vec<i32>) {
+    let fd = std::os::fd::AsRawFd::as_raw_fd(stream);
+    let mut data = [0u8; 256];
+    let mut control = [0u8; 64];
+    let mut part = libc::iovec { iov_base: data.as_mut_ptr().cast(), iov_len: data.len() };
+    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+    message.msg_iov = &mut part;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = control.len() as _;
+    let read = unsafe { libc::recvmsg(fd, &mut message, 0) };
+    let mut given = Vec::new();
+    unsafe {
+        let mut header = libc::CMSG_FIRSTHDR(&message);
+        while let Some(found) = header.as_ref() {
+            if found.cmsg_level == libc::SOL_SOCKET && found.cmsg_type == libc::SCM_RIGHTS {
+                // musl's length is a `u32`.
+                #[allow(clippy::unnecessary_cast)]
+                let count = (found.cmsg_len as usize - libc::CMSG_LEN(0) as usize) / std::mem::size_of::<i32>();
+                let fds = libc::CMSG_DATA(header).cast::<i32>();
+                given.extend((0..count).map(|i| fds.add(i).read_unaligned()));
+            }
+            header = libc::CMSG_NXTHDR(&message, header);
+        }
+    }
+    (String::from_utf8_lossy(&data[..read.max(0) as usize]).into_owned(), given)
 }
 
 /// What a scan keeps at a probe: the tick, when the scanned task's line
