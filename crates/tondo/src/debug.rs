@@ -1041,7 +1041,10 @@ impl Replaying {
         let mut read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
         let mut seen = std::collections::HashSet::new();
         read.retain(|name| seen.insert(name.clone()));
-        if read.is_empty() {
+        // A line that receives, or waits for a task's result, has a cause in
+        // another task too: the line that sent it, or that the task ended on.
+        let receives = ["receive", ".wait(", "select"].iter().any(|word| text.contains(word));
+        if read.is_empty() && !receives {
             return Value::Array(Vec::new());
         }
         let Ok(anchors) = read.iter().map(|name| anchor(here, name)).collect::<Result<Vec<_>, _>>() else {
@@ -1054,18 +1057,26 @@ impl Replaying {
         for base in std::iter::once(nearest).chain(nearest.map(|_| None)) {
             let Ok((running, mut scan)) = self.start(base, u64::MAX, true) else { continue };
             let found = (|| -> Result<Value, String> {
+                ask(&mut scan, "track")?;
                 for (name, anchor) in read.iter().zip(&anchors) {
                     ask(&mut scan, &format!("track {anchor} {name}"))?;
                 }
                 ask(&mut scan, &format!("scan {to}"))?;
                 scan.next_event()?;
-                Ok(ask(&mut scan, "tracked")?["tracked"].clone())
+                // On to the end of the line, for what it receives.
+                if receives {
+                    ask(&mut scan, "next")?;
+                    if let Some(tracked) = scan.next_event()?.get("tracked") {
+                        return Ok(tracked.clone());
+                    }
+                }
+                ask(&mut scan, "tracked")
             })();
             running.end();
             self.gather_ended(&mut scan);
+            let found = found.unwrap_or_default();
             // The last change of each before the line, by the line before it.
-            causes = found
-                .unwrap_or_default()
+            causes = found["tracked"]
                 .as_array()
                 .into_iter()
                 .flatten()
@@ -1077,7 +1088,20 @@ impl Replaying {
                     }))
                 })
                 .collect();
-            if causes.len() == read.len() {
+            // What the line received: where it was sent from. A line that
+            // waited for it started again once it came.
+            let received = found["received"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|r| r["at"] == at && r["tick"].as_u64().is_some_and(|t| t <= to));
+            let received = received.last();
+            if let Some(from) = received.map(|r| &r["from"]) {
+                causes.push(serde_json::json!({
+                    "name": "what it received", "received": true, "at": from["at"], "tick": from["tick"], "task": from["task"],
+                }));
+            }
+            if causes.len() == read.len() + usize::from(receives) {
                 break;
             }
         }
@@ -1261,6 +1285,20 @@ pub(crate) fn causes_here(ask: &mut dyn FnMut(&str) -> Result<Value, String>, ro
     ask(&format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
 }
 
+/// A cause of a line, in words: a binding's value and the line it came
+/// from, or what the line received and the line of the task that sent it.
+fn cause_text(cause: &Value) -> String {
+    let at = cause["at"].as_str().unwrap_or_default();
+    match cause["received"] == true {
+        true => format!("what it received came from {at}, in task {}", cause["task"]),
+        false => format!(
+            "`{}` was {}, from {at}",
+            cause["name"].as_str().unwrap_or_default(),
+            cause["value"].as_str().unwrap_or_default()
+        ),
+    }
+}
+
 /// The causes `origins` found, as a tree, each with the line that gave it.
 fn show_origins(causes: &[Value], indent: &str) {
     for (index, cause) in causes.iter().enumerate() {
@@ -1268,12 +1306,7 @@ fn show_origins(causes: &[Value], indent: &str) {
         let (branch, next) = if last { ("└ ", "  ") } else { ("├ ", "│ ") };
         let at = cause["at"].as_str().unwrap_or_default();
         let above = if cause["above"] == true { ", as above" } else { "" };
-        println!(
-            "{indent}{branch}`{}` was {}, from {at}{}{above}",
-            cause["name"].as_str().unwrap_or_default(),
-            cause["value"].as_str().unwrap_or_default(),
-            tick_of(cause)
-        );
+        println!("{indent}{branch}{}{}{above}", cause_text(cause), tick_of(cause));
         if cause["above"] == true {
             continue;
         }
@@ -1478,12 +1511,7 @@ impl Session {
                     Some(back) => format!(", {back} line{} back", if back == 1 { "" } else { "s" }),
                     None => tick_of(cause),
                 };
-                println!(
-                    "  `{}` was {}, from {}{back}",
-                    cause["name"].as_str().unwrap_or_default(),
-                    cause["value"].as_str().unwrap_or_default(),
-                    cause["at"].as_str().unwrap_or_default(),
-                );
+                println!("  {}{back}", cause_text(cause));
             }
         };
         if self.json {

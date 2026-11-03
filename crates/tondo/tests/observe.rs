@@ -1878,6 +1878,64 @@ fn main() {
 }
 "#;
 
+const SENT: &str = r#"fn produce(out: Sender[Int]) {
+    var n = 3
+    for i in 0..3 {
+        n = n * 2 + i
+        out.send(n)
+    }
+}
+
+fn main() {
+    let (out, inbox) = channel[Int](1)
+    spawn produce(out)
+    var total = 0
+    for _ in 0..3 {
+        let got = inbox.receive().unwrapOr(0)
+        total += got
+    }
+    _ = total
+}
+"#;
+
+/// In a replay, what a line received comes from the line of the task that
+/// sent it, which `why` and `origins` follow into that task.
+#[test]
+fn a_replay_follows_values_through_channels() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-sent");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("sent.to"), SENT).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "sent.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(recorded.status.success());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break sent.to:15\ncontinue\ncontinue\nwhy got\norigins\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let lines: Vec<Value> = output.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let why = lines.iter().filter_map(|l| l.get("stopped")).nth(3).unwrap_or_else(|| panic!("{output}"));
+    assert_eq!(why["at"], "sent.to:14 in main", "{output}");
+    let received = why["causes"].as_array().unwrap().iter().find(|c| c["received"] == true);
+    assert_eq!(received.map(|c| &c["at"]), Some(&json!("sent.to:5 in produce")), "{output}");
+    // The origins go on in the task that sent it.
+    let origins = lines.iter().find_map(|l| l.get("origins")).unwrap_or_else(|| panic!("{output}"));
+    assert!(origins.to_string().contains("sent.to:4 in produce"), "{origins}");
+}
+
 /// A recording keeps the program's sources, so it runs again elsewhere, as
 /// on another machine, with the lines it shows and reads.
 #[test]

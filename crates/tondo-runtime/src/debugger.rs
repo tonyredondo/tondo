@@ -1457,6 +1457,90 @@ struct Tracked {
     followed: Vec<Followed>,
     before: Option<(u64, usize)>,
     line: Option<Counted>,
+    /// Each task's last line of the program's code, by probe and site.
+    lines: std::collections::BTreeMap<u64, (u64, usize)>,
+    /// Where each value a channel holds was sent from, the oldest first:
+    /// a line and its task; `None` for one sent before the scan began.
+    messages: std::collections::BTreeMap<usize, std::collections::VecDeque<Option<Origin>>>,
+    /// The line each task ended on, by its join.
+    ends: std::collections::BTreeMap<usize, Origin>,
+    /// What a line received, by its probe and site: where it was sent from,
+    /// or where the task it waited for ended; the last ones.
+    received: std::collections::VecDeque<((u64, usize), Origin)>,
+}
+
+/// A line of a task: its probe, its site and the task.
+type Origin = (u64, usize, u64);
+
+/// A scan follows where values a task receives come from.
+static FOLLOWING: AtomicBool = AtomicBool::new(false);
+
+/// What a scan keeps of a value that changes hands: `from` is the task
+/// whose line it comes from, `to` the one whose line takes it; `None` when
+/// what was sent before the scan began.
+fn handed_over(from: impl FnOnce(&mut Tracked) -> Option<Origin>, to: u64) {
+    // The scan's own work, which the recording does not have.
+    let _outside = super::replay::Outside::enter();
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(tracked) = tracked.as_mut() else { return };
+    let (Some(origin), Some(&line)) = (from(tracked), tracked.lines.get(&to)) else { return };
+    if tracked.received.len() == LISTED {
+        tracked.received.pop_front();
+    }
+    tracked.received.push_back((line, origin));
+}
+
+fn origin_of(tracked: &Tracked, task: u64) -> Option<Origin> {
+    tracked.lines.get(&task).map(|&(tick, site)| (tick, site, task))
+}
+
+/// The task `from` sent a value into the channel, which held `held`.
+pub(crate) fn sent(channel: usize, held: usize, from: u64) {
+    if !FOLLOWING.load(Ordering::Relaxed) {
+        return;
+    }
+    let _outside = super::replay::Outside::enter();
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(tracked) = tracked.as_mut() else { return };
+    let origin = origin_of(tracked, from);
+    tracked.messages.entry(channel).or_insert_with(|| vec![None; held].into()).push_back(origin);
+}
+
+/// The task `by` took the oldest value of the channel, which held `held`.
+pub(crate) fn taken(channel: usize, held: usize, by: u64) {
+    if FOLLOWING.load(Ordering::Relaxed) {
+        let take =
+            |t: &mut Tracked| t.messages.entry(channel).or_insert_with(|| vec![None; held].into()).pop_front()?;
+        handed_over(take, by);
+    }
+}
+
+/// The task `from` gave a value to `to`, which waited for it.
+pub(crate) fn handed(from: u64, to: u64) {
+    if FOLLOWING.load(Ordering::Relaxed) {
+        handed_over(|t| origin_of(t, from), to);
+    }
+}
+
+/// The current task ends, its result in `join`.
+pub(crate) fn ended(join: usize) {
+    if !FOLLOWING.load(Ordering::Relaxed) {
+        return;
+    }
+    let _outside = super::replay::Outside::enter();
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(tracked) = tracked.as_mut()
+        && let Some(origin) = origin_of(tracked, super::tasks::current_id())
+    {
+        tracked.ends.insert(join, origin);
+    }
+}
+
+/// The current task takes the result in `join`.
+pub(crate) fn joined(join: usize) {
+    if FOLLOWING.load(Ordering::Relaxed) {
+        handed_over(|t| t.ends.get(&join).copied(), super::tasks::current_id());
+    }
 }
 
 /// A frame as another replay of the same run finds it, where addresses
@@ -1581,6 +1665,7 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
         return;
     }
     let before = tracked.before.replace((tick, site));
+    tracked.lines.insert(task, (tick, site));
     for followed in tracked.followed.iter_mut() {
         let anchor = &followed.anchor;
         let Some(pointer) = anchor.live else { continue };
@@ -1615,11 +1700,18 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
 fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     match word {
+        // Where the values tasks receive come from, as the next scan goes.
+        "track" if rest.trim().is_empty() => {
+            FOLLOWING.store(true, Ordering::Relaxed);
+            tracked.get_or_insert_with(Tracked::default);
+            Ok("{\"tracking\":true}".into())
+        }
         "track" => {
             let (anchor, text) =
                 rest.split_once(' ').ok_or("track takes a frame, as `anchor` gives it, and an expression")?;
             let anchor = Anchor::parse(anchor).ok_or("track takes a frame first, as `anchor` gives it")?;
             let expr = expression::parse(text.trim()).map_err(|m| format!("the expression: {m}"))?;
+            FOLLOWING.store(true, Ordering::Relaxed);
             tracked.get_or_insert_with(Tracked::default).followed.push(Followed {
                 anchor,
                 expr,
@@ -1639,7 +1731,18 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
             Ok("{\"counting\":true}".into())
         }
         _ => {
+            FOLLOWING.store(false, Ordering::Relaxed);
             let found = tracked.take().unwrap_or_default();
+            let received: Vec<String> = found
+                .received
+                .iter()
+                .map(|&((line, here), (tick, site, task))| {
+                    let (here, at) = (quoted(&place_in(table, here)), quoted(&place_in(table, site)));
+                    format!(
+                        "{{\"tick\":{line},\"at\":{here},\"from\":{{\"tick\":{tick},\"at\":{at},\"task\":{task}}}}}"
+                    )
+                })
+                .collect();
             let followed: Vec<String> = found
                 .followed
                 .iter()
@@ -1672,7 +1775,7 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
                     .collect();
                 format!(",\"ran\":[{}],\"times\":{times},\"at\":{}", runs.join(","), quoted(&place_in(table, sites[0])))
             });
-            Ok(format!("{{\"tracked\":[{}]{line}}}", followed.join(",")))
+            Ok(format!("{{\"tracked\":[{}]{line},\"received\":[{}]}}", followed.join(","), received.join(",")))
         }
     }
 }

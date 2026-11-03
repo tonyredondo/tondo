@@ -3190,6 +3190,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
 /// group, before that. True when the task was detached.
 unsafe fn complete(join: *mut JoinObject) -> bool {
     unsafe {
+        super::debugger::ended(join as usize);
         let j = &mut *join;
         lock(&j.lock);
         j.done = true;
@@ -3329,6 +3330,7 @@ pub unsafe extern "C" fn tondo_rt_join_wait(join: *mut JoinObject, out: *mut u8)
                 super::panics::rethrow(panic);
                 return;
             }
+            super::debugger::joined(join as usize);
             take(join, out);
         } else {
             std::ptr::write_bytes(out, 0, (*join).size);
@@ -3875,9 +3877,12 @@ unsafe fn try_send(c: &mut ChannelObject, value: *mut u8) -> Option<Option<*mut 
         if let Some(receiver) = claim_first(&mut c.receiving) {
             std::ptr::copy_nonoverlapping(value, (*receiver).value, c.size);
             (*receiver).state = MOVED;
-            return Some(Some((*(*receiver).wait).task));
+            let task = (*(*receiver).wait).task;
+            super::debugger::handed(current_id(), (*task).id);
+            return Some(Some(task));
         }
         if c.count < c.capacity {
+            super::debugger::sent(c as *const ChannelObject as usize, c.count, current_id());
             c.buffer.extend(std::slice::from_raw_parts(value, c.size));
             c.count += 1;
             return Some(None);
@@ -3892,10 +3897,13 @@ unsafe fn try_send(c: &mut ChannelObject, value: *mut u8) -> Option<Option<*mut 
 unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Option<*mut Task>)> {
     unsafe {
         if c.count > 0 {
+            let channel = c as *const ChannelObject as usize;
+            super::debugger::taken(channel, c.count, current_id());
             pop_bytes(&mut c.buffer, out, c.size);
             c.count -= 1;
             // A sender waiting for room moves its value in.
             let woken = claim_first(&mut c.sending).map(|sender| {
+                super::debugger::sent(channel, c.count, (*(*(*sender).wait).task).id);
                 c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
                 c.count += 1;
                 (*sender).state = MOVED;
@@ -3907,7 +3915,9 @@ unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Opti
         if let Some(sender) = claim_first(&mut c.sending) {
             std::ptr::copy_nonoverlapping((*sender).value, out, c.size);
             (*sender).state = MOVED;
-            return Some((true, Some((*(*sender).wait).task)));
+            let task = (*(*sender).wait).task;
+            super::debugger::handed((*task).id, current_id());
+            return Some((true, Some(task)));
         }
         if c.closed {
             return Some((false, None));

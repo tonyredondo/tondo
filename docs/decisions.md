@@ -4636,6 +4636,18 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — Causes across tasks
+
+A value a task receives was made by another: the cause of `let got =
+inbox.receive()` is the line that sent it, in its task. While a scan
+follows, each value that enters a channel carries the line of the task
+that sent it, in a queue per channel, where `try_send` and `try_receive`
+move values, the two places every send, receive, `select` and `offer`
+pass through; and a task that ends leaves its last line to whoever waits
+for its result. A line that received has that line among its causes, so
+`origins` goes on in the other task. A value in a channel before the scan
+began has no known sender.
+
 ## 2026-11-03 — Recordings that travel
 
 A recording is worth most where the failure did not happen: a test that

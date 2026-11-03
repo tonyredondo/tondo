@@ -1107,6 +1107,9 @@ principio que sigue la expresión, igual que `why`, o cuenta las veces que
 corre la línea, y
 dan el probe de cada línea: `seek
 <probe>` lleva el programa a ese punto, antes o después del de ahora.
+Lo que una línea recibe de un canal tiene por causa la línea de la tarea
+que lo envió, y el resultado de una tarea que espera, la línea en que esa
+tarea terminó: `why` y `origins` siguen a otra tarea por ahí.
 `first <condición>` y `last <condición>` buscan en toda la ejecución,
 con otra reproducción del principio al final que sigue la condición en el
 marco de su binding, la primera o la última vez que se cumplió, y llevan
