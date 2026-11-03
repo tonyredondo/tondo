@@ -1003,7 +1003,12 @@ static FOLLOW: AtomicBool = AtomicBool::new(false);
 /// a debug build of Tondo waits for it before its `main`, as `tondo debug`
 /// starts a program.
 pub(crate) fn following() -> bool {
-    ATTACHED.load(Ordering::Relaxed) && FOLLOW.load(Ordering::Relaxed) && !super::replay::replaying()
+    follows_children() && !super::replay::replaying()
+}
+
+/// The debugger asked to debug the children the program starts too.
+pub(crate) fn follows_children() -> bool {
+    ATTACHED.load(Ordering::Relaxed) && FOLLOW.load(Ordering::Relaxed)
 }
 
 /// What gdb or lldb asks of the frame they show, of the program's function
@@ -1048,9 +1053,11 @@ fn native_frame(table: &Table, command: &str, pc: usize, fp: usize) -> String {
     }
 }
 
-/// The program started a child the debugger follows.
-pub(crate) fn child_started(pid: u32, program: &str) {
-    tell(&format!("{{\"child\":{{\"pid\":{pid},\"program\":{}}}}}", quoted(program)));
+/// The program started a child the debugger follows, which a replay
+/// replays from its own `recording`.
+pub(crate) fn child_started(pid: u32, program: &str, recording: Option<&std::path::Path>) {
+    let recording = recording.map_or(String::new(), |r| format!(",\"recording\":{}", quoted(&r.to_string_lossy())));
+    tell(&format!("{{\"child\":{{\"pid\":{pid},\"program\":{}{recording}}}}}", quoted(program)));
 }
 static BEFORE_MAIN: AtomicBool = AtomicBool::new(true);
 

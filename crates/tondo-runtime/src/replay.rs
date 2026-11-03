@@ -15,6 +15,7 @@
 #![cfg_attr(not(all(tondo_staticlib, target_os = "linux")), allow(dead_code))]
 
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU64, Ordering};
 
@@ -112,17 +113,26 @@ pub(crate) fn start() -> bool {
     if asked && !cfg!(all(tondo_staticlib, target_os = "linux")) {
         super::runtime_fault("a run is recorded and replayed on Linux");
     }
-    if asked && (unsafe { libc::getpid() } == 0 || !WRAPPED.load(Ordering::Relaxed)) {
+    let able = unsafe { libc::getpid() } != 0 && WRAPPED.load(Ordering::Relaxed);
+    if asked && !able {
         super::runtime_fault("this executable cannot record its runs: it is not a debug build that tondo linked");
     }
+    // A child of a recorded run records its own, when it can, among its
+    // parent's recording.
+    let parent = std::env::var_os("TONDO_RT_RECORD_CHILDREN");
+    if parent.is_some() {
+        unsafe { std::env::remove_var("TONDO_RT_RECORD_CHILDREN") };
+    }
+    let child = parent.filter(|_| !asked && able).and_then(|dir| recording_of_child(Path::new(&dir)));
     // What the Rust library learns of the system the first time it asks,
     // as whether `statx` exists, it learns here, the same way in a run and
     // in its replay, whose runtime does more before the program starts.
-    if asked {
+    if asked || child.is_some() {
         let _ = std::fs::metadata("/");
     }
-    if let Some(path) = std::env::var_os("TONDO_RT_RECORD") {
+    if let Some(path) = std::env::var_os("TONDO_RT_RECORD").map(PathBuf::from).or(child) {
         unsafe { std::env::remove_var("TONDO_RT_RECORD") };
+        directory_of(&path);
         let file = std::fs::File::create(&path).unwrap_or_else(|e| {
             super::runtime_fault(&format!("cannot record to {}: {e}", std::path::Path::new(&path).display()))
         });
@@ -137,8 +147,9 @@ pub(crate) fn start() -> bool {
             flush();
         }
         unsafe { __cxa_atexit(flushed, std::ptr::null_mut(), std::ptr::null_mut()) };
-    } else if let Some(path) = std::env::var_os("TONDO_RT_REPLAY") {
+    } else if let Some(path) = std::env::var_os("TONDO_RT_REPLAY").map(PathBuf::from) {
         unsafe { std::env::remove_var("TONDO_RT_REPLAY") };
+        directory_of(&path);
         let recorded = std::fs::read(&path).unwrap_or_else(|e| {
             super::runtime_fault(&format!("cannot read the recording {}: {e}", std::path::Path::new(&path).display()))
         });
@@ -155,6 +166,54 @@ pub(crate) fn start() -> bool {
         DEBUGGER.store(unsafe { libc::getppid() }, Ordering::Relaxed);
     }
     on()
+}
+
+/// The directory of the recording a run makes or replays.
+static RECORDING: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The recording's directory, whole, as children that run elsewhere and
+/// the debugger find it.
+fn directory_of(calls: &Path) {
+    let calls = std::path::absolute(calls).unwrap_or_else(|_| calls.to_path_buf());
+    let _ = RECORDING.set(calls.parent().unwrap_or(Path::new("/")).to_path_buf());
+}
+
+/// Where a child of the program records its run, when it is a debug build
+/// of Tondo: a directory of its own there, named by its process.
+pub(crate) fn children() -> Option<PathBuf> {
+    RECORDING.get().map(|dir| dir.join("children"))
+}
+
+/// In a replay, the recording of the child `pid` started, if it made one.
+pub(crate) fn recorded_child(pid: u32) -> Option<PathBuf> {
+    let _outside = Outside::enter();
+    let dir = children()?.join(pid.to_string());
+    (replaying() && dir.join("run.json").is_file()).then_some(dir)
+}
+
+/// The recording of this run, a child's in `children`: the program, and
+/// what it ran with, as `tondo run --record` writes them; the file its
+/// calls go to.
+fn recording_of_child(children: &Path) -> Option<PathBuf> {
+    let dir = children.join(std::process::id().to_string());
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::copy("/proc/self/exe", dir.join("program")).ok()?;
+    let quoted = |text: &std::ffi::OsStr| super::diagnostics::quoted(&text.to_string_lossy());
+    let arguments: Vec<String> = std::env::args_os().skip(1).map(|a| quoted(&a)).collect();
+    let environment: Vec<String> =
+        std::env::vars_os().map(|(name, value)| format!("{}:{}", quoted(&name), quoted(&value))).collect();
+    let seed = std::env::var("TONDO_RT_SCHEDULE").unwrap_or_else(|_| "0".into());
+    let run = format!(
+        "{{\"source\":{},\"arguments\":[{}],\"environment\":{{{}}},\"directory\":{},\"seed\":{},\"tondo\":{}}}",
+        quoted(std::env::args_os().next().unwrap_or_default().as_os_str()),
+        arguments.join(","),
+        environment.join(","),
+        quoted(std::env::current_dir().unwrap_or_default().as_os_str()),
+        super::diagnostics::quoted(&seed),
+        super::diagnostics::quoted(env!("CARGO_PKG_VERSION")),
+    );
+    std::fs::write(dir.join("run.json"), run).ok()?;
+    Some(dir.join("calls"))
 }
 
 /// The debugger that started this replay is gone.
@@ -181,6 +240,17 @@ pub(crate) fn begin() {
         // probes, first makes one.
         let _ = std::collections::hash_map::RandomState::new();
     }
+}
+
+/// What the runtime gives the program of what a recording cannot follow,
+/// as a profile's samples, which a signal and a thread of its own take:
+/// a recorded run keeps the bytes `make` gives, and its replay gives them
+/// back without making them.
+pub(crate) fn kept(make: impl FnOnce() -> Vec<u8>) -> Vec<u8> {
+    #[cfg(all(tondo_staticlib, target_os = "linux"))]
+    return calls::kept(make);
+    #[cfg(not(all(tondo_staticlib, target_os = "linux")))]
+    make()
 }
 
 /// The worker would wait for a task to run: a replay has nothing to wait
@@ -390,6 +460,7 @@ mod calls {
         "setgroups",
         "getpwuid_r",
         "signal",
+        "kept",
     ];
 
     /// The number a function's calls have in a recording.
@@ -503,6 +574,26 @@ mod calls {
             drop(log);
             INSIDE.set(true);
             crate::debugger::stop_for_good("the replay ends here: the recording ends while the program waits".into())
+        }
+    }
+
+    pub(super) fn kept(make: impl FnOnce() -> Vec<u8>) -> Vec<u8> {
+        const ID: u32 = id("kept");
+        match here() {
+            Here::Pass => make(),
+            Here::Record => {
+                let mut bytes = inside(make);
+                record(ID, bytes.len() as i64, &[(bytes.as_mut_ptr(), bytes.len())]);
+                bytes
+            }
+            Here::Replay => {
+                let mut bytes = Vec::new();
+                replay(ID, "kept", |length| {
+                    bytes.resize(length.max(0) as usize, 0);
+                    vec![(bytes.as_mut_ptr(), bytes.len())]
+                });
+                bytes
+            }
         }
     }
 

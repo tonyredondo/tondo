@@ -417,9 +417,13 @@ pub extern "C" fn tondo_rt_profile_cpu_start(every: i64) -> u8 {
     let period = super::recorder::CPU_EVERY.load(Ordering::Relaxed) * 1000;
     *session = Some((Vec::new(), std::time::Instant::now(), period));
     drop(session);
-    let _ = super::recorder::take_samples();
-    super::recorder::sample_threads();
-    keep_draining();
+    // A replay gives the samples its recording kept, and takes none.
+    if !super::replay::replaying() {
+        let _outside = super::replay::Outside::enter();
+        let _ = super::recorder::take_samples();
+        super::recorder::sample_threads();
+        keep_draining();
+    }
     1
 }
 
@@ -456,17 +460,61 @@ pub extern "C" fn tondo_rt_profile_cpu_period() -> *mut super::native::NativeObj
 /// A profile of the processor time from its samples, each standing for
 /// `period` nanoseconds.
 fn cpu_profile(samples: &[Sample], started: std::time::Instant, period: i64) -> *mut super::native::NativeObject {
-    let weighed: Vec<Weighed> = samples
-        .iter()
-        .map(|(_, thread, stack, set)| {
+    let weighed: Vec<Weighed> = kept_samples(samples)
+        .into_iter()
+        .map(|(thread, set, frames)| {
             let mut labels = vec![("thread".to_string(), thread.to_string())];
-            labels.extend(super::labels::get(*set).unwrap_or_default());
-            (stack.frames().to_vec(), vec![1, period], labels)
+            labels.extend(super::labels::get(set).unwrap_or_default());
+            (frames, vec![1, period], labels)
         })
         .collect();
     let took = started.elapsed().as_nanos() as i64;
     let kinds = [("samples", "count"), ("cpu", "nanoseconds")];
     super::native::new(made("cpu", &kinds, ("cpu", "nanoseconds", period), None, &weighed, &[false, false], took))
+}
+
+/// The thread, labels and frames of each sample, which a recorded run
+/// keeps and its replay gives back: a frame of the executable as where it
+/// is in it, which a replay loaded elsewhere has at another address.
+fn kept_samples(samples: &[Sample]) -> Vec<(u32, u32, Vec<usize>)> {
+    const OWN: u64 = 1 << 63;
+    let base = |address: usize| {
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        let found = unsafe { libc::dladdr(address as *const libc::c_void, &mut info) } != 0;
+        found.then_some(info.dli_fbase as usize)
+    };
+    let own = base(kept_samples as *const () as usize).unwrap_or(0);
+    let bytes = super::replay::kept(|| {
+        let mut bytes = Vec::new();
+        for (_, thread, stack, set) in samples {
+            bytes.extend(thread.to_le_bytes());
+            bytes.extend(set.to_le_bytes());
+            bytes.extend((stack.frames().len() as u32).to_le_bytes());
+            for &frame in stack.frames() {
+                let at = match base(frame) {
+                    Some(base) if base == own && frame >= own => (frame - own) as u64 | OWN,
+                    _ => frame as u64,
+                };
+                bytes.extend(at.to_le_bytes());
+            }
+        }
+        bytes
+    });
+    let mut out = Vec::new();
+    let mut words = bytes.as_slice();
+    let mut next = |size: usize| -> Option<u64> {
+        let word = words.get(..size)?;
+        words = &words[size..];
+        Some(word.iter().rev().fold(0, |value, &byte| value << 8 | u64::from(byte)))
+    };
+    while let (Some(thread), Some(set), Some(count)) = (next(4), next(4), next(4)) {
+        let frames = (0..count).map_while(|_| next(8)).map(|frame| match frame & OWN {
+            0 => frame as usize,
+            _ => own + (frame & !OWN) as usize,
+        });
+        out.push((thread as u32, set as u32, frames.collect()));
+    }
+    out
 }
 
 /// `profile.startMemory(every:)`: samples what the program allocates from

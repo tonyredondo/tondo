@@ -567,6 +567,14 @@ impl Pumped {
                     "{} ({pid})",
                     Path::new(program).file_name().map_or(program.into(), |n| n.to_string_lossy())
                 );
+                // In a replay, its own recording, replayed too.
+                if let Some(recording) = value["child"]["recording"].as_str() {
+                    let configuration = json!({
+                        "type": "tondo", "request": "launch", "name": name, "replay": recording, "followChildren": true,
+                    });
+                    events.request("startDebugging", json!({ "request": "launch", "configuration": configuration }));
+                    continue;
+                }
                 let configuration = json!({ "type": "tondo", "request": "attach", "name": name, "processId": pid });
                 // Once it listens, which a program that is not Tondo's never
                 // does.

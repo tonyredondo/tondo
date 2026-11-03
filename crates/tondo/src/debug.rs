@@ -213,6 +213,16 @@ pub fn keep_sources(executable: &Path, recording: &Path) {
     }
 }
 
+/// The sources of the children of a recorded run that recorded theirs,
+/// and of their children, once the run ends.
+pub fn keep_children(recording: &Path) {
+    for child in std::fs::read_dir(recording.join("children")).into_iter().flatten().flatten() {
+        let dir = child.path();
+        keep_sources(&dir.join("program"), &dir);
+        keep_children(&dir);
+    }
+}
+
 /// The test a recording of `tondo test --record` is of.
 pub(crate) fn replayed_test(dir: &Path) -> Option<u32> {
     let read = std::fs::read(dir.join("run.json")).ok()?;
@@ -1806,9 +1816,15 @@ impl Session {
             println!("{logged}");
         } else if let Some(pid) = value["child"]["pid"].as_u64() {
             let program = value["child"]["program"].as_str().unwrap_or_default();
-            println!(
-                "the program started {program}, process {pid}: `tondo debug {pid}` debugs it, which waits 5 s for it"
-            );
+            match value["child"]["recording"].as_str() {
+                Some(recording) => println!(
+                    "the program started {program}, process {pid}, which recorded its run: \
+                     `tondo debug --replay {recording}` replays it"
+                ),
+                None => println!(
+                    "the program started {program}, process {pid}: `tondo debug {pid}` debugs it, which waits 5 s for it"
+                ),
+            }
         } else if let Some(retainers) = value.get("retainers") {
             println!("{}", retainers["object"].as_str().unwrap_or_default());
             let stacks: Vec<String> =

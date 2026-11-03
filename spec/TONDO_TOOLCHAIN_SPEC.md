@@ -913,7 +913,10 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   lleven `TONDO_DEBUG=1`: uno que es un build de depuración de Tondo espera
   antes de `main`, hasta 5 segundos, a que un depurador se adjunte, y el
   depurador dice cuál empezó (`child`, con su `pid` y su programa); `follow
-  off` lo deja. En una reproducción no hay hijos que seguir.
+  off` lo deja. En una reproducción los hijos no corren otra vez: dice cuál
+  empezó que grabó su propia ejecución (`child` con su `recording`), que
+  `tondo debug --replay <directorio>` reproduce, y el editor en una sesión
+  propia.
 - `record [<lines>]` guarda desde entonces cada línea del programa que
   ejecuta cada tarea, con su pila y los bindings que su código puede usar
   como estaban al empezarla, mostrados y recortados, en un historial de las
@@ -1074,13 +1077,18 @@ graba, una lectura de la entrada estándar o de un archivo detiene las demás
 tareas. La red y HTTP (`std.net`, `std.http`, `std.grpc` y los módulos que
 los usan) y los procesos (`std.process`) se graban también: lo que el
 runtime hace con ellos en threads propios lo hace ese mismo thread entre
-tareas. En la reproducción los procesos hijos no corren otra vez: el
-programa recibe lo que le dieron, pero lo que escribieron directamente en
-la terminal no se ve. Lo que corre en threads que el runtime no pone en ese
-orden no se graba: `fs.watch`, el perfilador por muestreo y las funciones de
-C que llaman al programa desde sus threads. La reproducción para donde el
-programa empieza uno de esos threads, o donde hace una llamada distinta de
-la grabada, y dice por qué. El
+tareas, y `fs.watch` también, que en Linux lee inotify en ese thread. En
+la reproducción los procesos hijos no corren otra vez: el programa recibe
+lo que le dieron, pero lo que escribieron directamente en la terminal no se
+ve. Un hijo que es un build de depuración de Tondo graba su propia
+ejecución en `children/<pid>` del directorio, que se reproduce igual, y así
+sus hijos. Del perfilador por muestreo, cuyas señales llegan cuando dice el
+tiempo de procesador, se graban las muestras que el programa recibe, y la
+reproducción las da sin muestrear. Lo que corre en threads que el runtime no
+pone en ese orden no se graba: las funciones de C que llaman al programa
+desde sus threads. La reproducción para donde el programa empieza uno de
+esos threads, o donde hace una llamada distinta de la grabada, y dice por
+qué. El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que
 se repite igual en otra máquina Linux, desde cualquier directorio; con

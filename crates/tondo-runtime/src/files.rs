@@ -349,7 +349,7 @@ pub unsafe extern "C" fn tondo_rt_files_real_path(path: *const Str) -> *mut Nati
 /// the stamps, not from the system's events, which kqueue gives for a
 /// directory rather than what it holds, and sometimes twice.
 struct Watch {
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<Watcher>,
     /// Out while a task waits for the next batch, and after the watch ends.
     changes: Option<tokio::sync::mpsc::UnboundedReceiver<PathBuf>>,
     roots: Vec<(String, PathBuf)>,
@@ -389,25 +389,189 @@ fn stamps(directory: &Path, depth: Option<usize>, out: &mut HashMap<PathBuf, Sta
     }
 }
 
+// The system's watcher, which sends each path it says changed: on Linux,
+// inotify's, whose events a task of the runtime reads, so that a recorded
+// run makes its calls on the program's thread; elsewhere, notify's.
+#[cfg(target_os = "linux")]
+use inotify::{Watcher, watch, watcher};
+
+#[cfg(not(target_os = "linux"))]
+type Watcher = notify::RecommendedWatcher;
+
+#[cfg(not(target_os = "linux"))]
+fn watcher(send: tokio::sync::mpsc::UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
+    notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let Ok(event) = event else { return };
+        if !matches!(event.kind, notify::EventKind::Access(_)) {
+            for path in event.paths {
+                let _ = send.send(path);
+            }
+        }
+    })
+    .map_err(|_| 8)
+}
+
+/// Watches `path`, and all it holds.
+#[cfg(not(target_os = "linux"))]
+fn watch(watcher: &mut Watcher, path: &Path) -> Result<(), i64> {
+    use notify::Watcher as _;
+    watcher.watch(path, notify::RecursiveMode::Recursive).map_err(|e| match e.kind {
+        notify::ErrorKind::Io(e) => failure(&e),
+        notify::ErrorKind::PathNotFound => 1,
+        _ => 8,
+    })
+}
+
+#[cfg(target_os = "linux")]
+mod inotify {
+    use super::failure;
+    use std::collections::HashMap;
+    use std::ffi::OsStr;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, MutexGuard};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    const MASK: u32 = libc::IN_CREATE
+        | libc::IN_DELETE
+        | libc::IN_MODIFY
+        | libc::IN_CLOSE_WRITE
+        | libc::IN_ATTRIB
+        | libc::IN_MOVED_FROM
+        | libc::IN_MOVED_TO
+        | libc::IN_DELETE_SELF
+        | libc::IN_MOVE_SELF;
+
+    /// A watch, and the task that reads its events, which ends with it.
+    pub(super) struct Watcher {
+        watches: Arc<Watches>,
+        reading: tokio::task::AbortHandle,
+    }
+
+    impl Drop for Watcher {
+        fn drop(&mut self) {
+            self.reading.abort();
+        }
+    }
+
+    /// inotify's descriptor, and the path of each of its watches.
+    struct Watches {
+        fd: OwnedFd,
+        paths: Mutex<HashMap<i32, PathBuf>>,
+    }
+
+    pub(super) fn watcher(send: UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
+        let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        if fd < 0 {
+            return Err(failure(&std::io::Error::last_os_error()));
+        }
+        let watches = Arc::new(Watches { fd: unsafe { OwnedFd::from_raw_fd(fd) }, paths: Mutex::default() });
+        let reading = crate::http::runtime().spawn(read(watches.clone(), send)).abort_handle();
+        Ok(Watcher { watches, reading })
+    }
+
+    pub(super) fn watch(watcher: &mut Watcher, path: &Path) -> Result<(), i64> {
+        watcher.watches.add(path).map_err(|e| failure(&e))
+    }
+
+    impl Watches {
+        fn paths(&self) -> MutexGuard<'_, HashMap<i32, PathBuf>> {
+            self.paths.lock().unwrap_or_else(|e| e.into_inner())
+        }
+
+        /// Watches `path`, and each directory below it.
+        fn add(&self, path: &Path) -> std::io::Result<()> {
+            let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+            let watch = unsafe { libc::inotify_add_watch(self.fd.as_raw_fd(), name.as_ptr(), MASK) };
+            if watch < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            self.paths().insert(watch, path.to_path_buf());
+            for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    let _ = self.add(&entry.path());
+                }
+            }
+            Ok(())
+        }
+
+        /// The paths an event says changed, watching a directory that
+        /// came and forgetting one that went.
+        fn changed(&self, event: &libc::inotify_event, name: &[u8]) -> Vec<PathBuf> {
+            // Events were lost: any watched directory may have changed.
+            if event.mask & libc::IN_Q_OVERFLOW != 0 {
+                return self.paths().values().cloned().collect();
+            }
+            if event.mask & libc::IN_IGNORED != 0 {
+                self.paths().remove(&event.wd);
+                return Vec::new();
+            }
+            let Some(directory) = self.paths().get(&event.wd).cloned() else { return Vec::new() };
+            let path = if name.is_empty() { directory } else { directory.join(OsStr::from_bytes(name)) };
+            if event.mask & libc::IN_ISDIR != 0 {
+                if event.mask & (libc::IN_CREATE | libc::IN_MOVED_TO) != 0 {
+                    let _ = self.add(&path);
+                }
+                if event.mask & libc::IN_MOVED_FROM != 0 {
+                    let fd = self.fd.as_raw_fd();
+                    self.paths().retain(|&watch, at| {
+                        let kept = !at.starts_with(&path);
+                        if !kept {
+                            unsafe { libc::inotify_rm_watch(fd, watch) };
+                        }
+                        kept
+                    });
+                }
+            }
+            vec![path]
+        }
+    }
+
+    /// Sends the paths of each event, until the watch or its receiver ends.
+    async fn read(watches: Arc<Watches>, send: UnboundedSender<PathBuf>) {
+        let fd = watches.fd.as_raw_fd();
+        // The descriptor is the watch's, open while this task holds it.
+        let ready = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE) };
+        let Ok(ready) = ready else { return };
+        let head = std::mem::size_of::<libc::inotify_event>();
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let Ok(mut guard) = ready.readable().await else { return };
+            let read = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+            if read < 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::WouldBlock {
+                    return;
+                }
+                guard.clear_ready();
+                continue;
+            }
+            let (read, mut at) = (read as usize, 0);
+            while at + head <= read {
+                let event = unsafe { buffer.as_ptr().add(at).cast::<libc::inotify_event>().read_unaligned() };
+                let name = &buffer[at + head..(at + head + event.len as usize).min(read)];
+                at += head + event.len as usize;
+                let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
+                for path in watches.changed(&event, name) {
+                    if send.send(path).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `fs.watch`: watches each path, with what its directories hold.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i64) -> *mut NativeObject {
-    use notify::Watcher;
     let paths = strings(paths);
     let settle = std::time::Duration::from_nanos(settle.max(0) as u64);
     done(move || {
         let (send, changes) = tokio::sync::mpsc::unbounded_channel();
         // An event says which paths changed; what became of each is read
         // when its batch ends.
-        let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            let Ok(event) = event else { return };
-            if !matches!(event.kind, notify::EventKind::Access(_)) {
-                for path in event.paths {
-                    let _ = send.send(path);
-                }
-            }
-        })
-        .map_err(|_| 8)?;
+        let mut watcher = watcher(send)?;
         let (mut roots, mut existing) = (Vec::new(), HashMap::new());
         for path in paths {
             let real = io(std::fs::canonicalize(&path))?;
@@ -417,11 +581,7 @@ pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i
                 }
                 existing.insert(real.clone(), found);
             }
-            watcher.watch(&real, notify::RecursiveMode::Recursive).map_err(|e| match e.kind {
-                notify::ErrorKind::Io(e) => failure(&e),
-                notify::ErrorKind::PathNotFound => 1,
-                _ => 8,
-            })?;
+            watch(&mut watcher, &real)?;
             roots.push((path, real));
         }
         let watch = Watch { watcher: Some(watcher), changes: Some(changes), roots, settle, existing };

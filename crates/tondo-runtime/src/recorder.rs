@@ -199,6 +199,9 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     #[cfg(target_os = "macos")]
     let errno = unsafe { libc::__error() };
     let saved = unsafe { *errno };
+    // Its calls come when the processor time says, which a recording does
+    // not repeat: they are not the program's.
+    let _outside = crate::replay::Outside::enter();
     let (_, pc, fp, _) = unsafe { crate::trace::faulted(info, context) };
     // A dump asks a thread that runs on where it is with this signal too.
     crate::tasks::answer_where(pc, fp);

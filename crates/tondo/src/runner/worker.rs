@@ -350,8 +350,11 @@ fn worker(
     #[cfg(not(unix))]
     let killed = false;
     interrupt::ended(&child, killed);
-    if recorded.is_none() {
-        let _ = std::fs::remove_file(&plan);
+    match &recorded {
+        Some((recording, _)) => crate::debug::keep_children(recording),
+        None => {
+            let _ = std::fs::remove_file(&plan);
+        }
     }
     session.flush_output();
     for (note, _) in std::mem::take(&mut session.done) {

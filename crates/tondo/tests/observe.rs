@@ -1979,6 +1979,121 @@ fn a_recording_replays_elsewhere() {
     assert!(output.contains("`roll` was "), "{output}");
 }
 
+/// A program that watches files and profiles itself, whose watch and
+/// samples come from threads and signals of the runtime.
+const OBSERVED: &str = r#"import std.console
+import std.fs
+import std.path
+import std.profile
+import std.time
+
+fn spin(): Int {
+    var total = 0
+    for i in 0..3000000 {
+        total += i % 7
+    }
+    total
+}
+
+fn main() {
+    let dir = fs.realPath(fs.createTemporaryDirectory()?)?
+    let changes = fs.watch([dir], settle: time.milliseconds(100))?
+    fs.writeText(path.join(dir, "a.txt"), "a")?
+    for change in changes.receive(timeout: time.seconds(10)).unwrapOr([]) {
+        console.println("{change.path.removePrefix(dir)} {change.kind}")
+    }
+    let cpu = profile.startCpu()
+    let total = spin()
+    let taken = cpu.stop()
+    console.println("{total} {taken.folded().contains("spin")} {taken.folded().length()}")
+}
+"#;
+
+/// A replay gives the program what a watch and the profiler gave it in
+/// the recorded run, without watching or sampling.
+#[test]
+fn a_replay_gives_watches_and_profiles_back() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-watched");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("watched.to"), OBSERVED).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "watched.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&recorded.stdout).into_owned();
+    assert!(recorded.status.success(), "{stdout}{}", String::from_utf8_lossy(&recorded.stderr));
+    assert!(stdout.contains("/a.txt Created") && stdout.contains(" true "), "{stdout}");
+    let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
+    let replayed = Command::new(dir.join("run/program"))
+        .env("TONDO_RT_REPLAY", dir.join("run/calls"))
+        .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let again = String::from_utf8_lossy(&replayed.stdout).into_owned();
+    assert_eq!(again, stdout, "{}", String::from_utf8_lossy(&replayed.stderr));
+}
+
+/// A child of a recorded run that is a debug build of Tondo records its
+/// own run, which a replay of its parent names, to replay it too.
+#[test]
+fn a_replay_names_the_recordings_of_children() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-children");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let child =
+        "import std.console\nimport std.env\n\nfn main() {\n    console.println(\"child got {env.args()}\")\n}\n";
+    std::fs::write(dir.join("child.to"), child).unwrap();
+    let parent = "import std.console\nimport std.process\n\nfn main() {\n    let out = process.command(\"./child\", \"hi\").output()?\n    console.println(\"parent read {out.text()?}\")\n}\n";
+    std::fs::write(dir.join("parent.to"), parent).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "child.to", "--output", "child", "--debug"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "parent.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&recorded.stdout).into_owned();
+    assert!(stdout.contains("parent read child got [hi]"), "{stdout}");
+    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(replay.stdin.as_mut().unwrap(), b"follow\ncontinue\n").unwrap();
+    drop(replay.stdin.take());
+    let output = String::from_utf8_lossy(&replay.wait_with_output().unwrap().stdout).into_owned();
+    let recording = output.split("`tondo debug --replay ").nth(1).and_then(|r| r.split('`').next());
+    let recording = recording.unwrap_or_else(|| panic!("{output}"));
+    assert!(Path::new(recording).join("sources").is_dir(), "{recording}");
+    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", recording])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(replay.stdin.as_mut().unwrap(), b"break child.to:5\ncontinue\nlocals\ncontinue\n")
+        .unwrap();
+    drop(replay.stdin.take());
+    let output = String::from_utf8_lossy(&replay.wait_with_output().unwrap().stdout).into_owned();
+    assert!(output.contains("child.to:5") && output.contains("child got [hi]"), "{output}");
+}
+
 /// In a replay, `reverse`, `back` and `why` go back by running the
 /// recording again, from a checkpoint where the program stopped before, to
 /// the program as it was there, every value of it.

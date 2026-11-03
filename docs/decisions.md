@@ -4830,3 +4830,20 @@ Cranelift's frame layout gives for slots with a key, in the table. A
 statement's DWARF row starts after its probe, so a breakpoint on a line
 stops where the probe has stored its bindings' addresses, rather than
 where they are still the last line's.
+
+## 2026-11-03 — What threads gave, recorded
+
+A replay ended where the program started `fs.watch` or the profiler,
+whose threads the recording does not follow. Each is closed its own way.
+On Linux `fs.watch` reads inotify itself, in a task of the runtime that
+the worker of a recorded run drives, so its calls are the program's
+thread's and replay as the network's do; notify stays for macOS. The
+profiler's samples come from signals when processor time says, which no
+replay repeats: what the program receives of them, the samples of a
+profile, goes in the recording as one call, with the frames of the
+executable as offsets in it, and the replay gives them back without
+sampling; the handler's own calls are not the program's. A child that is
+a debug build of Tondo records its own run in the parent's recording,
+`children/<pid>`, written as `tondo run --record` writes one, so a replay
+of the parent, where the child does not run, names it to be replayed in
+a session of its own. Callbacks from threads of C remain unrecorded.

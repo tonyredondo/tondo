@@ -589,9 +589,17 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
             if followed {
                 command.env("TONDO_DEBUG", "1");
             }
+            if let Some(children) = super::replay::children() {
+                command.env("TONDO_RT_RECORD_CHILDREN", children);
+            }
             let child = command.spawn()?;
+            let program = stage.program.to_string_lossy();
             if followed {
-                super::debugger::child_started(child.id(), &stage.program.to_string_lossy());
+                super::debugger::child_started(child.id(), &program, None);
+            } else if super::debugger::follows_children()
+                && let Some(recording) = super::replay::recorded_child(child.id())
+            {
+                super::debugger::child_started(child.id(), &program, Some(&recording));
             }
             super::diagnostics::PROCESSES_STARTED.add(1);
             running.pids.push(child.id());

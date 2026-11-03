@@ -2130,6 +2130,7 @@ fn record_run(
     // Ctrl-C is the program's to handle; the recording ends with it.
     unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
     let status = child.wait().map_err(|e| e.to_string())?;
+    tondo::debug::keep_children(dir);
     eprintln!("tondo: the run is recorded in {0}: `tondo debug --replay {0}` runs it again", dir.display());
     // A program a signal ended, as a shell says it.
     use std::os::unix::process::ExitStatusExt;
