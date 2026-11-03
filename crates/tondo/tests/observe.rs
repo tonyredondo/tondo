@@ -1584,7 +1584,11 @@ fn debugger_calls_the_programs_code() {
     assert_eq!(called, [("twice(count) + 1", "43"), ("describe(ada)", "Ada (36)")]);
     let error = lines.iter().find_map(|l| l["error"].as_str()).unwrap();
     assert!(error.contains("unknown name `nothing`"), "{error}");
-    assert!(text.contains("Ada (36)\n42"), "{text}");
+    // What the program printed, between the debugger's answers, as it
+    // flushes its output when it stops or when it ends.
+    let printed: Vec<&str> =
+        text.lines().filter(|l| serde_json::from_str::<Value>(l).map_or(true, |v| !v.is_object())).collect();
+    assert_eq!(printed, ["Ada (36)", "42"], "{text}");
     // The editor's console.
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
