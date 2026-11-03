@@ -4,7 +4,7 @@
 //! methods that read, as `length()`. They read values as the debugger shows
 //! them, and never run the program's code, so they change nothing.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::super::shown;
 
@@ -460,7 +460,7 @@ pub(super) fn binding_name(name: &str) -> bool {
 /// Evaluates expressions with the bindings `read` shows, each read once.
 pub(super) struct Evaluator<'r> {
     read: &'r dyn Fn(&str) -> Result<String, String>,
-    texts: HashMap<String, String>,
+    texts: BTreeMap<String, String>,
 }
 
 /// What an expression gave: its value, and when it names a binding or a
@@ -473,7 +473,7 @@ pub(super) struct Evaluated {
 
 impl<'r> Evaluator<'r> {
     pub(super) fn new(read: &'r dyn Fn(&str) -> Result<String, String>) -> Self {
-        Evaluator { read, texts: HashMap::new() }
+        Evaluator { read, texts: BTreeMap::new() }
     }
 
     pub(super) fn evaluate(&mut self, expr: &Expr) -> Result<Evaluated, String> {
