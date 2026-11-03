@@ -1064,7 +1064,25 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         cg.live_points(build, bodies);
         cg.live_tables(build, trace)?;
     }
-    let product = cg.module.finish();
+    // The DWARF of a debug build, for gdb and lldb.
+    let debugged: Vec<_> = match debug {
+        true => cg.traced.iter().map(|function| (function.id, cg.dwarf_rows(function))).collect(),
+        false => Vec::new(),
+    };
+    let mut product = cg.module.finish();
+    if debug {
+        let functions: Vec<crate::debuginfo::Function> = debugged
+            .into_iter()
+            .zip(&cg.traced)
+            .map(|((id, rows), function)| crate::debuginfo::Function {
+                symbol: product.function_symbol(id),
+                name: function.name.clone(),
+                size: function.size,
+                rows,
+            })
+            .collect();
+        crate::debuginfo::write(&mut product.object, "program", &functions)?;
+    }
     product.emit().map_err(|e| e.to_string())
 }
 
@@ -2152,6 +2170,26 @@ impl Codegen<'_> {
             data.entry(id).or_insert_with(|| decl.name.clone().unwrap_or_default());
         }
         Labels { functions, data }
+    }
+
+    /// Where each run of a function's code starts, with the file, line and
+    /// column of its statement, for the DWARF: code of no statement is the
+    /// statement's before it, and code before the first statement the
+    /// first's.
+    fn dwarf_rows(&self, function: &Traced) -> Vec<(u32, String, u32, u32)> {
+        let mut rows: Vec<(u32, String, u32, u32)> = function
+            .lines
+            .iter()
+            .filter(|&&(_, site)| site != 0)
+            .map(|&(start, site)| {
+                let (path, line, column) = self.sources.position(function.sites[site as usize - 1].0);
+                (start, path, line as u32, column as u32)
+            })
+            .collect();
+        if let Some(first) = rows.first().filter(|first| first.0 > 0).cloned() {
+            rows.insert(0, (0, first.1, first.2, first.3));
+        }
+        rows
     }
 
     /// What a live build's manifest keeps of each function's points, for a
@@ -5388,6 +5426,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let (file, line, _) = self.e.cg.sources().position(span.start);
         if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
             debug.line = Some((file, line));
+            // The line's code starts here, which the DWARF says.
+            let start = self.site(span.start, None);
+            self.e.fb.set_srcloc(start);
             for (index, &(local, copy)) in debug.shown.iter().enumerate() {
                 let address = match (self.storage[local.0 as usize], copy) {
                     (Storage::Var(var), Some(slot)) => {

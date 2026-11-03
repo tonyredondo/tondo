@@ -10,6 +10,7 @@ pub mod codegen;
 pub mod compact;
 pub mod dap;
 pub mod debug;
+pub mod debuginfo;
 pub mod deps;
 pub mod derive;
 pub mod diag;

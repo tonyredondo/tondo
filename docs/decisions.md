@@ -4636,6 +4636,20 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — DWARF for gdb and lldb
+
+gdb and lldb read DWARF, and a Tondo executable had none: they saw
+symbols without lines. A debug build writes it now, from what the table
+of the trace has: a unit with each function, its name and code, and a
+line program with a row for each statement, whose probe's code starts
+there, and one at the function's start that ends its prologue, where
+lldb puts a breakpoint on the function's first line. The compiler writes
+the sections in the program's object with relocations to its functions,
+and the linker keeps them, the addresses resolved, after the symbol
+table. The unit says C, which DWARF has a code for; bindings have no
+DWARF yet, and macOS, whose linker leaves DWARF in the objects for
+`dsymutil`, has none.
+
 ## 2026-11-03 — The editor asks why
 
 `why`, `timeline` and the tasks' waits were answers of the command line

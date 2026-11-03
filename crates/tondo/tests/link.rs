@@ -47,3 +47,62 @@ fn builds_the_same_bytes_each_time() {
     let second = build(&dir, "second", false);
     assert!(first == second, "two builds of the same program differ");
 }
+
+/// A debug build has the DWARF gdb and lldb read: each function of the
+/// program, and the line each run of its code comes from, one for each
+/// statement, at the addresses its code has.
+#[test]
+fn debug_builds_have_their_lines_in_dwarf() {
+    use object::ObjectSection;
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link-dwarf");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn square(n: Int): Int {\n    let result = n * n\n    result\n}\n\n\
+                   fn main() {\n    var total = 0\n    for i in 0..3 {\n        total += square(i)\n    }\n    \
+                   console.println(\"total {total}\")\n}\n";
+    std::fs::write(dir.join("app.to"), program).unwrap();
+    let output = dir.join("app");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "app.to", "--debug", "--output"])
+        .arg(&output)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let bytes = std::fs::read(&output).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    let section = |id: gimli::SectionId| -> Result<gimli::EndianSlice<'_, gimli::LittleEndian>, gimli::Error> {
+        let data = file.section_by_name(id.name()).and_then(|s| s.data().ok()).unwrap_or(&[]);
+        Ok(gimli::EndianSlice::new(data, gimli::LittleEndian))
+    };
+    let dwarf = gimli::Dwarf::load(section).unwrap();
+    let mut units = dwarf.units();
+    let header = units.next().unwrap().expect("a unit");
+    let unit = dwarf.unit(header).unwrap();
+    // The functions, by name and address.
+    let mut functions = Vec::new();
+    let mut entries = unit.entries();
+    while let Some(entry) = entries.next_dfs().unwrap() {
+        if entry.tag() == gimli::DW_TAG_subprogram {
+            let name = entry.attr_value(gimli::DW_AT_name).unwrap();
+            let name = dwarf.attr_string(&unit, name).unwrap().to_string_lossy().into_owned();
+            let Some(gimli::AttributeValue::Addr(low)) = entry.attr_value(gimli::DW_AT_low_pc) else { panic!() };
+            functions.push((name, low));
+        }
+    }
+    let square = functions.iter().find(|(name, _)| name == "square").map(|&(_, low)| low).expect("square");
+    let symbol = file.symbols().find(|s| s.name() == Ok("square")).map(|s| s.address());
+    assert!(symbol.is_none_or(|address| address == square), "{functions:?}");
+    // A row for each statement's line, the first of `square` at its start.
+    let program = unit.line_program.clone().unwrap();
+    let mut rows = program.rows();
+    let mut lines = Vec::new();
+    while let Some((_, row)) = rows.next_row().unwrap() {
+        if !row.end_sequence() {
+            lines.push((row.address(), row.line().map_or(0, |l| l.get())));
+        }
+    }
+    for line in [4, 5, 9, 10, 11, 13] {
+        assert!(lines.iter().any(|&(_, l)| l == line), "line {line}: {lines:?}");
+    }
+    assert!(lines.contains(&(square, 4)), "{lines:?}");
+}

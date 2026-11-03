@@ -787,7 +787,11 @@ compilador anota junto a cada llamada sin coste al ejecutar.
 
 `--debug`, en `run`, `build` y `test`, compila un build de depuración: sin
 optimizar, con una sonda donde empieza cada línea y lo que el depurador
-necesita para leer los bindings de cada función. Un build sin `--debug` no
+necesita para leer los bindings de cada función. En Linux, el ejecutable
+tiene además su DWARF, que gdb y lldb leen: cada función del programa, con
+su nombre y su código, y la línea de la que viene cada parte de su código,
+una por sentencia, así que paran en `archivo.to:línea`, avanzan por líneas
+y nombran en sus pilas la línea de cada marco. Un build sin `--debug` no
 tiene nada de eso, ni su coste.
 
 `tondo debug` depura un build de depuración: compila con `--debug` un archivo

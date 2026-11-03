@@ -2226,6 +2226,22 @@ impl<'a> Linker<'a> {
             sections.push([name(".strtab") as u64, SHT_STRTAB.0 as u64, 0, 0, offset, strtab.len() as u64, 0, 0, 1, 0]);
             image.put(offset, &strtab);
             offset += strtab.len() as u64;
+            for (section, data) in self.debug_sections() {
+                sections.push([
+                    name(&section) as u64,
+                    SHT_PROGBITS.0 as u64,
+                    0,
+                    0,
+                    offset,
+                    data.len() as u64,
+                    0,
+                    0,
+                    1,
+                    0,
+                ]);
+                image.put(offset, &data);
+                offset += data.len() as u64;
+            }
         }
         let shstrndx = sections.len();
         let shstrtab_name = name(".shstrtab") as u64;
@@ -2264,6 +2280,29 @@ impl<'a> Linker<'a> {
         image.u16(60, sections.len() as u16);
         image.u16(62, shstrndx as u16);
         Ok(())
+    }
+
+    /// The DWARF of a debug build, which the program's object has, with the
+    /// addresses of its functions as laid out.
+    fn debug_sections(&self) -> Vec<(String, Vec<u8>)> {
+        let Some(program) = self.inputs.first() else { return Vec::new() };
+        let mut out = Vec::new();
+        for section in program.file.sections() {
+            let (Ok(name), Ok(data)) = (section.name(), section.data()) else { continue };
+            if !name.starts_with(".debug_") {
+                continue;
+            }
+            let mut data = data.to_vec();
+            for relocation in read_relocations(program, 0, section.index().0 as u32) {
+                let (Some(target), at) = (relocation.target, relocation.offset as usize) else { continue };
+                let value = self.address(target).wrapping_add_signed(relocation.addend);
+                if matches!(relocation.kind, R_X86_64_64 | R_AARCH64_ABS64) && at + 8 <= data.len() {
+                    data[at..at + 8].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+            out.push((name.to_string(), data));
+        }
+        out
     }
 
     /// The symbols of the live sections, locals first: the table, its
