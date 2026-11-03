@@ -552,7 +552,20 @@ impl Pumped {
                     Path::new(program).file_name().map_or(program.into(), |n| n.to_string_lossy())
                 );
                 let configuration = json!({ "type": "tondo", "request": "attach", "name": name, "processId": pid });
-                events.request("startDebugging", json!({ "request": "attach", "configuration": configuration }));
+                // Once it listens, which a program that is not Tondo's never
+                // does.
+                let editor = events.clone();
+                std::thread::spawn(move || {
+                    let socket = observe::directory().join(pid.to_string());
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while !socket.exists() {
+                        if std::time::Instant::now() > deadline {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    editor.request("startDebugging", json!({ "request": "attach", "configuration": configuration }));
+                });
             } else if let Some(id) = value.get("unwatched") {
                 let why = value["why"].as_str().unwrap_or_default();
                 let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
