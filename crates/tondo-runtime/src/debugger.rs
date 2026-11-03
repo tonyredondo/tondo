@@ -1240,7 +1240,10 @@ pub(crate) fn stop_for_good(why: String) -> ! {
             break;
         }
     }
-    let _ = writeln!(std::io::stderr(), "tondo: {why}");
+    // Straight to the descriptor: the program may be writing to its
+    // standard error, whose lock it holds.
+    let message = format!("tondo: {why}\n");
+    unsafe { libc::write(2, message.as_ptr().cast(), message.len()) };
     std::process::exit(70);
 }
 
