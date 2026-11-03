@@ -2948,6 +2948,9 @@ impl Adapter {
             if message["event"] == event {
                 return message["body"].clone();
             }
+            // No more events come: waiting would hang the tests.
+            assert!(message["event"] != "terminated", "the session ended before `{event}`: {:?}", self.events);
+            self.events.push(message);
         }
     }
 
