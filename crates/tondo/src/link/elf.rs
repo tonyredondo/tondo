@@ -684,7 +684,9 @@ impl<'a> Linker<'a> {
             };
             let id = self.intern(symbol_name);
             globals[symbol.index] = Some(id);
-            let weak = symbol.weak;
+            // What the wrappers call is weak, in whichever part of the
+            // runtime the declaration fell.
+            let weak = symbol.weak || symbol.name.starts_with(b"tondo_real_");
             let def = match symbol.section {
                 SymbolSection::Section(section) if !dropped[section.0] => {
                     Def::Section { input: index, section: section.0 as u32, value: symbol.address }
