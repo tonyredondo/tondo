@@ -1336,7 +1336,7 @@ fn debugger_stops_at_a_deadlock() {
     assert_eq!(stop["at"], "deadlocked.to:10 in main");
     assert!(stop["why"].as_str().unwrap().starts_with("panic[P0013]: deadlock"), "{stop}");
     let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
-    let waits = json!({ "task": 2, "at": "deadlocked.to:3 in waiter", "why": "waits", "for": "a value of a channel that holds 0 of 1" });
+    let waits = json!({ "task": 2, "at": "deadlocked.to:3 in waiter", "why": "waits", "for": "a value of a channel that holds 0 of 1", "on": [] });
     assert_eq!(tasks[1], waits);
     assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
     // Going on, the program ends with the deadlock.
