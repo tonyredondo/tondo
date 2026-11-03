@@ -496,6 +496,14 @@ impl<'r> Evaluator<'r> {
     fn place(&mut self, expr: &Expr) -> Option<Result<(String, String), String>> {
         match expr {
             Expr::Name(name) if binding_name(name) => Some(self.text(name).map(|_| (name.clone(), String::new()))),
+            // A viewed binding as it is: its own root.
+            Expr::Method(inner, method, arguments) if method == "raw" && arguments.is_empty() => match &**inner {
+                Expr::Name(name) if binding_name(name) => {
+                    let root = format!("{name}.raw()");
+                    Some(self.text(&root).map(|_| (root.clone(), String::new())))
+                }
+                _ => None,
+            },
             Expr::Field(inner, field) => {
                 let place = self.place(inner)?;
                 Some(place.map(|(root, path)| (root, format!("{path}.{field}"))))

@@ -676,6 +676,11 @@ fn options(wanted: &Value) -> String {
 /// pages.
 fn opened(program: &mut Debuggee, task: u64, index: u64, path: &str, answer: &Value, variable: &mut Value) {
     let parts = answer["children"].as_u64().unwrap_or(0);
+    // A view opens to its value as it is, `raw()`, even without parts.
+    if answer["viewed"] == true {
+        variable["variablesReference"] = json!(program.handle(task, index, path.to_string()));
+        return;
+    }
     if parts == 0 {
         return;
     }

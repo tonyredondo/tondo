@@ -41,6 +41,7 @@ pub(super) struct Shared<'s, 't> {
     types: &'t Types,
     sources: &'t SourceMap,
     display: &'t HashMap<Ty, FnId>,
+    views: &'t HashMap<Ty, (FnId, Ty)>,
     externs: &'t [crate::hir::Extern],
     meta: bool,
     isa: &'s dyn cranelift_codegen::isa::TargetIsa,
@@ -72,6 +73,7 @@ impl<'s, 't> Shared<'s, 't> {
             types: cg.types,
             sources: cg.sources,
             display: cg.display,
+            views: cg.views,
             externs: cg.externs,
             meta: cg.meta,
             isa: cg.module.isa(),
@@ -176,6 +178,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     }
     fn display(&self) -> &'t HashMap<Ty, FnId> {
         self.shared.display
+    }
+    fn views(&self) -> &'t HashMap<Ty, (FnId, Ty)> {
+        self.shared.views
     }
     fn externs(&self) -> &'t [crate::hir::Extern] {
         self.shared.externs
@@ -378,7 +383,10 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
             Asked::ClosureCode(body) => Codegen::closure_code(cg, body).as_u32(),
             Asked::Callback(target, ty, closure) => Codegen::callback(cg, target, ty, closure).as_u32(),
             Asked::DebugFunction(name, described) => {
-                let described = described.into_iter().map(|(name, ty, glue)| (name, ty, real(glue, &ids))).collect();
+                let described = described
+                    .into_iter()
+                    .map(|(name, ty, glue, raw)| (name, ty, real(glue, &ids), raw.map(|raw| real(raw, &ids))))
+                    .collect();
                 let function = Gen::debug_function(cg, name, described);
                 debug_assert_eq!(function as usize, cg.current);
                 0

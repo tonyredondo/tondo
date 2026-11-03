@@ -21,6 +21,10 @@ pub struct Program {
     /// After monomorphization: the user `Display.display` of each type whose
     /// values are displayed inside collections.
     pub display: HashMap<Ty, FnId>,
+    /// After monomorphization: the `debug.View.view` of each type a
+    /// function holds that has one, which the debugger shows its values as
+    /// (toolchain 7.6).
+    pub views: HashMap<Ty, (FnId, Ty)>,
     /// The `extern fn` declarations, by `Callee::Extern` index.
     pub externs: Vec<Extern>,
     /// The `extern fn`s with a body, which C calls by their symbols.

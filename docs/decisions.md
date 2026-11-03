@@ -4543,3 +4543,17 @@ from a stack to it; `memory` counts the objects by where they were made
 and says how each place grew since it last counted, which between two
 stops shows what accumulates. The editor's console takes them as typed,
 with the other commands that only look.
+
+## 2026-11-02 — A type chooses how the debugger shows it
+
+A linked list showed as nested records and a matrix as one long array.
+He chose a trait that gives another value rather than a text: a type
+that implements `debug.View[T]` shows as the `T` that `view` gives, with
+its parts, pages and expressions, and its value as it is stays at hand
+as `raw()`. The compiler finds, for the types a debug build's functions
+hold, the implementations by their target alone, as the view's type is
+what it looks for, and the show glue of such a type calls `view`; a
+second glue shows it raw. A view is the program's code, so it runs on
+the stopped task, which the debugger's thread asks as `call` does, and
+its probes let it run; on the debugger's thread it would wait for
+workers the stop holds.

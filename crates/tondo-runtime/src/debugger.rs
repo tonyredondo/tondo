@@ -32,6 +32,8 @@ struct Binding {
     show: Show,
     /// How `set` writes into it, among the table's layouts.
     layout: usize,
+    /// For a type with a `debug.View`, how it shows as it is.
+    raw: Option<Show>,
 }
 
 /// How `set` writes into a value (`codegen::write_layout`).
@@ -375,6 +377,7 @@ pub unsafe extern "C" fn tondo_rt_debug_returned(site: i64, glue: Show, value: *
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
     let (functions, sites, layouts) = unsafe { parse(raw, 0) };
+    VIEWED.store(functions.iter().any(|f| f.bindings.iter().any(|b| b.raw.is_some())), Ordering::Relaxed);
     let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
     let offsets = functions.iter().map(|_| (AtomicIsize::new(UNKNOWN), AtomicIsize::new(UNKNOWN))).collect();
     let _ = TABLE.set(RwLock::new(Table { functions, sites, layouts, marked, offsets }));
@@ -431,12 +434,17 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
         let parts: Vec<&str> = line.split('\t').collect();
         match parts.as_slice() {
             ["F", name] => functions.push(Function { name: name.to_string(), bindings: Vec::new() }),
-            ["L", name, ty, layout] => {
+            ["L", name, ty, layout, viewed] => {
                 let show = glues[next];
                 next += 1;
+                // A view's binding has the glue that shows it as it is next.
+                let raw = (*viewed == "1").then(|| {
+                    next += 1;
+                    glues[next - 1]
+                });
                 if let Some(function) = functions.last_mut() {
                     let (name, ty, layout) = (name.to_string(), ty.to_string(), base + number(layout));
-                    function.bindings.push(Binding { name, ty, show, layout });
+                    function.bindings.push(Binding { name, ty, show, layout, raw });
                 }
             }
             ["D", layout] => {
@@ -770,9 +778,9 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);
     }
-    // A call the debugger makes runs to its end.
+    // A call the debugger makes runs to its end, as a view's code does.
     let calling = CALLING.load(Ordering::Relaxed);
-    if calling != 0 && calling == super::tasks::current_id() {
+    if (calling != 0 && calling == super::tasks::current_id()) || SHOWING.get() {
         return 0;
     }
     let Some(table) = table() else { return 0 };
@@ -977,6 +985,22 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     // A frozen task stays while the others go on.
     while state.resumed == resumed || frozen(&state) {
         state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
+        // Work the debugger's thread asks of this task, as showing a value
+        // through a view.
+        let work = WORK.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, _)| *t == task);
+        if let Some((_, work)) = work {
+            drop(state);
+            if paused {
+                super::tasks::enter_tondo();
+            }
+            work();
+            if paused {
+                super::tasks::pause_here();
+            }
+            *WORKED.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            WORK_DONE.notify_all();
+            state = self::state();
+        }
         // A call the debugger asks this task to make, on its own stack.
         let asked = CALL.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, ..)| *t == task);
         if let Some((_, code, addresses)) = asked {
@@ -1055,8 +1079,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH_ERRORS.load(Ordering::Relaxed) {
         return;
     }
-    let calling = CALLING.load(Ordering::Relaxed);
-    if calling != 0 && calling == super::tasks::current_id() {
+    if calling_here() {
         return;
     }
     let shown = show(glue, error as usize);
@@ -1076,8 +1099,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
 /// where the program's own code panicked, before it unwinds, the panic's
 /// text as why, and the others at their next probe.
 pub(crate) fn panicked(message: &str) {
-    let calling = CALLING.load(Ordering::Relaxed);
-    if calling != 0 && calling == super::tasks::current_id() {
+    if calling_here() {
         return;
     }
     if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
@@ -1151,10 +1173,11 @@ pub(crate) fn waited(task: u64, waited: std::time::Duration) {
     stop_here(format!("waited {} ms {what}", waited.as_millis()));
 }
 
-/// Whether the running task makes a call the debugger asked for.
+/// Whether the running task makes a call the debugger asked for, or runs
+/// a view's code.
 fn calling_here() -> bool {
     let calling = CALLING.load(Ordering::Relaxed);
-    calling != 0 && calling == super::tasks::current_id()
+    (calling != 0 && calling == super::tasks::current_id()) || SHOWING.get()
 }
 
 /// Stops the running task, from inside the runtime, where the program's
@@ -1445,7 +1468,11 @@ fn resolve(table: &Table, frames: &[Frame], index: usize, path: &str) -> Result<
     let Some((binding, address, _)) = bound.iter().find(|(b, ..)| b.name == root) else {
         return Err(missing(root, &bound));
     };
-    let whole = show(binding.show, *address);
+    // `raw()`: a viewed value as it is.
+    let (whole, rest) = match (rest.strip_prefix(".raw()"), binding.raw) {
+        (Some(after), Some(raw)) => (show(raw, *address), after),
+        _ => (show(binding.show, *address), rest),
+    };
     if rest.is_empty() {
         return Ok(Found { ty: Some(binding.ty.clone()), text: whole });
     }
@@ -1467,9 +1494,17 @@ fn missing(name: &str, bound: &[(&Binding, usize, Option<&str>)]) -> String {
 /// code of a frame can use.
 fn evaluating<T>(table: &Table, frames: &[Frame], index: usize, f: impl FnOnce(&mut Evaluator) -> T) -> T {
     let bound = visible(table, frames, index);
-    let read = |name: &str| match bound.iter().find(|(b, ..)| b.name == name) {
-        Some((binding, address, _)) => Ok(show(binding.show, *address)),
-        None => Err(missing(name, &bound)),
+    let read = |name: &str| {
+        // `x.raw()`: a viewed binding as it is.
+        let (name, raw) = name.strip_suffix(".raw()").map_or((name, false), |n| (n, true));
+        match bound.iter().find(|(b, ..)| b.name == name) {
+            Some((binding, address, _)) if raw => match binding.raw {
+                Some(glue) => Ok(show(glue, *address)),
+                None => Err(format!("`{name}` has no view: it shows as it is")),
+            },
+            Some((binding, address, _)) => Ok(show(binding.show, *address)),
+            None => Err(missing(name, &bound)),
+        }
     };
     f(&mut Evaluator::new(&read))
 }
@@ -1480,12 +1515,68 @@ const SHOWN: usize = 4096;
 
 /// A value as the debugger shows it.
 fn show(glue: Show, address: usize) -> String {
+    // A program with views shows through the program's code, which runs on
+    // a task: the stopped one, when the debugger's thread asks.
+    if VIEWED.load(Ordering::Relaxed) && super::tasks::current().is_null() {
+        let task = state().stopped.as_ref().filter(|s| s.site < WAITING).map(|s| s.task);
+        if let Some(shown) = task.and_then(|task| on_task(task, || shown_here(glue, address))) {
+            return shown;
+        }
+    }
+    shown_here(glue, address)
+}
+
+/// A value as the debugger shows it, on this thread; a view's code that
+/// runs meanwhile passes its probes.
+fn shown_here(glue: Show, address: usize) -> String {
+    let before = SHOWING.replace(true);
     let mut builder = super::Builder::new(0);
     unsafe { glue(&mut builder, address as *const u8) };
     let text = builder.finish();
     let shown = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
     unsafe { super::tondo_rt_str_release(text) };
+    SHOWING.set(before);
     shown
+}
+
+thread_local! {
+    /// This thread shows a value: the code of a view runs to its end.
+    static SHOWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The program has types with a `debug.View`.
+static VIEWED: AtomicBool = AtomicBool::new(false);
+
+/// Work the debugger's thread asks a held task to do on its own stack: the
+/// task and the work; and whether it is done.
+#[allow(clippy::type_complexity)]
+static WORK: Mutex<Option<(u64, Box<dyn FnOnce() + Send>)>> = Mutex::new(None);
+static WORKED: Mutex<bool> = Mutex::new(false);
+static WORK_DONE: Condvar = Condvar::new();
+
+/// Runs `work` on the held task `task`, as the debugger's thread waits:
+/// `None` when the task does not take it within a while.
+fn on_task<T: Send>(task: u64, work: impl FnOnce() -> T + Send) -> Option<T> {
+    let mut out: Option<T> = None;
+    let place = &mut out as *mut Option<T> as usize;
+    let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || unsafe { *(place as *mut Option<T>) = Some(work()) });
+    // The job borrows what this thread holds, which waits until it ran.
+    let job: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(job) };
+    *WORKED.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    *WORK.lock().unwrap_or_else(|e| e.into_inner()) = Some((task, job));
+    RESUMED.notify_all();
+    let worked = WORKED.lock().unwrap_or_else(|e| e.into_inner());
+    let (worked, timeout) = WORK_DONE
+        .wait_timeout_while(worked, std::time::Duration::from_secs(5), |done| !*done)
+        .unwrap_or_else(|e| e.into_inner());
+    if timeout.timed_out() {
+        // Not taken: it goes. Taken: it runs, and this thread waits for it.
+        if WORK.lock().unwrap_or_else(|e| e.into_inner()).take().is_some() {
+            return None;
+        }
+        drop(WORK_DONE.wait_while(worked, |done| !*done));
+    }
+    out
 }
 
 fn clipped(text: &str) -> String {
@@ -1883,7 +1974,22 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 Ok(found) => found,
                 Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
             };
-            children_of(path, &found.text, page)
+            let answer = children_of(path, &found.text, page);
+            // A viewed binding's value as it is comes first, as `raw()`.
+            let bound = visible(table, &frames, index);
+            let viewed = bound.iter().find(|(b, ..)| b.name == path && b.raw.is_some());
+            match viewed.and_then(|(binding, address, _)| Some(show(binding.raw?, *address))) {
+                Some(raw) => {
+                    let item = format!(
+                        "{{\"name\":\"raw()\",\"path\":{},{}}}",
+                        quoted(&format!("{path}.raw()")),
+                        described(&raw)
+                    );
+                    let more = if answer.starts_with("{\"children\":[]") { "" } else { "," };
+                    answer.replacen("{\"children\":[", &format!("{{\"children\":[{item}{more}"), 1)
+                }
+                None => answer,
+            }
         }
         // The contexts of the task looked at, and which `with` set each
         // field (language 11.16).
@@ -2549,7 +2655,11 @@ fn locals_of(table: &Table, frames: &[Frame], index: usize, task: u64) -> Vec<St
         .into_iter()
         .zip(&shown)
         .map(|((binding, _, from), (_, whole))| {
-            let from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
+            let mut from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
+            // A view opens to its value as it is, too.
+            if binding.raw.is_some() {
+                from.push_str(",\"viewed\":true");
+            }
             let was = before.as_ref().and_then(|b| b.iter().find(|(n, _)| *n == binding.name)).map(|(_, t)| t);
             let changed = if was.is_some_and(|was| was != whole) { ",\"changed\":true" } else { "" };
             format!(

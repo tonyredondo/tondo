@@ -11,7 +11,7 @@ use crate::hir::{
 };
 use crate::source::Span;
 use crate::types::{CursorKind, SOME, Ty, TyKind, Types};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Instantiation depth beyond which a generic function is considered to
 /// call itself with ever larger type arguments.
@@ -80,19 +80,18 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
                 .collect(),
         })
         .collect();
-    loop {
-        if let Some((id, args, instance)) = mono.queue.pop_front() {
-            let generic = &functions[id.0 as usize];
-            let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
-            let mut function = generic.clone();
-            mono.function(&mut function, &map);
-            mono.out[instance.0 as usize] = Some(function);
-        } else if let Some((mut function, instance)) = mono.made.pop() {
-            mono.function(&mut function, &HashMap::new());
-            mono.out[instance.0 as usize] = Some(function);
-        } else {
-            break;
+    mono.drain();
+    // The views the debugger shows the values of a type as, for every type
+    // a function holds, when the program implements `debug.View`.
+    let view = traits.iter().position(|t| t.name == "debug.View").map(|i| TraitId(i as u32));
+    let mut views = HashMap::new();
+    if let Some(view) = view.filter(|&view| impls.iter().any(|i| i.trait_id == view)) {
+        let held: Vec<Ty> = mono.out.iter().flatten().flat_map(|f| f.locals.iter().map(|l| l.ty)).collect();
+        let mut seen = HashSet::new();
+        for ty in held {
+            mono.collect_view(view, ty, &mut seen, &mut views);
         }
+        mono.drain();
     }
     if let Some(name) = mono.runaway.take().or_else(|| mono.types.runaway.take()) {
         let message = format!("`{name}` is instantiated with ever larger type arguments and never terminates");
@@ -117,6 +116,11 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         return None;
     }
     let display = std::mem::take(&mut mono.display);
+    // Each view with the type it gives.
+    let views: HashMap<Ty, (FnId, Ty)> = views
+        .into_iter()
+        .map(|(ty, view)| (ty, (view, mono.out[view.0 as usize].as_ref().expect("a view's instance").result)))
+        .collect();
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
     Some(Program {
         types,
@@ -125,6 +129,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         traits,
         impls,
         display,
+        views,
         externs,
         exports,
         c_api,
@@ -796,6 +801,55 @@ impl Mono<'_> {
                 }
             }
             _ => unreachable!("`{name}` is not of the arithmetic"),
+        }
+    }
+
+    /// Makes the instances the queue asks for, until none is left.
+    fn drain(&mut self) {
+        loop {
+            if let Some((id, args, instance)) = self.queue.pop_front() {
+                let generic = &self.functions[id.0 as usize];
+                let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
+                let mut function = generic.clone();
+                self.function(&mut function, &map);
+                self.out[instance.0 as usize] = Some(function);
+            } else if let Some((mut function, instance)) = self.made.pop() {
+                self.function(&mut function, &HashMap::new());
+                self.out[instance.0 as usize] = Some(function);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Records the `debug.View.view` of `ty` and of the types inside it, for
+    /// those that implement it.
+    fn collect_view(&mut self, view: TraitId, ty: Ty, seen: &mut HashSet<Ty>, views: &mut HashMap<Ty, FnId>) {
+        if !seen.insert(ty) {
+            return;
+        }
+        if let TyKind::Adt(_) = self.types.kind(ty) {
+            for implementation in self.impls.iter().filter(|i| i.trait_id == view) {
+                let mut map = HashMap::new();
+                if !self.types.matches(implementation.target, ty, &implementation.generics, &mut map) {
+                    continue;
+                }
+                if let Some(id) = implementation.methods.first().copied().flatten() {
+                    let binders: Vec<Ty> = implementation.generics.iter().map(|g| map[g]).collect();
+                    let instance = self.instance(id, binders);
+                    views.insert(ty, instance);
+                }
+                break;
+            }
+        }
+        let parts = match self.types.kind(ty).clone() {
+            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![t],
+            TyKind::Map(k, v) | TyKind::Result(k, v) => vec![k, v],
+            TyKind::Union(members) => members,
+            _ => self.types.components(ty).unwrap_or_default(),
+        };
+        for part in parts {
+            self.collect_view(view, part, seen, views);
         }
     }
 

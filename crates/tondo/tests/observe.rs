@@ -1821,6 +1821,67 @@ fn debugger_tells_what_holds_memory() {
     assert!(lines.iter().any(|l| l["error"].as_str().is_some_and(|e| e.contains("nothing"))));
 }
 
+const VIEWED: &str = r#"import std.console
+import std.debug
+
+type Stack = { top: Int?, below: Array[Int] }
+
+impl debug.View[Array[Int]] for Stack {
+    fn view(self): Array[Int] {
+        match self.top {
+            some(top) => self.below.concat([top])
+            none => self.below
+        }
+    }
+}
+
+type Holder = { name: String, stack: Stack }
+
+fn main() {
+    let stack = Stack { top: some(3), below: [1, 2] }
+    let holder = Holder { name: "h", stack: stack }
+    console.println("{stack.below.length()} {holder.name}")
+}
+"#;
+
+/// A type with a `debug.View` shows as its view, also inside another
+/// value, and its value as it is is at hand as `raw()`.
+#[test]
+fn debugger_shows_views() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-views");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("viewed.to"), VIEWED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "viewed.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script =
+        "break viewed.to:20\ncontinue\nlocals\nprint stack[2]\nprint stack.raw().top\nchildren stack\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let locals = lines.iter().find_map(|l| l["locals"].as_array()).unwrap();
+    assert_eq!((&locals[0]["value"], &locals[0]["viewed"]), (&json!("[1, 2, 3]"), &json!(true)));
+    assert_eq!(locals[1]["value"], "Holder { name: \"h\", stack: [1, 2, 3] }");
+    let printed: Vec<(&str, &str)> = lines
+        .iter()
+        .filter(|l| l["name"].is_string())
+        .map(|l| (l["name"].as_str().unwrap(), l["value"].as_str().unwrap()))
+        .collect();
+    assert_eq!(printed, [("stack[2]", "3"), ("stack.raw().top", "some(3)")]);
+    let parts = lines.iter().find_map(|l| l["children"].as_array()).unwrap();
+    assert_eq!(
+        (&parts[0]["path"], &parts[0]["value"]),
+        (&json!("stack.raw()"), &json!("Stack { top: some(3), below: [1, 2] }"))
+    );
+    assert_eq!(parts.len(), 4);
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

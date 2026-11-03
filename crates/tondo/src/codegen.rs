@@ -792,8 +792,11 @@ enum Glue {
     Test,
     /// Reports the references a value holds to the cycle collector.
     Visit,
-    /// Appends a value as a debugger shows it to a string builder.
+    /// Appends a value as a debugger shows it to a string builder: as its
+    /// `debug.View` when its type has one.
     Show,
+    /// The same, without the view: the value as it is (`raw()`).
+    ShowRaw,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -879,6 +882,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         identities: HashMap::new(),
         loans: bodies.iter().map(|body| body.loans.clone()).collect(),
         display: &program.display,
+        views: &program.views,
         fn_values: HashMap::new(),
         pending_thunks: Vec::new(),
         externs: &program.externs,
@@ -1090,6 +1094,7 @@ struct Codegen<'a> {
     loans: Vec<Vec<bool>>,
     /// The user `Display.display` of types displayed inside collections.
     display: &'a HashMap<Ty, FnId>,
+    views: &'a HashMap<Ty, (FnId, Ty)>,
     /// The static `fn(...)` object of each named function used as a value,
     /// and its thunk with the uniform calling convention.
     fn_values: HashMap<FnId, (DataId, FuncId)>,
@@ -1319,7 +1324,9 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
 
 /// A binding a debug build's probe shows: its name, its type and the glue
 /// that shows it.
-type DebugBinding = (String, Ty, FuncId);
+/// A binding the debugger shows: its name, type, how it shows, and for a
+/// type with a view, how it shows as it is.
+type DebugBinding = (String, Ty, FuncId, Option<FuncId>);
 
 /// A compiled function for stack traces: its name, size and, for each
 /// call, the offset it returns to and where its source starts; and where
@@ -1633,7 +1640,7 @@ impl<'t> Shapes<'t> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.make_signature();
         signature.params.push(AbiParam::new(POINTER));
-        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show) {
+        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show | Glue::ShowRaw) {
             signature.params.push(AbiParam::new(POINTER));
         }
         if kind == Glue::Equal {
@@ -1713,6 +1720,9 @@ trait Gen<'t> {
     fn types(&self) -> &'t Types;
     fn sources(&self) -> &'t SourceMap;
     fn display(&self) -> &'t HashMap<Ty, FnId>;
+    /// The `debug.View.view` of each type that has one, and the type of
+    /// the view.
+    fn views(&self) -> &'t HashMap<Ty, (FnId, Ty)>;
     fn externs(&self) -> &'t [crate::hir::Extern];
     fn meta(&self) -> bool;
     fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa;
@@ -1827,6 +1837,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn display(&self) -> &'t HashMap<Ty, FnId> {
         self.display
+    }
+    fn views(&self) -> &'t HashMap<Ty, (FnId, Ty)> {
+        self.views
     }
     fn externs(&self) -> &'t [crate::hir::Extern] {
         self.externs
@@ -2643,10 +2656,12 @@ impl Codegen<'_> {
         let (mut layouts, mut known) = (Vec::new(), HashMap::new());
         for (name, bindings) in self.debug_functions.clone() {
             text.push_str(&format!("F\t{name}\n"));
-            for (binding, ty, glue) in bindings {
+            for (binding, ty, glue, raw) in bindings {
                 let layout = self.write_layout(ty, &mut layouts, &mut known);
-                text.push_str(&format!("L\t{binding}\t{}\t{layout}\n", self.types.display(ty)));
+                let viewed = u8::from(raw.is_some());
+                text.push_str(&format!("L\t{binding}\t{}\t{layout}\t{viewed}\n", self.types.display(ty)));
                 glues.push(glue);
+                glues.extend(raw);
             }
         }
         for layout in layouts {
@@ -4133,7 +4148,38 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
             e.append_display(params[0], ty, value);
             e.fb.ins().return_(&[]);
         }
-        (Glue::Show, _) => {
+        // A type the program views otherwise shows as its view.
+        (Glue::Show, _) if e.cg.views().contains_key(&ty) => {
+            let (view, shown) = e.cg.views()[&ty];
+            let value = e.value_at(params[1], ty);
+            let args: Vec<ir::Value> = match value {
+                Val::Scalar(v) | Val::Memory(v) => vec![v],
+                Val::Zero => Vec::new(),
+            };
+            let size = e.cg.layout(shown).size.max(8);
+            let slot = e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+            let at = e.fb.ins().stack_addr(POINTER, slot, 0);
+            let viewed = match e.cg.class(shown) {
+                Class::Memory => {
+                    call_body(e.cg, &mut e.fb, view, &[&[at][..], &args].concat());
+                    Val::Memory(at)
+                }
+                Class::Scalar(_) => {
+                    let call = call_body(e.cg, &mut e.fb, view, &args);
+                    let result = e.fb.inst_results(call)[0];
+                    e.fb.ins().store(flags(), result, at, 0);
+                    Val::Scalar(result)
+                }
+                Class::Zero => {
+                    call_body(e.cg, &mut e.fb, view, &args);
+                    Val::Zero
+                }
+            };
+            e.call_glue(Glue::Show, shown, &[params[0], at]);
+            e.refcount(shown, viewed, true);
+            e.fb.ins().return_(&[]);
+        }
+        (Glue::Show | Glue::ShowRaw, _) => {
             let value = e.value_at(params[1], ty);
             e.append_show(params[0], ty, value, params[1]);
             e.fb.ins().return_(&[]);
@@ -4554,7 +4600,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
                 shown.push((local, copy));
                 let ty = body.locals[index];
-                described.push((name.clone(), ty, cg.glue(Glue::Show, ty)));
+                let raw = cg.views().contains_key(&ty).then(|| cg.glue(Glue::ShowRaw, ty));
+                described.push((name.clone(), ty, cg.glue(Glue::Show, ty), raw));
             }
             // What a closure captured is a binding of its body too, read
             // from its environment; but not in one that gives its captures
@@ -4571,7 +4618,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         continue;
                     }
                     captured.push((slot.offset, slot.boxed));
-                    described.push((field.name.clone(), slot.ty, cg.glue(Glue::Show, slot.ty)));
+                    let raw = cg.views().contains_key(&slot.ty).then(|| cg.glue(Glue::ShowRaw, slot.ty));
+                    described.push((field.name.clone(), slot.ty, cg.glue(Glue::Show, slot.ty), raw));
                 }
             }
             let count = shown.len() + captured.len();

@@ -7617,3 +7617,36 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 
 Hasta cerrar esta lista, el documento puede ser normativo para las reglas base
 sin que exista una release pública completa de STD-0.1.
+
+### 14.42 `std.debug`
+
+`std.debug` deja que un tipo decida cómo lo muestra el depurador (7.6 del
+toolchain): un tipo que implementa `debug.View[T]` se muestra como el valor
+`T` que da `view`, con sus partes, sus páginas y sus expresiones, también
+dentro de otros valores, y el valor tal cual queda a mano como `raw()`, en
+`print x.raw()` y entre sus partes.
+
+~~~tondo
+import std.debug
+
+type Stack = { top: Int?, below: Array[Int] }
+
+impl debug.View[Array[Int]] for Stack {
+    fn view(self): Array[Int] {
+        match self.top {
+            some(top) => self.below.concat([top])
+            none => self.below
+        }
+    }
+}
+~~~
+
+```tondo
+pub trait View[T] {
+    fn view(self): T
+}
+```
+
+`view` corre en la tarea parada mientras el programa está quieto, y sus
+líneas no paran: solo debe leer. Un pánico en ella termina el programa,
+como cualquier pánico. Un build sin `--debug` no la llama.

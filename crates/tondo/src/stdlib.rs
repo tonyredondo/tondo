@@ -26,6 +26,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("panics", include_str!("../std/panics.to")),
     ("math", include_str!("../std/math.to")),
     ("meta", include_str!("../std/meta.to")),
+    ("debug", include_str!("../std/debug.to")),
     ("encoding", include_str!("../std/encoding.to")),
     ("hash", include_str!("../std/hash.to")),
     ("crypto", include_str!("../std/crypto.to")),

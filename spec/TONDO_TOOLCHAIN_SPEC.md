@@ -900,7 +900,8 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   funciones en que está escrita cuyos marcos siguen en su pila, cada uno con
   la función de la que es (`from`): las de un closure, la que lo hizo; las de
   un test, sus suites. Así se ve todo lo que el código de ese bloque puede
-  usar. Un `Ref` y una celda de `std.sync` muestran lo que tienen como un
+  usar. Un tipo que implementa `debug.View` (14.42 de la librería estándar)
+  se muestra como su vista, y su valor tal cual es `x.raw()`. Un `Ref` y una celda de `std.sync` muestran lo que tienen como un
   record con `value`, que es lo que lee el programa: `Ref { value: 3 }`.
   `print <path>` muestra uno, o una parte suya por su ruta: `user.name`,
   `items[2]`, `scores["x"]`, `pair.0`. Los textos van entre comillas, los
