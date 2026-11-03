@@ -14,6 +14,8 @@ use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::unix::pipe;
 
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
@@ -248,7 +250,7 @@ struct Running {
     /// The process group of its own, `group()`'s: its first stage's id.
     group: Option<u32>,
     streams: [Option<Held>; 3],
-    workers: Vec<JoinHandle<()>>,
+    workers: Vec<Worker>,
     captured: Arc<Mutex<Captured>>,
     statuses: Option<Vec<(i64, bool)>>,
     detached: bool,
@@ -291,28 +293,108 @@ impl Sink {
     }
 }
 
+/// What drains or feeds a child's pipe: a thread, or in a recorded run, and
+/// its replay, a task of the runtime its worker drives, whose calls the
+/// recording has.
+enum Worker {
+    Thread(JoinHandle<()>),
+    Task(tokio::task::JoinHandle<()>),
+}
+
+impl Worker {
+    /// Waits for it to end, or until `until`.
+    fn join(self, until: Option<std::time::Instant>) {
+        match self {
+            Worker::Thread(handle) => {
+                if let Some(until) = until {
+                    while !handle.is_finished() && std::time::Instant::now() < until {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    if !handle.is_finished() {
+                        return;
+                    }
+                }
+                let _ = handle.join();
+            }
+            Worker::Task(handle) => {
+                super::http::wait(async move {
+                    match until {
+                        Some(until) => drop(tokio::time::timeout_at(until.into(), handle).await),
+                        None => drop(handle.await),
+                    }
+                });
+            }
+        }
+    }
+}
+
+/// In a recorded run, and its replay, the runtime its worker drives, where
+/// the work around children goes.
+fn recorded() -> Option<&'static tokio::runtime::Runtime> {
+    super::replay::on().then(super::http::runtime)
+}
+
+/// A child's pipe as the recorded run's runtime reads it.
+fn receiver(runtime: &tokio::runtime::Runtime, pipe: std::io::PipeReader) -> std::io::Result<pipe::Receiver> {
+    let _entered = runtime.enter();
+    pipe::Receiver::from_owned_fd(pipe.into())
+}
+
 /// Copies what a child writes into the captured output and `combined`.
-fn collect(mut pipe: std::io::PipeReader, captured: Arc<Mutex<Captured>>, stage: Option<usize>) -> JoinHandle<()> {
-    super::tasks::spawn_thread(None, move || {
+fn collect(mut pipe: std::io::PipeReader, captured: Arc<Mutex<Captured>>, stage: Option<usize>) -> Worker {
+    let keep = move |chunk: &[u8]| {
+        let mut captured = captured.lock().unwrap_or_else(|e| e.into_inner());
+        match stage {
+            None => captured.stdout.extend_from_slice(chunk),
+            Some(stage) => captured.stderr[stage].extend_from_slice(chunk),
+        }
+        captured.combined.extend_from_slice(chunk);
+    };
+    if let Some(runtime) = recorded() {
+        let receiver = receiver(runtime, pipe);
+        return Worker::Task(runtime.spawn(async move {
+            let Ok(mut receiver) = receiver else { return };
+            let mut buffer = vec![0; 64 * 1024];
+            while let Ok(count) = receiver.read(&mut buffer).await
+                && count > 0
+            {
+                keep(&buffer[..count]);
+            }
+        }));
+    }
+    Worker::Thread(super::tasks::spawn_thread(None, move || {
         let mut buffer = vec![0; 64 * 1024];
         while let Ok(count) = pipe.read(&mut buffer) {
             if count == 0 {
                 break;
             }
-            let mut captured = captured.lock().unwrap_or_else(|e| e.into_inner());
-            let chunk = &buffer[..count];
-            match stage {
-                None => captured.stdout.extend_from_slice(chunk),
-                Some(stage) => captured.stderr[stage].extend_from_slice(chunk),
-            }
-            captured.combined.extend_from_slice(chunk);
+            keep(&buffer[..count]);
         }
-    })
+    }))
 }
 
 /// Copies what a child writes into a stream of `std.io`.
-fn forward(mut pipe: std::io::PipeReader, target: Held) -> JoinHandle<()> {
-    super::tasks::spawn_thread(None, move || {
+fn forward(mut pipe: std::io::PipeReader, target: Held) -> Worker {
+    if let Some(runtime) = recorded() {
+        let receiver = receiver(runtime, pipe);
+        return Worker::Task(runtime.spawn(async move {
+            let target = Arc::new(target);
+            if let Ok(mut receiver) = receiver {
+                let mut buffer = vec![0; 64 * 1024];
+                while let Ok(count) = receiver.read(&mut buffer).await
+                    && count > 0
+                {
+                    let (target, chunk) = (target.clone(), buffer[..count].to_vec());
+                    let written = super::http::blocking(move || run(target.0, move |s| s.write(&chunk))).await;
+                    if !matches!(written, Ok(Ok(()))) {
+                        break;
+                    }
+                }
+            }
+            let _ = super::http::blocking(move || run(target.0, |s| s.flush())).await;
+        }));
+    }
+    Worker::Thread(super::tasks::spawn_thread(None, move || {
         let target = target;
         let mut buffer = vec![0; 64 * 1024];
         while let Ok(count) = pipe.read(&mut buffer) {
@@ -325,12 +407,35 @@ fn forward(mut pipe: std::io::PipeReader, target: Held) -> JoinHandle<()> {
             }
         }
         let _ = run(target.0, |s| s.flush());
-    })
+    }))
 }
 
 /// Feeds a child's input from bytes or a stream of `std.io`.
-fn feed(mut pipe: std::io::PipeWriter, input: Input) -> JoinHandle<()> {
-    super::tasks::spawn_thread(None, move || match input {
+fn feed(mut pipe: std::io::PipeWriter, input: Input) -> Worker {
+    if let Some(runtime) = recorded() {
+        let sender = {
+            let _entered = runtime.enter();
+            pipe::Sender::from_owned_fd(pipe.into())
+        };
+        return Worker::Task(runtime.spawn(async move {
+            let Ok(mut sender) = sender else { return };
+            match input {
+                Input::Bytes(bytes) => drop(sender.write_all(&bytes).await),
+                Input::Reader(source) => {
+                    let source = Arc::new(source);
+                    loop {
+                        let reading = source.clone();
+                        match super::http::blocking(move || run(reading.0, |s| s.read(64 * 1024))).await {
+                            Ok(Ok(Some(chunk))) if sender.write_all(&chunk).await.is_ok() => {}
+                            _ => break,
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }));
+    }
+    Worker::Thread(super::tasks::spawn_thread(None, move || match input {
         Input::Bytes(bytes) => {
             let _ = pipe.write_all(&bytes);
         }
@@ -343,7 +448,7 @@ fn feed(mut pipe: std::io::PipeWriter, input: Input) -> JoinHandle<()> {
             }
         }
         _ => {}
-    })
+    }))
 }
 
 /// Where output set to `Inherit` goes: the console's stream when the
@@ -523,12 +628,21 @@ fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>
         }),
     }
     let (pids, reaped) = (pids.to_vec(), reaped.clone());
-    super::tasks::spawn_thread(None, move || {
-        std::thread::sleep(grace);
+    let late = move || {
         if !reaped.load(Ordering::Acquire) {
             kill_all(&pids, group);
         }
-    });
+    };
+    match recorded() {
+        Some(runtime) => drop(runtime.spawn(async move {
+            tokio::time::sleep(grace).await;
+            late();
+        })),
+        None => drop(super::tasks::spawn_thread(None, move || {
+            std::thread::sleep(grace);
+            late();
+        })),
+    }
 }
 
 /// Ends the processes, and every process of their group when they have
@@ -561,7 +675,7 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
     let statuses: Vec<(i64, bool)> = running
         .children
         .iter_mut()
-        .map(|child| match child.wait() {
+        .map(|child| match exited(child) {
             Ok(status) => match (status.code(), status.signal()) {
                 (Some(code), _) => (code as i64, code == 0),
                 (None, Some(signal)) => (128 + signal as i64, false),
@@ -575,23 +689,31 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
     // that long to finish it.
     let until = running.grace.map(|grace| std::time::Instant::now() + grace);
     for worker in running.workers.drain(..) {
-        match until {
-            Some(until) => {
-                while !worker.is_finished() && std::time::Instant::now() < until {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                if worker.is_finished() {
-                    let _ = worker.join();
-                }
-            }
-            None => {
-                let _ = worker.join();
-            }
-        }
+        worker.join(until);
     }
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !running.pids.contains(pid));
     running.statuses = Some(statuses.clone());
     statuses
+}
+
+/// Waits for a child to end. In a recorded run, the worker drives its
+/// runtime meanwhile, which polls the child's pidfd: what drains the
+/// child's pipes runs there.
+fn exited(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    if recorded().is_some() {
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as libc::pid_t, 0) };
+        if fd >= 0 {
+            let fd = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) };
+            super::http::wait(async move {
+                let interest = tokio::io::Interest::READABLE;
+                // The pidfd, open until the wait ends.
+                if let Ok(fd) = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, interest) } {
+                    let _ = fd.readable().await;
+                }
+            });
+        }
+    }
+    child.wait()
 }
 
 /// The status of the whole plan: success when every stage succeeds, and
@@ -872,16 +994,37 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
         reaped: running.reaped.clone(),
     };
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !gone.pids.contains(pid));
-    super::tasks::spawn_thread(None, move || {
-        // The program's side of a piped input closes first.
-        drop(std::mem::take(&mut gone.streams));
-        for child in &mut gone.children {
-            let _ = child.wait();
+    // The program's side of a piped input closes first.
+    drop(std::mem::take(&mut gone.streams));
+    match recorded() {
+        // A recorded run waits for each child as it ends, on its worker.
+        Some(runtime) => {
+            for child in std::mem::take(&mut gone.children) {
+                let pid = child.id();
+                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+                let fd = (fd >= 0).then(|| unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd as i32) });
+                let mut child = child;
+                let _entered = runtime.enter();
+                let ready = fd.map(|fd| unsafe {
+                    tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE)
+                });
+                drop(runtime.spawn(async move {
+                    if let Some(Ok(ready)) = &ready {
+                        let _ = ready.readable().await;
+                    }
+                    let _ = child.wait();
+                }));
+            }
         }
-        for worker in gone.workers.drain(..) {
-            let _ = worker.join();
-        }
-    });
+        None => drop(super::tasks::spawn_thread(None, move || {
+            for child in &mut gone.children {
+                let _ = child.wait();
+            }
+            for worker in gone.workers.drain(..) {
+                worker.join(None);
+            }
+        })),
+    }
 }
 
 /// Releases a `Process`: the last reference closes its input and waits for

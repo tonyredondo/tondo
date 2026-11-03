@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 const WAKE: mio::Token = mio::Token(usize::MAX);
 
 pub(crate) struct Poller {
+    fd: std::os::fd::RawFd,
     poll: Mutex<Polling>,
     registry: mio::Registry,
     waker: mio::Waker,
@@ -43,20 +44,31 @@ pub(crate) fn poller() -> Option<&'static Poller> {
     POLLER.get()?.as_ref()
 }
 
+/// The poller, started now if it was not.
+pub(crate) fn started() -> Option<&'static Poller> {
+    start()
+}
+
 fn start() -> Option<&'static Poller> {
     POLLER
         .get_or_init(|| {
             let poll = mio::Poll::new().ok()?;
+            let fd = std::os::fd::AsRawFd::as_raw_fd(&poll);
             let registry = poll.registry().try_clone().ok()?;
             let waker = mio::Waker::new(poll.registry(), WAKE).ok()?;
             let sources = Mutex::new(Slots::default());
             let polling = Polling { poll, events: mio::Events::with_capacity(256) };
-            Some(Poller { poll: Mutex::new(polling), registry, waker, sources })
+            Some(Poller { fd, poll: Mutex::new(polling), registry, waker, sources })
         })
         .as_ref()
 }
 
 impl Poller {
+    /// What waits for its events, which another poll may wait for too.
+    pub(crate) fn fd(&self) -> std::os::fd::RawFd {
+        self.fd
+    }
+
     /// Ends the wait of the worker in `poll`, if any.
     pub(crate) fn wake(&self) {
         let _ = self.waker.wake();

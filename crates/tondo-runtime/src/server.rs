@@ -4,7 +4,7 @@
 //! Files go out with ranges, so a download can resume, and uploads go to
 //! disk as they arrive.
 
-use super::http::{Failure, Source, bytes_of, runtime, socket, stream_of, string_array, strings, text, wait};
+use super::http::{Failure, Source, blocking, bytes_of, runtime, socket, stream_of, string_array, strings, text, wait};
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, str_new};
 use crate::io::{Host, Mode, StreamObject, byte_array};
@@ -15,7 +15,6 @@ use hyper::body::{Frame, Incoming};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, watch};
 
 type Body = UnsyncBoxBody<Bytes, std::io::Error>;
@@ -1180,12 +1179,16 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     let opened = {
         let path = path.clone();
         wait(async move {
-            let file = tokio::fs::File::open(&path).await?;
-            let metadata = file.metadata().await?;
-            if metadata.is_dir() {
-                return Err(std::io::Error::other("it is a directory"));
-            }
-            Ok((file, metadata))
+            let (file, metadata) = blocking(move || -> std::io::Result<_> {
+                let file = std::fs::File::open(&path)?;
+                let metadata = file.metadata()?;
+                if metadata.is_dir() {
+                    return Err(std::io::Error::other("it is a directory"));
+                }
+                Ok((file, metadata))
+            })
+            .await??;
+            Ok::<_, std::io::Error>((Disk(Some(file)), metadata))
         })
     };
     let (file, metadata) = match opened {
@@ -1211,17 +1214,24 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
             if left == 0 {
                 return None;
             }
-            if at > 0
-                && let Err(error) = file.seek(std::io::SeekFrom::Start(at)).await
-            {
-                return Some((Err(error), (file, 0, 0)));
-            }
-            let mut buffer = vec![0; left.min(64 * 1024) as usize];
-            match file.read(&mut buffer).await {
-                Ok(0) => None,
-                Ok(count) => {
+            let size = left.min(64 * 1024) as usize;
+            let read = file
+                .run(move |file| {
+                    use std::io::Seek;
+                    if at > 0 {
+                        file.seek(std::io::SeekFrom::Start(at))?;
+                    }
+                    let mut buffer = vec![0; size];
+                    let count = std::io::Read::read(file, &mut buffer)?;
                     buffer.truncate(count);
-                    Some((Ok(Frame::data(Bytes::from(buffer))), (file, 0, left - count as u64)))
+                    Ok(buffer)
+                })
+                .await;
+            match read {
+                Ok(buffer) if buffer.is_empty() => None,
+                Ok(buffer) => {
+                    let count = buffer.len() as u64;
+                    Some((Ok(Frame::data(Bytes::from(buffer))), (file, 0, left - count)))
                 }
                 Err(error) => Some((Err(error), (file, 0, 0))),
             }
@@ -1229,6 +1239,26 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
         BodyExt::boxed_unsync(StreamBody::new(chunks))
     });
     str_new(b"")
+}
+
+/// A file the server reads or writes, each operation done where work that
+/// blocks is (`http::blocking`).
+struct Disk(Option<std::fs::File>);
+
+impl Disk {
+    async fn run<T: Send + 'static>(
+        &mut self,
+        op: impl FnOnce(&mut std::fs::File) -> std::io::Result<T> + Send + 'static,
+    ) -> std::io::Result<T> {
+        let mut file = self.0.take().ok_or_else(|| std::io::Error::other("the file failed before"))?;
+        let (file, result) = blocking(move || {
+            let result = op(&mut file);
+            (file, result)
+        })
+        .await?;
+        self.0 = Some(file);
+        result
+    }
 }
 
 /// Responds with an embedded file (standard library 14.27) as with a file
@@ -1322,17 +1352,25 @@ pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path
     let r = request(object);
     let (path, body, exceeded) = (text(path), r.take_body(), r.exceeded.clone());
     let saved = wait(async move {
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let offset = u64::try_from(offset).unwrap_or(0);
-        let mut file = tokio::fs::OpenOptions::new().create(true).write(true).truncate(offset == 0).open(&path).await?;
-        let length = file.metadata().await?.len();
-        if offset > length {
-            return Err(std::io::Error::other(format!("the file has {length} bytes, fewer than the offset {offset}")));
-        }
-        file.set_len(offset).await?;
-        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        let opened = blocking(move || -> std::io::Result<_> {
+            use std::io::Seek;
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut file = std::fs::OpenOptions::new().create(true).write(true).truncate(offset == 0).open(&path)?;
+            let length = file.metadata()?.len();
+            if offset > length {
+                return Err(std::io::Error::other(format!(
+                    "the file has {length} bytes, fewer than the offset {offset}"
+                )));
+            }
+            file.set_len(offset)?;
+            file.seek(std::io::SeekFrom::Start(offset))?;
+            Ok(file)
+        })
+        .await??;
+        let mut file = Disk(Some(opened));
         if let Some(mut body) = body {
             while let Some(frame) = body.frame().await {
                 let frame = frame.map_err(|error| {
@@ -1340,12 +1378,11 @@ pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path
                     std::io::Error::other(error)
                 })?;
                 if let Ok(data) = frame.into_data() {
-                    file.write_all(&data).await?;
+                    file.run(move |file| std::io::Write::write_all(file, &data)).await?;
                 }
             }
         }
-        file.flush().await?;
-        Ok(file.metadata().await?.len())
+        file.run(|file| Ok(file.metadata()?.len())).await
     });
     match saved {
         Some(Ok(length)) => length as i64,
@@ -1499,18 +1536,20 @@ pub unsafe extern "C" fn tondo_rt_http_upload_save(object: *mut NativeObject, pa
     let Some(u) = native::get::<Upload>(object) else { return -1 };
     let (path, field) = (text(path), lock(&u.field).take());
     let saved = wait(async move {
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let mut file = tokio::fs::File::create(&path).await?;
-        let mut total = 0u64;
+        let created = blocking(move || -> std::io::Result<_> {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::File::create(&path)
+        })
+        .await??;
+        let (mut file, mut total) = (Disk(Some(created)), 0u64);
         if let Some(mut field) = field {
             while let Some(chunk) = field.chunk().await.map_err(std::io::Error::other)? {
-                file.write_all(&chunk).await?;
                 total += chunk.len() as u64;
+                file.run(move |file| std::io::Write::write_all(file, &chunk)).await?;
             }
         }
-        file.flush().await?;
         Ok::<u64, std::io::Error>(total)
     });
     match saved {

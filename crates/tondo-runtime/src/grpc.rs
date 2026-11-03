@@ -281,8 +281,8 @@ impl Channel {
     async fn lookup(&self) -> Vec<Result<Vec<SocketAddr>, String>> {
         let mut found = Vec::new();
         for (host, port) in &self.hosts {
-            found.push(match tokio::net::lookup_host((host.as_str(), *port)).await {
-                Ok(addresses) => Ok(addresses.collect()),
+            found.push(match crate::net::addresses(host, *port).await {
+                Ok(addresses) => Ok(addresses),
                 Err(error) => Err(format!("cannot resolve {host}: {error}")),
             });
         }

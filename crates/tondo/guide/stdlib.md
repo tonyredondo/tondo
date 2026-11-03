@@ -730,8 +730,10 @@ a failure that happened once. There `back`, `reverse` and `why total` go back
 to the whole program as it was: a line back, the last breakpoint's stop, or
 the line that gave `total` its value, in whichever function or task changed
 it, as a method with `mut self` or another task through a `sync.Mutex`. The
-network and processes are not recorded: the replay stops where the program
-starts them.
+network and processes are recorded too; a child does not run again in the
+replay, so what it wrote straight to the terminal does not show. A replay
+stops where the program starts `fs.watch` or the profiler, whose threads
+are not recorded.
 
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames

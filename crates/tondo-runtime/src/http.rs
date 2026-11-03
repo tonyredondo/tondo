@@ -13,8 +13,9 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         // A write to a connection the other side closed, which `writev`
         // makes without `MSG_NOSIGNAL`, fails instead of ending the program,
@@ -25,13 +26,102 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
         const SIGPIPE: i32 = 13;
         const SIG_IGN: usize = 1;
         unsafe { signal(SIGPIPE, SIG_IGN) };
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("tondo-http")
-            .enable_all()
-            .build()
-            .expect("the HTTP runtime starts")
+        // A recorded run, and its replay, call the system from one thread:
+        // its worker drives this runtime between tasks, and waits in it,
+        // with the workers' poller among what it waits for.
+        let mut builder = match super::replay::on() {
+            true => {
+                super::poll::started();
+                tokio::runtime::Builder::new_current_thread()
+            }
+            false => {
+                let mut builder = tokio::runtime::Builder::new_multi_thread();
+                builder.worker_threads(2).thread_name("tondo-http");
+                builder
+            }
+        };
+        builder.enable_all().build().expect("the HTTP runtime starts")
     })
+}
+
+/// The runtime the worker of a recorded run or of its replay drives, once
+/// the program has one.
+pub(crate) fn driven() -> Option<&'static tokio::runtime::Runtime> {
+    RUNTIME.get().filter(|_| super::replay::on())
+}
+
+/// Runs what the driven runtime has to do now, on this thread; with
+/// `wait`, until the workers' poller has events, as when a task of the
+/// program is woken, or `until`.
+pub(crate) fn drive(runtime: &'static tokio::runtime::Runtime, wait: bool, until: Option<std::time::Instant>) {
+    struct Raw(std::os::fd::RawFd);
+    impl std::os::fd::AsRawFd for Raw {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            self.0
+        }
+    }
+    static POLLER: OnceLock<Option<tokio::io::unix::AsyncFd<Raw>>> = OnceLock::new();
+    if !wait {
+        runtime.block_on(tokio::task::yield_now());
+        return;
+    }
+    runtime.block_on(async {
+        let poller = POLLER.get_or_init(|| {
+            let fd = super::poll::poller()?.fd();
+            // The poller's, open for as long as the program runs.
+            unsafe { tokio::io::unix::AsyncFd::register_with_interest(Raw(fd), tokio::io::Interest::READABLE) }.ok()
+        });
+        let ready = async {
+            match poller {
+                Some(poller) => {
+                    if let Ok(mut ready) = poller.readable().await {
+                        ready.clear_ready();
+                    }
+                }
+                None => std::future::pending().await,
+            }
+        };
+        match until {
+            Some(at) => {
+                tokio::select! {
+                    _ = ready => {}
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(at)) => {}
+                }
+            }
+            None => ready.await,
+        }
+    });
+}
+
+/// Work that blocks, the runtime's own, done where it holds no thread of
+/// the runtime: on a thread of tokio's, or by the worker of a recorded run,
+/// whose calls the recording has, between its tasks.
+pub(crate) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> std::io::Result<T> {
+    if driven().is_none() {
+        return tokio::task::spawn_blocking(work).await.map_err(std::io::Error::other);
+    }
+    let (done, result) = tokio::sync::oneshot::channel();
+    DEFERRED.lock().unwrap_or_else(|e| e.into_inner()).push_back(Box::new(move || {
+        let _ = done.send(work());
+    }));
+    // The worker may wait in the runtime.
+    if let Some(poller) = super::poll::poller() {
+        poller.wake();
+    }
+    result.await.map_err(std::io::Error::other)
+}
+
+#[allow(clippy::type_complexity)]
+static DEFERRED: Mutex<std::collections::VecDeque<Box<dyn FnOnce() + Send>>> =
+    Mutex::new(std::collections::VecDeque::new());
+
+/// The work that blocks the runtime gave the worker of a recorded run,
+/// done now.
+pub(crate) fn deferred() {
+    loop {
+        let Some(work) = DEFERRED.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else { return };
+        work();
+    }
 }
 
 /// What a future gives when the current task waits for it on the HTTP
@@ -78,6 +168,13 @@ pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + '
     }
     let mut over = ended.0.lock().unwrap_or_else(|e| e.into_inner());
     while !*over {
+        // A driven runtime drops the future when this thread drives it.
+        if let Some(runtime) = driven() {
+            drop(over);
+            drive(runtime, false, None);
+            over = ended.0.lock().unwrap_or_else(|e| e.into_inner());
+            continue;
+        }
         over = ended.1.wait(over).unwrap_or_else(|e| e.into_inner());
     }
     drop(over);
@@ -193,7 +290,20 @@ pub unsafe extern "C" fn tondo_rt_http_client(
     if cookies != 0 {
         builder = builder.cookie_store(true);
     }
-    native::new(builder.build().map_err(|error| error.to_string()))
+    native::new(builder.dns_resolver(Resolver).build().map_err(|error| error.to_string()))
+}
+
+/// Looks hosts up as `std.net` does, on the worker of a recorded run.
+struct Resolver;
+
+impl reqwest::dns::Resolve for Resolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let found = crate::net::addresses(&host, 0).await?;
+            Ok(Box::new(found.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,10 +354,7 @@ pub(crate) fn stream_of(
             }
         } else {
             let reading = source.clone();
-            match tokio::task::spawn_blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await {
-                Ok(read) => read,
-                Err(error) => Err(std::io::Error::other(error)),
-            }
+            blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await.and_then(|read| read)
         };
         match read {
             Ok(Some(bytes)) => Some((Ok(Bytes::from(bytes)), source)),
@@ -731,7 +838,27 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
     };
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let connector = tokio_tungstenite::Connector::Rustls(Arc::new(config));
-    let connecting = tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
+    // Connected as `std.net` connects, which looks the host up on the
+    // worker of a recorded run.
+    let connecting = async move {
+        use tokio_tungstenite::tungstenite::Error;
+        let uri = request.uri();
+        let host = uri.host().unwrap_or_default().trim_start_matches('[').trim_end_matches(']').to_string();
+        let port = uri.port_u16().unwrap_or(if uri.scheme_str() == Some("wss") { 443 } else { 80 });
+        let mut last = std::io::Error::other(format!("{host} has no address"));
+        let mut connected = None;
+        for address in crate::net::addresses(&host, port).await.map_err(Error::Io)? {
+            match tokio::net::TcpStream::connect(address).await {
+                Ok(socket) => {
+                    connected = Some(socket);
+                    break;
+                }
+                Err(error) => last = error,
+            }
+        }
+        let socket = connected.ok_or(Error::Io(last))?;
+        tokio_tungstenite::client_async_tls_with_config(request, socket, None, Some(connector)).await
+    };
     let outcome = wait(async move {
         match timeout_ms {
             0 => connecting.await.map_err(ws_failure),

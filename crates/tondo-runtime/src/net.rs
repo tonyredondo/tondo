@@ -112,7 +112,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// The addresses of `host`, a name or an IP address, in the system's order.
 async fn lookup(host: &str, port: u16) -> Result<Vec<SocketAddr>, Failure> {
-    let found = tokio::net::lookup_host((host, port)).await.map_err(|_| failure(NOT_FOUND, host))?;
+    let found = addresses(host, port).await.map_err(|_| failure(NOT_FOUND, host))?;
     let mut addresses: Vec<SocketAddr> = Vec::new();
     for address in found {
         if !addresses.contains(&address) {
@@ -123,6 +123,16 @@ async fn lookup(host: &str, port: u16) -> Result<Vec<SocketAddr>, Failure> {
         true => Err(failure(NOT_FOUND, host)),
         false => Ok(addresses),
     }
+}
+
+/// The addresses `host` resolves to: in a recorded run, and its replay,
+/// looked up on the worker, which the recording has the calls of, and not
+/// on a thread of tokio's.
+pub(crate) async fn addresses(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    if super::replay::on() {
+        return std::net::ToSocketAddrs::to_socket_addrs(&(host, port)).map(Iterator::collect);
+    }
+    tokio::net::lookup_host((host, port)).await.map(Iterator::collect)
 }
 
 fn port(port: i64) -> Result<u16, Failure> {

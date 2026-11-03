@@ -4636,6 +4636,25 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — Recording the network and processes
+
+tokio drives the network on threads of its own, and a child's pipes are
+drained by threads too: their calls cannot be put in a recorded order.
+A recorded run, and its replay, build tokio on one thread instead, and
+the worker drives it between tasks; with nothing to run it waits in
+tokio, whose sources include the workers' poller, so a task woken there
+wakes it through the poller's own descriptor, a recorded event. tokio
+registers the address of each socket's state with epoll, which another
+run has elsewhere: the wrappers of `epoll_ctl` and `epoll_wait` keep each
+event by its descriptor, and give a replay back what it registered, an
+epoll and its copies being one. What tokio would do on its blocking
+threads, as looking a host up or reading a file the server sends, the
+worker does between tasks; a child's pipes are pipes of tokio, and its
+end is its pidfd becoming readable. Children do not run again in a
+replay: the program gets what they gave, but what they wrote straight
+to the terminal is not shown. `fs.watch`, the sampling profiler and C's
+threads still end a replay where they start.
+
 ## 2026-11-03 — Going back in a replay
 
 The history `record` keeps is the bindings of each line, as text: it

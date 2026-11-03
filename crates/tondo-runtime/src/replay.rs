@@ -729,10 +729,26 @@ mod calls {
     );
     wrap!(futimens(fd: c_int, times: *const libc::timespec) -> c_int, |r| none(r));
     wrap!(utimes(path: *const c_char, times: *const libc::timeval) -> c_int, |r| none(r));
-    wrap!(dup(fd: c_int) -> c_int, |r| none(r));
-    wrap!(dup2(from: c_int, to: c_int) -> c_int, |r| none(r));
-    wrap!(fcntl(fd: c_int, command: c_int, argument: usize) -> c_int, |r| none(r));
-    wrap!(fcntl64(fd: c_int, command: c_int, argument: usize) -> c_int, |r| none(r));
+    wrap!(dup(fd: c_int) -> c_int, |r| {
+        duplicated(fd, r);
+        none(r)
+    });
+    wrap!(dup2(from: c_int, to: c_int) -> c_int, |r| {
+        duplicated(from, r);
+        none(r)
+    });
+    wrap!(fcntl(fd: c_int, command: c_int, argument: usize) -> c_int, |r| {
+        if matches!(command, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC) {
+            duplicated(fd, r);
+        }
+        none(r)
+    });
+    wrap!(fcntl64(fd: c_int, command: c_int, argument: usize) -> c_int, |r| {
+        if matches!(command, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC) {
+            duplicated(fd, r);
+        }
+        none(r)
+    });
     wrap!(ioctl(fd: c_int, request: c_ulong, argument: *mut c_void) -> c_int, |r| [(
         argument.cast::<u8>(),
         // What the requests the runtime makes write: a count, a terminal's
@@ -749,12 +765,19 @@ mod calls {
     wrap!(pipe(fds: *mut [c_int; 2]) -> c_int, |r| [of(fds)]);
     wrap!(pipe2(fds: *mut [c_int; 2], flags: c_int) -> c_int, |r| [of(fds)]);
     wrap!(eventfd(initial: c_uint, flags: c_int) -> c_int, |r| none(r));
-    wrap!(epoll_create1(flags: c_int) -> c_int, |r| none(r));
-    wrap!(epoll_ctl(epoll: c_int, op: c_int, fd: c_int, event: *mut libc::epoll_event) -> c_int, |r| none(r));
-    wrap!(
-        epoll_wait(epoll: c_int, events: *mut libc::epoll_event, most: c_int, timeout: c_int) -> c_int,
-        |r| [(events.cast::<u8>(), r.max(0) as usize * std::mem::size_of::<libc::epoll_event>())]
-    );
+    wrap!(epoll_create1(flags: c_int) -> c_int, |r| {
+        if r >= 0 {
+            let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+            registry.get_or_insert_with(Registry::default).instances.insert(r as c_int, r as c_int);
+        }
+        none(r)
+    });
+    wrap!(epoll_ctl(epoll: c_int, op: c_int, fd: c_int, event: *mut libc::epoll_event) -> c_int, |r| {
+        if r == 0 {
+            registered(epoll, op, fd, event);
+        }
+        none(r)
+    });
     wrap!(poll(fds: *mut libc::pollfd, count: libc::nfds_t, timeout: c_int) -> c_int, |r| [(
         fds.cast::<u8>(),
         count as usize * std::mem::size_of::<libc::pollfd>()
@@ -791,6 +814,7 @@ mod calls {
         ".weak tondo_real_getaddrinfo",
         ".weak tondo_real_freeaddrinfo",
         ".weak tondo_real_pthread_create",
+        ".weak tondo_real_epoll_wait",
     );
 
     /// The process's ID; the first call says the linker gave the program
@@ -1264,6 +1288,107 @@ mod calls {
         }
     }
 
+    /// What each descriptor is registered with in each epoll, and back: what
+    /// a program registers may be an address, as tokio's are, which another
+    /// run has elsewhere, so a recording has each event by its descriptor.
+    /// An epoll is the one its copies are, as mio registers with one.
+    #[derive(Default)]
+    struct Registry {
+        instances: std::collections::BTreeMap<c_int, c_int>,
+        data: std::collections::BTreeMap<(c_int, c_int), u64>,
+        fds: std::collections::BTreeMap<(c_int, u64), c_int>,
+    }
+
+    impl Registry {
+        fn instance(&self, epoll: c_int) -> c_int {
+            self.instances.get(&epoll).copied().unwrap_or(epoll)
+        }
+    }
+
+    static REGISTRY: std::sync::Mutex<Option<Registry>> = std::sync::Mutex::new(None);
+
+    /// `copy` is a copy of `fd`, which may be an epoll.
+    fn duplicated(fd: c_int, copy: i64) {
+        let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(registry) = registry.as_mut() else { return };
+        let copy = copy as c_int;
+        match registry.instances.get(&fd).copied() {
+            Some(instance) if copy >= 0 => registry.instances.insert(copy, instance),
+            _ => registry.instances.remove(&copy),
+        };
+    }
+
+    fn registered(epoll: c_int, op: c_int, fd: c_int, event: *mut libc::epoll_event) {
+        let mut registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        let registry = registry.get_or_insert_with(Registry::default);
+        let epoll = registry.instance(epoll);
+        if let Some(data) = registry.data.remove(&(epoll, fd)) {
+            registry.fds.remove(&(epoll, data));
+        }
+        if op != libc::EPOLL_CTL_DEL && !event.is_null() {
+            let data = unsafe { event.read_unaligned() }.u64;
+            registry.data.insert((epoll, fd), data);
+            registry.fds.insert((epoll, data), fd);
+        }
+    }
+
+    /// Each event's data as its descriptor, or `back` as what this run
+    /// registered for the descriptor.
+    fn translated(epoll: c_int, events: *mut libc::epoll_event, count: c_int, back: bool) {
+        let registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(registry) = registry.as_ref() else { return };
+        let epoll = registry.instance(epoll);
+        for at in 0..count.max(0) as usize {
+            let event = unsafe { events.add(at) };
+            let mut read = unsafe { event.read_unaligned() };
+            let data = read.u64;
+            let found = match back {
+                false => registry.fds.get(&(epoll, data)).map(|&fd| fd as u64),
+                true => registry.data.get(&(epoll, data as c_int)).copied(),
+            };
+            if let Some(found) = found {
+                read.u64 = found;
+                unsafe { event.write_unaligned(read) };
+            }
+        }
+    }
+
+    #[unsafe(export_name = "tondo_rr_epoll_wait")]
+    pub unsafe extern "C" fn epoll_wait_wrapper(
+        epoll: c_int,
+        events: *mut libc::epoll_event,
+        most: c_int,
+        timeout: c_int,
+    ) -> c_int {
+        unsafe extern "C" {
+            #[link_name = "tondo_real_epoll_wait"]
+            fn real(epoll: c_int, events: *mut libc::epoll_event, most: c_int, timeout: c_int) -> c_int;
+        }
+        const ID: u32 = id("epoll_wait");
+        let size = std::mem::size_of::<libc::epoll_event>();
+        match here() {
+            Here::Pass => unsafe { real(epoll, events, most, timeout) },
+            Here::Record => {
+                let result = inside(|| unsafe { real(epoll, events, most, timeout) });
+                let error = unsafe { *errno() };
+                let _outside = Outside::enter();
+                let count = result.max(0) as usize;
+                let mut kept: Vec<libc::epoll_event> =
+                    (0..count).map(|at| unsafe { events.add(at).read_unaligned() }).collect();
+                translated(epoll, kept.as_mut_ptr(), result, false);
+                unsafe { *errno() = error };
+                record(ID, result as i64, &[(kept.as_mut_ptr().cast(), count * size)]);
+                result
+            }
+            Here::Replay => {
+                let result =
+                    replay(ID, "epoll_wait", |r| vec![(events.cast::<u8>(), r.max(0) as usize * size)]) as c_int;
+                translated(epoll, events, result, true);
+                result
+            }
+        }
+    }
+
     /// A thread the program starts: the recording marks where, and a replay
     /// ends there, as what it does is not recorded.
     #[unsafe(export_name = "tondo_rr_pthread_create")]
@@ -1292,7 +1417,7 @@ mod calls {
             Here::Replay => {
                 replay(ID, "pthread_create", none_vec);
                 ended(
-                    "the program starts a thread, as std.net, std.http, std.process and fs.watch do, \
+                    "the program starts a thread, as fs.watch, the profiler and C libraries do, \
                      whose calls the recording does not have",
                 )
             }

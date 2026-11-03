@@ -1028,11 +1028,16 @@ mundo: un fallo que pasó una vez se depura con todas las órdenes de esta
 sección. El editor lo hace con `"replay"` en `launch`, y el servidor MCP con
 `record` en `run` y `replay` en `debug_start`. Solo en Linux. Mientras se
 graba, una lectura de la entrada estándar o de un archivo detiene las demás
-tareas. Lo que corre en threads propios no se graba: la red y HTTP
-(`std.net`, `std.http` y los módulos que los usan), los procesos
-(`std.process`), `fs.watch` y las funciones de C que llaman al programa desde
-sus threads. La reproducción para donde el programa empieza uno de esos
-threads, o donde hace una llamada distinta de la grabada, y dice por qué. El
+tareas. La red y HTTP (`std.net`, `std.http`, `std.grpc` y los módulos que
+los usan) y los procesos (`std.process`) se graban también: lo que el
+runtime hace con ellos en threads propios lo hace ese mismo thread entre
+tareas. En la reproducción los procesos hijos no corren otra vez: el
+programa recibe lo que le dieron, pero lo que escribieron directamente en
+la terminal no se ve. Lo que corre en threads que el runtime no pone en ese
+orden no se graba: `fs.watch`, el perfilador por muestreo y las funciones de
+C que llaman al programa desde sus threads. La reproducción para donde el
+programa empieza uno de esos threads, o donde hace una llamada distinta de
+la grabada, y dice por qué. El
 directorio tiene el entorno del programa y lo que leyó, y se guarda como esos
 datos.
 

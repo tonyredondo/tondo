@@ -81,6 +81,12 @@ fn catch(signal: i32) {
 pub(crate) fn start() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
+        // A replay takes the signals its recording has, and a recorded run
+        // catches them with calls that are not the program's.
+        if super::replay::replaying() {
+            return;
+        }
+        let _outside = super::replay::Outside::enter();
         let mut fds = [0; 2];
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return;

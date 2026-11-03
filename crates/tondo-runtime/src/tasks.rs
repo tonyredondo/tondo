@@ -1313,10 +1313,12 @@ fn work(main: bool) -> i32 {
                     }
                     return 0;
                 }
-                // The signals of a recorded run come at the worker's turns.
+                // The signals of a recorded run come at the worker's turns,
+                // and it does the work that blocks its runtime meanwhile.
                 if super::replay::on() {
                     drop(queue);
                     super::signals::at_turn();
+                    super::http::deferred();
                     queue = self::queue();
                 }
                 fire_timers(&mut queue);
@@ -1329,6 +1331,10 @@ fn work(main: bool) -> i32 {
                     && let Some((poller, polled)) = claim(&mut queue)
                 {
                     drop(queue);
+                    // And a recorded run's worker at the runtime it drives.
+                    if let Some(runtime) = super::http::driven() {
+                        super::http::drive(runtime, false, None);
+                    }
                     queue = poll(poller, polled, Some(Instant::now()));
                 }
                 let next = match exploring() {
@@ -1410,7 +1416,20 @@ fn work(main: bool) -> i32 {
                 }
                 if let Some((poller, polled)) = polling {
                     drop(queue);
-                    queue = poll(poller, polled, next);
+                    queue = match super::http::driven() {
+                        // A recorded run's worker waits in the runtime it
+                        // drives, whose sources have the poller, unless the
+                        // poller has events already, which the runtime
+                        // would not hear of again.
+                        Some(runtime) => {
+                            let mut ready = libc::pollfd { fd: poller.fd(), events: libc::POLLIN, revents: 0 };
+                            if unsafe { libc::poll(&mut ready, 1, 0) } == 0 {
+                                super::http::drive(runtime, true, next);
+                            }
+                            poll(poller, polled, Some(Instant::now()))
+                        }
+                        None => poll(poller, polled, next),
+                    };
                     looked = false;
                     continue;
                 }
