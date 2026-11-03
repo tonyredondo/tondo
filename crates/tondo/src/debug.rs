@@ -937,39 +937,49 @@ impl Replaying {
         let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
         let bound: Vec<&str> =
             locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
-        let read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
+        let mut read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
+        let mut seen = std::collections::HashSet::new();
+        read.retain(|name| seen.insert(name.clone()));
         if read.is_empty() {
             return Value::Array(Vec::new());
         }
         let Ok(anchors) = read.iter().map(|name| anchor(session, name)).collect::<Result<Vec<_>, _>>() else {
             return Value::Array(Vec::new());
         };
-        let Ok((_, running, mut scan)) = self.start_before(to, false, u64::MAX, true) else {
-            return Value::Array(Vec::new());
-        };
-        let found = (|| -> Result<Value, String> {
-            for (name, anchor) in read.iter().zip(&anchors) {
-                ask(&mut scan, &format!("track {anchor} {name}"))?;
+        // From the nearest checkpoint before the line; a binding whose last
+        // change came before that checkpoint, from the start.
+        let nearest = self.bases(to, false)[0];
+        let mut causes = Vec::new();
+        for base in std::iter::once(nearest).chain(nearest.map(|_| None)) {
+            let Ok((running, mut scan)) = self.start(base, u64::MAX, true) else { continue };
+            let found = (|| -> Result<Value, String> {
+                for (name, anchor) in read.iter().zip(&anchors) {
+                    ask(&mut scan, &format!("track {anchor} {name}"))?;
+                }
+                ask(&mut scan, &format!("scan {to}"))?;
+                scan.next_event()?;
+                Ok(ask(&mut scan, "tracked")?["tracked"].clone())
+            })();
+            running.end();
+            self.gather_ended(&mut scan);
+            // The last change of each before the line, by the line before it.
+            causes = found
+                .unwrap_or_default()
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|followed| {
+                    let changes = followed["changes"].as_array()?;
+                    let change = changes.iter().rev().find(|c| c["tick"].as_u64().is_some_and(|t| t < to))?;
+                    Some(serde_json::json!({
+                        "name": followed["expression"], "value": change["value"], "at": change["at"], "tick": change["tick"],
+                    }))
+                })
+                .collect();
+            if causes.len() == read.len() {
+                break;
             }
-            ask(&mut scan, &format!("scan {to}"))?;
-            scan.next_event()?;
-            Ok(ask(&mut scan, "tracked")?["tracked"].clone())
-        })();
-        running.end();
-        self.gather_ended(&mut scan);
-        // The last change of each before the line, by the line before it.
-        let causes: Vec<Value> = found
-            .unwrap_or_default()
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|followed| {
-                let change = followed["changes"].as_array()?.iter().rev().find(|c| c["tick"].as_u64().is_some_and(|t| t < to))?;
-                Some(serde_json::json!({
-                    "name": followed["expression"], "value": change["value"], "at": change["at"], "tick": change["tick"],
-                }))
-            })
-            .collect();
+        }
         Value::Array(causes)
     }
 
