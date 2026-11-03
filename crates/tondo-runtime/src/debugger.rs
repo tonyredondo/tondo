@@ -670,6 +670,9 @@ struct Breakpoint {
     once: bool,
     /// The event it stops at, instead of a place.
     event: Option<Event>,
+    /// It captures the stack and the bindings and goes on, instead of
+    /// stopping (`capture`).
+    capture: bool,
 }
 
 /// When a breakpoint stops by its count of hits: at the `n`th, from it on,
@@ -880,6 +883,19 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             }
             breakpoint.count += 1;
             if !breakpoint.hits.as_ref().is_none_or(|hits| hits.reached(breakpoint.count)) {
+                continue;
+            }
+            // A capture: the stack and the bindings, as the program goes on.
+            if breakpoint.capture {
+                let frames = stack();
+                let locals = locals_of(&table, frames, 0, task).join(",");
+                let places: Vec<String> = frames.iter().map(|f| quoted(&f.place)).collect();
+                tell(&format!(
+                    "{{\"captured\":{{\"id\":{},\"task\":{task},\"at\":{},\"locals\":[{locals}],\"stack\":[{}]}}}}",
+                    breakpoint.id,
+                    quoted(&place_in(&table, site)),
+                    places.join(",")
+                ));
                 continue;
             }
             match &breakpoint.log {
@@ -1711,6 +1727,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 task,
                 once: true,
                 event: None,
+                capture: false,
             });
             remark(table, &state);
             drop(state);
@@ -2516,6 +2533,11 @@ fn breakpoint(table: &Table, text: &str) -> String {
         Some((text, log)) => (text, Some(log.to_string())),
         None => (text, None),
     };
+    // `capture`, last: what it takes, without stopping.
+    let (text, capture) = match text.strip_suffix(" capture") {
+        Some(text) => (text, true),
+        None => (text, false),
+    };
     let (text, hits) = match text.split_once(" hits ") {
         Some((text, hits)) => match Hits::parse(hits) {
             Ok(hits) => (text, Some(hits)),
@@ -2571,7 +2593,8 @@ fn breakpoint(table: &Table, text: &str) -> String {
     state.next_breakpoint += 1;
     let at = &table.sites[sites[0]];
     let answer = format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}}}}}", quoted(&at.file), at.line);
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event: None });
+    let event = None;
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event, capture });
     remark(table, &state);
     answer
 }
@@ -2820,7 +2843,8 @@ fn event_breakpoint(table: &Table, text: &str) -> String {
     state.next_breakpoint += 1;
     let (sites, condition, hits, log, task) = (Vec::new(), None, None, None, None);
     let event = Some(event);
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event });
+    let capture = false;
+    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event, capture });
     remark(table, &state);
     format!("{{\"breakpoint\":{{\"id\":{id},\"on\":{}}}}}", quoted(text.trim()))
 }

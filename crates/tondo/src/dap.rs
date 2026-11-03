@@ -486,6 +486,23 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                 events.event("stopped", body);
             } else if let Some(logged) = value["logged"].as_str() {
                 events.event("output", json!({ "category": "console", "output": format!("{logged}\n") }));
+            } else if let Some(captured) = value.get("captured") {
+                // A capture, in the console: where, and each binding.
+                let locals: Vec<String> = captured["locals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|l| {
+                        format!(
+                            "{} = {}",
+                            l["name"].as_str().unwrap_or_default(),
+                            l["value"].as_str().unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                let at = captured["at"].as_str().unwrap_or_default();
+                let output = format!("captured at {at}: {}\n", locals.join(", "));
+                events.event("output", json!({ "category": "console", "output": output, "data": captured }));
             } else if let Some(id) = value.get("unwatched") {
                 let why = value["why"].as_str().unwrap_or_default();
                 let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });

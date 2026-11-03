@@ -825,7 +825,10 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
   `log`, no para: escribe el mensaje, cada `{expresión}` cambiada por su
-  valor, y sigue. La condición y el mensaje leen lo mismo que `locals`:
+  valor, y sigue. Con `capture` al final, tampoco para: da la pila y los
+  bindings de ese punto como `captured`, el estado de un servidor en marcha
+  sin detenerlo; `hits 1` lo toma solo la primera vez. La condición y el
+  mensaje leen lo mismo que `locals`:
   también lo de las funciones en que está escrito el código de esa línea; un
   nombre que no es un binding de ellas, o una expresión mal escrita, es un
   error al poner el breakpoint. `delete <id>` lo quita.

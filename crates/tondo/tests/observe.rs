@@ -1882,6 +1882,36 @@ fn debugger_shows_views() {
     assert_eq!(parts.len(), 4);
 }
 
+/// A breakpoint that captures gives the stack and the bindings where its
+/// condition holds, and the program goes on.
+#[test]
+fn debugger_captures_without_stopping() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-capture");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("spawning.to"), SPAWNING).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "spawning.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break spawning.to:6 if i == 2 capture\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let captured: Vec<&Value> = lines.iter().filter_map(|l| l.get("captured")).collect();
+    assert_eq!(captured.len(), 1, "{lines:?}");
+    assert_eq!((&captured[0]["at"], &captured[0]["task"]), (&json!("spawning.to:6 in work"), &json!(2)));
+    let total = captured[0]["locals"].as_array().unwrap().iter().find(|l| l["name"] == "total").unwrap();
+    assert_eq!(total["value"], "101");
+    // It never stopped: the program ran to its end.
+    assert_eq!(lines.iter().filter(|l| l.get("stopped").is_some()).count(), 1);
+    assert!(text.contains("some(110)"), "{text}");
+}
+
 #[test]
 fn every_object_of_a_debug_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");

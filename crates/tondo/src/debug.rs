@@ -35,6 +35,8 @@ break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with 
                                                 stop where that line starts, or write a message there (b)
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
 break <place> task <id> ...                     the same for one task only
+break <place> ... capture                       capture the stack and the bindings there, and go on: a running
+                                                server's state, without stopping it (hits 1: the first time only)
 break on spawn|send|receive|wait <ms>           stop a task as it starts, sends or receives on a channel, or once
                                                 it waited longer than that for a lock, a channel or a task
 freeze <task>, thaw <task>                      the task stays held while the others go on, or goes on again
@@ -338,8 +340,9 @@ impl Session {
                 self.events.push(value);
                 continue;
             }
-            // A logpoint's message, or a watch that ended, as it comes.
-            if value.get("logged").is_some() || value.get("unwatched").is_some() {
+            // A logpoint's message, a capture or a watch that ended, as it
+            // comes.
+            if value.get("logged").is_some() || value.get("unwatched").is_some() || value.get("captured").is_some() {
                 self.show(&value);
                 continue;
             }
@@ -362,7 +365,13 @@ impl Session {
                 Ok(value) if value.get("stopped").is_some() || value.get("exited").is_some() => {
                     self.events.push(value);
                 }
-                Ok(value) if value.get("logged").is_some() || value.get("unwatched").is_some() => self.show(&value),
+                Ok(value)
+                    if value.get("logged").is_some()
+                        || value.get("unwatched").is_some()
+                        || value.get("captured").is_some() =>
+                {
+                    self.show(&value)
+                }
                 // The answer to `pause`.
                 Ok(_) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -505,6 +514,11 @@ impl Session {
             match lines.as_u64() {
                 Some(0) => println!("the history is off"),
                 _ => println!("the history keeps the last {lines} lines"),
+            }
+        } else if let Some(captured) = value.get("captured") {
+            println!("captured at {} (task {})", captured["at"].as_str().unwrap_or_default(), captured["task"]);
+            for local in captured["locals"].as_array().into_iter().flatten() {
+                println!("    {}", binding(local));
             }
         } else if let Some(watch) = value.get("watch") {
             println!("watch {} = {}", watch["id"], watch["value"].as_str().unwrap_or_default());

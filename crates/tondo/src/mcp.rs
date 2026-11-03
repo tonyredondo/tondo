@@ -1599,7 +1599,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 26] = [
+    const KEYS: [&str; 27] = [
         "debugging",
         "running",
         "pausing",
@@ -1623,6 +1623,7 @@ fn debugger(value: &Value) -> bool {
         "frozen",
         "retainers",
         "memory",
+        "captured",
         "deleted",
         "reloaded",
         "error",
@@ -2070,7 +2071,8 @@ as `ssh host` or `docker exec -i box`, where `tondo relay` joins it to this sess
         description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
 {expressions}>], break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
 changes it; a std.sync cell's value, in any task), delete <id>, \
-catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), break on spawn|send|receive|wait <ms> (a task starts, uses a channel, or waited that long), freeze <task> \
+catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), break <place> [if <condition>] [hits <n>] capture (the stack and bindings there, without stopping), \
+break on spawn|send|receive|wait <ms> (a task starts, uses a channel, or waited that long), freeze <task> \
 and thaw <task> (it stays held while the others go on), retainers <path> (what keeps a value alive), memory \
 (the objects by where they were made, and how that grew since the last memory), snapshot (in one answer: why it stopped, every frame with its bindings, where the task was spawned, the other \
 tasks and the last lines run), continue, until <line>, step, step into <name> (that call of the line), next, finish (a step says \
