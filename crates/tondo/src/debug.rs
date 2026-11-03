@@ -1094,8 +1094,8 @@ impl Replaying {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|r| r["at"] == at && r["tick"].as_u64().is_some_and(|t| t <= to));
-            let received = received.last();
+                .rev()
+                .find(|r| r["at"] == at && r["tick"].as_u64().is_some_and(|t| t <= to));
             if let Some(from) = received.map(|r| &r["from"]) {
                 causes.push(serde_json::json!({
                     "name": "what it received", "received": true, "at": from["at"], "tick": from["tick"], "task": from["task"],
