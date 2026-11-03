@@ -74,6 +74,8 @@ ran <file>:<line> [<expression>]                each time a task started that li
 seek <probe>                                    a replay: to that probe, which timeline and ran give
 first <condition>, last <condition>            a replay: to the line after which the condition held, the first
                                                 or the last time in the whole run
+diff <probe> [<probe>]                          a replay: what changed between two probes, or one and now: the
+                                                bindings of each task's frames, the tasks, and the memory by place
 origins [<expression>]                          a replay: where the value came from, line by line, and what each
                                                 of those lines read, back to what the program read; without an
                                                 expression, what the line where it stopped reads
@@ -496,6 +498,24 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 };
                 match found {
                     Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
+            // What changed between two moments of a replay.
+            "diff" => {
+                let found = match replaying.as_mut() {
+                    Some(replaying) => {
+                        let probes: Vec<Option<u64>> = rest.split_whitespace().map(|p| p.parse().ok()).collect();
+                        match probes[..] {
+                            [Some(from)] => replaying.diff(&mut |c| ask(&mut session, c), from, None),
+                            [Some(from), Some(to)] => replaying.diff(&mut |c| ask(&mut session, c), from, Some(to)),
+                            _ => Err("diff takes a probe, or two, as tick, timeline and ran give them".into()),
+                        }
+                    }
+                    None => Err("diff compares moments of a replay: `tondo run --record` records a run".into()),
+                };
+                match found {
+                    Ok(answer) => session.show(&answer),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
@@ -1135,6 +1155,27 @@ impl Replaying {
         Ok((tick, format!("the {which} time `{condition}` holds, after this line")))
     }
 
+    /// `diff <from> [<to>]` in a replay: what changed between the program at
+    /// probe `from` and at `to`, or where it is: the bindings of each task's
+    /// frames, the tasks that started or ended, and the objects by where
+    /// they were made. The program stays where it is.
+    pub(crate) fn diff(&mut self, here: Asking, from: u64, to: Option<u64>) -> Result<Value, String> {
+        let now = here("tick")?["tick"].as_u64().unwrap_or(0);
+        let at = |tick: u64, this: &mut Self| -> Result<Value, String> {
+            let (running, mut there, _) = this.reach(tick, String::new(), true)?;
+            let found = moment(&mut |c| ask(&mut there, c));
+            running.end();
+            this.gather_ended(&mut there);
+            found
+        };
+        let before = at(from, self)?;
+        let (to, after) = match to.filter(|&to| to != now) {
+            Some(to) => (to, at(to, self)?),
+            None => (now, moment(here)?),
+        };
+        Ok(serde_json::json!({ "diff": changes(&before, &after, from, to) }))
+    }
+
     /// `origins [<expression>]` in a replay: the line that gave the
     /// expression its value, or the line the program is at, with where each
     /// binding it reads got its own, and so on back, each line's causes
@@ -1297,6 +1338,99 @@ fn cause_text(cause: &Value) -> String {
             cause["value"].as_str().unwrap_or_default()
         ),
     }
+}
+
+/// The program as it is where it stopped, to compare with another moment:
+/// its tasks, each frame of each with its bindings, keyed by the task, the
+/// function and how far from the bottom of the stack it is, and its
+/// objects by where they were made.
+fn moment(here: Asking) -> Result<Value, String> {
+    let snapshot = here("snapshot")?;
+    let tasks = snapshot["snapshot"]["tasks"].as_array().cloned().unwrap_or_default();
+    let mut frames = serde_json::Map::new();
+    for task in tasks.iter().filter_map(|t| t["task"].as_u64()) {
+        let stack = here(&format!("stack {task}"))?;
+        let places = stack["stack"].as_array().cloned().unwrap_or_default();
+        for (index, place) in places.iter().enumerate() {
+            let function = place.as_str().and_then(|p| p.split_once(" in ")).map_or("", |(_, f)| f);
+            let key = format!("task {task}, {function} ({} from the bottom)", places.len() - 1 - index);
+            if here(&format!("select {task} {index}")).is_ok()
+                && let Ok(locals) = here("locals")
+            {
+                let bindings: serde_json::Map<String, Value> = locals["locals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| Some((l["name"].as_str()?.to_string(), l["value"].clone())))
+                    .collect();
+                frames.insert(key, Value::Object(bindings));
+            }
+        }
+    }
+    if let Some(task) = snapshot["snapshot"]["task"].as_u64() {
+        let _ = here(&format!("select {task} 0"));
+    }
+    let memory: serde_json::Map<String, Value> = here("memory")
+        .ok()
+        .and_then(|m| m["memory"]["places"].as_array().cloned())
+        .into_iter()
+        .flatten()
+        .fold(serde_json::Map::new(), |mut places, place| {
+            let at = place["at"].as_str().unwrap_or_default().to_string();
+            let (objects, bytes) = (place["objects"].as_i64().unwrap_or(0), place["bytes"].as_i64().unwrap_or(0));
+            let sum = places.entry(at).or_insert(serde_json::json!([0, 0]));
+            *sum = serde_json::json!([sum[0].as_i64().unwrap_or(0) + objects, sum[1].as_i64().unwrap_or(0) + bytes]);
+            places
+        });
+    let tasks: Vec<Value> = tasks.iter().map(|t| serde_json::json!({ "task": t["task"], "at": t["at"] })).collect();
+    Ok(serde_json::json!({ "tasks": tasks, "frames": frames, "memory": memory }))
+}
+
+/// What changed from one moment to another: the bindings that took
+/// another value, came or went, frame by frame; the tasks that started or
+/// ended; and the objects by place, as many more or fewer.
+fn changes(before: &Value, after: &Value, from: u64, to: u64) -> Value {
+    let empty = serde_json::Map::new();
+    let (old, new) = (before["frames"].as_object().unwrap_or(&empty), after["frames"].as_object().unwrap_or(&empty));
+    let mut bindings = Vec::new();
+    for (frame, now) in new {
+        let was = old.get(frame).and_then(Value::as_object);
+        for (name, value) in now.as_object().unwrap_or(&empty) {
+            let earlier = was.and_then(|w| w.get(name));
+            if earlier != Some(value) {
+                bindings.push(serde_json::json!({ "frame": frame, "name": name, "before": earlier, "after": value }));
+            }
+        }
+    }
+    // Those that went, with their frames or not.
+    for (frame, was) in old {
+        let now = new.get(frame).and_then(Value::as_object);
+        for (name, value) in was.as_object().unwrap_or(&empty) {
+            if now.is_none_or(|now| !now.contains_key(name)) {
+                bindings.push(serde_json::json!({ "frame": frame, "name": name, "before": value, "after": null }));
+            }
+        }
+    }
+    let ids = |moment: &Value| -> Vec<Value> {
+        moment["tasks"].as_array().into_iter().flatten().map(|t| t["task"].clone()).collect()
+    };
+    let (old_tasks, new_tasks) = (ids(before), ids(after));
+    let started: Vec<&Value> =
+        after["tasks"].as_array().into_iter().flatten().filter(|t| !old_tasks.contains(&t["task"])).collect();
+    let ended: Vec<&Value> =
+        before["tasks"].as_array().into_iter().flatten().filter(|t| !new_tasks.contains(&t["task"])).collect();
+    let (old_memory, new_memory) =
+        (before["memory"].as_object().unwrap_or(&empty), after["memory"].as_object().unwrap_or(&empty));
+    let mut memory = Vec::new();
+    for at in old_memory.keys().chain(new_memory.keys().filter(|k| !old_memory.contains_key(*k))) {
+        let count = |m: &serde_json::Map<String, Value>, i: usize| m.get(at).and_then(|v| v[i].as_i64()).unwrap_or(0);
+        let (objects, bytes) =
+            (count(new_memory, 0) - count(old_memory, 0), count(new_memory, 1) - count(old_memory, 1));
+        if objects != 0 || bytes != 0 {
+            memory.push(serde_json::json!({ "at": at, "objects": objects, "bytes": bytes }));
+        }
+    }
+    serde_json::json!({ "from": from, "to": to, "bindings": bindings, "started": started, "ended": ended, "memory": memory })
 }
 
 /// The causes `origins` found, as a tree, each with the line that gave it.
@@ -1551,6 +1685,36 @@ impl Session {
             }
         } else if value.get("exited").is_some() {
             println!("the program ended");
+        } else if let Some(diff) = value.get("diff") {
+            println!("from probe {} to probe {}:", diff["from"], diff["to"]);
+            let mut frame = "";
+            for change in diff["bindings"].as_array().into_iter().flatten() {
+                if change["frame"].as_str() != Some(frame) {
+                    frame = change["frame"].as_str().unwrap_or_default();
+                    println!("{frame}:");
+                }
+                let shown = |v: &Value| v.as_str().map_or("nothing".to_string(), String::from);
+                println!(
+                    "  {}: {} → {}",
+                    change["name"].as_str().unwrap_or_default(),
+                    shown(&change["before"]),
+                    shown(&change["after"])
+                );
+            }
+            for task in diff["started"].as_array().into_iter().flatten() {
+                println!("task {} started, now at {}", task["task"], task["at"].as_str().unwrap_or_default());
+            }
+            for task in diff["ended"].as_array().into_iter().flatten() {
+                println!("task {} ended, last at {}", task["task"], task["at"].as_str().unwrap_or_default());
+            }
+            for place in diff["memory"].as_array().into_iter().flatten() {
+                println!(
+                    "memory made at {}: {:+} objects, {:+} bytes",
+                    place["at"].as_str().unwrap_or_default(),
+                    place["objects"].as_i64().unwrap_or(0),
+                    place["bytes"].as_i64().unwrap_or(0)
+                );
+            }
         } else if let Some(origins) = value.get("origins") {
             println!(
                 "{}, at {}{}",

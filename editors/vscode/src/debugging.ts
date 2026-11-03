@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Origin, Table, Task, Timeline, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
+import { Diff, Origin, Table, Task, Timeline, diffMarkdown, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -44,6 +44,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     vscode.languages.registerInlineValuesProvider({ language: 'tondo' }, { provideInlineValues: effects }),
     vscode.commands.registerCommand('tondo.taskGraph', taskGraph),
     vscode.commands.registerCommand('tondo.when', when),
+    vscode.commands.registerCommand('tondo.diff', diff),
     vscode.commands.registerCommand('tondo.origins', (context?: { variable?: Variable }) =>
       origins(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
@@ -51,6 +52,30 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
       timeline(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
   );
+}
+
+/** What changed in a replay between another probe and where the program
+ *  is, beside the code. */
+async function diff(): Promise<void> {
+  const session = vscode.debug.activeDebugSession;
+  if (session?.type !== 'tondo') {
+    void vscode.window.showInformationMessage('Replay a recorded run to compare its moments: tondo run --record <dir>.');
+    return;
+  }
+  const from = await vscode.window.showInputBox({
+    prompt: 'The probe to compare with, as Show Its Values over the Run and Where Does It Come From? give them',
+    validateInput: (text) => (/^\d+$/.test(text.trim()) ? undefined : 'a probe is a number'),
+  });
+  if (!from) {
+    return;
+  }
+  try {
+    const found = (await session.customRequest('diff', { from: Number(from.trim()) })) as { diff: Diff };
+    const document = await vscode.workspace.openTextDocument({ content: diffMarkdown(found.diff), language: 'markdown' });
+    await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  } catch (error) {
+    void vscode.window.showErrorMessage((error as Error).message);
+  }
 }
 
 /** In a replay, to the line after which a condition held, the first or the

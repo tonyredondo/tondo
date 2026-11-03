@@ -4636,6 +4636,16 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — What changed between two moments
+
+"What did this request change?" is the difference between two probes of
+a replay. `diff` takes the program as it is at each, every task's frames
+with their bindings and the memory by place, keyed by the task, the
+function and its depth from the bottom of the stack, which stay the same
+from one moment to another of the same run, and says what is not the
+same. The program stays where it is: the earlier moment is a replay that
+stops there.
+
 ## 2026-11-03 — Causes across tasks
 
 A value a task receives was made by another: the cause of `let got =

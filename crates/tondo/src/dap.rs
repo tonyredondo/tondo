@@ -1151,6 +1151,15 @@ fn handle(
             let (to, why) = found?;
             program.seek(to, why.clone()).map(|()| json!({ "why": why, "tick": to }))
         }
+        // What changed between two probes of a replay, or one and now.
+        "diff" if program.replaying.is_some() => {
+            let from = arguments["from"].as_u64().ok_or("diff takes the probe to compare with, `from`")?;
+            let mut replaying = program.replaying.take().expect("a replay");
+            let found = replaying.diff(&mut |c| program.ask(c), from, arguments["to"].as_u64());
+            program.replaying = Some(replaying);
+            program.adopt();
+            found
+        }
         // The tasks: where each is, and what each waits for and on whom.
         "tasks" => program.ask("tasks"),
         // What each line of the call the frame shows changed the last time

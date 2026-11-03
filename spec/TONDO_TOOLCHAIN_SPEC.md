@@ -1037,7 +1037,8 @@ probe de cada uno en una reproducción, el probe actual y los de los
 checkpoints, y `seek` lleva la reproducción a un probe; `effects` da, para
 el marco de `frameId`, lo que cambió cada línea de su llamada la última vez
 que corrió, según el historial; `origins`, con `expression`, lo que da la
-orden; `when`, con `condition` y `which` (`first` o `last`), lleva la
+orden; `diff`, con `from` y `to`, lo que da `diff`; `when`, con `condition`
+y `which` (`first` o `last`), lleva la
 reproducción como `first` y `last`; y `tasks` da las tareas, dónde está cada
 una, qué espera y qué tareas lo tienen. La extensión las ofrece con *Why
 Does It Have This Value?* y *Show Its Values over the Run* en el menú de
@@ -1114,6 +1115,10 @@ tarea terminó: `why` y `origins` siguen a otra tarea por ahí.
 con otra reproducción del principio al final que sigue la condición en el
 marco de su binding, la primera o la última vez que se cumplió, y llevan
 el programa a la línea después de la cual se cumple, antes de que corra.
+`diff <probe> [<probe>]` dice qué cambió entre dos probes, o entre uno y
+donde está el programa, sin moverlo: los bindings de cada marco de cada
+tarea que tomaron otro valor, llegaron o se fueron, las tareas que
+empezaron o terminaron, y la memoria por el sitio que la hizo.
 `origins [<expresión>]` sigue `why` hacia atrás sin mover el programa: la
 línea que dio a la expresión su valor, o sin expresión la línea donde está,
 y por cada binding que lee esa línea, la línea que le dio el suyo, y así

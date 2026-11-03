@@ -984,3 +984,37 @@ export function originsMarkdown(title: string, origins: { why: string; at: strin
   walk(origins.causes, 0);
   return `${lines.join('\n')}\n`;
 }
+
+/** What changed between two moments of a replay, as `diff` gives it. */
+export interface Diff {
+  from: number;
+  to: number;
+  bindings: { frame: string; name: string; before: string | null; after: string | null }[];
+  started: { task: number; at: string }[];
+  ended: { task: number; at: string }[];
+  memory: { at: string; objects: number; bytes: number }[];
+}
+
+/** What changed between two moments, as Markdown: the bindings frame by
+ *  frame, the tasks, and the memory by where it was made. */
+export function diffMarkdown(diff: Diff): string {
+  const lines = [`# From probe ${diff.from} to probe ${diff.to}`, ''];
+  let frame = '';
+  for (const change of diff.bindings) {
+    if (change.frame !== frame) {
+      frame = change.frame;
+      lines.push(`## ${frame}`, '');
+    }
+    lines.push(`- \`${change.name}\`: \`${change.before ?? 'nothing'}\` → \`${change.after ?? 'nothing'}\``);
+  }
+  const sign = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  const rest = [
+    ...diff.started.map((task) => `- task ${task.task} started, now at \`${task.at}\``),
+    ...diff.ended.map((task) => `- task ${task.task} ended, last at \`${task.at}\``),
+    ...diff.memory.map((place) => `- memory made at \`${place.at}\`: ${sign(place.objects)} objects, ${sign(place.bytes)} bytes`),
+  ];
+  if (rest.length > 0) {
+    lines.push('', '## Tasks and memory', '', ...rest);
+  }
+  return `${lines.join('\n')}\n`;
+}

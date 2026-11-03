@@ -346,6 +346,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.diff",
+        "title": "Compare with Another Moment",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -508,6 +513,10 @@
         {
           "command": "tondo.when",
           "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.diff",
+          "when": "debugType == tondo"
         }
       ],
       "editor/context": [
@@ -550,6 +559,10 @@
         },
         {
           "command": "tondo.when",
+          "when": "inDebugMode && debugType == tondo"
+        },
+        {
+          "command": "tondo.diff",
           "when": "inDebugMode && debugType == tondo"
         },
         {

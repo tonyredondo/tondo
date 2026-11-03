@@ -31,6 +31,7 @@ import {
   mermaid,
   timelineHtml,
   originsMarkdown,
+  diffMarkdown,
   running,
   served,
   share,
@@ -509,6 +510,37 @@ test("a value's origins show as a list under the line that gave it, each cause u
       '- `total` was `12`, from `rolled.to:9 in main`',
       '  - `roll` was `3`, from `rolled.to:8 in main`, as above',
       '- `roll` was `3`, from `rolled.to:8 in main`',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('what changed between two moments shows frame by frame, then the tasks and the memory', () => {
+  const markdown = diffMarkdown({
+    from: 11,
+    to: 47,
+    bindings: [
+      { frame: 'task 1, main (0 from the bottom)', name: 'total', before: '0', after: '47' },
+      { frame: 'task 1, main (0 from the bottom)', name: 'got', before: null, after: '28' },
+    ],
+    started: [],
+    ended: [{ task: 2, at: 'chan.to:7 in produce' }],
+    memory: [{ at: 'chan.to:20 in main', objects: -3, bytes: -336 }],
+  });
+  assert.equal(
+    markdown,
+    [
+      '# From probe 11 to probe 47',
+      '',
+      '## task 1, main (0 from the bottom)',
+      '',
+      '- `total`: `0` → `47`',
+      '- `got`: `nothing` → `28`',
+      '',
+      '## Tasks and memory',
+      '',
+      '- task 2 ended, last at `chan.to:7 in produce`',
+      '- memory made at `chan.to:20 in main`: -3 objects, -336 bytes',
       '',
     ].join('\n'),
   );

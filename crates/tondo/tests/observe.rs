@@ -1922,7 +1922,7 @@ fn a_replay_follows_values_through_channels() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break sent.to:15\ncontinue\ncontinue\nwhy got\norigins\n";
+    let script = "break sent.to:15\ncontinue\ncontinue\nwhy got\norigins\ntick\ncontinue\ndiff 3\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
@@ -1934,6 +1934,10 @@ fn a_replay_follows_values_through_channels() {
     // The origins go on in the task that sent it.
     let origins = lines.iter().find_map(|l| l.get("origins")).unwrap_or_else(|| panic!("{output}"));
     assert!(origins.to_string().contains("sent.to:4 in produce"), "{origins}");
+    // What changed since probe 3, in each task.
+    let diff = lines.iter().find_map(|l| l.get("diff")).unwrap_or_else(|| panic!("{output}"));
+    let changed: Vec<&str> = diff["bindings"].as_array().unwrap().iter().filter_map(|b| b["name"].as_str()).collect();
+    assert!(changed.contains(&"total") && changed.contains(&"n"), "{diff}");
 }
 
 /// A recording keeps the program's sources, so it runs again elsewhere, as
@@ -2113,6 +2117,8 @@ fn debugger_goes_back_in_a_replay() {
     assert!(found["why"].as_str().unwrap().starts_with("the last time `total =="), "{found}");
     adapter.until("stopped");
     assert_eq!(evaluated(&mut adapter, "total"), ("0".to_string(), json!(9)));
+    let diff = adapter.ask("diff", json!({ "from": 1 }));
+    assert!(diff["diff"]["bindings"].as_array().is_some_and(|b| !b.is_empty()), "{diff}");
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
     adapter.ask("continue", json!({ "threadId": 1 }));
     adapter.until("terminated");

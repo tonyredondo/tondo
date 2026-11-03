@@ -121,7 +121,8 @@ and the line that gave it, `ran app.to:12 total` each time that line ran,
 and in a replay `seek <probe>` goes to any of them. In a replay, `origins
 total` follows `why` back over the run, each cause with its own, to what
 the program read: the autopsy of a failure. `first total > 100` and
-`last total > 100` go to the line after which it held, over the run.
+`last total > 100` go to the line after which it held, over the run, and
+`diff 120` says what changed since probe 120, task by task.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling
