@@ -668,8 +668,11 @@ impl<'a> Linker<'a> {
         // replay does again.
         let allocator = symbols.iter().any(|s| s.name == b"mi_malloc" && s.section != SymbolSection::Undefined);
         for symbol in symbols {
+            // A weak reference asks whether the function is there, which
+            // the wrapper always is: it stays the function's.
             let symbol_name = match symbol.section {
-                SymbolSection::Undefined => redirected(symbol.name, self.recordable && !allocator),
+                SymbolSection::Undefined if !symbol.weak => redirected(symbol.name, self.recordable && !allocator),
+                SymbolSection::Undefined => redirected(symbol.name, false),
                 _ => symbol.name,
             };
             let id = self.intern(symbol_name);
