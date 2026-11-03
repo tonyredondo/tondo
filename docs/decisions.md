@@ -4636,6 +4636,19 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — A `tondo` command in lldb and gdb
+
+dotnet's SOS teaches lldb the runtime's structures. Tondo's dump already
+holds what such a command would show, the tasks, their stacks and the
+live memory, and `dump read` shows it: so the command, a Python script
+for each debugger that `tondo dump plugin` writes, has the stopped
+program write a dump through a function of its runtime, which the
+debugger calls on the stopped thread, whose task's stack is below the
+call, and shows it with `dump read`. It reads nothing of the runtime's
+memory itself, so it stays right as the runtime changes. A core file,
+which no function can be called in, has the dump `TONDO_DUMP` wrote at
+the crash.
+
 ## 2026-11-03 — DWARF for gdb and lldb
 
 gdb and lldb read DWARF, and a Tondo executable had none: they saw

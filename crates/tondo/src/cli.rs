@@ -216,6 +216,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["show a dump, as one written at a crash with", "TONDO_DUMP=<dir>"],
     },
     Command {
+        name: "dump",
+        usage: &["tondo dump plugin <lldb|gdb> [--json]"],
+        summary: &["write the `tondo` command for lldb or gdb, which", "shows a stopped program as `dump read` does"],
+    },
+    Command {
         name: "trace",
         usage: &[
             "tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--via <command>] [--json]",

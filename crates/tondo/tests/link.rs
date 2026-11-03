@@ -106,3 +106,34 @@ fn debug_builds_have_their_lines_in_dwarf() {
     }
     assert!(lines.contains(&(square, 4)), "{lines:?}");
 }
+
+/// gdb stops a debug build at a line of its DWARF, and the `tondo` command
+/// that `tondo dump plugin gdb` writes shows the stopped task's stack, from
+/// a dump the program writes when gdb asks it to.
+#[test]
+fn gdb_stops_at_a_line_and_shows_the_tasks() {
+    if Command::new("gdb").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link-gdb");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "fn square(n: Int): Int {\n    let result = n * n\n    result\n}\n\nfn main() {\n    \
+                   _ = square(3)\n}\n";
+    std::fs::write(dir.join("app.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let status = Command::new(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
+    assert!(status.unwrap().success());
+    let plugin = Command::new(tondo).args(["dump", "plugin", "gdb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
+    let load = String::from_utf8_lossy(&plugin.stdout).trim().to_string();
+    assert!(load.starts_with("source "), "{load}");
+    let ran = Command::new("gdb")
+        .args(["-q", "-batch", "-nx", "-ex", "set debuginfod enabled off", "-ex", &load])
+        .args(["-ex", "break app.to:2", "-ex", "run", "-ex", "bt", "-ex", "tondo task 1", "app"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let shown = String::from_utf8_lossy(&ran.stdout);
+    assert!(shown.contains("square () at app.to:2"), "{shown}");
+    assert!(shown.contains("in main () at app.to:7"), "{shown}");
+    assert!(shown.contains("task 1 (main) runs at square") && shown.contains("app.to:7 in main"), "{shown}");
+}

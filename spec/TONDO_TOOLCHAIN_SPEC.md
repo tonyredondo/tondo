@@ -278,6 +278,7 @@ tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <pat
 tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]
 tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
+tondo dump plugin <lldb|gdb> [--json]
 tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
 tondo debug [--json] --test <id> [<project>]
 tondo dap
@@ -774,6 +775,15 @@ volcado de un build de depuración, `objects`, cada objeto vivo por tipo, y
 string, los objetos que apuntan a él y la cadena más corta que lo mantiene
 vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON, en
 `tondo-dump-read-0.1/1` (sección 7.12).
+
+`dump plugin <lldb|gdb>` escribe en la caché de `tondo` el comando `tondo`
+de lldb o de gdb, un script de Python, y dice cómo cargarlo: `command script
+import <archivo>` o `source <archivo>`. Con el programa parado, `tondo
+[tasks | task <id> | heap | objects | object <address>]` hace que el
+programa escriba un volcado, llamando a `tondo_rt_dump_to` de su runtime, con
+la pila de la tarea parada, y lo muestra como `dump read`. En un build de
+depuración, gdb y lldb leen además las líneas del programa en su DWARF
+(sección 7.6).
 
 La memoria viva sale de muestras que el runtime toma siempre, como Go: una
 asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
@@ -1432,6 +1442,7 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
+| `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
 | `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |

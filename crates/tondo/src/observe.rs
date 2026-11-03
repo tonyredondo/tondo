@@ -822,6 +822,29 @@ pub fn dump(name: &str, output: Option<PathBuf>, as_json: bool) -> Result<(), St
     Ok(())
 }
 
+/// `tondo dump plugin <lldb|gdb>`: writes the debugger's `tondo` command,
+/// which has the program write a dump and shows it with `dump read`, and
+/// says how the debugger loads it.
+pub fn plugin(debugger: &str, json: bool) -> Result<(), String> {
+    let (script, load) = match debugger {
+        "lldb" => (include_str!("plugins/tondo_lldb.py"), "command script import"),
+        "gdb" => (include_str!("plugins/tondo_gdb.py"), "source"),
+        other => return Err(format!("dump plugin is for lldb or gdb, not `{other}`")),
+    };
+    let tondo = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = crate::driver::cache_dir().join("plugins");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot write to {}: {e}", dir.display()))?;
+    let path = dir.join(format!("tondo_{debugger}.py"));
+    let script = script.replace("@TONDO@", &tondo.display().to_string().replace('\\', "\\\\").replace('"', "\\\""));
+    std::fs::write(&path, script).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let command = format!("{load} {}", path.display());
+    match json {
+        true => crate::cli::print_json("dump-plugin", true, json!({ "file": path, "load": command })),
+        false => println!("{command}"),
+    }
+    Ok(())
+}
+
 /// What `tondo dump read` shows of a dump.
 pub enum View {
     Summary,

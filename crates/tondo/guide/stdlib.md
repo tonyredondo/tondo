@@ -735,6 +735,10 @@ replay, so what it wrote straight to the terminal does not show. A replay
 stops where the program starts `fs.watch` or the profiler, whose threads
 are not recorded.
 
+A debug build has DWARF on Linux, so gdb and lldb stop at `app.to:12` and
+name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
+`tondo` command for them that shows the stopped program's tasks and memory.
+
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames
 are below it, marked with which: a closure's maker, a test's suites.

@@ -1099,6 +1099,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
             };
             tondo::observe::read(Path::new(file), view, json).map(|()| ExitCode::SUCCESS)
         }
+        ["plugin", debugger] => tondo::observe::plugin(debugger, json).map(|()| ExitCode::SUCCESS),
         [name] if !name.starts_with('-') => tondo::observe::dump(name, None, json).map(|()| ExitCode::SUCCESS),
         [name, "--output", path] => {
             tondo::observe::dump(name, Some(PathBuf::from(path)), json).map(|()| ExitCode::SUCCESS)

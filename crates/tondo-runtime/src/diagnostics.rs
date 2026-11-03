@@ -566,6 +566,8 @@ fn directory() -> PathBuf {
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn start() {
     STARTED.get_or_init(Instant::now);
+    // Linked in, for gdb and lldb to call.
+    std::hint::black_box(tondo_rt_dump_to as *const ());
     super::recorder::thread();
     if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
         hook(EXACT);
@@ -1087,6 +1089,22 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
         Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
     };
+}
+
+/// Writes a dump of the program to `path`, as a debugger asks with the
+/// program stopped, gdb's or lldb's: whether it could. Its threads stand
+/// still, so it waits for none of them. The debugger calls it on a thread
+/// it stopped, whose task stopped at `pc` with the frame pointer `fp`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_dump_to(path: *const std::ffi::c_char, pc: usize, fp: usize) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { std::ffi::CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let here = std::iter::once(pc).chain(super::trace::walk(fp, bounds)).collect();
+    let text = dump("debugger", "asked by a debugger", Some(here), None);
+    std::fs::write(path, text).is_ok() as i32
 }
 
 /// The sets of labels a document's samples refer to by number, each
