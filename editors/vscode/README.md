@@ -42,7 +42,9 @@ project, running, debugging and testing it.
   records, a table that sorts by its columns and filters its rows;
   *Why Does It Have This Value?* on a variable or the code, which goes back
   to the line that gave the value, in a replay or with `"record": true`,
-  and offers to ask the same of each value that line read; *Show Its Values
+  and offers to ask the same of each value that line read; *Where Does It
+  Come From?*, in a replay, the whole chain back to what the program read;
+  *Show Its Values
   over the Run*, every value a binding took, from which line, on a bar of a
   replay whose marks take the program there; beside each line run, with
   `"record"`, what it changed the last time; *Show What the Tasks Wait For*

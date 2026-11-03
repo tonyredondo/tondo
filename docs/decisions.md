@@ -4636,6 +4636,17 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — The origins of a value
+
+`why` answers one step: the line that gave a value, and what that line
+read. A failure is explained by the chain, back to what the program read
+from outside, which a person asks for one `why` after another. `origins`
+asks them all in a replay, from the line of the value, or of the stop,
+each line's causes found by a replay that stops at it, while the program
+the debugger looks at stays where it is. It gives a tree, each line in
+it once, with limits on its size, so an agent gets the whole autopsy in
+one answer.
+
 ## 2026-11-03 — Following children
 
 A program that starts others, as a server its workers, is debugged in

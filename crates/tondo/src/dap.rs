@@ -1159,6 +1159,23 @@ fn handle(
                 .collect();
             Ok(json!({ "lines": lines }))
         }
+        // Where a value came from in a replay, back over the run.
+        "origins" => {
+            let expression = arguments["expression"].as_str().unwrap_or_default().trim().to_string();
+            let (task, index) = match arguments["frameId"].as_u64() {
+                Some(id) => frame_of(id),
+                None => (program.ask("snapshot")?["snapshot"]["task"].as_u64().unwrap_or(1), 0),
+            };
+            program.ask(&format!("select {task} {index}"))?;
+            program.keep();
+            let Some(mut replaying) = program.replaying.take() else {
+                return Err("origins reads a replay: `tondo run --record` records a run".into());
+            };
+            let found = replaying.origins(&mut |c| program.ask(c), task, &expression);
+            program.replaying = Some(replaying);
+            program.adopt();
+            found
+        }
         // The line that gave an expression its value, and where what that
         // line reads got its own: the program as it was there in a replay,
         // the history otherwise.
@@ -1179,7 +1196,7 @@ fn handle(
                 let (to, why, _) = replaying.find("why", &expression, tick, task, &anchor)?;
                 let (running, mut session, stop) = replaying.reach(to, why, true)?;
                 let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
-                let causes = replaying.causes(&mut session, &at, to);
+                let causes = replaying.causes(&mut |c| crate::debug::ask(&mut session, c), &at, to);
                 program.take_over(running, session, &stop);
                 return Ok(json!({ "why": stop["stopped"]["why"], "at": at, "causes": causes }));
             }

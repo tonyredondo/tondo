@@ -956,3 +956,31 @@ render();
 </html>
 `;
 }
+
+/** A cause `origins` found: a binding, its value, the line that gave it,
+ *  and that line's own causes. */
+export interface Origin {
+  name: string;
+  value: string;
+  at: string;
+  tick?: number;
+  above?: boolean;
+  causes?: Origin[];
+}
+
+/** Where a value came from, as Markdown: the line, then each cause under
+ *  the one it explains. */
+export function originsMarkdown(title: string, origins: { why: string; at: string; causes: Origin[] }): string {
+  const lines = [`# Where ${title} comes from`, '', `${origins.why}, at \`${origins.at}\``, ''];
+  const walk = (causes: Origin[], depth: number) => {
+    for (const cause of causes) {
+      const above = cause.above ? ', as above' : '';
+      lines.push(`${'  '.repeat(depth)}- \`${cause.name}\` was \`${cause.value}\`, from \`${cause.at}\`${above}`);
+      if (!cause.above) {
+        walk(cause.causes ?? [], depth + 1);
+      }
+    }
+  };
+  walk(origins.causes, 0);
+  return `${lines.join('\n')}\n`;
+}

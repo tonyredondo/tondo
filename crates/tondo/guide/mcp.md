@@ -118,7 +118,9 @@ once, with its time, input and files. There `back`, `reverse` and
 a value its value, in whichever function or task changed it, and its `causes` say where each binding that line reads
 got its own, to ask `why` of next. `timeline total` lists each value it took
 and the line that gave it, `ran app.to:12 total` each time that line ran,
-and in a replay `seek <probe>` goes to any of them.
+and in a replay `seek <probe>` goes to any of them. In a replay, `origins
+total` follows `why` back over the run, each cause with its own, to what
+the program read: the autopsy of a failure.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling

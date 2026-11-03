@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Table, Task, Timeline, mermaid, shortPlace, tableHtml, timelineHtml } from './report';
+import { Origin, Table, Task, Timeline, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -43,10 +43,34 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     ),
     vscode.languages.registerInlineValuesProvider({ language: 'tondo' }, { provideInlineValues: effects }),
     vscode.commands.registerCommand('tondo.taskGraph', taskGraph),
+    vscode.commands.registerCommand('tondo.origins', (context?: { variable?: Variable }) =>
+      origins(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
+    ),
     vscode.commands.registerCommand('tondo.timeline', (context?: { variable?: Variable }) =>
       timeline(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
   );
+}
+
+/** Where a value came from in a replay, back over the run: the line that
+ *  gave it, what that line read, and so on, beside the code. */
+async function origins(expression?: string): Promise<void> {
+  const session = vscode.debug.activeDebugSession;
+  if (session?.type !== 'tondo' || !expression) {
+    void vscode.window.showInformationMessage('Select a binding of the program, or one in the Variables view.');
+    return;
+  }
+  const item = vscode.debug.activeStackItem;
+  const frameId = item instanceof vscode.DebugStackFrame && item.session.id === session.id ? item.frameId : undefined;
+  let found: { origins: { why: string; at: string; causes: Origin[] } };
+  try {
+    found = (await session.customRequest('origins', { expression, frameId })) as typeof found;
+  } catch (error) {
+    void vscode.window.showErrorMessage((error as Error).message);
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument({ content: originsMarkdown(expression, found.origins), language: 'markdown' });
+  await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
 }
 
 /** Each value an expression took over the run beside the code: in a

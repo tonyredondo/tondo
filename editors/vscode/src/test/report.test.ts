@@ -30,6 +30,7 @@ import {
   tableHtml,
   mermaid,
   timelineHtml,
+  originsMarkdown,
   running,
   served,
   share,
@@ -487,4 +488,28 @@ test("a value's timeline holds its changes, which its page's script reads and no
   assert.ok(!html.includes('</script><b>'));
   const data = /const timeline = (.*);\n/.exec(html)?.[1] ?? '';
   assert.deepEqual(JSON.parse(data), { title: 'total', ...timeline });
+});
+
+test("a value's origins show as a list under the line that gave it, each cause under what it explains", () => {
+  const markdown = originsMarkdown('total', {
+    why: '`total` became 15 on this line',
+    at: 'rolled.to:9 in main',
+    causes: [
+      { name: 'total', value: '12', at: 'rolled.to:9 in main', causes: [{ name: 'roll', value: '3', at: 'rolled.to:8 in main', above: true }] },
+      { name: 'roll', value: '3', at: 'rolled.to:8 in main' },
+    ],
+  });
+  assert.equal(
+    markdown,
+    [
+      '# Where total comes from',
+      '',
+      '`total` became 15 on this line, at `rolled.to:9 in main`',
+      '',
+      '- `total` was `12`, from `rolled.to:9 in main`',
+      '  - `roll` was `3`, from `rolled.to:8 in main`, as above',
+      '- `roll` was `3`, from `rolled.to:8 in main`',
+      '',
+    ].join('\n'),
+  );
 });

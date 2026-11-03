@@ -72,6 +72,9 @@ why <expression>                                back to the line that gave the e
 timeline <expression>                           each value it took in the history, with the line that gave it
 ran <file>:<line> [<expression>]                each time a task started that line, with the expression's value
 seek <probe>                                    a replay: to that probe, which timeline and ran give
+origins [<expression>]                          a replay: where the value came from, line by line, and what each
+                                                of those lines read, back to what the program read; without an
+                                                expression, what the line where it stopped reads
                                                 (in a replay, `tondo debug --replay`, back, reverse and why go
                                                 back to the whole program as it was there)
 pause                                           stop every task, as Ctrl-C does
@@ -406,7 +409,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "timeline" | "ran" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
                 let surveyed = ask(&mut session, "tick").and_then(|t| {
-                    let anchor = if word == "timeline" { anchor(&mut session, rest)? } else { String::new() };
+                    let anchor =
+                        if word == "timeline" { anchor(&mut |c| ask(&mut session, c), rest)? } else { String::new() };
                     replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0), &anchor)
                 });
                 match surveyed {
@@ -422,6 +426,20 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 };
                 match sought {
                     Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
+            // Where a value came from, over the whole run.
+            "origins" => {
+                let found = match replaying.as_mut() {
+                    Some(replaying) => {
+                        let task = session.task;
+                        replaying.origins(&mut |c| ask(&mut session, c), task, rest)
+                    }
+                    None => Err("origins reads a replay: `tondo run --record` records a run".to_string()),
+                };
+                match found {
+                    Ok(answer) => session.show(&answer),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
@@ -597,6 +615,10 @@ impl Running {
 
 /// The checkpoints a replay keeps; past them, the oldest go.
 const CHECKPOINTS: usize = 32;
+
+/// How many lines `origins` looks at the causes of, and how far back.
+const ORIGINS: usize = 24;
+const ORIGINS_DEPTH: usize = 8;
 
 /// A checkpoint: the probe it is at, and its process.
 type Checkpoint = (u64, u32);
@@ -791,12 +813,12 @@ impl Replaying {
     fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
         let task = session.task;
-        let anchor = if word == "why" { anchor(session, rest)? } else { String::new() };
+        let anchor = if word == "why" { anchor(&mut |c| ask(session, c), rest)? } else { String::new() };
         let (to, why, _) = self.find(word, rest, tick, task, &anchor)?;
         let (running, mut next, mut stop) = self.reach(to, why, session.json)?;
         if word == "why" {
             let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
-            stop["stopped"]["causes"] = self.causes(&mut next, &at, to);
+            stop["stopped"]["causes"] = self.causes(&mut |c| ask(&mut next, c), &at, to);
         }
         if let Some(old) = self.current.replace(running) {
             old.end();
@@ -941,9 +963,9 @@ impl Replaying {
     /// Where each binding the line at probe `to` reads got the value it has
     /// there, found by a replay from a checkpoint before that follows them;
     /// `session` is stopped there, and says which bindings it has.
-    pub(crate) fn causes(&mut self, session: &mut Session, at: &str, to: u64) -> Value {
+    pub(crate) fn causes(&mut self, here: Asking, at: &str, to: u64) -> Value {
         let Some(text) = line_text(&self.root, at) else { return Value::Array(Vec::new()) };
-        let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
+        let Ok(locals) = here("locals") else { return Value::Array(Vec::new()) };
         let bound: Vec<&str> =
             locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
         let mut read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
@@ -952,7 +974,7 @@ impl Replaying {
         if read.is_empty() {
             return Value::Array(Vec::new());
         }
-        let Ok(anchors) = read.iter().map(|name| anchor(session, name)).collect::<Result<Vec<_>, _>>() else {
+        let Ok(anchors) = read.iter().map(|name| anchor(here, name)).collect::<Result<Vec<_>, _>>() else {
             return Value::Array(Vec::new());
         };
         // From the nearest checkpoint before the line; a binding whose last
@@ -990,6 +1012,69 @@ impl Replaying {
             }
         }
         Value::Array(causes)
+    }
+
+    /// `origins [<expression>]` in a replay: the line that gave the
+    /// expression its value, or the line the program is at, with where each
+    /// binding it reads got its own, and so on back, each line's causes
+    /// found by a replay that stops there; the program stays where it is.
+    pub(crate) fn origins(&mut self, here: Asking, task: u64, rest: &str) -> Result<Value, String> {
+        let tick = here("tick")?["tick"].as_u64().unwrap_or(0);
+        let (to, why, at, causes) = match rest.trim() {
+            "" => {
+                let at = here("snapshot")?["snapshot"]["frames"][0]["at"].as_str().unwrap_or_default().to_string();
+                let causes = self.causes(here, &at, tick);
+                (tick, "the program is here".to_string(), at, causes)
+            }
+            expression => {
+                let anchor = anchor(here, expression)?;
+                let (to, why, _) = self.find("why", expression, tick, task, &anchor)?;
+                let (running, mut there, stop) = self.reach(to, why.clone(), true)?;
+                let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+                let causes = self.causes(&mut |c| ask(&mut there, c), &at, to);
+                running.end();
+                self.gather_ended(&mut there);
+                (to, why, at, causes)
+            }
+        };
+        let (mut seen, mut left) = (std::collections::HashSet::from([to]), ORIGINS);
+        let causes = self.origins_of(&causes, &mut seen, &mut left, 1);
+        Ok(serde_json::json!({ "origins": { "why": why, "at": at, "tick": to, "causes": causes } }))
+    }
+
+    /// Each cause with the causes of the line that gave it, while `left`
+    /// lines may be looked at and the chain is not too deep; a line looked
+    /// at once is not again.
+    fn origins_of(
+        &mut self,
+        causes: &Value,
+        seen: &mut std::collections::HashSet<u64>,
+        left: &mut usize,
+        depth: usize,
+    ) -> Vec<Value> {
+        let mut out = Vec::new();
+        for cause in causes.as_array().into_iter().flatten() {
+            let mut node = cause.clone();
+            let tick = cause["tick"].as_u64();
+            if tick.is_some_and(|tick| seen.contains(&tick)) {
+                node["above"] = true.into();
+            } else if let Some(tick) = tick
+                && depth < ORIGINS_DEPTH
+                && *left > 0
+                && seen.insert(tick)
+            {
+                *left -= 1;
+                if let Ok((running, mut there, stop)) = self.reach(tick, String::new(), true) {
+                    let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+                    let further = self.causes(&mut |c| ask(&mut there, c), &at, tick);
+                    running.end();
+                    self.gather_ended(&mut there);
+                    node["causes"] = Value::Array(self.origins_of(&further, seen, left, depth + 1));
+                }
+            }
+            out.push(node);
+        }
+        out
     }
 
     /// `seek <tick>` in a replay: on to that probe, or back to it from the
@@ -1076,6 +1161,30 @@ pub(crate) fn causes_here(ask: &mut dyn FnMut(&str) -> Result<Value, String>, ro
     ask(&format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
 }
 
+/// The causes `origins` found, as a tree, each with the line that gave it.
+fn show_origins(causes: &[Value], indent: &str) {
+    for (index, cause) in causes.iter().enumerate() {
+        let last = index + 1 == causes.len();
+        let (branch, next) = if last { ("└ ", "  ") } else { ("├ ", "│ ") };
+        let at = cause["at"].as_str().unwrap_or_default();
+        let above = if cause["above"] == true { ", as above" } else { "" };
+        println!(
+            "{indent}{branch}`{}` was {}, from {at}{}{above}",
+            cause["name"].as_str().unwrap_or_default(),
+            cause["value"].as_str().unwrap_or_default(),
+            tick_of(cause)
+        );
+        if cause["above"] == true {
+            continue;
+        }
+        let deeper = format!("{indent}{next}");
+        if let Some(text) = line_text(Path::new(""), at) {
+            println!("{deeper}  {}", text.trim());
+        }
+        show_origins(cause["causes"].as_array().map_or(&[][..], Vec::as_slice), &deeper);
+    }
+}
+
 /// A replay's probe of a line the history lists, to `seek`; none outside
 /// a replay, where it is zero.
 fn tick_of(line: &Value) -> String {
@@ -1088,9 +1197,12 @@ fn tick_of(line: &Value) -> String {
 /// The frame that has the binding `expression` reads, the one the
 /// debugger looks at or one its code can read, as a scan of another replay
 /// of the run finds it.
-fn anchor(session: &mut Session, expression: &str) -> Result<String, String> {
-    Ok(ask(session, &format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string())
+fn anchor(here: Asking, expression: &str) -> Result<String, String> {
+    Ok(here(&format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string())
 }
+
+/// What asks the program the debugger looks at, and gives its answer.
+pub(crate) type Asking<'a> = &'a mut dyn FnMut(&str) -> Result<Value, String>;
 
 /// The text of the line of `file:line in function`, a file in `root`.
 fn line_text(root: &Path, at: &str) -> Option<String> {
@@ -1140,7 +1252,7 @@ fn read_by(text: &str) -> Vec<String> {
 }
 
 /// The answer to a command, or the error it is.
-fn ask(session: &mut Session, command: &str) -> Result<Value, String> {
+pub(crate) fn ask(session: &mut Session, command: &str) -> Result<Value, String> {
     session.send(command)?;
     let answer = session.answer()?;
     match answer["error"].as_str() {
@@ -1311,6 +1423,17 @@ impl Session {
             }
         } else if value.get("exited").is_some() {
             println!("the program ended");
+        } else if let Some(origins) = value.get("origins") {
+            println!(
+                "{}, at {}{}",
+                origins["why"].as_str().unwrap_or_default(),
+                origins["at"].as_str().unwrap_or_default(),
+                tick_of(origins)
+            );
+            if let Some(source) = source_line(origins["at"].as_str().unwrap_or_default()) {
+                println!("{source}");
+            }
+            show_origins(origins["causes"].as_array().map_or(&[][..], Vec::as_slice), "");
         } else if let Some(timeline) = value["timeline"].as_array() {
             if timeline.is_empty() {
                 println!("no line of the history gave it a value");

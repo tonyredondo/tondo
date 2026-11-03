@@ -1036,7 +1036,8 @@ que `why` y da la línea, por qué y las causas, y la parada llega después;
 probe de cada uno en una reproducción, el probe actual y los de los
 checkpoints, y `seek` lleva la reproducción a un probe; `effects` da, para
 el marco de `frameId`, lo que cambió cada línea de su llamada la última vez
-que corrió, según el historial; y `tasks` da las tareas, dónde está cada
+que corrió, según el historial; `origins`, con `expression`, lo que da la
+orden; y `tasks` da las tareas, dónde está cada
 una, qué espera y qué tareas lo tienen. La extensión las ofrece con *Why
 Does It Have This Value?* y *Show Its Values over the Run* en el menú de
 una variable o del código, que pregunta luego por cada causa y dibuja la
@@ -1101,6 +1102,11 @@ principio que sigue la expresión, igual que `why`, o cuenta las veces que
 corre la línea, y
 dan el probe de cada línea: `seek
 <probe>` lleva el programa a ese punto, antes o después del de ahora.
+`origins [<expresión>]` sigue `why` hacia atrás sin mover el programa: la
+línea que dio a la expresión su valor, o sin expresión la línea donde está,
+y por cada binding que lee esa línea, la línea que le dio el suyo, y así
+hasta lo que el programa leyó, como el reloj, un archivo o los bytes
+aleatorios; cada línea se mira una vez, hasta 24 y 8 de profundidad.
 
 ### 7.7 Librerías para C
 

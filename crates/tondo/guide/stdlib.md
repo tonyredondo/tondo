@@ -733,7 +733,9 @@ it, as a method with `mut self` or another task through a `sync.Mutex`. The
 network and processes are recorded too; a child does not run again in the
 replay, so what it wrote straight to the terminal does not show. A replay
 stops where the program starts `fs.watch` or the profiler, whose threads
-are not recorded.
+are not recorded. `origins total` gives the whole chain at once: the line
+that gave `total`, what that line read and where each came from, back to
+what the program read.
 
 A debug build has DWARF on Linux, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a

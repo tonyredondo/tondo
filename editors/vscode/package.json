@@ -336,6 +336,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.origins",
+        "title": "Where Does It Come From?",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -484,6 +489,10 @@
         {
           "command": "tondo.timeline",
           "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.origins",
+          "when": "debugType == tondo"
         }
       ],
       "debug/callstack/context": [
@@ -500,6 +509,11 @@
         },
         {
           "command": "tondo.timeline",
+          "when": "inDebugMode && debugType == tondo && resourceLangId == tondo",
+          "group": "debug"
+        },
+        {
+          "command": "tondo.origins",
           "when": "inDebugMode && debugType == tondo && resourceLangId == tondo",
           "group": "debug"
         }
@@ -519,6 +533,10 @@
         },
         {
           "command": "tondo.timeline",
+          "when": "inDebugMode && debugType == tondo"
+        },
+        {
+          "command": "tondo.origins",
           "when": "inDebugMode && debugType == tondo"
         },
         {

@@ -1965,6 +1965,12 @@ fn debugger_goes_back_in_a_replay() {
     assert_eq!(values, [0, rolls[0], rolls[0] + rolls[1], rolls[0] + rolls[1] + rolls[2]], "{timeline}");
     let ran = ask("ran rolled.to:9 roll", "ran");
     assert_eq!(ran["times"], 3, "{ran}");
+    // Where `total` came from, back to the dice it rolled.
+    let origins = ask("origins total", "origins");
+    let tree = origins["origins"].to_string();
+    assert_eq!(origins["origins"]["at"], "rolled.to:9 in main", "{origins}");
+    assert!(tree.contains(r#""name":"roll""#) && tree.contains(r#""name":"dice""#), "{origins}");
+    assert!(tree.contains("rolled.to:5 in main"), "{origins}");
     // And back to where the second came from.
     let tick = timeline["timeline"][2]["tick"].as_u64().unwrap();
     ask(&format!("seek {tick}"), "stopped");
@@ -1997,6 +2003,8 @@ fn debugger_goes_back_in_a_replay() {
     adapter.ask("stepBack", json!({ "threadId": 1 }));
     adapter.until("stopped");
     assert_eq!(evaluated(&mut adapter, "i"), ("1".to_string(), json!(9)));
+    let origins = adapter.ask("origins", json!({ "expression": "total" }));
+    assert!(origins["origins"]["causes"].as_array().is_some_and(|c| !c.is_empty()), "{origins}");
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
     adapter.ask("continue", json!({ "threadId": 1 }));
     adapter.until("terminated");
