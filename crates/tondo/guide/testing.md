@@ -64,7 +64,8 @@ suite slow {
   where it was spawned: wait for them, cancel them, or close what they wait on.
 - `tondo test --schedules 50` runs each test with its tasks in 50 orders, to
   find one that depends on which task runs first; a failure prints the
-  command that runs that order again, `--schedules 1 --seed hex`.
+  command that runs that order again, `--schedules 1 --seed hex`, and the
+  one that debugs the test in it, `tondo debug --test <id> --schedule hex`.
 
 ## Benchmarks
 

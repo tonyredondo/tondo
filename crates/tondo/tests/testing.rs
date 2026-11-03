@@ -945,6 +945,27 @@ test firstArrivesFirst {
         let (stdout, _, status) = tondo(&dir, &args);
         assert_eq!(status, 1, "{stdout}");
     }
+    // And under the debugger, which stops where the assertion fails.
+    let debug = stdout.lines().find_map(|line| line.strip_prefix("debug it in that order: tondo ")).expect(&stdout);
+    let mut args: Vec<&str> = debug.split(' ').collect();
+    args.insert(1, "--json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(&args)
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"continue\ncontinue\n").unwrap();
+    drop(child.stdin.take());
+    let debugged = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let stops: Vec<serde_json::Value> = debugged
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|l| l.get("stopped").cloned())
+        .collect();
+    assert!(stops.iter().any(|s| s["why"].as_str().is_some_and(|w| w.contains("panic"))), "{debugged}");
     let (stdout, stderr, status) = tondo(&dir, &["test", "--schedules", "2", "--repeat", "2"]);
     assert_eq!(status, 2, "{stdout}{stderr}");
     assert!(stderr.contains("--schedules runs everything once per order; it does not go with --repeat"), "{stderr}");

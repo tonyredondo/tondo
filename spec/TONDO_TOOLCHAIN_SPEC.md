@@ -799,7 +799,10 @@ como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. Con `--via
 `tondo relay` une su entrada y su salida a la conexión del programa allí,
 sin abrir puertos; el acceso es el del comando. `--test <id>` depura
 un test del proyecto, solo, con sus snapshots y las entradas de su fuzz store
-(10.6 de testing): dice cómo terminó en lugar de los frames del runner. Lee una orden por
+(10.6 de testing): dice cómo terminó en lugar de los frames del runner; con
+`--schedule <seed>`, sus tareas corren en el orden de esa seed (8.10 de
+testing), la que nombra un fallo de `tondo test --schedules`, y el editor
+la da como `"schedule"` en `launch`. Lee una orden por
 línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
 y cada evento como una línea de JSON, para una herramienta o un modelo:
 

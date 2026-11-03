@@ -4594,3 +4594,19 @@ editor's references name other values after the program goes on, so a
 page carries the stop it is of, and one of another stop is refused
 rather than mixed with it. Images and charts stay out: a table covers
 the values programs hold most.
+
+## 2026-11-03 — PCT for the orders of a test's tasks
+
+`tondo test --schedules` chose the next task at random at each point
+where tasks may change places. A random walk finds an order that needs
+one task to stop at a given step among many only rarely, and less the
+longer the test runs. PCT (Burckhardt et al., 2010) gives each task a
+priority as it starts, runs the highest, and at a few steps the seed
+chooses drops the task that would run below all, which finds an order
+of depth d among n tasks and k steps with a probability of at least
+1/(n·k^(d-1)). Two changes give depth three; the scale of the steps they
+fall in is the seed's too, so that runs of many seeds cover short tests
+and long ones. The algorithm's name in the report changed with it, as a
+seed of the old one gives another order. A failure also names the
+command that debugs the test in its order, `tondo debug --test <id>
+--schedule <seed>`.

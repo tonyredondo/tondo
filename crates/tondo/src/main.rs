@@ -934,12 +934,19 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
-    let (mut test, mut via) = (None, None);
+    let (mut test, mut via, mut schedule) = (None, None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
             "--json" => json = true,
             "--live" => live = true,
+            "--schedule" => {
+                let seed = rest.next().and_then(|s| u64::from_str_radix(s.to_str()?, 16).ok());
+                let seed = seed.ok_or_else(|| {
+                    usage("--schedule takes the seed in hex of an order, as `tondo test --schedules` names it")
+                })?;
+                schedule = Some(seed);
+            }
             "--test" => {
                 test = Some(
                     rest.next()
@@ -956,6 +963,9 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
             other if !other.starts_with('-') && target.is_none() => target = Some(arg.clone()),
             other => return Err(usage(&format!("debug does not take `{other}`"))),
         }
+    }
+    if schedule.is_some() && test.is_none() {
+        return Err(usage("--schedule orders the tasks of a test: it goes with --test"));
     }
     // A program on another machine, or in a container, by its name there.
     if let Some(via) = via {
@@ -984,7 +994,8 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
         };
         let root = if project.is_file() { project.parent().unwrap_or(&project).to_path_buf() } else { project.clone() };
         let environment = tondo::runner::test_environment(&root)?;
-        let status = tondo::debug::debug(tondo::debug::Debugged::Test(executable, node as u32, environment), json)?;
+        let status =
+            tondo::debug::debug(tondo::debug::Debugged::Test(executable, node as u32, environment, schedule), json)?;
         return Ok(ExitCode::from(status.clamp(0, 255) as u8));
     }
     let target = target.ok_or_else(|| {

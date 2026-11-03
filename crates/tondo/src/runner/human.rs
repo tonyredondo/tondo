@@ -395,10 +395,9 @@ pub(super) fn report(
         if let Some(seed) =
             aggregate.attempts.iter().find(|a| a.status != Status::Passed).and_then(|a| options.schedule(a.iteration))
         {
-            text.push_str(&format!(
-                "again in that order: tondo test --exact {} --schedules 1 --seed {seed:x}\n",
-                tree.id(node)
-            ));
+            let id = tree.id(node);
+            text.push_str(&format!("again in that order: tondo test --exact {id} --schedules 1 --seed {seed:x}\n"));
+            text.push_str(&format!("debug it in that order: tondo debug --test {id} --schedule {seed:x}\n"));
         }
         sections.push(text);
     }

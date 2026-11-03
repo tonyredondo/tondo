@@ -333,6 +333,9 @@ impl Server {
         if let Some(test) = args.text("test") {
             argv.extend(["--test".into(), test]);
         }
+        if let Some(seed) = args.text("schedule") {
+            argv.extend(["--schedule".into(), seed]);
+        }
         if let Some(via) = args.text("via") {
             argv.extend(["--via".into(), via]);
         }
@@ -2057,6 +2060,12 @@ debug build's process ID or name. A program it starts waits before main for brea
                 "string",
                 "The id of a test of the project `target` names, as `test` lists it: the session debugs that test \
 alone, and says how it ended.",
+            ),
+            (
+                "schedule",
+                "string",
+                "With `test`, the seed in hex of an order of its tasks, as a failure of `test` with `schedules` \
+names it: the test runs in that order again.",
             ),
             (
                 "via",

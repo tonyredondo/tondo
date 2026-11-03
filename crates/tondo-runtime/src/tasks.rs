@@ -339,6 +339,8 @@ pub(crate) struct Task {
     /// The panic the last `recover` stopped, which the standard library
     /// reads into a `Panic`.
     pub(crate) caught: Option<Box<super::panics::Record>>,
+    /// While exploring orders, its priority: the highest that can run runs.
+    priority: u64,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -1313,7 +1315,7 @@ fn work(main: bool) -> i32 {
                 }
                 let next = match exploring() {
                     Some(seed) if !queue.runnable.is_empty() => {
-                        let at = (seeded(seed) % queue.runnable.len() as u64) as usize;
+                        let at = prioritized(seed, &queue.runnable);
                         queue.runnable.remove(at)
                     }
                     _ => queue.runnable.pop_front(),
@@ -2381,6 +2383,7 @@ fn new_task(
         unwinding: None,
         paused: Vec::new(),
         caught: None,
+        priority: exploring().map_or(0, |seed| seeded(seed) | 1 << 63),
     };
     let task = match place.is_null() {
         true => Box::into_raw(Box::new(task)),
@@ -2848,6 +2851,33 @@ fn exploring() -> Option<&'static AtomicU64> {
         Some(AtomicU64::new(seed))
     })
     .as_ref()
+}
+
+/// Where the task to run next is among those that can, while exploring
+/// orders (testing 8.10), by PCT: each task has a priority the seed gives
+/// as it starts, the highest runs, and at two of its steps, which the seed
+/// chooses within a scale it chooses too, the task that would run drops
+/// below all, so that an order that needs a task to stop at a few given
+/// steps comes with a probability that does not fall with the program's
+/// length.
+fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
+    static STEPS: AtomicU64 = AtomicU64::new(0);
+    static CHANGES: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
+    let changes = CHANGES.get_or_init(|| {
+        let scale = 1 << (6 + seeded(seed) % 14);
+        [1 + seeded(seed) % scale, 1 + seeded(seed) % scale]
+    });
+    let step = STEPS.fetch_add(1, Ordering::Relaxed) + 1;
+    let priority = |at: usize| unsafe { (*runnable[at]).priority };
+    let highest = (0..runnable.len()).max_by_key(|&at| priority(at)).unwrap_or(0);
+    // A change: below every priority a task starts with, and below the
+    // earlier changes'.
+    if let Some(change) = changes.iter().position(|&c| c == step) {
+        let task = runnable[highest];
+        unsafe { (*task).priority = (changes.len() - change) as u64 };
+        return (0..runnable.len()).max_by_key(|&at| priority(at)).unwrap_or(0);
+    }
+    highest
 }
 
 /// The next number of the seed's sequence (SplitMix64).

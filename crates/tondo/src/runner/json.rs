@@ -334,7 +334,7 @@ impl Context<'_> {
                 Some((count, seed, _)) => obj(vec![
                     ("count", int(count as usize)),
                     ("seed", str(format!("{seed:016x}"))),
-                    ("algorithm", str("seeded-single-worker-v1")),
+                    ("algorithm", str("pct-single-worker-v1")),
                 ]),
                 None => Value::Null,
             },

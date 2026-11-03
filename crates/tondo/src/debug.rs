@@ -20,8 +20,9 @@ pub enum Debugged {
     /// command that reaches it (`--via`) and its name there.
     Remote(String, String),
     /// A test of a project: its tests' executable, the test's node, which
-    /// runs alone, and the variables that give it the project's stores.
-    Test(PathBuf, u32, Vec<(&'static str, PathBuf)>),
+    /// runs alone, the variables that give it the project's stores, and the
+    /// seed of the order of its tasks (`--schedule`).
+    Test(PathBuf, u32, Vec<(&'static str, PathBuf)>, Option<u64>),
 }
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
@@ -90,7 +91,7 @@ quit                                            end the program and the debugger
 /// a program it started.
 pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     let (program, child) = match debugged {
-        Debugged::Test(executable, node, environment) => {
+        Debugged::Test(executable, node, environment, schedule) => {
             use std::os::unix::process::CommandExt;
             let plan = std::env::temp_dir().join(format!("tondo-debug-plan-{}", std::process::id()));
             std::fs::write(&plan, node.to_string()).map_err(|e| format!("cannot write {}: {e}", plan.display()))?;
@@ -98,6 +99,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .env("TONDO_DEBUG", "1")
                 .env("TONDO_TEST_PLAN", &plan)
                 .envs(environment)
+                .envs(schedule.map(|seed| ("TONDO_RT_SCHEDULE", format!("{seed:x}"))))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())

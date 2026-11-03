@@ -423,12 +423,23 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .flatten()
             .map(|(name, value)| (name.clone(), value.as_str().map_or(value.to_string(), str::to_string)))
             .collect();
+        let schedule = match arguments["schedule"].as_str() {
+            Some(seed) if u64::from_str_radix(seed, 16).is_ok() => Some(seed.to_string()),
+            Some(seed) => {
+                return Err(format!("`schedule` takes the seed in hex of an order of a test's tasks, not `{seed}`"));
+            }
+            None => None,
+        };
         let arguments: Vec<String> =
             arguments["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
         let mut command = std::process::Command::new(&executable);
         if let Some(plan) = &plan {
             command.env("TONDO_TEST_PLAN", plan);
             command.envs(environment);
+            // The order of its tasks a failure of `--schedules` named.
+            if let Some(seed) = schedule {
+                command.env("TONDO_RT_SCHEDULE", seed);
+            }
         }
         command.envs(variables);
         let child = command

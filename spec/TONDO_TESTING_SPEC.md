@@ -1709,16 +1709,22 @@ completa `N` veces, cada una en un trabajador nuevo como en 8.8, y en cada una
 las tareas corren en otro orden:
 
 - todas en un solo thread;
-- cuando varias pueden correr, la siguiente la elige un generador sembrado,
-  que también elige entre las operaciones listas de un `select`;
+- cuando varias pueden correr, corre la de más prioridad (PCT): cada tarea
+  recibe una del generador sembrado al empezar, y en dos pasos que elige la
+  seed, dentro de una escala que también elige, la que iba a correr pasa a
+  tener menos que todas. Así, un orden que necesita que una tarea se detenga
+  en unos pocos pasos concretos aparece con una probabilidad que no baja con
+  la longitud del test. El generador también elige entre las operaciones
+  listas de un `select`;
 - cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
   lenguaje), donde el orden entre tareas puede cambiar.
 
 La iteración `1` usa la seed de la invocación y cada iteración `i > 1` una seed
-derivada (`seeded-single-worker-v1`: SplitMix64 de `seed + i·0x9e3779b97f4a7c15`).
+derivada (`pct-single-worker-v1`: SplitMix64 de `seed + i·0x9e3779b97f4a7c15`).
 La salida humana nombra la seed de cada iteración y, para cada test que falla,
-el comando que lo repite en el primer orden en que falló:
-`tondo test --exact <id> --schedules 1 --seed <seed>`. Una seed reproduce el
+el comando que lo repite en el primer orden en que falló,
+`tondo test --exact <id> --schedules 1 --seed <seed>`, y el que lo depura en
+ese orden, `tondo debug --test <id> --schedule <seed>`. Una seed reproduce el
 mismo orden mientras el test solo espere a sus propias tareas; el reloj, la red,
 los archivos y los procesos siguen siendo los reales.
 
@@ -3388,7 +3394,7 @@ simultáneamente: `repeat.count > 1` implica
 
 `schedules` es `null` sin `--schedules`; si no, contiene `count`, la `seed` de
 la iteración `1` en dieciséis dígitos hexadecimales lowercase y `algorithm`,
-siempre `seeded-single-worker-v1`; la seed de cada intento se deriva de su
+siempre `pct-single-worker-v1`; la seed de cada intento se deriva de su
 `iteration` según 8.10.
 
 `artifact_store` identifica el store aunque ningún intento adjunte bytes; no
