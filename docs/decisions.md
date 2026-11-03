@@ -4567,3 +4567,17 @@ event, and the program goes on, as dynamic instrumentation does in
 production tools; `hits 1` takes the first time only. It is a logpoint
 that writes what `snapshot` would, and the editor writes it in its
 console.
+
+## 2026-11-03 — Conditions compiled in live builds
+
+The debugger reads a condition as it shows values, which is safe and
+slow, and cannot call the program's code. In a live build, `tondo`
+compiles each breakpoint's condition with a patch, as `call` does, into a
+function that reads the bindings it names from their addresses, and the
+probe calls it on the task instead of reading the condition. A condition
+the debugger cannot read, as a call, stops nowhere until it compiles, and
+one that does not compile is an error; one it can read falls back to
+reading. Each compiled version keeps the sites of the code it was
+compiled with, whose types it knows: a reload that changes the line's
+code adds sites the debugger reads, and `tondo` compiles the condition
+again for them.

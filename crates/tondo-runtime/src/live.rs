@@ -802,7 +802,8 @@ pub(crate) fn goto(task: u64, frame: usize, site: i64, bytes: &[u8]) -> Result<(
     Ok(())
 }
 
-/// The code a slot of the image leads to now, for the debugger's `call`.
+/// The code a slot of the image leads to now, for the debugger's `call`
+/// and its compiled conditions.
 pub(crate) fn slot_code(slot: u64) -> Option<u64> {
     let info = unsafe { INFO.load(Ordering::Acquire).as_ref() }?;
     (slot < info.capacity).then(|| {

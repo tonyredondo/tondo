@@ -586,6 +586,21 @@ impl From<String> for Refused {
 /// patches the process `pid` with it; `ask` sends the process a request
 /// and gives its answer.
 pub fn reload(pid: u32, ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>) -> Result<Reloaded, Refused> {
+    let reloaded = patched(pid, ask)?;
+    // A condition only compiled code reads, compiled again for the new code
+    // of its lines.
+    if let Ok(answer) = ask("conditions") {
+        for pending in answer["conditions"].as_array().into_iter().flatten() {
+            if let (Some(id), Some(condition)) = (pending["id"].as_u64(), pending["condition"].as_str()) {
+                let _ = compiled_condition(pid, ask, id, condition);
+            }
+        }
+    }
+    Ok(reloaded)
+}
+
+/// A reload, without what follows it.
+fn patched(pid: u32, ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>) -> Result<Reloaded, Refused> {
     let (live, manifest) = manifest_of(pid, ask)?;
     let id = live["build"].as_str().unwrap_or_default().to_string();
     let strings = |key: &str| -> Vec<String> {
@@ -658,35 +673,115 @@ pub fn call(
     expression: &str,
     bindings: &[(String, String)],
 ) -> Result<String, String> {
-    const CALLED: &str = "tondoDebugCall";
-    let (_, manifest) =
-        manifest_of(pid, ask).map_err(|e| format!("{e}: a call runs in a live build, debugged with --live"))?;
     let file = place.split_once(" in ").and_then(|(at, _)| at.rsplit_once(':')).map(|(file, _)| file);
     let file = file.ok_or("the program runs: `pause` stops it, or a breakpoint")?;
-    let path = std::path::PathBuf::from(manifest["dir"].as_str().unwrap_or(".")).join(file);
-    let mut text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    // The bindings the expression names, read from their addresses.
-    let words: Vec<&str> = expression.split(|c: char| !(c.is_alphanumeric() || c == '_')).collect();
-    let named: Vec<&(String, String)> = bindings.iter().filter(|(name, _)| words.contains(&name.as_str())).collect();
-    text.push_str(&format!("\nfn {CALLED}(at: UInt64): String {{\n"));
-    for (index, (name, ty)) in named.iter().enumerate() {
-        text.push_str(&format!(
-            "    let {name} = unsafe {{ at.toPointer[UInt64]().offset({index}).read().toPointer[{ty}]().read() }}\n"
-        ));
-    }
-    text.push_str(&format!("    let value = {expression}\n    \"{{value}}\"\n}}\n"));
-    let open = std::collections::HashMap::from([(path, text)]);
-    let patched = crate::driver::with_open(open, CALLED, || reload(pid, ask));
-    patched.map_err(|refused| refused.message())?;
-    let (_, manifest) = manifest_of(pid, ask)?;
-    let slots = manifest["slots"].as_object().into_iter().flatten();
-    let slot = slots.into_iter().find(|(identity, _)| osr::shown(identity) == CALLED).and_then(|(_, s)| s.as_u64());
-    let slot = slot.ok_or("the patch did not add the call")?;
-    let names: Vec<&str> = named.iter().map(|(name, _)| name.as_str()).collect();
+    let ending = format!("    let value = {expression}\n    \"{{value}}\"");
+    let (slot, names) = compiled(pid, ask, file, "tondoDebugCall", "String", expression, &ending, bindings)
+        .map_err(|e| e.replace("a function runs", "a call runs"))?;
     let answer = ask(&format!("call {slot} {}", names.join(" ")))?;
     match answer["called"].as_str() {
         Some(value) => Ok(value.to_string()),
         None => Err(answer["error"].as_str().unwrap_or("the call failed").to_string()),
+    }
+}
+
+/// A function a live patch adds to the program's `file`, in memory: named
+/// `name`, it reads the bindings of `bindings` that `expression` names from
+/// the addresses its argument holds, and ends with `ending`, its result of
+/// type `result`. Gives its slot and the bindings it reads, in order.
+#[allow(clippy::too_many_arguments)]
+fn compiled(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    file: &str,
+    name: &str,
+    result: &str,
+    expression: &str,
+    ending: &str,
+    bindings: &[(String, String)],
+) -> Result<(u64, Vec<String>), String> {
+    let (_, manifest) =
+        manifest_of(pid, ask).map_err(|e| format!("{e}: a function runs in a live build, debugged with --live"))?;
+    let path = std::path::PathBuf::from(manifest["dir"].as_str().unwrap_or(".")).join(file);
+    let mut text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    // The bindings the expression names, read from their addresses.
+    let words: Vec<&str> = expression.split(|c: char| !(c.is_alphanumeric() || c == '_')).collect();
+    let named: Vec<&(String, String)> = bindings.iter().filter(|(n, _)| words.contains(&n.as_str())).collect();
+    text.push_str(&format!("\nfn {name}(at: UInt64): {result} {{\n"));
+    for (index, (binding, ty)) in named.iter().enumerate() {
+        text.push_str(&format!(
+            "    let {binding} = unsafe {{ at.toPointer[UInt64]().offset({index}).read().toPointer[{ty}]().read() }}\n"
+        ));
+    }
+    text.push_str(&format!("{ending}\n}}\n"));
+    let open = std::collections::HashMap::from([(path, text)]);
+    crate::driver::with_open(open, name, || patched(pid, ask)).map_err(told)?;
+    let (_, manifest) = manifest_of(pid, ask)?;
+    let slots = manifest["slots"].as_object().into_iter().flatten();
+    let slot = slots.into_iter().find(|(identity, _)| osr::shown(identity) == name).and_then(|(_, s)| s.as_u64());
+    let slot = slot.ok_or("the patch did not add the function")?;
+    Ok((slot, named.iter().map(|(binding, _)| binding.clone()).collect()))
+}
+
+/// Why the code the debugger wrote did not compile: the compiler's errors,
+/// without the places in it, which the user did not write.
+fn told(refused: Refused) -> String {
+    let Refused::Diagnostics(text) = &refused else { return refused.message() };
+    let place = |line: &str| {
+        let line = line.trim_start();
+        line.starts_with("-->")
+            || line.split_once('|').is_some_and(|(n, _)| n.trim().chars().all(|c| c.is_ascii_digit()))
+    };
+    text.lines().filter(|line| !place(line)).collect::<Vec<_>>().join("\n")
+}
+
+/// The condition of the breakpoint a `break` answered with, in a live
+/// build, compiled: the runtime calls it at the breakpoint's lines instead
+/// of evaluating it, and the answer says `compiled`. One the debugger does
+/// not read, as a call, that does not compile, deletes the breakpoint, and
+/// the answer is the compiler's error; one it reads goes on evaluated.
+pub fn compile_condition(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    answer: &mut serde_json::Value,
+) {
+    let set = &answer["breakpoint"];
+    let (Some(breakpoint), Some(condition)) = (set["id"].as_u64(), set["condition"].as_str().map(String::from)) else {
+        return;
+    };
+    let unparsed = answer["breakpoint"].as_object_mut().and_then(|set| set.remove("unparsed")).is_some();
+    match compiled_condition(pid, ask, breakpoint, &condition) {
+        Ok(()) => answer["breakpoint"]["compiled"] = true.into(),
+        Err(why) if unparsed => {
+            let _ = ask(&format!("delete {breakpoint}"));
+            *answer = serde_json::json!({ "error": format!("the condition: {why}") });
+        }
+        Err(_) => {}
+    }
+}
+
+fn compiled_condition(
+    pid: u32,
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    breakpoint: u64,
+    condition: &str,
+) -> Result<(), String> {
+    let answer = ask(&format!("bindings {breakpoint}"))?;
+    let file = answer["file"].as_str().map(String::from).ok_or("the breakpoint is at no line")?;
+    let bindings: Vec<(String, String)> = answer["bindings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|b| (b["name"].as_str().unwrap_or_default().into(), b["type"].as_str().unwrap_or_default().into()))
+        .collect();
+    // One name for all, which takes one slot: the runtime keeps the code
+    // each breakpoint was given, as no patch's code is unmapped.
+    let ending = format!("    {condition}");
+    let (slot, names) = compiled(pid, ask, &file, "tondoDebugCondition", "Bool", condition, &ending, &bindings)?;
+    let answer = ask(&format!("condition {breakpoint} {slot} {}", names.join(" ")))?;
+    match answer["error"].as_str() {
+        Some(error) => Err(error.to_string()),
+        None => Ok(()),
     }
 }
 

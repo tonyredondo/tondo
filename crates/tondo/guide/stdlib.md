@@ -720,6 +720,9 @@ set count 3 | catch none        change a binding; do not stop at panics
 tasks | task 2 | pause | delete 1 | quit
 ```
 
+In a live build, `tondo debug app.to --live`, a condition is compiled, and
+may call the program's code: `break app.to:12 if isLate(order)`.
+
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames
 are below it, marked with which: a closure's maker, a test's suites.

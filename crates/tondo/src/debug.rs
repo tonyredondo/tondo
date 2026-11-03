@@ -32,7 +32,8 @@ extern "C" fn interrupted(_: i32) {
 
 pub const HELP: &str = "\
 break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with {expressions}>]
-                                                stop where that line starts, or write a message there (b)
+                                                stop where that line starts, or write a message there (b); in a
+                                                live build the condition is compiled, and may call functions
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
 break <place> task <id> ...                     the same for one task only
 break <place> ... capture                       capture the stack and the bindings there, and go on: a running
@@ -290,7 +291,14 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     _ => format!("{word} {rest}"),
                 };
                 session.send(request.trim_end())?;
-                let answer = session.answer()?;
+                let mut answer = session.answer()?;
+                if word == "break" {
+                    let mut ask = |request: &str| {
+                        session.send(request)?;
+                        session.answer()
+                    };
+                    crate::live::compile_condition(pid, &mut ask, &mut answer);
+                }
                 session.show(&answer);
                 if answer["running"] == true {
                     session.wait_event();
@@ -421,10 +429,11 @@ impl Session {
             println!("the program ended");
         } else if let Some(breakpoint) = value.get("breakpoint") {
             println!(
-                "breakpoint {} at {}:{}",
+                "breakpoint {} at {}:{}{}",
                 breakpoint["id"],
                 breakpoint["file"].as_str().unwrap_or_default(),
-                breakpoint["line"]
+                breakpoint["line"],
+                if breakpoint["compiled"] == true { ", its condition compiled" } else { "" }
             );
         } else if let Some(locals) = value["locals"].as_array() {
             if locals.is_empty() {

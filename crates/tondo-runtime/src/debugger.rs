@@ -673,6 +673,27 @@ struct Breakpoint {
     /// It captures the stack and the bindings and goes on, instead of
     /// stopping (`capture`).
     capture: bool,
+    /// Its condition, when only a compiled patch reads it.
+    unparsed: Option<String>,
+    /// Its condition compiled by live patches: for each, the code, the
+    /// bindings it reads, by name, in order, and the sites it is for, those
+    /// of the code it was compiled with, whose types it knows.
+    compiled: Vec<(u64, Vec<String>, Vec<usize>)>,
+}
+
+/// Whether a compiled condition holds in a frame: its code called with the
+/// addresses of the bindings it reads, on this task, its lines passing.
+/// None when one of them is not there yet, for the evaluator to say.
+fn compiled_holds(table: &Table, frames: &[Frame], code: u64, names: &[String]) -> Option<bool> {
+    let bound = visible(table, frames, 0);
+    let addresses: Option<Vec<u64>> =
+        names.iter().map(|name| bound.iter().find(|(b, ..)| b.name == *name).map(|(_, a, _)| *a as u64)).collect();
+    let addresses = addresses?;
+    let condition: extern "C" fn(u64, u64) -> u8 = unsafe { std::mem::transmute(code as usize) };
+    let before = SHOWING.replace(true);
+    let held = condition(addresses.as_ptr() as u64, 0) != 0;
+    SHOWING.set(before);
+    Some(held)
 }
 
 /// When a breakpoint stops by its count of hits: at the `n`th, from it on,
@@ -875,9 +896,15 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         let stack = || stack.get_or_init(|| frames(&table, &here));
         let mut hit = None;
         for breakpoint in state.breakpoints.iter_mut() {
-            let here = breakpoint.sites.contains(&site)
-                && breakpoint.task.is_none_or(|t| t == task)
-                && breakpoint.condition.as_ref().is_none_or(|c| evaluating(&table, stack(), 0, |e| e.holds(c)));
+            let evaluated = || match &breakpoint.condition {
+                Some(c) => evaluating(&table, stack(), 0, |e| e.holds(c)),
+                None => breakpoint.unparsed.is_none(),
+            };
+            let holds = || match breakpoint.compiled.iter().find(|(.., sites)| sites.contains(&site)) {
+                Some((code, names, _)) => compiled_holds(&table, stack(), *code, names).unwrap_or_else(evaluated),
+                None => evaluated(),
+            };
+            let here = breakpoint.sites.contains(&site) && breakpoint.task.is_none_or(|t| t == task) && holds();
             if !here {
                 continue;
             }
@@ -1728,6 +1755,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 once: true,
                 event: None,
                 capture: false,
+                unparsed: None,
+                compiled: Vec::new(),
             });
             remark(table, &state);
             drop(state);
@@ -1873,6 +1902,77 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        // `bindings <breakpoint>`: the file of its lines, and the bindings
+        // its condition reads there with their types, for `tondo` to
+        // compile it.
+        "bindings" => {
+            let id: u32 = rest.parse().unwrap_or(0);
+            let state = state();
+            let Some(breakpoint) = state.breakpoints.iter().find(|b| b.id == id) else {
+                return Some(format!("{{\"error\":{}}}", quoted(&format!("no breakpoint {id}"))));
+            };
+            let Some(&first) = breakpoint.sites.first() else {
+                return Some("{\"error\":\"the breakpoint is at no line\"}".into());
+            };
+            let functions: std::collections::BTreeSet<usize> =
+                breakpoint.sites.iter().map(|&s| table.sites[s].function).collect();
+            let mut bindings: Vec<(&str, &str)> = Vec::new();
+            for function in functions {
+                let mut name = table.functions[function].name.as_str();
+                let mut around = vec![function];
+                while let Some((outer, false)) = written_in(name) {
+                    let Some(found) = table.functions.iter().position(|f| f.name == outer) else { break };
+                    around.push(found);
+                    name = outer;
+                }
+                bindings.extend(around.iter().flat_map(|&f| &table.functions[f].bindings).map(|b| (&*b.name, &*b.ty)));
+            }
+            // A name bound with two types, which the patch could not tell
+            // apart, stays out: a condition that reads it is evaluated.
+            let mut out: Vec<String> = Vec::new();
+            for (index, &(name, ty)) in bindings.iter().enumerate() {
+                let earliest = bindings.iter().position(|(n, _)| *n == name) == Some(index);
+                if earliest && bindings.iter().all(|(n, t)| *n != name || *t == ty) {
+                    out.push(format!("{{\"name\":{},\"type\":{}}}", quoted(name), quoted(ty)));
+                }
+            }
+            format!("{{\"file\":{},\"bindings\":[{}]}}", quoted(&table.sites[first].file), out.join(","))
+        }
+        // The conditions only compiled code reads whose breakpoints have
+        // lines of code they were not compiled for, after a reload.
+        "conditions" => {
+            let state = state();
+            let pending = state.breakpoints.iter().filter_map(|b| {
+                let text = b.unparsed.as_ref()?;
+                let known = |s: &usize| b.compiled.iter().any(|(.., sites)| sites.contains(s));
+                (!b.sites.iter().all(known)).then(|| format!("{{\"id\":{},\"condition\":{}}}", b.id, quoted(text)))
+            });
+            format!("{{\"conditions\":[{}]}}", pending.collect::<Vec<_>>().join(","))
+        }
+        // `condition <breakpoint> <slot> <binding>...`: its condition as a
+        // live patch compiled it, which the breakpoint calls from now on.
+        "condition" => {
+            let mut words = rest.split_whitespace();
+            let (Some(id), Some(slot)) =
+                (words.next().and_then(|w| w.parse::<u32>().ok()), words.next().and_then(|w| w.parse().ok()))
+            else {
+                return Some("{\"error\":\"condition takes a breakpoint, a slot and the bindings it reads\"}".into());
+            };
+            let Some(code) = super::live::slot_code(slot).filter(|&c| c != 0) else {
+                return Some("{\"error\":\"the program is not a live build\"}".into());
+            };
+            let names = words.map(String::from).collect();
+            let mut state = state();
+            match state.breakpoints.iter_mut().find(|b| b.id == id) {
+                Some(breakpoint) => {
+                    let known: Vec<usize> = breakpoint.compiled.iter().flat_map(|(.., s)| s.clone()).collect();
+                    let sites = breakpoint.sites.iter().filter(|s| !known.contains(s)).copied().collect();
+                    breakpoint.compiled.push((code, names, sites));
+                    format!("{{\"condition\":{{\"id\":{id},\"compiled\":true}}}}")
+                }
+                None => format!("{{\"error\":{}}}", quoted(&format!("no breakpoint {id}"))),
+            }
+        }
         // Whether steps go into the standard library's code.
         "steps" => match rest {
             "all" | "program" => {
@@ -2565,10 +2665,19 @@ fn breakpoint(table: &Table, text: &str) -> String {
         Ok(sites) => sites,
         Err(message) => return error(message),
     };
-    let condition = match condition.map(expression::parse) {
+    // In a live build, `tondo` compiles the condition: one the debugger
+    // does not read, as a call, stops nowhere until it does.
+    let written = condition.filter(|_| super::live::on());
+    let (condition, unparsed) = match condition.map(expression::parse) {
+        Some(Err(message)) if written.is_some() => (None, Some(message)),
+        Some(Err(message)) if condition.is_some_and(|c| c.contains('(')) => {
+            return error(format!(
+                "the condition: {message}; a live build, debugged with --live, compiles a condition that calls the program's functions"
+            ));
+        }
         Some(Err(message)) => return error(format!("the condition: {message}")),
-        Some(Ok(condition)) => Some(condition),
-        None => None,
+        Some(Ok(condition)) => (Some(condition), None),
+        None => (None, None),
     };
     // What the condition and the message read are bindings there.
     let mut exprs: Vec<&Expr> = condition.iter().collect();
@@ -2592,9 +2701,19 @@ fn breakpoint(table: &Table, text: &str) -> String {
     let id = state.next_breakpoint;
     state.next_breakpoint += 1;
     let at = &table.sites[sites[0]];
-    let answer = format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}}}}}", quoted(&at.file), at.line);
-    let event = None;
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event, capture });
+    // Its condition, which `tondo` compiles in a live build.
+    let shown = match (written, &unparsed) {
+        (Some(c), Some(why)) => format!(",\"condition\":{},\"unparsed\":{}", quoted(c), quoted(why)),
+        (Some(c), None) => format!(",\"condition\":{}", quoted(c)),
+        (None, _) => String::new(),
+    };
+    let answer =
+        format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}{shown}}}}}", quoted(&at.file), at.line);
+    let (event, compiled) = (None, Vec::new());
+    let unparsed = unparsed.and(written).map(String::from);
+    let breakpoint =
+        Breakpoint { id, sites, condition, unparsed, count: 0, hits, log, task, once: false, event, capture, compiled };
+    state.breakpoints.push(breakpoint);
     remark(table, &state);
     answer
 }
@@ -2843,8 +2962,10 @@ fn event_breakpoint(table: &Table, text: &str) -> String {
     state.next_breakpoint += 1;
     let (sites, condition, hits, log, task) = (Vec::new(), None, None, None, None);
     let event = Some(event);
-    let capture = false;
-    state.breakpoints.push(Breakpoint { id, sites, condition, count: 0, hits, log, task, once: false, event, capture });
+    let (capture, compiled, unparsed) = (false, Vec::new(), None);
+    let breakpoint =
+        Breakpoint { id, sites, condition, unparsed, count: 0, hits, log, task, once: false, event, capture, compiled };
+    state.breakpoints.push(breakpoint);
     remark(table, &state);
     format!("{{\"breakpoint\":{{\"id\":{id},\"on\":{}}}}}", quoted(text.trim()))
 }

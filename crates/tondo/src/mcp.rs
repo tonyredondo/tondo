@@ -2069,7 +2069,7 @@ as `ssh host` or `docker exec -i box`, where `tondo relay` joins it to this sess
     Tool {
         name: "debug",
         description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
-{expressions}>], break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
+{expressions}>] (in a live build the condition is compiled, and may call the program's functions), break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
 changes it; a std.sync cell's value, in any task), delete <id>, \
 catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), break <place> [if <condition>] [hits <n>] capture (the stack and bindings there, without stopping), \
 break on spawn|send|receive|wait <ms> (a task starts, uses a channel, or waited that long), freeze <task> \

@@ -688,6 +688,17 @@ fn options(wanted: &Value) -> String {
     format!("{condition}{hits}{log}")
 }
 
+/// A breakpoint's answer once its condition is compiled, in a live build,
+/// or why it could not be.
+fn compiled(program: &mut Debuggee, mut answer: Value) -> Result<Value, String> {
+    let pid = program.pid;
+    crate::live::compile_condition(pid, &mut |request| program.answer(request), &mut answer);
+    match answer["error"].as_str() {
+        Some(error) => Err(error.to_string()),
+        None => Ok(answer),
+    }
+}
+
 /// Gives a variable with parts the reference that opens them, and an
 /// array's or a set's the count of its items, which the editor asks for in
 /// pages.
@@ -734,7 +745,8 @@ fn handle(
                     set.push(json!({ "verified": false, "line": line, "message": message }));
                     continue;
                 }
-                match program.ask(&format!("break {path}:{line}{}", options(wanted))) {
+                let answer = program.ask(&format!("break {path}:{line}{}", options(wanted)));
+                match answer.and_then(|answer| compiled(program, answer)) {
                     Ok(answer) => {
                         ids.push(answer["breakpoint"]["id"].as_u64().unwrap_or(0));
                         set.push(json!({ "verified": true, "line": answer["breakpoint"]["line"] }));
@@ -753,7 +765,8 @@ fn handle(
             let (mut set, mut ids) = (Vec::new(), Vec::new());
             for wanted in arguments["breakpoints"].as_array().into_iter().flatten() {
                 let name = wanted["name"].as_str().unwrap_or_default().trim();
-                match program.ask(&format!("break fn {name}{}", options(wanted))) {
+                let answer = program.ask(&format!("break fn {name}{}", options(wanted)));
+                match answer.and_then(|answer| compiled(program, answer)) {
                     Ok(answer) => {
                         let at = &answer["breakpoint"];
                         ids.push(at["id"].as_u64().unwrap_or(0));

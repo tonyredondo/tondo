@@ -1606,6 +1606,99 @@ fn debugger_calls_the_programs_code() {
     adapter.stop();
 }
 
+const CONDITIONED: &str = r#"import std.console
+
+type Order = { id: Int, total: Int }
+
+fn big(order: Order): Bool {
+    order.total > 200
+}
+
+fn main() {
+    var sum = 0
+    for i in 0..12 {
+        let order = Order { id: i, total: i * 30 }
+        sum += order.total
+        console.println("{order.id}")
+    }
+    console.println("{sum}")
+}
+"#;
+
+/// In a live build, a breakpoint's condition is compiled, and may call the
+/// program's code; after a reload that changes its function, it is compiled
+/// again for the new code.
+#[test]
+fn debugger_compiles_conditions() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-condition");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("conditioned.to"), CONDITIONED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--live", "conditioned.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut until = |key: &str| loop {
+        let mut line = String::new();
+        assert!(output.read_line(&mut line).unwrap() > 0, "the debugger ended before `{key}`");
+        let value: Value = serde_json::from_str(&line).unwrap_or_default();
+        if value.get(key).is_some() || value.get("error").is_some() {
+            return value;
+        }
+    };
+    let mut send = |line: &str| std::io::Write::write_all(&mut input, format!("{line}\n").as_bytes()).unwrap();
+    until("stopped");
+    send("break conditioned.to:13 if nothing(order)");
+    let refused = until("breakpoint");
+    assert!(refused["error"].as_str().unwrap().contains("unknown name `nothing`"), "{refused}");
+    send("break conditioned.to:13 if big(order) and sum < 2000");
+    let set = until("breakpoint");
+    assert_eq!(set["breakpoint"]["compiled"], true, "{set}");
+    send("continue");
+    until("stopped");
+    send("print order.id");
+    assert_eq!(until("value")["value"], "7");
+    // `main` changes, and `big` with it: the condition is compiled again
+    // for the new code of its line, and `big` says it is bigger now.
+    let source = CONDITIONED.replace("> 200", "> 250").replace("\"{order.id}\"", "\"order {order.id}\"");
+    std::fs::write(dir.join("conditioned.to"), source).unwrap();
+    send("reload");
+    let reloaded = until("reloaded");
+    assert!(reloaded["reloaded"]["changed"].as_array().unwrap().contains(&json!("main")), "{reloaded}");
+    send("continue");
+    until("stopped");
+    send("print order.id");
+    assert_eq!(until("value")["value"], "9");
+    send("print sum");
+    assert_eq!(until("value")["value"], "1080");
+    send("quit");
+    child.wait().unwrap();
+    // The editor's conditions too.
+    std::fs::write(dir.join("conditioned.to"), CONDITIONED).unwrap();
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "conditioned.to", "cwd": dir, "live": true }));
+    let path = dir.join("conditioned.to");
+    let wanted = json!([{ "line": 13, "condition": "big(order)" }, { "line": 14, "condition": "nothing(order)" }]);
+    let set = adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": wanted }));
+    assert_eq!(set["breakpoints"][0]["verified"], true, "{set}");
+    assert_eq!(set["breakpoints"][1]["verified"], false, "{set}");
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let id = adapter.ask("evaluate", json!({ "expression": "order.id", "frameId": frame }));
+    assert_eq!(id["result"], "7");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {

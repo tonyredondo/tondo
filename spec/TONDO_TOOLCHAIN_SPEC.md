@@ -823,7 +823,13 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   mensaje leen lo mismo que `locals`:
   también lo de las funciones en que está escrito el código de esa línea; un
   nombre que no es un binding de ellas, o una expresión mal escrita, es un
-  error al poner el breakpoint. `delete <id>` lo quita.
+  error al poner el breakpoint. En un build live, `tondo` compila la
+  condición con un parche, como `call`, y la tarea la llama en esa línea en
+  lugar de leerla, así que puede llamar al código del programa
+  (`if isLate(order)`) y la respuesta dice `compiled`. La que el depurador no
+  sabe leer y no compila es un error al poner el breakpoint, con el del
+  compilador; la que sabe leer y no compila, la lee. Un `reload` que cambia
+  el código de esa línea la compila de nuevo para él. `delete <id>` lo quita.
 - `retainers <path>` dice qué mantiene vivo el objeto del heap que tiene un
   binding, o una parte suya: las pilas de las tareas que apuntan a él y las
   cadenas de objetos más cortas desde una pila hasta él, cada objeto con su
@@ -931,8 +937,8 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   añade una función que lee los bindings que nombra del marco que se mira y
   la tarea parada la llama en su pila, sin parar en sus líneas. Un error de
   la expresión es el del compilador; una llamada que espera a otra tarea
-  parada sigue esperando, y la respuesta lo dice a los 10 segundos. Nunca
-  la usan las condiciones, los watches ni los logpoints.
+  parada sigue esperando, y la respuesta lo dice a los 10 segundos. Los
+  watches y los logpoints nunca la usan; las condiciones, como dice `break`.
 - `goto <línea>`, en un build live, hace que el marco donde paró la tarea
   siga en la sentencia de esa línea de su función, sin ejecutar las de en
   medio, cuando lo que esa sentencia usa ya tiene valor: si no, un error

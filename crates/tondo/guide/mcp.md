@@ -96,7 +96,9 @@ program's contexts and the `with` that set each field. Conditions, `print`,
 parts, literals, arithmetic, comparisons, `and`, `or`, `not`, and
 `length()`, `isEmpty()`, `isSome()`, `isNone()`, `isOk()`, `isErr()`,
 `contains()`, `startsWith()` and `endsWith()`; they read values and never
-run the program's code. `watch` stops on the line after the one that
+run the program's code. In a live build, a breakpoint's condition is
+compiled instead, and may call the program's functions:
+`break src/main.to:12 if isLate(order)`. `watch` stops on the line after the one that
 changed the value, in its frame or a call it makes; `catch error` stops
 where an error starts, a `fail` or a `?` on what the standard library
 failed with. `children` gives a page of a large value's parts from
