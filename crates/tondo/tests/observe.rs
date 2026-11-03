@@ -1699,6 +1699,65 @@ fn debugger_compiles_conditions() {
     adapter.stop();
 }
 
+const TABLED: &str = r#"import std.console
+
+type User = { name: String, age: Int }
+
+fn main() {
+    var users: Array[User] = []
+    for i in 0..3 {
+        users.push(User { name: "user {i}", age: 30 + i })
+    }
+    let ages: Map[String, Int] = ["Ada": 36]
+    console.println("{users.length()} {ages.length()}")
+    console.println("{users.length()}")
+}
+"#;
+
+/// The editor's table of a value: a row for each part of a page, a column
+/// for each field, and only of the stop it was asked at.
+#[test]
+fn debugger_gives_a_values_table() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-table");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tabled.to"), TABLED).unwrap();
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "tabled.to", "cwd": dir }));
+    let path = dir.join("tabled.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 11 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let scopes = adapter.ask("scopes", json!({ "frameId": trace["stackFrames"][0]["id"] }));
+    let locals = scopes["scopes"][0]["variablesReference"].clone();
+    let variables = adapter.ask("variables", json!({ "variablesReference": locals }));
+    let reference = |name: &str| {
+        let found = variables["variables"].as_array().unwrap().iter().find(|v| v["name"] == name).unwrap();
+        found["variablesReference"].clone()
+    };
+    let (users, ages) = (reference("users"), reference("ages"));
+    let table = adapter.ask("table", json!({ "variablesReference": users, "start": 1, "count": 5 }));
+    assert_eq!(table["columns"], json!(["name", "age"]));
+    assert_eq!(table["total"], 3);
+    let first = &table["rows"][0];
+    assert_eq!((first["name"].as_str(), first["cells"]["name"].as_str()), (Some("[1]"), Some("\"user 1\"")));
+    assert_eq!(table["rows"][1]["cells"]["age"], "32");
+    let map = adapter.ask("table", json!({ "variablesReference": ages }));
+    assert_eq!(map["rows"], json!([{ "name": "[\"Ada\"]", "cells": { "value": "36" } }]));
+    // The next page of a table is of its stop.
+    let stop = table["stop"].clone();
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 12 }] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("stopped");
+    let refused = adapter.refused("table", json!({ "variablesReference": users, "start": 2, "stop": stop }));
+    assert!(refused.contains("went on"), "{refused}");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {
@@ -2135,6 +2194,19 @@ impl Adapter {
     }
 
     fn ask(&mut self, command: &str, arguments: Value) -> Value {
+        let message = self.respond(command, arguments);
+        assert_eq!(message["success"], true, "{message}");
+        message["body"].clone()
+    }
+
+    /// Why the adapter refused a request.
+    fn refused(&mut self, command: &str, arguments: Value) -> String {
+        let message = self.respond(command, arguments);
+        assert_eq!(message["success"], false, "{message}");
+        message["message"].as_str().unwrap_or_default().to_string()
+    }
+
+    fn respond(&mut self, command: &str, arguments: Value) -> Value {
         self.seq += 1;
         let text =
             json!({ "seq": self.seq, "type": "request", "command": command, "arguments": arguments }).to_string();
@@ -2143,8 +2215,7 @@ impl Adapter {
         loop {
             let message = dap_read(&mut self.output);
             if message["type"] == "response" && message["command"] == command {
-                assert_eq!(message["success"], true, "{message}");
-                return message["body"].clone();
+                return message;
             }
             self.events.push(message);
         }

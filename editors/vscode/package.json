@@ -299,6 +299,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.showTable",
+        "title": "Show as Table",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -435,7 +440,17 @@
           "group": "navigation@1"
         }
       ],
+      "debug/variables/context": [
+        {
+          "command": "tondo.showTable",
+          "when": "debugType == tondo"
+        }
+      ],
       "commandPalette": [
+        {
+          "command": "tondo.showTable",
+          "when": "false"
+        },
         {
           "command": "tondo.reload",
           "when": "tondo.live"

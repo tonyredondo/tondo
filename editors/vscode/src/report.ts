@@ -3,7 +3,7 @@
 // test --test-format events` (testing 15), the project of a path from
 // `tondo graph --json`, the diagnostics of `tondo check --json`, what
 // `tondo doc-test` says of a document's examples, what a reload of a live
-// build did, and `tondo version --json`.
+// build did, `tondo version --json`, and the debugger's tables.
 
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -760,4 +760,89 @@ export function systemBadge(file: string): { badge: string; tooltip: string } | 
  *  Linux and `aarch64-macos` macOS. */
 export function systemOfTarget(target: string): string {
   return target.includes('macos') ? 'macOS' : 'Linux';
+}
+
+/** A page of a value's parts as the debugger's `table` request gives it:
+ *  a row for each part, a cell for each field, and the stop it is of. */
+export interface Table {
+  columns: string[];
+  rows: { name: string; cells: Record<string, string> }[];
+  start: number;
+  total: number;
+  stop: number;
+}
+
+/** The page that shows the table of the value `title`: its rows sort by a
+ *  column's header and filter by what they contain, and the next page of
+ *  parts comes when it asks, as a message with where it starts. */
+export function tableHtml(title: string, table: Table, nonce: string): string {
+  const data = JSON.stringify({ title, ...table }).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
+<style>
+  body { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); padding: 0 8px; }
+  .bar { position: sticky; top: 0; display: flex; gap: 8px; align-items: center; padding: 6px 0; background: var(--vscode-editor-background); }
+  input { flex: 1; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
+  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 4px 10px; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; }
+  th { position: sticky; top: 34px; background: var(--vscode-editor-background); text-align: left; cursor: pointer; user-select: none; }
+  th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 3px 8px; white-space: pre; }
+  td:first-child { color: var(--vscode-descriptionForeground); }
+  tr:hover td { background: var(--vscode-list-hoverBackground); }
+</style>
+</head>
+<body>
+<div class="bar"><input id="filter" placeholder="Filter the rows"><span id="count"></span><button id="more">Load more</button></div>
+<table><thead><tr id="head"></tr></thead><tbody id="rows"></tbody></table>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const table = ${data};
+const names = ['', ...table.columns];
+let sorted = { column: -1, down: false };
+const cell = (row, i) => (i === 0 ? row.name : row.cells[names[i]] ?? '');
+const number = (text) => (text.trim() !== '' && !Number.isNaN(Number(text)) ? Number(text) : undefined);
+function compare(x, y) {
+  const [m, n] = [number(x), number(y)];
+  return m !== undefined && n !== undefined ? m - n : x.localeCompare(y, undefined, { numeric: true });
+}
+function render() {
+  document.getElementById('head').replaceChildren(...names.map((name, i) => {
+    const th = document.createElement('th');
+    th.textContent = name + (sorted.column === i ? (sorted.down ? ' ▼' : ' ▲') : '');
+    th.onclick = () => { sorted = { column: i, down: sorted.column === i && !sorted.down }; render(); };
+    return th;
+  }));
+  const wanted = document.getElementById('filter').value.toLowerCase();
+  let rows = table.rows.filter((row) => names.some((_, i) => cell(row, i).toLowerCase().includes(wanted)));
+  if (sorted.column >= 0) {
+    rows = rows.sort((a, b) => (sorted.down ? -1 : 1) * compare(cell(a, sorted.column), cell(b, sorted.column)));
+  }
+  document.getElementById('rows').replaceChildren(...rows.map((row) => {
+    const tr = document.createElement('tr');
+    tr.append(...names.map((_, i) => { const td = document.createElement('td'); td.textContent = cell(row, i); return td; }));
+    return tr;
+  }));
+  document.getElementById('count').textContent = \`\${rows.length} shown, \${table.rows.length} of \${table.total} loaded\`;
+  document.getElementById('more').hidden = table.start + table.rows.length >= table.total;
+}
+document.getElementById('filter').oninput = render;
+document.getElementById('more').onclick = () =>
+  vscode.postMessage({ start: table.start + table.rows.length, stop: table.stop });
+window.addEventListener('message', (event) => {
+  for (const column of event.data.columns) {
+    if (!names.includes(column)) {
+      names.push(column);
+    }
+  }
+  table.rows.push(...event.data.rows);
+  render();
+});
+render();
+</script>
+</body>
+</html>
+`;
 }

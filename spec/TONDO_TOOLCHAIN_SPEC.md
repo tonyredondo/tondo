@@ -991,7 +991,14 @@ va en el ámbito de los bindings, y `"justMyCode": false` en `launch` hace
 que los pasos entren en el código de la librería estándar; con `"record"`
 (`true` o cuántas líneas) guarda el historial, por el que van `stepBack` y
 `reverseContinue`; la salida del programa y los logpoints van a la
-consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del
+consola del editor. La petición `table`, propia de Tondo, da una página de
+las partes de un valor, como un array o un map de records, por su
+`variablesReference`: una fila por parte, con su nombre, y una columna por
+campo, o una sola, `value`, si las partes no tienen campos, con cuántas hay
+y la parada de la que son; la página siguiente de otra parada es un error.
+La extensión de VS Code la muestra con *Show as Table* en el menú de una
+variable, en una tabla que se ordena por columnas y se filtra. Un
+breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.
 

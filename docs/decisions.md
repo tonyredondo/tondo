@@ -4581,3 +4581,16 @@ reading. Each compiled version keeps the sites of the code it was
 compiled with, whose types it knows: a reload that changes the line's
 code adds sites the debugger reads, and `tondo` compiles the condition
 again for them.
+
+## 2026-11-03 — A value as a table in the editor
+
+An array of records read part by part in the variables view hides what
+a table shows at once: which row is wrong. `tondo dap` answers a request
+of its own, `table`, with a page of a value's parts, a column for each
+field, built from the debugger's `children` without a new command of
+the runtime; the extension shows it beside the code, sorted and
+filtered in the page, and asks for the next page with *Load more*. The
+editor's references name other values after the program goes on, so a
+page carries the stop it is of, and one of another stop is refused
+rather than mixed with it. Images and charts stay out: a table covers
+the values programs hold most.

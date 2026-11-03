@@ -90,6 +90,9 @@ struct Debuggee {
     /// task, a frame of its stack, and a path in it, empty for the frame's
     /// bindings.
     handles: Vec<(u64, u64, String)>,
+    /// How many times the handles were forgotten: a table's next page is
+    /// of the stop its first was.
+    forgotten: u64,
     /// The calls of the line a task stopped at that `stepIn` can go into,
     /// by their `targetId`.
     targets: Vec<String>,
@@ -108,6 +111,12 @@ fn frame_of(id: u64) -> (u64, u64) {
 }
 
 impl Debuggee {
+    /// Forgets the references, as the program goes on.
+    fn forget(&mut self) {
+        self.handles.clear();
+        self.forgotten += 1;
+    }
+
     /// A reference to what a path names in a frame, for `variables`.
     fn handle(&mut self, task: u64, frame: u64, path: String) -> u64 {
         self.handles.push((task, frame, path));
@@ -549,7 +558,8 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         }
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let mut debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new(), targets: Vec::new() };
+    let mut debuggee =
+        Debuggee { pid, writer, answers, child, root, handles: Vec::new(), forgotten: 0, targets: Vec::new() };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -835,11 +845,11 @@ fn handle(
             Ok(json!({ "breakpoints": set }))
         }
         "configurationDone" | "continue" => {
-            program.handles.clear();
+            program.forget();
             program.ask("continue").map(|_| json!({ "allThreadsContinued": true }))
         }
         "next" | "stepIn" | "stepOut" => {
-            program.handles.clear();
+            program.forget();
             let target = arguments["targetId"].as_u64().and_then(|id| program.targets.get(id as usize));
             let asked = match (command, target) {
                 ("next", _) => "next".to_string(),
@@ -862,13 +872,13 @@ fn handle(
             let place = stack["stack"][0].as_str().unwrap_or_default().to_string();
             let pid = program.pid;
             let hex = crate::live::goto(pid, &mut |request| program.answer(request), &place, line)?;
-            program.handles.clear();
+            program.forget();
             program.ask(&format!("goto {line} {hex}")).map(|_| json!({}))
         }
         // Back in the history `record` keeps: a line, or to the last line
         // at a breakpoint.
         "stepBack" | "reverseContinue" => {
-            program.handles.clear();
+            program.forget();
             let asked = if command == "stepBack" { "back" } else { "reverse" };
             program.ask(asked).map(|_| json!({}))
         }
@@ -936,7 +946,7 @@ fn handle(
         // The frame where the task stopped, the only one that restarts.
         "restartFrame" => match arguments["frameId"].as_u64().map(frame_of) {
             Some((_, 0)) | None => {
-                program.handles.clear();
+                program.forget();
                 program.ask("restart").map(|_| json!({}))
             }
             Some(_) => Err("only the frame where the task stopped restarts".into()),
@@ -1091,6 +1101,47 @@ fn handle(
                 }
             }
             Ok(json!({ "variables": variables }))
+        }
+        // The editor's table of a value's parts, as an array or a map of
+        // records: a row for each part of a page, a column for each field.
+        "table" => {
+            if arguments["stop"].as_u64().is_some_and(|stop| stop != program.forgotten) {
+                return Err("the program went on: show the table again where it stops".into());
+            }
+            let reference = arguments["variablesReference"].as_u64().unwrap_or(0) as usize;
+            let Some((task, index, path)) = reference.checked_sub(1).and_then(|r| program.handles.get(r).cloned())
+            else {
+                return Err("only a value with parts, as an array or a map, shows as a table".into());
+            };
+            if path.is_empty() || path.starts_with(CONTEXT) || path.starts_with(OUTER) {
+                return Err("only a value with parts, as an array or a map, shows as a table".into());
+            }
+            program.ask(&format!("select {task} {index}"))?;
+            let start = arguments["start"].as_u64().unwrap_or(0);
+            let count = arguments["count"].as_u64().unwrap_or(500);
+            let parts = program.ask(&format!("children {path} {start} {count}"))?;
+            let mut columns: Vec<String> = Vec::new();
+            let mut rows = Vec::new();
+            for part in parts["children"].as_array().into_iter().flatten() {
+                let mut cells = serde_json::Map::new();
+                // A part with fields gives a cell to each; an array, or a
+                // value without parts, one.
+                let fields = match part["children"].as_u64().unwrap_or(0) > 0 && part["indexed"] != true {
+                    true => program.ask(&format!("children {}", part["path"].as_str().unwrap_or_default()))?,
+                    false => json!({ "children": [{ "name": "value", "value": part["value"] }] }),
+                };
+                for field in fields["children"].as_array().into_iter().flatten() {
+                    let name = field["name"].as_str().unwrap_or_default();
+                    let name = name.strip_prefix('.').unwrap_or(name).to_string();
+                    if !columns.contains(&name) {
+                        columns.push(name.clone());
+                    }
+                    cells.insert(name, field["value"].clone());
+                }
+                rows.push(json!({ "name": part["name"], "cells": cells }));
+            }
+            let stop = program.forgotten;
+            Ok(json!({ "columns": columns, "rows": rows, "start": start, "total": parts["total"], "stop": stop }))
         }
         // A binding of a frame where its task stopped, or a part of one,
         // changed to what an expression gives.

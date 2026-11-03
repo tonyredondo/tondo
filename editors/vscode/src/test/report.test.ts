@@ -27,6 +27,7 @@ import {
   systemBadge,
   systemOfTarget,
   searchLine,
+  tableHtml,
   running,
   served,
   share,
@@ -435,3 +436,18 @@ test('a file of a system has its badge, and a target its system', () => {
   assert.equal(systemOfTarget('x86_64-linux-gnu'), 'Linux');
 });
 
+test("a value's table holds its parts, which its page's script reads and no value can end", () => {
+  const table = {
+    columns: ['name', 'age'],
+    rows: [{ name: '[0]', cells: { name: '"</script><b>Ada"', age: '36' } }],
+    start: 0,
+    total: 1,
+    stop: 3,
+  };
+  const html = tableHtml('users', table, 'n0nce');
+  assert.ok(html.includes("script-src 'nonce-n0nce'"));
+  assert.ok(html.includes('<script nonce="n0nce">'));
+  assert.ok(!html.includes('</script><b>'));
+  const data = /const table = (.*);\n/.exec(html)?.[1] ?? '';
+  assert.deepEqual(JSON.parse(data), { title: 'users', ...table });
+});
