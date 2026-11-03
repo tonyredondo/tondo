@@ -267,6 +267,24 @@ static OBJECTS: [std::sync::Mutex<std::collections::BTreeMap<usize, (usize, usiz
 thread_local! {
     /// Inside the registry, whose own allocations do not count.
     static TRACKING: Cell<bool> = const { Cell::new(false) };
+    /// The debugger's work at a probe, whose allocations are not objects of
+    /// the program, and would each cost a walk of the stack.
+    static QUIET: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While it lives, what this thread allocates is the debugger's.
+pub(crate) struct Quiet(bool);
+
+impl Quiet {
+    pub(crate) fn enter() -> Quiet {
+        Quiet(QUIET.replace(true))
+    }
+}
+
+impl Drop for Quiet {
+    fn drop(&mut self) {
+        QUIET.set(self.0);
+    }
 }
 
 /// A debug build tracks every object from now on.
@@ -279,7 +297,7 @@ fn shard(address: usize) -> std::sync::MutexGuard<'static, std::collections::BTr
 }
 
 pub(crate) fn track(address: usize, size: usize) {
-    if !OBJECTS_ON.load(Ordering::Relaxed) || TRACKING.with(|t| t.replace(true)) {
+    if !OBJECTS_ON.load(Ordering::Relaxed) || QUIET.get() || TRACKING.with(|t| t.replace(true)) {
         return;
     }
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));

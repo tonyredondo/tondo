@@ -997,8 +997,10 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     {
         return restarting(frame, task, site);
     }
-    // What the debugger does here is not the program's.
+    // What the debugger does here is not the program's, until the task
+    // stops, when what the debugger asks it to run may be.
     let _outside = super::replay::Outside::enter();
+    let quiet = super::heap::Quiet::enter();
     if recording {
         let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
         let (addresses, alive) = (addresses as usize, alive as usize);
@@ -1020,6 +1022,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
             let (addresses, alive) = (addresses as usize, alive as usize);
             let stop = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+            drop(quiet);
             hold(state, stop, Some(if scanning { "scanned" } else { "replayed" }.to_string()));
             return restarting(frame, task, site);
         }
@@ -1155,6 +1158,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     let stop =
         Stop { task, site, frame, bounds, addresses: addresses as usize, alive: alive as usize, why: String::new() };
+    drop(quiet);
     hold(state, stop, why);
     restarting(frame, task, site)
 }
