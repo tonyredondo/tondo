@@ -1432,14 +1432,16 @@ fn debugger_reaches_a_program_through_a_relay() {
     let listed = observed(&["ps"]);
     let _ = program.kill();
     let _ = program.wait();
-    let lines: Vec<Value> =
-        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-    let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap();
+    let said = String::from_utf8_lossy(&output.stdout).into_owned();
+    let lines: Vec<Value> = said.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap_or_else(|| panic!("{said}"));
     assert_eq!(stop["at"], "looped.to:6 in main");
-    assert_eq!(lines.iter().find(|l| l["name"] == "ticks > 0").unwrap()["value"], "true");
+    let printed = lines.iter().find(|l| l["name"] == "ticks > 0").unwrap_or_else(|| panic!("{said}"));
+    assert_eq!(printed["value"], "true");
     assert!(counters["counters"].as_array().is_some_and(|c| !c.is_empty()), "{counters}");
     assert!(dumped["summary"].as_str().is_some_and(|s| s.starts_with("looped (pid ")), "{dumped}");
-    assert!(listed["programs"].as_array().unwrap().iter().any(|p| p["pid"].as_u64() == Some(program_id)), "{listed}");
+    let programs = listed["programs"].as_array();
+    assert!(programs.is_some_and(|p| p.iter().any(|p| p["pid"].as_u64() == Some(program_id))), "{listed}");
 }
 
 /// `record` keeps each line a task runs with its bindings; `back`,
