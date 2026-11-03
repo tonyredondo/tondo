@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-fn directory() -> PathBuf {
+pub(crate) fn directory() -> PathBuf {
     std::env::temp_dir().join(format!("tondo-{}", unsafe { libc::geteuid() }))
 }
 

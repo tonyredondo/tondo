@@ -113,7 +113,9 @@ tasks and the last lines run; `until 30` runs to a line, and
 `back until total > 10` finds where a value went wrong in the history.
 On Linux, `run` with `record` keeps a run in a directory, and `debug_start`
 with `replay` debugs it again, the same each time: a failure that happened
-once, with its time, input and files.
+once, with its time, input and files. There `back`, `reverse` and
+`why total` go back to the program as it was: `why` finds the line that gave
+a value its value.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling

@@ -4635,3 +4635,21 @@ numbers. What runs on threads of its own, as tokio's for the network,
 cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
+
+## 2026-11-03 — Going back in a replay
+
+The history `record` keeps is the bindings of each line, as text: it
+cannot show a value of the heap it did not keep, nor go on from there. A
+replay is the same each time, so going back is running it again to an
+earlier probe of its one thread, which it counts, and stopping there with
+the whole program as it was. `back`, `reverse` and `why` first run a
+replay to where the program is, keeping what they look for: where the
+stopped task's lines start, where breakpoints would stop, or the history,
+whose lines carry their probe; then another to the probe that gives, which
+takes over, with the session's breakpoints. Each stop forks a checkpoint,
+a copy of the process that waits on a socket of its own, which those
+replays start from instead of the start: the nearest before, or an
+earlier one when it does not have what they look for. A breakpoint that
+counts its hits counts them from the start, so they start there. `why`
+reads the history: the last line that began with another value is the
+line that gave the value, in any session that records.

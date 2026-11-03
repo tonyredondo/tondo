@@ -899,7 +899,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   <condición>` y `forward until <condición>` van a la línea más cercana en
   que la condición se cumplía, leída con los bindings de entonces. Mientras muestra el
   pasado, `locals`, `print`, `children` y `stack` lo leen, de su marco más
-  interior, y `continue` sigue desde el presente.
+  interior, y `continue` sigue desde el presente. `why <expresión>` va a la
+  línea del historial que dio a la expresión el valor que tiene: la última
+  que empezó con otro valor, y dice cuál.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
   en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
@@ -1027,6 +1029,19 @@ sus threads. La reproducción para donde el programa empieza uno de esos
 threads, o donde hace una llamada distinta de la grabada, y dice por qué. El
 directorio tiene el entorno del programa y lo que leyó, y se guarda como esos
 datos.
+
+En una reproducción, `back [<n>]`, `reverse` y `why <expresión>` vuelven al
+programa entero como estaba, no a un historial: otra reproducción corre
+hasta donde está el programa, y guarda dónde empiezan las líneas de la tarea
+parada, dónde habrían parado los breakpoints o el historial, y una tercera
+corre hasta la línea que eso da, `n` líneas atrás, la última parada de un
+breakpoint o la línea que dio a la expresión su valor, y toma el relevo, con
+los breakpoints y los ajustes de la sesión. Cada parada de la reproducción
+guarda un checkpoint, una copia del proceso hecha con `fork` donde paró, y
+las reproducciones que vuelven atrás empiezan en el más cercano anterior, o
+en otro anterior si ahí no encuentran lo que buscan, en lugar del principio;
+un breakpoint que cuenta sus hits hace empezar desde el principio, donde
+empezó a contarlos.
 
 ### 7.7 Librerías para C
 

@@ -114,6 +114,8 @@ struct Moment {
     site: usize,
     stack: Vec<String>,
     bindings: Vec<(String, String, String)>,
+    /// In a replay, the probes the program's thread passed before it.
+    tick: u64,
 }
 
 /// How many lines the history keeps, or 0 while it does not record; and
@@ -137,7 +139,8 @@ fn record(table: &Table, here: &Stop) {
     while history.len() >= RECORDING.load(Ordering::Relaxed).max(1) {
         history.pop_front();
     }
-    history.push_back(Moment { task: here.task, site: here.site, stack, bindings });
+    let tick = super::replay::ticks();
+    history.push_back(Moment { task: here.task, site: here.site, stack, bindings, tick });
 }
 
 /// The line `goto` moves a stopped task's frame to as it goes on, where
@@ -202,6 +205,12 @@ static TELL_AFTER: Mutex<Option<String>> = Mutex::new(None);
 /// where the condition holds, or the last before it at a breakpoint;
 /// forward past the last is the present again.
 fn moved(table: &Table, word: &str, rest: &str) -> Result<String, String> {
+    moved_because(table, word, rest, None)
+}
+
+/// `moved`, with what the stop says it is for.
+fn moved_because(table: &Table, word: &str, rest: &str, because: Option<String>) -> Result<String, String> {
+    let because = because.map_or(String::new(), |b| format!(",\"because\":{}", quoted(&b)));
     let until = match rest.strip_prefix("until ") {
         Some(condition) => Some(expression::parse(condition).map_err(|m| format!("the condition: {m}"))?),
         None => None,
@@ -258,9 +267,46 @@ fn moved(table: &Table, word: &str, rest: &str) -> Result<String, String> {
     let moment = &history[mine[to]];
     let at = place_in(table, moment.site);
     let back = present - to;
-    *TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(format!("{{\"stopped\":{{\"why\":\"history\",\"task\":{task},\"at\":{},\"back\":{back}}}}}", quoted(&at)));
+    let tick = if super::replay::on() { format!(",\"tick\":{}", moment.tick) } else { String::new() };
+    *TELL_AFTER.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
+        "{{\"stopped\":{{\"why\":\"history\",\"task\":{task},\"at\":{},\"back\":{back}{tick}{because}}}}}",
+        quoted(&at)
+    ));
     Ok("{\"running\":true}".into())
+}
+
+/// `why <expression>`: the line of the stopped task's history that gave
+/// the expression the value it has where the task is shown: the last line
+/// before which it had another, or none. The history shows that line.
+fn why(table: &Table, text: &str) -> Result<String, String> {
+    let expr = expression::parse(text).map_err(|m| format!("the expression: {m}"))?;
+    let shown = |moment: &Moment| {
+        let read = |name: &str| match moment.bindings.iter().find(|(n, ..)| n == name) {
+            Some((.., text)) => Ok(text.clone()),
+            None => Err(format!("no binding `{name}`")),
+        };
+        Evaluator::new(&read).evaluate(&expr).ok().map(|e| e.text)
+    };
+    let state = state();
+    let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let task = state.selected.map_or(stop.task, |(task, _)| task);
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mine: Vec<usize> = (0..history.len()).filter(|&i| history[i].task == task).collect();
+    let present = mine.len().checked_sub(1).ok_or("the history has no line of this task: `record` keeps them")?;
+    let at = state.past.and_then(|past| mine.iter().position(|&i| i == past)).unwrap_or(present);
+    let now = shown(&history[mine[at]]).ok_or(format!("`{text}` has no value here"))?;
+    // The last line that started with another value, which this line did not.
+    let Some(changed) = mine[..at].iter().rposition(|&i| shown(&history[i]).as_ref() != Some(&now)) else {
+        return Err(format!(
+            "`{text}` has been {} since the first line of task {task}'s history: `record` keeps more of it",
+            clipped(&now)
+        ));
+    };
+    drop(history);
+    drop(state);
+    let count = (at - changed).to_string();
+    let because = format!("`{text}` became {} on this line", clipped(&now));
+    moved_because(table, "back", &count, Some(because))
 }
 
 /// The moment of the history the debugger shows, while it shows one.
@@ -796,7 +842,9 @@ fn tell(event: &str) {
 /// statement after the probe then returns and calls its function again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) -> u8 {
-    if super::replay::on() {
+    // The probes the program passes place a replay's calls: not those of
+    // the code the debugger runs, to show a value or make a call.
+    if super::replay::on() && !SHOWING.get() && CALLING.load(Ordering::Relaxed) != super::tasks::current_id() {
         super::replay::tick();
     }
     // A reload that converts values with identity stops every task at a
@@ -829,15 +877,45 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let watching = WATCHING.load(Ordering::Relaxed);
     let recording = RECORDING.load(Ordering::Relaxed) > 0;
     let waiting = STARTED.load(Ordering::Relaxed) || FREEZING.load(Ordering::Relaxed);
-    if !marked && !watching && !recording && !waiting && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
+    let aiming = AIM.load(Ordering::Relaxed) != u64::MAX;
+    if !marked
+        && !watching
+        && !recording
+        && !waiting
+        && !aiming
+        && !HOLD.load(Ordering::Relaxed)
+        && state().mode == Mode::Run
+    {
         return restarting(frame, task, site);
     }
+    // What the debugger does here is not the program's.
+    let _outside = super::replay::Outside::enter();
     if recording {
         let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
         let (addresses, alive) = (addresses as usize, alive as usize);
         record(&table, &Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
     }
     let mut state = state();
+    // A replay going to a probe (`seek`), or through the run to it, keeping
+    // where breakpoints would stop and where a task's lines start (`scan`).
+    if aiming {
+        let tick = super::replay::ticks();
+        let scanning = SCANNING.load(Ordering::Relaxed);
+        // Breakpoints count their hits, as they would have, and stop
+        // nowhere before the probe it goes to.
+        scanned(&table, &mut state, task, site, frame, (addresses as usize, alive as usize), tick);
+        if AIM.load(Ordering::Relaxed) == tick {
+            AIM.store(u64::MAX, Ordering::Relaxed);
+            SCANNING.store(false, Ordering::Relaxed);
+            drop(table);
+            let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+            let (addresses, alive) = (addresses as usize, alive as usize);
+            let stop = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+            hold(state, stop, Some(if scanning { "scanned" } else { "replayed" }.to_string()));
+            return restarting(frame, task, site);
+        }
+        return restarting(frame, task, site);
+    }
     let frozen = state.frozen.contains(&task);
     // A task that started while a breakpoint stops tasks as they start, at
     // its first line of the program's code.
@@ -970,6 +1048,108 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         Stop { task, site, frame, bounds, addresses: addresses as usize, alive: alive as usize, why: String::new() };
     hold(state, stop, why);
     restarting(frame, task, site)
+}
+
+/// In a replay, the probe of the program's thread a `seek` or a `scan` goes
+/// to; while scanning, the probes where breakpoints would have stopped,
+/// and those where the lines of one task start.
+static AIM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+static SCANNING: AtomicBool = AtomicBool::new(false);
+static SCANNED: Mutex<(u64, Vec<u64>, Vec<u64>)> = Mutex::new((0, Vec::new(), Vec::new()));
+
+/// Forks the replay where its task stopped, on that task: the copy keeps
+/// the program as it is here, without the debugger, and waits on a socket
+/// of its own; each `resume <probe>` there forks it again into a replay
+/// stopped here, which shows what the program writes from that probe on.
+fn checkpoint(table: &Table) -> Result<u32, String> {
+    match unsafe { libc::fork() } {
+        -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
+        0 => {
+            kept(table);
+            Ok(0)
+        }
+        pid => Ok(pid as u32),
+    }
+}
+
+/// A checkpoint, until a replay forked from it goes on from here, which
+/// returns. Only this thread is left: the debugger's connection and its
+/// settings were the parent's.
+fn kept(table: &Table) {
+    use std::io::{BufRead, Write};
+    *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    ATTACHED.store(false, Ordering::Relaxed);
+    {
+        let mut state = state();
+        state.breakpoints.clear();
+        state.watches.clear();
+        state.next_breakpoint = 1;
+        remark(table, &state);
+    }
+    WATCHING.store(false, Ordering::Relaxed);
+    RECORDING.store(0, Ordering::Relaxed);
+    HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CATCH.store(true, Ordering::Relaxed);
+    CATCH_ERRORS.store(false, Ordering::Relaxed);
+    STEPS_STD.store(false, Ordering::Relaxed);
+    // The replays it forks end without it waiting for them.
+    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+    let path = super::diagnostics::sockets().join(format!("{}.checkpoint", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { unsafe { libc::_exit(0) } };
+    loop {
+        let Ok((mut stream, _)) = listener.accept() else { continue };
+        let mut line = String::new();
+        let _ = std::io::BufReader::new(&stream).read_line(&mut line);
+        let Some(shown) = line.trim().strip_prefix("resume ").and_then(|t| t.parse::<u64>().ok()) else {
+            let _ = std::fs::remove_file(&path);
+            unsafe { libc::_exit(0) };
+        };
+        match unsafe { libc::fork() } {
+            0 => {
+                drop(listener);
+                unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) };
+                super::replay::shown_from(shown);
+                super::diagnostics::listen_again();
+                return;
+            }
+            pid => {
+                let _ = writeln!(stream, "{pid}");
+            }
+        }
+    }
+}
+
+/// What a scan keeps at a probe: the tick, when the scanned task's line
+/// starts there or a breakpoint that stops would stop there.
+fn scanned(
+    table: &Table,
+    state: &mut State,
+    task: u64,
+    site: usize,
+    frame: usize,
+    (addresses, alive): (usize, usize),
+    tick: u64,
+) {
+    let mut scan = SCANNED.lock().unwrap_or_else(|e| e.into_inner());
+    if scan.0 == task && table.sites.get(site).is_some_and(|s| !s.generated()) {
+        scan.2.push(tick);
+    }
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let here = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+    let stack = std::cell::OnceCell::new();
+    let stack = || stack.get_or_init(|| frames(table, &here));
+    for breakpoint in state.breakpoints.iter_mut().filter(|b| b.log.is_none() && !b.capture && b.event.is_none()) {
+        let here = breakpoint.sites.contains(&site)
+            && breakpoint.task.is_none_or(|t| t == task)
+            && breakpoint.condition.as_ref().is_none_or(|c| evaluating(table, stack(), 0, |e| e.holds(c)));
+        if here {
+            breakpoint.count += 1;
+            if breakpoint.hits.as_ref().is_none_or(|hits| hits.reached(breakpoint.count)) {
+                scan.1.push(tick);
+            }
+        }
+    }
 }
 
 /// At a probe of a task, its watches: one whose frame returned ends, and
@@ -1750,6 +1930,49 @@ pub(crate) fn command(line: &str) -> Option<String> {
             go_after_answer(Mode::Run);
             "{\"running\":true}".into()
         }
+        // In a replay, the probes the program's thread passed (`tick`), a
+        // run on to one of them (`seek <tick>`), or through to it keeping
+        // where breakpoints would stop and where a task's lines start
+        // (`scan <tick> [<task>]`), which `scanned` gives.
+        "tick" if super::replay::replaying() => format!("{{\"tick\":{}}}", super::replay::ticks()),
+        "seek" | "scan" if super::replay::replaying() => {
+            let mut words = rest.split_whitespace();
+            let Some(tick) = words.next().and_then(|t| t.parse::<u64>().ok()) else {
+                return Some(format!("{{\"error\":\"{word} takes a probe's tick, as `tick` gives\"}}"));
+            };
+            if tick <= super::replay::ticks() {
+                return Some(
+                    "{\"error\":\"the replay is past that probe: a replay of the recording from its start goes back\"}"
+                        .into(),
+                );
+            }
+            let task = words.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+            *SCANNED.lock().unwrap_or_else(|e| e.into_inner()) = (task, Vec::new(), Vec::new());
+            SCANNING.store(word == "scan", Ordering::Relaxed);
+            AIM.store(tick, Ordering::Relaxed);
+            go_after_answer(Mode::Run);
+            "{\"running\":true}".into()
+        }
+        // In a replay, a copy of the process where its task stopped, which
+        // the debugger goes back to rather than to the start.
+        "checkpoint" if super::replay::replaying() => {
+            let Some(stop) = stopped().filter(|s| s.site < WAITING) else { return Some(not_stopped()) };
+            let tick = super::replay::ticks();
+            match on_task(stop.task, || checkpoint(table)) {
+                Some(Ok(pid)) => format!("{{\"checkpoint\":{{\"pid\":{pid},\"tick\":{tick}}}}}"),
+                Some(Err(message)) => format!("{{\"error\":{}}}", quoted(&message)),
+                None => "{\"error\":\"the stopped task did not take the checkpoint\"}".into(),
+            }
+        }
+        "scanned" => {
+            let scan = SCANNED.lock().unwrap_or_else(|e| e.into_inner());
+            let list = |ticks: &[u64]| ticks.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+            format!("{{\"hits\":[{}],\"lines\":[{}]}}", list(&scan.1), list(&scan.2))
+        }
+        "why" => match why(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         // `until <line>` or `until <file>:<line>`: runs until that line, or
         // the next stop, wherever that is.
         "until" => {

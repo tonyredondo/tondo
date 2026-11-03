@@ -456,7 +456,8 @@ fn descriptors() -> Descriptors {
     let mut open = Descriptors::default();
     let Ok(entries) = std::fs::read_dir("/dev/fd") else { return open };
     let numbers: Vec<i32> = entries.flatten().filter_map(|e| e.file_name().to_str()?.parse().ok()).collect();
-    let ours = SOCKET.get().map(|path| path.as_os_str().as_encoded_bytes());
+    let ours = socket();
+    let ours = ours.as_ref().map(|path| path.as_os_str().as_encoded_bytes());
     // The listing's own descriptor is closed by now, and `fstat` skips it.
     for fd in numbers {
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
@@ -547,7 +548,12 @@ fn resident() -> i64 {
 // ---------------------------------------------------------------------------
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
-static SOCKET: OnceLock<PathBuf> = OnceLock::new();
+/// The program's socket, which a replay a checkpoint forked has its own of.
+static SOCKET: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn socket() -> Option<PathBuf> {
+    SOCKET.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// Where the processes of this user listen: `$TMPDIR/tondo-<uid>`.
 fn directory() -> PathBuf {
@@ -594,7 +600,7 @@ pub(crate) fn start() {
     let path = directory.join(std::process::id().to_string());
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else { return };
-    let _ = SOCKET.set(path);
+    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
     // `atexit` is not a symbol of glibc's shared library.
     unsafe extern "C" {
         fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
@@ -604,7 +610,7 @@ pub(crate) fn start() {
         let _outside = super::replay::Outside::enter();
         end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
         super::debugger::exited();
-        if let Some(path) = SOCKET.get() {
+        if let Some(path) = socket() {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -626,6 +632,21 @@ pub(crate) fn start() {
 
 /// Answers every tool from this one thread: each line one sends, with a
 /// line of JSON.
+/// The directory of the programs' sockets, also a replay's checkpoints'.
+pub(crate) fn sockets() -> PathBuf {
+    directory()
+}
+
+/// A replay a checkpoint forked, whose parent's threads are gone: it
+/// listens for the tools at a socket of its own.
+pub(crate) fn listen_again() -> bool {
+    let path = directory().join(std::process::id().to_string());
+    let _ = std::fs::remove_file(&path);
+    let Ok(listener) = UnixListener::bind(&path) else { return false };
+    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+    super::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_ok()
+}
+
 fn serve(listener: UnixListener) {
     retire_here();
     let _ = listener.set_nonblocking(true);

@@ -2108,7 +2108,9 @@ tasks and the last lines run), continue, until <line>, step, step into <name> (t
 what a function returned), steps all|program (into the standard library's code or over it), pause, locals \
 (what the code there can use: its bindings, a closure's captures, and those of the functions it is written in, \
 as a test's suites), record [<lines>|off] (keep each line run, with its bindings), back [<n>], forward [<n>], \
-reverse, back until <condition> (move through that history; locals, print and stack show it), context (the task's contexts, and the `with` that set each field), print <expression> \
+reverse, back until <condition> (move through that history; locals, print and stack show it), why <expression> \
+(back to the line that gave it its value; in a session of `replay`, back, reverse and why go back to the whole \
+program as it was), context (the task's contexts, and the `with` that set each field), print <expression> \
 (bindings, their parts as user.name or items[i + 1], literals, arithmetic, comparisons, and, or, not, and \
 length(), isEmpty(), isSome(), contains(), which read and never run the program's code), children <path> \
 [<start> <count>], set <target> <expression> (a binding or a part, as user.age or items[i]), stack, frame <n>, \

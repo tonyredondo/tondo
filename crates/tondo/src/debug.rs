@@ -66,6 +66,9 @@ back [<n> | until <condition>]                  back in the stopped task's histo
                                                 the condition held: locals, print, stack show it
 forward [<n> | until <condition>]               forward in it, as steps do there; past the last, the present
 reverse                                         back to the last line at a breakpoint, or the first kept
+why <expression>                                back to the line that gave the expression its value
+                                                (in a replay, `tondo debug --replay`, back, reverse and why go
+                                                back to the whole program as it was there)
 pause                                           stop every task, as Ctrl-C does
 catch panic [<code>...] error [<type>...]|none  stop where a task panics and no recover stops it (the default), where
                                                 an error starts (a fail, or a ? on what std failed with), both, or none;
@@ -118,7 +121,11 @@ pub fn replayed(dir: &Path) -> Result<(PathBuf, std::process::Command), String> 
 /// The debugger, until its input ends or `quit`; gives the exit status of
 /// a program it started.
 pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
-    let (program, child) = match debugged {
+    let replay = match &debugged {
+        Debugged::Replayed(dir) => Some(dir.clone()),
+        _ => None,
+    };
+    let (program, mut child) = match debugged {
         Debugged::Test(executable, node, environment, schedule) => {
             use std::os::unix::process::CommandExt;
             let plan = std::env::temp_dir().join(format!("tondo-debug-plan-{}", std::process::id()));
@@ -187,28 +194,24 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         Debugged::Remote(via, name) => (observe::via(&via, &name)?, None),
     };
     let pid = program.pid;
-    let Program { mut writer, reader, .. } = program;
-    // The program may stand still at a breakpoint for as long as it takes.
-    let _ = reader.get_ref().set_read_timeout(None);
-    writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    // A thread reads what the program says: answers, and events whenever
-    // it stops or ends.
-    let (lines, said) = mpsc::channel::<Value>();
-    std::thread::spawn(move || {
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
-            if lines.send(value).is_err() {
-                break;
-            }
-        }
+    let (writer, said) = attach(program)?;
+    let mut session = Session { said, writer, json, events: Vec::new(), ended: false, task: 0 };
+    // A replay goes back by running its recording again (`back`, `reverse`,
+    // `why`): it keeps the commands that set how the program stops.
+    let mut replaying = replay.map(|dir| Replaying {
+        dir,
+        settings: Vec::new(),
+        current: child.take().map(Running::Started),
+        checkpoints: Vec::new(),
     });
-    let mut session = Session { said, writer, json, events: Vec::new(), ended: false };
     let attached = session.answer()?;
     if let Some(error) = attached["error"].as_str() {
         if let Some(mut child) = child {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if let Some(running) = replaying.and_then(|r| r.current) {
+            running.end();
         }
         return Err(match error.contains("--debug") {
             true => format!("{error}: debug it as `tondo debug <file.to>`, or run it with `tondo run --debug`"),
@@ -216,7 +219,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         });
     }
     session.show(&attached);
-    if child.is_some() {
+    if child.is_some() || replaying.is_some() {
         session.wait_event();
     }
     unsafe { libc::signal(libc::SIGINT, interrupted as *const () as libc::sighandler_t) };
@@ -321,10 +324,18 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            // A replay goes back by running its recording again.
+            "back" | "reverse" | "why" if replaying.is_some() => {
+                let replaying = replaying.as_mut().expect("a replay");
+                match replaying.go_back(&mut session, word, rest) {
+                    Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" | "watch"
-            | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze" | "thaw"
-            | "retainers" | "memory" => {
+            | "why" | "tick" | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context"
+            | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze"
+            | "thaw" | "retainers" | "memory" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -332,6 +343,13 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 };
                 session.send(request.trim_end())?;
                 let mut answer = session.answer()?;
+                // How the program stops, which a replay run again takes too.
+                if let Some(replaying) = replaying.as_mut()
+                    && matches!(word, "break" | "delete" | "catch" | "steps")
+                    && answer.get("error").is_none()
+                {
+                    replaying.settings.push(request.trim_end().to_string());
+                }
                 if word == "break" {
                     let mut ask = |request: &str| {
                         session.send(request)?;
@@ -342,6 +360,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 session.show(&answer);
                 if answer["running"] == true {
                     session.wait_event();
+                    // A replay keeps a checkpoint where it stops.
+                    if let Some(replaying) = replaying.as_mut().filter(|_| !session.ended) {
+                        replaying.keep(&mut session);
+                    }
                 }
             }
             other => {
@@ -358,12 +380,282 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     // it started.
     let _ = session.writer.shutdown(std::net::Shutdown::Both);
     drop(session);
+    // A replay's checkpoints end with it; its process too, at `quit`, or
+    // it goes on to its end.
+    if let Some(replaying) = replaying {
+        for (_, pid) in replaying.checkpoints {
+            Running::Forked(pid).end();
+        }
+        match replaying.current {
+            Some(Running::Started(started)) => child = Some(started),
+            Some(Running::Forked(pid)) => {
+                if quit {
+                    Running::Forked(pid).end();
+                }
+                while unsafe { libc::kill(pid as i32, 0) } == 0 {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                return Ok(0);
+            }
+            None => {}
+        }
+    }
     let Some(mut child) = child else { return Ok(0) };
     if quit {
         let _ = child.kill();
     }
     let status = child.wait().map_err(|e| e.to_string())?;
     Ok(status.code().unwrap_or(1))
+}
+
+/// Talks to a program the debugger attaches to: what it says comes on the
+/// channel, which a thread fills.
+fn attach(program: Program) -> Result<(std::os::unix::net::UnixStream, mpsc::Receiver<Value>), String> {
+    let Program { mut writer, reader, .. } = program;
+    // The program may stand still at a breakpoint for as long as it takes.
+    let _ = reader.get_ref().set_read_timeout(None);
+    writeln!(writer, "debug").map_err(|e| e.to_string())?;
+    // A thread reads what the program says: answers, and events whenever
+    // it stops or ends.
+    let (lines, said) = mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            if lines.send(value).is_err() {
+                break;
+            }
+        }
+    });
+    Ok((writer, said))
+}
+
+/// A replay under the debugger: its recording, the commands that set how
+/// the program stops, the process the debugger talks to, and checkpoints:
+/// copies of a replay where it stopped, by the probe they are at.
+struct Replaying {
+    dir: PathBuf,
+    settings: Vec<String>,
+    current: Option<Running>,
+    checkpoints: Vec<(u64, u32)>,
+}
+
+/// A process of a replay: one the debugger started, or one a checkpoint
+/// forked, which only ends when it is ended.
+enum Running {
+    Started(std::process::Child),
+    Forked(u32),
+}
+
+impl Running {
+    fn end(self) {
+        match self {
+            Running::Started(mut child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            // Ended at once, it leaves its sockets behind.
+            Running::Forked(pid) => {
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                let _ = std::fs::remove_file(observe::directory().join(pid.to_string()));
+                let _ = std::fs::remove_file(observe::directory().join(format!("{pid}.checkpoint")));
+            }
+        }
+    }
+}
+
+/// The checkpoints a replay keeps; past them, the oldest go.
+const CHECKPOINTS: usize = 32;
+
+impl Replaying {
+    /// The recording run again, attached and stopped: from its start, or
+    /// from a checkpoint, with the debugger's settings; what it writes
+    /// shows from probe `shown` on.
+    fn start(&self, from: Option<(u64, u32)>, shown: u64, json: bool) -> Result<(Running, Session), String> {
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+        let (executable, mut command) = replayed(&self.dir)?;
+        let running = match from {
+            None => Running::Started(
+                command
+                    .env("TONDO_RT_SHOWN_FROM", shown.to_string())
+                    .stdin(std::process::Stdio::null())
+                    .process_group(0)
+                    .spawn()
+                    .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
+            ),
+            Some((_, checkpoint)) => {
+                let path = observe::directory().join(format!("{checkpoint}.checkpoint"));
+                let mut stream = std::os::unix::net::UnixStream::connect(&path)
+                    .map_err(|e| format!("the checkpoint {checkpoint} is gone: {e}"))?;
+                writeln!(stream, "resume {shown}").map_err(|e| e.to_string())?;
+                let mut line = String::new();
+                std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
+                Running::Forked(line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?)
+            }
+        };
+        let pid = match &running {
+            Running::Started(child) => child.id(),
+            Running::Forked(pid) => *pid,
+        };
+        let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
+            Ok(attached) => attached,
+            Err(message) => {
+                running.end();
+                return Err(message);
+            }
+        };
+        let mut session = Session { said, writer, json, events: Vec::new(), ended: false, task: 0 };
+        session.answer()?;
+        // A replay from the start waits there; a checkpoint's stopped where
+        // it was taken.
+        if from.is_none() {
+            session.next_event()?;
+        }
+        for setting in &self.settings {
+            session.send(setting)?;
+            session.answer()?;
+        }
+        Ok((running, session))
+    }
+
+    /// A checkpoint where the program stopped, kept for going back.
+    fn keep(&mut self, session: &mut Session) {
+        let Ok(answer) = ask(session, "checkpoint") else { return };
+        let (Some(tick), Some(pid)) = (answer["checkpoint"]["tick"].as_u64(), answer["checkpoint"]["pid"].as_u64())
+        else {
+            return;
+        };
+        // One kept there already is the same.
+        if self.checkpoints.iter().any(|&(t, _)| t == tick) {
+            Running::Forked(pid as u32).end();
+            return;
+        }
+        self.checkpoints.push((tick, pid as u32));
+        self.checkpoints.sort_unstable();
+        while self.checkpoints.len() > CHECKPOINTS {
+            let (_, oldest) = self.checkpoints.remove(0);
+            Running::Forked(oldest).end();
+        }
+    }
+
+    /// Where a replay may start to reach probe `tick`: the checkpoints
+    /// before it, the nearest first, then the start. A breakpoint that
+    /// counts its hits counts them from the start.
+    fn bases(&self, tick: u64, at: bool) -> Vec<Option<(u64, u32)>> {
+        let counted = self.settings.iter().any(|s| s.contains(" hits "));
+        let mut bases: Vec<Option<(u64, u32)>> = match counted {
+            true => Vec::new(),
+            false => self
+                .checkpoints
+                .iter()
+                .rev()
+                .filter(|&&(t, _)| t < tick || (at && t == tick))
+                .map(|&c| Some(c))
+                .collect(),
+        };
+        bases.push(None);
+        bases
+    }
+
+    /// `back [<n>]`, `reverse` or `why <expression>` in a replay: a replay
+    /// from the nearest checkpoint, or an earlier one, runs to where the
+    /// program is, keeping where the stopped task's lines start, where
+    /// breakpoints would stop, or the history; another runs to the probe
+    /// that gives, and takes over.
+    fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
+        let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
+        let task = session.task;
+        let mut found = None;
+        let mut failed = String::new();
+        for base in self.bases(tick, false) {
+            let (running, mut scan) = self.start(base, u64::MAX, session.json)?;
+            let scanned = self.scan(&mut scan, word, rest, tick, task);
+            let _ = scan.send("quit");
+            running.end();
+            match scanned {
+                Ok(target) => {
+                    found = Some(target);
+                    break;
+                }
+                Err(message) => failed = message,
+            }
+        }
+        let (to, why) = found.ok_or(failed)?;
+        let base = self.bases(to, true).into_iter().next().flatten();
+        let (running, mut next) = self.start(base, to, session.json)?;
+        let stop = match to {
+            _ if base.is_some_and(|(t, _)| t == to) => {
+                let snapshot = ask(&mut next, "snapshot")?;
+                let at = snapshot["snapshot"]["frames"][0]["at"].clone();
+                serde_json::json!({ "stopped": { "at": at, "task": snapshot["snapshot"]["task"].clone(), "why": why } })
+            }
+            0 => {
+                let snapshot = ask(&mut next, "snapshot")?;
+                let at = snapshot["snapshot"]["frames"][0]["at"].clone();
+                serde_json::json!({ "stopped": { "at": at, "task": snapshot["snapshot"]["task"].clone(), "why": why } })
+            }
+            _ => {
+                ask(&mut next, &format!("seek {to}"))?;
+                let mut stop = next.next_event()?;
+                stop["stopped"]["why"] = why.into();
+                stop
+            }
+        };
+        if let Some(old) = self.current.replace(running) {
+            old.end();
+        }
+        std::mem::swap(session, &mut next);
+        self.keep(session);
+        Ok(stop)
+    }
+
+    /// What a replay that started before probe `tick` finds on its way
+    /// there, for `word`: the probe to go back to, and why.
+    fn scan(&self, scan: &mut Session, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String), String> {
+        if word == "why" {
+            ask(scan, "record 1000000")?;
+        }
+        let scanning = match word {
+            "back" => format!("scan {tick} {task}"),
+            _ => format!("scan {tick}"),
+        };
+        ask(scan, &scanning)?;
+        scan.next_event()?;
+        let scanned = ask(scan, "scanned")?;
+        let ticks = |key: &str| -> Vec<u64> {
+            scanned[key].as_array().into_iter().flatten().filter_map(Value::as_u64).filter(|&t| t < tick).collect()
+        };
+        match word {
+            "back" => {
+                let count = rest.trim().parse::<usize>().unwrap_or(1).max(1);
+                let lines = ticks("lines");
+                let back = lines.len().checked_sub(count).map(|at| lines[at]);
+                back.map(|to| (to, format!("{count} lines back")))
+                    .ok_or(format!("task {task} has no line that many lines back"))
+            }
+            "reverse" => match ticks("hits").last() {
+                Some(&to) => Ok((to, "reverse".into())),
+                None => Err("no breakpoint stops before here".into()),
+            },
+            _ => {
+                ask(scan, &format!("why {rest}"))?;
+                let stop = scan.next_event()?;
+                let to = stop["stopped"]["tick"].as_u64().ok_or("the history has no line of that")?;
+                Ok((to, stop["stopped"]["because"].as_str().unwrap_or("why").to_string()))
+            }
+        }
+    }
+}
+
+/// The answer to a command, or the error it is.
+fn ask(session: &mut Session, command: &str) -> Result<Value, String> {
+    session.send(command)?;
+    let answer = session.answer()?;
+    match answer["error"].as_str() {
+        Some(error) => Err(error.to_string()),
+        None => Ok(answer),
+    }
 }
 
 struct Session {
@@ -373,11 +665,26 @@ struct Session {
     /// Events that came while an answer was awaited.
     events: Vec<Value>,
     ended: bool,
+    /// The task of the last stop.
+    task: u64,
 }
 
 impl Session {
     fn send(&mut self, command: &str) -> Result<(), String> {
         writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())
+    }
+
+    /// The next stop or end, which it does not show.
+    fn next_event(&mut self) -> Result<Value, String> {
+        if !self.events.is_empty() {
+            return Ok(self.events.remove(0));
+        }
+        loop {
+            let value = self.said.recv().map_err(|_| "the program ended".to_string())?;
+            if value.get("stopped").is_some() || value.get("exited").is_some() {
+                return Ok(value);
+            }
+        }
     }
 
     /// The answer to the last command; events that come first wait.
@@ -435,6 +742,9 @@ impl Session {
         if value.get("exited").is_some() {
             self.ended = true;
         }
+        if let Some(task) = value["stopped"]["task"].as_u64() {
+            self.task = task;
+        }
         if self.json {
             println!("{value}");
             return;
@@ -449,6 +759,9 @@ impl Session {
                     0 => println!("back in the present, at {at}"),
                     back => {
                         println!("{back} lines back in task {}'s history, at {at}", stop["task"]);
+                        if let Some(because) = stop["because"].as_str() {
+                            println!("{because}");
+                        }
                         if let Some(source) = source_line(at) {
                             println!("{source}");
                         }

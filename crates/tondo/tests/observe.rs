@@ -1841,6 +1841,94 @@ fn debugger_replays_a_recorded_run() {
     }
 }
 
+const ROLLED: &str = r#"import std.console
+import std.random
+
+fn main() {
+    var dice = random.Random.new()
+    var total = 0
+    for i in 0..6 {
+        let roll = dice.int(1..7)
+        total += roll
+        console.println("{i}: {roll}")
+    }
+    console.println("total {total}")
+}
+"#;
+
+/// In a replay, `reverse`, `back` and `why` go back by running the
+/// recording again, from a checkpoint where the program stopped before, to
+/// the program as it was there, every value of it.
+#[test]
+fn debugger_goes_back_in_a_replay() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-back");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rolled.to"), ROLLED).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "rolled.to"])
+        .current_dir(&dir)
+        .output();
+    let recorded = String::from_utf8_lossy(&recorded.unwrap().stdout).into_owned();
+    let rolls: Vec<i64> = recorded.lines().take(6).map(|l| l.split(": ").nth(1).unwrap().parse().unwrap()).collect();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut text = String::new();
+    let mut ask = |line: &str, key: &str| {
+        if !line.is_empty() {
+            std::io::Write::write_all(&mut input, format!("{line}\n").as_bytes()).unwrap();
+        }
+        loop {
+            let mut read = String::new();
+            assert!(output.read_line(&mut read).unwrap() > 0, "the debugger ended: {text}");
+            text.push_str(&read);
+            let value: Value = serde_json::from_str(&read).unwrap_or_default();
+            assert!(value.get("error").is_none(), "{text}");
+            if value.get(key).is_some() {
+                return value;
+            }
+        }
+    };
+    ask("", "stopped");
+    ask("break rolled.to:10", "breakpoint");
+    for _ in 0..4 {
+        ask("continue", "stopped");
+    }
+    let value = |ask: &mut dyn FnMut(&str, &str) -> Value, name: &str| -> i64 {
+        ask(&format!("print {name}"), "value")["value"].as_str().unwrap().parse().unwrap()
+    };
+    assert_eq!(value(&mut ask, "i"), 3);
+    // The breakpoint's stop before this one.
+    let stop = ask("reverse", "stopped");
+    assert_eq!(stop["stopped"]["why"], "reverse", "{stop}");
+    assert_eq!(value(&mut ask, "i"), 2);
+    // The line that gave `total` its value: the `+=` of this iteration.
+    let total = value(&mut ask, "total");
+    let stop = ask("why total", "stopped");
+    assert_eq!(stop["stopped"]["at"], "rolled.to:9 in main", "{stop}");
+    assert_eq!(value(&mut ask, "total"), total - rolls[2]);
+    assert_eq!(value(&mut ask, "i"), 2);
+    // Two lines of the task back: the start of the iteration's `let`.
+    let stop = ask("back 1", "stopped");
+    assert_eq!(stop["stopped"]["at"], "rolled.to:8 in main", "{stop}");
+    // And on again, the same.
+    ask("next", "stopped");
+    ask("next", "stopped");
+    assert_eq!(value(&mut ask, "total"), total);
+    drop(input);
+    child.wait().unwrap();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {

@@ -27,6 +27,9 @@ static MODE: AtomicU8 = AtomicU8::new(OFF);
 static WRAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The probes the program's thread passed, which place each call.
 static TICKS: AtomicU64 = AtomicU64::new(0);
+/// A replay shows what the program writes from this probe on: the debugger
+/// that goes back runs it again from the start, and has shown the rest.
+static SHOWN_FROM: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// This is the program's thread, whose calls are recorded.
@@ -58,6 +61,11 @@ fn log() -> std::sync::MutexGuard<'static, Log> {
 #[inline]
 pub(crate) fn on() -> bool {
     MODE.load(Ordering::Relaxed) != OFF
+}
+
+/// From the probe `tick` on, a replay shows what the program writes.
+pub(crate) fn shown_from(tick: u64) {
+    SHOWN_FROM.store(tick, Ordering::Relaxed);
 }
 
 /// Whether it replays a recording.
@@ -139,6 +147,9 @@ pub(crate) fn start() -> bool {
         log.recorded = recorded;
         log.at = MAGIC.len();
         MODE.store(REPLAY, Ordering::Relaxed);
+        let from = std::env::var("TONDO_RT_SHOWN_FROM").ok().and_then(|t| t.parse().ok()).unwrap_or(0);
+        SHOWN_FROM.store(from, Ordering::Relaxed);
+        unsafe { std::env::remove_var("TONDO_RT_SHOWN_FROM") };
     }
     on()
 }
@@ -572,7 +583,7 @@ mod calls {
 
     /// Writing to the standard output or error shows in a replay too.
     fn shown(fd: c_int, write: impl FnOnce()) {
-        if fd == 1 || fd == 2 {
+        if (fd == 1 || fd == 2) && TICKS.load(Ordering::Relaxed) >= SHOWN_FROM.load(Ordering::Relaxed) {
             inside(write);
         }
     }
