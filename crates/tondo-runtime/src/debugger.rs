@@ -1719,6 +1719,13 @@ fn watched(table: &Table, state: &mut State, task: u64, frame: usize, site: usiz
                 continue;
             }
         }
+        // A cell's change stops the task that made it, at its next probe,
+        // not another that runs meanwhile.
+        if let Some((cell, ..)) = watch.shared
+            && ![0, task].contains(&super::sync::last_writer(cell))
+        {
+            continue;
+        }
         if let Some((now, holds)) = watch.now(table).filter(|(now, _)| *now != watch.value) {
             let (before, after) = (clipped(&watch.value), clipped(&now));
             watch.value = now;

@@ -39,6 +39,14 @@ pub struct SyncObject {
     /// Visits the state for the cycle collector, when it may refer back
     /// to the cell, which is then registered with it.
     visit: Option<Visit>,
+    /// The task that last let go of the lock to change the value, which
+    /// the debugger's watch of the cell stops.
+    writer: std::sync::atomic::AtomicU64,
+}
+
+/// The task that last changed the cell's value, or 0.
+pub(crate) fn last_writer(object: usize) -> u64 {
+    unsafe { (*(object as *const SyncObject)).writer.load(Ordering::Relaxed) }
 }
 
 const WRITER: usize = 1;
@@ -80,6 +88,7 @@ pub extern "C" fn tondo_rt_sync_new(
         align,
         release,
         visit,
+        writer: std::sync::atomic::AtomicU64::new(0),
     }));
     if visit.is_some() {
         cycles::remember(cell as *const u8, Kind::Sync);
@@ -358,6 +367,7 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     unsafe {
         let o = &mut *object(guard);
         let before = if exclusive {
+            o.writer.store(super::tasks::current_id(), Ordering::Relaxed);
             o.state.fetch_and(!WRITER, Ordering::Release)
         } else {
             o.state.fetch_sub(READER, Ordering::Release)
@@ -392,6 +402,7 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         let mut woken = wake_changes(o);
         o.changes.push(Arc::as_ptr(&wait));
         o.state.fetch_or(PARKED, Ordering::AcqRel);
+        o.writer.store(super::tasks::current_id(), Ordering::Relaxed);
         o.state.fetch_and(!WRITER, Ordering::Release);
         let (lockers, delay) = wake_lockers(o);
         woken.extend(lockers);
