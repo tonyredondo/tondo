@@ -174,11 +174,12 @@ pub(crate) fn orphaned() -> bool {
 /// From here on, this thread's calls are the program's.
 pub(crate) fn begin() {
     if on() {
-        // The keys of the thread's hash maps, which the Rust library draws
-        // from the system the first time it makes one: here, and not
-        // where the program, or the debugger at its probes, first does.
-        let _ = std::collections::hash_map::RandomState::new();
         PROGRAM.set(true);
+        // The keys of the thread's hash maps, which the Rust library draws
+        // from the system the first time it makes one: here, a call the
+        // recording has, and not where the program, or the debugger at its
+        // probes, first makes one.
+        let _ = std::collections::hash_map::RandomState::new();
     }
 }
 
