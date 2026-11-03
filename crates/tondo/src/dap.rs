@@ -96,6 +96,14 @@ struct Debuggee {
     /// The calls of the line a task stopped at that `stepIn` can go into,
     /// by their `targetId`.
     targets: Vec<String>,
+    /// Where what the program says goes, for a process that takes over.
+    pumped: Pumped,
+    /// A replay, which goes back by running its recording again; whether
+    /// it kept a checkpoint where it stopped last; and the stop to tell
+    /// the editor after the answer to the request that went back.
+    replaying: Option<crate::debug::Replaying>,
+    kept: bool,
+    after: Option<Value>,
 }
 
 /// A frame's id: its task, and its place in the task's stack.
@@ -115,6 +123,48 @@ impl Debuggee {
     fn forget(&mut self) {
         self.handles.clear();
         self.forgotten += 1;
+        self.kept = false;
+    }
+
+    /// A replay's process stopped where the debugger went back to takes
+    /// over: the debugger talks to it, the old one ends, and the editor
+    /// hears the stop after the answer.
+    fn take_over(&mut self, mut running: crate::debug::Running, session: crate::debug::Session, stop: &Value) {
+        if let crate::debug::Running::Started(child) = &mut running {
+            forward(child, &self.pumped.events, &self.pumped.drained, None);
+        }
+        let (answer, answers) = mpsc::channel();
+        let pumped = self.pumped.clone();
+        let said = session.said;
+        std::thread::spawn(move || pumped.pump(said.into_iter(), answer));
+        self.writer = session.writer;
+        self.answers = answers;
+        self.pid = running.pid();
+        // The first process is the adapter's; those after, the replay's.
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(replaying) = self.replaying.as_mut() {
+            replaying.take_over(running);
+        }
+        self.forget();
+        let stop = &stop["stopped"];
+        self.after = Some(json!({ "reason": "step", "threadId": stop["task"], "allThreadsStopped": true,
+            "description": stop["why"], "text": stop["why"] }));
+    }
+
+    /// A checkpoint where a replay stopped, once.
+    fn keep(&mut self) {
+        if self.kept || self.replaying.is_none() {
+            return;
+        }
+        self.kept = true;
+        let mut replaying = self.replaying.take();
+        if let Some(replaying) = replaying.as_mut() {
+            replaying.keep(&mut |command| self.ask(command));
+        }
+        self.replaying = replaying;
     }
 
     /// A reference to what a path names in a frame, for `variables`.
@@ -125,10 +175,17 @@ impl Debuggee {
 
     fn ask(&mut self, command: &str) -> Result<Value, String> {
         let answer = self.answer(command)?;
-        match answer["error"].as_str() {
-            Some(error) => Err(error.to_string()),
-            None => Ok(answer),
+        if let Some(error) = answer["error"].as_str() {
+            return Err(error.to_string());
         }
+        // How the program stops, which a replay run again takes too.
+        let word = command.split(' ').next().unwrap_or_default();
+        if let Some(replaying) = self.replaying.as_mut()
+            && matches!(word, "break" | "delete" | "catch" | "steps")
+        {
+            replaying.set(command);
+        }
+        Ok(answer)
     }
 
     /// The program's answer as it is, with its `error`: a reload reads
@@ -262,12 +319,19 @@ pub fn serve(builds: Builds) -> Result<(), String> {
         };
         let ending = matches!(command, "disconnect" | "terminate");
         editor.respond(&request, result);
+        // Where a replay went back to, after the answer.
+        if let Some(stop) = debuggee.as_mut().and_then(|program| program.after.take()) {
+            editor.event("stopped", stop);
+        }
         if ending {
             if let Some(mut program) = debuggee.take() {
                 let _ = program.writer.shutdown(std::net::Shutdown::Both);
                 if let Some(child) = program.child.as_mut() {
                     let _ = child.kill();
                     let _ = child.wait();
+                }
+                if let Some(replaying) = program.replaying.as_mut() {
+                    replaying.end();
                 }
             }
             editor.event("terminated", json!({}));
@@ -380,14 +444,122 @@ impl Dumped {
     }
 }
 
+/// Where what a program says goes: events to the editor, the stop at the
+/// start only when it asked for it, and the end once the program's output
+/// was read; answers to the command waiting for them.
+#[derive(Clone)]
+struct Pumped {
+    events: Editor,
+    entry: bool,
+    drained: Arc<(Mutex<usize>, std::sync::Condvar)>,
+    streams: usize,
+}
+
+impl Pumped {
+    fn pump(self, values: impl Iterator<Item = Value>, answer: mpsc::Sender<Value>) {
+        let Pumped { events, entry, drained: read_out, streams } = self;
+        for value in values {
+            if let Some(stop) = value.get("stopped") {
+                if stop["why"] == "start" && !entry {
+                    continue;
+                }
+                let why = stop["why"].as_str().unwrap_or_default();
+                let reason = match why {
+                    "start" => "entry",
+                    "step" | "history" => "step",
+                    "goto" => "goto",
+                    "pause" => "pause",
+                    _ if why.starts_with("panic[") || why.starts_with("error: ") => "exception",
+                    _ if why.starts_with("watch ") => "data breakpoint",
+                    _ => "breakpoint",
+                };
+                let mut body = json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true });
+                if reason == "exception" || reason == "data breakpoint" {
+                    body["text"] = json!(why);
+                    body["description"] = json!(why);
+                }
+                events.event("stopped", body);
+            } else if let Some(logged) = value["logged"].as_str() {
+                events.event("output", json!({ "category": "console", "output": format!("{logged}\n") }));
+            } else if let Some(captured) = value.get("captured") {
+                // A capture, in the console: where, and each binding.
+                let locals: Vec<String> = captured["locals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|l| {
+                        format!(
+                            "{} = {}",
+                            l["name"].as_str().unwrap_or_default(),
+                            l["value"].as_str().unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                let at = captured["at"].as_str().unwrap_or_default();
+                let output = format!("captured at {at}: {}\n", locals.join(", "));
+                events.event("output", json!({ "category": "console", "output": output, "data": captured }));
+            } else if let Some(id) = value.get("unwatched") {
+                let why = value["why"].as_str().unwrap_or_default();
+                let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
+                events.event("breakpoint", json!({ "reason": "changed", "breakpoint": breakpoint }));
+            } else if value.get("exited").is_some() {
+                let (count, ended) = &*read_out;
+                let count = count.lock().unwrap_or_else(|e| e.into_inner());
+                let wait = std::time::Duration::from_secs(2);
+                drop(ended.wait_timeout_while(count, wait, |count| *count < streams));
+                events.event("terminated", json!({}));
+            } else if answer.send(value).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+/// The program's output, to the editor's console as it comes; each stream
+/// counts in `drained` once read to its end.
+fn forward(
+    child: &mut std::process::Child,
+    editor: &Editor,
+    drained: &Arc<(Mutex<usize>, std::sync::Condvar)>,
+    tested: Option<u32>,
+) {
+    for (stream, category) in [
+        (child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stdout"),
+        (child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stderr"),
+    ] {
+        let Some(stream) = stream else { continue };
+        let editor = editor.clone();
+        let drained = drained.clone();
+        std::thread::spawn(move || {
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
+                let shown = match line.strip_prefix('\x1e') {
+                    // A test's frame, from the runner inside a test build.
+                    Some(frame) => test_frame(frame, &mut stream, tested),
+                    None => Some(std::mem::take(&mut line)),
+                };
+                if let Some(output) = shown {
+                    editor.event("output", json!({ "category": category, "output": output }));
+                }
+                line.clear();
+            }
+            let (count, ended) = &*drained;
+            *count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            ended.notify_all();
+        });
+    }
+}
+
 /// Starts the program the editor names, or attaches to a running one.
 fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> Result<Debuggee, String> {
     let root =
         arguments["cwd"].as_str().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let (program, child, tested) = if let Some(dir) = arguments["replay"].as_str().filter(|_| command == "launch") {
+    let replay = arguments["replay"].as_str().filter(|_| command == "launch").map(|dir| root.join(dir));
+    let (program, child, tested) = if let Some(dir) = &replay {
         // A recorded run, again (`tondo debug --replay`).
         use std::os::unix::process::CommandExt;
-        let (executable, mut command) = crate::debug::replayed(&root.join(dir))?;
+        let (executable, mut command) = crate::debug::replayed(dir)?;
         let child = command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -493,96 +665,19 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     let read_out = drained.clone();
     // What the program says: events go to the editor as they come; answers
     // to the command waiting for them.
-    std::thread::spawn(move || {
-        for line in reader.lines() {
-            let Ok(value) = serde_json::from_str::<Value>(&line.unwrap_or_default()) else { break };
-            if let Some(stop) = value.get("stopped") {
-                if stop["why"] == "start" && !entry {
-                    continue;
-                }
-                let why = stop["why"].as_str().unwrap_or_default();
-                let reason = match why {
-                    "start" => "entry",
-                    "step" | "history" => "step",
-                    "goto" => "goto",
-                    "pause" => "pause",
-                    _ if why.starts_with("panic[") || why.starts_with("error: ") => "exception",
-                    _ if why.starts_with("watch ") => "data breakpoint",
-                    _ => "breakpoint",
-                };
-                let mut body = json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true });
-                if reason == "exception" || reason == "data breakpoint" {
-                    body["text"] = json!(why);
-                    body["description"] = json!(why);
-                }
-                events.event("stopped", body);
-            } else if let Some(logged) = value["logged"].as_str() {
-                events.event("output", json!({ "category": "console", "output": format!("{logged}\n") }));
-            } else if let Some(captured) = value.get("captured") {
-                // A capture, in the console: where, and each binding.
-                let locals: Vec<String> = captured["locals"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|l| {
-                        format!(
-                            "{} = {}",
-                            l["name"].as_str().unwrap_or_default(),
-                            l["value"].as_str().unwrap_or_default()
-                        )
-                    })
-                    .collect();
-                let at = captured["at"].as_str().unwrap_or_default();
-                let output = format!("captured at {at}: {}\n", locals.join(", "));
-                events.event("output", json!({ "category": "console", "output": output, "data": captured }));
-            } else if let Some(id) = value.get("unwatched") {
-                let why = value["why"].as_str().unwrap_or_default();
-                let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
-                events.event("breakpoint", json!({ "reason": "changed", "breakpoint": breakpoint }));
-            } else if value.get("exited").is_some() {
-                let (count, ended) = &*read_out;
-                let count = count.lock().unwrap_or_else(|e| e.into_inner());
-                let wait = std::time::Duration::from_secs(2);
-                drop(ended.wait_timeout_while(count, wait, |count| *count < streams));
-                events.event("terminated", json!({}));
-            } else if answer.send(value).is_err() {
-                break;
-            }
-        }
-    });
+    let pumped = Pumped { events, entry, drained: read_out, streams };
+    let values = reader.lines().map_while(|line| serde_json::from_str::<Value>(&line.ok()?).ok());
+    let pumping = pumped.clone();
+    std::thread::spawn(move || pumping.pump(values, answer));
     let mut child = child;
     if let Some(child) = child.as_mut() {
-        // The program's output goes to the editor's console.
-        for (stream, category) in [
-            (child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stdout"),
-            (child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>), "stderr"),
-        ] {
-            let Some(stream) = stream else { continue };
-            let editor = editor_events.clone();
-            let drained = drained.clone();
-            std::thread::spawn(move || {
-                let mut stream = BufReader::new(stream);
-                let mut line = String::new();
-                while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
-                    let shown = match line.strip_prefix('\x1e') {
-                        // A test's frame, from the runner inside a test build.
-                        Some(frame) => test_frame(frame, &mut stream, tested),
-                        None => Some(std::mem::take(&mut line)),
-                    };
-                    if let Some(output) = shown {
-                        editor.event("output", json!({ "category": category, "output": output }));
-                    }
-                    line.clear();
-                }
-                let (count, ended) = &*drained;
-                *count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
-                ended.notify_all();
-            });
-        }
+        forward(child, &editor_events, &drained, tested);
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
+    let replaying = replay.map(crate::debug::Replaying::for_editor);
+    let (handles, targets, kept, after) = (Vec::new(), Vec::new(), false, None);
     let mut debuggee =
-        Debuggee { pid, writer, answers, child, root, handles: Vec::new(), forgotten: 0, targets: Vec::new() };
+        Debuggee { pid, writer, answers, child, root, handles, forgotten: 0, targets, pumped, replaying, kept, after };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -900,6 +995,19 @@ fn handle(
         }
         // Back in the history `record` keeps: a line, or to the last line
         // at a breakpoint.
+        // A replay goes back by running its recording again, to the whole
+        // program as it was.
+        "stepBack" | "reverseContinue" if program.replaying.is_some() => {
+            program.keep();
+            let word = if command == "stepBack" { "back" } else { "reverse" };
+            let task = arguments["threadId"].as_u64().unwrap_or(1);
+            let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
+            let replaying = program.replaying.as_ref().expect("a replay");
+            let (to, why) = replaying.find(word, "1", tick, task)?;
+            let (running, session, stop) = replaying.reach(to, why, true)?;
+            program.take_over(running, session, &stop);
+            Ok(json!({}))
+        }
         "stepBack" | "reverseContinue" => {
             program.forget();
             let asked = if command == "stepBack" { "back" } else { "reverse" };
@@ -993,6 +1101,9 @@ fn handle(
             Ok(json!({ "threads": threads }))
         }
         "stackTrace" => {
+            // A replay keeps a checkpoint where it stopped, which the
+            // editor asks the stack of.
+            program.keep();
             let task = arguments["threadId"].as_u64().unwrap_or(1);
             let stack = program.ask(&format!("stack {task}"))?;
             let frames: Vec<Value> = stack["stack"]

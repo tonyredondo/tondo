@@ -1041,7 +1041,8 @@ guarda un checkpoint, una copia del proceso hecha con `fork` donde paró, y
 las reproducciones que vuelven atrás empiezan en el más cercano anterior, o
 en otro anterior si ahí no encuentran lo que buscan, en lugar del principio;
 un breakpoint que cuenta sus hits hace empezar desde el principio, donde
-empezó a contarlos.
+empezó a contarlos. En el editor, `stepBack` y `reverseContinue` de una
+reproducción son `back` y `reverse`.
 
 ### 7.7 Librerías para C
 

@@ -203,6 +203,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         settings: Vec::new(),
         current: child.take().map(Running::Started),
         checkpoints: Vec::new(),
+        piped: false,
     });
     let attached = session.answer()?;
     if let Some(error) = attached["error"].as_str() {
@@ -362,7 +363,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     session.wait_event();
                     // A replay keeps a checkpoint where it stops.
                     if let Some(replaying) = replaying.as_mut().filter(|_| !session.ended) {
-                        replaying.keep(&mut session);
+                        replaying.keep(&mut |command| ask(&mut session, command));
                     }
                 }
             }
@@ -433,22 +434,32 @@ fn attach(program: Program) -> Result<(std::os::unix::net::UnixStream, mpsc::Rec
 /// A replay under the debugger: its recording, the commands that set how
 /// the program stops, the process the debugger talks to, and checkpoints:
 /// copies of a replay where it stopped, by the probe they are at.
-struct Replaying {
+pub(crate) struct Replaying {
     dir: PathBuf,
     settings: Vec<String>,
     current: Option<Running>,
     checkpoints: Vec<(u64, u32)>,
+    /// What a replay started from the start writes goes to a pipe the
+    /// caller reads, as the editor's adapter does, not to this process's.
+    piped: bool,
 }
 
 /// A process of a replay: one the debugger started, or one a checkpoint
 /// forked, which only ends when it is ended.
-enum Running {
+pub(crate) enum Running {
     Started(std::process::Child),
     Forked(u32),
 }
 
 impl Running {
-    fn end(self) {
+    pub(crate) fn pid(&self) -> u32 {
+        match self {
+            Running::Started(child) => child.id(),
+            Running::Forked(pid) => *pid,
+        }
+    }
+
+    pub(crate) fn end(self) {
         match self {
             Running::Started(mut child) => {
                 let _ = child.kill();
@@ -475,11 +486,19 @@ impl Replaying {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
         let (executable, mut command) = replayed(&self.dir)?;
+        // One that only looks writes nothing.
+        let output = || match (shown, self.piped) {
+            (u64::MAX, _) => std::process::Stdio::null(),
+            (_, true) => std::process::Stdio::piped(),
+            (_, false) => std::process::Stdio::inherit(),
+        };
         let running = match from {
             None => Running::Started(
                 command
                     .env("TONDO_RT_SHOWN_FROM", shown.to_string())
                     .stdin(std::process::Stdio::null())
+                    .stdout(output())
+                    .stderr(output())
                     .process_group(0)
                     .spawn()
                     .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
@@ -520,8 +539,8 @@ impl Replaying {
     }
 
     /// A checkpoint where the program stopped, kept for going back.
-    fn keep(&mut self, session: &mut Session) {
-        let Ok(answer) = ask(session, "checkpoint") else { return };
+    pub(crate) fn keep(&mut self, ask: &mut dyn FnMut(&str) -> Result<Value, String>) {
+        let Ok(answer) = ask("checkpoint") else { return };
         let (Some(tick), Some(pid)) = (answer["checkpoint"]["tick"].as_u64(), answer["checkpoint"]["pid"].as_u64())
         else {
             return;
@@ -565,25 +584,39 @@ impl Replaying {
     /// that gives, and takes over.
     fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
-        let task = session.task;
-        let mut found = None;
+        let (to, why) = self.find(word, rest, tick, session.task)?;
+        let (running, mut next, stop) = self.reach(to, why, session.json)?;
+        if let Some(old) = self.current.replace(running) {
+            old.end();
+        }
+        std::mem::swap(session, &mut next);
+        self.keep(&mut |command| ask(session, command));
+        Ok(stop)
+    }
+
+    /// The probe `back`, `reverse` or `why` goes to from probe `tick`,
+    /// where `task` stopped, and why: what a replay from the nearest
+    /// checkpoint before, or an earlier one, finds on its way there.
+    pub(crate) fn find(&self, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String), String> {
         let mut failed = String::new();
         for base in self.bases(tick, false) {
-            let (running, mut scan) = self.start(base, u64::MAX, session.json)?;
+            let (running, mut scan) = self.start(base, u64::MAX, true)?;
             let scanned = self.scan(&mut scan, word, rest, tick, task);
             let _ = scan.send("quit");
             running.end();
             match scanned {
-                Ok(target) => {
-                    found = Some(target);
-                    break;
-                }
+                Ok(target) => return Ok(target),
                 Err(message) => failed = message,
             }
         }
-        let (to, why) = found.ok_or(failed)?;
+        Err(failed)
+    }
+
+    /// A replay stopped at probe `to`, from the nearest checkpoint, and the
+    /// stop, which says `why`.
+    pub(crate) fn reach(&self, to: u64, why: String, json: bool) -> Result<(Running, Session, Value), String> {
         let base = self.bases(to, true).into_iter().next().flatten();
-        let (running, mut next) = self.start(base, to, session.json)?;
+        let (running, mut next) = self.start(base, to, json)?;
         let stop = match to {
             _ if base.is_some_and(|(t, _)| t == to) => {
                 let snapshot = ask(&mut next, "snapshot")?;
@@ -602,12 +635,37 @@ impl Replaying {
                 stop
             }
         };
+        Ok((running, next, stop))
+    }
+
+    /// A replay of the recording in `dir`, as the editor's adapter has one:
+    /// what its replays write goes to pipes, and the adapter ends its first
+    /// process.
+    pub(crate) fn for_editor(dir: PathBuf) -> Replaying {
+        Replaying { dir, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true }
+    }
+
+    /// A command that sets how the program stops, which replays take too.
+    pub(crate) fn set(&mut self, command: &str) {
+        self.settings.push(command.to_string());
+    }
+
+    /// The process the debugger talks to from now on, the old one ended.
+    pub(crate) fn take_over(&mut self, running: Running) {
         if let Some(old) = self.current.replace(running) {
             old.end();
         }
-        std::mem::swap(session, &mut next);
-        self.keep(session);
-        Ok(stop)
+    }
+
+    /// Ends the replay's processes: its checkpoints, and the one it talks
+    /// to unless `keep`.
+    pub(crate) fn end(&mut self) {
+        for (_, pid) in std::mem::take(&mut self.checkpoints) {
+            Running::Forked(pid).end();
+        }
+        if let Some(current) = self.current.take() {
+            current.end();
+        }
     }
 
     /// What a replay that started before probe `tick` finds on its way
@@ -658,9 +716,9 @@ fn ask(session: &mut Session, command: &str) -> Result<Value, String> {
     }
 }
 
-struct Session {
-    said: mpsc::Receiver<Value>,
-    writer: std::os::unix::net::UnixStream,
+pub(crate) struct Session {
+    pub(crate) said: mpsc::Receiver<Value>,
+    pub(crate) writer: std::os::unix::net::UnixStream,
     json: bool,
     /// Events that came while an answer was awaited.
     events: Vec<Value>,

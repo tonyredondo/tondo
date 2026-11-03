@@ -1927,6 +1927,36 @@ fn debugger_goes_back_in_a_replay() {
     assert_eq!(value(&mut ask, "total"), total);
     drop(input);
     child.wait().unwrap();
+    // The editor's step back and reverse continue.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "replay": "run", "cwd": dir }));
+    let path = dir.join("rolled.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 10 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let evaluated = |adapter: &mut Adapter, expression: &str| {
+        let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+        let frame = trace["stackFrames"][0]["id"].clone();
+        let line = trace["stackFrames"][0]["line"].clone();
+        let value = adapter.ask("evaluate", json!({ "expression": expression, "frameId": frame }));
+        (value["result"].as_str().unwrap().to_string(), line)
+    };
+    for _ in 0..2 {
+        adapter.ask("continue", json!({ "threadId": 1 }));
+        adapter.until("stopped");
+    }
+    assert_eq!(evaluated(&mut adapter, "i").0, "2");
+    adapter.ask("reverseContinue", json!({ "threadId": 1 }));
+    adapter.until("stopped");
+    assert_eq!(evaluated(&mut adapter, "i"), ("1".to_string(), json!(10)));
+    adapter.ask("stepBack", json!({ "threadId": 1 }));
+    adapter.until("stopped");
+    assert_eq!(evaluated(&mut adapter, "i"), ("1".to_string(), json!(9)));
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
 }
 
 const SPAWNING: &str = r#"import std.console
