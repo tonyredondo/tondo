@@ -1878,23 +1878,26 @@ fn main() {
 }
 "#;
 
-const SENT: &str = r#"fn produce(out: Sender[Int]) {
+const SENT: &str = r#"fn produce(out: Sender[Int], done: Receiver[Int]) {
     var n = 3
     for i in 0..3 {
         n = n * 2 + i
         out.send(n)
     }
+    _ = done.receive()
 }
 
 fn main() {
     let (out, inbox) = channel[Int](1)
-    spawn produce(out)
+    let (finish, done) = channel[Int](1)
+    spawn produce(out, done)
     var total = 0
     for _ in 0..3 {
         let got = inbox.receive().unwrapOr(0)
         total += got
     }
     _ = total
+    finish.send(0)
 }
 "#;
 
@@ -1922,13 +1925,13 @@ fn a_replay_follows_values_through_channels() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break sent.to:15\ncontinue\ncontinue\nwhy got\norigins\ntick\ncontinue\ndiff 3\n";
+    let script = "break sent.to:17\ncontinue\ncontinue\nwhy got\norigins\ntick\ncontinue\ndiff 3\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
     let lines: Vec<Value> = output.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let why = lines.iter().filter_map(|l| l.get("stopped")).nth(3).unwrap_or_else(|| panic!("{output}"));
-    assert_eq!(why["at"], "sent.to:14 in main", "{output}");
+    assert_eq!(why["at"], "sent.to:16 in main", "{output}");
     let received = why["causes"].as_array().unwrap().iter().find(|c| c["received"] == true);
     assert_eq!(received.map(|c| &c["at"]), Some(&json!("sent.to:5 in produce")), "{output}");
     // The origins go on in the task that sent it.
