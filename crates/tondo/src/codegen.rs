@@ -893,6 +893,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         traced: Vec::new(),
         debug: None,
         debug_functions: Vec::new(),
+        debug_slots: HashMap::new(),
         debug_sites: Vec::new(),
         live: None,
         current: 0,
@@ -1136,6 +1137,8 @@ struct Codegen<'a> {
     /// the bindings it shows, and each probe's source and function.
     debug: Option<DataId>,
     debug_functions: Vec<(String, Vec<DebugBinding>)>,
+    /// Where each debug function's slots are, by its number.
+    debug_slots: HashMap<u32, (i64, i64)>,
     debug_sites: Vec<(u32, u32)>,
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
@@ -1392,6 +1395,10 @@ struct Compiled {
     /// Where each run of code of one statement starts, and the statement's
     /// site, `0` for code of none.
     lines: Vec<(u32, u32)>,
+    /// In a debug build, where its bindings' addresses and which of them
+    /// hold values are in its frame, from the frame pointer, by the
+    /// function's number in the debugger's table.
+    debug_slots: Option<(u32, i64, i64)>,
 }
 
 /// Compiles a function's IR to machine code.
@@ -1443,7 +1450,26 @@ fn compile_one(
             .iter()
             .map(|s| (s.start, if s.loc.as_abs().is_default() { 0 } else { s.loc.as_abs().bits() }))
             .collect(),
+        debug_slots: debug_slots(code.buffer.frame_layout()),
     })
+}
+
+/// Where the keyed slots of a debug build's function are from its frame
+/// pointer: its number, then the slot of which bindings hold values, then
+/// that of their addresses.
+fn debug_slots(layout: Option<&cranelift_codegen::MachBufferFrameLayout>) -> Option<(u32, i64, i64)> {
+    let layout = layout?;
+    let (mut function, mut alive, mut addresses) = (None, None, None);
+    for (_, slot) in layout.stackslots.iter() {
+        let Some(key) = slot.key else { continue };
+        let at = i64::from(slot.offset) - i64::from(layout.frame_to_fp_offset);
+        function = Some((key.bits() >> 1) as u32);
+        match key.bits() & 1 {
+            0 => alive = Some(at),
+            _ => addresses = Some(at),
+        }
+    }
+    Some((function?, alive?, addresses?))
 }
 
 /// What the code generator knows of the program's types without declaring
@@ -2123,6 +2149,9 @@ impl Codegen<'_> {
             self.module
                 .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
                 .map_err(|e| format!("{e:?}"))?;
+            if let Some((function, alive, addresses)) = code.debug_slots {
+                self.debug_slots.insert(function, (alive, addresses));
+            }
             if let Some(name) = job.traced {
                 let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
                 let handlers = code.handlers;
@@ -2178,18 +2207,28 @@ impl Codegen<'_> {
     /// column of its statement, for the DWARF: code of no statement is the
     /// statement's before it, and code before the first statement the
     /// first's.
-    fn dwarf_rows(&self, function: &Traced) -> Vec<(u32, String, u32, u32)> {
-        let mut rows: Vec<(u32, String, u32, u32)> = function
-            .lines
-            .iter()
-            .filter(|&&(_, site)| site != 0)
-            .map(|&(start, site)| {
-                let (path, line, column) = self.sources.position(function.sites[site as usize - 1].0);
-                (start, path, line as u32, column as u32)
-            })
-            .collect();
-        if let Some(first) = rows.first().filter(|first| first.0 > 0).cloned() {
-            rows.insert(0, (0, first.1, first.2, first.3));
+    fn dwarf_rows(&self, function: &Traced) -> Vec<crate::debuginfo::Row> {
+        let mut rows: Vec<crate::debuginfo::Row> = Vec::new();
+        for (index, &(start, site)) in function.lines.iter().enumerate().filter(|&(_, &(_, site))| site != 0) {
+            let end = function.lines.get(index + 1).map_or(u32::MAX, |&(next, _)| next);
+            let (path, line, column) = self.sources.position(function.sites[site as usize - 1].0);
+            let (line, column) = (line as u32, column as u32);
+            let new = rows.last().is_none_or(|row| (&row.file, row.line) != (&path, line));
+            // A line starts with its probe, which stores where its bindings
+            // are: the line's code for a debugger starts after it.
+            let probe =
+                new.then(|| function.calls.iter().find(|&&(at, of)| of == site && at > start && at < end)).flatten();
+            let row = crate::debuginfo::Row { offset: start, file: path, line, column, statement: probe.is_none() };
+            match probe {
+                Some(&(after, _)) => {
+                    rows.push(row.clone());
+                    rows.push(crate::debuginfo::Row { offset: after, statement: true, ..row });
+                }
+                None => rows.push(row),
+            }
+        }
+        if let Some(first) = rows.first().filter(|first| first.offset > 0).cloned() {
+            rows.insert(0, crate::debuginfo::Row { offset: 0, statement: false, ..first });
         }
         rows
     }
@@ -2694,8 +2733,11 @@ impl Codegen<'_> {
         let mut text = String::new();
         let mut glues = Vec::new();
         let (mut layouts, mut known) = (Vec::new(), HashMap::new());
-        for (name, bindings) in self.debug_functions.clone() {
+        for (index, (name, bindings)) in self.debug_functions.clone().into_iter().enumerate() {
             text.push_str(&format!("F\t{name}\n"));
+            if let Some((alive, addresses)) = self.debug_slots.get(&(index as u32)) {
+                text.push_str(&format!("O\t{addresses}\t{alive}\n"));
+            }
             for (binding, ty, glue, raw) in bindings {
                 let layout = self.write_layout(ty, &mut layouts, &mut known);
                 let viewed = u8::from(raw.is_some());
@@ -4664,10 +4706,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             let count = shown.len() + captured.len();
             let words = count.div_ceil(64).max(1) as u32;
-            let alive = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, words * 8, 3));
-            let size = (count.max(1) * 8) as u32;
-            let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
             let function = cg.debug_function(body.name.clone(), described);
+            // Keyed by the function and which they are, so that where they
+            // are in its frame goes in the debugger's table.
+            let slot = |size: u32, which: u64| {
+                let key = ir::StackSlotKey::new(u64::from(function) << 1 | which);
+                StackSlotData::new_with_key(StackSlotKind::ExplicitSlot, size, 3, key)
+            };
+            let alive = fb.create_sized_stack_slot(slot(words * 8, 0));
+            let addresses = fb.create_sized_stack_slot(slot((count.max(1) * 8) as u32, 1));
             let first = cg.function_sites();
             DebugFrame { function, first, shown, captured, alive, addresses, line: None, site: 0 }
         });

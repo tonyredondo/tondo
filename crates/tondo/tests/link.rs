@@ -128,12 +128,19 @@ fn gdb_stops_at_a_line_and_shows_the_tasks() {
     assert!(load.starts_with("source "), "{load}");
     let ran = Command::new("gdb")
         .args(["-q", "-batch", "-nx", "-ex", "set debuginfod enabled off", "-ex", &load])
-        .args(["-ex", "break app.to:2", "-ex", "run", "-ex", "bt", "-ex", "tondo task 1", "app"])
+        .args(["-ex", "break app.to:2", "-ex", "run", "-ex", "bt", "-ex", "tondo task 1", "-ex", "tondo locals"])
+        .args(["-ex", "up", "-ex", "tondo print 3 * 2", "app"])
         .current_dir(&dir)
         .output()
         .unwrap();
     let shown = String::from_utf8_lossy(&ran.stdout);
     assert!(shown.contains("square () at app.to:2"), "{shown}");
     assert!(shown.contains("in main () at app.to:7"), "{shown}");
-    assert!(shown.contains("task 1 (main) runs at square") && shown.contains("app.to:7 in main"), "{shown}");
+    assert!(
+        shown.contains("task 1 (main) runs at app.to:2 in square") && shown.contains("app.to:7 in main"),
+        "{shown}"
+    );
+    // The bindings of the frame gdb shows, as the debugger of Tondo shows them.
+    assert!(shown.contains("n: Int = 3"), "{shown}");
+    assert!(shown.contains("3 * 2 = 6"), "{shown}");
 }

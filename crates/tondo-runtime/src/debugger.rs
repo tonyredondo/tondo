@@ -55,6 +55,9 @@ enum Layout {
 struct Function {
     name: String,
     bindings: Vec<Binding>,
+    /// Where the addresses of its bindings and which of them hold values
+    /// are, from its frame pointer, when the compiler said.
+    offsets: Option<(isize, isize)>,
 }
 
 struct Site {
@@ -577,7 +580,13 @@ pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
     let (functions, sites, layouts) = unsafe { parse(raw, 0) };
     VIEWED.store(functions.iter().any(|f| f.bindings.iter().any(|b| b.raw.is_some())), Ordering::Relaxed);
     let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
-    let offsets = functions.iter().map(|_| (AtomicIsize::new(UNKNOWN), AtomicIsize::new(UNKNOWN))).collect();
+    let offsets = functions
+        .iter()
+        .map(|f| {
+            let (addresses, alive) = f.offsets.unwrap_or((UNKNOWN, UNKNOWN));
+            (AtomicIsize::new(addresses), AtomicIsize::new(alive))
+        })
+        .collect();
     let _ = TABLE.set(RwLock::new(Table { functions, sites, layouts, marked, offsets }));
     super::heap::track_objects();
 }
@@ -591,7 +600,10 @@ pub(crate) fn add_table(raw: *const Raw) -> usize {
     let (functions, sites, layouts) = unsafe { parse(raw, table.layouts.len()) };
     table.layouts.extend(layouts);
     let (offset, first) = (table.functions.len(), table.sites.len());
-    let added = functions.iter().map(|_| (AtomicIsize::new(UNKNOWN), AtomicIsize::new(UNKNOWN)));
+    let added = functions.iter().map(|f| {
+        let (addresses, alive) = f.offsets.unwrap_or((UNKNOWN, UNKNOWN));
+        (AtomicIsize::new(addresses), AtomicIsize::new(alive))
+    });
     table.offsets.extend(added);
     table.functions.extend(functions);
     for mut site in sites {
@@ -631,7 +643,14 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
     for line in text.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
         match parts.as_slice() {
-            ["F", name] => functions.push(Function { name: name.to_string(), bindings: Vec::new() }),
+            ["F", name] => functions.push(Function { name: name.to_string(), bindings: Vec::new(), offsets: None }),
+            ["O", addresses, alive] => {
+                if let (Some(function), Ok(addresses), Ok(alive)) =
+                    (functions.last_mut(), addresses.parse(), alive.parse())
+                {
+                    function.offsets = Some((addresses, alive));
+                }
+            }
             ["L", name, ty, layout, viewed] => {
                 let show = glues[next];
                 next += 1;
@@ -985,6 +1004,48 @@ static FOLLOW: AtomicBool = AtomicBool::new(false);
 /// starts a program.
 pub(crate) fn following() -> bool {
     ATTACHED.load(Ordering::Relaxed) && FOLLOW.load(Ordering::Relaxed) && !super::replay::replaying()
+}
+
+/// What gdb or lldb asks of the frame they show, of the program's function
+/// at `pc` whose frame pointer is `fp`: `locals`, or `print <expression>`,
+/// written to `path` as this debugger answers. The debugger calls it on
+/// the thread it stopped; whether it could.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_debug_to(
+    path: *const std::ffi::c_char,
+    command: *const std::ffi::c_char,
+    pc: usize,
+    fp: usize,
+) -> i32 {
+    let (Some(table), false, false) = (table(), path.is_null(), command.is_null()) else { return 0 };
+    let path = unsafe { std::ffi::CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    let command = unsafe { std::ffi::CStr::from_ptr(command) }.to_string_lossy().into_owned();
+    std::fs::write(path, native_frame(&table, command.trim(), pc, fp)).is_ok() as i32
+}
+
+/// The answer to `command` in the frame of another debugger.
+fn native_frame(table: &Table, command: &str, pc: usize, fp: usize) -> String {
+    let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
+    let Some(code) = super::trace::describe(pc + 1) else { return error("this frame is not the program's code") };
+    let Some(function) = table.functions.iter().position(|f| f.name == code.function) else {
+        return error(&format!("`{}` is not a function of the program", code.function));
+    };
+    let offsets = table.offsets.get(function).map(|(a, l)| (a.load(Ordering::Relaxed), l.load(Ordering::Relaxed)));
+    let Some((addressed, living)) = offsets.filter(|&(a, _)| a != UNKNOWN) else {
+        return error("the function has reached none of its lines yet: step to one");
+    };
+    let place = code.at.map_or(String::new(), |(file, line)| format!("{file}:{line} in {}", code.function));
+    let at = |offset: isize| (fp as isize + offset) as usize;
+    let frames = [Frame { place, function: Some(function), pointer: fp, addresses: at(addressed), alive: at(living) }];
+    let (word, rest) = command.split_once(' ').unwrap_or((command, ""));
+    match word {
+        "locals" => format!("{{\"locals\":[{}]}}", locals_of(table, &frames, 0, super::tasks::current_id()).join(",")),
+        "print" => match expression::parse(rest).and_then(|e| evaluating(table, &frames, 0, |ev| ev.evaluate(&e))) {
+            Ok(evaluated) => format!("{{\"name\":{},{}}}", quoted(rest), described(&evaluated.text)),
+            Err(message) => error(&message),
+        },
+        _ => error("gdb and lldb ask `locals` or `print <expression>`"),
+    }
 }
 
 /// The program started a child the debugger follows.

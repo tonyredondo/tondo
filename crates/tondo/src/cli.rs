@@ -218,7 +218,11 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "dump",
         usage: &["tondo dump plugin <lldb|gdb> [--json]"],
-        summary: &["write the `tondo` command for lldb or gdb, which", "shows a stopped program as `dump read` does"],
+        summary: &[
+            "write the `tondo` command for lldb or gdb, which",
+            "shows a stopped program as `dump read` does, and",
+            "a frame's bindings with its `locals` and `print`",
+        ],
     },
     Command {
         name: "trace",

@@ -741,7 +741,9 @@ with `--static` it does not depend on that machine's C library either.
 
 A debug build has DWARF on Linux, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
-`tondo` command for them that shows the stopped program's tasks and memory.
+`tondo` command for them that shows the stopped program's tasks and memory,
+and with `tondo locals` and `tondo print user.name` the selected frame's
+bindings, as `tondo debug` shows them.
 
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames

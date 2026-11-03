@@ -4813,3 +4813,20 @@ recordings of those that fail, with the tests' executable and the plan
 that runs that test: `tondo debug --replay` debugs it as `--test` would,
 its frames read as they are there. A recording of a test that passed is
 deleted at once, so the directory holds only what is worth looking at.
+
+## 2026-11-03 — Bindings in gdb and lldb
+
+gdb and lldb stopped at Tondo's lines but showed none of its values:
+DWARF would have to describe every type and where each binding is at
+each instruction, which the debugger of Tondo already knows from its
+table, the addresses the probes store and the glue that shows each type.
+So the `tondo` command of the plugin asks the program instead, as it
+does for a dump: `tondo locals` and `tondo print <expression>` call the
+runtime's `tondo_rt_debug_to` with the frame's pc and frame pointer, and
+it answers with what `tondo debug` would, its expressions included. For
+it to find a frame's slots without a debugger of its own attached, the
+compiler writes where each function's slots are in its frame, which
+Cranelift's frame layout gives for slots with a key, in the table. A
+statement's DWARF row starts after its probe, so a breakpoint on a line
+stops where the probe has stored its bindings' addresses, rather than
+where they are still the last line's.

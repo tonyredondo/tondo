@@ -783,7 +783,11 @@ import <archivo>` o `source <archivo>`. Con el programa parado, `tondo
 programa escriba un volcado, llamando a `tondo_rt_dump_to` de su runtime, con
 la pila de la tarea parada, y lo muestra como `dump read`. En un build de
 depuración, gdb y lldb leen además las líneas del programa en su DWARF
-(sección 7.6).
+(sección 7.6), y `tondo locals` y `tondo print <expresión>` muestran los
+bindings del marco elegido como `locals` y `print` de `tondo debug`: el
+comando llama a `tondo_rt_debug_to` del runtime, que los lee del marco con
+lo que el compilador dejó en la tabla del depurador, dónde guarda cada
+función las direcciones de sus bindings y cuáles tienen valor.
 
 La memoria viva sale de muestras que el runtime toma siempre, como Go: una
 asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
@@ -801,7 +805,9 @@ necesita para leer los bindings de cada función. En Linux, el ejecutable
 tiene además su DWARF, que gdb y lldb leen: cada función del programa, con
 su nombre y su código, y la línea de la que viene cada parte de su código,
 una por sentencia, así que paran en `archivo.to:línea`, avanzan por líneas
-y nombran en sus pilas la línea de cada marco. Un build sin `--debug` no
+y nombran en sus pilas la línea de cada marco. Una línea empieza para ellos
+después de su sonda, que guarda dónde están sus bindings, para que los
+lean al parar. Un build sin `--debug` no
 tiene nada de eso, ni su coste.
 
 `tondo debug` depura un build de depuración: compila con `--debug` un archivo

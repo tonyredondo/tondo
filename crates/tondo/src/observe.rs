@@ -823,8 +823,9 @@ pub fn dump(name: &str, output: Option<PathBuf>, as_json: bool) -> Result<(), St
 }
 
 /// `tondo dump plugin <lldb|gdb>`: writes the debugger's `tondo` command,
-/// which has the program write a dump and shows it with `dump read`, and
-/// says how the debugger loads it.
+/// which has the program write a dump and shows it with `dump read`, or
+/// answer `locals` and `print` in a frame, and says how the debugger loads
+/// it.
 pub fn plugin(debugger: &str, json: bool) -> Result<(), String> {
     let (script, load) = match debugger {
         "lldb" => (include_str!("plugins/tondo_lldb.py"), "command script import"),

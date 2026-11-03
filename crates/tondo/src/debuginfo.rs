@@ -13,13 +13,23 @@ use object::write::{Object, Relocation, SymbolId};
 use std::collections::HashMap;
 
 /// A function as its DWARF says it: its symbol, its name, the size of its
-/// code, and where each run of its code starts with the file, line and
-/// column it comes from.
+/// code, and where each run of its code starts.
 pub(crate) struct Function {
     pub symbol: SymbolId,
     pub name: String,
     pub size: u32,
-    pub rows: Vec<(u32, String, u32, u32)>,
+    pub rows: Vec<Row>,
+}
+
+/// Where a run of a function's code starts, the file, line and column it
+/// comes from, and whether a debugger stops there for its line.
+#[derive(Clone)]
+pub(crate) struct Row {
+    pub offset: u32,
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub statement: bool,
 }
 
 /// A section's bytes, and where they hold the address of a function: its
@@ -83,14 +93,16 @@ pub(crate) fn write(object: &mut Object<'static>, name: &str, functions: &[Funct
         // The prologue ends where the first statement's code starts, which
         // a breakpoint on the function's first line stops at.
         let mut prologue = true;
-        for (offset, file, line, column) in &function.rows {
-            let file = *files.entry(file.clone()).or_insert_with(|| {
+        for at in &function.rows {
+            let file = *files.entry(at.file.clone()).or_insert_with(|| {
                 let directory = lines.default_directory();
-                lines.add_file(LineString::String(file.clone().into_bytes()), directory, None)
+                lines.add_file(LineString::String(at.file.clone().into_bytes()), directory, None)
             });
             let row = lines.row();
-            (row.address_offset, row.file, row.line, row.column) = (*offset as u64, file, *line as u64, *column as u64);
-            row.prologue_end = prologue && *offset > 0;
+            (row.address_offset, row.file, row.line, row.column) =
+                (at.offset as u64, file, at.line as u64, at.column as u64);
+            row.is_statement = at.statement;
+            row.prologue_end = prologue && at.statement && at.offset > 0;
             prologue &= !row.prologue_end;
             lines.generate_row();
         }

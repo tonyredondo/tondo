@@ -568,6 +568,7 @@ pub(crate) fn start() {
     STARTED.get_or_init(Instant::now);
     // Linked in, for gdb and lldb to call.
     std::hint::black_box(tondo_rt_dump_to as *const ());
+    std::hint::black_box(super::debugger::tondo_rt_debug_to as *const ());
     super::recorder::thread();
     if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
         hook(EXACT);
