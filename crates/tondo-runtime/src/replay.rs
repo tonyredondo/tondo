@@ -197,15 +197,16 @@ pub(crate) fn recorded_child(pid: u32) -> Option<PathBuf> {
 fn recording_of_child(children: &Path) -> Option<PathBuf> {
     let dir = children.join(std::process::id().to_string());
     std::fs::create_dir_all(&dir).ok()?;
-    std::fs::copy("/proc/self/exe", dir.join("program")).ok()?;
+    std::fs::copy(std::env::current_exe().ok()?, dir.join("program")).ok()?;
     let quoted = |text: &std::ffi::OsStr| super::diagnostics::quoted(&text.to_string_lossy());
-    let arguments: Vec<String> = std::env::args_os().skip(1).map(|a| quoted(&a)).collect();
+    let (invoked, arguments) = super::env::arguments().split_first()?;
+    let arguments: Vec<String> = arguments.iter().map(|a| quoted(a)).collect();
     let environment: Vec<String> =
         std::env::vars_os().map(|(name, value)| format!("{}:{}", quoted(&name), quoted(&value))).collect();
     let seed = std::env::var("TONDO_RT_SCHEDULE").unwrap_or_else(|_| "0".into());
     let run = format!(
         "{{\"source\":{},\"arguments\":[{}],\"environment\":{{{}}},\"directory\":{},\"seed\":{},\"tondo\":{}}}",
-        quoted(std::env::args_os().next().unwrap_or_default().as_os_str()),
+        quoted(invoked),
         arguments.join(","),
         environment.join(","),
         quoted(std::env::current_dir().unwrap_or_default().as_os_str()),
