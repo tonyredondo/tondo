@@ -735,7 +735,9 @@ replay, so what it wrote straight to the terminal does not show. A replay
 stops where the program starts `fs.watch` or the profiler, whose threads
 are not recorded. `origins total` gives the whole chain at once: the line
 that gave `total`, what that line read and where each came from, back to
-what the program read.
+what the program read. A recording keeps the program's sources, so the
+directory replays the same on another Linux machine, as one CI uploads;
+with `--static` it does not depend on that machine's C library either.
 
 A debug build has DWARF on Linux, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a

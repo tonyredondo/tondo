@@ -1074,8 +1074,12 @@ orden no se graba: `fs.watch`, el perfilador por muestreo y las funciones de
 C que llaman al programa desde sus threads. La reproducción para donde el
 programa empieza uno de esos threads, o donde hace una llamada distinta de
 la grabada, y dice por qué. El
-directorio tiene el entorno del programa y lo que leyó, y se guarda como esos
-datos.
+directorio guarda también las fuentes del programa, que nombra su DWARF, y
+la reproducción lee de ellas sus líneas cuando el archivo no está, así que
+se repite igual en otra máquina Linux, desde cualquier directorio; con
+`--static` el ejecutable tampoco depende de la librería de C de esa
+máquina. Tiene el entorno del programa y lo que leyó, y se guarda y se
+comparte como esos datos.
 
 En una reproducción, `back [<n>]`, `reverse` y `why <expresión>` vuelven al
 programa entero como estaba, no a un historial: otra reproducción corre

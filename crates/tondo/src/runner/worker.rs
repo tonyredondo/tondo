@@ -281,6 +281,7 @@ fn worker(
         let file = recording.join("run.json");
         let written = serde_json::to_vec_pretty(&run).unwrap_or_default();
         std::fs::write(&file, written).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+        crate::debug::keep_sources(executable, recording);
     }
     // Its own process group, so that a timeout ends what it started too.
     #[cfg(unix)]

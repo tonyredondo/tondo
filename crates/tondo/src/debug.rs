@@ -159,6 +159,58 @@ fn given(stream: &std::os::unix::net::UnixStream, line: &str, fds: &[i32]) -> st
     }
 }
 
+/// The sources of the recording a replay runs, which its lines are read
+/// from as they were when it was recorded, wherever it runs.
+static SOURCES: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A replay reads the sources its recording kept.
+pub(crate) fn read_sources_of(recording: &Path) {
+    let _ = SOURCES.set(recording.join("sources"));
+}
+
+/// The recording's copy of `file`, a path as the program's stops name it.
+pub(crate) fn kept_source(file: &str) -> Option<PathBuf> {
+    Some(SOURCES.get()?.join(file.trim_start_matches('/'))).filter(|kept| kept.is_file())
+}
+
+/// Where the editor finds `file`: in `root`, or the recording's copy when
+/// it is not there, as on another machine.
+pub(crate) fn source_for_editor(root: &Path, file: &str) -> PathBuf {
+    let here = root.join(file);
+    match here.is_file() {
+        true => here,
+        false => kept_source(file).unwrap_or(here),
+    }
+}
+
+/// Copies into `<recording>/sources` the program's source files, as the
+/// lines of its DWARF name them, so that a replay elsewhere shows them.
+pub fn keep_sources(executable: &Path, recording: &Path) {
+    use object::{Object, ObjectSection};
+    let Ok(bytes) = std::fs::read(executable) else { return };
+    let Ok(file) = object::File::parse(bytes.as_slice()) else { return };
+    let section = |id: gimli::SectionId| -> Result<gimli::EndianSlice<'_, gimli::LittleEndian>, gimli::Error> {
+        let data = file.section_by_name(id.name()).and_then(|s| s.data().ok()).unwrap_or(&[]);
+        Ok(gimli::EndianSlice::new(data, gimli::LittleEndian))
+    };
+    let Ok(dwarf) = gimli::Dwarf::load(section) else { return };
+    let mut units = dwarf.units();
+    while let Ok(Some(header)) = units.next() {
+        let Ok(unit) = dwarf.unit(header) else { continue };
+        let Some(lines) = unit.line_program.as_ref() else { continue };
+        let directory = unit.comp_dir.map(|d| PathBuf::from(d.to_string_lossy().into_owned())).unwrap_or_default();
+        for entry in lines.header().file_names() {
+            let Ok(name) = dwarf.attr_string(&unit, entry.path_name()) else { continue };
+            let name = name.to_string_lossy().into_owned();
+            let kept = recording.join("sources").join(name.trim_start_matches('/'));
+            if let Some(parent) = kept.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::copy(directory.join(&name), kept);
+        }
+    }
+}
+
 /// The test a recording of `tondo test --record` is of.
 pub(crate) fn replayed_test(dir: &Path) -> Option<u32> {
     let read = std::fs::read(dir.join("run.json")).ok()?;
@@ -197,7 +249,10 @@ pub fn replayed(dir: &Path) -> Result<(PathBuf, std::process::Command), String> 
 /// a program it started.
 pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     let replay = match &debugged {
-        Debugged::Replayed(dir) => Some(dir.clone()),
+        Debugged::Replayed(dir) => {
+            read_sources_of(dir);
+            Some(dir.clone())
+        }
         _ => None,
     };
     let (program, mut child) = match debugged {
@@ -1253,7 +1308,7 @@ pub(crate) type Asking<'a> = &'a mut dyn FnMut(&str) -> Result<Value, String>;
 fn line_text(root: &Path, at: &str) -> Option<String> {
     let (place, _) = at.split_once(" in ")?;
     let (file, line) = place.rsplit_once(':')?;
-    let text = std::fs::read_to_string(root.join(file)).ok()?;
+    let text = std::fs::read_to_string(kept_source(file).unwrap_or_else(|| root.join(file))).ok()?;
     text.lines().nth(line.parse::<usize>().ok()?.checked_sub(1)?).map(String::from)
 }
 
@@ -1646,7 +1701,7 @@ fn source_line(at: &str) -> Option<String> {
     let (place, _) = at.split_once(" in ")?;
     let (file, line) = place.rsplit_once(':')?;
     let line: usize = line.parse().ok()?;
-    let text = std::fs::read_to_string(file).ok()?;
+    let text = std::fs::read_to_string(kept_source(file).unwrap_or_else(|| PathBuf::from(file))).ok()?;
     let source = text.lines().nth(line.checked_sub(1)?)?;
     Some(format!("{line:>5} | {source}"))
 }

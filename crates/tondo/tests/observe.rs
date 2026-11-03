@@ -1878,6 +1878,42 @@ fn main() {
 }
 "#;
 
+/// A recording keeps the program's sources, so it runs again elsewhere, as
+/// on another machine, with the lines it shows and reads.
+#[test]
+fn a_recording_replays_elsewhere() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-elsewhere");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (here, elsewhere) = (dir.join("here"), dir.join("elsewhere"));
+    std::fs::create_dir_all(&here).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(here.join("rolled.to"), ROLLED).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "rolled.to"])
+        .current_dir(&here)
+        .output()
+        .unwrap();
+    assert!(recorded.status.success());
+    std::fs::rename(here.join("run"), elsewhere.join("run")).unwrap();
+    std::fs::remove_dir_all(&here).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", "run"])
+        .current_dir(&elsewhere)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break rolled.to:12\ncontinue\nwhy total\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    assert!(output.contains("    9 |         total += roll"), "{output}");
+    assert!(output.contains("`roll` was "), "{output}");
+}
+
 /// In a replay, `reverse`, `back` and `why` go back by running the
 /// recording again, from a checkpoint where the program stopped before, to
 /// the program as it was there, every value of it.

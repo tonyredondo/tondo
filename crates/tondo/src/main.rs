@@ -2100,6 +2100,7 @@ fn record_run(
     let program = dir.join("program");
     let _ = std::fs::remove_file(&program);
     std::fs::copy(&executable, &program).map_err(cannot)?;
+    tondo::debug::keep_sources(&program, dir);
     let seed = match std::env::var("TONDO_RT_SCHEDULE") {
         Ok(seed) => {
             u64::from_str_radix(&seed, 16).map_err(|_| format!("TONDO_RT_SCHEDULE is not a seed in hex: {seed}"))?

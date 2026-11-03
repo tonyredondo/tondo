@@ -4636,6 +4636,17 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — Recordings that travel
+
+A recording is worth most where the failure did not happen: a test that
+failed in CI, debugged on a laptop. It had the program and what it read,
+but its lines were read from the files where it was recorded. It keeps
+the program's sources now, which the DWARF of its debug build names, and
+a replay reads its lines from them when the file is not where its path
+says; the editor gets the copy too. The directory is what moves, as CI
+uploads it; a command to pack it would only call `tar`. Its `run.json`
+has the program's environment, so a recording is shared as that is.
+
 ## 2026-11-03 — When a condition held
 
 A question about a run is often "when did this first go wrong?". In a

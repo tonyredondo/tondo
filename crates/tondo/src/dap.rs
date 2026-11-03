@@ -763,6 +763,9 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         forward(streams, &editor_events, &drained, tested);
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
+    if let Some(dir) = &replay {
+        crate::debug::read_sources_of(dir);
+    }
     let replaying = replay.map(|dir| crate::debug::Replaying::for_editor(dir, root.clone()));
     let (handles, targets, kept, after) = (Vec::new(), Vec::new(), false, None);
     let mut debuggee =
@@ -997,7 +1000,7 @@ fn handle(
                         let at = &answer["breakpoint"];
                         ids.push(at["id"].as_u64().unwrap_or(0));
                         let file = at["file"].as_str().unwrap_or_default();
-                        let source = json!({ "name": file, "path": program.root.join(file).display().to_string() });
+                        let source = json!({ "name": file, "path": crate::debug::source_for_editor(&program.root, file).display().to_string() });
                         set.push(json!({ "verified": true, "line": at["line"], "source": source }));
                     }
                     Err(message) => set.push(json!({ "verified": false, "message": message })),
@@ -1175,7 +1178,8 @@ fn handle(
                             )
                         })
                         .collect();
-                    let path = program.root.join(effect["file"].as_str()?).display().to_string();
+                    let path =
+                        crate::debug::source_for_editor(&program.root, effect["file"].as_str()?).display().to_string();
                     (!changed.is_empty())
                         .then(|| json!({ "path": path, "line": effect["line"], "text": changed.join(", ") }))
                 })
@@ -1243,7 +1247,7 @@ fn handle(
             let stack = program.ask(&format!("stack {task}"))?;
             let place = stack["stack"].get(index as usize).and_then(Value::as_str).unwrap_or_default().to_string();
             let line = place.split_once(" in ").and_then(|(at, _)| at.rsplit_once(':')).and_then(|(file, line)| {
-                let text = std::fs::read_to_string(program.root.join(file)).ok()?;
+                let text = std::fs::read_to_string(crate::debug::source_for_editor(&program.root, file)).ok()?;
                 text.lines().nth(line.parse::<usize>().ok()?.checked_sub(1)?).map(String::from)
             });
             program.targets = line.as_deref().map(calls).unwrap_or_default();
@@ -1338,7 +1342,7 @@ fn handle(
                 .filter_map(|(index, frame)| {
                     let (place, function) = frame.as_str()?.split_once(" in ")?;
                     let (file, line) = place.rsplit_once(':')?;
-                    let path = program.root.join(file);
+                    let path = crate::debug::source_for_editor(&program.root, file);
                     Some(json!({
                         "id": frame_id(task, index as u64), "name": function, "line": line.parse::<u64>().ok()?,
                         "column": 1, "source": { "name": file, "path": path.display().to_string() },
@@ -1357,7 +1361,7 @@ fn handle(
             for (index, place) in spawned.iter().enumerate() {
                 let Some((at, function)) = place.as_str().and_then(|p| p.split_once(" in ")) else { continue };
                 let Some((file, line)) = at.rsplit_once(':') else { continue };
-                let path = program.root.join(file);
+                let path = crate::debug::source_for_editor(&program.root, file);
                 frames.push(json!({
                     "id": frame_id(task, SPAWNED + 1 + index as u64), "name": function,
                     "line": line.parse::<u64>().unwrap_or(0), "column": 1, "presentationHint": "subtle",
