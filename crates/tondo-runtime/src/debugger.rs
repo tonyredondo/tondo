@@ -1521,6 +1521,9 @@ struct Followed {
     text: String,
     last: Option<String>,
     changes: std::collections::VecDeque<(Option<(u64, usize)>, String)>,
+    /// The first change to each value, as the first time a condition held,
+    /// which the last changes may no longer have.
+    firsts: Vec<(Option<(u64, usize)>, String)>,
 }
 
 /// A line a scan counts: its sites, the expression it shows, and its last
@@ -1594,11 +1597,14 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
             alive: at(living),
         }];
         let now = evaluating(table, &frame, 0, |ev| ev.evaluate(&followed.expr)).ok().map(|v| v.text);
-        if now.is_some() && now != followed.last {
+        if let Some(value) = now.as_ref().filter(|now| Some(*now) != followed.last.as_ref()) {
             if followed.changes.len() == LISTED {
                 followed.changes.pop_front();
             }
-            followed.changes.push_back((before, now.clone().unwrap_or_default()));
+            followed.changes.push_back((before, value.clone()));
+            if followed.firsts.len() < LISTED && !followed.firsts.iter().any(|(_, v)| v == value) {
+                followed.firsts.push((before, value.clone()));
+            }
         }
         followed.last = now;
     }
@@ -1620,6 +1626,7 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
                 text: text.trim().to_string(),
                 last: None,
                 changes: Default::default(),
+                firsts: Vec::new(),
             });
             Ok("{\"tracking\":true}".into())
         }
@@ -1636,18 +1643,22 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
             let followed: Vec<String> = found
                 .followed
                 .iter()
-                .map(|Followed { text, changes, .. }| {
-                    let changes: Vec<String> = changes
-                        .iter()
-                        .map(|(before, value)| {
-                            let (at, tick) = match before {
-                                Some((tick, site)) => (quoted(&place_in(table, *site)), tick.to_string()),
-                                None => ("null".into(), "null".into()),
-                            };
-                            format!("{{\"at\":{at},\"tick\":{tick},\"value\":{}}}", quoted(&clipped(value)))
-                        })
-                        .collect();
-                    format!("{{\"expression\":{},\"changes\":[{}]}}", quoted(text), changes.join(","))
+                .map(|Followed { text, changes, firsts, .. }| {
+                    let shown = |(before, value): &(Option<(u64, usize)>, String)| {
+                        let (at, tick) = match before {
+                            Some((tick, site)) => (quoted(&place_in(table, *site)), tick.to_string()),
+                            None => ("null".into(), "null".into()),
+                        };
+                        format!("{{\"at\":{at},\"tick\":{tick},\"value\":{}}}", quoted(&clipped(value)))
+                    };
+                    let changes: Vec<String> = changes.iter().map(shown).collect();
+                    let firsts: Vec<String> = firsts.iter().map(shown).collect();
+                    format!(
+                        "{{\"expression\":{},\"changes\":[{}],\"firsts\":[{}]}}",
+                        quoted(text),
+                        changes.join(","),
+                        firsts.join(",")
+                    )
                 })
                 .collect();
             let line = found.line.map_or(String::new(), |Counted { sites, runs, times, .. }| {
@@ -2459,7 +2470,13 @@ pub(crate) fn is_client(fd: i32) -> bool {
 
 /// The program ended: the debugger hears it.
 pub(crate) fn exited() {
-    tell("{\"exited\":true}");
+    // A scan to the end gives what it followed as the program ends.
+    let following = TRACKED.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+    let tracked = match (following, table()) {
+        (true, Some(table)) => track(&table, "tracked", "").map_or(String::new(), |t| format!(",\"tracked\":{t}")),
+        _ => String::new(),
+    };
+    tell(&format!("{{\"exited\":true{tracked}}}"));
 }
 
 /// Answers a command of the debugger, or `None` for one it does not know.

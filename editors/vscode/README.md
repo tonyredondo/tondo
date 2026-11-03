@@ -44,6 +44,7 @@ project, running, debugging and testing it.
   to the line that gave the value, in a replay or with `"record": true`,
   and offers to ask the same of each value that line read; *Where Does It
   Come From?*, in a replay, the whole chain back to what the program read;
+  *Go to When a Condition Holds*, the first or the last time in the run;
   *Show Its Values
   over the Run*, every value a binding took, from which line, on a bar of a
   replay whose marks take the program there; beside each line run, with

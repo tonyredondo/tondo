@@ -72,6 +72,8 @@ why <expression>                                back to the line that gave the e
 timeline <expression>                           each value it took in the history, with the line that gave it
 ran <file>:<line> [<expression>]                each time a task started that line, with the expression's value
 seek <probe>                                    a replay: to that probe, which timeline and ran give
+first <condition>, last <condition>            a replay: to the line after which the condition held, the first
+                                                or the last time in the whole run
 origins [<expression>]                          a replay: where the value came from, line by line, and what each
                                                 of those lines read, back to what the program read; without an
                                                 expression, what the line where it stopped reads
@@ -421,10 +423,23 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "seek" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
                 let sought = match rest.trim().parse::<u64>() {
-                    Ok(to) => replaying.seek(&mut session, to),
+                    Ok(to) => replaying.seek(&mut session, to, format!("probe {to}")),
                     Err(_) => Err("seek takes a probe's tick, as timeline and ran give them".to_string()),
                 };
                 match sought {
+                    Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
+            // The line that made a condition hold, over the whole run.
+            "first" | "last" => {
+                let found = match replaying.as_mut() {
+                    Some(replaying) => replaying
+                        .when(&mut |c| ask(&mut session, c), word, rest.trim())
+                        .and_then(|(to, why)| replaying.seek(&mut session, to, why)),
+                    None => Err(format!("{word} searches a replay: `tondo run --record` records a run")),
+                };
+                match found {
                     Ok(stop) => session.show(&stop),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
@@ -1014,6 +1029,33 @@ impl Replaying {
         Value::Array(causes)
     }
 
+    /// `first <condition>` or `last <condition>` in a replay: the probe of
+    /// the line that made the condition hold, the first or the last time
+    /// over the whole run, as a replay from the start to the end finds it,
+    /// and why.
+    pub(crate) fn when(&mut self, here: Asking, which: &str, condition: &str) -> Result<(u64, String), String> {
+        let anchor = anchor(here, condition)?;
+        let (running, mut scan) = self.start(None, u64::MAX, true)?;
+        let found = (|| -> Result<Value, String> {
+            ask(&mut scan, &format!("track {anchor} {condition}"))?;
+            // To the end, where the program says what it followed.
+            ask(&mut scan, &format!("scan {}", u64::MAX - 1))?;
+            Ok(scan.next_event()?["tracked"]["tracked"][0].clone())
+        })();
+        running.end();
+        self.gather_ended(&mut scan);
+        let followed = found?;
+        let held = |change: &&Value| change["value"] == "true" && change["tick"].is_u64();
+        let changes = |key: &str| followed[key].as_array().cloned().unwrap_or_default();
+        let change = match which {
+            "first" => changes("firsts").iter().find(held).cloned(),
+            _ => changes("changes").iter().rev().find(held).cloned(),
+        };
+        let change = change.ok_or(format!("`{condition}` holds at no line of the run"))?;
+        let tick = change["tick"].as_u64().unwrap_or(0);
+        Ok((tick, format!("the {which} time `{condition}` holds, after this line")))
+    }
+
     /// `origins [<expression>]` in a replay: the line that gave the
     /// expression its value, or the line the program is at, with where each
     /// binding it reads got its own, and so on back, each line's causes
@@ -1079,16 +1121,19 @@ impl Replaying {
 
     /// `seek <tick>` in a replay: on to that probe, or back to it from the
     /// nearest checkpoint.
-    fn seek(&mut self, session: &mut Session, to: u64) -> Result<Value, String> {
+    fn seek(&mut self, session: &mut Session, to: u64, why: String) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
         if to > tick {
             ask(session, &format!("seek {to}"))?;
-            let stop = session.next_event()?;
+            let mut stop = session.next_event()?;
+            if stop.get("stopped").is_some() {
+                stop["stopped"]["why"] = why.into();
+            }
             self.gather(session);
             self.keep(&mut |command| ask(session, command));
             return Ok(stop);
         }
-        let (running, mut next, stop) = self.reach(to, format!("probe {to}"), session.json)?;
+        let (running, mut next, stop) = self.reach(to, why, session.json)?;
         self.take_over(running);
         let _ = ask(&mut next, CHECKPOINTING);
         std::mem::swap(session, &mut next);

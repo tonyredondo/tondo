@@ -43,6 +43,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     ),
     vscode.languages.registerInlineValuesProvider({ language: 'tondo' }, { provideInlineValues: effects }),
     vscode.commands.registerCommand('tondo.taskGraph', taskGraph),
+    vscode.commands.registerCommand('tondo.when', when),
     vscode.commands.registerCommand('tondo.origins', (context?: { variable?: Variable }) =>
       origins(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
@@ -50,6 +51,31 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
       timeline(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
   );
+}
+
+/** In a replay, to the line after which a condition held, the first or the
+ *  last time over the whole run. */
+async function when(): Promise<void> {
+  const session = vscode.debug.activeDebugSession;
+  if (session?.type !== 'tondo') {
+    void vscode.window.showInformationMessage('Replay a recorded run to search it: tondo run --record <dir>.');
+    return;
+  }
+  const condition = await vscode.window.showInputBox({ prompt: 'A condition, as total > 100', value: selected() });
+  if (!condition) {
+    return;
+  }
+  const which = await vscode.window.showQuickPick(['first', 'last'], { placeHolder: 'The first or the last time it holds' });
+  if (!which) {
+    return;
+  }
+  const item = vscode.debug.activeStackItem;
+  const frameId = item instanceof vscode.DebugStackFrame && item.session.id === session.id ? item.frameId : undefined;
+  try {
+    await session.customRequest('when', { condition, which, frameId });
+  } catch (error) {
+    void vscode.window.showErrorMessage((error as Error).message);
+  }
 }
 
 /** Where a value came from in a replay, back over the run: the line that

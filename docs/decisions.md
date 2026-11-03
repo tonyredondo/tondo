@@ -4636,6 +4636,16 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — When a condition held
+
+A question about a run is often "when did this first go wrong?". In a
+replay, `first` and `last` follow the condition as `timeline` follows a
+value, in the frame of its binding, over the whole run, from a replay
+that goes to its end, where the program gives what it followed; the
+first change to each value is kept, which the last changes may no longer
+have. The program goes to the line after which the condition held,
+before it runs, as `why` goes to the line that gave a value.
+
 ## 2026-11-03 — The origins of a value
 
 `why` answers one step: the line that gave a value, and what that line

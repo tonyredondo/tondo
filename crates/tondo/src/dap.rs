@@ -176,6 +176,22 @@ impl Debuggee {
             "description": stop["why"], "text": stop["why"] }));
     }
 
+    /// On to probe `to` of the replay, or back to it from a checkpoint; the
+    /// editor hears the stop, which says `why` when it goes back.
+    fn seek(&mut self, to: u64, why: String) -> Result<(), String> {
+        self.keep();
+        let tick = self.ask("tick")?["tick"].as_u64().unwrap_or(0);
+        if to > tick {
+            self.forget();
+            return self.ask(&format!("seek {to}")).map(drop);
+        }
+        self.adopt();
+        let replaying = self.replaying.as_mut().expect("a replay");
+        let (running, session, stop) = replaying.reach(to, why, true)?;
+        self.take_over(running, session, &stop);
+        Ok(())
+    }
+
     /// The checkpoints the replay kept as it ran, kept for going back.
     fn adopt(&mut self) {
         let kept = std::mem::take(&mut *self.pumped.checkpointed.lock().unwrap_or_else(|e| e.into_inner()));
@@ -1113,17 +1129,24 @@ fn handle(
         // On to a probe of a replay, or back to it from a checkpoint.
         "seek" if program.replaying.is_some() => {
             let to = arguments["tick"].as_u64().ok_or("seek takes a probe")?;
+            program.seek(to, format!("probe {to}")).map(|()| json!({}))
+        }
+        // The line after which a condition held, the first or the last time
+        // in the whole run of a replay.
+        "when" if program.replaying.is_some() => {
+            let condition = arguments["condition"].as_str().unwrap_or_default().trim().to_string();
+            let which = if arguments["which"] == "last" { "last" } else { "first" };
+            let (task, index) = match arguments["frameId"].as_u64() {
+                Some(id) => frame_of(id),
+                None => (program.ask("snapshot")?["snapshot"]["task"].as_u64().unwrap_or(1), 0),
+            };
+            program.ask(&format!("select {task} {index}"))?;
             program.keep();
-            let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
-            if to > tick {
-                program.forget();
-                return program.ask(&format!("seek {to}")).map(|_| json!({}));
-            }
-            program.adopt();
-            let replaying = program.replaying.as_mut().expect("a replay");
-            let (running, session, stop) = replaying.reach(to, format!("probe {to}"), true)?;
-            program.take_over(running, session, &stop);
-            Ok(json!({}))
+            let mut replaying = program.replaying.take().expect("a replay");
+            let found = replaying.when(&mut |c| program.ask(c), which, &condition);
+            program.replaying = Some(replaying);
+            let (to, why) = found?;
+            program.seek(to, why.clone()).map(|()| json!({ "why": why, "tick": to }))
         }
         // The tasks: where each is, and what each waits for and on whom.
         "tasks" => program.ask("tasks"),

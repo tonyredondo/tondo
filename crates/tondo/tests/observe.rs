@@ -1971,6 +1971,14 @@ fn debugger_goes_back_in_a_replay() {
     assert_eq!(origins["origins"]["at"], "rolled.to:9 in main", "{origins}");
     assert!(tree.contains(r#""name":"roll""#) && tree.contains(r#""name":"dice""#), "{origins}");
     assert!(tree.contains("rolled.to:5 in main"), "{origins}");
+    // The line after which a condition first held over the run, and the
+    // last time another did.
+    let stop = ask(&format!("first total > {}", rolls[0]), "stopped");
+    assert_eq!(stop["stopped"]["at"], "rolled.to:9 in main", "{stop}");
+    assert_eq!((value(&mut ask, "i"), value(&mut ask, "total")), (1, rolls[0]));
+    let stop = ask(&format!("last total == {}", rolls[0]), "stopped");
+    assert_eq!(stop["stopped"]["at"], "rolled.to:9 in main", "{stop}");
+    assert_eq!((value(&mut ask, "i"), value(&mut ask, "total")), (0, 0));
     // And back to where the second came from.
     let tick = timeline["timeline"][2]["tick"].as_u64().unwrap();
     ask(&format!("seek {tick}"), "stopped");
@@ -2005,6 +2013,12 @@ fn debugger_goes_back_in_a_replay() {
     assert_eq!(evaluated(&mut adapter, "i"), ("1".to_string(), json!(9)));
     let origins = adapter.ask("origins", json!({ "expression": "total" }));
     assert!(origins["origins"]["causes"].as_array().is_some_and(|c| !c.is_empty()), "{origins}");
+    // To the line after which `total` last had the first roll.
+    let condition = format!("total == {}", rolls[0]);
+    let found = adapter.ask("when", json!({ "condition": condition, "which": "last" }));
+    assert!(found["why"].as_str().unwrap().starts_with("the last time `total =="), "{found}");
+    adapter.until("stopped");
+    assert_eq!(evaluated(&mut adapter, "total"), ("0".to_string(), json!(9)));
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
     adapter.ask("continue", json!({ "threadId": 1 }));
     adapter.until("terminated");

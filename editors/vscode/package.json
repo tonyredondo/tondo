@@ -341,6 +341,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.when",
+        "title": "Go to When a Condition Holds",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -499,6 +504,10 @@
         {
           "command": "tondo.taskGraph",
           "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.when",
+          "when": "debugType == tondo"
         }
       ],
       "editor/context": [
@@ -537,6 +546,10 @@
         },
         {
           "command": "tondo.origins",
+          "when": "inDebugMode && debugType == tondo"
+        },
+        {
+          "command": "tondo.when",
           "when": "inDebugMode && debugType == tondo"
         },
         {

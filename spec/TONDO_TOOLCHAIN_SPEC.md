@@ -1037,7 +1037,8 @@ probe de cada uno en una reproducción, el probe actual y los de los
 checkpoints, y `seek` lleva la reproducción a un probe; `effects` da, para
 el marco de `frameId`, lo que cambió cada línea de su llamada la última vez
 que corrió, según el historial; `origins`, con `expression`, lo que da la
-orden; y `tasks` da las tareas, dónde está cada
+orden; `when`, con `condition` y `which` (`first` o `last`), lleva la
+reproducción como `first` y `last`; y `tasks` da las tareas, dónde está cada
 una, qué espera y qué tareas lo tienen. La extensión las ofrece con *Why
 Does It Have This Value?* y *Show Its Values over the Run* en el menú de
 una variable o del código, que pregunta luego por cada causa y dibuja la
@@ -1102,6 +1103,10 @@ principio que sigue la expresión, igual que `why`, o cuenta las veces que
 corre la línea, y
 dan el probe de cada línea: `seek
 <probe>` lleva el programa a ese punto, antes o después del de ahora.
+`first <condición>` y `last <condición>` buscan en toda la ejecución,
+con otra reproducción del principio al final que sigue la condición en el
+marco de su binding, la primera o la última vez que se cumplió, y llevan
+el programa a la línea después de la cual se cumple, antes de que corra.
 `origins [<expresión>]` sigue `why` hacia atrás sin mover el programa: la
 línea que dio a la expresión su valor, o sin expresión la línea donde está,
 y por cada binding que lee esa línea, la línea que le dio el suyo, y así
