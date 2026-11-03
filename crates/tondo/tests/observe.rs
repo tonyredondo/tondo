@@ -970,6 +970,24 @@ fn debug_adapter_watches_and_pages() {
     ask("next", json!({ "threadId": 1 }));
     ask("", Value::Null);
     assert_eq!(ask("stackTrace", json!({ "threadId": 1 }))["stackFrames"][0]["line"], 13);
+    // The line that gave `total` its value, of the variable's menu, in the
+    // history too; and on again.
+    let frame = ask("stackTrace", json!({ "threadId": 1 }))["stackFrames"][0]["id"].clone();
+    let why = ask("why", json!({ "expression": "total", "frameId": frame }));
+    assert!(why["at"].as_str().unwrap().ends_with("summed.to:17 in sum"), "{why}");
+    assert_eq!(why["why"], "`total` became 1 on this line", "{why}");
+    ask("", Value::Null);
+    ask("next", json!({ "threadId": 1 }));
+    ask("", Value::Null);
+    assert_eq!(ask("stackTrace", json!({ "threadId": 1 }))["stackFrames"][0]["line"], 13);
+    // Beside each line of the call, what it changed the last time it ran.
+    let effects = ask("effects", json!({ "frameId": frame }));
+    let text = |line: u64| {
+        let lines = effects["lines"].as_array().unwrap();
+        lines.iter().find(|l| l["line"] == line).map(|l| l["text"].as_str().unwrap().to_string())
+    };
+    assert_eq!((text(13), text(14), text(17)), (Some("item = 1".into()), None, Some("total = 1".into())), "{effects}");
+    assert!(effects["lines"][0]["path"].as_str().unwrap().ends_with("summed.to"), "{effects}");
     ask("setDataBreakpoints", json!({ "breakpoints": [] }));
     // Out of `sum`, its frame's scope shows what it returned.
     ask("stepOut", json!({ "threadId": 1 }));
@@ -2082,6 +2100,42 @@ fn debugger_finds_who_changed_a_value_in_a_replay() {
     }
     drop(input);
     child.wait().unwrap();
+    // The editor's `why`, of a variable's menu: the program as it was.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "replay": "run", "cwd": dir }));
+    let path = dir.join("changed.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 29 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    // The tasks, and a value over the run, whose changes it goes to.
+    let tasks = adapter.ask("tasks", json!({}));
+    assert!(tasks["tasks"].as_array().unwrap().iter().any(|t| t["task"] == 1), "{tasks}");
+    let timeline = adapter.ask("timeline", json!({ "expression": "counter.hits", "frameId": frame }));
+    let last = timeline["changes"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!((&last["value"], &last["at"]), (&json!("10"), &json!("changed.to:7 in Counter.bump")), "{timeline}");
+    adapter.ask("seek", json!({ "tick": last["tick"] }));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(trace["stackFrames"][0]["line"], 7, "{trace}");
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let why = adapter.ask("why", json!({ "expression": "items", "frameId": frame }));
+    assert_eq!(why["at"], "changed.to:11 in add", "{why}");
+    let causes = why["causes"].as_array().unwrap();
+    assert!(causes.iter().any(|c| c["name"] == "items" && c["at"] == "changed.to:22 in main"), "{why}");
+    let stop = adapter.until("stopped");
+    assert_eq!(stop["threadId"], 1, "{stop}");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(trace["stackFrames"][0]["line"], 11, "{trace}");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
+    adapter.stop();
 }
 
 const SPAWNING: &str = r#"import std.console

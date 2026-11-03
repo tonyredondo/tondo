@@ -343,6 +343,49 @@ fn shown_at(moment: &Moment, expr: &Expr) -> Option<String> {
 /// The most a `timeline` or a `ran` gives, the newest.
 const LISTED: usize = 200;
 
+/// `effects`: what each line of the call the debugger shows changed the
+/// last time it ran, as the history has it: the bindings whose values the
+/// call's next line started with were others, or new.
+fn effects(table: &Table) -> Result<String, String> {
+    let (_, mine, at) = shown_lines(&state())?;
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let now = &history[mine[at]];
+    let depth = now.stack.len();
+    // The call's lines, back to where it started: those of its callees have
+    // its callers under them too.
+    let within = |moment: &Moment| {
+        moment.stack.len() >= depth && moment.stack[moment.stack.len() + 1 - depth..] == now.stack[1..]
+    };
+    let mut call: Vec<&Moment> = mine[..=at]
+        .iter()
+        .rev()
+        .map(|&i| &history[i])
+        .take_while(|moment| within(moment))
+        .filter(|moment| moment.stack.len() == depth)
+        .collect();
+    call.reverse();
+    let mut lines: Vec<(usize, String)> = Vec::new();
+    for pair in call.windows(2) {
+        let (before, after) = (pair[0], pair[1]);
+        let changed: Vec<String> = after
+            .bindings
+            .iter()
+            .filter(|(name, _, value)| !before.bindings.iter().any(|(n, _, v)| n == name && v == value))
+            .map(|(name, _, value)| format!("{{\"name\":{},\"value\":{}}}", quoted(name), quoted(value)))
+            .collect();
+        lines.retain(|(site, _)| *site != before.site);
+        lines.push((before.site, changed.join(",")));
+    }
+    let lines: Vec<String> = lines
+        .iter()
+        .filter_map(|(site, changed)| {
+            let site = table.sites.get(*site)?;
+            Some(format!("{{\"file\":{},\"line\":{},\"changed\":[{changed}]}}", quoted(&site.file), site.line))
+        })
+        .collect();
+    Ok(format!("{{\"effects\":[{}]}}", lines.join(",")))
+}
+
 /// `timeline <expression>`: the lines of the stopped task's history, up
 /// to the one shown, that gave the expression another value: the line
 /// before the first that starts with it. Each with its place, how many
@@ -2478,6 +2521,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        "effects" => match effects(table) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         "timeline" => match timeline(table, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
@@ -2980,9 +3027,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     let Some(stop) = stop_of(&state, task).filter(|s| s.site == WAITING) else { continue };
                     let at = frames(table, &stop).first().map_or(String::new(), |f| f.place.clone());
                     let (at, why) = (quoted(&at), quoted(&stop.why));
-                    // What it waits for, and who holds that.
-                    let waits =
-                        waits_for(task).map_or(String::new(), |(text, _)| format!(",\"for\":{}", quoted(&text)));
+                    // What it waits for, and the tasks that hold that.
+                    let waits = waits_for(task).map_or(String::new(), |(text, on)| {
+                        let on: Vec<String> = on.iter().map(u64::to_string).collect();
+                        format!(",\"for\":{},\"on\":[{}]", quoted(&text), on.join(","))
+                    });
                     waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}}}"));
                 }
             }

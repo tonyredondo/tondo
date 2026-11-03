@@ -28,6 +28,8 @@ import {
   systemOfTarget,
   searchLine,
   tableHtml,
+  mermaid,
+  timelineHtml,
   running,
   served,
   share,
@@ -450,4 +452,39 @@ test("a value's table holds its parts, which its page's script reads and no valu
   assert.ok(!html.includes('</script><b>'));
   const data = /const table = (.*);\n/.exec(html)?.[1] ?? '';
   assert.deepEqual(JSON.parse(data), { title: 'users', ...table });
+});
+
+test('the tasks show as a graph, each pointing at the tasks that hold what it waits for', () => {
+  const graph = mermaid([
+    { task: 1, at: '/w/app/main.to:12 in main', why: 'breakpoint 1' },
+    { task: 3, at: '/w/app/main.to:30 in worker', why: 'waits', for: 'a std.sync lock task 2 holds, taken at main.to:20', on: [2] },
+    { task: 2, at: '/w/app/main.to:21 in "quoted"', why: 'held' },
+  ]);
+  assert.equal(
+    graph,
+    [
+      'flowchart LR',
+      '  t1["task 1<br/>main.to:12 in main<br/>breakpoint 1"]',
+      '  t3["task 3<br/>main.to:30 in worker<br/>waits for a std.sync lock task 2 holds, taken at main.to:20"]',
+      '  t2["task 2<br/>main.to:21 in #quot;quoted#quot;<br/>held"]',
+      '  t3 -->|waits for| t2',
+      '',
+    ].join('\n'),
+  );
+});
+
+test("a value's timeline holds its changes, which its page's script reads and no value can end", () => {
+  const timeline = {
+    changes: [
+      { value: '0', at: 'main.to:4 in main', tick: 3 },
+      { value: '"</script><b>"', at: 'main.to:6 in main', tick: 9 },
+    ],
+    tick: 12,
+    checkpoints: [5],
+  };
+  const html = timelineHtml('total', timeline, 'n0nce');
+  assert.ok(html.includes("script-src 'nonce-n0nce'"));
+  assert.ok(!html.includes('</script><b>'));
+  const data = /const timeline = (.*);\n/.exec(html)?.[1] ?? '';
+  assert.deepEqual(JSON.parse(data), { title: 'total', ...timeline });
 });

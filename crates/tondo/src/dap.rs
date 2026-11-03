@@ -715,7 +715,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         forward(streams, &editor_events, &drained, tested);
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let replaying = replay.map(crate::debug::Replaying::for_editor);
+    let replaying = replay.map(|dir| crate::debug::Replaying::for_editor(dir, root.clone()));
     let (handles, targets, kept, after) = (Vec::new(), Vec::new(), false, None);
     let mut debuggee =
         Debuggee { pid, writer, answers, child, root, handles, forgotten: 0, targets, pumped, replaying, kept, after };
@@ -1053,6 +1053,107 @@ fn handle(
             let (running, session, stop) = replaying.reach(to, why, true)?;
             program.take_over(running, session, &stop);
             Ok(json!({}))
+        }
+        // Each value an expression took over the run, with the line that
+        // gave it: in a replay, as a replay from the start finds it, with
+        // the probe of each, to `seek`; in the history otherwise.
+        "timeline" => {
+            let expression = arguments["expression"].as_str().unwrap_or_default().trim().to_string();
+            let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
+            program.ask(&format!("select {task} {index}"))?;
+            if program.replaying.is_some() {
+                let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
+                let anchor =
+                    program.ask(&format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string();
+                program.adopt();
+                let replaying = program.replaying.as_mut().expect("a replay");
+                let found = replaying.survey("timeline", &expression, tick, &anchor)?;
+                return Ok(json!({ "changes": found["timeline"], "tick": tick, "checkpoints": replaying.kept_at() }));
+            }
+            let found = program.ask(&format!("timeline {expression}"))?;
+            Ok(json!({ "changes": found["timeline"], "tick": 0, "checkpoints": [] }))
+        }
+        // On to a probe of a replay, or back to it from a checkpoint.
+        "seek" if program.replaying.is_some() => {
+            let to = arguments["tick"].as_u64().ok_or("seek takes a probe")?;
+            program.keep();
+            let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
+            if to > tick {
+                program.forget();
+                return program.ask(&format!("seek {to}")).map(|_| json!({}));
+            }
+            program.adopt();
+            let replaying = program.replaying.as_mut().expect("a replay");
+            let (running, session, stop) = replaying.reach(to, format!("probe {to}"), true)?;
+            program.take_over(running, session, &stop);
+            Ok(json!({}))
+        }
+        // The tasks: where each is, and what each waits for and on whom.
+        "tasks" => program.ask("tasks"),
+        // What each line of the call the frame shows changed the last time
+        // it ran, as the history has it, for the editor to show beside it.
+        "effects" => {
+            let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
+            program.ask(&format!("select {task} {index}"))?;
+            let answer = match program.ask("effects") {
+                Ok(answer) if index == 0 => answer,
+                _ => return Ok(json!({ "lines": [] })),
+            };
+            let lines: Vec<Value> = answer["effects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|effect| {
+                    let changed: Vec<String> = effect["changed"]
+                        .as_array()?
+                        .iter()
+                        .map(|c| {
+                            format!(
+                                "{} = {}",
+                                c["name"].as_str().unwrap_or_default(),
+                                c["value"].as_str().unwrap_or_default()
+                            )
+                        })
+                        .collect();
+                    let path = program.root.join(effect["file"].as_str()?).display().to_string();
+                    (!changed.is_empty())
+                        .then(|| json!({ "path": path, "line": effect["line"], "text": changed.join(", ") }))
+                })
+                .collect();
+            Ok(json!({ "lines": lines }))
+        }
+        // The line that gave an expression its value, and where what that
+        // line reads got its own: the program as it was there in a replay,
+        // the history otherwise.
+        "why" => {
+            let expression = arguments["expression"].as_str().unwrap_or_default().trim().to_string();
+            let (task, index) = match arguments["frameId"].as_u64() {
+                Some(id) => frame_of(id),
+                None => (program.ask("snapshot")?["snapshot"]["task"].as_u64().unwrap_or(1), 0),
+            };
+            program.ask(&format!("select {task} {index}"))?;
+            if program.replaying.is_some() {
+                program.keep();
+                let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
+                let anchor =
+                    program.ask(&format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string();
+                program.adopt();
+                let replaying = program.replaying.as_mut().expect("a replay");
+                let (to, why, _) = replaying.find("why", &expression, tick, task, &anchor)?;
+                let (running, mut session, stop) = replaying.reach(to, why, true)?;
+                let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+                let causes = replaying.causes(&mut session, &at, to);
+                program.take_over(running, session, &stop);
+                return Ok(json!({ "why": stop["stopped"]["why"], "at": at, "causes": causes }));
+            }
+            program.forget();
+            let value = program.ask(&format!("print {expression}"))?["value"].as_str().unwrap_or_default().to_string();
+            program.ask(&format!("why {expression}"))?;
+            let stack = program.ask(&format!("stack {task}"))?;
+            let at = stack["stack"][0].as_str().unwrap_or_default().to_string();
+            let root = program.root.clone();
+            let causes = crate::debug::causes_here(&mut |command| program.ask(command), &root, &at);
+            Ok(json!({ "why": format!("`{expression}` became {value} on this line"), "at": at, "causes": causes }))
         }
         "stepBack" | "reverseContinue" => {
             program.forget();

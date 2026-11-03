@@ -4636,6 +4636,18 @@ cannot be put in that order from inside the process: the recording
 marks where such a thread starts, and a replay ends there, saying why,
 as it does where the program makes another call than the one recorded.
 
+## 2026-11-03 — The editor asks why
+
+`why`, `timeline` and the tasks' waits were answers of the command line
+the editor could not ask for. The adapter gives them as requests of its
+own, as `table` is, and the extension puts them where a person looks at
+a value: the variable's menu and the code's, the call stack's menu for
+the tasks, and the lines themselves for what each changed, which an
+inline value shows as `then total = 12`. A timeline in a replay is a bar
+of the run whose changes take the program there with `seek`. The tasks'
+waits are a Mermaid graph, as the modules' are, rather than a view of
+its own.
+
 ## 2026-11-03 — Recording the network and processes
 
 tokio drives the network on threads of its own, and a child's pipes are

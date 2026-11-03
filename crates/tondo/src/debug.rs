@@ -256,6 +256,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     let mut replaying = replay.map(|dir| Replaying {
         test: replayed_test(&dir),
         dir,
+        root: PathBuf::new(),
         settings: Vec::new(),
         current: child.take().map(Running::Started),
         checkpoints: Vec::new(),
@@ -392,7 +393,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     ask(&mut session, &format!("why {rest}"))?;
                     let mut stop = session.next_event()?;
                     let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
-                    stop["stopped"]["causes"] = causes_here(&mut session, &at);
+                    stop["stopped"]["causes"] = causes_here(&mut |c| ask(&mut session, c), Path::new(""), &at);
                     Ok(stop)
                 };
                 match ask_why() {
@@ -544,6 +545,8 @@ fn attach(program: Program) -> Result<(std::os::unix::net::UnixStream, mpsc::Rec
 /// copies of a replay where it stopped, by the probe they are at.
 pub(crate) struct Replaying {
     dir: PathBuf,
+    /// Where the program's files are, which its stops name.
+    root: PathBuf,
     settings: Vec<String>,
     current: Option<Running>,
     checkpoints: Vec<Checkpoint>,
@@ -865,9 +868,14 @@ impl Replaying {
     /// A replay of the recording in `dir`, as the editor's adapter has one:
     /// what its replays write goes to pipes, and the adapter ends its first
     /// process.
-    pub(crate) fn for_editor(dir: PathBuf) -> Replaying {
+    pub(crate) fn for_editor(dir: PathBuf, root: PathBuf) -> Replaying {
         let test = replayed_test(&dir);
-        Replaying { dir, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true, test }
+        Replaying { dir, root, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true, test }
+    }
+
+    /// The probes the checkpoints are at.
+    pub(crate) fn kept_at(&self) -> Vec<u64> {
+        self.checkpoints.iter().map(|&(tick, _)| tick).collect()
     }
 
     /// A command that sets how the program stops, which replays take too.
@@ -897,7 +905,7 @@ impl Replaying {
     /// replay: what a replay from the start to probe `tick` finds, the
     /// changes of the expression in the frame `anchor` gives, or the runs
     /// of the line.
-    fn survey(&mut self, word: &str, rest: &str, tick: u64, anchor: &str) -> Result<Value, String> {
+    pub(crate) fn survey(&mut self, word: &str, rest: &str, tick: u64, anchor: &str) -> Result<Value, String> {
         let (running, mut scan) = self.start(None, u64::MAX, true)?;
         let surveyed = (|| {
             match word {
@@ -932,8 +940,8 @@ impl Replaying {
     /// Where each binding the line at probe `to` reads got the value it has
     /// there, found by a replay from a checkpoint before that follows them;
     /// `session` is stopped there, and says which bindings it has.
-    fn causes(&mut self, session: &mut Session, at: &str, to: u64) -> Value {
-        let Some(text) = line_text(at) else { return Value::Array(Vec::new()) };
+    pub(crate) fn causes(&mut self, session: &mut Session, at: &str, to: u64) -> Value {
+        let Some(text) = line_text(&self.root, at) else { return Value::Array(Vec::new()) };
         let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
         let bound: Vec<&str> =
             locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
@@ -1052,10 +1060,11 @@ impl Replaying {
 }
 
 /// Where each binding a line reads got its value, as the history says,
-/// for the line `at` the debugger shows: the causes of what it gives.
-fn causes_here(session: &mut Session, at: &str) -> Value {
-    let Some(text) = line_text(at) else { return Value::Array(Vec::new()) };
-    let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
+/// for the line `at` the debugger shows, of a program whose files are in
+/// `root`: the causes of what it gives.
+pub(crate) fn causes_here(ask: &mut dyn FnMut(&str) -> Result<Value, String>, root: &Path, at: &str) -> Value {
+    let Some(text) = line_text(root, at) else { return Value::Array(Vec::new()) };
+    let Ok(locals) = ask("locals") else { return Value::Array(Vec::new()) };
     let bound: Vec<&str> =
         locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
     let mut read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
@@ -1063,7 +1072,7 @@ fn causes_here(session: &mut Session, at: &str) -> Value {
     if read.is_empty() {
         return Value::Array(Vec::new());
     }
-    ask(session, &format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
+    ask(&format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
 }
 
 /// A replay's probe of a line the history lists, to `seek`; none outside
@@ -1082,11 +1091,11 @@ fn anchor(session: &mut Session, expression: &str) -> Result<String, String> {
     Ok(ask(session, &format!("anchor {expression}"))?["anchor"].as_str().unwrap_or_default().to_string())
 }
 
-/// The text of the line of `file:line in function`.
-fn line_text(at: &str) -> Option<String> {
+/// The text of the line of `file:line in function`, a file in `root`.
+fn line_text(root: &Path, at: &str) -> Option<String> {
     let (place, _) = at.split_once(" in ")?;
     let (file, line) = place.rsplit_once(':')?;
-    let text = std::fs::read_to_string(file).ok()?;
+    let text = std::fs::read_to_string(root.join(file)).ok()?;
     text.lines().nth(line.parse::<usize>().ok()?.checked_sub(1)?).map(String::from)
 }
 

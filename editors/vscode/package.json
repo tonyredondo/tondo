@@ -304,6 +304,21 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.why",
+        "title": "Why Does It Have This Value?",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.taskGraph",
+        "title": "Show What the Tasks Wait For",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.timeline",
+        "title": "Show Its Values over the Run",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -444,12 +459,50 @@
         {
           "command": "tondo.showTable",
           "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.why",
+          "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.timeline",
+          "when": "debugType == tondo"
+        }
+      ],
+      "debug/callstack/context": [
+        {
+          "command": "tondo.taskGraph",
+          "when": "debugType == tondo"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "tondo.why",
+          "when": "inDebugMode && debugType == tondo && resourceLangId == tondo",
+          "group": "debug"
+        },
+        {
+          "command": "tondo.timeline",
+          "when": "inDebugMode && debugType == tondo && resourceLangId == tondo",
+          "group": "debug"
         }
       ],
       "commandPalette": [
         {
           "command": "tondo.showTable",
           "when": "false"
+        },
+        {
+          "command": "tondo.why",
+          "when": "inDebugMode && debugType == tondo"
+        },
+        {
+          "command": "tondo.taskGraph",
+          "when": "inDebugMode && debugType == tondo"
+        },
+        {
+          "command": "tondo.timeline",
+          "when": "inDebugMode && debugType == tondo"
         },
         {
           "command": "tondo.reload",

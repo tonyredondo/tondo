@@ -39,9 +39,16 @@ project, running, debugging and testing it.
   frame and task, opened field by field; watches and hovers of paths like
   `user.name`; changing a value; a stop where a panic happens, before it
   unwinds; *Restart Frame*; *Show as Table* on an array or a map of
-  records, a table that sorts by its columns and filters its rows; and
-  *Debug a Dump*, which opens a dump of a crashed program at its tasks and
-  stacks.
+  records, a table that sorts by its columns and filters its rows;
+  *Why Does It Have This Value?* on a variable or the code, which goes back
+  to the line that gave the value, in a replay or with `"record": true`,
+  and offers to ask the same of each value that line read; *Show Its Values
+  over the Run*, every value a binding took, from which line, on a bar of a
+  replay whose marks take the program there; beside each line run, with
+  `"record"`, what it changed the last time; *Show What the Tasks Wait For*
+  in the call stack's menu, the tasks as a graph that points at who holds
+  what each waits for; and *Debug a Dump*, which opens a dump of a crashed
+  program at its tasks and stacks.
 - **Live builds**: *Tondo: Debug Live* starts a build whose code changes
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.

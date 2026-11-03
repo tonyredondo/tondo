@@ -3,7 +3,7 @@
 // test --test-format events` (testing 15), the project of a path from
 // `tondo graph --json`, the diagnostics of `tondo check --json`, what
 // `tondo doc-test` says of a document's examples, what a reload of a live
-// build did, `tondo version --json`, and the debugger's tables.
+// build did, `tondo version --json`, and the debugger's tables and tasks.
 
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -838,6 +838,116 @@ window.addEventListener('message', (event) => {
     }
   }
   table.rows.push(...event.data.rows);
+  render();
+});
+render();
+</script>
+</body>
+</html>
+`;
+}
+
+/** A task as the debugger lists it: where it is, why it stands still, and
+ *  what it waits for and the tasks that hold that. */
+export interface Task {
+  task: number;
+  at: string;
+  why: string;
+  for?: string;
+  on?: number[];
+}
+
+/** The tasks as a Mermaid flowchart. */
+export function mermaid(tasks: Task[]): string {
+  const text = (value: string) => value.replace(/"/g, '#quot;');
+  const lines = ['flowchart LR'];
+  for (const task of tasks) {
+    const waits = task.for ? `<br/>waits for ${text(task.for)}` : `<br/>${text(task.why)}`;
+    lines.push(`  t${task.task}["task ${task.task}<br/>${text(shortPlace(task.at))}${waits}"]`);
+  }
+  for (const task of tasks) {
+    for (const holder of task.on ?? []) {
+      lines.push(`  t${task.task} -->|waits for| t${holder}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** `file:line in function`, with the file's name only. */
+export function shortPlace(at: string): string {
+  const [where, function_] = at.split(' in ');
+  return `${path.basename(where)}${function_ ? ` in ${function_}` : ''}`;
+}
+
+/** Each value an expression took over a run, with the line that gave it
+ *  and, in a replay, its probe; the probe the program is at, and those of
+ *  the checkpoints. */
+export interface Timeline {
+  changes: { value: string; at: string; tick: number | null }[];
+  tick: number;
+  checkpoints: number[];
+}
+
+/** A page with the timeline of `title`: in a replay, a bar of the run with
+ *  each change, where the program is and the checkpoints, and each change
+ *  goes to its probe when clicked; a list of the changes in any session.
+ *  The data reaches its script as JSON no value can end. */
+export function timelineHtml(title: string, timeline: Timeline, nonce: string): string {
+  const data = JSON.stringify({ title, ...timeline }).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
+<style>
+  body { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); padding: 0 8px; }
+  #run { position: relative; height: 36px; margin: 12px 0; border-bottom: 2px solid var(--vscode-panel-border); }
+  .mark { position: absolute; bottom: 0; width: 3px; height: 22px; background: var(--vscode-charts-blue); cursor: pointer; }
+  .kept { position: absolute; bottom: 0; width: 1px; height: 8px; background: var(--vscode-descriptionForeground); }
+  #now { position: absolute; bottom: 0; width: 2px; height: 34px; background: var(--vscode-charts-orange); }
+  li { padding: 2px 0; white-space: pre; }
+  li.seek { cursor: pointer; }
+  li.seek:hover { background: var(--vscode-list-hoverBackground); }
+  .at { color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<h3 id="title"></h3>
+<div id="run"></div>
+<ol id="changes"></ol>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const timeline = ${data};
+document.getElementById('title').textContent = timeline.title;
+const ticks = timeline.changes.map((c) => c.tick).filter((t) => typeof t === 'number' && t > 0);
+const end = Math.max(timeline.tick, ...ticks, ...timeline.checkpoints, 1);
+const left = (tick) => (100 * tick) / end + '%';
+const seek = (tick) => vscode.postMessage({ seek: tick });
+function render() {
+  const run = document.getElementById('run');
+  run.hidden = ticks.length === 0;
+  run.replaceChildren(
+    ...timeline.checkpoints.map((tick) => Object.assign(document.createElement('div'), { className: 'kept', title: 'checkpoint at probe ' + tick, style: 'left:' + left(tick) })),
+    ...timeline.changes.filter((c) => c.tick > 0).map((c) => {
+      const mark = Object.assign(document.createElement('div'), { className: 'mark', title: c.value + ' at ' + c.at, style: 'left:' + left(c.tick) });
+      mark.onclick = () => seek(c.tick);
+      return mark;
+    }),
+    Object.assign(document.createElement('div'), { id: 'now', title: 'the program is at probe ' + timeline.tick, style: 'left:' + left(timeline.tick) }),
+  );
+  document.getElementById('changes').replaceChildren(...timeline.changes.map((c) => {
+    const item = document.createElement('li');
+    const at = Object.assign(document.createElement('span'), { className: 'at', textContent: '  ' + c.at + (c.tick > 0 ? ' (probe ' + c.tick + ')' : '') });
+    item.append(c.value, at);
+    if (c.tick > 0) {
+      item.className = 'seek';
+      item.onclick = () => seek(c.tick);
+    }
+    return item;
+  }));
+}
+window.addEventListener('message', (event) => {
+  timeline.tick = event.data.tick;
   render();
 });
 render();

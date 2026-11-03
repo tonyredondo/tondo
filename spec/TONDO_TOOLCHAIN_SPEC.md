@@ -1008,7 +1008,20 @@ las partes de un valor, como un array o un map de records, por su
 campo, o una sola, `value`, si las partes no tienen campos, con cuántas hay
 y la parada de la que son; la página siguiente de otra parada es un error.
 La extensión de VS Code la muestra con *Show as Table* en el menú de una
-variable, en una tabla que se ordena por columnas y se filtra. Un
+variable, en una tabla que se ordena por columnas y se filtra. Otras
+peticiones propias de Tondo: `why`, con `expression` y `frameId`, hace lo
+que `why` y da la línea, por qué y las causas, y la parada llega después;
+`timeline` da los cambios de una expresión en toda la ejecución, con el
+probe de cada uno en una reproducción, el probe actual y los de los
+checkpoints, y `seek` lleva la reproducción a un probe; `effects` da, para
+el marco de `frameId`, lo que cambió cada línea de su llamada la última vez
+que corrió, según el historial; y `tasks` da las tareas, dónde está cada
+una, qué espera y qué tareas lo tienen. La extensión las ofrece con *Why
+Does It Have This Value?* y *Show Its Values over the Run* en el menú de
+una variable o del código, que pregunta luego por cada causa y dibuja la
+ejecución con sus cambios, que llevan al programa allí; muestra al lado de
+cada línea lo que cambió, y *Show What the Tasks Wait For* dibuja las
+tareas con una flecha a la tarea que tiene lo que cada una espera. Un
 breakpoint en un archivo de otro sistema (6.8 del
 lenguaje) queda sin verificar, con el motivo: el programa corre en el de
 esta máquina, que no compila ese archivo.
