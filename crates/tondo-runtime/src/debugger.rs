@@ -330,6 +330,71 @@ fn origin(
     }
 }
 
+/// What an expression gives as a moment of the history starts, read from
+/// its bindings as they were; none where it has no value.
+fn shown_at(moment: &Moment, expr: &Expr) -> Option<String> {
+    let read = |name: &str| match moment.bindings.iter().find(|(n, ..)| n == name) {
+        Some((.., text)) => Ok(text.clone()),
+        None => Err(format!("no binding `{name}`")),
+    };
+    Evaluator::new(&read).evaluate(expr).ok().map(|e| e.text)
+}
+
+/// The most a `timeline` or a `ran` gives, the newest.
+const LISTED: usize = 200;
+
+/// `timeline <expression>`: the lines of the stopped task's history, up
+/// to the one shown, that gave the expression another value: the line
+/// before the first that starts with it. Each with its place, how many
+/// lines back, its probe in a replay, and the value.
+fn timeline(table: &Table, text: &str) -> Result<String, String> {
+    let expr = expression::parse(text).map_err(|m| format!("the expression: {m}"))?;
+    let state = state();
+    let (_, mine, at) = shown_lines(&state)?;
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut changes = Vec::new();
+    let mut last: Option<String> = None;
+    for (index, &i) in mine[..=at].iter().enumerate() {
+        let now = shown_at(&history[i], &expr);
+        if now.is_some() && now != last {
+            let gave = index.saturating_sub(1);
+            let moment = &history[mine[gave]];
+            changes.push(format!(
+                "{{\"at\":{},\"back\":{},\"tick\":{},\"value\":{}}}",
+                quoted(&place_in(table, moment.site)),
+                at - gave,
+                moment.tick,
+                quoted(&clipped(now.as_deref().unwrap_or_default()))
+            ));
+        }
+        last = now;
+    }
+    let from = changes.len().saturating_sub(LISTED);
+    Ok(format!("{{\"timeline\":[{}],\"changes\":{}}}", changes[from..].join(","), changes.len()))
+}
+
+/// `ran <file>:<line> [<expression>]`: each line of the history, of any
+/// task, that starts at that line, newest last: the task, its probe in a
+/// replay, and the expression's value then.
+fn ran(table: &Table, rest: &str) -> Result<String, String> {
+    let (at, text) = rest.split_once(' ').map_or((rest, None), |(at, text)| (at, Some(text.trim())));
+    let sites = line_sites(table, at)?;
+    let expr = text.map(expression::parse).transpose().map_err(|m| format!("the expression: {m}"))?;
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let runs: Vec<String> = history
+        .iter()
+        .filter(|moment| sites.contains(&moment.site))
+        .map(|moment| {
+            let value = expr.as_ref().and_then(|expr| shown_at(moment, expr));
+            let value = value.map_or(String::new(), |v| format!(",\"value\":{}", quoted(&clipped(&v))));
+            format!("{{\"task\":{},\"tick\":{}{value}}}", moment.task, moment.tick)
+        })
+        .collect();
+    let from = runs.len().saturating_sub(LISTED);
+    let place = place_in(table, sites[0]);
+    Ok(format!("{{\"ran\":[{}],\"times\":{},\"at\":{}}}", runs[from..].join(","), runs.len(), quoted(&place)))
+}
+
 /// `causes <expression>...`: where each got the value it has as the line
 /// the debugger shows starts, without moving there: the line, how many
 /// lines back, and its probe in a replay.
@@ -2014,6 +2079,14 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"hits\":[{}],\"lines\":[{}]}}", list(&scan.1), list(&scan.2))
         }
         "why" => match why(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "timeline" => match timeline(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "ran" => match ran(table, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },

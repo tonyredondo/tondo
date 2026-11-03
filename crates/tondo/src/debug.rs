@@ -66,7 +66,11 @@ back [<n> | until <condition>]                  back in the stopped task's histo
                                                 the condition held: locals, print, stack show it
 forward [<n> | until <condition>]               forward in it, as steps do there; past the last, the present
 reverse                                         back to the last line at a breakpoint, or the first kept
-why <expression>                                back to the line that gave the expression its value
+why <expression>                                back to the line that gave the expression its value, and where
+                                                what that line reads got its own
+timeline <expression>                           each value it took in the history, with the line that gave it
+ran <file>:<line> [<expression>]                each time a task started that line, with the expression's value
+seek <probe>                                    a replay: to that probe, which timeline and ran give
                                                 (in a replay, `tondo debug --replay`, back, reverse and why go
                                                 back to the whole program as it was there)
 pause                                           stop every task, as Ctrl-C does
@@ -361,6 +365,27 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            // Over the whole run: a replay runs it again from the start.
+            "timeline" | "ran" if replaying.is_some() => {
+                let replaying = replaying.as_ref().expect("a replay");
+                let surveyed = ask(&mut session, "tick")
+                    .and_then(|t| replaying.survey(word, rest, t["tick"].as_u64().unwrap_or(0)));
+                match surveyed {
+                    Ok(answer) => session.show(&answer),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
+            "seek" if replaying.is_some() => {
+                let replaying = replaying.as_mut().expect("a replay");
+                let sought = match rest.trim().parse::<u64>() {
+                    Ok(to) => replaying.seek(&mut session, to),
+                    Err(_) => Err("seek takes a probe's tick, as timeline and ran give them".to_string()),
+                };
+                match sought {
+                    Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
             // A replay goes back by running its recording again.
             "back" | "reverse" | "why" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
@@ -370,9 +395,9 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "why" | "tick" | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context"
-            | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until" | "snapshot" | "freeze"
-            | "thaw" | "retainers" | "memory" => {
+            | "why" | "tick" | "timeline" | "ran" | "tasks" | "restart" | "select" | "children" | "task" | "catch"
+            | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
+            | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -711,6 +736,39 @@ impl Replaying {
         }
     }
 
+    /// `timeline <expression>` or `ran <file>:<line> [<expression>]` in a
+    /// replay: what the history of a replay from the start to probe `tick`
+    /// says, as `record` would have kept from the start.
+    fn survey(&self, word: &str, rest: &str, tick: u64) -> Result<Value, String> {
+        let (running, mut scan) = self.start(None, u64::MAX, true)?;
+        let surveyed = (|| {
+            ask(&mut scan, "record 1000000")?;
+            ask(&mut scan, &format!("scan {tick}"))?;
+            scan.next_event()?;
+            ask(&mut scan, &format!("{word} {rest}"))
+        })();
+        let _ = scan.send("quit");
+        running.end();
+        surveyed
+    }
+
+    /// `seek <tick>` in a replay: on to that probe, or back to it from the
+    /// nearest checkpoint.
+    fn seek(&mut self, session: &mut Session, to: u64) -> Result<Value, String> {
+        let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
+        if to > tick {
+            ask(session, &format!("seek {to}"))?;
+            let stop = session.next_event()?;
+            self.keep(&mut |command| ask(session, command));
+            return Ok(stop);
+        }
+        let (running, mut next, stop) = self.reach(to, format!("probe {to}"), session.json)?;
+        self.take_over(running);
+        std::mem::swap(session, &mut next);
+        self.keep(&mut |command| ask(session, command));
+        Ok(stop)
+    }
+
     /// What a replay that started before probe `tick` finds on its way
     /// there, for `word`: the probe to go back to, and why.
     fn scan(
@@ -770,6 +828,15 @@ fn causes_here(session: &mut Session, at: &str) -> Value {
         return Value::Array(Vec::new());
     }
     ask(session, &format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
+}
+
+/// A replay's probe of a line the history lists, to `seek`; none outside
+/// a replay, where it is zero.
+fn tick_of(line: &Value) -> String {
+    match line["tick"].as_u64() {
+        Some(tick) if tick > 0 => format!(" (probe {tick})"),
+        _ => String::new(),
+    }
 }
 
 /// The text of the line of `file:line in function`.
@@ -965,6 +1032,25 @@ impl Session {
             }
         } else if value.get("exited").is_some() {
             println!("the program ended");
+        } else if let Some(timeline) = value["timeline"].as_array() {
+            if timeline.is_empty() {
+                println!("no line of the history gave it a value");
+            }
+            for change in timeline {
+                println!(
+                    "{}  at {}, {} lines back{}",
+                    change["value"].as_str().unwrap_or_default(),
+                    change["at"].as_str().unwrap_or_default(),
+                    change["back"],
+                    tick_of(change)
+                );
+            }
+        } else if let Some(runs) = value["ran"].as_array() {
+            println!("{} ran {} times in the history", value["at"].as_str().unwrap_or_default(), value["times"]);
+            for run in runs {
+                let shown = run["value"].as_str().map_or(String::new(), |v| format!(": {v}"));
+                println!("  task {}{}{shown}", run["task"], tick_of(run));
+            }
         } else if let Some(breakpoint) = value.get("breakpoint") {
             println!(
                 "breakpoint {} at {}:{}{}",

@@ -1932,6 +1932,21 @@ fn debugger_goes_back_in_a_replay() {
     ask("next", "stopped");
     ask("next", "stopped");
     assert_eq!(value(&mut ask, "total"), total);
+    // Each value `total` had, from the line that gave it, over the run.
+    let timeline = ask("timeline total", "timeline");
+    let values: Vec<i64> = timeline["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["value"].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(values, [0, rolls[0], rolls[0] + rolls[1], rolls[0] + rolls[1] + rolls[2]], "{timeline}");
+    let ran = ask("ran rolled.to:9 roll", "ran");
+    assert_eq!(ran["times"], 3, "{ran}");
+    // And back to where the second came from.
+    let tick = timeline["timeline"][2]["tick"].as_u64().unwrap();
+    ask(&format!("seek {tick}"), "stopped");
+    assert_eq!((value(&mut ask, "i"), value(&mut ask, "total")), (1, rolls[0]));
     drop(input);
     child.wait().unwrap();
     // The editor's step back and reverse continue.

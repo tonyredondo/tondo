@@ -903,7 +903,11 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   línea del historial que dio a la expresión el valor que tiene: la última
   que empezó con otro valor, y dice cuál; y de cada binding que esa línea
   lee, según su texto, el valor que tenía y la línea de donde le vino
-  (`causes`), para seguir preguntando por ellos.
+  (`causes`), para seguir preguntando por ellos. `timeline <expresión>` da
+  cada valor que tomó la expresión en la tarea parada, con la línea que se
+  lo dio, y `ran <archivo>:<línea> [<expresión>]` cada vez que una tarea
+  empezó esa línea, con el valor de la expresión entonces; las 200 más
+  recientes, y cuántas hubo.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
   en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
@@ -1044,7 +1048,10 @@ las reproducciones que vuelven atrás empiezan en el más cercano anterior, o
 en otro anterior si ahí no encuentran lo que buscan, en lugar del principio;
 un breakpoint que cuenta sus hits hace empezar desde el principio, donde
 empezó a contarlos. En el editor, `stepBack` y `reverseContinue` de una
-reproducción son `back` y `reverse`.
+reproducción son `back` y `reverse`. Allí `timeline` y `ran` miran la
+ejecución entera hasta donde está el programa, con otra reproducción desde el
+principio que guarda el historial, y dan el probe de cada línea: `seek
+<probe>` lleva el programa a ese punto, antes o después del de ahora.
 
 ### 7.7 Librerías para C
 
