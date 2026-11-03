@@ -96,6 +96,10 @@ In this repository, `cargo run -q -p tondo -- <command>` is the `tondo` of
 the working tree. `README.md` says where everything is; the
 specifications in `spec/` define what Tondo is.
 
+While working on a feature, `TONDO_RUNTIME_FAST=1` in the environment of
+`cargo` compiles a change to the runtime in about half the time. Leave it
+out for the final check below, which is the build that ships.
+
 Before every commit, as CI does on Linux, macOS, musl and under emulation:
 
 ```sh

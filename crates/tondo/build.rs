@@ -94,9 +94,14 @@ fn fnv(start: u64, bytes: &[u8]) -> u64 {
 /// Builds the runtime for `target`: the archive, and the native libraries
 /// it needs as linker arguments.
 fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, String) {
+    // `TONDO_RUNTIME_FAST=1`, while working on the toolchain: many codegen
+    // units, incrementally, compile a change sooner, with a runtime that
+    // runs as the real one but is not measured or shipped.
+    println!("cargo:rerun-if-env-changed=TONDO_RUNTIME_FAST");
+    let fast = env::var_os("TONDO_RUNTIME_FAST").is_some_and(|value| value == "1");
     // Its own build directory, so this build does not wait for the one
-    // that runs it.
-    let target_dir = out_dir.join("runtime");
+    // that runs it; and one for each way, so that neither undoes the other.
+    let target_dir = out_dir.join(if fast { "runtime-fast" } else { "runtime" });
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut command = Command::new(&cargo);
     command
@@ -109,7 +114,9 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         // function starts a cache line, so that changing one does not move
         // the others' code across lines.
         .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "-C", "force-frame-pointers=yes"])
-        .args(["-C", "codegen-units=1", "-C", "llvm-args=-align-all-functions=6"])
+        .args(["-C", if fast { "codegen-units=16" } else { "codegen-units=1" }])
+        .args(["-C", "llvm-args=-align-all-functions=6"])
+        .env("CARGO_PROFILE_RELEASE_INCREMENTAL", fast.to_string())
         .args(["--cfg", "tondo_staticlib"])
         .args(["--print", "native-static-libs"])
         .current_dir(runtime)
