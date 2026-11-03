@@ -1004,7 +1004,7 @@ fn handle(
             let task = arguments["threadId"].as_u64().unwrap_or(1);
             let tick = program.ask("tick")?["tick"].as_u64().unwrap_or(0);
             let replaying = program.replaying.as_ref().expect("a replay");
-            let (to, why) = replaying.find(word, "1", tick, task)?;
+            let (to, why, _) = replaying.find(word, "1", tick, task)?;
             let (running, session, stop) = replaying.reach(to, why, true)?;
             program.take_over(running, session, &stop);
             Ok(json!({}))

@@ -346,6 +346,21 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            // `why`, in the history: the line that gave the value, and
+            // where what that line reads got its own.
+            "why" if replaying.is_none() => {
+                let mut ask_why = || -> Result<Value, String> {
+                    ask(&mut session, &format!("why {rest}"))?;
+                    let mut stop = session.next_event()?;
+                    let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+                    stop["stopped"]["causes"] = causes_here(&mut session, &at);
+                    Ok(stop)
+                };
+                match ask_why() {
+                    Ok(stop) => session.show(&stop),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
             // A replay goes back by running its recording again.
             "back" | "reverse" | "why" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
@@ -608,8 +623,11 @@ impl Replaying {
     /// that gives, and takes over.
     fn go_back(&mut self, session: &mut Session, word: &str, rest: &str) -> Result<Value, String> {
         let tick = ask(session, "tick")?["tick"].as_u64().unwrap_or(0);
-        let (to, why) = self.find(word, rest, tick, session.task)?;
-        let (running, mut next, stop) = self.reach(to, why, session.json)?;
+        let (to, why, causes) = self.find(word, rest, tick, session.task)?;
+        let (running, mut next, mut stop) = self.reach(to, why, session.json)?;
+        if !causes.is_null() {
+            stop["stopped"]["causes"] = causes;
+        }
         if let Some(old) = self.current.replace(running) {
             old.end();
         }
@@ -621,7 +639,7 @@ impl Replaying {
     /// The probe `back`, `reverse` or `why` goes to from probe `tick`,
     /// where `task` stopped, and why: what a replay from the nearest
     /// checkpoint before, or an earlier one, finds on its way there.
-    pub(crate) fn find(&self, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String), String> {
+    pub(crate) fn find(&self, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String, Value), String> {
         let mut failed = String::new();
         for base in self.bases(tick, false) {
             let (running, mut scan) = self.start(base, u64::MAX, true)?;
@@ -695,7 +713,14 @@ impl Replaying {
 
     /// What a replay that started before probe `tick` finds on its way
     /// there, for `word`: the probe to go back to, and why.
-    fn scan(&self, scan: &mut Session, word: &str, rest: &str, tick: u64, task: u64) -> Result<(u64, String), String> {
+    fn scan(
+        &self,
+        scan: &mut Session,
+        word: &str,
+        rest: &str,
+        tick: u64,
+        task: u64,
+    ) -> Result<(u64, String, Value), String> {
         if word == "why" {
             ask(scan, "record 1000000")?;
         }
@@ -714,21 +739,84 @@ impl Replaying {
                 let count = rest.trim().parse::<usize>().unwrap_or(1).max(1);
                 let lines = ticks("lines");
                 let back = lines.len().checked_sub(count).map(|at| lines[at]);
-                back.map(|to| (to, format!("{count} lines back")))
+                back.map(|to| (to, format!("{count} lines back"), Value::Null))
                     .ok_or(format!("task {task} has no line that many lines back"))
             }
             "reverse" => match ticks("hits").last() {
-                Some(&to) => Ok((to, "reverse".into())),
+                Some(&to) => Ok((to, "reverse".into(), Value::Null)),
                 None => Err("no breakpoint stops before here".into()),
             },
             _ => {
                 ask(scan, &format!("why {rest}"))?;
                 let stop = scan.next_event()?;
                 let to = stop["stopped"]["tick"].as_u64().ok_or("the history has no line of that")?;
-                Ok((to, stop["stopped"]["because"].as_str().unwrap_or("why").to_string()))
+                let causes = causes_here(scan, stop["stopped"]["at"].as_str().unwrap_or_default());
+                Ok((to, stop["stopped"]["because"].as_str().unwrap_or("why").to_string(), causes))
             }
         }
     }
+}
+
+/// Where each binding a line reads got its value, as the history says,
+/// for the line `at` the debugger shows: the causes of what it gives.
+fn causes_here(session: &mut Session, at: &str) -> Value {
+    let Some(text) = line_text(at) else { return Value::Array(Vec::new()) };
+    let Ok(locals) = ask(session, "locals") else { return Value::Array(Vec::new()) };
+    let bound: Vec<&str> =
+        locals["locals"].as_array().into_iter().flatten().filter_map(|l| l["name"].as_str()).collect();
+    let mut read: Vec<String> = read_by(&text).into_iter().filter(|n| bound.contains(&n.as_str())).collect();
+    read.dedup();
+    if read.is_empty() {
+        return Value::Array(Vec::new());
+    }
+    ask(session, &format!("causes {}", read.join(" "))).map_or(Value::Array(Vec::new()), |a| a["causes"].clone())
+}
+
+/// The text of the line of `file:line in function`.
+fn line_text(at: &str) -> Option<String> {
+    let (place, _) = at.split_once(" in ")?;
+    let (file, line) = place.rsplit_once(':')?;
+    let text = std::fs::read_to_string(file).ok()?;
+    text.lines().nth(line.parse::<usize>().ok()?.checked_sub(1)?).map(String::from)
+}
+
+/// The names a line of code reads, as its text has them: what follows an
+/// assignment's `=`, and its target too in a compound one, as `+=`; all of
+/// a line that assigns nothing. A name after a `.`, a field's or a
+/// method's, or before a `(`, a function's, is not one.
+fn read_by(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut from = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        let (before, after) = (i.checked_sub(1).map_or(b' ', |b| bytes[b]), bytes.get(i + 1).copied().unwrap_or(b' '));
+        if byte == b'=' && !matches!(after, b'=' | b'>') && !matches!(before, b'=' | b'!' | b'<' | b'>') {
+            from = if matches!(before, b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^') { 0 } else { i + 1 };
+            break;
+        }
+    }
+    let mut names = Vec::new();
+    let rest = &text[from..];
+    let mut at = 0;
+    let chars: Vec<(usize, char)> = rest.char_indices().collect();
+    while at < chars.len() {
+        let (start, c) = chars[at];
+        if !(c.is_alphabetic() || c == '_') {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while end < chars.len() && (chars[end].1.is_alphanumeric() || chars[end].1 == '_') {
+            end += 1;
+        }
+        let word = &rest[start..chars.get(end).map_or(rest.len(), |&(i, _)| i)];
+        let after = rest[chars.get(end).map_or(rest.len(), |&(i, _)| i)..].trim_start();
+        let dotted = rest[..start].ends_with('.');
+        if !dotted && !after.starts_with('(') && !names.iter().any(|n| n == word) {
+            names.push(word.to_string());
+        }
+        at = end;
+    }
+    names
 }
 
 /// The answer to a command, or the error it is.
@@ -828,6 +916,18 @@ impl Session {
         if let Some(task) = value["stopped"]["task"].as_u64() {
             self.task = task;
         }
+        let causes = || {
+            for cause in value["stopped"]["causes"].as_array().into_iter().flatten() {
+                let back = cause["back"].as_u64().unwrap_or(0);
+                println!(
+                    "  `{}` was {}, from {}, {back} line{} back",
+                    cause["name"].as_str().unwrap_or_default(),
+                    cause["value"].as_str().unwrap_or_default(),
+                    cause["at"].as_str().unwrap_or_default(),
+                    if back == 1 { "" } else { "s" }
+                );
+            }
+        };
         if self.json {
             println!("{value}");
             return;
@@ -845,6 +945,7 @@ impl Session {
                         if let Some(because) = stop["because"].as_str() {
                             println!("{because}");
                         }
+                        causes();
                         if let Some(source) = source_line(at) {
                             println!("{source}");
                         }
@@ -852,6 +953,7 @@ impl Session {
                 },
                 why => {
                     println!("task {} stopped at {at} ({why})", stop["task"]);
+                    causes();
                     if let Some(returned) = stop.get("returned") {
                         let function = returned["function"].as_str().unwrap_or_default();
                         println!("{function} returned {}", returned["value"].as_str().unwrap_or_default());

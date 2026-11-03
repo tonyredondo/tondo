@@ -1916,6 +1916,13 @@ fn debugger_goes_back_in_a_replay() {
     let total = value(&mut ask, "total");
     let stop = ask("why total", "stopped");
     assert_eq!(stop["stopped"]["at"], "rolled.to:9 in main", "{stop}");
+    // What that line reads, and where it got it.
+    let causes = stop["stopped"]["causes"].as_array().unwrap();
+    let roll = causes.iter().find(|c| c["name"] == "roll").expect(&stop.to_string());
+    assert_eq!(
+        (roll["value"].as_str().unwrap(), &roll["at"]),
+        (rolls[2].to_string().as_str(), &json!("rolled.to:8 in main"))
+    );
     assert_eq!(value(&mut ask, "total"), total - rolls[2]);
     assert_eq!(value(&mut ask, "i"), 2);
     // Two lines of the task back: the start of the iteration's `let`.

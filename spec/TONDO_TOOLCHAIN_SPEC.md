@@ -901,7 +901,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   pasado, `locals`, `print`, `children` y `stack` lo leen, de su marco más
   interior, y `continue` sigue desde el presente. `why <expresión>` va a la
   línea del historial que dio a la expresión el valor que tiene: la última
-  que empezó con otro valor, y dice cuál.
+  que empezó con otro valor, y dice cuál; y de cada binding que esa línea
+  lee, según su texto, el valor que tenía y la línea de donde le vino
+  (`causes`), para seguir preguntando por ellos.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
   en un canal, un lock o un `sleep`, o están listas para seguir: `task` y

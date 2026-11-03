@@ -115,7 +115,8 @@ On Linux, `run` with `record` keeps a run in a directory, and `debug_start`
 with `replay` debugs it again, the same each time: a failure that happened
 once, with its time, input and files. There `back`, `reverse` and
 `why total` go back to the program as it was: `why` finds the line that gave
-a value its value.
+a value its value, and its `causes` say where each binding that line reads
+got its own, to ask `why` of next.
 `debug_stop` ends the session and its program.
 
 ## Observing and profiling

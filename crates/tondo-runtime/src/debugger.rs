@@ -279,6 +279,39 @@ fn moved_because(table: &Table, word: &str, rest: &str, because: Option<String>)
 /// the expression the value it has where the task is shown: the last line
 /// before which it had another, or none. The history shows that line.
 fn why(table: &Table, text: &str) -> Result<String, String> {
+    let ((changed, now), at) = {
+        let state = state();
+        let (task, mine, at) = shown_lines(&state)?;
+        let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+        let found = origin(&history, &mine, at, text).map_err(|e| e.replace("{task}", &task.to_string()))?;
+        (found, at)
+    };
+    let count = (at - changed).to_string();
+    let because = format!("`{text}` became {} on this line", clipped(&now));
+    moved_because(table, "back", &count, Some(because))
+}
+
+/// The stopped task's lines in the history, and which of them the
+/// debugger shows.
+fn shown_lines(state: &State) -> Result<(u64, Vec<usize>, usize), String> {
+    let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
+    let task = state.selected.map_or(stop.task, |(task, _)| task);
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mine: Vec<usize> = (0..history.len()).filter(|&i| history[i].task == task).collect();
+    let present = mine.len().checked_sub(1).ok_or("the history has no line of this task: `record` keeps them")?;
+    let at = state.past.and_then(|past| mine.iter().position(|&i| i == past)).unwrap_or(present);
+    Ok((task, mine, at))
+}
+
+/// Of the task's lines `mine`, the one before line `at` that gave the
+/// expression the value it has as line `at` starts: the last that started
+/// with another value. Gives that line and the value.
+fn origin(
+    history: &std::collections::VecDeque<Moment>,
+    mine: &[usize],
+    at: usize,
+    text: &str,
+) -> Result<(usize, String), String> {
     let expr = expression::parse(text).map_err(|m| format!("the expression: {m}"))?;
     let shown = |moment: &Moment| {
         let read = |name: &str| match moment.bindings.iter().find(|(n, ..)| n == name) {
@@ -287,26 +320,37 @@ fn why(table: &Table, text: &str) -> Result<String, String> {
         };
         Evaluator::new(&read).evaluate(&expr).ok().map(|e| e.text)
     };
-    let state = state();
-    let stop = state.stopped.clone().ok_or("the program runs: `pause` stops it, or a breakpoint")?;
-    let task = state.selected.map_or(stop.task, |(task, _)| task);
-    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
-    let mine: Vec<usize> = (0..history.len()).filter(|&i| history[i].task == task).collect();
-    let present = mine.len().checked_sub(1).ok_or("the history has no line of this task: `record` keeps them")?;
-    let at = state.past.and_then(|past| mine.iter().position(|&i| i == past)).unwrap_or(present);
     let now = shown(&history[mine[at]]).ok_or(format!("`{text}` has no value here"))?;
-    // The last line that started with another value, which this line did not.
-    let Some(changed) = mine[..at].iter().rposition(|&i| shown(&history[i]).as_ref() != Some(&now)) else {
-        return Err(format!(
-            "`{text}` has been {} since the first line of task {task}'s history: `record` keeps more of it",
+    match mine[..at].iter().rposition(|&i| shown(&history[i]).as_ref() != Some(&now)) {
+        Some(changed) => Ok((changed, now)),
+        None => Err(format!(
+            "`{text}` has been {} since the first line of task {{task}}'s history: `record` keeps more of it",
             clipped(&now)
+        )),
+    }
+}
+
+/// `causes <expression>...`: where each got the value it has as the line
+/// the debugger shows starts, without moving there: the line, how many
+/// lines back, and its probe in a replay.
+fn causes(table: &Table, rest: &str) -> Result<String, String> {
+    let state = state();
+    let (_, mine, at) = shown_lines(&state)?;
+    let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut found = Vec::new();
+    for text in rest.split_whitespace() {
+        let Ok((changed, now)) = origin(&history, &mine, at, text) else { continue };
+        let moment = &history[mine[changed]];
+        found.push(format!(
+            "{{\"name\":{},\"value\":{},\"at\":{},\"back\":{},\"tick\":{}}}",
+            quoted(text),
+            quoted(&clipped(&now)),
+            quoted(&place_in(table, moment.site)),
+            at - changed,
+            moment.tick
         ));
-    };
-    drop(history);
-    drop(state);
-    let count = (at - changed).to_string();
-    let because = format!("`{text}` became {} on this line", clipped(&now));
-    moved_because(table, "back", &count, Some(because))
+    }
+    Ok(format!("{{\"causes\":[{}]}}", found.join(",")))
 }
 
 /// The moment of the history the debugger shows, while it shows one.
@@ -1970,6 +2014,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"hits\":[{}],\"lines\":[{}]}}", list(&scan.1), list(&scan.2))
         }
         "why" => match why(table, rest) {
+            Ok(answer) => answer,
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "causes" => match causes(table, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
