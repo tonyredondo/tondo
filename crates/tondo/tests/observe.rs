@@ -2077,13 +2077,16 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break racing.to:21\ncontinue\ncontinue\nprint next\nback\nprint next\n";
+    // A search to the end goes past the tasks of those calls, whose stacks go
+    // with them.
+    let script = "break racing.to:21\ncontinue\ncontinue\nprint next\nback\nprint next\nfirst next > 40\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
     assert!(output.contains("racing.to:21"), "{output}");
     assert!(output.contains("next: Int = 2"), "{output}");
     assert!(output.matches("stopped at").count() >= 3, "{output}");
+    assert!(output.contains("the first time `next > 40` holds"), "{output}");
 }
 
 /// lldb stops a debug build at a line of its DWARF, on Linux and macOS,

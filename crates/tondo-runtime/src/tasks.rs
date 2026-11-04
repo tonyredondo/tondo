@@ -1572,6 +1572,7 @@ fn run(task: *mut Task) {
     unsafe {
         let in_domain = (*task).in_domain;
         if (*task).finished {
+            super::debugger::task_ended((*task).id);
             let (was_main, join) = ((*task).main, (*task).join);
             for asked in [&(*task).cancelled, &(*task).again] {
                 if asked.load(Ordering::SeqCst) {

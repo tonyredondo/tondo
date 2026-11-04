@@ -1580,6 +1580,18 @@ pub(crate) fn sent(channel: usize, held: usize, from: u64) {
     tracked.messages.entry(channel).or_insert_with(|| vec![None; held].into()).push_back(origin);
 }
 
+/// A task ended, and its stack goes: a scan follows its frames no longer.
+pub(crate) fn task_ended(task: u64) {
+    if !FOLLOWING.load(Ordering::Relaxed) {
+        return;
+    }
+    let _outside = super::replay::Outside::enter();
+    let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+    for followed in tracked.iter_mut().flat_map(|t| &mut t.followed).filter(|f| f.anchor.task == task) {
+        followed.anchor.live = None;
+    }
+}
+
 /// The task `by` took the oldest value of the channel, which held `held`.
 pub(crate) fn taken(channel: usize, held: usize, by: u64) {
     if FOLLOWING.load(Ordering::Relaxed) {
