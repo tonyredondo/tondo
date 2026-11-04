@@ -2325,6 +2325,9 @@ pub(crate) fn end_all(status: i32) -> ! {
 /// after `PANIC_GRACE`.
 pub(crate) fn abandon(status: i32) {
     let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
+    // Read here, a call of the program's, and not first by the thread below,
+    // which a replay does not have.
+    std::sync::LazyLock::force(&EPOCH);
     // The program ends after a while, unless it replays a recording, which
     // ends where the recording does.
     static WATCHDOG: std::sync::Once = std::sync::Once::new();
