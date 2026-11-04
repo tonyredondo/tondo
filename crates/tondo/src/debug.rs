@@ -247,6 +247,8 @@ pub fn replayed(dir: &Path) -> Result<(PathBuf, std::process::Command), String> 
         .env_clear()
         .envs(environment)
         .env_remove("TONDO_RT_RECORD")
+        .env_remove("TONDO_DUMP")
+        .envs(std::env::var_os("TONDO_DUMP").map(|dir| ("TONDO_DUMP", dir)))
         .env("TMPDIR", std::env::temp_dir())
         .env("TONDO_RT_REPLAY", dir.join("calls"))
         .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap_or("0"))
@@ -322,8 +324,16 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     };
     let pid = program.pid;
     let (writer, said) = attach(program)?;
-    let mut session =
-        Session { said, writer, json, events: Vec::new(), ended: false, task: 0, checkpointed: Vec::new() };
+    let mut session = Session {
+        said,
+        writer,
+        json,
+        events: Vec::new(),
+        ended: false,
+        task: 0,
+        checkpointed: Vec::new(),
+        report: None,
+    };
     // A replay goes back by running its recording again (`back`, `reverse`,
     // `why`): it keeps the commands that set how the program stops.
     let mut replaying = replay.map(|dir| Replaying {
@@ -737,19 +747,24 @@ impl Replaying {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
         let (executable, mut command) = replayed(&self.dir)?;
-        // One that only looks writes nothing.
+        // One that only looks writes nothing, but for why it ended, if it
+        // ends before the program does.
+        let report =
+            (shown == u64::MAX).then(|| std::env::temp_dir().join(format!("tondo-replay-{}", std::process::id())));
+        let report_file = || report.as_ref().and_then(|path| std::fs::File::create(path).ok());
         let output = || match (shown, self.piped || self.test.is_some()) {
             (u64::MAX, _) => std::process::Stdio::null(),
             (_, true) => std::process::Stdio::piped(),
             (_, false) => std::process::Stdio::inherit(),
         };
+        let errors = || report_file().map_or_else(output, std::process::Stdio::from);
         let mut running = match from {
             None => Running::Started(
                 command
                     .env("TONDO_RT_SHOWN_FROM", shown.to_string())
                     .stdin(std::process::Stdio::null())
                     .stdout(output())
-                    .stderr(output())
+                    .stderr(errors())
                     .process_group(0)
                     .spawn()
                     .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
@@ -777,7 +792,8 @@ impl Replaying {
                 let (fds, output, _ends) = match (shown, self.piped || self.test.is_some()) {
                     (u64::MAX, _) => {
                         let null = std::fs::OpenOptions::new().write(true).open("/dev/null").map_err(cannot)?;
-                        (vec![null.as_raw_fd(), null.as_raw_fd()], None, (Some(null), None))
+                        let errors = report_file().unwrap_or(null.try_clone().map_err(cannot)?);
+                        (vec![null.as_raw_fd(), errors.as_raw_fd()], None, (Some((null, errors)), None))
                     }
                     (_, true) => {
                         let ((out, out_end), (error, error_end)) =
@@ -812,7 +828,7 @@ impl Replaying {
             }
         };
         let mut session =
-            Session { said, writer, json, events: Vec::new(), ended: false, task: 0, checkpointed: Vec::new() };
+            Session { said, writer, json, events: Vec::new(), ended: false, task: 0, checkpointed: Vec::new(), report };
         session.answer()?;
         // A replay from the start waits there; a checkpoint's stopped where
         // it was taken.
@@ -1552,20 +1568,37 @@ pub(crate) struct Session {
     task: u64,
     /// The checkpoints a replay kept as it ran, by probe and process.
     checkpointed: Vec<(u64, u32)>,
+    /// Where a replay that only looks says why it ended.
+    report: Option<PathBuf>,
 }
 
 impl Session {
     fn send(&mut self, command: &str) -> Result<(), String> {
-        writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())
+        let sent = writeln!(self.writer, "{command}");
+        sent.map_err(|_| self.ended_error())
     }
 
     /// The next stop or end, which it does not show.
+    /// The program ended with nothing said: why, of a replay that only
+    /// looks, whose crash shows nowhere else.
+    fn ended_error(&self) -> String {
+        let said = self.report.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+        match said.filter(|said| !said.trim().is_empty()) {
+            Some(said) => {
+                let lines: Vec<&str> = said.lines().rev().take(20).collect();
+                let tail: Vec<&str> = lines.into_iter().rev().collect();
+                format!("the replay that searches the run ended early, which is a bug of tondo:\n{}", tail.join("\n"))
+            }
+            None => "the program ended".to_string(),
+        }
+    }
+
     fn next_event(&mut self) -> Result<Value, String> {
         if !self.events.is_empty() {
             return Ok(self.events.remove(0));
         }
         loop {
-            let value = self.said.recv().map_err(|_| "the program ended".to_string())?;
+            let value = self.said.recv().map_err(|_| self.ended_error())?;
             if value.get("stopped").is_some() || value.get("exited").is_some() {
                 return Ok(value);
             }
@@ -1588,7 +1621,7 @@ impl Session {
     /// The answer to the last command; events that come first wait.
     fn answer(&mut self) -> Result<Value, String> {
         loop {
-            let value = self.said.recv().map_err(|_| "the program ended".to_string())?;
+            let value = self.said.recv().map_err(|_| self.ended_error())?;
             if value.get("stopped").is_some() || value.get("exited").is_some() {
                 self.events.push(value);
                 continue;

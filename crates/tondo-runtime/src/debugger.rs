@@ -2668,6 +2668,16 @@ pub(crate) fn exited() {
     tell(&format!("{{\"exited\":true{tracked}}}"));
 }
 
+/// The program crashed in a replay, as it did in its recording: a scan
+/// gives what it followed all the same, which is what a crash is searched
+/// for, unless the crash came with a lock this takes.
+pub(crate) fn crashed() {
+    let free = TRACKED.try_lock().is_ok() && CLIENT.try_lock().is_ok();
+    if free && super::replay::replaying() {
+        exited();
+    }
+}
+
 /// Answers a command of the debugger, or `None` for one it does not know.
 pub(crate) fn command(line: &str) -> Option<String> {
     let table = table()?;

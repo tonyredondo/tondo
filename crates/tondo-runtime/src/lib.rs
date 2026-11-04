@@ -2835,8 +2835,10 @@ pub unsafe extern "C" fn tondo_rt_report_error(description: *const Str, ty: *con
 
 /// An internal invariant of the runtime or the generated code was broken.
 fn runtime_fault(message: &str) -> ! {
+    let _outside = replay::Outside::enter();
     flush_stdout();
     let _ = writeln!(std::io::stderr(), "tondo runtime fault: {message}{}", trace::report());
+    diagnostics::crash_dump("fault", message, Vec::new(), false);
     std::process::abort()
 }
 

@@ -15,6 +15,18 @@ const USAGE: &str = "\u{0}usage";
 const TOOL_FAILURE: u8 = 3;
 
 fn main() -> ExitCode {
+    // A panic of `tondo` itself says so, and what to give whoever looks at it.
+    let panicked = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        panicked(info);
+        let arguments: Vec<String> = std::env::args().skip(1).collect();
+        eprintln!(
+            "tondo: this is a bug of tondo {}, not of your program: `tondo {}` ended here, and \
+             RUST_BACKTRACE=1 shows how it got there",
+            driver::VERSION,
+            arguments.join(" ")
+        );
+    }));
     // Output into a closed pipe ends `tondo` quietly, as `tondo api | head`
     // expects, instead of failing to print.
     #[cfg(unix)]

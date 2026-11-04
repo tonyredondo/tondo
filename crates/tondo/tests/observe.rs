@@ -2089,6 +2089,33 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     assert!(output.contains("the first time `next > 40` holds"), "{output}");
 }
 
+/// A recording of a crash is what a search is for: the replay crashes where
+/// the run did, and says what it followed all the same.
+#[test]
+fn a_replay_searches_the_recording_of_a_crash() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-crash");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.ffi\n\nfn main() {\n    var total = 0\n    for i in 0..5 {\n        total += i\n    }\n    \
+                   unsafe {\n        ffi.allocate[Int]().offset(1000000000).write(total)\n    }\n}\n";
+    std::fs::write(dir.join("crash.to"), program).unwrap();
+    let run = |command: &str| {
+        Command::new("sh").args(["-c", &format!("ulimit -c 0; {command}")]).current_dir(&dir).output().unwrap()
+    };
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let recorded = run(&format!("{tondo} run --record rec crash.to"));
+    assert!(!recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
+    let replayed = run(&format!(
+        "printf 'break crash.to:6\\ncontinue\\nfirst total > 3\\nlast total > 3\\n' | {tondo} debug --replay rec"
+    ));
+    let output = String::from_utf8_lossy(&replayed.stdout).into_owned();
+    assert!(output.contains("the first time `total > 3` holds"), "{output}");
+    assert!(output.contains("the last time `total > 3` holds"), "{output}");
+}
+
 /// lldb stops a debug build at a line of its DWARF, on Linux and macOS,
 /// and the `tondo` command that `tondo dump plugin lldb` writes shows the
 /// bindings of the frame it shows.

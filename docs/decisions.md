@@ -4898,3 +4898,19 @@ starts by itself by their function and order. A fork loses threads, so `back` ru
 reads the world from its threads is not exact, which only recording every
 thread at the level of the system would be, as rr does, and that is
 another mechanism, unknown on macOS.
+
+## 2026-11-04 — Crashes say more, and nothing waits for ever
+
+A replay that only looks wrote nowhere, so one that crashed reached the
+person as "the program ended". It now writes its errors to a file the
+debugger reads when it ends early, and passes on `TONDO_DUMP`. A fault
+says what it says outside the recording, and a runtime fault leaves a dump
+as the others do. The same silence hid something worse: `exited` runs at
+`atexit`, which a fault skips, so a search over the recording of a crash
+found nothing, and a crash is what such a search is for. A crash now gives
+what the scan followed, unless it holds a lock that needs. A wait for the
+baton in a replay used to be endless when the threads of C came in an
+order the recording did not have: with nobody running and nothing of the
+recording used for 30 seconds it says so and ends, and while recording,
+the calls that wait let the baton go, since a callback may be what they
+wait for.

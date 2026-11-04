@@ -1099,7 +1099,13 @@ reproducción lo hace otra vez y toca el mundo, y si eso cambia lo que hace,
 puede no ser la misma. Con threads de C vivos una reproducción no se copia,
 así que `back` y `why` la corren desde el principio. La reproducción para
 donde el programa hace una llamada distinta de la grabada, o donde la
-grabación tiene una llamada de un thread de C que no llega, y dice por qué.
+grabación tiene una llamada de un thread de C que no llega, y dice por qué:
+si nada usa la grabación durante 30 segundos con el programa sin correr,
+termina en vez de colgarse. Las búsquedas de una reproducción (`first`, `last`,
+`timeline`) funcionan también sobre la grabación de un crash: la reproducción
+se estrella donde se estrelló el programa y dice lo que siguió. Si una de esas
+reproducciones acaba antes de tiempo por un fallo de `tondo`, el depurador
+dice por qué, y con `TONDO_DUMP` en su entorno deja también el volcado.
 El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que

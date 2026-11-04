@@ -891,6 +891,8 @@ unsafe fn top_word(sp: usize, address: usize) -> usize {
 /// process as the signal does: the handler goes back to the default one,
 /// and the instruction faults again, or the signal comes again.
 extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    // What it says and writes is the fault's, which a replay says too.
+    let _outside = crate::replay::Outside::enter();
     unsafe {
         let (address, pc, fp, link) = faulted(info, context);
         // In a library, a fault outside its tasks and code is its host's.
@@ -980,6 +982,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         };
         let frames = std::iter::once(pc).chain(first).chain(walk).collect();
         crate::diagnostics::crash_dump("fault", &message, frames, false);
+        crate::debugger::crashed();
         // A recorded run ends here, its recording as it was.
         crate::replay::ending();
         let mut action: libc::sigaction = std::mem::zeroed();
