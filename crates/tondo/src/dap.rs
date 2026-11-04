@@ -1053,9 +1053,6 @@ fn compiled(program: &mut Debuggee, mut answer: Value) -> Result<Value, String> 
 /// array's or a set's the count of its items, which the editor asks for in
 /// pages.
 fn opened(program: &mut Debuggee, task: u64, index: u64, path: &str, answer: &Value, variable: &mut Value) {
-    if let Some(memory) = answer["memory"].as_u64() {
-        variable["memoryReference"] = json!(format!("{memory:#x}"));
-    }
     let parts = answer["children"].as_u64().unwrap_or(0);
     // A view opens to its value as it is, `raw()`, even without parts.
     if answer["viewed"] == true {
@@ -1525,6 +1522,7 @@ fn handle(
             program.keep();
             let task = arguments["threadId"].as_u64().unwrap_or(1);
             let stack = program.ask(&format!("stack {task}"))?;
+            let pcs = program.ask(&format!("pcs {task}")).unwrap_or_default();
             let frames: Vec<Value> = stack["stack"]
                 .as_array()
                 .into_iter()
@@ -1538,7 +1536,7 @@ fn handle(
                         "id": frame_id(task, index as u64), "name": function, "line": line.parse::<u64>().ok()?,
                         "column": 1, "source": { "name": file, "path": path.display().to_string() },
                     });
-                    if let Some(pc) = stack["pcs"][index].as_u64().filter(|&pc| pc != 0) {
+                    if let Some(pc) = pcs["pcs"][index].as_u64().filter(|&pc| pc != 0) {
                         frame["instructionPointerReference"] = json!(format!("{pc:#x}"));
                     }
                     Some(frame)
@@ -1623,6 +1621,7 @@ fn handle(
             } else if path.is_empty() || path.starts_with(OUTER) {
                 let outer = path.strip_prefix(OUTER);
                 let locals = program.ask("locals")?;
+                let memories = program.ask("memories").unwrap_or_default();
                 // What a function returned in the step that stopped here.
                 if let (Some(returned), None) = (locals.get("returned"), outer) {
                     let name = format!("({} returned)", returned["function"].as_str().unwrap_or_default());
@@ -1637,6 +1636,9 @@ fn handle(
                         "name": name, "value": local["value"], "type": local["type"], "evaluateName": name,
                         "variablesReference": 0,
                     });
+                    if let Some(memory) = memories["memories"][&name].as_u64() {
+                        variable["memoryReference"] = json!(format!("{memory:#x}"));
+                    }
                     opened(program, task, index, &name, local, &mut variable);
                     variables.push(variable);
                 }

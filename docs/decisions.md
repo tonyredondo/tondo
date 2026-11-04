@@ -4965,3 +4965,13 @@ it does not survive a reboot or a container, and CI has to record whole
 runs, which is why the calls are compressed too. A copy listens only once it
 is stopped and replaying: before, a debugger could reach it while it still
 recorded.
+
+## A line stops once, however many blocks it takes
+
+A probe starts each run of code of a line, so a line that a call that may
+panic cuts into blocks had several, and a breakpoint stopped at each: three
+times on the last line of an HTTP handler. Those probes stay, since `why`
+needs them: a value that came from a wait is seen there, on its line, and
+not at the next line of another task. What changes is that a probe whose
+line goes on from the only block before it says so, and breakpoints, `ran`
+and conditions leave it out.

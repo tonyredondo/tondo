@@ -487,8 +487,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             // The instructions around where a frame is.
             "disassemble" => {
                 let index = rest.parse::<usize>().unwrap_or(0);
-                let found = ask(&mut session, "stack").and_then(|stack| {
-                    let pc = stack["pcs"][index].as_u64().filter(|&pc| pc != 0);
+                let found = ask(&mut session, "pcs").and_then(|frames| {
+                    let pc = frames["pcs"][index].as_u64().filter(|&pc| pc != 0);
                     let pc = pc.ok_or("that frame's code is not known")?;
                     let list = crate::disassembly::around(&mut |c| ask(&mut session, c), pc, -8, 24)?;
                     let list: Vec<Value> = list.iter().map(crate::disassembly::data).collect();

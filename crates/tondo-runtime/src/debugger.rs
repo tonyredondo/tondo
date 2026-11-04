@@ -64,6 +64,9 @@ struct Site {
     file: String,
     line: u32,
     function: usize,
+    /// Its line goes on here from the code before, which a stop at the line
+    /// already stopped at.
+    goes_on: bool,
 }
 
 impl Site {
@@ -615,7 +618,8 @@ pub(crate) fn add_table(raw: *const Raw) -> usize {
     for breakpoint in &mut state.breakpoints {
         let Some(&known) = breakpoint.sites.first() else { continue };
         let (file, line) = (table.sites[known].file.clone(), table.sites[known].line);
-        let added = (first..table.sites.len()).filter(|&i| table.sites[i].file == file && table.sites[i].line == line);
+        let same = |site: &Site| site.file == file && site.line == line && !site.goes_on;
+        let added = (first..table.sites.len()).filter(|&i| same(&table.sites[i]));
         breakpoint.sites.extend(added);
     }
     remark(&table, &state);
@@ -688,10 +692,11 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
                     _ => Layout::Other,
                 });
             }
-            ["S", file, line, function] => sites.push(Site {
+            ["S", file, line, function, goes_on] => sites.push(Site {
                 file: file.to_string(),
                 line: line.parse().unwrap_or(0),
                 function: function.parse().unwrap_or(0),
+                goes_on: *goes_on == "1",
             }),
             _ => {}
         }
@@ -3014,6 +3019,26 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        // Where the code of each frame of a task is at.
+        "pcs" => {
+            let state = state();
+            let task = rest.parse::<u64>().ok().or(state.stopped.as_ref().map(|s| s.task));
+            let held = task.and_then(|task| stop_of(&state, task));
+            drop(state);
+            let Some(held) = held else { return Some(not_stopped()) };
+            let pcs: Vec<String> = frames(table, &held).iter().map(|f| pc_of(table, f).to_string()).collect();
+            format!("{{\"pcs\":[{}]}}", pcs.join(","))
+        }
+        // Where the bytes of each binding of the frame looked at are.
+        "memories" if state().past.is_none() => match selected(table) {
+            Ok((frames, index)) => {
+                let visible = visible(table, &frames, index);
+                let at =
+                    visible.iter().map(|(b, address, _)| format!("{}:{}", quoted(&b.name), memory_of(b, *address)));
+                format!("{{\"memories\":{{{}}}}}", at.collect::<Vec<_>>().join(","))
+            }
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
         "peek" => match rest.split_once(' ').and_then(|(at, count)| Some((at.parse().ok()?, count.parse().ok()?))) {
             Some((at, count)) if state().past.is_none() => {
                 let bytes = peek(at, usize::min(count, MOST_PEEKED));
@@ -3311,9 +3336,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let Some(held) = held else {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
-            let frames = frames(table, &held);
-            let pcs: Vec<String> = frames.iter().map(|f| pc_of(table, f).to_string()).collect();
-            let mut frames: Vec<String> = frames.iter().map(|f| f.place.clone()).collect();
+            let mut frames: Vec<String> = frames(table, &held).iter().map(|f| f.place.clone()).collect();
             let spawned: Vec<String> = spawned(task).iter().map(|s| quoted(s)).collect();
             // A frame `goto` moves shows where it goes on.
             if let (Some((_, line)), Some(first)) =
@@ -3328,7 +3351,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 true => String::new(),
                 false => format!(",\"spawned\":[{}]", spawned.join(",")),
             };
-            format!("{{\"stack\":[{}],\"pcs\":[{}]{spawned}}}", frames.join(","), pcs.join(","))
+            format!("{{\"stack\":[{}]{spawned}}}", frames.join(","))
         }
         "snapshot" => match snapshot(table) {
             Ok(answer) => answer,
@@ -3985,7 +4008,8 @@ fn line_sites(table: &Table, at: &str) -> Result<Vec<usize>, String> {
             files.into_iter().collect::<Vec<_>>().join(", ")
         ));
     };
-    Ok(table.sites.iter().enumerate().filter(|(_, s)| matches(s) && s.line == found).map(|(i, _)| i).collect())
+    let starts = |site: &Site| matches(site) && site.line == found && !site.goes_on;
+    Ok(table.sites.iter().enumerate().filter(|(_, s)| starts(s)).map(|(i, _)| i).collect())
 }
 
 /// The probes where the functions called `name` start: by their whole
@@ -4045,9 +4069,8 @@ fn locals_of(table: &Table, frames: &[Frame], index: usize, task: u64) -> Vec<St
     let items = visible(table, frames, index)
         .into_iter()
         .zip(&shown)
-        .map(|((binding, address, from), (_, whole))| {
+        .map(|((binding, _, from), (_, whole))| {
             let mut from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
-            from.push_str(&format!(",\"memory\":{}", memory_of(binding, address)));
             // A view opens to its value as it is, too.
             if binding.raw.is_some() {
                 from.push_str(",\"viewed\":true");

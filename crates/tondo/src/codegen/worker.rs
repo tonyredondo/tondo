@@ -30,7 +30,7 @@ enum Asked {
     DebugFunction(String, Vec<DebugBinding>),
     FunctionSites,
     Attention,
-    DebugSite(u32, u32),
+    DebugSite(u32, u32, bool),
     PointSite(u32, u32),
     PointLayout(u32, StateLayout),
     Counter(Counted),
@@ -335,8 +335,8 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         self.shared.live?;
         Some((DataId::from_u32(self.ask(Asked::FunctionSites)), 0))
     }
-    fn debug_site(&mut self, start: u32, function: u32) -> usize {
-        self.ask(Asked::DebugSite(start, function));
+    fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize {
+        self.ask(Asked::DebugSite(start, function, goes_on));
         self.sites += 1;
         self.sites - 1
     }
@@ -393,8 +393,8 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
             }
             Asked::FunctionSites => Gen::function_sites(cg).expect("a live build").0.as_u32(),
             Asked::Attention => Gen::attention(cg).as_u32(),
-            Asked::DebugSite(start, function) => {
-                let index = Gen::debug_site(cg, start, function);
+            Asked::DebugSite(start, function, goes_on) => {
+                let index = Gen::debug_site(cg, start, function, goes_on);
                 first_site.get_or_insert(index);
                 0
             }

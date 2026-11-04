@@ -1137,7 +1137,9 @@ struct Codegen<'a> {
     debug_functions: Vec<(String, Vec<DebugBinding>)>,
     /// Where each debug function's slots are, by its number.
     debug_slots: HashMap<u32, (i64, i64)>,
-    debug_sites: Vec<(u32, u32)>,
+    /// A debug build's probes: where each is, its function, and whether its
+    /// line goes on there from the code before.
+    debug_sites: Vec<(u32, u32, bool)>,
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
@@ -1341,6 +1343,26 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
     let signature = cg.function_signature(func);
     let signature = fb.import_signature(signature);
     fb.ins().call_indirect(signature, code, args)
+}
+
+/// For each block, the block before it when only one jumps to it.
+fn only_before(blocks: &[crate::mir::BlockData]) -> Vec<Option<usize>> {
+    let mut before: Vec<(usize, Option<usize>)> = vec![(0, None); blocks.len()];
+    let mut jump = |from: usize, to: &crate::mir::BlockId| {
+        let target = &mut before[to.0 as usize];
+        *target = (target.0 + 1, Some(from));
+    };
+    for (index, block) in blocks.iter().enumerate() {
+        match &block.terminator {
+            Terminator::Goto(next) => jump(index, next),
+            Terminator::Branch(_, then, otherwise) => {
+                jump(index, then);
+                jump(index, otherwise);
+            }
+            _ => {}
+        }
+    }
+    before.into_iter().map(|(count, from)| from.filter(|_| count == 1)).collect()
 }
 
 /// A binding a debug build's probe shows: its name, its type and the glue
@@ -1816,7 +1838,7 @@ trait Gen<'t> {
     /// first site, and that number.
     fn function_sites(&mut self) -> Option<(DataId, usize)>;
     /// A probe of the function `function` at `start`: its site's number.
-    fn debug_site(&mut self, start: u32, function: u32) -> usize;
+    fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize;
     /// The number of the site `index`, as an instruction's constant.
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
     /// In a live build, the site of the probe of a point of the function.
@@ -1986,8 +2008,8 @@ impl<'t> Gen<'t> for Codegen<'t> {
         self.live.as_mut().expect("a live build").sites.push((id, self.current, first));
         Some((id, first))
     }
-    fn debug_site(&mut self, start: u32, function: u32) -> usize {
-        self.debug_sites.push((start, function));
+    fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize {
+        self.debug_sites.push((start, function, goes_on));
         self.debug_sites.len() - 1
     }
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
@@ -2747,9 +2769,9 @@ impl Codegen<'_> {
         for layout in layouts {
             text.push_str(&format!("D\t{layout}\n"));
         }
-        for &(start, function) in &self.debug_sites {
+        for &(start, function, goes_on) in &self.debug_sites {
             let (file, line, _) = self.sources.position(start);
-            text.push_str(&format!("S\t{file}\t{line}\t{function}\n"));
+            text.push_str(&format!("S\t{file}\t{line}\t{function}\t{}\n", u8::from(goes_on)));
         }
         let text = self.string(&text);
         let array = self.module.declare_data("tondo_debug_glue", Linkage::Local, false, false).expect("debug glue");
@@ -4621,6 +4643,8 @@ struct DebugFrame {
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
     line: Option<(String, usize)>,
+    /// The line the only block that leads to this one ended in.
+    before: Option<(String, usize)>,
     /// The site of the last probe.
     site: usize,
 }
@@ -4714,7 +4738,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let alive = fb.create_sized_stack_slot(slot(words * 8, 0));
             let addresses = fb.create_sized_stack_slot(slot((count.max(1) * 8) as u32, 1));
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, captured, alive, addresses, line: None, site: 0 }
+            DebugFrame { function, first, shown, captured, alive, addresses, line: None, before: None, site: 0 }
         });
         FnCodegen {
             e: Emit { cg, fb },
@@ -4803,6 +4827,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.ways.entry((way.block.0 as usize, way.at)).or_default().push(n);
             }
         }
+        // The block that alone leads to each, and the line each ended in.
+        let from = only_before(&self.body.blocks);
+        let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
         for (index, block) in self.body.blocks.iter().enumerate() {
             self.scope = self.body.scopes.get(index).copied().flatten();
             if index > 0 {
@@ -4820,6 +4847,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // the statement goes on in only takes it.
                 self.carrying =
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
+                // Code that only follows the one before goes on in its line,
+                // as after a call that may panic: its probe sees the line
+                // go on, for what it changed, and stops nobody there.
+                debug.before = from[index].and_then(|before| ended[before].clone());
             }
             let returns = matches!(block.terminator, Terminator::Return(_));
             let last_resume = block.stmts.iter().rposition(resumes);
@@ -4861,6 +4892,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 None => self.terminator(&block.terminator),
             }
+            ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
         }
         self.e.fb.seal_all_blocks();
         let config = self.e.cg.isa().frontend_config();
@@ -5472,6 +5504,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let Some(mut debug) = self.debug.take() else { return };
         let (file, line, _) = self.e.cg.sources().position(span.start);
         if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
+            let goes_on = debug.before.take().is_some_and(|before| before == (file.clone(), line));
             debug.line = Some((file, line));
             // The line's code starts here, which the DWARF says.
             let start = self.site(span.start, None);
@@ -5507,7 +5540,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index * 8);
                 }
             }
-            let index = self.e.cg.debug_site(span.start, debug.function);
+            let index = self.e.cg.debug_site(span.start, debug.function, goes_on);
             debug.site = index;
             let (site, addresses, alive) = self.debug_place(&debug);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);

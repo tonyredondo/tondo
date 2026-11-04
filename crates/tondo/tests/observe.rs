@@ -2125,6 +2125,22 @@ fn debugger_compares_two_recorded_runs() {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let parted = compared(&good, &bad);
+    if parted["parted"] != true {
+        // What each replay does, when they seem the same.
+        for run in [&good, &bad] {
+            let mut debugger = Command::new(tondo)
+                .args(["debug", "--replay", run])
+                .current_dir(&dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let commands = "continue\nstack\nquit\n";
+            std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+            eprintln!("{run}: {:?}", debugger.wait_with_output().unwrap());
+        }
+    }
     assert_eq!(parted["parted"], true, "{parted}");
     assert_eq!(parted["after"], "flaky.to:12 in main", "{parted}");
     assert_eq!(parted["first"]["at"], "flaky.to:15 in main", "{parted}");
@@ -2707,6 +2723,27 @@ fn debug_adapter_opens_the_recordings_of_children() {
     followed.stop();
     adapter.until("terminated");
     adapter.stop();
+}
+
+#[test]
+fn a_line_stops_once_however_many_blocks_it_takes() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.http\n\nfn main(): !http.HttpError {\n    var app = http.App.new()\n    app.get(\n        \"/hit\",\n        (_) {\n            let s = 1\n            http.Reply.text(\"hit {s}\")\n        },\n    )\n    let reply = app.client().get(\"/hit\")?\n    console.println(\"{reply.status()}\")\n}\n";
+    std::fs::write(dir.join("once.to"), program).unwrap();
+    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "once.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "break once.to:10\ncontinue\ncontinue\ncontinue\ncontinue\nquit\n";
+    std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
+    assert!(text.contains("200"), "{text}");
 }
 
 #[test]
