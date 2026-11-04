@@ -3179,7 +3179,9 @@ pub fn App.listen(
 ): !HttpError {
     let listening = bound(host, port, tls, socket, limits)?
     let (heard, asked) = channel[__process.Signal](1)
-    spawn detached drainWhenAsked(listening, grace, heard)
+    // Before the task starts: a signal that comes first finds who hears it.
+    let signals = __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate)
+    spawn detached drainWhenAsked(listening, grace, heard, signals)
     serve(listening, self.pipeline())
     match asked.receive(timeout: __time.seconds(0)) {
         some(signal) => {
@@ -3196,20 +3198,17 @@ fn drainWhenAsked(
     listening: httpNative.Native,
     grace: __time.Duration,
     heard: Sender[__process.Signal],
+    signals: Receiver[__process.Signal],
 ) {
-    match askedToEnd() {
+    // The first `Interrupt` or `Terminate`: the channel goes with this call,
+    // so that the next ends the program at once.
+    match signals.receive() {
         some(signal) => {
             heard.send(signal)
             httpNative.serverStop(listening, grace.milliseconds())
         }
         none => {}
     }
-}
-
-/// The first `Interrupt` or `Terminate`. The channel goes with the call,
-/// so that the next ends the program at once.
-fn askedToEnd(): __process.Signal? {
-    __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate).receive()
 }
 
 /// Starts serving in a task of its own, for a program that goes on, such
