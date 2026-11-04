@@ -1857,6 +1857,37 @@ unsafe fn switched_out(task: *mut Task) -> Option<(usize, (usize, usize))> {
     }
 }
 
+/// The tasks that are not running on this thread, each where it stands:
+/// its id, the frame pointer of the place it stopped in, and its stack.
+pub(crate) fn standing() -> Vec<(u64, usize, (usize, usize))> {
+    let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    let me = current();
+    let mut out = Vec::new();
+    for task in all.into_iter().filter(|&task| task != me) {
+        let shown = unsafe { &*task };
+        let Some(stack) = shown.stack.as_ref() else { continue };
+        let bounds = (stack.base as usize + GUARD, stack.top() as usize);
+        let paused = runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task);
+        let in_c = callers.iter().find(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task);
+        let frame = if let Some(caller) = in_c {
+            let depth = (caller.depth.load(Ordering::SeqCst) - 1).min(caller.frames.len() - 1);
+            caller.frames[depth].load(Ordering::Relaxed)
+        } else if let Some(runner) = paused {
+            runner.frame.load(Ordering::SeqCst)
+        } else {
+            match unsafe { switched_out(task) } {
+                Some((frame, _)) => frame,
+                None => continue,
+            }
+        };
+        out.push((shown.id, frame, bounds));
+    }
+    out.sort_by_key(|&(id, ..)| id);
+    out
+}
+
 /// Where the task `id` was spawned, the return addresses of each spawn,
 /// innermost first, then where its spawner was, and on.
 pub(crate) fn spawned_at(id: u64) -> Vec<usize> {

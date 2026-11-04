@@ -1381,6 +1381,148 @@ static CHECKPOINT_LOOK: AtomicU64 = AtomicU64::new(0);
 /// faster than the time does.
 const PROBES: u64 = 1 << 22;
 
+/// How far into a value a dump keeps its parts, and how many of each.
+const DUMPED_DEPTH: usize = 4;
+const DUMPED_PARTS: usize = 100;
+/// How long a dump takes to show the bindings, and how many that break it
+/// it goes past.
+const DUMPING: std::time::Duration = std::time::Duration::from_secs(3);
+const BROKEN: usize = 16;
+
+/// This process is the copy of the program that shows a dump's bindings.
+static RENDERING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn rendering() -> bool {
+    RENDERING.load(Ordering::Relaxed)
+}
+
+/// The parts of a value as a dump keeps them, to open it afterwards.
+fn dumped_parts(text: &str, depth: usize) -> String {
+    let part = |(name, part): &(String, super::shown::Part)| {
+        let parts = dumped_parts(part.text, depth - 1);
+        format!("{{\"name\":{},\"value\":{},\"parts\":{parts}}}", quoted(name), quoted(&clipped(part.text)))
+    };
+    let parts = match depth {
+        0 => Vec::new(),
+        _ => super::shown::parse(text).parts.iter().take(DUMPED_PARTS).map(part).collect(),
+    };
+    format!("[{}]", parts.join(","))
+}
+
+/// The frame of the code at `pc`, whose frame pointer is `fp`.
+fn frame_at(table: &Table, pc: usize, fp: usize) -> Option<Frame> {
+    let code = super::trace::describe(pc + 1)?;
+    let (file, line) = code.at?;
+    let function = table.functions.iter().position(|f| f.name == code.function)?;
+    let (addressed, living) =
+        table.offsets.get(function).map(|(a, l)| (a.load(Ordering::Relaxed), l.load(Ordering::Relaxed)))?;
+    let (addresses, alive) = match addressed {
+        UNKNOWN => (0, 0),
+        _ => ((fp as isize + addressed) as usize, (fp as isize + living) as usize),
+    };
+    let place = format!("{file}:{line} in {}", code.function);
+    Some(Frame { place, function: Some(function), pointer: fp, addresses, alive, pc })
+}
+
+/// The bindings of every frame of every task, for a dump: a line of JSON
+/// each. Showing a value reads memory that may be broken, at a crash above
+/// all, and takes locks others may hold: a copy of the program does it,
+/// which may crash or hang without harm, and one that crashes goes on from
+/// the next binding. `here` is where this thread's task stands.
+pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Vec<String> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    let Some(table) = table() else { return Vec::new() };
+    let _outside = super::replay::Outside::enter();
+    let deadline = std::time::Instant::now() + DUMPING;
+    let (mut lines, mut skipped) = (Vec::new(), 0);
+    for _ in 0..BROKEN {
+        let mut ends = [0; 2];
+        if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+            break;
+        }
+        match unsafe { libc::fork() } {
+            -1 => break,
+            0 => {
+                unsafe { libc::close(ends[0]) };
+                render(&table, here, lines.len() + skipped, ends[1]);
+                unsafe { libc::_exit(0) };
+            }
+            pid => {
+                unsafe { libc::close(ends[1]) };
+                unsafe { libc::fcntl(ends[0], libc::F_SETFL, libc::O_NONBLOCK) };
+                let mut pipe = unsafe { std::fs::File::from_raw_fd(ends[0]) };
+                let (mut text, mut part, mut ended) = (Vec::new(), [0u8; 8192], false);
+                while !ended && std::time::Instant::now() < deadline {
+                    match pipe.read(&mut part) {
+                        Ok(0) => ended = true,
+                        Ok(read) => text.extend_from_slice(&part[..read]),
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            let mut ready = libc::pollfd { fd: ends[0], events: libc::POLLIN, revents: 0 };
+                            unsafe { libc::poll(&mut ready, 1, 50) };
+                        }
+                        Err(_) => ended = true,
+                    }
+                }
+                let mut status = 0;
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
+                }
+                // What came whole: a line cut short has no end.
+                let end = text.iter().rposition(|&b| b == b'\n').map_or(0, |at| at + 1);
+                let whole = text[..end].split(|&b| b == b'\n').filter(|line| !line.is_empty());
+                lines.extend(whole.map(|line| String::from_utf8_lossy(line).into_owned()));
+                // It ended by itself, or it stands at the binding that
+                // broke it: on past that one.
+                let done = libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+                if done || !ended {
+                    break;
+                }
+                skipped += 1;
+            }
+        }
+    }
+    lines
+}
+
+/// In the copy of the program, shows the bindings from the `from`th on,
+/// a line each on `out`.
+fn render(table: &Table, here: Option<(Option<usize>, usize, (usize, usize))>, from: usize, out: i32) {
+    RENDERING.store(true, Ordering::Relaxed);
+    for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
+        unsafe { libc::signal(signal, libc::SIG_DFL) };
+    }
+    let _quiet = super::heap::Quiet::enter();
+    let mut stops: Vec<(u64, Option<usize>, usize, (usize, usize))> =
+        here.into_iter().map(|(pc, fp, bounds)| (super::tasks::current_id(), pc, fp, bounds)).collect();
+    stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds)| (id, None, fp, bounds)));
+    let mut index = 0;
+    for (task, pc, frame, bounds) in stops {
+        let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: String::new() };
+        let mut stack = frames(table, &stop);
+        stack.splice(0..0, pc.and_then(|pc| frame_at(table, pc, frame)));
+        for at in 0..stack.len() {
+            for (binding, address, _) in visible(table, &stack, at) {
+                index += 1;
+                if index <= from {
+                    continue;
+                }
+                let text = shown_here(binding.show, address);
+                let line = format!(
+                    "{{\"task\":{task},\"frame\":{at},\"at\":{},\"name\":{},\"type\":{},\"value\":{},\"parts\":{}}}\n",
+                    quoted(&stack[at].place),
+                    quoted(&binding.name),
+                    quoted(&binding.ty),
+                    quoted(&clipped(&text)),
+                    dumped_parts(&text, DUMPED_DEPTH),
+                );
+                unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
+            }
+        }
+    }
+}
+
 /// A checkpoint at a probe of a replay that runs, when one is due: the
 /// debugger's state and connection held across the fork, so that the copy
 /// has none another thread held; the debugger hears where it is. A replay

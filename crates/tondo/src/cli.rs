@@ -215,8 +215,19 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
-        usage: &["tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]"],
+        usage: &[
+            "tondo dump read <file> [tasks | task <id> | locals [<task> [<frame>]] | print <path> [<task> [<frame>]]",
+            "                       | heap | objects | object <address>] [--json]",
+        ],
         summary: &["show a dump, as one written at a crash with", "TONDO_DUMP=<dir>"],
+    },
+    Command {
+        name: "dump",
+        usage: &["tondo dump diff <file> <file> [--json]"],
+        summary: &[
+            "what changed from one dump of a program to a later",
+            "one: memory by place, tasks, bindings, counters",
+        ],
     },
     Command {
         name: "dump",

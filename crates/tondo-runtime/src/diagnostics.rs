@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -587,6 +587,9 @@ pub(crate) fn start() {
         super::heap::prepare();
         hook(WATCHED);
     }
+    if !super::replay::on() {
+        schedule_dumps();
+    }
     // `tondo debug -- program` debugs that program, not those it starts.
     if debugged {
         unsafe { std::env::remove_var("TONDO_DEBUG") };
@@ -1004,9 +1007,12 @@ fn contexts_json(described: Vec<super::contexts::Described>) -> String {
 /// when `wait` says, so that the running tasks show where they are; `here`
 /// is the stack of this thread's own task.
 fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std::time::Duration>) -> String {
-    let (stopped, tasks, contexts) = super::cycles::without_collections(|| {
+    let (stopped, tasks, contexts, values) = super::cycles::without_collections(|| {
         let stopped = wait.is_some_and(super::tasks::stop_world);
+        let current = here.is_some();
         let tasks = super::tasks::snapshot(here);
+        // The bindings of the frames, while nothing moves.
+        let values = super::debugger::values(current.then(here_now));
         // Each task's contexts (language 11.16), the fields a `with` set:
         // not at a fault, where showing them could not allocate.
         let contexts: Vec<String> = tasks
@@ -1019,7 +1025,7 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         if stopped {
             super::tasks::resume_world();
         }
-        (stopped, tasks, contexts)
+        (stopped, tasks, contexts, values)
     });
     let (samples, dropped) = super::heap::alive();
     let mut frames = Frames::default();
@@ -1069,14 +1075,33 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let roots: Vec<String> = objects.roots.iter().map(|(task, to)| format!("[{task},{to}]")).collect();
         let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
     }
+    let _ = write!(out, ",\"values\":[{}]", values.join(","));
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     out
+}
+
+/// Where a fault stopped the program: its code, its frame and its stack.
+static FAULTED: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+pub(crate) fn faulted_at(pc: usize, fp: usize, (low, high): (usize, usize)) {
+    for (slot, value) in FAULTED.iter().zip([pc, fp, low, high]) {
+        slot.store(value, Ordering::SeqCst);
+    }
+}
+
+/// Where the task of this thread stands: at the fault that stopped it, or
+/// here. The code of a fault, its frame and its stack.
+fn here_now() -> (Option<usize>, usize, (usize, usize)) {
+    match FAULTED.each_ref().map(|slot| slot.load(Ordering::SeqCst)) {
+        [pc, fp, low, high] if pc != 0 => (Some(pc), fp, (low, high)),
+        _ => (None, super::trace::frame_pointer(), super::tasks::stack_bounds().unwrap_or((0, 0))),
+    }
 }
 
 /// With `TONDO_DUMP=<dir>`, a program that panics, faults or deadlocks
 /// leaves a dump there before it ends, named after it and its process.
 pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bool) {
-    let Some(dir) = std::env::var_os("TONDO_DUMP") else { return };
+    let Some(dir) = std::env::var_os("TONDO_DUMP").filter(|_| !super::debugger::rendering()) else { return };
     let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
     let name = format!("{}-{}.dump.json", program.unwrap_or_else(|| "tondo".into()), std::process::id());
     let path = PathBuf::from(dir).join(name);
@@ -1090,6 +1115,126 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
         Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
     };
+}
+
+/// `TONDO_DUMP_WHEN`: dumps by themselves in `TONDO_DUMP`: `every=5m`, or
+/// past `memory=512m` resident or `cpu=90` percent of a core, with no more
+/// than one a minute of those, keeping the `keep=10` last. Parts go by
+/// commas.
+struct Schedule {
+    every: Option<std::time::Duration>,
+    memory: Option<i64>,
+    cpu: Option<f64>,
+    keep: usize,
+}
+
+impl Schedule {
+    fn parse(text: &str) -> Result<Schedule, String> {
+        let mut schedule = Schedule { every: None, memory: None, cpu: None, keep: 10 };
+        for part in text.split(',').map(str::trim) {
+            let wrong = || format!("TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, cpu=90 or keep=10");
+            let (name, value) = part.split_once('=').ok_or_else(wrong)?;
+            match name {
+                "every" => schedule.every = Some(interval(value).ok_or_else(wrong)?),
+                "memory" => schedule.memory = Some(size(value).ok_or_else(wrong)?),
+                "cpu" => schedule.cpu = Some(value.parse().map_err(|_| wrong())?),
+                "keep" => schedule.keep = value.parse().map_err(|_| wrong())?,
+                _ => return Err(wrong()),
+            }
+        }
+        Ok(schedule)
+    }
+}
+
+/// `30s`, `5m` or `2h`.
+fn interval(text: &str) -> Option<std::time::Duration> {
+    let (count, unit) = text.split_at(text.find(|c: char| !c.is_ascii_digit())?);
+    let seconds = match unit {
+        "ms" => return Some(std::time::Duration::from_millis(count.parse().ok()?)),
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        _ => return None,
+    };
+    Some(std::time::Duration::from_secs(count.parse::<u64>().ok()? * seconds))
+}
+
+/// `512m` or `2g`.
+fn size(text: &str) -> Option<i64> {
+    let (count, unit) = text.split_at(text.find(|c: char| !c.is_ascii_digit())?);
+    let scale = match unit.to_ascii_lowercase().as_str() {
+        "k" => 1 << 10,
+        "m" => 1 << 20,
+        "g" => 1 << 30,
+        _ => return None,
+    };
+    Some(count.parse::<i64>().ok()? * scale)
+}
+
+/// The processor time the program used so far.
+fn processor_time() -> std::time::Duration {
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    let of = |time: libc::timeval| std::time::Duration::new(time.tv_sec as u64, time.tv_usec as u32 * 1000);
+    of(usage.ru_utime) + of(usage.ru_stime)
+}
+
+/// Starts the thread of `TONDO_DUMP_WHEN`, when it is set with `TONDO_DUMP`.
+fn schedule_dumps() {
+    let (Some(when), Some(dir)) = (std::env::var("TONDO_DUMP_WHEN").ok(), std::env::var_os("TONDO_DUMP")) else {
+        return;
+    };
+    let schedule = match Schedule::parse(&when) {
+        Ok(schedule) => schedule,
+        Err(message) => {
+            let _ = writeln!(std::io::stderr(), "tondo runtime: {message}");
+            return;
+        }
+    };
+    let _ = super::tasks::try_spawn_thread(Some(128 * 1024), move || dumps_on_schedule(schedule, PathBuf::from(dir)));
+}
+
+fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
+    retire_here();
+    let tick = std::time::Duration::from_secs(1).min(schedule.every.unwrap_or(std::time::Duration::MAX));
+    let least = std::time::Duration::from_secs(60);
+    let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
+    let program = program.unwrap_or_else(|| "tondo".into());
+    let mut written: std::collections::VecDeque<PathBuf> = Default::default();
+    let (mut number, mut used, mut measured) = (0, processor_time(), Instant::now());
+    let (mut last_timed, mut last_over) = (Instant::now(), None::<Instant>);
+    loop {
+        std::thread::sleep(tick);
+        let now = Instant::now();
+        let spent = processor_time();
+        let busy = (spent - used).as_secs_f64() / now.duration_since(measured).as_secs_f64().max(0.001) * 100.0;
+        (used, measured) = (spent, now);
+        let over = match (schedule.memory, schedule.cpu) {
+            (Some(most), _) if resident() > most => Some(format!("{} bytes resident, over {most}", resident())),
+            (_, Some(most)) if busy > most => Some(format!("{busy:.0}% of a core, over {most}%")),
+            _ => None,
+        };
+        let over = over.filter(|_| last_over.is_none_or(|at| now.duration_since(at) >= least));
+        let timed =
+            schedule.every.filter(|&every| now.duration_since(last_timed) >= every).map(|_| "on time".to_string());
+        let Some(why) = over.clone().or(timed) else { continue };
+        if over.is_some() {
+            last_over = Some(now);
+        } else {
+            last_timed = now;
+        }
+        number += 1;
+        let path = dir.join(format!("{program}-{}-{number}.dump.json", std::process::id()));
+        let text = dump("schedule", &why, None, Some(std::time::Duration::from_millis(100)));
+        if std::fs::write(&path, text).is_ok() {
+            written.push_back(path);
+        }
+        while written.len() > schedule.keep.max(1) {
+            if let Some(oldest) = written.pop_front() {
+                let _ = std::fs::remove_file(oldest);
+            }
+        }
+    }
 }
 
 /// Writes a dump of the program to `path`, as a debugger asks with the

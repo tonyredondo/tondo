@@ -1156,12 +1156,7 @@ type Recorded = (Vec<PathBuf>, Vec<(String, String)>);
 /// executable; those of the attempts that did not fail go, but for one of a
 /// test that also failed, which says where a run that passed and one that
 /// failed part: for each such test, its id and that.
-fn recorded(
-    recordings: &Path,
-    executable: &Path,
-    tree: &Tree,
-    attempts: &[Attempt],
-) -> Result<Recorded, String> {
+fn recorded(recordings: &Path, executable: &Path, tree: &Tree, attempts: &[Attempt]) -> Result<Recorded, String> {
     let tests = || attempts.iter().filter(|a| !tree.suite(a.node));
     let dir_of =
         |attempt: &Attempt| recordings.join(worker::recording(tree, attempt.node, attempt.iteration, attempt.round));

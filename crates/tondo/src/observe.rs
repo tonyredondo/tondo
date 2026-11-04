@@ -855,6 +855,41 @@ pub enum View {
     /// Every object of a debug build, by type, or one and what holds it.
     Objects,
     Object(String),
+    /// The bindings of a frame: of a task, the first with some by default.
+    Locals(Option<u64>, usize),
+    /// A binding or a part of one, as `user.name` or `items[2]`.
+    Print(String, Option<u64>, usize),
+}
+
+/// The frame of a dump's task that a view names.
+fn dump_frame<'a>(tasks: &'a [Value], task: Option<u64>, frame: usize) -> Result<&'a Value, String> {
+    let has_frames = |t: &&Value| t["frames"].as_array().is_some_and(|frames| !frames.is_empty());
+    let chosen = match task {
+        Some(id) => tasks.iter().find(|t| t["id"] == id).ok_or(format!("the dump has no task {id}"))?,
+        None => tasks.iter().find(has_frames).ok_or(NO_BINDINGS)?,
+    };
+    let frames = chosen["frames"].as_array().filter(|frames| !frames.is_empty()).ok_or(NO_BINDINGS)?;
+    let shown =
+        |frames: &[Value]| frames.iter().map(|f| f["at"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+    frames.get(frame).ok_or(format!("that task has bindings in these frames: {}", shown(frames).join(", ")))
+}
+
+const NO_BINDINGS: &str = "this dump has no bindings of that task: a task must have reached a line of the program";
+
+/// What a path names in a frame of a dump: a binding, then its parts, each
+/// by the name `.field`, `[2]` or `["key"]`.
+pub fn dumped_value<'a>(frame: &'a Value, path: &str) -> Option<&'a Value> {
+    let end = path.find(['.', '[']).unwrap_or(path.len());
+    let (name, mut rest) = path.split_at(end);
+    let bindings = frame["bindings"].as_array()?;
+    let mut value = bindings.iter().find(|binding| binding["name"] == name)?;
+    while !rest.is_empty() {
+        let parts = value["parts"].as_array()?;
+        let part = parts.iter().find(|part| part["name"].as_str().is_some_and(|name| rest.starts_with(name)))?;
+        rest = &rest[part["name"].as_str()?.len()..];
+        value = part;
+    }
+    Some(value)
 }
 
 /// `tondo dump read <file> [tasks | task <id> | heap] [--json]`.
@@ -885,6 +920,28 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
             }
             task_text(task, true)
         }
+        View::Locals(task, frame) => {
+            let frame = dump_frame(&tasks, task, frame)?;
+            if json {
+                return shown("locals", frame.clone());
+            }
+            let binding = |b: &Value| {
+                let text = |key: &str| b[key].as_str().unwrap_or_default().to_string();
+                format!("{}: {} = {}", text("name"), text("type"), text("value"))
+            };
+            let bindings = frame["bindings"].as_array().map_or(&[][..], Vec::as_slice);
+            let lines: Vec<String> = bindings.iter().map(binding).collect();
+            format!("{}\n{}", frame["at"].as_str().unwrap_or_default(), lines.join("\n"))
+        }
+        View::Print(path_of, task, frame) => {
+            let frame = dump_frame(&tasks, task, frame)?;
+            let value = dumped_value(frame, &path_of)
+                .ok_or(format!("no binding or part `{path_of}` in {}", frame["at"].as_str().unwrap_or_default()))?;
+            if json {
+                return shown("value", value.clone());
+            }
+            value["value"].as_str().unwrap_or_default().to_string()
+        }
         View::Heap if json => return shown("heap", heap(&dump)),
         View::Heap => heap_text(&heap(&dump)),
         View::Objects | View::Object(_) if dump.get("objects").is_none() => {
@@ -907,6 +964,151 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
     };
     println!("{}", out.trim_end());
     Ok(())
+}
+
+/// `tondo dump diff <first> <second>`: what changed from one dump of a
+/// program to a later one: its memory by where it was made, its counters,
+/// its tasks, and the bindings of the frames both have.
+pub fn diff(first: &std::path::Path, second: &std::path::Path, json: bool) -> Result<(), String> {
+    let read = |path: &std::path::Path| -> Result<Value, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut dump: Value =
+            serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+        if dump.get("dump").is_none() {
+            return Err(format!("{} is not a dump of a Tondo program", path.display()));
+        }
+        name_frames(&mut dump);
+        Ok(dump)
+    };
+    let (a, b) = (read(first)?, read(second)?);
+    let found = dumps_differ(&a, &b);
+    if json {
+        crate::cli::print_json("dump-diff", true, found);
+    } else {
+        println!("{}", diff_text(&found).trim_end());
+    }
+    Ok(())
+}
+
+fn dumps_differ(a: &Value, b: &Value) -> Value {
+    // The counters that moved.
+    let before = |name: &Value| a["counters"].as_array()?.iter().find(|c| c["name"] == *name)?["value"].as_f64();
+    let counters: Vec<Value> = b["counters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|counter| {
+            let (old, new) = (before(&counter["name"])?, counter["value"].as_f64()?);
+            (old != new)
+                .then(|| json!({ "name": counter["name"], "before": old, "after": new, "unit": counter["unit"] }))
+        })
+        .collect();
+    // The memory by the place that made it, what grew the most first.
+    let places = |dump: &Value| -> std::collections::HashMap<String, f64> {
+        let heap = heap(dump);
+        let sites = heap["sites"].as_array().cloned().unwrap_or_default();
+        let key = |site: &Value| {
+            format!("{} at {}", site["kind"].as_str().unwrap_or_default(), site["site"].as_str().unwrap_or_default())
+        };
+        sites.iter().map(|site| (key(site), site["bytes"].as_f64().unwrap_or(0.0))).collect()
+    };
+    let (was, now) = (places(a), places(b));
+    let mut memory: Vec<(String, f64)> = was
+        .keys()
+        .chain(now.keys())
+        .map(|place| (place.clone(), now.get(place).copied().unwrap_or(0.0) - was.get(place).copied().unwrap_or(0.0)))
+        .filter(|(_, grew)| *grew != 0.0)
+        .collect();
+    memory.sort_by(|x, y| y.1.abs().total_cmp(&x.1.abs()).then(x.0.cmp(&y.0)));
+    memory.dedup_by(|x, y| x.0 == y.0);
+    let memory: Vec<Value> = memory.iter().map(|(place, grew)| json!({ "place": place, "bytes": grew })).collect();
+    // The tasks: those that came, those that went, those that moved.
+    let (old, new) = (tasks(a), tasks(b));
+    let find = |list: &[Value], id: &Value| list.iter().find(|t| t["id"] == *id).cloned();
+    let brief = |t: &Value| json!({ "id": t["id"], "runs": t["runs"], "state": t["state"], "at": t["at"] });
+    let started: Vec<Value> = new.iter().filter(|t| find(&old, &t["id"]).is_none()).map(brief).collect();
+    let ended: Vec<Value> = old.iter().filter(|t| find(&new, &t["id"]).is_none()).map(brief).collect();
+    let mut moved = Vec::new();
+    let mut bindings = Vec::new();
+    for task in &new {
+        let Some(earlier) = find(&old, &task["id"]) else { continue };
+        if task["at"] != earlier["at"] || task["state"] != earlier["state"] {
+            moved.push(json!({
+                "id": task["id"], "from": earlier["at"], "to": task["at"], "was": earlier["state"], "is": task["state"],
+            }));
+        }
+        for frame in task["frames"].as_array().into_iter().flatten() {
+            let then = earlier["frames"].as_array().into_iter().flatten().find(|f| f["at"] == frame["at"]);
+            let Some(then) = then else { continue };
+            for binding in frame["bindings"].as_array().into_iter().flatten() {
+                let same = then["bindings"].as_array().into_iter().flatten().find(|b| b["name"] == binding["name"]);
+                if let Some(same) = same.filter(|same| same["value"] != binding["value"]) {
+                    bindings.push(json!({
+                        "task": task["id"], "at": frame["at"], "name": binding["name"], "before": same["value"],
+                        "after": binding["value"],
+                    }));
+                }
+            }
+        }
+    }
+    let seconds = (b["time_ms"].as_f64().unwrap_or(0.0) - a["time_ms"].as_f64().unwrap_or(0.0)) / 1000.0;
+    json!({
+        "seconds": seconds, "memory": memory, "counters": counters, "started": started, "ended": ended,
+        "moved": moved, "bindings": bindings,
+    })
+}
+
+fn diff_text(found: &Value) -> String {
+    let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
+    let mut out = format!("{} later:\n", duration(found["seconds"].as_f64().unwrap_or(0.0)));
+    let signed = |n: f64| format!("{}{}", if n < 0.0 { "-" } else { "+" }, bytes(n.abs()));
+    if !list("memory").is_empty() {
+        out.push_str("memory, by where it was made:\n");
+    }
+    for place in list("memory").iter().take(20) {
+        out.push_str(&format!(
+            "  {} {}\n",
+            signed(place["bytes"].as_f64().unwrap_or(0.0)),
+            place["place"].as_str().unwrap_or_default()
+        ));
+    }
+    for (key, title) in [("started", "tasks that started:"), ("ended", "tasks that ended:")] {
+        if !list(key).is_empty() {
+            out.push_str(&format!("{title}\n"));
+        }
+        for task in list(key) {
+            let (runs, at) =
+                (task["runs"].as_str().unwrap_or_default(), task["at"].as_str().unwrap_or("nowhere known"));
+            out.push_str(&format!("  task {} ({runs}) at {at}\n", task["id"]));
+        }
+    }
+    if !list("moved").is_empty() {
+        out.push_str("tasks that moved:\n");
+    }
+    for task in list("moved") {
+        let at = |key: &str| task[key].as_str().unwrap_or("nowhere known").to_string();
+        out.push_str(&format!("  task {}: {} {} -> {} {}\n", task["id"], at("was"), at("from"), at("is"), at("to")));
+    }
+    if !list("bindings").is_empty() {
+        out.push_str("bindings that changed:\n");
+    }
+    for binding in list("bindings") {
+        let text = |key: &str| binding[key].as_str().unwrap_or_default().to_string();
+        out.push_str(&format!("  {} in {}: {} -> {}\n", text("name"), text("at"), text("before"), text("after")));
+    }
+    if !list("counters").is_empty() {
+        out.push_str("counters:\n");
+    }
+    for counter in list("counters") {
+        let number = |key: &str| counter[key].as_f64().unwrap_or(0.0);
+        out.push_str(&format!(
+            "  {}: {} -> {}\n",
+            counter["name"].as_str().unwrap_or_default(),
+            number("before"),
+            number("after")
+        ));
+    }
+    out
 }
 
 /// A dump as a debugger shows it after the fact (toolchain 7.6): its
@@ -981,10 +1183,23 @@ fn tasks(dump: &Value) -> Vec<Value> {
         let words = |list: &Value| -> Vec<String> {
             list.as_array().into_iter().flatten().flat_map(|a| frame_texts(dump, a)).collect()
         };
+        // The bindings of each frame, as the dump showed them.
+        let mut frames: Vec<Value> = Vec::new();
+        for value in dump["values"].as_array().into_iter().flatten().filter(|v| v["task"] == task["id"]) {
+            if frames.last().is_none_or(|last| last["frame"] != value["frame"]) {
+                frames.push(json!({ "frame": value["frame"], "at": value["at"], "bindings": [] }));
+            }
+            if let Some(bindings) = frames.last_mut().and_then(|last| last["bindings"].as_array_mut()) {
+                bindings.push(json!({
+                    "name": value["name"], "type": value["type"], "value": value["value"], "parts": value["parts"],
+                }));
+            }
+        }
         out.push(json!({
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
             "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
+            "frames": frames,
         }));
     }
     out

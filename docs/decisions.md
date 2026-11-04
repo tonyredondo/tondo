@@ -4975,3 +4975,20 @@ needs them: a value that came from a wait is seen there, on its line, and
 not at the next line of another task. What changes is that a probe whose
 line goes on from the only block before it says so, and breakpoints, `ran`
 and conditions leave it out.
+
+## A copy of the program shows a dump's bindings
+
+A dump is taken when the program is at its worst: memory may be broken and
+the thread that crashed may hold any lock. Showing a value runs the
+program's glue, and a crash there would lose the dump, so a `fork` of the
+program shows them, a line at a time down a pipe, and the dump keeps what
+arrives. A copy that crashes costs one binding, as the next copy starts past
+it, and one that hangs is killed at three seconds. Text with its parts goes
+in the dump rather than raw memory, so that a dump opens with no build and
+no knowledge of layouts, on another machine.
+
+## A failed end of a run writes what it held
+
+Copies of the program do not outlive a machine, and CI ends. So a failed
+`--last` run writes a report at once, while the copies are there: the last
+line, what every frame held, and where what that line reads came from.

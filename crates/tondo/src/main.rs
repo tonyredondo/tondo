@@ -1116,9 +1116,25 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 ["task", id] => {
                     tondo::observe::View::Task(id.parse().map_err(|_| usage("task takes a task's number"))?)
                 }
-                _ => return Err(usage("dump read shows tasks, task <id>, heap, objects or object <address>")),
+                ["locals", place @ ..] if place.len() < 3 => {
+                    let (task, frame) = dump_place(place).ok_or(usage("locals takes a task and a frame"))?;
+                    tondo::observe::View::Locals(task, frame)
+                }
+                ["print", path, place @ ..] if place.len() < 3 => {
+                    let (task, frame) =
+                        dump_place(place).ok_or(usage("print takes a task and a frame after the path"))?;
+                    tondo::observe::View::Print(path.to_string(), task, frame)
+                }
+                _ => {
+                    return Err(usage(
+                        "dump read shows tasks, task <id>, locals, print <path>, heap, objects or object <address>",
+                    ));
+                }
             };
             tondo::observe::read(Path::new(file), view, json).map(|()| ExitCode::SUCCESS)
+        }
+        ["diff", first, second] => {
+            tondo::observe::diff(Path::new(first), Path::new(second), json).map(|()| ExitCode::SUCCESS)
         }
         ["plugin", debugger] => tondo::observe::plugin(debugger, json).map(|()| ExitCode::SUCCESS),
         [name] if !name.starts_with('-') => tondo::observe::dump(name, None, json).map(|()| ExitCode::SUCCESS),
@@ -1127,6 +1143,16 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         _ => Err(usage("dump takes a running program, its process ID or its name, or `read <file>`")),
     }
+}
+
+/// A task and a frame of a dump, as `locals` and `print` take them.
+fn dump_place(place: &[&str]) -> Option<(Option<u64>, usize)> {
+    let task = match place.first() {
+        Some(task) => Some(task.parse().ok()?),
+        None => None,
+    };
+    let frame = place.get(1).map_or(Some(0), |frame| frame.parse().ok())?;
+    Some((task, frame))
 }
 
 /// Traces a running program, or one it starts.
@@ -2200,6 +2226,13 @@ fn record_run(
         ),
         Kept::Whole => eprintln!("tondo: the run is recorded in {shown}: `tondo debug --replay {shown}` runs it again"),
         Kept::Nothing => eprintln!("tondo: the run went well, and nothing of its end is kept"),
+    }
+    // What it can tell lasts longer than the copies: on disk, for CI.
+    if last.is_some() && !status.success() {
+        match tondo::debug::write_report(dir) {
+            Ok(report) => eprintln!("tondo: what the end of the run held is in {}", report.display()),
+            Err(message) => eprintln!("tondo: no report of the end of the run: {message}"),
+        }
     }
     // A program a signal ended, as a shell says it.
     use std::os::unix::process::ExitStatusExt;

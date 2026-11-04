@@ -702,6 +702,12 @@ program that panics, crashes or deadlocks leaves its dump there. The dump
 of a `--debug` build has every object: `objects` by type, and `object
 <address>` with what keeps it alive, `task 1 -> Map[...] -> String`.
 
+A dump keeps the bindings of every frame of every task: `tondo dump read
+<file> locals [<task> [<frame>]]` shows them, and `print user.name` a part,
+as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
+changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or
+`memory=512m`, `cpu=90` and `keep=10`, a program dumps by itself.
+
 ## Debugging
 
 `tondo debug app.to` builds it with `--debug` (unoptimized, with a probe at
@@ -758,7 +764,8 @@ fails, the oldest copy waits for an hour, or what `--hold 2h` says, and
 `tondo debug --replay rec` starts from it, with all of the above over those minutes. The copies live on
 that machine, so to take a recording elsewhere, as from CI, record it whole;
 its calls are compressed. A run that goes well keeps
-nothing, and one with threads of C is kept whole.
+nothing, and one with threads of C is kept whole. A run that fails also
+leaves `report.txt` in the directory: where it ended and what its frames held.
 
 A debug build has DWARF, on Linux and macOS, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a

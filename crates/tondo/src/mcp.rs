@@ -1148,14 +1148,31 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--output", "output");
             option(&mut argv, "--via", "via");
         }
+        "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_read" => {
             push(&["dump", "read", &args.need("file")?]);
             match args.text("view").as_deref().unwrap_or("summary") {
                 "summary" => {}
                 "task" => push(&["task", &args.need("task")?]),
                 "object" => push(&["object", &args.need("address")?]),
+                view @ ("locals" | "print") => {
+                    push(&[view]);
+                    if view == "print" {
+                        push(&[&args.need("path")?]);
+                    }
+                    if let Some(task) = args.text("task") {
+                        push(&[&task]);
+                        if let Some(frame) = args.text("frame") {
+                            push(&[&frame]);
+                        }
+                    }
+                }
                 view @ ("tasks" | "heap" | "objects") => push(&[view]),
-                other => return Err(format!("no view `{other}`: summary, tasks, task, heap, objects or object")),
+                other => {
+                    return Err(format!(
+                        "no view `{other}`: summary, tasks, task, locals, print, heap, objects or object"
+                    ));
+                }
             }
             push(&["--json"]);
         }
@@ -2070,13 +2087,22 @@ a running program, or of `command`, which it starts.",
         params: &[PROGRAM, VIA, ("output", "string", "The dump file to write.")],
     },
     Tool {
+        name: "dump_diff",
+        description: "What changed from one dump of a program to a later one: its memory by where it was made, \
+its tasks, the bindings of the frames both have, and its counters.",
+        kind: Kind::Reads,
+        params: &[("first", "string!", "The earlier dump."), ("second", "string!", "The later dump.")],
+    },
+    Tool {
         name: "dump_read",
         description: "Read a dump, as `dump` writes or a crash leaves with TONDO_DUMP=<dir>.",
         kind: Kind::Reads,
         params: &[
             ("file", "string!", "The dump."),
-            ("view", "string", "summary (by default), tasks, task, heap, objects or object."),
-            ("task", "integer", "The task the task view shows."),
+            ("view", "string", "summary (by default), tasks, task, locals, print, heap, objects or object."),
+            ("task", "integer", "The task the task, locals and print views show."),
+            ("frame", "integer", "The frame of that task the locals and print views show: 0 by default."),
+            ("path", "string", "What the print view shows: a binding or a part of one, as user.name or items[2]."),
             ("address", "string", "The object the object view shows."),
         ],
     },

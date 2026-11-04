@@ -2730,6 +2730,107 @@ fn debug_adapter_opens_the_recordings_of_children() {
 }
 
 #[test]
+fn a_dump_keeps_the_bindings_of_its_frames() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-bindings");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "type User = {\n    name: String\n    tags: Array[String]\n}\n\nfn check(user: User, limit: Int) {\n    let over = user.tags.length() - limit\n    if over > 0 {\n        panic(\"too many by {over}\")\n    }\n}\n\nfn main() {\n    let list = [User { name: \"ana\", tags: [\"a\", \"b\", \"c\"] }]\n    var checked = 0\n    for user in list {\n        check(user, 1)\n        checked = checked + 1\n    }\n}\n";
+    std::fs::write(dir.join("told.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo)
+        .args(["build", "told.to", "--debug", "--output", "told"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("told")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let dump = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|f| f.path())
+        .find(|p| p.to_string_lossy().ends_with(".dump.json"))
+        .unwrap();
+    let read = |view: &[&str]| {
+        let args = [&["dump", "read", dump.to_str().unwrap()], view].concat();
+        let output = Command::new(tondo).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let locals = read(&["locals"]);
+    assert!(locals.starts_with("told.to:9 in check"), "{locals}");
+    assert!(locals.contains("over: Int = 2"), "{locals}");
+    assert!(locals.contains("limit: Int = 1"), "{locals}");
+    assert_eq!(read(&["print", "user.name"]).trim(), "\"ana\"");
+    assert_eq!(read(&["print", "user.tags[2]"]).trim(), "\"c\"");
+    // The frame below it, by its task.
+    let below = read(&["locals", "1", "1"]);
+    assert!(below.contains("checked: Int = 0"), "{below}");
+    assert_eq!(read(&["print", "list[0].tags[1]", "1", "1"]).trim(), "\"b\"");
+    // In the editor, as it opens the dump.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "dump": dump, "cwd": dir }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let frames = trace["stackFrames"].as_array().unwrap();
+    let frame = frames.iter().find(|f| f["name"] == "check").unwrap_or_else(|| panic!("{trace}"))["id"].clone();
+    let scopes = adapter.ask("scopes", json!({ "frameId": frame }));
+    assert_eq!(scopes["scopes"][0]["name"], "Bindings", "{scopes}");
+    let reference = scopes["scopes"][0]["variablesReference"].clone();
+    let variables = adapter.ask("variables", json!({ "variablesReference": reference }));
+    let user = variables["variables"].as_array().unwrap().iter().find(|v| v["name"] == "user").unwrap().clone();
+    let parts = adapter.ask("variables", json!({ "variablesReference": user["variablesReference"] }));
+    assert!(parts.to_string().contains("\\\"ana\\\""), "{parts}");
+    let value = adapter.ask("evaluate", json!({ "expression": "user.tags[0]", "frameId": frame }));
+    assert_eq!(value["result"], "\"a\"", "{value}");
+    adapter.stop();
+}
+
+#[test]
+fn dumps_come_on_a_schedule_and_differ() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-schedule");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    let program = "import std.time\n\nfn main() {\n    var items: Array[String] = []\n    var round = 0\n    for round < 45 {\n        for i in 0..500 {\n            items.push(\"item {round} {i}\")\n        }\n        round = round + 1\n        time.sleep(time.milliseconds(100))\n    }\n}\n";
+    std::fs::write(dir.join("grows.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo)
+        .args(["build", "grows.to", "--debug", "--output", "grows"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("grows"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .env("TONDO_DUMP_WHEN", "every=1s,keep=2")
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    let mut dumps: Vec<_> = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().map(|f| f.path()).collect();
+    dumps.sort_by_key(|dump| dump.metadata().unwrap().modified().unwrap());
+    assert_eq!(dumps.len(), 2, "{dumps:?}");
+    let diff = Command::new(tondo).arg("dump").arg("diff").args(&dumps).output().unwrap();
+    let text = String::from_utf8_lossy(&diff.stdout);
+    assert!(diff.status.success(), "{}", String::from_utf8_lossy(&diff.stderr));
+    assert!(text.contains("at grows.to:8 in main"), "{text}");
+    assert!(text.contains("round in grows.to:"), "{text}");
+    let wrong = Command::new(dir.join("grows"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .env("TONDO_DUMP_WHEN", "sometimes")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("every=5m"), "{wrong:?}");
+}
+
+#[test]
 fn a_line_stops_once_however_many_blocks_it_takes() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");
     let _ = std::fs::remove_dir_all(&dir);
@@ -2788,6 +2889,10 @@ fn a_recording_keeps_the_end_of_a_run() {
     assert!(said.contains("the end of the run is held in crash for 2m"), "{said}");
     // The start of the run went, with what recorded it.
     assert!(!dir.join("crash/calls").exists());
+    // What it held is on disk, for after the copies.
+    let report = std::fs::read_to_string(dir.join("crash/report.txt")).unwrap();
+    assert!(report.contains("the run ended in task 1, at crashes.to:14 in main"), "{report}");
+    assert!(report.contains("round = "), "{report}");
     let held = std::fs::read_to_string(dir.join("crash/held")).unwrap();
     let first: u64 = held.split(' ').next().unwrap().parse().unwrap();
     assert!(first > 0, "{held}");

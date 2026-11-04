@@ -277,7 +277,9 @@ tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--
 tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
 tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]
 tondo dump <pid|name> [--output <path>] [--json]
-tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
+tondo dump read <file> [tasks | task <id> | locals [<task> [<frame>]] | print <path> [<task> [<frame>]]
+                       | heap | objects | object <address>] [--json]
+tondo dump diff <file> <file> [--json]
 tondo dump plugin <lldb|gdb> [--json]
 tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
 tondo debug [--json] --test <id> [<project>]
@@ -766,6 +768,22 @@ Su `format` es `tondo-panic-0.1/1`, y sus campos, en orden alfabético:
 Sin la variable, o con otro valor, el informe es el de texto. El volcado de
 `TONDO_DUMP` describe su pánico con el mismo objeto.
 
+Un volcado guarda además las variables de cada frame de cada tarea, con sus
+partes hasta cuatro niveles y cien por nivel: las muestra una copia del programa
+hecha con `fork`, que puede romperse o colgarse sin dañar el volcado. Una variable
+que la rompe se salta y las demás siguen, y todo acaba en tres segundos.
+`dump read` las da con `locals [<tarea> [<frame>]]`, por defecto el primer frame
+de la primera tarea con variables, y con `print <ruta>`, como `user.name` o
+`items[2]`; `tondo dap` las abre en el ámbito `Bindings` y en `evaluate`.
+`tondo dump diff <a> <b>` dice qué cambió entre dos volcados de un programa: la
+memoria por sitio, las tareas que empezaron, acabaron o se movieron, las variables
+de los frames que están en ambos y los contadores.
+
+Con `TONDO_DUMP_WHEN` junto a `TONDO_DUMP` el programa se vuelca solo, sin parar:
+`every=5m` cada ese tiempo, `memory=512m` sobre esa memoria residente, `cpu=90`
+sobre ese porcentaje de un núcleo, y `keep=10` guarda los últimos diez, separados
+por comas. Lo que pasa de un umbral vuelca como mucho una vez por minuto.
+
 `dump read` muestra un volcado: sin más, un resumen, con por qué se tomó, la
 memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
 viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con
@@ -1134,6 +1152,9 @@ ejecución va bien, las copias y las llamadas se borran; si es más corta que la
 duración, queda entera. Un programa con threads de C no se copia, porque la
 copia los perdería, y queda entero también. Las grabaciones de hijos que no
 escribieron nada en esa duración se borran con lo demás.
+Si falla, `tondo run` deja además en el directorio `report.txt` y `report.json`:
+dónde acabó, las variables de cada frame allí y de dónde vino lo que lee su última
+línea, que duran más que las copias y se llevan a otra máquina, como desde CI.
 `tondo debug --compare <dir> <dir>` compara dos grabaciones del mismo
 ejecutable, como una que pasó y otra que falló, y `debug_compare` en el
 servidor MCP y *Compare Two Recordings* en el editor hacen lo mismo. Cada una
@@ -1545,7 +1566,8 @@ campos de su resultado:
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
-| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
+| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
+| `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
 | `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |

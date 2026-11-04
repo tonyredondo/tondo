@@ -1769,6 +1769,45 @@ pub fn compared(first: &Path, second: &Path) -> Result<Value, String> {
     }))
 }
 
+/// What a failed run's end can tell without a debugger, for as long as the
+/// copies that hold it last and after: where it ended, what every frame held
+/// there, and where what its last line reads came from. Written to
+/// `report.json` and `report.txt` of the recording.
+pub fn write_report(dir: &Path) -> Result<PathBuf, String> {
+    read_sources_of(dir);
+    let trail = trail_of(dir)?;
+    let last = trail.iter().filter_map(|(&task, lines)| lines.last().map(|line| (line.0, task))).max();
+    let (tick, task) = last.ok_or("the end of the run has no lines of the program")?;
+    let (at, there) = look_at(dir, tick)?;
+    let read = line_text(Path::new(""), &at).map_or(Vec::new(), |text| read_by(&text));
+    let origins: Vec<Value> = read
+        .iter()
+        .take(FOLLOWED)
+        .filter_map(|name| {
+            let found = origins_at(dir, tick, task, name)?;
+            Some(serde_json::json!({ "name": name, "why": found["why"], "at": found["at"], "causes": found["causes"] }))
+        })
+        .collect();
+    let report =
+        serde_json::json!({ "task": task, "tick": tick, "at": at, "frames": there["frames"], "origins": origins });
+    let mut text = format!("the run ended in task {task}, at {at} (probe {tick})\n");
+    for (frame, bindings) in report["frames"].as_object().into_iter().flatten() {
+        text.push_str(&format!("{frame}:\n"));
+        for (name, value) in bindings.as_object().into_iter().flatten() {
+            text.push_str(&format!("  {name} = {}\n", value.as_str().unwrap_or_default()));
+        }
+    }
+    for origin in &origins {
+        let (name, why) = (origin["name"].as_str().unwrap_or_default(), origin["why"].as_str().unwrap_or_default());
+        text.push_str(&format!("where `{name}` came from: {why}, at {}\n", origin["at"].as_str().unwrap_or_default()));
+        text.push_str(&origins_text(origin["causes"].as_array().map_or(&[][..], Vec::as_slice), "  "));
+    }
+    let cannot = |e: std::io::Error| format!("cannot write the report in {}: {e}", dir.display());
+    std::fs::write(dir.join("report.json"), serde_json::to_vec_pretty(&report).unwrap_or_default()).map_err(cannot)?;
+    std::fs::write(dir.join("report.txt"), text).map_err(cannot)?;
+    Ok(dir.join("report.txt"))
+}
+
 /// `compared` in words, naming the runs.
 pub fn compared_text(found: &Value, first: &Path, second: &Path) -> String {
     if found["parted"] != true {

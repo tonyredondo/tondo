@@ -482,7 +482,9 @@ pub(crate) fn here_compiled() -> Vec<(&'static str, &'static str, u32, u32)> {
         .collect()
 }
 
-/// The running task's stack from here.
+/// The running task's stack from here: from the function this inlines
+/// into, which it does whatever the compiler would choose.
+#[inline(always)]
 fn here() -> Walk {
     let fp = frame_pointer();
     walk(fp, crate::tasks::stack_bounds().unwrap_or((0, 0)))
@@ -1023,6 +1025,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
         };
         let frames = std::iter::once(pc).chain(first).chain(walk).collect();
+        crate::diagnostics::faulted_at(if in_c { link } else { pc }, fp, bounds);
         crate::diagnostics::crash_dump("fault", &message, frames, false);
         crate::debugger::crashed();
         // A recorded run ends here, its recording as it was.

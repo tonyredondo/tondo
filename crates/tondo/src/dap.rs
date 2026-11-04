@@ -383,7 +383,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 match observe::opened(&root.join(&path)) {
                     Ok((summary, tasks, heap)) => {
                         editor.event("output", json!({ "category": "console", "output": summary.clone() }));
-                        dumped = Some(Dumped { summary, tasks, heap, root });
+                        dumped = Some(Dumped { summary, tasks, heap, root, opened: Default::default() });
                         editor.respond(&request, Ok(json!({})));
                         editor.event("initialized", json!({}));
                         continue;
@@ -505,9 +505,31 @@ struct Dumped {
     tasks: Vec<Value>,
     heap: Value,
     root: PathBuf,
+    /// The bindings or parts each reference above `OPENED` opens to.
+    opened: std::cell::RefCell<Vec<Value>>,
 }
 
+/// References to what a dump's values open to start past those of tasks.
+const OPENED: u64 = 1 << 40;
+
 impl Dumped {
+    /// A reference to what `value`, a list, opens to.
+    fn open(&self, value: Value) -> u64 {
+        let mut opened = self.opened.borrow_mut();
+        opened.push(value);
+        OPENED + opened.len() as u64 - 1
+    }
+
+    /// What the dump holds of the frame at `index` of a task's stack: of its
+    /// frames with the same place, the one in the same order.
+    fn frame(&self, thread: u64, index: u64) -> Option<&Value> {
+        let task = self.tasks.iter().find(|t| t["id"] == thread)?;
+        let stack = task["stack"].as_array()?;
+        let place = stack.get(index as usize)?;
+        let before = stack[..index as usize].iter().filter(|line| *line == place).count();
+        task["frames"].as_array()?.iter().filter(|frame| frame["at"] == *place).nth(before)
+    }
+
     fn answer(&self, command: &str, arguments: &Value) -> Result<Value, String> {
         let task = |id: &Value| self.tasks.iter().find(|t| t["id"] == *id);
         match command {
@@ -555,15 +577,49 @@ impl Dumped {
                 Ok(json!({ "stackFrames": frames, "totalFrames": frames.len() }))
             }
             "scopes" => {
-                let (thread, _) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
-                Ok(json!({ "scopes": [
-                    { "name": "Task", "variablesReference": thread + 1, "expensive": false },
-                    { "name": "Memory", "variablesReference": 1, "expensive": false },
-                ] }))
+                let (thread, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
+                let mut scopes = vec![
+                    json!({ "name": "Task", "variablesReference": thread + 1, "expensive": false }),
+                    json!({ "name": "Memory", "variablesReference": 1, "expensive": false }),
+                ];
+                if let Some(frame) = self.frame(thread, index) {
+                    let reference = self.open(frame["bindings"].clone());
+                    scopes
+                        .insert(0, json!({ "name": "Bindings", "variablesReference": reference, "expensive": false }));
+                }
+                Ok(json!({ "scopes": scopes }))
+            }
+            // What the dump holds of a binding or part of the frame.
+            "evaluate" => {
+                let (thread, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
+                let path = arguments["expression"].as_str().unwrap_or_default().trim();
+                let frame = self.frame(thread, index).ok_or("this frame has no bindings in the dump")?;
+                let value = observe::dumped_value(frame, path)
+                    .ok_or(format!("the dump has no `{path}` here: it holds the bindings and their parts"))?;
+                let parts = &value["parts"];
+                let opens = parts.as_array().is_some_and(|parts| !parts.is_empty());
+                let reference = if opens { self.open(parts.clone()) } else { 0 };
+                Ok(json!({ "result": value["value"], "type": value["type"], "variablesReference": reference }))
             }
             // The memory by where it was made, or a task's state.
             "variables" => {
                 let reference = arguments["variablesReference"].as_u64().unwrap_or(0);
+                if reference >= OPENED {
+                    let list = self.opened.borrow().get((reference - OPENED) as usize).cloned().unwrap_or_default();
+                    let mut variables = Vec::new();
+                    for part in list.as_array().into_iter().flatten() {
+                        let parts = &part["parts"];
+                        let opens = parts.as_array().is_some_and(|parts| !parts.is_empty());
+                        let reference = if opens { self.open(parts.clone()) } else { 0 };
+                        let mut variable =
+                            json!({ "name": part["name"], "value": part["value"], "variablesReference": reference });
+                        if part["type"].is_string() {
+                            variable["type"] = part["type"].clone();
+                        }
+                        variables.push(variable);
+                    }
+                    return Ok(json!({ "variables": variables }));
+                }
                 let variables: Vec<Value> = if reference == 1 {
                     let sites = self.heap["sites"].as_array().cloned().unwrap_or_default();
                     sites
