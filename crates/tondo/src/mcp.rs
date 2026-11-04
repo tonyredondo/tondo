@@ -1038,6 +1038,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(dir) = args.text("record") {
                 argv.extend(["--record".into(), dir]);
             }
+            if let Some(last) = args.text("last") {
+                argv.extend(["--last".into(), last]);
+            }
             let program_args = args.list("args");
             if !program_args.is_empty() {
                 argv.push("--".into());
@@ -1937,6 +1940,11 @@ message, data, source and stack, as data.",
                 "string",
                 "A directory to record the run to: what each call to the system gave the program, which \
 `debug_start` with `replay` runs again, the same, to debug a failure that happened once.",
+            ),
+            (
+                "last",
+                "string",
+                "With `record`, keep only the end of the run, as 5m: a run that fails is held in memory for an hour, on this machine, and one that goes well keeps nothing.",
             ),
             STATIC,
             DEBUG,

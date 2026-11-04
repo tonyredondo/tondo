@@ -4948,3 +4948,20 @@ inside one needs a probe per expression.
 A long search of a replay is a process of its own, so `cancel` kills that
 process and the session stays where it was. The adapter reads the editor on
 a thread of its own for that, and only the searches can be cancelled.
+
+## The end of a run is held in copies of the program
+
+A recording is a log of calls, and a log only replays from a state: to drop
+its start, something must hold the program as it was at the first call kept.
+That state cannot be written to a file and read back without restoring a
+process, its C library and its threads included, which on macOS means the
+state of dyld and of Mach ports. `fork` already gives that state for the
+replay's checkpoints, so `--last` uses the same thing while recording: a
+copy sleeps at a probe, the calls after it go to a file of their own, and a
+replay is the copy going on with those files. Memory is shared with the
+program until either writes it, and the fork takes no time from the run but
+copying page tables. The price is that the end of a run lives in processes:
+it does not survive a reboot or a container, and CI has to record whole
+runs, which is why the calls are compressed too. A copy listens only once it
+is stopped and replaying: before, a debugger could reach it while it still
+recorded.

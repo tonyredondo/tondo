@@ -43,11 +43,13 @@ thread_local! {
     static INSIDE: Cell<bool> = const { Cell::new(false) };
 }
 
-const MAGIC: &[u8; 8] = b"TONDORR1";
+const MAGIC: &[u8; 8] = b"TONDORR2";
 
 /// What a recording holds, as it is written: the calls, each with its
 /// function, the probe it came after, its result, `errno` and the bytes it
-/// wrote where its arguments point.
+/// wrote where its arguments point. The file has them in blocks, each after
+/// how long it is and how long it is stored, compressed unless these are
+/// the same.
 struct Log {
     file: Option<std::fs::File>,
     buffer: Vec<u8>,
@@ -411,32 +413,31 @@ pub(crate) fn start() -> bool {
     if let Some(path) = std::env::var_os("TONDO_RT_RECORD").map(PathBuf::from).or(child) {
         unsafe { std::env::remove_var("TONDO_RT_RECORD") };
         directory_of(&path);
-        let file = std::fs::File::create(&path).unwrap_or_else(|e| {
+        let cannot = |e: std::io::Error| -> ! {
             super::runtime_fault(&format!("cannot record to {}: {e}", std::path::Path::new(&path).display()))
-        });
+        };
+        let mut file = std::fs::File::create(&path).unwrap_or_else(|e| cannot(e));
+        std::io::Write::write_all(&mut file, MAGIC).unwrap_or_else(|e| cannot(e));
         let mut log = log();
         log.file = Some(file);
-        log.buffer.extend_from_slice(MAGIC);
         MODE.store(RECORD, Ordering::Relaxed);
+        let last = std::env::var("TONDO_RT_RECORD_LAST").ok().and_then(|ms| ms.parse().ok()).unwrap_or(0);
+        unsafe { std::env::remove_var("TONDO_RT_RECORD_LAST") };
+        LAST.store(last, Ordering::Relaxed);
         unsafe extern "C" {
             fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
         }
         extern "C" fn flushed(_: *mut u8) {
-            flush();
+            store(true);
         }
         unsafe { __cxa_atexit(flushed, std::ptr::null_mut(), std::ptr::null_mut()) };
     } else if let Some(path) = std::env::var_os("TONDO_RT_REPLAY").map(PathBuf::from) {
         unsafe { std::env::remove_var("TONDO_RT_REPLAY") };
         directory_of(&path);
-        let recorded = std::fs::read(&path).unwrap_or_else(|e| {
-            super::runtime_fault(&format!("cannot read the recording {}: {e}", std::path::Path::new(&path).display()))
-        });
-        if !recorded.starts_with(MAGIC) {
-            super::runtime_fault("the file is not a recording of this tondo");
-        }
+        let recorded = calls_from(&path, 0).unwrap_or_else(|message| super::runtime_fault(&message));
         let mut log = log();
         log.recorded = recorded;
-        log.at = MAGIC.len();
+        log.at = 0;
         MODE.store(REPLAY, Ordering::Relaxed);
         let from = std::env::var("TONDO_RT_SHOWN_FROM").ok().and_then(|t| t.parse().ok()).unwrap_or(0);
         SHOWN_FROM.store(from, Ordering::Relaxed);
@@ -581,17 +582,182 @@ pub(crate) fn ending() {
     }
 }
 
-/// Writes what the recording holds so far.
+/// How much of its end a recording keeps, in milliseconds, or all of it.
+static LAST: AtomicU64 = AtomicU64::new(0);
+
+/// A copy of the program held at a probe, for `--last`: where the recording
+/// goes on from, in the segment it started; the start of the run is one, in
+/// no process.
+struct Copied {
+    tick: u64,
+    pid: i32,
+    segment: u32,
+    at: std::time::Instant,
+}
+
+static COPIES: Mutex<Vec<Copied>> = Mutex::new(Vec::new());
+/// The last time a copy was taken, which the next is due after.
+static TAKEN: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// The file of a segment of the recording: the first is `calls`.
+fn segment_path(calls: &Path, segment: u32) -> PathBuf {
+    match segment {
+        0 => calls.to_path_buf(),
+        _ => calls.with_extension(segment.to_string()),
+    }
+}
+
+/// The calls of a recording from a segment on, to its last.
+fn calls_from(calls: &Path, first: u32) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    for segment in first.. {
+        let path = segment_path(calls, segment);
+        let file = match std::fs::read(&path) {
+            Ok(file) => file,
+            Err(_) if segment > first => break,
+            Err(e) => return Err(format!("cannot read the recording {}: {e}", path.display())),
+        };
+        let blocks = file.strip_prefix(MAGIC).and_then(unpacked);
+        out.extend(blocks.ok_or("the file is not a recording of this tondo")?);
+    }
+    Ok(out)
+}
+
+/// Whether a copy of the program is due, as the end of the recording moves
+/// on, looked at every so many probes. A copy would lose threads of C, so a
+/// run that has them keeps it all.
+#[inline]
+pub(crate) fn copy_due() -> bool {
+    let last = LAST.load(Ordering::Relaxed);
+    if last == 0 || !TICKS.load(Ordering::Relaxed).is_multiple_of(1 << 12) || !PROGRAM.get() || threaded() {
+        return false;
+    }
+    let _outside = Outside::enter();
+    let now = std::time::Instant::now();
+    let mut taken = TAKEN.lock().unwrap_or_else(|e| e.into_inner());
+    let at = *taken.get_or_insert(now);
+    at != now && now.duration_since(at).as_millis() as u64 >= last / 2
+}
+
+/// A copy of the program here, and a new segment after it: `copied` runs in
+/// the copy, which only comes back to replay what follows, and takes the
+/// segment it starts at. Copies and segments the end of the run no longer
+/// needs go. The log is held across the fork, so that the copy has it free.
+pub(crate) fn copy(copied: impl FnOnce(u32)) {
+    let Some(calls) = RECORDING.get().map(|dir| dir.join("calls")) else { return };
+    store(true);
+    let mut held = COPIES.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    *TAKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(now);
+    if held.is_empty() {
+        held.push(Copied { tick: 0, pid: 0, segment: 0, at: now });
+    }
+    let segment = held.last().map_or(1, |last| last.segment + 1);
+    let Ok(mut file) = std::fs::File::create(segment_path(&calls, segment)) else { return };
+    if std::io::Write::write_all(&mut file, MAGIC).is_err() {
+        return;
+    }
+    let mut log = log();
+    let baton = baton();
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        drop(baton);
+        drop(file);
+        log.file = None;
+        drop(log);
+        drop(held);
+        unsafe { libc::setsid() };
+        copied(segment);
+        return;
+    }
+    drop(baton);
+    if pid < 0 {
+        return;
+    }
+    log.file = Some(file);
+    drop(log);
+    held.push(Copied { tick: TICKS.load(Ordering::Relaxed), pid, segment, at: now });
+    // The oldest goes once the next is old enough to cover the window.
+    let window = std::time::Duration::from_millis(LAST.load(Ordering::Relaxed));
+    while held.len() > 1 && now.duration_since(held[1].at) >= window {
+        let gone = held.remove(0);
+        if gone.pid != 0 {
+            unsafe {
+                libc::kill(gone.pid, libc::SIGKILL);
+                libc::waitpid(gone.pid, std::ptr::null_mut(), 0);
+            }
+            let _ = std::fs::remove_file(super::diagnostics::sockets().join(format!("{}.checkpoint", gone.pid)));
+        }
+        for segment in gone.segment..held[0].segment {
+            let _ = std::fs::remove_file(segment_path(&calls, segment));
+        }
+    }
+    let text: String = held.iter().map(|h| format!("{} {}\n", h.tick, h.pid)).collect();
+    let (list, written) = (calls.with_file_name("held"), calls.with_file_name("held.new"));
+    if std::fs::write(&written, text).is_ok() {
+        let _ = std::fs::rename(&written, list);
+    }
+}
+
+/// A copy goes on as a replay, of what was recorded since it was taken.
+pub(crate) fn replay_from(segment: u32, debugger: i32) {
+    let Some(calls) = RECORDING.get().map(|dir| dir.join("calls")) else { return };
+    let recorded = calls_from(&calls, segment).unwrap_or_else(|message| super::runtime_fault(&message));
+    let mut log = log();
+    log.recorded = recorded;
+    log.at = 0;
+    LAST.store(0, Ordering::Relaxed);
+    DEBUGGER.store(debugger, Ordering::Relaxed);
+    MODE.store(REPLAY, Ordering::Relaxed);
+}
+
+/// Writes what the recording holds so far, where a crash may have left
+/// anything held: as it is.
 pub(crate) fn flush() {
+    store(false);
+}
+
+/// Writes what the recording holds so far as a block, compressed if asked.
+fn store(compressed: bool) {
     use std::io::Write;
     let mut log = log();
     let Log { file, buffer, .. } = &mut *log;
-    if let Some(file) = file.as_mut() {
-        INSIDE.set(true);
-        let _ = file.write_all(buffer);
-        INSIDE.set(false);
+    if let Some(file) = file.as_mut().filter(|_| !buffer.is_empty()) {
+        let _outside = Outside::enter();
+        let packed = compressed.then(|| packed(buffer)).flatten().filter(|packed| packed.len() < buffer.len());
+        let stored = packed.as_ref().unwrap_or(buffer);
+        let _ = file.write_all(&(buffer.len() as u32).to_le_bytes());
+        let _ = file.write_all(&(stored.len() as u32).to_le_bytes());
+        let _ = file.write_all(stored);
         buffer.clear();
     }
+}
+
+fn packed(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(bytes).ok()?;
+    encoder.finish().ok()
+}
+
+/// The calls of the blocks of a recording; none if it is not one, but for a
+/// last block a crash cut short, which is lost as what it held would be.
+fn unpacked(mut blocks: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    while let Some((head, rest)) = blocks.split_first_chunk::<8>() {
+        let length = u32::from_le_bytes(head[..4].try_into().ok()?) as usize;
+        let stored = u32::from_le_bytes(head[4..].try_into().ok()?) as usize;
+        let Some((block, rest)) = rest.split_at_checked(stored) else { break };
+        match stored == length {
+            true => out.extend_from_slice(block),
+            false => {
+                flate2::read::DeflateDecoder::new(block).read_to_end(&mut out).ok()?;
+            }
+        }
+        blocks = rest;
+    }
+    Some(out)
 }
 
 /// The wrappers, in what `tondo` links on Linux, where the linker gives
@@ -867,7 +1033,7 @@ mod calls {
         let full = buffer.len() >= 1 << 20;
         drop(log);
         if full {
-            flush();
+            store(true);
         }
         unsafe { *errno() = error };
     }
@@ -1985,6 +2151,7 @@ mod calls {
             Here::Pass => unsafe { real(thread, attributes, start, argument) },
             Here::Record => {
                 record(ID, 0, &[]);
+                THREADED.store(true, Ordering::Relaxed);
                 start_it()
             }
             Here::Replay => {

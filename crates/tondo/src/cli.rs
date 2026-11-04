@@ -15,7 +15,8 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]",
             "          [--target <target>] [--diagnostic-format human|json] [-- <argument>...]",
-            "tondo run --record <recording> [<project>|<file.to>] [--link <library>]... [-- <argument>...]",
+            "tondo run --record <recording> [--last <duration>] [<project>|<file.to>] [--link <library>]...",
+            "          [-- <argument>...]",
         ],
         summary: &[
             "compile and run a program (under qemu for another",

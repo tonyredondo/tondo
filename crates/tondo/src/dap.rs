@@ -743,7 +743,15 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     let root =
         arguments["cwd"].as_str().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let replay = arguments["replay"].as_str().filter(|_| command == "launch").map(|dir| root.join(dir));
-    let (program, child, tested) = if let Some(dir) = &replay {
+    // A recording of the end of a run starts at a copy of the program.
+    let held = replay.as_deref().map(crate::debug::held_copy).transpose()?.flatten();
+    let mut copied = None;
+    let (program, child, tested) = if let (Some(dir), Some((_, pid))) = (&replay, held) {
+        let first = crate::debug::resumed(pid, 0, true, None)?;
+        let program = observe::started(&dir.join("program"), first.pid())?;
+        copied = Some(first);
+        (program, None, None)
+    } else if let Some(dir) = &replay {
         // A recorded run, again (`tondo debug --replay`).
         use std::os::unix::process::CommandExt;
         let (executable, mut command) = crate::debug::replayed(dir)?;
@@ -848,7 +856,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     // The streams of the program's output read to their end, which the
     // editor gets before it hears that the program ended.
     let drained = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
-    let streams = if child.is_some() { 2 } else { 0 };
+    let streams = if child.is_some() || copied.is_some() { 2 } else { 0 };
     let read_out = drained.clone();
     // What the program says: events go to the editor as they come; answers
     // to the command waiting for them.
@@ -866,11 +874,20 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         );
         forward(streams, &editor_events, &drained, tested);
     }
+    if let Some(crate::debug::Running::Forked(_, output)) = copied.as_mut()
+        && let Some((out, error)) = output.take()
+    {
+        let streams = (Some(Box::new(out) as Box<dyn Read + Send>), Some(Box::new(error) as Box<dyn Read + Send>));
+        forward(streams, &editor_events, &drained, tested);
+    }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
     if let Some(dir) = &replay {
         crate::debug::read_sources_of(dir);
     }
-    let replaying = replay.map(|dir| crate::debug::Replaying::for_editor(dir, root.clone()));
+    let mut replaying = replay.map(|dir| crate::debug::Replaying::for_editor(dir, root.clone()));
+    if let (Some(replaying), Some(first)) = (replaying.as_mut(), copied) {
+        replaying.take_over(first);
+    }
     let (handles, targets, kept, after) = (Vec::new(), Vec::new(), false, None);
     let mut debuggee =
         Debuggee { pid, writer, answers, child, root, handles, forgotten: 0, targets, pumped, replaying, kept, after };

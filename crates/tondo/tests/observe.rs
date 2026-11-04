@@ -2710,6 +2710,76 @@ fn debug_adapter_opens_the_recordings_of_children() {
 }
 
 #[test]
+fn a_recording_keeps_the_end_of_a_run() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-last");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body = "import std.console\nimport std.time\n\nfn main() {\n    let start = time.now()\n    var round = 0\n    for start.elapsed() < time.milliseconds(1000) {\n        round = round + 1\n        if round % 2000 == 0 {\n            time.sleep(time.milliseconds(1))\n        }\n    }\n    console.println(\"rounds {round}\")\n";
+    std::fs::write(dir.join("crashes.to"), format!("{body}    panic(\"the end\")\n}}\n")).unwrap();
+    std::fs::write(dir.join("ends.to"), format!("{body}}}\n")).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let run = |name: &str, file: &str| {
+        let args = ["run", "--record", name, "--last", "200ms", file];
+        Command::new(tondo).args(args).current_dir(&dir).output().unwrap()
+    };
+    let ran = run("crash", "crashes.to");
+    assert!(!ran.status.success());
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(said.contains("the end of the run is held in crash"), "{said}");
+    // The start of the run went, with what recorded it.
+    assert!(!dir.join("crash/calls").exists());
+    let held = std::fs::read_to_string(dir.join("crash/held")).unwrap();
+    let first: u64 = held.split(' ').next().unwrap().parse().unwrap();
+    assert!(first > 0, "{held}");
+    // Twice: a copy stays for the next one.
+    for _ in 0..2 {
+        let mut debugger = Command::new(tondo)
+            .args(["debug", "--replay", "crash"])
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let commands = "continue\nprint round\nback\ntick\nfirst round > 0\nquit\n";
+        std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+        let output = debugger.wait_with_output().unwrap();
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains(&format!("the recording keeps the run from probe {first} on")), "{text}");
+        assert!(text.contains("the end"), "{text}");
+        assert!(text.contains("round: Int = "), "{text}");
+    }
+    // The editor starts from it too, and goes on to the panic.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "replay": "crash", "cwd": dir }));
+    adapter.ask("setExceptionBreakpoints", json!({ "filters": ["panic"] }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "exception", "{stopped}");
+    adapter.ask("stepBack", json!({ "threadId": stopped["threadId"] }));
+    adapter.until("stopped");
+    adapter.stop();
+    for pid in held.lines().filter_map(|line| line.split_once(' ')?.1.parse::<i32>().ok()) {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    // One that goes well leaves nothing behind.
+    let ran = run("end", "ends.to");
+    assert!(ran.status.success());
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(said.contains("the run went well"), "{said}");
+    let held = std::fs::read_to_string(dir.join("end/held")).unwrap();
+    for pid in held.lines().filter_map(|line| line.split_once(' ')?.1.parse::<i32>().ok()) {
+        assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "{held}");
+    }
+    let debugger = Command::new(tondo).args(["debug", "--replay", "end"]).current_dir(&dir).output().unwrap();
+    assert!(String::from_utf8_lossy(&debugger.stderr).contains("are gone"), "{debugger:?}");
+}
+
+#[test]
 fn debug_adapter_cancels_a_long_search() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;

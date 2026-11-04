@@ -271,6 +271,9 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         }
         _ => None,
     };
+    // A recording of the end of a run starts at a copy of the program.
+    let held = replay.as_deref().map(held_copy).transpose()?.flatten();
+    let mut copied = None;
     let (program, mut child) = match debugged {
         Debugged::Test(executable, node, environment, schedule) => {
             use std::os::unix::process::CommandExt;
@@ -302,6 +305,12 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
             (observe::started(&executable, child.id())?, Some(child))
+        }
+        Debugged::Replayed(dir) if held.is_some() => {
+            let first = resumed(held.map_or(0, |(_, pid)| pid), 0, false, None)?;
+            let program = observe::started(&dir.join("program"), first.pid())?;
+            copied = Some(first);
+            (program, None)
         }
         Debugged::Replayed(dir) => {
             use std::os::unix::process::CommandExt;
@@ -343,9 +352,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         dir,
         root: PathBuf::new(),
         settings: Vec::new(),
-        current: child.take().map(Running::Started),
+        current: child.take().map(Running::Started).or(copied.take()),
         checkpoints: Vec::new(),
         piped: false,
+        held,
     });
     let attached = session.answer()?;
     if let Some(error) = attached["error"].as_str() {
@@ -362,8 +372,11 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         });
     }
     session.show(&attached);
-    if child.is_some() || replaying.is_some() {
-        session.wait_event();
+    match held {
+        Some((tick, _)) if !json => println!("the recording keeps the run from probe {tick} on, and stops there"),
+        Some(_) => {}
+        None if child.is_some() || replaying.is_some() => session.wait_event(),
+        None => {}
     }
     // A replay keeps checkpoints as it runs, to go back from.
     if replaying.is_some() {
@@ -714,6 +727,106 @@ pub(crate) fn search_cancelled() -> bool {
     SEARCH.lock().unwrap().1
 }
 
+/// A replay forked from a checkpoint, which shows what the program writes
+/// from probe `shown` on: to pipes the caller reads when `piped`, or here;
+/// nowhere when nothing shows, but for why it ended, in `report`.
+pub(crate) fn resumed(
+    checkpoint: u32,
+    shown: u64,
+    piped: bool,
+    report: Option<std::fs::File>,
+) -> Result<Running, String> {
+    use std::io::BufRead;
+    // A checkpoint just forked may not listen yet.
+    let path = observe::directory().join(format!("{checkpoint}.checkpoint"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let stream = loop {
+        match std::os::unix::net::UnixStream::connect(&path) {
+            Ok(stream) => break stream,
+            Err(_) if std::time::Instant::now() < deadline && unsafe { libc::kill(checkpoint as i32, 0) } == 0 => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(format!("the checkpoint {checkpoint} is gone: {e}")),
+        }
+    };
+    // What the replay writes goes where this one's does, to pipes the
+    // caller reads, or nowhere when nothing shows.
+    use std::os::fd::AsRawFd;
+    let cannot = |e: std::io::Error| e.to_string();
+    let (fds, output, _ends) = match (shown, piped) {
+        (u64::MAX, _) => {
+            let null = std::fs::OpenOptions::new().write(true).open("/dev/null").map_err(cannot)?;
+            let errors = report.unwrap_or(null.try_clone().map_err(cannot)?);
+            (vec![null.as_raw_fd(), errors.as_raw_fd()], None, (Some((null, errors)), None))
+        }
+        (_, true) => {
+            let ((out, out_end), (error, error_end)) =
+                (std::io::pipe().map_err(cannot)?, std::io::pipe().map_err(cannot)?);
+            let fds = vec![out_end.as_raw_fd(), error_end.as_raw_fd()];
+            (fds, Some((out, error)), (None, Some((out_end, error_end))))
+        }
+        (_, false) => (vec![1, 2], None, (None, None)),
+    };
+    given(&stream, &format!("resume {shown} {}\n", std::process::id()), &fds).map_err(cannot)?;
+    let mut line = String::new();
+    std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
+    let pid = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
+    Ok(Running::Forked(pid, output))
+}
+
+/// Where a recording of the last of a run goes on from: the oldest of the
+/// copies of the program it held, which are the recording's start. None
+/// when it has its start.
+pub(crate) fn held_copy(dir: &Path) -> Result<Option<Checkpoint>, String> {
+    let Ok(held) = std::fs::read_to_string(dir.join("held")) else { return Ok(None) };
+    let copies: Vec<Checkpoint> = held
+        .lines()
+        .filter_map(|line| {
+            let (tick, pid) = line.split_once(' ')?;
+            Some((tick.parse().ok()?, pid.parse().ok()?))
+        })
+        .collect();
+    if copies.first().is_some_and(|&(_, pid)| pid == 0) {
+        return Ok(None);
+    }
+    let alive = copies.into_iter().find(|&(_, pid)| unsafe { libc::kill(pid as i32, 0) } == 0);
+    alive.map(Some).ok_or(format!(
+        "the copies of the program that held the end of {} are gone: they last an hour unused, on the machine it ran on, and end with a run that went well",
+        dir.display()
+    ))
+}
+
+/// What a recording of the end of a run has once the run ended.
+pub enum Kept {
+    /// Copies of the program, which go on from where the recording starts.
+    Copies,
+    /// All of the run, which was shorter than what it keeps.
+    Whole,
+    /// Nothing: the run went well, and there is nothing to look at.
+    Nothing,
+}
+
+/// Ends a recording of the end of a run, when the run ended: the copies of
+/// one that went well end, as its calls go.
+pub fn end_held(dir: &Path, well: bool) -> Kept {
+    let Ok(held) = std::fs::read_to_string(dir.join("held")) else { return Kept::Whole };
+    let whole = held.starts_with("0 0\n");
+    if !well {
+        return if whole { Kept::Whole } else { Kept::Copies };
+    }
+    let pids = held.lines().filter_map(|line| line.split_once(' ')?.1.parse::<u32>().ok());
+    pids.filter(|&pid| pid != 0).for_each(|pid| Running::Forked(pid, None).end());
+    if whole {
+        return Kept::Whole;
+    }
+    for file in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if file.file_name().to_string_lossy().starts_with("calls") {
+            let _ = std::fs::remove_file(file.path());
+        }
+    }
+    Kept::Nothing
+}
+
 /// A replay under the debugger: its recording, the commands that set how
 /// the program stops, the process the debugger talks to, and checkpoints:
 /// copies of a replay where it stopped, by the probe they are at.
@@ -730,6 +843,8 @@ pub(crate) struct Replaying {
     /// The test a recording of `tondo test --record` is of, whose frames
     /// say how it ended.
     pub(crate) test: Option<u32>,
+    /// The copy of the program a recording of the end of a run starts at.
+    held: Option<Checkpoint>,
 }
 
 /// A process of a replay: one the debugger started, or one a checkpoint
@@ -779,7 +894,7 @@ const ORIGINS: usize = 24;
 const ORIGINS_DEPTH: usize = 8;
 
 /// A checkpoint: the probe it is at, and its process.
-type Checkpoint = (u64, u32);
+pub(crate) type Checkpoint = (u64, u32);
 
 /// A replay that runs keeps a checkpoint once a second.
 pub(crate) const CHECKPOINTING: &str = "checkpoints 1000";
@@ -789,11 +904,11 @@ impl Replaying {
     /// from a checkpoint, with the debugger's settings; what it writes
     /// shows from probe `shown` on.
     fn start(&self, from: Option<(u64, u32)>, shown: u64, json: bool) -> Result<(Running, Session), String> {
-        use std::io::BufRead;
         use std::os::unix::process::CommandExt;
         if search_cancelled() {
             return Err(CANCELLED.to_string());
         }
+        let from = from.or(self.held);
         let (executable, mut command) = replayed(&self.dir)?;
         // One that only looks writes nothing, but for why it ended, if it
         // ends before the program does.
@@ -817,46 +932,7 @@ impl Replaying {
                     .spawn()
                     .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
             ),
-            Some((_, checkpoint)) => {
-                // A checkpoint just forked may not listen yet.
-                let path = observe::directory().join(format!("{checkpoint}.checkpoint"));
-                let deadline = std::time::Instant::now() + Duration::from_secs(5);
-                let stream = loop {
-                    match std::os::unix::net::UnixStream::connect(&path) {
-                        Ok(stream) => break stream,
-                        Err(_)
-                            if std::time::Instant::now() < deadline
-                                && unsafe { libc::kill(checkpoint as i32, 0) } == 0 =>
-                        {
-                            std::thread::sleep(Duration::from_millis(5));
-                        }
-                        Err(e) => return Err(format!("the checkpoint {checkpoint} is gone: {e}")),
-                    }
-                };
-                // What the replay writes goes where this one's does, to
-                // pipes the caller reads, or nowhere when nothing shows.
-                use std::os::fd::AsRawFd;
-                let cannot = |e: std::io::Error| e.to_string();
-                let (fds, output, _ends) = match (shown, self.piped || self.test.is_some()) {
-                    (u64::MAX, _) => {
-                        let null = std::fs::OpenOptions::new().write(true).open("/dev/null").map_err(cannot)?;
-                        let errors = report_file().unwrap_or(null.try_clone().map_err(cannot)?);
-                        (vec![null.as_raw_fd(), errors.as_raw_fd()], None, (Some((null, errors)), None))
-                    }
-                    (_, true) => {
-                        let ((out, out_end), (error, error_end)) =
-                            (std::io::pipe().map_err(cannot)?, std::io::pipe().map_err(cannot)?);
-                        let fds = vec![out_end.as_raw_fd(), error_end.as_raw_fd()];
-                        (fds, Some((out, error)), (None, Some((out_end, error_end))))
-                    }
-                    (_, false) => (vec![1, 2], None, (None, None)),
-                };
-                given(&stream, &format!("resume {shown}\n"), &fds).map_err(cannot)?;
-                let mut line = String::new();
-                std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
-                let pid = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
-                Running::Forked(pid, output)
-            }
+            Some((_, checkpoint)) => resumed(checkpoint, shown, self.piped || self.test.is_some(), report_file())?,
         };
         match (&mut running, self.test, self.piped) {
             (Running::Started(child), Some(node), false) => tested(child.stdout.take(), child.stderr.take(), node),
@@ -1064,7 +1140,8 @@ impl Replaying {
     /// process.
     pub(crate) fn for_editor(dir: PathBuf, root: PathBuf) -> Replaying {
         let test = replayed_test(&dir);
-        Replaying { dir, root, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true, test }
+        let held = held_copy(&dir).ok().flatten();
+        Replaying { dir, root, settings: Vec::new(), current: None, checkpoints: Vec::new(), piped: true, test, held }
     }
 
     /// The probes the checkpoints are at.

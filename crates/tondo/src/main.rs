@@ -2081,6 +2081,18 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(_) => return Err(format!("--record takes the directory the recording goes to\n{USAGE}")),
         None => None,
     };
+    // `--last <duration>`, of a recording: how much of its end it keeps.
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let last = match args[..end].iter().position(|a| a == "--last") {
+        Some(at) if at + 1 < end && record.is_some() => {
+            let text = args.remove(at + 1);
+            args.remove(at);
+            let text = text.to_string_lossy();
+            Some(milliseconds(&text).ok_or(format!("--last takes a duration, as 5m, 30s or 500ms, not `{text}`"))?)
+        }
+        Some(_) => return Err(format!("--last goes with --record, and takes a duration\n{USAGE}")),
+        None => None,
+    };
     let (path, rest) = source_argument(&args);
     let (options, rest) = link_options(rest)?;
     let program_args = match rest.as_slice() {
@@ -2089,12 +2101,26 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
     if let Some(dir) = record {
-        return record_run(&path, program_args, options, &dir);
+        return record_run(&path, program_args, options, &dir, last);
     }
     if options.watch {
         return watch(&path, program_args, &options);
     }
     run(&path, program_args, &options)
+}
+
+/// A duration as `--last` takes it, in milliseconds.
+fn milliseconds(text: &str) -> Option<u64> {
+    let digits = text.find(|c: char| !c.is_ascii_digit())?;
+    let count: u64 = text[..digits].parse().ok()?;
+    let unit = match &text[digits..] {
+        "ms" => 1,
+        "s" => 1000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        _ => return None,
+    };
+    count.checked_mul(unit).filter(|&ms| ms > 0)
 }
 
 /// `tondo run --record <dir>` (toolchain 7.6): a debug build of the
@@ -2107,6 +2133,7 @@ fn record_run(
     program_args: &[OsString],
     mut options: BuildOptions,
     dir: &Path,
+    last: Option<u64>,
 ) -> Result<ExitCode, String> {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return Err("a run is recorded on Linux and macOS".into());
@@ -2146,13 +2173,22 @@ fn record_run(
         .args(program_args)
         .env("TONDO_RT_RECORD", dir.join("calls"))
         .env("TONDO_RT_SCHEDULE", format!("{seed:x}"))
+        .envs(last.map(|ms| ("TONDO_RT_RECORD_LAST", ms.to_string())))
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
     // Ctrl-C is the program's to handle; the recording ends with it.
     unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
     let status = child.wait().map_err(|e| e.to_string())?;
     tondo::debug::keep_children(dir);
-    eprintln!("tondo: the run is recorded in {0}: `tondo debug --replay {0}` runs it again", dir.display());
+    use tondo::debug::Kept;
+    let shown = dir.display();
+    match last.map_or(Kept::Whole, |_| tondo::debug::end_held(dir, status.success())) {
+        Kept::Copies => eprintln!(
+            "tondo: the end of the run is held in {shown} for an hour, on this machine: `tondo debug --replay {shown}` runs it again"
+        ),
+        Kept::Whole => eprintln!("tondo: the run is recorded in {shown}: `tondo debug --replay {shown}` runs it again"),
+        Kept::Nothing => eprintln!("tondo: the run went well, and nothing of its end is kept"),
+    }
     // A program a signal ended, as a shell says it.
     use std::os::unix::process::ExitStatusExt;
     let code = status.code().or_else(|| status.signal().map(|signal| 128 + signal)).unwrap_or(1);

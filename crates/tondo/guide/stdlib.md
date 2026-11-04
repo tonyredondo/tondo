@@ -748,6 +748,15 @@ directory replays the same on another machine of the same system, as one
 CI uploads; with `--static`, on Linux, it does not depend on that machine's
 C library either.
 
+For a program that runs for days, `tondo run --record rec --last 5m app.to`
+keeps only the end of the run: every half of that time the program leaves a
+sleeping copy of itself, with `fork`, and what is older goes. When the run
+fails, the oldest copy waits for an hour and `tondo debug --replay rec`
+starts from it, with all of the above over those minutes. The copies live on
+that machine, so to take a recording elsewhere, as from CI, record it whole;
+its calls are compressed. A run that goes well keeps
+nothing, and one with threads of C is kept whole.
+
 A debug build has DWARF, on Linux and macOS, so gdb and lldb stop at `app.to:12` and
 name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
 `tondo` command for them that shows the stopped program's tasks and memory,

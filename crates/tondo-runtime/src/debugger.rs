@@ -1088,6 +1088,12 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if super::live::barrier() {
         super::live::park();
     }
+    // A recording of the last minutes keeps a copy of the program now and
+    // then, which a replay goes on from.
+    if super::replay::copy_due() {
+        let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
+        copied(site as usize, frame, addresses as usize, alive as usize);
+    }
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);
     }
@@ -1345,6 +1351,7 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
         -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
         0 => {
             kept(table);
+            super::diagnostics::listen_again();
             Ok(0)
         }
         pid => Ok(pid as u32),
@@ -1391,7 +1398,7 @@ fn periodic(table: &Table, mut here: Stop, every: u64) {
             drop(state);
             kept(table);
             here.bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
-            hold(self::state(), here, Some("checkpoint".into()));
+            hold(self::state(), here, Some(CHECKPOINT.into()));
         }
         -1 => {}
         pid => {
@@ -1402,10 +1409,33 @@ fn periodic(table: &Table, mut here: Stop, every: u64) {
     }
 }
 
+/// Why a replay forked from a checkpoint is stopped.
+const CHECKPOINT: &str = "checkpoint";
+
+/// A copy of a run being recorded, at a probe: as a checkpoint, held until
+/// a replay goes on from here, of what was recorded after it.
+fn copied(site: usize, frame: usize, addresses: usize, alive: usize) {
+    let Some(table) = table() else { return };
+    let _outside = super::replay::Outside::enter();
+    let task = super::tasks::current_id();
+    let state = state();
+    let client = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut parent = Some((client, state));
+    super::replay::copy(|segment| {
+        drop(parent.take());
+        let debugger = kept(&table);
+        super::replay::replay_from(segment, debugger);
+        let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+        let here = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+        hold(self::state(), here, Some(CHECKPOINT.into()));
+    });
+}
+
 /// A checkpoint, until a replay forked from it goes on from here, which
 /// returns. Only this thread is left: the debugger's connection and its
-/// settings were the parent's.
-fn kept(table: &Table) {
+/// settings were the parent's. Gives the process of the debugger that
+/// asked.
+fn kept(table: &Table) -> i32 {
     use std::io::Write;
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     ATTACHED.store(false, Ordering::Relaxed);
@@ -1427,13 +1457,15 @@ fn kept(table: &Table) {
     // open but its standard streams is its parent's: the sockets of the
     // tools, which would seem to listen once the parent ended.
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
-    for fd in 3..1024 {
+    let open = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) }.clamp(1024, 1 << 16) as i32;
+    for fd in 3..open {
         unsafe { libc::close(fd) };
     }
     // Nor does it keep its parent's output open: each replay it forks
     // writes where the one that asks for it says.
     unsafe {
         let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        libc::dup2(null, 0);
         libc::dup2(null, 1);
         libc::dup2(null, 2);
         libc::close(null);
@@ -1461,7 +1493,9 @@ fn kept(table: &Table) {
         }
         let Ok((mut stream, _)) = listener.accept() else { continue };
         let (line, given) = received(&stream);
-        let Some(shown) = line.trim().strip_prefix("resume ").and_then(|t| t.parse::<u64>().ok()) else {
+        let asked = line.trim().strip_prefix("resume ").and_then(|asked| asked.split_once(' '));
+        let Some((shown, debugger)) = asked.and_then(|(s, d)| Some((s.parse::<u64>().ok()?, d.parse::<i32>().ok()?)))
+        else {
             let _ = std::fs::remove_file(&path);
             unsafe { libc::_exit(0) };
         };
@@ -1480,8 +1514,7 @@ fn kept(table: &Table) {
                     libc::close(fd);
                 });
                 super::replay::shown_from(shown);
-                super::diagnostics::listen_again();
-                return;
+                return debugger;
             }
             pid => {
                 given.iter().for_each(|&fd| unsafe {
@@ -1978,6 +2011,11 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
         state.stopped = Some(stop.clone());
         state.mode = Mode::Run;
         HOLD.store(true, Ordering::Relaxed);
+        // A replay forked from a checkpoint listens once it is there, so
+        // that the debugger finds it stopped.
+        if stop.why == CHECKPOINT {
+            super::diagnostics::listen_again();
+        }
     }
     state.held.push(stop);
     // Out of Tondo code while it waits, so collections and dumps go on.

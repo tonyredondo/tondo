@@ -123,6 +123,8 @@ total` follows `why` back over the run, each cause with its own, to what
 the program read: the autopsy of a failure. `first total > 100` and
 `last total > 100` go to the line after which it held, over the run, and
 `diff 120` says what changed since probe 120, task by task.
+With `last`, as `5m`, `run` keeps only the end of what `record` records, held
+for an hour on this machine when the run fails.
 `debug_compare` takes two recordings of the same build, as one that passed
 and one that failed, and says where they part and why.
 `debug_stop` ends the session and its program.

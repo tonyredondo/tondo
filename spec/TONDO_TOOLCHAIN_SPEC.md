@@ -1116,6 +1116,23 @@ termina en vez de colgarse. Las búsquedas de una reproducción (`first`, `last`
 se estrella donde se estrelló el programa y dice lo que siguió. Si una de esas
 reproducciones acaba antes de tiempo por un fallo de `tondo`, el depurador
 dice por qué, y con `TONDO_DUMP` en su entorno deja también el volcado.
+Las llamadas se guardan comprimidas, por bloques, salvo el último de un crash.
+`tondo run --record <dir> --last <duración>` (`5m`, `30s`, `500ms`; `last` en
+`run` del servidor MCP) guarda solo el final de la ejecución, para programas que
+corren mucho: cada media duración el programa hace una copia de sí mismo con
+`fork`, dormida, y las llamadas empiezan otro archivo; las copias y los
+archivos más viejos que la duración se van. La grabación ocupa entonces lo que
+ocupan esas llamadas en disco y lo que la copia no comparte con el programa en
+memoria, hasta el tamaño del programa por cada copia, de las que suele haber
+tres. Si la ejecución falla, la copia más vieja queda esperando, y
+`tondo debug --replay` empieza en ella, parado en esa sonda, con todas las
+órdenes de esta sección sobre lo que queda. Las copias duran una hora sin
+usarse, viven en esa máquina y no sobreviven a reiniciarla ni al final de un
+contenedor: `--last` es para un programa que se investiga donde corre, y para
+llevarse una grabación a otra máquina, como en CI, se graba entera. Si la
+ejecución va bien, las copias y las llamadas se borran; si es más corta que la
+duración, queda entera. Un programa con threads de C no se copia, porque la
+copia los perdería, y queda entero también.
 `tondo debug --compare <dir> <dir>` compara dos grabaciones del mismo
 ejecutable, como una que pasó y otra que falló, y `debug_compare` en el
 servidor MCP y *Compare Two Recordings* en el editor hacen lo mismo. Cada una
