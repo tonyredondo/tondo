@@ -1091,7 +1091,9 @@ llega cuando el programa está en C, espera o cambia de tarea, y cada vez que
 el turno cambia de thread la grabación lo dice. En la reproducción el código
 de C corre otra vez, de verdad, con sus threads, y cada llamada suya al
 programa espera a su sitio en la grabación, así que se repite igual el C que
-solo depende de lo que recibe. Lo que el C hace por su cuenta desde sus
+solo depende de lo que recibe. Cada thread se reconoce por la llamada a
+`pthread_create` del programa que lo empezó; los que empieza la librería de C
+por su cuenta, por la función que llaman y por el orden en que llegan. Lo que el C hace por su cuenta desde sus
 threads no se graba: si lee la red o archivos, o escribe en ellos, la
 reproducción lo hace otra vez y toca el mundo, y si eso cambia lo que hace,
 puede no ser la misma. Con threads de C vivos una reproducción no se copia,

@@ -108,8 +108,11 @@ thread_local! {
     /// This thread, as `Baton::owner` says; the first one is the program's.
     static NUMBER: Cell<u32> = const { Cell::new(0) };
     static HOLDS: Cell<bool> = const { Cell::new(false) };
-    /// What a thread of C calls, which tells it from others in a replay.
+    /// What tells a thread of C from the others in a replay, where they get
+    /// to the program in another order: which `pthread_create` of the
+    /// program made it, or what it calls for one the C library started.
     static CALLED: Cell<u64> = const { Cell::new(0) };
+    static MADE: Cell<u64> = const { Cell::new(0) };
 }
 
 fn baton() -> std::sync::MutexGuard<'static, Baton> {
@@ -305,7 +308,10 @@ pub(crate) fn turn() {
 pub(crate) fn entered(function: usize) {
     if on() {
         THREADED.store(true, Ordering::Relaxed);
-        CALLED.set(function as u64);
+        CALLED.set(match MADE.get() {
+            0 => function as u64,
+            made => made | 1 << 63,
+        });
         take();
         let first = !PROGRAM.replace(true);
         // The keys of its hash maps, as in `begin`.
@@ -1898,6 +1904,19 @@ mod calls {
         }
     }
 
+    /// A thread the program starts, and which of them it is.
+    struct Started {
+        start: extern "C" fn(*mut c_void) -> *mut c_void,
+        argument: *mut c_void,
+        made: u64,
+    }
+
+    extern "C" fn started(what: *mut c_void) -> *mut c_void {
+        let what = unsafe { Box::from_raw(what.cast::<Started>()) };
+        MADE.set(what.made);
+        (what.start)(what.argument)
+    }
+
     /// A thread the program starts: the recording marks where, and a replay
     /// starts it again, as what it does is not recorded.
     #[unsafe(export_name = "tondo_rr_pthread_create")]
@@ -1917,16 +1936,26 @@ mod calls {
             ) -> c_int;
         }
         const ID: u32 = id("pthread_create");
+        static MADE_SO_FAR: AtomicU64 = AtomicU64::new(0);
+        let start_it = || {
+            let made = MADE_SO_FAR.fetch_add(1, Ordering::Relaxed) + 1;
+            let what = Box::into_raw(Box::new(Started { start, argument, made }));
+            let result = inside(|| unsafe { real(thread, attributes, started, what.cast()) });
+            if result != 0 {
+                drop(unsafe { Box::from_raw(what) });
+            }
+            result
+        };
         match here() {
             Here::Pass => unsafe { real(thread, attributes, start, argument) },
             Here::Record => {
                 record(ID, 0, &[]);
-                inside(|| unsafe { real(thread, attributes, start, argument) })
+                start_it()
             }
             Here::Replay => {
                 replay(ID, "pthread_create", none_vec);
                 THREADED.store(true, Ordering::Relaxed);
-                inside(|| unsafe { real(thread, attributes, start, argument) })
+                start_it()
             }
         }
     }

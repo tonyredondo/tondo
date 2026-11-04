@@ -4890,8 +4890,11 @@ way it was let go, which together place it exactly: one place of the
 program may let go several ways. A callback that waits works as a worker
 on its own thread, and a task that waits with C's frames on its stack gets
 a thread that stands in for its worker. A thread that stands in stops by
-the task's state, not when the worker sees it, which depends on time. A
-fork loses threads, so `back` runs such a replay from the start. C that
+the task's state, not when the worker sees it, which depends on time. In a
+replay threads arrive in another order, and giving a turn to the first that
+came deadlocked one that joined the other: each thread is known by which
+`pthread_create` of the program made it, and only those the C library
+starts by itself by their function and order. A fork loses threads, so `back` runs such a replay from the start. C that
 reads the world from its threads is not exact, which only recording every
 thread at the level of the system would be, as rr does, and that is
 another mechanism, unknown on macOS.

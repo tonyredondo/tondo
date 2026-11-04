@@ -2048,12 +2048,24 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     assert_eq!(stdout, "100\n");
     let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
     for _ in 0..3 {
-        let replayed = Command::new(dir.join("run/program"))
+        // A replay that hung would hold the tests for hours.
+        let mut replayed = Command::new(dir.join("run/program"))
             .env("TONDO_RT_REPLAY", dir.join("run/calls"))
             .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
             .current_dir(&dir)
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while replayed.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() > deadline {
+                let _ = replayed.kill();
+                panic!("the replay hung: {:?}", replayed.wait_with_output().unwrap());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let replayed = replayed.wait_with_output().unwrap();
         let said = String::from_utf8_lossy(&replayed.stderr).into_owned();
         assert_eq!(String::from_utf8_lossy(&replayed.stdout), stdout, "{said}");
         assert!(replayed.status.success(), "{said}");
