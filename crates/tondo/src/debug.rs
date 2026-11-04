@@ -578,6 +578,9 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
                 session.show(&answer);
                 if answer["running"] == true {
+                    // A stop said before this answer is one the program went
+                    // on from, as a breakpoint set on a program that runs.
+                    session.events.retain(|event| event.get("stopped").is_none());
                     session.wait_event();
                     // A replay keeps those checkpoints it kept as it ran, and
                     // one where it stops.
