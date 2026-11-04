@@ -97,8 +97,9 @@ static MOVED: std::sync::Condvar = std::sync::Condvar::new();
 static C_CALLS: AtomicU64 = AtomicU64::new(0);
 /// Threads of C run in this replay, which a fork would lose.
 static THREADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// How long a replay waits for a call from a thread of C the recording has.
-const CALL_FROM_C: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a replay waits with no thread running the program and nothing
+/// of the recording used: then it says so and ends, rather than hang.
+const STUCK: std::time::Duration = std::time::Duration::from_secs(30);
 /// A move of the baton in a recording, among the calls: the program's calls
 /// of C in the place of a result, how it was let go in that of `errno`, and
 /// the thread it went to and the function that thread called.
@@ -179,10 +180,14 @@ fn take() {
             buffer.extend_from_slice(&CALLED.get().to_le_bytes());
         }
     } else {
-        let mut since = None;
+        let (mut seen, mut since) = (None, std::time::Instant::now());
         loop {
             if !baton.held {
                 let mut log = log();
+                let now = Some((log.at, TICKS.load(Ordering::Relaxed)));
+                if now != seen {
+                    (seen, since) = (now, std::time::Instant::now());
+                }
                 let next = next_hand(&log);
                 let number = NUMBER.get();
                 let how = baton.how;
@@ -199,22 +204,22 @@ fn take() {
                         baton.owner = hand.to;
                         break;
                     }
-                    Some(hand) if hand.to > baton.known => {
-                        let waited = since.get_or_insert_with(std::time::Instant::now).elapsed();
-                        if waited > CALL_FROM_C {
-                            drop(log);
-                            drop(baton);
-                            INSIDE.set(true);
-                            crate::debugger::stop_for_good(
-                                "the replay ends here: the recording has a call from a thread of C that did not come"
-                                    .into(),
-                            );
-                        }
-                    }
-                    Some(_) => {}
                     None if baton.owner == number => break,
-                    None => {}
+                    _ => {}
                 }
+                if since.elapsed() > STUCK {
+                    drop(log);
+                    drop(baton);
+                    INSIDE.set(true);
+                    crate::debugger::stop_for_good(
+                        "the replay ends here: the threads of C and the program wait for each other, \
+                         in an order the recording does not have: a thread of C may have called the \
+                         program at another place, or not at all"
+                            .into(),
+                    );
+                }
+            } else {
+                since = std::time::Instant::now();
             }
             let waited = MOVED.wait_timeout(baton, std::time::Duration::from_millis(10));
             baton = waited.unwrap_or_else(|e| e.into_inner()).0;
@@ -808,6 +813,36 @@ mod calls {
         result
     }
 
+    /// `inside`, for a function that may wait for long: meanwhile a thread
+    /// of C may run the program, which may be what it waits for.
+    fn waiting_inside<T>(name: &str, real: impl FnOnce() -> T) -> T {
+        const WAIT: &[&str] = &[
+            "accept",
+            "connect",
+            "flock",
+            "nanosleep",
+            "pause",
+            "poll",
+            "read",
+            "readv",
+            "recv",
+            "recvfrom",
+            "recvmsg",
+            "sleep",
+            "waitid",
+            "waitpid",
+            "write",
+            "writev",
+        ];
+        if !WAIT.contains(&name) {
+            return inside(real);
+        }
+        waits();
+        let result = inside(real);
+        waited();
+        result
+    }
+
     /// Records a call: its result, `errno`, and the bytes at each of `outs`.
     fn record(id: u32, result: i64, outs: &[(*mut u8, usize)]) {
         let error = unsafe { *errno() };
@@ -995,7 +1030,7 @@ mod calls {
                     match here() {
                         Here::Pass => unsafe { real($($arg),*) },
                         Here::Record => {
-                            let result = inside(|| unsafe { real($($arg),*) });
+                            let result = waiting_inside(stringify!($name), || unsafe { real($($arg),*) });
                             let _outside = Outside::enter();
                             record(ID, result as i64, &outs(result as i64));
                             result
