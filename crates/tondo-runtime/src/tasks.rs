@@ -1329,9 +1329,12 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
             let (mut looked, mut stealing) = (false, false);
             loop {
                 // Exploring orders this thread is the only worker: after a
-                // panic it runs the other tasks' cleanups itself.
-                let draining =
-                    exploring().is_some() && ENDING.load(Ordering::SeqCst) != usize::MAX && !queue.runnable.is_empty();
+                // panic it runs the other tasks' cleanups itself, and the
+                // tasks left when the program ends where leaks are checked,
+                // which other workers would have run by then.
+                let ending = ENDING.load(Ordering::SeqCst) != usize::MAX
+                    || (MAIN_DONE.load(Ordering::SeqCst) && std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some());
+                let draining = exploring().is_some() && ending && !queue.runnable.is_empty();
                 if main && MAIN_DONE.load(Ordering::SeqCst) && !draining {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
@@ -2444,6 +2447,8 @@ pub(crate) fn ending() -> Option<i32> {
     if status == usize::MAX {
         return None;
     }
+    // How long this takes is no part of a recording.
+    let _outside = super::replay::Outside::enter();
     let from = Instant::now();
     while live_tasks() > 0 && Instant::now() < cleaned_by(from) {
         std::thread::sleep(Duration::from_millis(1));
@@ -2609,7 +2614,11 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
         std::ptr::null_mut(),
     );
     schedule(task);
-    work(true)
+    let status = work(true);
+    // A thread of C that waits for the program finishes its call, as the
+    // end of the program waits for it.
+    super::replay::waits();
+    status
 }
 
 // ---------------------------------------------------------------------------

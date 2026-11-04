@@ -2845,6 +2845,8 @@ pub const LEAK_EXIT_CODE: i32 = 99;
 
 pub fn check_leaks() -> Option<usize> {
     std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
+    // How long these waits take is no part of a recording.
+    let _outside = replay::Outside::enter();
     tasks::wait_foreign_calls();
     tasks::wait_tasks_freed();
     // The contexts' initial values live as long as the program, and so do
