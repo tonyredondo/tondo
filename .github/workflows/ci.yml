@@ -152,6 +152,8 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-linux-musl
     runs-on: ${{ matrix.os }}
+    # A hang fails the job instead of holding it for hours.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
