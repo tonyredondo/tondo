@@ -1064,9 +1064,10 @@ fn debugger_shows_waiting_tasks_and_returned_values() {
     let lines: Vec<Value> =
         String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
-    // It waits in `receive`, or, sent its value, is ready to go there.
+    // It waits in `receive`, or, sent its value, is ready to go there; or
+    // the stop found it on another worker at the line's probe, before it.
     assert_eq!((&tasks[1]["task"], &tasks[1]["at"]), (&json!(2), &json!("waited.to:8 in waiter")));
-    assert!(tasks[1]["why"] == "waits" || tasks[1]["why"] == "ready", "{tasks:?}");
+    assert!(["waits", "ready", "held"].contains(&tasks[1]["why"].as_str().unwrap_or_default()), "{tasks:?}");
     assert_eq!(lines.iter().find_map(|l| l["stack"].as_array()).unwrap()[0], "waited.to:8 in waiter");
     assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
     let stops: Vec<(&str, &Value)> =
