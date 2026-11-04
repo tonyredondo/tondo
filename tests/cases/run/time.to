@@ -6,6 +6,8 @@ fn main() {
     time.sleep(time.milliseconds(20))
     let took = started.elapsed()
     console.println("slept enough {not took.isLessThan(time.milliseconds(20))}")
+    // A receiver that reads the clock reads it before `elapsed` does.
+    console.println("never negative {not time.now().elapsed().isNegative()}")
     let d = time.hours(1) + time.minutes(2) + time.milliseconds(3500)
     console.println("{d} {d.seconds()} {d.minutes()} {d.milliseconds()}")
     console.println("{time.milliseconds(250)} {time.microseconds(1500)} {time.nanoseconds(42)} {time.seconds(0)}")
@@ -24,6 +26,7 @@ fn main() {
 }
 
 // expect-stdout: slept enough true
+// expect-stdout: never negative true
 // expect-stdout: 1h2m3.5s 3723 62 3723500
 // expect-stdout: 250ms 1.5ms 42ns 0s
 // expect-stdout: 1m30s 1.5s -3s 1.500000001s

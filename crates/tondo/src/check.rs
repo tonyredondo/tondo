@@ -7536,7 +7536,10 @@ impl<'a> Checker<'a> {
             (false, "elapsed", None) => {
                 let now =
                     Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::TimeNow), Vec::new(), Vec::new()), instant, span);
-                retype(binary(BinOp::Sub, nanos(now), own, Ty::INT), duration)
+                // The receiver first, which may be a call that reads the
+                // clock or takes long: operands run from the left.
+                let ago = binary(BinOp::Sub, own, nanos(now), Ty::INT);
+                retype(binary(BinOp::Sub, int(0), ago, Ty::INT), duration)
             }
             _ => unreachable!("checked above"),
         }
