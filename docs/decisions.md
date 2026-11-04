@@ -4914,3 +4914,17 @@ order the recording did not have: with nobody running and nothing of the
 recording used for 30 seconds it says so and ends, and while recording,
 the calls that wait let the baton go, since a callback may be what they
 wait for.
+
+## Two recordings compare by the lines each task ran
+
+A failure that happens once in ten runs leaves a good run and a bad one,
+and the question is where they stop being the same. `tondo debug --compare`
+replays both and keeps the lines each task ran, in a file, since the scan
+that gives them runs in the program; then it looks at each task by itself,
+because the order between tasks may differ in two runs without meaning
+anything, and answers with the earliest line by which a task parts. What
+differs at the last line they share comes from `diff`, and where it came
+from from `origins`, cut down to the branches that reach a value the other
+run got differently at the same line: the full tree was long, and nearly
+all of it the same in both. Only runs of one build compare, since the
+probes of two builds do not name the same lines.

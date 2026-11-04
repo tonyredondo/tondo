@@ -46,6 +46,8 @@ project, running, debugging and testing it.
   Come From?*, in a replay, the whole chain back to what the program read;
   *Go to When a Condition Holds*, the first or the last time in the run;
   *Compare with Another Moment*, what changed since another probe;
+  *Compare Two Recordings*, where a run that passed and one that failed part
+  and why;
   *Show Its Values
   over the Run*, every value a binding took, from which line, on a bar of a
   replay whose marks take the program there; beside each line run, with

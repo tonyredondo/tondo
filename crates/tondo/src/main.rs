@@ -959,7 +959,7 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
-    let (mut test, mut via, mut schedule, mut replay) = (None, None, None, None);
+    let (mut test, mut via, mut schedule, mut replay, mut compare) = (None, None, None, None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
@@ -968,6 +968,11 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--replay" => {
                 let dir = rest.next().ok_or_else(|| usage("--replay takes the directory of a recording"))?;
                 replay = Some(PathBuf::from(dir));
+            }
+            "--compare" => {
+                let cannot = || usage("--compare takes the directories of two recordings of a program");
+                let (first, second) = (rest.next().ok_or_else(cannot)?, rest.next().ok_or_else(cannot)?);
+                compare = Some((PathBuf::from(first), PathBuf::from(second)));
             }
             "--schedule" => {
                 let seed = rest.next().and_then(|s| u64::from_str_radix(s.to_str()?, 16).ok());
@@ -995,6 +1000,10 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if schedule.is_some() && test.is_none() {
         return Err(usage("--schedule orders the tasks of a test: it goes with --test"));
+    }
+    // Where two recorded runs part.
+    if let Some((first, second)) = compare {
+        return tondo::debug::compare(&first, &second, json).map(|()| ExitCode::SUCCESS);
     }
     // A recorded run, again.
     if let Some(dir) = replay {

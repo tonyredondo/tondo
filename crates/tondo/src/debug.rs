@@ -163,16 +163,17 @@ fn given(stream: &std::os::unix::net::UnixStream, line: &str, fds: &[i32]) -> st
 
 /// The sources of the recording a replay runs, which its lines are read
 /// from as they were when it was recorded, wherever it runs.
-static SOURCES: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static SOURCES: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// A replay reads the sources its recording kept.
 pub(crate) fn read_sources_of(recording: &Path) {
-    let _ = SOURCES.set(recording.join("sources"));
+    *SOURCES.lock().unwrap() = Some(recording.join("sources"));
 }
 
 /// The recording's copy of `file`, a path as the program's stops name it.
 pub(crate) fn kept_source(file: &str) -> Option<PathBuf> {
-    Some(SOURCES.get()?.join(file.trim_start_matches('/'))).filter(|kept| kept.is_file())
+    let sources = SOURCES.lock().unwrap();
+    Some(sources.as_ref()?.join(file.trim_start_matches('/'))).filter(|kept| kept.is_file())
 }
 
 /// Where the editor finds `file`: in `root`, or the recording's copy when
@@ -1166,9 +1167,7 @@ impl Replaying {
         let (running, mut scan) = self.start(None, u64::MAX, true)?;
         let found = (|| -> Result<Value, String> {
             ask(&mut scan, &format!("track {anchor} {condition}"))?;
-            // To the end, where the program says what it followed.
-            ask(&mut scan, &format!("scan {}", u64::MAX - 1))?;
-            Ok(scan.next_event()?["tracked"]["tracked"][0].clone())
+            Ok(scanned_to_end(&mut scan)?["tracked"][0].clone())
         })();
         running.end();
         self.gather_ended(&mut scan);
@@ -1462,23 +1461,254 @@ fn changes(before: &Value, after: &Value, from: u64, to: u64) -> Value {
     serde_json::json!({ "from": from, "to": to, "bindings": bindings, "started": started, "ended": ended, "memory": memory })
 }
 
+/// Runs a replay that looks to the end, where the program says what it
+/// followed; or to the panic that stops it there, as a debugger's does, which
+/// is what a recording of a failure ends with.
+fn scanned_to_end(scan: &mut Session) -> Result<Value, String> {
+    ask(scan, &format!("scan {}", u64::MAX - 1))?;
+    let event = scan.next_event()?;
+    match event.get("tracked") {
+        Some(followed) => Ok(followed.clone()),
+        None => ask(scan, "tracked"),
+    }
+}
+
+/// Where each task went in a run: its lines, each a probe and a site.
+type Trail = std::collections::BTreeMap<u64, Vec<(u64, u64)>>;
+
+/// The lines each task of a recorded run ran, by a replay that looks.
+fn trail_of(dir: &Path) -> Result<Trail, String> {
+    let replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());
+    let file = std::env::temp_dir().join(format!("tondo-trail-{}", std::process::id()));
+    let (running, mut scan) = replaying.start(None, u64::MAX, true)?;
+    let done = (|| -> Result<(), String> {
+        ask(&mut scan, &format!("trail {}", file.display()))?;
+        scanned_to_end(&mut scan).map(|_| ())
+    })();
+    running.end();
+    done?;
+    let bytes = std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let _ = std::fs::remove_file(&file);
+    let word = |at: &[u8]| u64::from_le_bytes(at.try_into().expect("8 bytes"));
+    let mut trail = Trail::new();
+    for line in bytes.as_chunks::<24>().0 {
+        trail.entry(word(&line[..8])).or_default().push((word(&line[8..16]), word(&line[16..])));
+    }
+    Ok(trail)
+}
+
+/// The program at a probe of a recorded run: where it is, and its moment.
+fn look_at(dir: &Path, tick: u64) -> Result<(String, Value), String> {
+    let replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());
+    let (running, mut there) = replaying.start(None, u64::MAX, true)?;
+    let found = (|| -> Result<(String, Value), String> {
+        ask(&mut there, &format!("seek {tick}"))?;
+        let stop = there.next_event()?;
+        let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+        Ok((at, moment(&mut |c| ask(&mut there, c))?))
+    })();
+    running.end();
+    found
+}
+
+/// Where the lines of a task first differ between two runs: the task, how
+/// many lines they share, of all the tasks the one that parts the soonest.
+/// Each task is compared by itself, as two runs order their tasks in their
+/// own way, and read another clock.
+fn first_parting(first: &Trail, second: &Trail) -> Option<(u64, usize)> {
+    let empty = Vec::new();
+    let tasks = first.keys().chain(second.keys()).collect::<std::collections::BTreeSet<_>>();
+    let parted = tasks.into_iter().filter_map(|&task| {
+        let (a, b) = (first.get(&task).unwrap_or(&empty), second.get(&task).unwrap_or(&empty));
+        let shared = a.iter().zip(b).take_while(|(x, y)| x.1 == y.1).count();
+        (shared < a.len().max(b.len())).then(|| {
+            let when = b.get(shared).or(a.get(shared)).map_or(u64::MAX, |line| line.0);
+            (when, task, shared)
+        })
+    });
+    parted.min().map(|(_, task, shared)| (task, shared))
+}
+
+/// The origins of `name` at a probe of a recorded run.
+fn origins_at(dir: &Path, tick: u64, task: u64, name: &str) -> Option<Value> {
+    let mut replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());
+    let (running, mut there) = replaying.start(None, u64::MAX, true).ok()?;
+    ask(&mut there, &format!("seek {tick}")).ok()?;
+    there.next_event().ok()?;
+    let found = replaying.origins(&mut |c| ask(&mut there, c), task, name);
+    running.end();
+    Some(found.ok()?["origins"].clone())
+}
+
+/// Every cause of a tree of origins.
+fn flatten_causes(causes: &Value, out: &mut Vec<Value>) {
+    for cause in causes.as_array().into_iter().flatten() {
+        out.push(cause.clone());
+        flatten_causes(&cause["causes"], out);
+    }
+}
+
+/// Of a tree of causes, the branches that lead to a value the other run got
+/// differently at the same line: what made the runs differ, without what is
+/// the same in both.
+fn differing(others: &[Value], causes: &Value) -> Vec<Value> {
+    let differs = |cause: &Value| {
+        let mut there = others.iter().filter(|o| o["name"] == cause["name"] && o["at"] == cause["at"]).peekable();
+        there.peek().is_some() && !there.any(|other| other["value"] == cause["value"])
+    };
+    let branch = |cause: &Value| {
+        let below = differing(others, &cause["causes"]);
+        (differs(cause) || !below.is_empty()).then(|| {
+            let mut kept = cause.clone();
+            kept["causes"] = Value::Array(below);
+            kept
+        })
+    };
+    causes.as_array().into_iter().flatten().filter_map(branch).collect()
+}
+
+/// Where two recorded runs of a program part, as one that passed and one
+/// that failed: the first line a task of one runs that the same task of the
+/// other does not, what differs in the program just before, and where that
+/// came from.
+pub fn compared(first: &Path, second: &Path) -> Result<Value, String> {
+    let read = |dir: &Path| {
+        std::fs::read(dir.join("program")).map_err(|e| format!("{} is not a recording: {e}", dir.display()))
+    };
+    if read(first)? != read(second)? {
+        return Err(format!(
+            "{} and {} are runs of different builds, whose lines do not compare: record both with the same one",
+            first.display(),
+            second.display()
+        ));
+    }
+    read_sources_of(second);
+    let (a, b) = (trail_of(first)?, trail_of(second)?);
+    let Some((task, shared)) = first_parting(&a, &b) else {
+        return Ok(serde_json::json!({ "parted": false }));
+    };
+    // The line each goes on to, or that its task ended there.
+    let next = |dir: &Path, trail: &Trail| -> Result<Value, String> {
+        match trail.get(&task).and_then(|lines| lines.get(shared)) {
+            Some(&(tick, _)) => {
+                let (at, _) = look_at(dir, tick)?;
+                Ok(serde_json::json!({ "at": at, "tick": tick }))
+            }
+            None => Ok(serde_json::json!({ "at": null, "tick": null })),
+        }
+    };
+    let (next_a, next_b) = (next(first, &a)?, next(second, &b)?);
+    // The last line both ran, and what differs there.
+    let last = |trail: &Trail| shared.checked_sub(1).and_then(|at| trail.get(&task)?.get(at)).map(|line| line.0);
+    let (mut after, mut differs) = (None, Vec::new());
+    let mut origins = None;
+    if let (Some(tick_a), Some(tick_b)) = (last(&a), last(&b)) {
+        let ((at, there_a), (_, there_b)) = (look_at(first, tick_a)?, look_at(second, tick_b)?);
+        let changed = changes(&there_a, &there_b, tick_a, tick_b);
+        let own = format!("task {task}, ");
+        differs = changed["bindings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|binding| binding["frame"].as_str().is_some_and(|frame| frame.starts_with(&own)))
+            .cloned()
+            .collect();
+        after = Some(at);
+        if let Some(name) = differs.first().and_then(|binding| binding["name"].as_str())
+            && let (Some(there_a), Some(there_b)) =
+                (origins_at(first, tick_a, task, name), origins_at(second, tick_b, task, name))
+        {
+            let mut others = Vec::new();
+            flatten_causes(&there_a["causes"], &mut others);
+            origins = Some(serde_json::json!({
+                "name": name, "why": there_b["why"], "at": there_b["at"], "causes": differing(&others, &there_b["causes"]),
+            }));
+        }
+    }
+    Ok(serde_json::json!({
+        "parted": true, "task": task, "after": after, "first": next_a, "second": next_b, "bindings": differs,
+        "origins": origins,
+    }))
+}
+
+/// `compared` in words, naming the runs.
+pub fn compared_text(found: &Value, first: &Path, second: &Path) -> String {
+    if found["parted"] != true {
+        return "the two runs went through the same lines\n".to_string();
+    }
+    let mut text = String::new();
+    let mut line = |words: String| {
+        text.push_str(&words);
+        text.push('\n');
+    };
+    let task = &found["task"];
+    line(match found["after"].as_str() {
+        Some(at) => format!("the runs part in task {task}, after {at}:"),
+        None => format!("the runs part at the first line of task {task}:"),
+    });
+    let went = |name: &Path, next: &Value| match next["at"].as_str() {
+        Some(at) => format!("  {} goes on at {at} (probe {})", name.display(), next["tick"]),
+        None => format!("  {} ends the task there", name.display()),
+    };
+    line(went(first, &found["first"]));
+    line(went(second, &found["second"]));
+    let bindings = found["bindings"].as_array().map_or(&[][..], Vec::as_slice);
+    if !bindings.is_empty() {
+        line("what differs there, from the first to the second:".to_string());
+    }
+    let shown = |value: &Value| value.as_str().unwrap_or("nothing").to_string();
+    for binding in bindings {
+        let (frame, name) =
+            (binding["frame"].as_str().unwrap_or_default(), binding["name"].as_str().unwrap_or_default());
+        line(format!("  {name}: {} → {}   ({frame})", shown(&binding["before"]), shown(&binding["after"])));
+    }
+    let origins = &found["origins"];
+    if let Some(name) = origins["name"].as_str() {
+        let (why, at) = (origins["why"].as_str().unwrap_or_default(), origins["at"].as_str().unwrap_or_default());
+        line(format!("where the `{name}` of the second came from, by what differs: {why}, at {at}"));
+        let causes = origins["causes"].as_array().map_or(&[][..], Vec::as_slice);
+        if !causes.is_empty() {
+            line(origins_text(causes, "  ").trim_end().to_string());
+        }
+    }
+    if let Some(tick) = found["second"]["tick"].as_u64() {
+        line(format!(
+            "`tondo debug --replay {}` and `seek {tick}` go there, where `why` follows a value",
+            second.display()
+        ));
+    }
+    text
+}
+
+/// `tondo debug --compare <first> <second>`.
+pub fn compare(first: &Path, second: &Path, json: bool) -> Result<(), String> {
+    let found = compared(first, second)?;
+    match json {
+        true => crate::cli::print_json("debug-compare", true, found),
+        false => print!("{}", compared_text(&found, first, second)),
+    }
+    Ok(())
+}
+
 /// The causes `origins` found, as a tree, each with the line that gave it.
-fn show_origins(causes: &[Value], indent: &str) {
+fn origins_text(causes: &[Value], indent: &str) -> String {
+    let mut text = String::new();
     for (index, cause) in causes.iter().enumerate() {
         let last = index + 1 == causes.len();
         let (branch, next) = if last { ("└ ", "  ") } else { ("├ ", "│ ") };
         let at = cause["at"].as_str().unwrap_or_default();
         let above = if cause["above"] == true { ", as above" } else { "" };
-        println!("{indent}{branch}{}{}{above}", cause_text(cause), tick_of(cause));
+        text.push_str(&format!("{indent}{branch}{}{}{above}\n", cause_text(cause), tick_of(cause)));
         if cause["above"] == true {
             continue;
         }
         let deeper = format!("{indent}{next}");
-        if let Some(text) = line_text(Path::new(""), at) {
-            println!("{deeper}  {}", text.trim());
+        if let Some(line) = line_text(Path::new(""), at) {
+            text.push_str(&format!("{deeper}  {}\n", line.trim()));
         }
-        show_origins(cause["causes"].as_array().map_or(&[][..], Vec::as_slice), &deeper);
+        text.push_str(&origins_text(cause["causes"].as_array().map_or(&[][..], Vec::as_slice), &deeper));
     }
+    text
 }
 
 /// A replay's probe of a line the history lists, to `seek`; none outside
@@ -1771,7 +2001,7 @@ impl Session {
             if let Some(source) = source_line(origins["at"].as_str().unwrap_or_default()) {
                 println!("{source}");
             }
-            show_origins(origins["causes"].as_array().map_or(&[][..], Vec::as_slice), "");
+            print!("{}", origins_text(origins["causes"].as_array().map_or(&[][..], Vec::as_slice), ""));
         } else if let Some(timeline) = value["timeline"].as_array() {
             if timeline.is_empty() {
                 println!("no line of the history gave it a value");

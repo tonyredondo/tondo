@@ -1541,6 +1541,9 @@ struct Tracked {
     /// What a line received, by its probe and site: where it was sent from,
     /// or where the task it waited for ended; the last ones.
     received: std::collections::VecDeque<((u64, usize), Origin)>,
+    /// Where each line of the program's code that runs goes: its task, its
+    /// probe and its site, which another run of the program compares.
+    trail: Option<std::io::BufWriter<std::fs::File>>,
 }
 
 /// A line of a task: its probe, its site and the task.
@@ -1750,6 +1753,12 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
     if table.sites.get(site).is_none_or(Site::generated) {
         return;
     }
+    if let Some(trail) = tracked.trail.as_mut() {
+        let _outside = super::replay::Outside::enter();
+        let _ = trail.write_all(&task.to_le_bytes());
+        let _ = trail.write_all(&tick.to_le_bytes());
+        let _ = trail.write_all(&(site as u64).to_le_bytes());
+    }
     let before = tracked.before.replace((tick, site));
     tracked.lines.insert(task, (tick, site));
     for followed in tracked.followed.iter_mut() {
@@ -1807,6 +1816,12 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
                 firsts: Vec::new(),
             });
             Ok("{\"tracking\":true}".into())
+        }
+        "trail" => {
+            let _outside = super::replay::Outside::enter();
+            let file = std::fs::File::create(rest).map_err(|e| format!("cannot write {rest}: {e}"))?;
+            tracked.get_or_insert_with(Tracked::default).trail = Some(std::io::BufWriter::new(file));
+            Ok("{\"trailing\":true}".into())
         }
         "count" => {
             let (at, text) = rest.split_once(' ').map_or((rest, None), |(at, text)| (at, Some(text.trim())));
@@ -2757,7 +2772,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
-        "track" | "count" | "tracked" => match track(table, word, rest) {
+        "track" | "trail" | "count" | "tracked" => match track(table, word, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },

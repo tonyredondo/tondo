@@ -186,6 +186,7 @@ pub const COMMANDS: &[Command] = &[
             "tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]",
             "tondo debug [--json] --test <id> [--schedule <seed>] [<project>]",
             "tondo debug [--json] --replay <recording>",
+            "tondo debug [--json] --compare <recording> <recording>",
             "tondo debug [--json] --via <command> <pid|name>",
         ],
         summary: &[

@@ -739,7 +739,11 @@ program waits for its place in the recording: C that depends only on what it
 is given replays the same, but what it reads or writes by itself from its
 threads is done again and not recorded. `origins total` gives the whole chain at once: the line
 that gave `total`, what that line read and where each came from, back to
-what the program read. A recording keeps the program's sources, so the
+what the program read. `tondo debug --compare good bad` takes two recordings
+of the same build, as a run that passed and one that failed: it gives the
+first line where a task of one goes where the same task of the other does
+not, what differs just before, and where that came from, following only the
+values that differ. A recording keeps the program's sources, so the
 directory replays the same on another machine of the same system, as one
 CI uploads; with `--static`, on Linux, it does not depend on that machine's
 C library either.

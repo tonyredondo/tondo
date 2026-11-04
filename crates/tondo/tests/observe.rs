@@ -2089,6 +2089,73 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     assert!(output.contains("the first time `next > 40` holds"), "{output}");
 }
 
+/// Two recorded runs of a program, one that went wrong: where they part,
+/// each task by itself, what differs there, and where that came from.
+#[test]
+fn debugger_compares_two_recorded_runs() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-compare");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.random\n\nfn total(): Int {\n    var dice = random.Random.new()\n    \
+                   let rate = dice.int(1..=4)\n    rate * 6\n}\n\nfn main() {\n    let sum = total()\n    if sum > 12 {\n        \
+                   panic(\"over budget\")\n    }\n    console.println(\"fine\")\n}\n";
+    std::fs::write(dir.join("flaky.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    // A run of each kind: one in two is, and the seed of each run differs.
+    let (mut good, mut bad) = (None, None);
+    for run in 0..200 {
+        let name = format!("run{run}");
+        let ran = Command::new(tondo).args(["run", "--record", &name, "flaky.to"]).current_dir(&dir).output().unwrap();
+        match ran.status.success() {
+            true => good = good.or(Some(name)),
+            false => bad = bad.or(Some(name)),
+        }
+        if good.is_some() && bad.is_some() {
+            break;
+        }
+    }
+    let (good, bad) = (good.unwrap(), bad.unwrap());
+    let compared = |first: &str, second: &str| {
+        let args = ["debug", "--compare", first, second, "--json"];
+        let output = Command::new(tondo).args(args).current_dir(&dir).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let parted = compared(&good, &bad);
+    assert_eq!(parted["parted"], true, "{parted}");
+    assert_eq!(parted["after"], "flaky.to:12 in main", "{parted}");
+    assert_eq!(parted["first"]["at"], "flaky.to:15 in main", "{parted}");
+    assert_eq!(parted["second"]["at"], "flaky.to:13 in main", "{parted}");
+    let names: Vec<&str> = parted["bindings"].as_array().unwrap().iter().filter_map(|b| b["name"].as_str()).collect();
+    assert_eq!(names, ["sum"], "{parted}");
+    // Of what made it, only what differs: the die, and what threw it.
+    assert_eq!(parted["origins"]["causes"][0]["name"], "rate", "{parted}");
+    assert_eq!(parted["origins"]["causes"][0]["at"], "flaky.to:6 in total", "{parted}");
+    // The recordings keep what it reads, wherever it runs.
+    let elsewhere = Command::new(tondo)
+        .args(["debug", "--compare", &good, &bad].map(|arg| match arg.starts_with('-') || arg == "debug" {
+            true => arg.to_string(),
+            false => dir.join(arg).display().to_string(),
+        }))
+        .args(["--json"])
+        .current_dir("/")
+        .output()
+        .unwrap();
+    let elsewhere: Value = serde_json::from_slice(&elsewhere.stdout).unwrap();
+    assert_eq!(elsewhere["origins"]["causes"][0]["name"], "rate", "{elsewhere}");
+    assert_eq!(compared(&good, &good)["parted"], false);
+    // Another build's lines are not these.
+    let mut other = std::fs::read(dir.join(&good).join("program")).unwrap();
+    other.push(0);
+    std::fs::create_dir_all(dir.join("other")).unwrap();
+    std::fs::write(dir.join("other/program"), other).unwrap();
+    let refused = Command::new(tondo).args(["debug", "--compare", &good, "other"]).current_dir(&dir).output().unwrap();
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("different builds"));
+}
+
 /// A recording of a crash is what a search is for: the replay crashes where
 /// the run did, and says what it followed all the same.
 #[test]

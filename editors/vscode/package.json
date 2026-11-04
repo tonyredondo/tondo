@@ -351,6 +351,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.compareRecordings",
+        "title": "Compare Two Recordings",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"

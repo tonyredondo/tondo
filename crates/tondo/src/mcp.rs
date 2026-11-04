@@ -220,6 +220,12 @@ impl Server {
                 Ok(Reply::new(text, json!({ "project": path, "name": name, "files": written })))
             }
             "debug_start" => self.debug_start(args),
+            "debug_compare" => {
+                let path = |name: &str| args.text(name).map(PathBuf::from).ok_or(format!("`{name}` is missing"));
+                let (first, second) = (path("first")?, path("second")?);
+                let found = crate::debug::compared(&first, &second)?;
+                Ok(Reply::new(crate::debug::compared_text(&found, &first, &second), found))
+            }
             "debug" => self.debug(args),
             "run_start" => self.run_start(args),
             "run_output" | "run_input" | "run_stop" => {
@@ -2131,6 +2137,17 @@ program to stop. Gives the debugger's answers and events, and what the program p
             ("session", "string!", "The session `debug_start` gave."),
             ("command", "string!", "The command."),
             ("wait", "number", "Seconds to wait for a running program to stop; 10 by default."),
+        ],
+    },
+    Tool {
+        name: "debug_compare",
+        description: "Where two recorded runs of a program part, as one that passed and one that failed: the first \
+line a task of one ran that the same task of the other did not, what differs there, and where that came from, by the \
+values that differ, back to what the program read. Both must be runs of the same build, recorded with `record`.",
+        kind: Kind::Runs,
+        params: &[
+            ("first", "string!", "The directory of a recording."),
+            ("second", "string!", "The directory of the other, whose origins it follows."),
         ],
     },
     Tool {

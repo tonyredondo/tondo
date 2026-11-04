@@ -31,6 +31,7 @@ import {
   mermaid,
   timelineHtml,
   originsMarkdown,
+  comparedMarkdown,
   diffMarkdown,
   running,
   served,
@@ -513,6 +514,51 @@ test("a value's origins show as a list under the line that gave it, each cause u
       '',
     ].join('\n'),
   );
+});
+
+test('two recordings show where they part, what differs and where it came from', () => {
+  const markdown = comparedMarkdown(
+    {
+      parted: true,
+      task: 1,
+      after: 'flaky.to:12 in main',
+      first: { at: 'flaky.to:15 in main', tick: 83 },
+      second: { at: 'flaky.to:13 in main', tick: 83 },
+      bindings: [{ frame: 'task 1, main (0 from the bottom)', name: 'sum', before: '6', after: '18' }],
+      origins: {
+        name: 'sum',
+        why: 'rate * 6',
+        at: 'flaky.to:7 in total',
+        causes: [{ name: 'rate', value: '3', at: 'flaky.to:6 in total', causes: [{ name: 'dice', value: 'a', at: 'flaky.to:5 in total' }] }],
+      },
+    },
+    'good',
+    'bad',
+  );
+  assert.equal(
+    markdown,
+    [
+      '# good and bad part in task 1',
+      '',
+      'After `flaky.to:12 in main`:',
+      '',
+      '- good goes on at `flaky.to:15 in main` (probe 83)',
+      '- bad goes on at `flaky.to:13 in main` (probe 83)',
+      '',
+      '## What differs there',
+      '',
+      '- `sum`: `6` → `18`',
+      '',
+      '## Where the `sum` of bad came from',
+      '',
+      'rate * 6, at `flaky.to:7 in total`',
+      '',
+      '- `rate` was `3`, from `flaky.to:6 in total`',
+      '  - `dice` was `a`, from `flaky.to:5 in total`',
+      '',
+    ].join('\n'),
+  );
+  assert.equal(comparedMarkdown({ parted: false }, 'a', 'b'), '# a and b\n\nThe two runs went through the same lines.\n');
 });
 
 test('what changed between two moments shows frame by frame, then the tasks and the memory', () => {

@@ -6,9 +6,9 @@
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { programFor, settings } from './cli';
+import { exec, programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Diff, Origin, Table, Task, Timeline, diffMarkdown, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
+import { Compared, Diff, Origin, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -45,6 +45,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('tondo.taskGraph', taskGraph),
     vscode.commands.registerCommand('tondo.when', when),
     vscode.commands.registerCommand('tondo.diff', diff),
+    vscode.commands.registerCommand('tondo.compareRecordings', compareRecordings),
     vscode.commands.registerCommand('tondo.origins', (context?: { variable?: Variable }) =>
       origins(context?.variable ? (context.variable.evaluateName ?? context.variable.name) : selected()),
     ),
@@ -76,6 +77,26 @@ async function diff(): Promise<void> {
   } catch (error) {
     void vscode.window.showErrorMessage((error as Error).message);
   }
+}
+
+/** Where two recordings of a program part and why, beside the code. */
+async function compareRecordings(): Promise<void> {
+  const pick = async (openLabel: string) =>
+    (await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel }))?.[0].fsPath;
+  const first = await pick('The first recording');
+  const second = first && (await pick('The recording to compare it with'));
+  if (!first || !second) {
+    return;
+  }
+  const ran = await exec(['debug', '--compare', first, second, '--json'], path.dirname(first));
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo debug --compare failed');
+    return;
+  }
+  const found = JSON.parse(ran.stdout) as Compared;
+  const content = comparedMarkdown(found, path.basename(first), path.basename(second));
+  const document = await vscode.workspace.openTextDocument({ content, language: 'markdown' });
+  await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
 }
 
 /** In a replay, to the line after which a condition held, the first or the

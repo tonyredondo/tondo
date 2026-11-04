@@ -1106,6 +1106,15 @@ termina en vez de colgarse. Las búsquedas de una reproducción (`first`, `last`
 se estrella donde se estrelló el programa y dice lo que siguió. Si una de esas
 reproducciones acaba antes de tiempo por un fallo de `tondo`, el depurador
 dice por qué, y con `TONDO_DUMP` en su entorno deja también el volcado.
+`tondo debug --compare <dir> <dir>` compara dos grabaciones del mismo
+ejecutable, como una que pasó y otra que falló, y `debug_compare` en el
+servidor MCP y *Compare Two Recordings* en el editor hacen lo mismo. Cada una
+se reproduce sin parar anotando las líneas que corre cada tarea, y la
+respuesta es la primera línea, por orden de ejecución, en que una tarea de una
+va adonde la misma tarea de la otra no va: qué difiere en sus variables justo
+antes, y de dónde vino en la segunda, siguiendo `origins` solo por los valores
+que en la otra grabación fueron distintos en esa misma línea. Dos grabaciones
+de ejecutables distintos no se comparan, porque sus líneas no se corresponden.
 El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que

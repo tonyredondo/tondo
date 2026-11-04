@@ -971,18 +971,16 @@ export interface Origin {
 /** Where a value came from, as Markdown: the line, then each cause under
  *  the one it explains. */
 export function originsMarkdown(title: string, origins: { why: string; at: string; causes: Origin[] }): string {
-  const lines = [`# Where ${title} comes from`, '', `${origins.why}, at \`${origins.at}\``, ''];
-  const walk = (causes: Origin[], depth: number) => {
-    for (const cause of causes) {
-      const above = cause.above ? ', as above' : '';
-      lines.push(`${'  '.repeat(depth)}- \`${cause.name}\` was \`${cause.value}\`, from \`${cause.at}\`${above}`);
-      if (!cause.above) {
-        walk(cause.causes ?? [], depth + 1);
-      }
-    }
-  };
-  walk(origins.causes, 0);
+  const lines = [`# Where ${title} comes from`, '', `${origins.why}, at \`${origins.at}\``, '', ...causeLines(origins.causes)];
   return `${lines.join('\n')}\n`;
+}
+
+/** Each cause under the one it explains. */
+function causeLines(causes: Origin[], depth = 0): string[] {
+  return causes.flatMap((cause) => [
+    `${'  '.repeat(depth)}- \`${cause.name}\` was \`${cause.value}\`, from \`${cause.at}\`${cause.above ? ', as above' : ''}`,
+    ...(cause.above ? [] : causeLines(cause.causes ?? [], depth + 1)),
+  ]);
 }
 
 /** What changed between two moments of a replay, as `diff` gives it. */
@@ -993,6 +991,44 @@ export interface Diff {
   started: { task: number; at: string }[];
   ended: { task: number; at: string }[];
   memory: { at: string; objects: number; bytes: number }[];
+}
+
+export interface Compared {
+  parted: boolean;
+  task?: number;
+  after?: string | null;
+  first?: { at: string | null; tick: number | null };
+  second?: { at: string | null; tick: number | null };
+  bindings?: { frame: string; name: string; before: string | null; after: string | null }[];
+  origins?: { name: string; why: string; at: string; causes: Origin[] } | null;
+}
+
+/** Where two recordings part, as Markdown: the lines each goes on to, what
+ *  differs there, and where that came from. */
+export function comparedMarkdown(found: Compared, first: string, second: string): string {
+  if (!found.parted) {
+    return `# ${first} and ${second}\n\nThe two runs went through the same lines.\n`;
+  }
+  const next = (run: string, to?: { at: string | null; tick: number | null }) =>
+    to?.at ? `- ${run} goes on at \`${to.at}\` (probe ${to.tick})` : `- ${run} ends the task there`;
+  const lines = [
+    `# ${first} and ${second} part in task ${found.task}`,
+    '',
+    ...(found.after ? [`After \`${found.after}\`:`, ''] : []),
+    next(first, found.first),
+    next(second, found.second),
+  ];
+  if (found.bindings?.length) {
+    lines.push('', '## What differs there', '');
+    for (const change of found.bindings) {
+      lines.push(`- \`${change.name}\`: \`${change.before ?? 'nothing'}\` → \`${change.after ?? 'nothing'}\``);
+    }
+  }
+  if (found.origins) {
+    const { name, why, at, causes } = found.origins;
+    lines.push('', `## Where the \`${name}\` of ${second} came from`, '', `${why}, at \`${at}\``, '', ...causeLines(causes));
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /** What changed between two moments, as Markdown: the bindings frame by

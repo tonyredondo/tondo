@@ -301,6 +301,24 @@ test joining {
 /// An agent finds where the time goes: in the program, in a test, and in
 /// what a benchmark measures.
 #[test]
+fn compares_two_recordings() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let program = "import std.env\nimport std.console\n\nfn main() {\n    let told = env.args()\n    if told.length() > 1 {\n        console.println(\"many\")\n    }\n    console.println(\"done\")\n}\n";
+    let dir = project("mcp_compare", &[("src/main.to", program)]);
+    let mut agent = Agent::start(&dir);
+    agent.call("run", json!({ "record": "one", "args": ["a"] }));
+    agent.call("run", json!({ "record": "two", "args": ["a", "b"] }));
+    let (found, text) = agent.call("debug_compare", json!({ "first": "one", "second": "two" }));
+    assert_eq!(found["parted"], true, "{found}");
+    assert_eq!(found["second"]["at"], "src/main.to:7 in main", "{found}");
+    assert_eq!(found["origins"]["at"], "src/main.to:5 in main", "{found}");
+    assert!(text.contains("the runs part in task 1, after src/main.to:6 in main"), "{text}");
+    agent.stop();
+}
+
+#[test]
 fn profiles_for_agents() {
     let files = [
         ("tondo.toml", "[package]\nname = \"app\"\n"),
