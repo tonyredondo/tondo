@@ -3430,7 +3430,7 @@ pub unsafe extern "C" fn tondo_rt_join_wait_timeout(join: *mut JoinObject, out: 
         Case { kind: WAIT, found: 0, handle: join as *mut u8, value: out, nanos: 0 },
         Case { kind: SLEEP, found: 0, handle: std::ptr::null_mut(), value: std::ptr::null_mut(), nanos },
     ];
-    match unsafe { select(&mut cases, true, std::ptr::null()) } {
+    match unsafe { select_within(&mut cases) } {
         0 => 1,
         1 => {
             unsafe { cancel_join(join) };
@@ -4192,7 +4192,7 @@ pub unsafe extern "C" fn tondo_rt_channel_receive_timeout(channel: *mut ChannelO
         Case { kind: RECEIVE, found: 0, handle: channel as *mut u8, value: out, nanos: 0 },
         Case { kind: SLEEP, found: 0, handle: std::ptr::null_mut(), value: std::ptr::null_mut(), nanos },
     ];
-    let won = unsafe { select(&mut cases, true, std::ptr::null()) };
+    let won = unsafe { select_within(&mut cases) };
     (won == 0 && cases[0].found != 0) as u8
 }
 
@@ -4345,6 +4345,15 @@ fn random(bound: usize) -> usize {
     x ^= x << 17;
     STATE.store(x, Ordering::Relaxed);
     x % bound
+}
+
+/// A wait of `cases[0]` for as long as the timer `cases[1]` says: what is
+/// ready already goes first, as a timeout of nothing is ready too.
+unsafe fn select_within(cases: &mut [Case; 2]) -> i64 {
+    match unsafe { select(&mut cases[..1], false, std::ptr::null()) } {
+        -1 => unsafe { select(cases, true, std::ptr::null()) },
+        won => won,
+    }
 }
 
 /// `select` over `count` operations at `cases`: completes the first that

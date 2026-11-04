@@ -1,0 +1,18 @@
+// A value that is there goes first: a timeout of nothing does not take a
+// turn at random with it.
+import std.console
+import std.time
+
+fn main() {
+    let (give, take) = channel[Int](256)
+    var received = 0
+    for i in 0..200 {
+        give.send(i)
+        if take.receive(timeout: time.seconds(0)).isSome() {
+            received += 1
+        }
+    }
+    console.println("{received} of 200")
+}
+
+// expect-stdout: 200 of 200
