@@ -2573,6 +2573,48 @@ fn debug_adapter_follows_children() {
     adapter.stop();
 }
 
+/// In a replay the editor opens the recording of a child in a session of
+/// its own, which replays it.
+#[test]
+fn debug_adapter_opens_the_recordings_of_children() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-recorded-children");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let child = "import std.console\n\nfn main() {\n    let greeting = \"hi\"\n    console.println(greeting)\n}\n";
+    std::fs::write(dir.join("child.to"), child).unwrap();
+    let parent =
+        "import std.process\n\nfn main(): !process.ProcessError {\n    _ = process.command(\"./child\").run()?\n}\n";
+    std::fs::write(dir.join("parent.to"), parent).unwrap();
+    for args in [&["build", "child.to", "--debug", "--output", "child"][..], &["run", "--record", "run", "parent.to"]] {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    }
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "replay": "run", "cwd": dir, "followChildren": true }));
+    adapter.ask("configurationDone", json!({}));
+    let asked = adapter.asked("startDebugging");
+    assert_eq!(asked["request"], "launch", "{asked}");
+    assert!(asked["configuration"]["name"].as_str().unwrap().starts_with("child ("), "{asked}");
+    let mut followed = Adapter::start();
+    followed.ask("initialize", json!({ "adapterID": "tondo" }));
+    followed.ask("launch", json!({ "replay": asked["configuration"]["replay"], "cwd": dir }));
+    let path = dir.join("child.to");
+    followed.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 5 }] }));
+    followed.ask("configurationDone", json!({}));
+    followed.until("stopped");
+    let trace = followed.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(trace["stackFrames"][0]["line"], 5, "{trace}");
+    followed.ask("continue", json!({ "threadId": 1 }));
+    followed.until("terminated");
+    followed.stop();
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {
