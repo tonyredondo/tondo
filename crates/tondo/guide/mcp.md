@@ -134,7 +134,9 @@ and one that failed, and says where they part and why.
 `ps` lists the programs started with `TONDO_DIAGNOSTICS=1` and the debug
 builds; `counters`, `trace`, `dump` and `dump_read` look into one by
 `program`, its process ID or name, and with `via`, as `ssh host`, they and
-`ps` and `reload` reach one on another machine or in a container. `profile` profiles a `path` it runs, a
+`ps` and `reload` reach one on another machine or in a container.
+`dump_read` with the view `locals` or `print` gives what a frame held, of any
+build, and `dump_diff` what changed between two dumps. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `memory` or `tasks`, and gives the functions and the program's lines that
 take the most, each with its code.

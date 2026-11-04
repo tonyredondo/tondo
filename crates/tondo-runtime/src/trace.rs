@@ -315,6 +315,35 @@ fn located(pc: usize) -> Option<(&'static str, u32, &'static str, Inlined)> {
     }
 }
 
+/// The frames code stands for, as `frames`: from the innermost out, each
+/// with its inlined call, `u32::MAX` for the function's own, and its place.
+pub(crate) fn scopes_at(address: usize) -> Vec<(u32, String)> {
+    let (first, mut outer) = match call(address) {
+        Some((of, site)) => unsafe {
+            let blob = of.table.blob;
+            let record = u32_at(blob, site + 20);
+            let (file, line) = (named(of.table, u32_at(blob, site + 12)), u32_at(blob, site + 4));
+            ((record, format!("{file}:{line} in {}", of.name(record))), Inlined { of: Some(of), record })
+        },
+        None => match located(address.saturating_sub(1)) {
+            Some((file, line, function, inlined)) => {
+                ((inlined.record, format!("{file}:{line} in {function}")), inlined)
+            }
+            None => return Vec::new(),
+        },
+    };
+    let mut out = vec![first];
+    while let Some((function, file, line, _)) = outer.next() {
+        out.push((outer.record, format!("{file}:{line} in {function}")));
+    }
+    out
+}
+
+/// The number of the function a return address is in, and where it starts.
+pub(crate) fn function_at(address: usize) -> Option<(usize, usize)> {
+    find(address).map(|(_, start, index)| (index, start))
+}
+
 /// The code of a function: its name, where it starts and ends, and where
 /// each of its lines starts.
 pub(crate) struct Code {
@@ -883,6 +912,73 @@ unsafe fn forward(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c
 /// The fault's address, and the instruction, frame pointer and return
 /// address of the code that faulted: the link register, or the top of the
 /// stack, which holds one when a call was being made.
+/// The integer registers at a fault, by the number a compiler gives them.
+unsafe fn fault_registers(context: *const libc::c_void) -> [usize; 32] {
+    let mut registers = [0; 32];
+    unsafe {
+        let context = context as *const libc::ucontext_t;
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            let state = &(*context).uc_mcontext.gregs;
+            let names = [
+                libc::REG_RAX,
+                libc::REG_RCX,
+                libc::REG_RDX,
+                libc::REG_RBX,
+                libc::REG_RSP,
+                libc::REG_RBP,
+                libc::REG_RSI,
+                libc::REG_RDI,
+                libc::REG_R8,
+                libc::REG_R9,
+                libc::REG_R10,
+                libc::REG_R11,
+                libc::REG_R12,
+                libc::REG_R13,
+                libc::REG_R14,
+                libc::REG_R15,
+            ];
+            for (slot, name) in registers.iter_mut().zip(names) {
+                *slot = state[name as usize] as usize;
+            }
+        }
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        for (slot, value) in registers.iter_mut().zip((*context).uc_mcontext.regs) {
+            *slot = value as usize;
+        }
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            let state = &(*(*context).uc_mcontext).__ss;
+            let values = [
+                state.__rax,
+                state.__rcx,
+                state.__rdx,
+                state.__rbx,
+                state.__rsp,
+                state.__rbp,
+                state.__rsi,
+                state.__rdi,
+                state.__r8,
+                state.__r9,
+                state.__r10,
+                state.__r11,
+                state.__r12,
+                state.__r13,
+                state.__r14,
+                state.__r15,
+            ];
+            for (slot, value) in registers.iter_mut().zip(values) {
+                *slot = value as usize;
+            }
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        for (slot, value) in registers.iter_mut().zip((*(*context).uc_mcontext).__ss.__x) {
+            *slot = value as usize;
+        }
+    }
+    registers
+}
+
 pub(crate) unsafe fn faulted(
     info: *const libc::siginfo_t,
     context: *const libc::c_void,
@@ -1025,6 +1121,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
         };
         let frames = std::iter::once(pc).chain(first).chain(walk).collect();
+        crate::diagnostics::fault_registers(&fault_registers(context), !in_c);
         crate::diagnostics::faulted_at(if in_c { link } else { pc }, fp, bounds);
         crate::diagnostics::crash_dump("fault", &message, frames, false);
         crate::debugger::crashed();

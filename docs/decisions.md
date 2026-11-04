@@ -4992,3 +4992,22 @@ no knowledge of layouts, on another machine.
 Copies of the program do not outlive a machine, and CI ends. So a failed
 `--last` run writes a report at once, while the copies are there: the last
 line, what every frame held, and where what that line reads came from.
+
+## Dumps of optimized code say where the compiler left each binding
+
+The hardest case is a service that fell in production, so a dump shows
+bindings without probes too. Cranelift's value labels say where each value
+is over the code, and cost no instruction, only a table; the frame layout
+says where each slot is, and the unwind information what each function saved
+of its caller's registers, which walks them up the stack. Show glue stays in
+the binary, 0.5 % of a small one, so a value reads the same as in a debug
+build, in the copy that renders them. The inliner keeps which binding is of
+which inlined call, since in an optimized build most frames are inlined.
+
+Two limits are the optimizer's. A value that nothing reads later is gone,
+and at a panic nothing is read later: so a `panic` the program wrote stores
+its numbers in code only that panic runs, which keeps them alive until then.
+Bounds checks do not, as they sit in hot loops, and values of the heap do not,
+as a dead one may have been moved. And past the runtime's own frames the
+registers are not known without its unwind tables, so a task that waits shows
+only what the compiler spilled.

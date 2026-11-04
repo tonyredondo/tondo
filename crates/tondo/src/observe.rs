@@ -862,7 +862,7 @@ pub enum View {
 }
 
 /// The frame of a dump's task that a view names.
-fn dump_frame<'a>(tasks: &'a [Value], task: Option<u64>, frame: usize) -> Result<&'a Value, String> {
+fn dump_frame(tasks: &[Value], task: Option<u64>, frame: usize) -> Result<&Value, String> {
     let has_frames = |t: &&Value| t["frames"].as_array().is_some_and(|frames| !frames.is_empty());
     let chosen = match task {
         Some(id) => tasks.iter().find(|t| t["id"] == id).ok_or(format!("the dump has no task {id}"))?,

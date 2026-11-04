@@ -10,7 +10,7 @@ use super::{Builder, Str, str_bytes};
 use expression::{Evaluator, Expr};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, RwLock};
 
 mod expression;
@@ -1432,7 +1432,10 @@ fn frame_at(table: &Table, pc: usize, fp: usize) -> Option<Frame> {
 pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Vec<String> {
     use std::io::Read;
     use std::os::fd::FromRawFd;
-    let Some(table) = table() else { return Vec::new() };
+    let table = table();
+    if table.is_none() && DUMP_TABLE.load(Ordering::Relaxed).is_null() {
+        return Vec::new();
+    }
     let _outside = super::replay::Outside::enter();
     let deadline = std::time::Instant::now() + DUMPING;
     let (mut lines, mut skipped) = (Vec::new(), 0);
@@ -1445,7 +1448,7 @@ pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Ve
             -1 => break,
             0 => {
                 unsafe { libc::close(ends[0]) };
-                render(&table, here, lines.len() + skipped, ends[1]);
+                render(table.as_deref(), here, lines.len() + skipped, ends[1]);
                 unsafe { libc::_exit(0) };
             }
             pid => {
@@ -1486,41 +1489,307 @@ pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Ve
     lines
 }
 
+/// Where a task stands in a dump: its id, the code of a fault, its frame
+/// and its stack.
+type TaskStop = (u64, Option<usize>, usize, (usize, usize));
+
 /// In the copy of the program, shows the bindings from the `from`th on,
 /// a line each on `out`.
-fn render(table: &Table, here: Option<(Option<usize>, usize, (usize, usize))>, from: usize, out: i32) {
+fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usize))>, from: usize, out: i32) {
     RENDERING.store(true, Ordering::Relaxed);
     for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
         unsafe { libc::signal(signal, libc::SIG_DFL) };
     }
     let _quiet = super::heap::Quiet::enter();
-    let mut stops: Vec<(u64, Option<usize>, usize, (usize, usize))> =
+    let mut stops: Vec<TaskStop> =
         here.into_iter().map(|(pc, fp, bounds)| (super::tasks::current_id(), pc, fp, bounds)).collect();
     stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds)| (id, None, fp, bounds)));
     let mut index = 0;
+    let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, glue: Show, address: usize| {
+        index += 1;
+        if index <= from {
+            return;
+        }
+        let text = shown_here(glue, address);
+        let line = format!(
+            "{{\"task\":{task},\"frame\":{frame},\"at\":{},\"name\":{},\"type\":{},\"value\":{},\"parts\":{}}}\n",
+            quoted(place),
+            quoted(name),
+            quoted(ty),
+            quoted(&clipped(&text)),
+            dumped_parts(&text, DUMPED_DEPTH),
+        );
+        unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
+    };
+    let release = table.is_none().then(dump_functions);
     for (task, pc, frame, bounds) in stops {
-        let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: String::new() };
-        let mut stack = frames(table, &stop);
-        stack.splice(0..0, pc.and_then(|pc| frame_at(table, pc, frame)));
-        for at in 0..stack.len() {
-            for (binding, address, _) in visible(table, &stack, at) {
-                index += 1;
-                if index <= from {
-                    continue;
+        if let Some(table) = table {
+            let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: String::new() };
+            let mut stack = frames(table, &stop);
+            stack.splice(0..0, pc.and_then(|pc| frame_at(table, pc, frame)));
+            for at in 0..stack.len() {
+                for (binding, address, _) in visible(table, &stack, at) {
+                    show(task, at, &stack[at].place, &binding.name, &binding.ty, binding.show, address);
                 }
-                let text = shown_here(binding.show, address);
-                let line = format!(
-                    "{{\"task\":{task},\"frame\":{at},\"at\":{},\"name\":{},\"type\":{},\"value\":{},\"parts\":{}}}\n",
-                    quoted(&stack[at].place),
-                    quoted(&binding.name),
-                    quoted(&binding.ty),
-                    quoted(&clipped(&text)),
-                    dumped_parts(&text, DUMPED_DEPTH),
-                );
-                unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
+            }
+        } else if let Some(functions) = &release {
+            let top = pc.map(|pc| (frame, pc + 1));
+            let (mut at, mut registers): (_, Registers) = (0, [None; 32]);
+            // A fault says all of them, for the frame it stopped.
+            if pc.is_some() {
+                registers = super::diagnostics::faulted_registers();
+            }
+            let (kept_at, kept) = PANIC_REGISTERS.get();
+            for (fp, address) in top.into_iter().chain(super::trace::callers(frame, bounds)) {
+                // Past the runtime's own frames nothing is known, but what
+                // a panic kept.
+                let Some((function, start)) = super::trace::function_at(address) else {
+                    registers = [None; 32];
+                    continue;
+                };
+                if fp == kept_at {
+                    for (&register, &value) in CALLEE_SAVED.iter().zip(&kept) {
+                        registers[register] = Some(value);
+                    }
+                }
+                let offset = (address - 1 - start) as u32;
+                let found = functions.get(&function);
+                // What a panic kept is in this frame, if it panicked.
+                let numbers = PANIC_NUMBERS.get().addr();
+                let numbers = (fp == kept_at && numbers != 0).then_some(numbers);
+                let scopes = super::trace::scopes_at(address);
+                for (record, place) in scopes.iter().filter(|(_, place)| !place.contains(" in spawn")) {
+                    for binding in found.iter().flat_map(|f| &f.bindings).filter(|b| b.scope == *record) {
+                        let mut word = 0usize;
+                        let kept = numbers.zip(binding.keep).and_then(|(numbers, index)| {
+                            let bits = unsafe { *(numbers as *const u64) };
+                            (bits & (1 << index) != 0).then_some(numbers + (index + 1) * 8)
+                        });
+                        if let Some(address) = kept.or_else(|| binding.found(fp, offset, &registers, &mut word)) {
+                            show(task, at, place, &binding.name, &binding.ty, binding.show, address);
+                        }
+                    }
+                    at += 1;
+                }
+                let saved = found.map_or(&[][..], |f| &f.saved);
+                registers = caller_registers(&registers, fp, saved);
             }
         }
     }
+}
+
+/// What a build without probes says of a binding, for its dumps.
+struct DumpBinding {
+    name: String,
+    ty: String,
+    show: Show,
+    /// Where it is from the frame pointer, when it has a slot there.
+    slot: Option<isize>,
+    /// Behind what the ranges find, a pointer to it.
+    pointer: bool,
+    /// Over which code it is where.
+    ranges: Vec<(u32, u32, Place)>,
+    /// Its place among what an explicit panic keeps.
+    keep: Option<usize>,
+    /// The inlined call it is of, or `u32::MAX`.
+    scope: u32,
+}
+
+/// Where a value is: at an offset from the canonical frame address, or in
+/// a register, by its number.
+#[derive(Clone, Copy)]
+enum Place {
+    Frame(isize),
+    Register(usize),
+}
+
+/// What a dump reads of a function of a build without probes.
+#[derive(Default)]
+struct DumpFunction {
+    bindings: Vec<DumpBinding>,
+    /// Where it saves its caller's registers, from the canonical frame
+    /// address, by number.
+    saved: Vec<(usize, isize)>,
+}
+
+/// The registers of a frame, those known.
+type Registers = [Option<usize>; 32];
+
+/// The callee-saved registers, as the ABI says.
+#[cfg(target_arch = "x86_64")]
+const CALLEE_SAVED: &[usize] = &[3, 12, 13, 14, 15];
+#[cfg(target_arch = "aarch64")]
+const CALLEE_SAVED: &[usize] = &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
+
+thread_local! {
+    /// The frame pointer and callee-saved registers before a panic.
+    static PANIC_REGISTERS: std::cell::Cell<(usize, [usize; 10])> = const { std::cell::Cell::new((0, [0; 10])) };
+}
+
+thread_local! {
+    /// What an explicit panic kept: the bits of those it holds, then each.
+    static PANIC_NUMBERS: std::cell::Cell<*const u64> = const { std::cell::Cell::new(std::ptr::null()) };
+}
+
+/// Called before a panic the program wrote, with what it keeps.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_keep_numbers(kept: *const u64) {
+    PANIC_NUMBERS.set(kept);
+}
+
+/// Called by what keeps the registers: the frame pointer of the code that
+/// panics, then the callee-saved registers.
+extern "C" fn registers_kept(registers: *const usize) {
+    let mut kept = [0; 10];
+    let fp = unsafe { *registers };
+    for (index, slot) in kept.iter_mut().enumerate().take(CALLEE_SAVED.len()) {
+        *slot = unsafe { *registers.add(index + 1) };
+    }
+    PANIC_REGISTERS.set((fp, kept));
+}
+
+/// Keeps the registers of the code that is about to panic, which the
+/// runtime's own frames would overwrite on the way to a dump.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn tondo_rt_keep_registers() {
+    std::arch::naked_asm!(
+        "sub rsp, 56",
+        "mov [rsp], rbp",
+        "mov [rsp + 8], rbx",
+        "mov [rsp + 16], r12",
+        "mov [rsp + 24], r13",
+        "mov [rsp + 32], r14",
+        "mov [rsp + 40], r15",
+        "mov rdi, rsp",
+        "call {kept}",
+        "add rsp, 56",
+        "ret",
+        kept = sym registers_kept,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn tondo_rt_keep_registers() {
+    std::arch::naked_asm!(
+        "sub sp, sp, #112",
+        "stp x29, x19, [sp]",
+        "stp x20, x21, [sp, #16]",
+        "stp x22, x23, [sp, #32]",
+        "stp x24, x25, [sp, #48]",
+        "stp x26, x27, [sp, #64]",
+        "stp x28, x30, [sp, #80]",
+        "mov x0, sp",
+        "bl {kept}",
+        "ldr x30, [sp, #88]",
+        "add sp, sp, #112",
+        "ret",
+        kept = sym registers_kept,
+    )
+}
+
+impl DumpBinding {
+    /// Where the binding is at a place of the code of the frame at `fp`:
+    /// in memory, or a copy of a register in `word`.
+    fn found(&self, fp: usize, offset: u32, registers: &Registers, word: &mut usize) -> Option<usize> {
+        if let Some(slot) = self.slot {
+            return Some((fp as isize + slot) as usize);
+        }
+        let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
+        let value = match place {
+            Place::Frame(at) => {
+                let address = (fp as isize + 16 + at) as usize;
+                if !self.pointer {
+                    return Some(address);
+                }
+                peek(address, 8).try_into().ok().map(usize::from_ne_bytes)?
+            }
+            Place::Register(number) => (*registers.get(number)?)?,
+        };
+        if self.pointer {
+            return Some(value);
+        }
+        *word = value;
+        Some(word as *mut usize as usize)
+    }
+}
+
+/// The registers of the caller of the frame at `fp`, of a function that
+/// saves these.
+fn caller_registers(registers: &Registers, fp: usize, saved: &[(usize, isize)]) -> Registers {
+    let mut caller: Registers = [None; 32];
+    for &register in CALLEE_SAVED {
+        caller[register] = registers[register];
+    }
+    for &(register, at) in saved {
+        let word = peek((fp as isize + 16 + at) as usize, 8).try_into().ok().map(usize::from_ne_bytes);
+        if let Some(slot) = caller.get_mut(register) {
+            *slot = word;
+        }
+    }
+    caller
+}
+
+/// The table of what the dumps of a build without probes show.
+static DUMP_TABLE: AtomicPtr<Raw> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Called by a program without probes before anything else.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_dump_table(raw: *mut Raw) {
+    DUMP_TABLE.store(raw, Ordering::Relaxed);
+}
+
+/// The bindings of each function, by its number, as `tondo_rt_dump_table`
+/// has them, which only a dump reads.
+fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
+    let mut functions: std::collections::HashMap<usize, DumpFunction> = Default::default();
+    let raw = DUMP_TABLE.load(Ordering::Relaxed);
+    if raw.is_null() {
+        return functions;
+    }
+    let raw = unsafe { &*raw };
+    let text = String::from_utf8_lossy(unsafe { str_bytes(raw.text) }).into_owned();
+    let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
+    let (mut current, mut next) = (0, 0);
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let function = functions.entry(current).or_default();
+        match fields[..] {
+            ["F", index] => current = index.parse().unwrap_or(0),
+            ["C", register, at] => {
+                if let (Ok(register), Ok(at)) = (register.parse(), at.parse()) {
+                    function.saved.push((register, at));
+                }
+            }
+            ["B", name, ty, kind, value, keep, scope] => {
+                let (name, ty) = (name.to_string(), ty.to_string());
+                let show = glues[next];
+                next += 1;
+                let value: isize = value.parse().unwrap_or(0);
+                let (slot, pointer) = if kind == "s" { (Some(value), false) } else { (None, value == 1) };
+                let keep = keep.parse().ok();
+                let scope = scope.parse().unwrap_or(u32::MAX);
+                let ranges = Vec::new();
+                function.bindings.push(DumpBinding { name, ty, show, slot, pointer, ranges, keep, scope });
+            }
+            ["R", start, end, kind, at] => {
+                let place = match kind {
+                    "f" => at.parse().ok().map(Place::Frame),
+                    _ => at.parse().ok().map(Place::Register),
+                };
+                if let (Some(binding), Ok(start), Ok(end), Some(place)) =
+                    (function.bindings.last_mut(), start.parse(), end.parse(), place)
+                {
+                    binding.ranges.push((start, end, place));
+                }
+            }
+            _ => {}
+        }
+    }
+    functions
 }
 
 /// A checkpoint at a probe of a replay that runs, when one is due: the

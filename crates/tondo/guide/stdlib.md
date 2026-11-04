@@ -702,7 +702,10 @@ program that panics, crashes or deadlocks leaves its dump there. The dump
 of a `--debug` build has every object: `objects` by type, and `object
 <address>` with what keeps it alive, `task 1 -> Map[...] -> String`.
 
-A dump keeps the bindings of every frame of every task: `tondo dump read
+A dump keeps the bindings of every frame of every task, in any build, so a
+service that fell in production has them too: there a binding the code no
+longer needed may be gone, and a task that waits shows what was on its stack.
+`tondo dump read
 <file> locals [<task> [<frame>]]` shows them, and `print user.name` a part,
 as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
 changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or

@@ -136,6 +136,12 @@ enum Rt {
     Trace,
     /// A debug build's table of probes, and each probe (toolchain 7.6).
     DebugTable,
+    /// What the dumps of a build without probes show.
+    DumpTable,
+    /// Before a panic, the registers its dump reads.
+    KeepRegisters,
+    /// Before a panic the program wrote, the numbers its dump shows.
+    KeepNumbers,
     MetricsWatch,
     DebugLine,
     DebugFailed,
@@ -423,6 +429,9 @@ impl Rt {
             Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64], &[]),
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
+            Rt::DumpTable => ("tondo_rt_dump_table", &[I64], &[]),
+            Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
+            Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
             Rt::DebugFailed => ("tondo_rt_debug_failed", &[I64, I64, I64, I64, I64, I64], &[]),
@@ -895,6 +904,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         debug_functions: Vec::new(),
         debug_slots: HashMap::new(),
         debug_sites: Vec::new(),
+        dump: None,
+        dump_bindings: HashMap::new(),
         live: None,
         current: 0,
         takes_osr: bodies.iter().map(|body| body.osr.is_some()).collect(),
@@ -918,6 +929,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         let table = cg.module.declare_data("tondo_debug", Linkage::Local, false, false).map_err(|e| e.to_string())?;
         cg.debug = Some(table);
     }
+    // Any other program says what its dumps show.
+    if !debug && cg.live.is_none() && coverage.is_none() && !Gen::fuzzing(&cg) {
+        let table = cg.module.declare_data("tondo_dump", Linkage::Local, false, false).map_err(|e| e.to_string())?;
+        cg.dump = Some(table);
+    }
     for (index, body) in bodies.iter().enumerate() {
         let signature = cg.signature(body);
         let id = cg
@@ -938,9 +954,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // to declare is declared in the functions' order (see `worker`);
     // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined| {
+    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body| {
         let func = std::mem::replace(&mut context.func, ir::Function::new());
-        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined });
+        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body });
     };
     let built = {
         let shared = worker::Shared::new(&cg);
@@ -957,11 +973,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
             let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone());
+            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone(), index);
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone());
+            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone(), index);
         }
         cg.module.clear_context(&mut context);
     }
@@ -974,14 +990,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let main = main.0 as usize;
             let entry =
                 cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-            job(entry, &mut context, None, Vec::new(), Vec::new());
+            job(entry, &mut context, None, Vec::new(), Vec::new(), 0);
             cg.module.clear_context(&mut context);
             let start = cg.process_main(entry, &mut context, &mut builder_context)?;
-            job(start, &mut context, None, Vec::new(), Vec::new());
+            job(start, &mut context, None, Vec::new(), Vec::new(), 0);
         }
         None => {
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
-            job(init, &mut context, None, Vec::new(), Vec::new());
+            job(init, &mut context, None, Vec::new(), Vec::new(), 0);
             cg.library = Some(init);
         }
     }
@@ -991,26 +1007,26 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
         // In the table of the trace, without lines, for its handler.
-        job(thunk, &mut context, Some(""), Vec::new(), Vec::new());
+        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, Some(""), Vec::new(), Vec::new());
+        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None, Vec::new(), Vec::new());
+        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new());
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
     }
     // A patch's conversions of the running program's values, which the
@@ -1026,7 +1042,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = signature;
         context.func.name = UserFuncName::user(7, id.as_u32());
         define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new());
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
         let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
         let old = body.locals[body.params[0].0 as usize];
@@ -1046,7 +1062,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new());
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
     }
     cg.compile_all(jobs)?;
@@ -1060,6 +1076,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     cg.trace_table(trace);
     if let Some(debug) = cg.debug {
         cg.debug_table(debug);
+    }
+    if let Some(dump) = cg.dump {
+        cg.dump_table(dump);
     }
     if let Some(build) = live {
         cg.live_points(build, bodies);
@@ -1140,6 +1159,10 @@ struct Codegen<'a> {
     /// A debug build's probes: where each is, its function, and whether its
     /// line goes on there from the code before.
     debug_sites: Vec<(u32, u32, bool)>,
+    /// A build without probes: the table of what its dumps show, and the
+    /// bindings of each function, by its number.
+    dump: Option<DataId>,
+    dump_bindings: HashMap<usize, Vec<DumpBinding>>,
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
@@ -1371,6 +1394,20 @@ fn only_before(blocks: &[crate::mir::BlockData]) -> Vec<Option<usize>> {
 /// type with a view, how it shows as it is.
 type DebugBinding = (String, Ty, FuncId, Option<FuncId>);
 
+/// A binding of a build without probes, as a dump shows it: its name, its
+/// type, the glue that shows it, where it is, its place among those an
+/// explicit panic keeps, and the inlined call it is of.
+type DumpBinding = (String, Ty, FuncId, DumpPlace, Option<u32>, Option<u32>);
+
+/// Where a dump finds a binding: in what a value label says, in a stack
+/// slot, or behind a pointer a value label says.
+#[derive(Clone, Copy)]
+enum DumpPlace {
+    Value(u32),
+    Slot(u32),
+    Pointer(u32),
+}
+
 /// A compiled function for stack traces: its name, size and, for each
 /// call, the offset it returns to and where its source starts; and where
 /// the code of each statement starts, for profiles.
@@ -1383,6 +1420,11 @@ struct Traced {
     lines: Vec<(u32, u32)>,
     sites: Vec<Site>,
     inlined: Vec<crate::mir::Inlined>,
+    /// What a dump finds in it, by the function's number, and where.
+    body: usize,
+    labelled: Vec<(u32, u32, u32, Located)>,
+    slots: Vec<(u32, i64)>,
+    saved: Vec<(u16, i64)>,
 }
 
 /// Where a statement's code is in the source, the type of the local it
@@ -1400,6 +1442,8 @@ struct Job {
     /// its type: the source location of an instruction indexes this, from 1.
     sites: Vec<Site>,
     inlined: Vec<crate::mir::Inlined>,
+    /// The body it is of.
+    body: usize,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -1419,6 +1463,80 @@ struct Compiled {
     /// hold values are in its frame, from the frame pointer, by the
     /// function's number in the debugger's table.
     debug_slots: Option<(u32, i64, i64)>,
+    /// For a dump, where each value label is over the code, and where each
+    /// stack slot is from the frame pointer.
+    labelled: Vec<(u32, u32, u32, Located)>,
+    slots: Vec<(u32, i64)>,
+    saved: Vec<(u16, i64)>,
+}
+
+/// Where a value label is: in a register, by its number and whether it is
+/// an integer's, or at an offset from the canonical frame address.
+#[derive(Clone, Copy)]
+enum Located {
+    Register(u8, bool),
+    Frame(i64),
+}
+
+/// Where a compiled function keeps the registers it saves, from the
+/// canonical frame address: a dump reads the caller's values there.
+fn saved_registers(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    code: &cranelift_codegen::CompiledCode,
+) -> Vec<(u16, i64)> {
+    use gimli::UnwindSection;
+    use gimli::write::{Address, EhFrame, EndianVec, FrameTable};
+    let (Ok(Some(cranelift_codegen::isa::unwind::UnwindInfo::SystemV(info))), Some(cie)) =
+        (code.create_unwind_info(isa), isa.create_systemv_cie())
+    else {
+        return Vec::new();
+    };
+    let mut table = FrameTable::default();
+    let cie = table.add_cie(cie);
+    table.add_fde(cie, info.to_fde(Address::Constant(0)));
+    let mut written = EhFrame(EndianVec::new(gimli::LittleEndian));
+    if table.write_eh_frame(&mut written).is_err() {
+        return Vec::new();
+    }
+    let bytes = written.0.into_vec();
+    let frame = gimli::read::EhFrame::new(&bytes, gimli::LittleEndian);
+    let bases = gimli::read::BaseAddresses::default();
+    let mut entries = frame.entries(&bases);
+    let mut saved = Vec::new();
+    while let Ok(Some(entry)) = entries.next() {
+        let gimli::read::CieOrFde::Fde(partial) = entry else { continue };
+        let Ok(fde) = partial.parse(gimli::read::EhFrame::cie_from_offset) else { continue };
+        let mut context = gimli::read::UnwindContext::new();
+        let Ok(mut rows) = fde.rows(&frame, &bases, &mut context) else { continue };
+        while let Ok(Some(row)) = rows.next_row() {
+            for (register, rule) in row.registers() {
+                if let gimli::read::RegisterRule::Offset(offset) = rule
+                    && !saved.iter().any(|&(known, _)| known == register.0)
+                {
+                    saved.push((register.0, *offset));
+                }
+            }
+        }
+    }
+    saved
+}
+
+/// Where each value label of a compiled function is.
+fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32, Located)> {
+    let mut out = Vec::new();
+    for (label, ranges) in ranges {
+        for range in ranges {
+            let located = match range.loc {
+                cranelift_codegen::LabelValueLoc::CFAOffset(offset) => Some(Located::Frame(offset)),
+                cranelift_codegen::LabelValueLoc::Reg(reg) => {
+                    reg.to_real_reg().map(|reg| Located::Register(reg.hw_enc(), format!("{:?}", reg.class()) == "Int"))
+                }
+            };
+            out.extend(located.map(|located| (label.as_u32(), range.start, range.end, located)));
+        }
+    }
+    out.sort_by_key(|&(label, start, ..)| (label, start));
+    out
 }
 
 /// Compiles a function's IR to machine code.
@@ -1429,6 +1547,7 @@ fn compile_one(
     function: ir::Function,
 ) -> Result<Compiled, String> {
     context.clear();
+    let dumps = function.dfg.values_labels.is_some();
     context.func = function;
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
     let code = context.compiled_code().expect("compiled code");
@@ -1471,6 +1590,12 @@ fn compile_one(
             .map(|s| (s.start, if s.loc.as_abs().is_default() { 0 } else { s.loc.as_abs().bits() }))
             .collect(),
         debug_slots: debug_slots(code.buffer.frame_layout()),
+        labelled: labelled(&code.value_labels_ranges),
+        saved: if dumps { saved_registers(isa, code) } else { Vec::new() },
+        slots: code.buffer.frame_layout().map_or(Vec::new(), |layout| {
+            let at = |offset: u32| i64::from(offset) - i64::from(layout.frame_to_fp_offset);
+            layout.stackslots.iter().map(|(slot, data)| (slot.as_u32(), at(data.offset))).collect()
+        }),
     })
 }
 
@@ -1834,6 +1959,10 @@ trait Gen<'t> {
 
     /// A debug build's function, with the bindings it shows: its number.
     fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32;
+    /// A build without probes: whether its dumps show bindings.
+    fn dumps(&self) -> bool;
+    /// What a dump finds in the function that is being built.
+    fn dump_bindings(&mut self, described: Vec<DumpBinding>);
     /// In a live build, the word that holds the number of the function's
     /// first site, and that number.
     fn function_sites(&mut self) -> Option<(DataId, usize)>;
@@ -1999,6 +2128,12 @@ impl<'t> Gen<'t> for Codegen<'t> {
     fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
         self.debug_functions.push((name, described));
         self.debug_functions.len() as u32 - 1
+    }
+    fn dumps(&self) -> bool {
+        self.dump.is_some()
+    }
+    fn dump_bindings(&mut self, described: Vec<DumpBinding>) {
+        self.dump_bindings.insert(self.current, described);
     }
     fn function_sites(&mut self) -> Option<(DataId, usize)> {
         self.live.as_ref()?;
@@ -2174,8 +2309,22 @@ impl Codegen<'_> {
             }
             if let Some(name) = job.traced {
                 let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
-                let handlers = code.handlers;
-                self.traced.push(Traced { id: job.id, name, size, calls, handlers, lines, sites, inlined });
+                let (handlers, labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
+                let saved = code.saved;
+                self.traced.push(Traced {
+                    id: job.id,
+                    name,
+                    size,
+                    calls,
+                    handlers,
+                    lines,
+                    sites,
+                    inlined,
+                    body,
+                    labelled,
+                    slots,
+                    saved,
+                });
             }
         }
         Ok(())
@@ -2749,6 +2898,65 @@ impl Codegen<'_> {
     /// lines, `F` and a function's name, `L` a binding's name and type for
     /// each it shows, and `S` a probe's file, line and function; and the
     /// glue that shows each binding, in the order of the `L` lines.
+    fn dump_table(&mut self, id: DataId) {
+        let (mut text, mut glues) = (String::new(), Vec::new());
+        for (index, function) in self.traced.iter().enumerate() {
+            text.push_str(&format!("F\t{index}\n"));
+            for (register, at) in &function.saved {
+                text.push_str(&format!("C\t{register}\t{at}\n"));
+            }
+            let Some(bindings) = self.dump_bindings.get(&function.body) else { continue };
+            for (name, ty, glue, place, keep, scope) in bindings {
+                glues.push(*glue);
+                let ty = self.types.display(*ty);
+                let keep = keep.map_or(-1, i64::from);
+                let keep = format!("{keep}\t{}", scope.map_or(-1, i64::from));
+                match *place {
+                    DumpPlace::Slot(slot) => {
+                        let Some((_, at)) = function.slots.iter().find(|(s, _)| *s == slot) else {
+                            glues.pop();
+                            continue;
+                        };
+                        text.push_str(&format!("B\t{name}\t{ty}\ts\t{at}\t{keep}\n"));
+                    }
+                    DumpPlace::Value(label) | DumpPlace::Pointer(label) => {
+                        let pointer = u8::from(matches!(place, DumpPlace::Pointer(_)));
+                        text.push_str(&format!("B\t{name}\t{ty}\tv\t{pointer}\t{keep}\n"));
+                        for &(_, start, end, located) in function.labelled.iter().filter(|l| l.0 == label) {
+                            match located {
+                                Located::Frame(at) => text.push_str(&format!("R\t{start}\t{end}\tf\t{at}\n")),
+                                Located::Register(number, true) => {
+                                    text.push_str(&format!("R\t{start}\t{end}\tr\t{number}\n"));
+                                }
+                                Located::Register(_, false) => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let text = self.string(&text);
+        let array = self.module.declare_data("tondo_dump_glue", Linkage::Local, false, false).expect("dump glue");
+        let mut data = DataDescription::new();
+        data.define(vec![0u8; glues.len().max(1) * 8].into_boxed_slice());
+        data.set_align(8);
+        for (index, &glue) in glues.iter().enumerate() {
+            let code = self.module.declare_func_in_data(glue, &mut data);
+            data.write_function_addr(index as u32 * 8, code);
+        }
+        self.module.define_data(array, &data).expect("dump glue definition");
+        let mut header = vec![0u8; 24];
+        header[16..24].copy_from_slice(&(glues.len() as u64).to_le_bytes());
+        let mut data = DataDescription::new();
+        data.define(header.into_boxed_slice());
+        data.set_align(8);
+        let text = self.module.declare_data_in_data(text, &mut data);
+        let array = self.module.declare_data_in_data(array, &mut data);
+        data.write_data_addr(0, text, 0);
+        data.write_data_addr(8, array, 0);
+        self.module.define_data(id, &data).expect("dump table");
+    }
+
     fn debug_table(&mut self, id: DataId) {
         let mut text = String::new();
         let mut glues = Vec::new();
@@ -3028,6 +3236,11 @@ impl Codegen<'_> {
             let debug = e.fb.ins().symbol_value(POINTER, debug);
             e.call_rt(Rt::DebugTable, &[debug]);
         }
+        if let Some(dump) = e.cg.dump {
+            let dump = e.cg.module.declare_data_in_func(dump, e.fb.func);
+            let dump = e.fb.ins().symbol_value(POINTER, dump);
+            e.call_rt(Rt::DumpTable, &[dump]);
+        }
         e.fb.ins().return_(&[]);
         e.fb.seal_all_blocks();
         let config = e.cg.module.isa().frontend_config();
@@ -3065,6 +3278,11 @@ impl Codegen<'_> {
             let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
             let debug = e.fb.ins().symbol_value(POINTER, debug);
             e.call_rt(Rt::DebugTable, &[debug]);
+        }
+        if let Some(dump) = e.cg.dump {
+            let dump = e.cg.module.declare_data_in_func(dump, e.fb.func);
+            let dump = e.fb.ins().symbol_value(POINTER, dump);
+            e.call_rt(Rt::DumpTable, &[dump]);
         }
         // A program that reads its metrics counts them from the start
         // (standard library 14.25).
@@ -4586,6 +4804,12 @@ struct FnCodegen<'a, 'b> {
     scope: Option<u32>,
     /// In a debug build, what its probes show.
     debug: Option<DebugFrame>,
+    /// In a build without probes, the value label of each named variable.
+    labels: HashMap<u32, u32>,
+    /// Where an explicit panic keeps the numbers a dump shows, and which.
+    keeping: Option<(ir::StackSlot, Vec<(Local, Variable)>)>,
+    /// The block being built.
+    block: usize,
     /// What the probe just placed answered: whether to restart the frame;
     /// the local that holds it, and the line each block a restart point
     /// leads to is on.
@@ -4688,6 +4912,57 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             });
         }
+        // A build without probes says where the compiler left its named
+        // values, for a dump: no code changes for it.
+        let mut labels = HashMap::new();
+        let mut kept = Vec::new();
+        let panics = body.blocks.iter().any(|block| matches!(block.terminator, Terminator::Panic { .. }));
+        if cg.dumps() {
+            fb.func.collect_debug_info();
+            let mut described = Vec::new();
+            let own = body.names.iter().enumerate().filter_map(|(index, name)| Some((index, name.as_ref()?, None)));
+            let inlined = body.scoped.iter().map(|(local, name, scope)| (local.0 as usize, name, Some(*scope)));
+            for (index, name, scope) in own.chain(inlined) {
+                let place = match storage[index] {
+                    Storage::Zero => continue,
+                    Storage::Var(var) => {
+                        labels.insert(var.as_u32(), index as u32);
+                        DumpPlace::Value(index as u32)
+                    }
+                    Storage::Pointer(var) => {
+                        labels.insert(var.as_u32(), index as u32);
+                        DumpPlace::Pointer(index as u32)
+                    }
+                    Storage::Slot(slot) => DumpPlace::Slot(slot.as_u32()),
+                };
+                let ty = body.locals[index];
+                // A number the code no longer needs is gone by the time
+                // it panics: a panic the program wrote keeps it, in code
+                // that only that panic runs. What the heap holds may be
+                // moved by then, and only what is live is shown.
+                let number = matches!(
+                    cg.types().kind(ty),
+                    TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Byte
+                ) && cg.layout(ty).size <= 8;
+                let keep = match (number, storage[index]) {
+                    (true, Storage::Var(var)) if panics => {
+                        let local = Local(index as u32);
+                        let at = kept.iter().position(|&(known, _)| known == local).unwrap_or_else(|| {
+                            kept.push((local, var));
+                            kept.len() - 1
+                        });
+                        Some(at as u32)
+                    }
+                    _ => None,
+                };
+                described.push((name.clone(), ty, cg.glue(Glue::Show, ty), place, keep, scope));
+            }
+            cg.dump_bindings(described);
+        }
+        let keeping = (!kept.is_empty()).then(|| {
+            let size = (kept.len() as u32 + 1) * 8;
+            (fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3)), kept)
+        });
         let debug = cg.debug().then(|| {
             let mut shown = Vec::new();
             let mut described = Vec::new();
@@ -4750,6 +5025,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             sites: Vec::new(),
             scope: None,
             debug,
+            labels,
+            keeping,
+            block: 0,
             probed: None,
             carrying: false,
             carried: HashMap::new(),
@@ -4771,6 +5049,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
+    /// A variable has `value` from here on, which says so for a dump.
+    fn define(&mut self, var: Variable, value: ir::Value) {
+        self.e.fb.def_var(var, value);
+        if let Some(&label) = self.labels.get(&var.as_u32()) {
+            self.e.fb.set_val_label(value, ir::ValueLabel::from_u32(label));
+        }
+    }
+
     /// Builds the function's IR; gives where its statements are, which the
     /// source locations of its instructions index.
     fn run(mut self) -> Vec<Site> {
@@ -4781,11 +5067,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if let Some(ret) = self.body.ret
             && let Storage::Pointer(var) = self.storage[ret.0 as usize]
         {
-            self.e.fb.def_var(var, incoming.next().unwrap());
+            self.define(var, incoming.next().unwrap());
         }
         for (index, &param) in self.body.params.iter().enumerate() {
             match self.storage[param.0 as usize] {
-                Storage::Var(var) | Storage::Pointer(var) => self.e.fb.def_var(var, incoming.next().unwrap()),
+                Storage::Var(var) | Storage::Pointer(var) => self.define(var, incoming.next().unwrap()),
                 // A loan of a zero-sized place still has its address parameter.
                 Storage::Zero if self.body.loans[index] => {
                     incoming.next();
@@ -4827,6 +5113,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.ways.entry((way.block.0 as usize, way.at)).or_default().push(n);
             }
         }
+        // A value that comes into a block is a value of its own, which says
+        // whose it is: only those it reads, so no code changes for it.
+        let live = (!self.labels.is_empty()).then(|| crate::mir::live_in(&self.body.blocks, self.body.locals.len()));
         // The block that alone leads to each, and the line each ended in.
         let from = only_before(&self.body.blocks);
         let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
@@ -4838,8 +5127,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::MetaStep, &[]);
             }
             self.counted = None;
+            self.block = index;
             if index == 0 {
                 self.count_call();
+            } else if let Some(live) = &live {
+                for local in &live[index] {
+                    if let Storage::Var(var) | Storage::Pointer(var) = self.storage[local.0 as usize]
+                        && let Some(&label) = self.labels.get(&var.as_u32())
+                    {
+                        let value = self.e.fb.use_var(var);
+                        self.e.fb.set_val_label(value, ir::ValueLabel::from_u32(label));
+                    }
+                }
             }
             if let Some(debug) = &mut self.debug {
                 debug.line = self.carried.remove(&index);
@@ -5234,7 +5533,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let current = self.e.fb.use_var(var);
         let ty = self.e.fb.func.dfg.value_type(current);
         let value = self.e.fb.ins().load(ty, flags(), address, 0);
-        self.e.fb.def_var(var, value);
+        self.define(var, value);
     }
 
     /// The address of the storage holding the array at `place`, spilled to
@@ -5291,7 +5590,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if let (Val::Scalar(value), Storage::Var(var)) = (value, self.storage[place.local.0 as usize])
             && place.path.is_empty()
         {
-            self.e.fb.def_var(var, value);
+            self.define(var, value);
             return;
         }
         if let Val::Zero = value {
@@ -5550,7 +5849,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     && let Class::Scalar(ty) = self.e.cg.class(self.body.locals[local.0 as usize])
                 {
                     let value = self.e.fb.ins().stack_load(POINTER, ty, slot, 0);
-                    self.e.fb.def_var(var, value);
+                    self.define(var, value);
                 }
             }
             self.site_now = Some((site, self.e.cg.site_base() + index as u32));
@@ -5761,11 +6060,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             match kept {
                 StateKept::Var(var, clif) => {
                     let value = self.e.fb.ins().load(clif, flags(), address, 0);
-                    self.e.fb.def_var(var, value);
+                    self.define(var, value);
                 }
                 StateKept::Pointer(var) => {
                     let value = self.e.fb.ins().load(POINTER, flags(), address, 0);
-                    self.e.fb.def_var(var, value);
+                    self.define(var, value);
                 }
                 StateKept::Slot(kept) => {
                     let target = self.e.fb.ins().stack_addr(POINTER, kept, 0);
@@ -5823,14 +6122,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Statement::Lend(local, place) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
                     let address = self.pointer_to(place, true);
-                    self.e.fb.def_var(var, address);
+                    self.define(var, address);
                 }
             }
             Statement::LendAt(local, guard) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
                     let guard = self.scalar(guard);
                     let address = self.e.call_rt(Rt::SyncValue, &[guard]).unwrap();
-                    self.e.fb.def_var(var, address);
+                    self.define(var, address);
                 }
             }
             Statement::Retain(place) | Statement::Release(place) => {
@@ -8434,6 +8733,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let location = self.location(self.span);
                 values.insert(0, code);
                 values.push(location);
+                self.keep_registers();
                 self.e.call_rt(Rt::PanicUnwind, &values)
             }
             Callee::Std(StdFn::ContextGet(index)) => {
@@ -8772,11 +9072,40 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     Some(message) => self.scalar(message),
                     None => self.e.fb.ins().iconst(POINTER, 0),
                 };
+                self.keep_numbers();
                 self.emit_panic(*code, message, *span);
             }
             Terminator::Unreachable => {
                 self.e.fb.ins().trap(TrapCode::user(1).unwrap());
             }
+        }
+    }
+
+    /// Before a panic the program wrote, for a dump: the numbers assigned
+    /// by now, which the code after it would not need, each in its place
+    /// after a word with the bits of those it holds.
+    fn keep_numbers(&mut self) {
+        let Some((slot, kept)) = self.keeping.clone() else { return };
+        let assigned = crate::mir::assigned_at_end(&self.body.blocks, &self.body.params, self.body.locals.len());
+        let mut bits = 0u64;
+        for (index, &(local, var)) in kept.iter().enumerate().take(63) {
+            if assigned[self.block][local.0 as usize] {
+                bits |= 1 << index;
+                let value = self.e.fb.use_var(var);
+                let ty = self.e.fb.func.dfg.value_type(value);
+                self.e.fb.ins().stack_store(ty, value, slot, (index as i32 + 1) * 8);
+            }
+        }
+        let bits = self.e.fb.ins().iconst(types::I64, bits as i64);
+        self.e.fb.ins().stack_store(types::I64, bits, slot, 0);
+        let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        self.e.call_rt(Rt::KeepNumbers, &[address]);
+    }
+
+    /// Before a panic, for a dump: the registers the runtime would change.
+    fn keep_registers(&mut self) {
+        if self.e.cg.dumps() {
+            self.e.call_rt(Rt::KeepRegisters, &[]);
         }
     }
 
@@ -8786,6 +9115,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let outer = self.e.fb.srcloc();
         let site = self.site(span.start, None);
         self.e.fb.set_srcloc(site);
+        self.keep_registers();
         self.e.call_rt(Rt::Panic, &[code, message, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
         self.e.fb.set_srcloc(outer);
@@ -8849,10 +9179,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match self.unwind_to {
             // A panic a `recover` may stop returns, and unwinds (15.9).
             Some(target) => {
+                self.keep_registers();
                 self.e.call_rt(Rt::PanicValuesUnwind, &[code, detail, values, name, location]);
                 self.e.fb.ins().jump(target, &[]);
             }
             None => {
+                self.keep_registers();
                 self.e.call_rt(Rt::PanicValues, &[code, detail, values, name, location]);
                 self.e.fb.ins().trap(TrapCode::user(1).unwrap());
             }

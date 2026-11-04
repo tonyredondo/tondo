@@ -1089,6 +1089,25 @@ pub(crate) fn faulted_at(pc: usize, fp: usize, (low, high): (usize, usize)) {
     }
 }
 
+/// The registers at a fault, by number.
+static FAULT_REGISTERS: [AtomicUsize; 32] = [const { AtomicUsize::new(0) }; 32];
+
+/// The fault stopped the program's code, and they are that code's: in C
+/// they are C's.
+static FAULT_IN_CODE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn fault_registers(registers: &[usize; 32], in_code: bool) {
+    for (slot, &value) in FAULT_REGISTERS.iter().zip(registers) {
+        slot.store(value, Ordering::SeqCst);
+    }
+    FAULT_IN_CODE.store(in_code, Ordering::SeqCst);
+}
+
+pub(crate) fn faulted_registers() -> [Option<usize>; 32] {
+    let known = FAULT_IN_CODE.load(Ordering::SeqCst);
+    FAULT_REGISTERS.each_ref().map(|slot| known.then(|| slot.load(Ordering::SeqCst)))
+}
+
 /// Where the task of this thread stands: at the fault that stopped it, or
 /// here. The code of a fault, its frame and its stack.
 fn here_now() -> (Option<usize>, usize, (usize, usize)) {

@@ -28,6 +28,7 @@ enum Asked {
     /// is built again in its turn.
     CFunction(ir::Signature),
     DebugFunction(String, Vec<DebugBinding>),
+    DumpBindings(Vec<super::DumpBinding>),
     FunctionSites,
     Attention,
     DebugSite(u32, u32, bool),
@@ -58,6 +59,7 @@ pub(super) struct Shared<'s, 't> {
     debug: bool,
     coverage: Option<DataId>,
     fuzz: bool,
+    dumps: bool,
 }
 
 impl<'s, 't> Shared<'s, 't> {
@@ -84,6 +86,7 @@ impl<'s, 't> Shared<'s, 't> {
             data,
             live: cg.live.as_ref().map(|live| (live.slots, &live.slot_of[..], Gen::site_base(cg))),
             debug: cg.debug.is_some(),
+            dumps: cg.dump.is_some(),
             coverage: Gen::coverage(cg),
             fuzz: Gen::fuzzing(cg),
         }
@@ -326,6 +329,12 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         }
         value
     }
+    fn dumps(&self) -> bool {
+        self.shared.dumps
+    }
+    fn dump_bindings(&mut self, described: Vec<super::DumpBinding>) {
+        self.ask(Asked::DumpBindings(described));
+    }
     fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
         self.ask(Asked::DebugFunction(name, described));
         // Each function of the program has one, in order.
@@ -389,6 +398,14 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
                     .collect();
                 let function = Gen::debug_function(cg, name, described);
                 debug_assert_eq!(function as usize, cg.current);
+                0
+            }
+            Asked::DumpBindings(described) => {
+                let described = described
+                    .into_iter()
+                    .map(|(name, ty, glue, place, keep, scope)| (name, ty, real(glue, &ids), place, keep, scope))
+                    .collect();
+                Gen::dump_bindings(cg, described);
                 0
             }
             Asked::FunctionSites => Gen::function_sites(cg).expect("a live build").0.as_u32(),

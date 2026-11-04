@@ -772,6 +772,14 @@ Un volcado guarda además las variables de cada frame de cada tarea, con sus
 partes hasta cuatro niveles y cien por nivel: las muestra una copia del programa
 hecha con `fork`, que puede romperse o colgarse sin dañar el volcado. Una variable
 que la rompe se salta y las demás siguen, y todo acaba en tres segundos.
+Un build sin sondas, el de producción, las guarda también: el compilador dice dónde
+dejó cada variable en cada tramo del código, cuya ubicación no cambia el código
+generado, y dónde guarda cada función los registros de quien la llama, y el
+programa guarda los registros antes de un pánico. Cada frame inlineado tiene las
+suyas. En ese build una variable que el código ya no usa no existe y no aparece,
+salvo los números de un `panic` escrito en el programa, que ese pánico conserva en
+código que solo él ejecuta; y tras los frames del runtime, como en una tarea que
+espera, solo están las que el compilador dejó en la pila.
 `dump read` las da con `locals [<tarea> [<frame>]]`, por defecto el primer frame
 de la primera tarea con variables, y con `print <ruta>`, como `user.name` o
 `items[2]`; `tondo dap` las abre en el ámbito `Bindings` y en `evaluate`.

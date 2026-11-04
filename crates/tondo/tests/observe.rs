@@ -2792,6 +2792,63 @@ fn a_dump_keeps_the_bindings_of_its_frames() {
 }
 
 #[test]
+fn a_dump_of_a_build_without_probes_has_its_bindings() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-release");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // Small functions, which the optimizer inlines: each frame has its own.
+    let panics = "import std.console\n\nfn work(rows: Array[Int], scale: Int): Int {\n    var sum = 0\n    for row in rows {\n        sum = sum + row * scale\n    }\n    deep(sum, rows.length())\n}\n\nfn deep(value: Int, count: Int): Int {\n    let limit = 100\n    if value > limit {\n        panic(\"value {value} over {limit} with {count} rows\")\n    }\n    value\n}\n\nfn main() {\n    let rows = [1, 2, 3, 40]\n    let factor = 7\n    let done = work(rows, factor)\n    console.println(\"{done} {rows.length()} {factor}\")\n}\n";
+    std::fs::write(dir.join("panics.to"), panics).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo).args(["build", "panics.to", "--output", "panics"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("panics")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let dump = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|f| f.path())
+        .find(|p| p.to_string_lossy().ends_with(".dump.json"))
+        .unwrap();
+    let read = |view: &[&str]| {
+        let args = [&["dump", "read", dump.to_str().unwrap()], view].concat();
+        let output = Command::new(tondo).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let deep = read(&["locals", "1", "0"]);
+    assert!(deep.starts_with("panics.to:14 in deep"), "{deep}");
+    assert!(deep.contains("value: Int = 322"), "{deep}");
+    assert!(deep.contains("limit: Int = 100"), "{deep}");
+    let work = read(&["locals", "1", "1"]);
+    assert!(work.starts_with("panics.to:8 in work"), "{work}");
+    assert!(work.contains("sum: Int = 322"), "{work}");
+    assert_eq!(read(&["print", "factor", "1", "2"]).trim(), "7");
+    // A fault in the program's code, which says its registers.
+    let faults = "import std.ffi\n\nextern fn strlen(text: Pointer[UInt8]?): ffi.CSize\n\nfn measure(text: Pointer[UInt8]?, tries: Int): Int {\n    var total = tries\n    for i in 0..3 {\n        total = total + i\n    }\n    _ = unsafe { strlen(text) }\n    total\n}\n\nfn main() {\n    let text: Pointer[UInt8]? = none\n    let first = 40\n    let got = measure(text, first)\n    panic(\"{got} {first}\")\n}\n";
+    std::fs::write(dir.join("faults.to"), faults).unwrap();
+    let built =
+        Command::new(tondo).args(["build", "faults.to", "--output", "faults"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    std::fs::remove_file(&dump).unwrap();
+    let ran = Command::new(dir.join("faults")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let dump = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|f| f.path())
+        .find(|p| p.to_string_lossy().ends_with(".dump.json"))
+        .unwrap();
+    let args = ["dump", "read", dump.to_str().unwrap(), "tasks"];
+    let tasks = Command::new(tondo).args(args).output().unwrap();
+    assert!(String::from_utf8_lossy(&tasks.stdout).contains("in measure"), "{tasks:?}");
+}
+
+#[test]
 fn dumps_come_on_a_schedule_and_differ() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
@@ -2820,7 +2877,7 @@ fn dumps_come_on_a_schedule_and_differ() {
     let diff = Command::new(tondo).arg("dump").arg("diff").args(&dumps).output().unwrap();
     let text = String::from_utf8_lossy(&diff.stdout);
     assert!(diff.status.success(), "{}", String::from_utf8_lossy(&diff.stderr));
-    assert!(text.contains("at grows.to:8 in main"), "{text}");
+    assert!(text.contains("memory.held:"), "{text}");
     assert!(text.contains("round in grows.to:"), "{text}");
     let wrong = Command::new(dir.join("grows"))
         .env("TONDO_DUMP", dir.join("dumps"))

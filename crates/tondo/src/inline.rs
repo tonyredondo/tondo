@@ -391,6 +391,23 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             let call = body.inlined.len() as u32;
             body.inlined.push(Inlined { name: callee.name.clone(), span: callee.span, call: *span, parent: scope });
             let base = body.inlined.len() as u32;
+            // Its bindings, and those of what was inlined into it.
+            let local_of = |local: Local| match rename.places.get(&local) {
+                Some(place) if place.path.is_empty() => Some(place.local),
+                Some(_) => None,
+                None => rename.locals.get(&local).copied(),
+            };
+            let named = callee
+                .names
+                .iter()
+                .enumerate()
+                .filter_map(|(index, name)| Some((local_of(Local(index as u32))?, name.clone()?, call)));
+            let scoped = callee
+                .scoped
+                .iter()
+                .filter_map(|(local, name, scope)| Some((local_of(*local)?, name.clone(), base + scope)));
+            let found: Vec<_> = named.chain(scoped).collect();
+            body.scoped.extend(found);
             body.inlined.extend(callee.inlined.iter().map(|inlined| Inlined {
                 parent: Some(inlined.parent.map_or(call, |parent| base + parent)),
                 ..inlined.clone()

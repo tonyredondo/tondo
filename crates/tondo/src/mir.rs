@@ -102,6 +102,9 @@ pub struct Body {
     /// The names of the program's own bindings, for a debugger; the
     /// compiler's temporaries have none.
     pub names: Vec<Option<String>>,
+    /// The bindings of the code inlined here, for a dump: the local, the
+    /// binding's name, and the inlined call it is of (`inlined`).
+    pub scoped: Vec<(Local, String, u32)>,
     pub params: Vec<Local>,
     /// Parameters passed as the address of the caller's place (a `mut self`
     /// or `var self` loan); reads and writes go through it.
@@ -452,6 +455,51 @@ pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
             (0..locals as u32).map(Local).filter(|l| bits[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0).collect()
         })
         .collect()
+}
+
+/// The locals each block's end finds assigned on every path to it, from
+/// `given`, as a program's parameters.
+pub fn assigned_at_end(blocks: &[BlockData], given: &[Local], locals: usize) -> Vec<Vec<bool>> {
+    let writes: Vec<Vec<Local>> = blocks
+        .iter()
+        .map(|block| {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            for statement in &block.stmts {
+                statement_locals(statement, &mut used, &mut defined);
+            }
+            defined
+        })
+        .collect();
+    let mut before: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for (index, block) in blocks.iter().enumerate() {
+        match block.terminator {
+            Terminator::Goto(target) => before[target.0 as usize].push(index),
+            Terminator::Branch(_, then, otherwise) => {
+                before[then.0 as usize].push(index);
+                before[otherwise.0 as usize].push(index);
+            }
+            _ => {}
+        }
+    }
+    let mut assigned = vec![vec![true; locals]; blocks.len()];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for index in 0..blocks.len() {
+            let mut now = vec![false; locals];
+            if index == 0 {
+                given.iter().for_each(|local| now[local.0 as usize] = true);
+            } else if !before[index].is_empty() {
+                now = (0..locals).map(|local| before[index].iter().all(|&b| assigned[b][local])).collect();
+            }
+            writes[index].iter().for_each(|local| now[local.0 as usize] = true);
+            if now != assigned[index] {
+                assigned[index] = now;
+                changed = true;
+            }
+        }
+    }
+    assigned
 }
 
 fn place_uses(place: &Place, used: &mut Vec<Local>) {
