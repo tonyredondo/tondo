@@ -9092,12 +9092,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             if assigned[self.block][local.0 as usize] {
                 bits |= 1 << index;
                 let value = self.e.fb.use_var(var);
-                let ty = self.e.fb.func.dfg.value_type(value);
-                self.e.fb.ins().stack_store(ty, value, slot, (index as i32 + 1) * 8);
+                self.e.fb.ins().stack_store(POINTER, value, slot, (index as i32 + 1) * 8);
             }
         }
         let bits = self.e.fb.ins().iconst(types::I64, bits as i64);
-        self.e.fb.ins().stack_store(types::I64, bits, slot, 0);
+        self.e.fb.ins().stack_store(POINTER, bits, slot, 0);
         let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
         self.e.call_rt(Rt::KeepNumbers, &[address]);
     }

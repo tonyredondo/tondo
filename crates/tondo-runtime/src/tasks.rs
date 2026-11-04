@@ -1275,6 +1275,17 @@ fn work(main: bool) -> i32 {
     work_until(main, None)
 }
 
+/// The main thread has nothing left to do: the program ended. Exploring
+/// orders this thread is the only worker: after a panic it runs the other
+/// tasks' cleanups itself, and the tasks left when the program ends where
+/// leaks are checked, which other workers would have run by then.
+fn program_ended(queue: &Queue) -> bool {
+    let done = MAIN_DONE.load(Ordering::SeqCst);
+    let ending =
+        ENDING.load(Ordering::SeqCst) != usize::MAX || (done && std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some());
+    done && !(exploring().is_some() && ending && !queue.runnable.is_empty())
+}
+
 /// `work` in a recorded run, on a thread other than the worker's until
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
@@ -1328,14 +1339,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
             let mut queue = queue();
             let (mut looked, mut stealing) = (false, false);
             loop {
-                // Exploring orders this thread is the only worker: after a
-                // panic it runs the other tasks' cleanups itself, and the
-                // tasks left when the program ends where leaks are checked,
-                // which other workers would have run by then.
-                let ending = ENDING.load(Ordering::SeqCst) != usize::MAX
-                    || (MAIN_DONE.load(Ordering::SeqCst) && std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some());
-                let draining = exploring().is_some() && ending && !queue.runnable.is_empty();
-                if main && MAIN_DONE.load(Ordering::SeqCst) && !draining {
+                if main && program_ended(&queue) {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
                 if until.is_some_and(|until| until()) {
@@ -1364,7 +1368,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     queue = self::queue();
                     // The program may have ended meanwhile, on a thread of
                     // C that ran its task, with nobody asleep to hear it.
-                    if main && MAIN_DONE.load(Ordering::SeqCst) {
+                    if main && program_ended(&queue) {
                         continue;
                     }
                 }
