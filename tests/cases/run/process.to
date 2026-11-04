@@ -77,3 +77,4 @@ fn main(): !process.ProcessError {
 // expect-stdout: 
 // expect-stdout: child says: some(through cat)
 // expect-stdout: child: 0
+// expect-no-replay: what a child writes straight to the terminal is not the program's

@@ -107,6 +107,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 TONDO_CASES_DEBUG=1 cargo test -p tondo --test cases
+TONDO_CASES_REPLAY=1 cargo test -p tondo --test cases cases
 ```
 
 - The implementation follows the specifications. Changing one is the

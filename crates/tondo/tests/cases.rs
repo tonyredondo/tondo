@@ -13,13 +13,17 @@
 //!   a case that fails to compile reports no other;
 //! - `// expect-platform: <os or arch>...` — the case runs only there, as
 //!   `linux` or `aarch64`;
-//! - `// expect-env: <NAME>=<value>` — the executable runs with it set.
+//! - `// expect-env: <NAME>=<value>` — the executable runs with it set;
+//! - `// expect-no-replay: <why>` — with `TONDO_CASES_REPLAY`, it is not
+//!   recorded, for the reason given.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once. With
 //! `TONDO_CASES_STATIC` set, cases build static executables (`--static`);
 //! with `TONDO_CASES_DEBUG`, debug builds (`--debug`); with
-//! `TONDO_CASES_LIVE`, live builds (`--live`).
+//! `TONDO_CASES_LIVE`, live builds (`--live`). With `TONDO_CASES_REPLAY`,
+//! debug builds whose runs are recorded, each checked as ever and then
+//! replayed, which must write the same and end the same.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -38,6 +42,7 @@ struct Expect {
     warnings: Vec<String>,
     platforms: Vec<String>,
     env: Vec<(String, String)>,
+    no_replay: bool,
 }
 
 fn expectations(source: &str) -> Expect {
@@ -55,6 +60,7 @@ fn expectations(source: &str) -> Expect {
             "error" => expect.errors.push(value.trim().into()),
             "warning" => expect.warnings.push(value.trim().into()),
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
+            "no-replay" => expect.no_replay = true,
             "env" => {
                 let (name, value) = value.split_once('=').expect("`NAME=value`");
                 expect.env.push((name.trim().into(), value.trim().into()));
@@ -99,7 +105,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .arg("--output")
         .arg(&binary)
         .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
-        .args(std::env::var_os("TONDO_CASES_DEBUG").map(|_| "--debug"))
+        .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
         .env("XDG_CACHE_HOME", scratch.join("cache"))
         .output()
@@ -145,13 +151,26 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
 
     // A crash writes no core file, which takes the system a while.
-    let mut command = Command::new(&binary);
-    if expect.crash {
-        command = Command::new("sh");
-        command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
+    let program = || {
+        let mut command = Command::new(&binary);
+        if expect.crash {
+            command = Command::new("sh");
+            command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
+        }
+        command.envs(expect.env.iter().map(|(name, value)| (name, value)));
+        command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
+        command
+    };
+    let mut command = program();
+    // A seed of its own each time, which a failure says.
+    let recording = std::env::var_os("TONDO_CASES_REPLAY").filter(|_| !expect.no_replay).map(|_| {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        (binary.with_extension("calls"), format!("{:x}", now.as_nanos() as u64))
+    });
+    if let Some((calls, seed)) = &recording {
+        command.env("TONDO_RT_RECORD", calls).env("TONDO_RT_SCHEDULE", seed);
     }
-    command.envs(expect.env.iter().map(|(name, value)| (name, value)));
-    let run = run_with_timeout(command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch))?;
+    let run = run_with_timeout(&mut command)?;
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
@@ -174,6 +193,18 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
     if let Some(missing) = expect.stderr.iter().find(|line| !stderr.lines().any(|l| l == line.as_str())) {
         return Err(format!("missing `{missing}` in stderr:\n{stderr}"));
+    }
+    if let Some((calls, seed)) = &recording {
+        let mut replay = program();
+        let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed))
+            .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
+        if again.stdout != run.stdout || again.status != run.status {
+            let (out, err) = (String::from_utf8_lossy(&again.stdout), String::from_utf8_lossy(&again.stderr));
+            let status = (run.status, again.status);
+            return Err(format!(
+                "its replay, of seed {seed}, differs: {status:?}\n--- recorded\n{stdout}--- replayed\n{out}--- stderr\n{err}"
+            ));
+        }
     }
     Ok(())
 }

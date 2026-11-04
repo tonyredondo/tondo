@@ -67,6 +67,10 @@ jobs:
       - run: cargo test -p tondo --test cases
         env:
           TONDO_CASES_DEBUG: 1
+      # Every case recorded and replayed, which must end the same.
+      - run: cargo test -p tondo --test cases cases
+        env:
+          TONDO_CASES_REPLAY: 1
       # Live builds (`--live`), whose calls go through slots.
       - run: cargo test -p tondo --test cases cases
         env:
