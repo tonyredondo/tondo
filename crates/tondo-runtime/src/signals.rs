@@ -55,6 +55,7 @@ fn handle(signal: i32) {
 pub(crate) fn at_turn() {
     static TURNS: AtomicU64 = AtomicU64::new(0);
     let turn = TURNS.fetch_add(1, Ordering::Relaxed);
+    super::replay::turn();
     if super::replay::replaying() {
         while let Some(signal) = super::replay::signal_at(turn) {
             handle(signal);

@@ -1337,6 +1337,9 @@ fn kept_last(list: &mut std::collections::VecDeque<u64>, tick: u64) {
 /// of its own; each `resume <probe>` there forks it again into a replay
 /// stopped here, which shows what the program writes from that probe on.
 fn checkpoint(table: &Table) -> Result<u32, String> {
+    if super::replay::threaded() {
+        return Err("a copy of the replay would lose its threads of C".into());
+    }
     match unsafe { libc::fork() } {
         -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
         0 => {
@@ -1361,6 +1364,9 @@ const PROBES: u64 = 1 << 22;
 /// has none another thread held; the debugger hears where it is. A replay
 /// forked from it later stops at that probe.
 fn periodic(table: &Table, mut here: Stop, every: u64) {
+    if super::replay::threaded() {
+        return;
+    }
     let (now, tick) = (std::time::Instant::now(), super::replay::ticks());
     {
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());

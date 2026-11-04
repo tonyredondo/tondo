@@ -903,8 +903,13 @@ fn wait_pinned(task: *mut Task) {
         queue.pinned.push(task);
         check(queue);
     }
+    // A recorded run has no other worker to run what it waits for: a thread
+    // stands in for it meanwhile.
+    let standing_in = super::replay::on().then(|| stand_in(state));
     // Waiting, the thread runs no Tondo code that a collection could meet.
     leave_tondo();
+    // The wait's own reading of the clock is not the program's.
+    let outside = super::replay::Outside::enter();
     loop {
         let lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if state.load(Ordering::Acquire) == RUNNING {
@@ -917,8 +922,33 @@ fn wait_pinned(task: *mut Task) {
         drop(lock);
         check(queue());
     }
+    if let Some(thread) = standing_in {
+        // It reads the task's state, which is this thread's again.
+        let _ = thread.join();
+        super::replay::waited();
+    }
+    drop(outside);
     enter_tondo();
     queue().pinned.retain(|&t| t != task);
+}
+
+/// Starts a thread that runs the program, with the baton, for a worker
+/// that waits with C's frames on its task's stack, until the task's `state`
+/// says it goes on, which comes at the same place of the program in a replay.
+fn stand_in(state: &AtomicU8) -> std::thread::JoinHandle<()> {
+    let state = state as *const AtomicU8 as usize;
+    let outside = super::replay::Outside::enter();
+    let thread = spawn_thread(Some(256 * 1024), move || {
+        let state = unsafe { &*(state as *const AtomicU8) };
+        super::replay::entered(0);
+        queue().workers += 1;
+        work_until(false, Some(&|| state.load(Ordering::Acquire) == RUNNING));
+        queue().workers -= 1;
+        super::replay::left();
+    });
+    drop(outside);
+    super::replay::waits();
+    thread
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1272,12 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
 /// Runs tasks; on the main thread, until the main task finishes, wherever
 /// it ran, and then returns its exit status.
 fn work(main: bool) -> i32 {
+    work_until(main, None)
+}
+
+/// `work` in a recorded run, on a thread other than the worker's until
+/// `until` says: the worker may be in C, and only the baton's runs anyway.
+fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     super::trace::guard_thread(true);
     if exploring().is_none() && OWN_NEXT.with(Cell::get).is_none() {
         let index = NEXT_COUNT.load(Ordering::Acquire);
@@ -1298,6 +1334,9 @@ fn work(main: bool) -> i32 {
                     exploring().is_some() && ENDING.load(Ordering::SeqCst) != usize::MAX && !queue.runnable.is_empty();
                 if main && MAIN_DONE.load(Ordering::SeqCst) && !draining {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
+                }
+                if until.is_some_and(|until| until()) {
+                    return 0;
                 }
                 if !main && queue.surplus > 0 {
                     if seeker {
@@ -1416,6 +1455,7 @@ fn work(main: bool) -> i32 {
                 }
                 if let Some((poller, polled)) = polling {
                     drop(queue);
+                    super::replay::waits();
                     queue = match super::http::driven() {
                         // A recorded run's worker waits in the runtime it
                         // drives, whose sources have the poller, unless the
@@ -1430,6 +1470,9 @@ fn work(main: bool) -> i32 {
                         }
                         None => poll(poller, polled, next),
                     };
+                    drop(queue);
+                    super::replay::waited();
+                    queue = self::queue();
                     looked = false;
                     continue;
                 }
@@ -1437,16 +1480,31 @@ fn work(main: bool) -> i32 {
                 queue = if super::replay::replaying() {
                     // A replay waits for nothing: what woke the recorded
                     // run comes next in its recording.
+                    drop(queue);
                     super::replay::waiting();
-                    queue
+                    self::queue()
                 } else {
+                    super::replay::waits();
                     // The wait's own reading of the clock is not the
                     // program's.
-                    let _outside = super::replay::Outside::enter();
-                    match delay {
-                        Some(delay) => READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0,
-                        None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
-                    }
+                    let outside = super::replay::Outside::enter();
+                    let woken = match (delay, until) {
+                        (Some(delay), _) => READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0,
+                        (None, None) => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
+                        // What it waits for may come without a wake, and
+                        // looking again is no turn of the worker's.
+                        (None, Some(until)) => loop {
+                            let (woken, waited) = READY.wait_timeout(queue, RECHECK).unwrap_or_else(|e| e.into_inner());
+                            if !waited.timed_out() || until() {
+                                break woken;
+                            }
+                            queue = woken;
+                        },
+                    };
+                    drop(outside);
+                    drop(woken);
+                    super::replay::waited();
+                    self::queue()
                 };
                 queue.idle -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
@@ -1976,6 +2034,7 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     }
     // One worker, exploring orders, starts no other in its place.
     if exploring().is_some() {
+        super::replay::calls_c();
         return;
     }
     let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
@@ -2001,6 +2060,7 @@ const LONG_CALL: u64 = 1_000_000;
 /// one worker retire.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_leave() {
+    super::replay::waited();
     enter_tondo();
     let state = in_c();
     let depth = state.depth.load(Ordering::Relaxed).wrapping_sub(1);
@@ -2302,6 +2362,10 @@ pub(crate) fn end_all(status: i32) -> ! {
             let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
             *done = true;
             call.finished.notify_one();
+            drop(done);
+            // Its thread may be working for it, and sleep.
+            drop(queue());
+            READY.notify_all();
         } else if !join.is_null() {
             // Its join completes without a result, so whoever waits for
             // it goes on and nothing releases what it never made.
@@ -2467,6 +2531,7 @@ pub unsafe extern "C" fn tondo_rt_callback(
 ) {
     if !current().is_null() {
         // A call back from C on a worker: Tondo code again until it returns.
+        let _held = super::replay::held();
         enter_tondo();
         unsafe { inner(frame) };
         leave_tondo();
@@ -2476,6 +2541,8 @@ pub unsafe extern "C" fn tondo_rt_callback(
         super::start_library(start);
     }
     super::trace::guard_thread(false);
+    // Where it is in the program, the same in another run.
+    super::replay::entered((inner as usize).wrapping_sub(tondo_rt_callback as *const () as usize));
     let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
     let task = new_task(
         Some(task_stack()),
@@ -2497,6 +2564,11 @@ pub unsafe extern "C" fn tondo_rt_callback(
     if !*call.done.lock().unwrap_or_else(|e| e.into_inner()) {
         start_workers();
         FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
+        if super::replay::on() {
+            queue().workers += 1;
+            work_until(false, Some(&|| *call.done.lock().unwrap_or_else(|e| e.into_inner())));
+            queue().workers -= 1;
+        }
         let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
         while !*done {
             done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
@@ -2504,6 +2576,7 @@ pub unsafe extern "C" fn tondo_rt_callback(
         drop(done);
         FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
     }
+    super::replay::left();
     FOREIGN_CALLS.fetch_sub(1, Ordering::SeqCst);
     // What a library wrote comes before what its caller writes next.
     if library.is_some() {

@@ -733,7 +733,11 @@ it, as a method with `mut self` or another task through a `sync.Mutex`. The
 network, processes, `fs.watch` and the profiler's samples are recorded
 too; a child does not run again in the replay, so what it wrote straight to
 the terminal does not show, but a child that is a debug build of Tondo
-records its own run, which `follow` in the replay names to replay it. `origins total` gives the whole chain at once: the line
+records its own run, which `follow` in the replay names to replay it. C
+runs again in a replay, its threads too, and each of their calls to the
+program waits for its place in the recording: C that depends only on what it
+is given replays the same, but what it reads or writes by itself from its
+threads is done again and not recorded. `origins total` gives the whole chain at once: the line
 that gave `total`, what that line read and where each came from, back to
 what the program read. A recording keeps the program's sources, so the
 directory replays the same on another machine of the same system, as one

@@ -1981,6 +1981,98 @@ fn a_recording_replays_elsewhere() {
     assert!(output.contains("`roll` was "), "{output}");
 }
 
+/// Two threads of C that call the program in whichever order they get to
+/// it, with what each sees of the other in what it prints.
+const RACING: &str = r#"import std.console
+import std.ffi
+import std.sync
+
+extern fn pthread_create(
+    thread: Pointer[UInt64],
+    attributes: Pointer[ffi.Void]?,
+    start: extern fn(Pointer[ffi.Void]?): Pointer[ffi.Void]?,
+    argument: Pointer[ffi.Void]?,
+): ffi.CInt
+
+extern fn pthread_join(thread: UInt64, result: Pointer[Pointer[ffi.Void]?]?): ffi.CInt
+
+unsafe fn worker(argument: Pointer[ffi.Void]?): Pointer[ffi.Void]? {
+    let order = ffi.fromContext[sync.Mutex[Array[Int]]](argument?)
+    for _ in 0..50 {
+        let next = order.update((seen) {
+            seen.push(seen.length())
+            seen.length()
+        })
+        _ = next
+    }
+    none
+}
+
+fn main() {
+    let order = sync.Mutex(Array.new[Int]())
+    unsafe {
+        let context = ffi.context(order)
+        let first = ffi.allocate[UInt64]()
+        let second = ffi.allocate[UInt64]()
+        _ = pthread_create(first, none, worker, context)
+        _ = pthread_create(second, none, worker, context)
+        _ = pthread_join(first.read(), none)
+        _ = pthread_join(second.read(), none)
+        ffi.freeContext[sync.Mutex[Array[Int]]](context)
+        ffi.free(first)
+        ffi.free(second)
+    }
+    console.println("{order.get().length()}")
+}
+"#;
+
+/// A replay runs the threads of C again and holds their calls to the
+/// order the recording has, and `back` goes on working there.
+#[test]
+fn a_replay_holds_the_threads_of_c_to_their_order() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-racing");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("racing.to"), RACING).unwrap();
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "run", "racing.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&recorded.stdout).into_owned();
+    assert!(recorded.status.success(), "{stdout}{}", String::from_utf8_lossy(&recorded.stderr));
+    assert_eq!(stdout, "100\n");
+    let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
+    for _ in 0..3 {
+        let replayed = Command::new(dir.join("run/program"))
+            .env("TONDO_RT_REPLAY", dir.join("run/calls"))
+            .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&replayed.stderr).into_owned();
+        assert_eq!(String::from_utf8_lossy(&replayed.stdout), stdout, "{said}");
+        assert!(replayed.status.success(), "{said}");
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break racing.to:21\ncontinue\ncontinue\nprint next\nback\nprint next\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    assert!(output.contains("racing.to:21"), "{output}");
+    assert!(output.contains("next: Int = 2"), "{output}");
+    assert!(output.matches("stopped at").count() >= 3, "{output}");
+}
+
 /// lldb stops a debug build at a line of its DWARF, on Linux and macOS,
 /// and the `tondo` command that `tondo dump plugin lldb` writes shows the
 /// bindings of the frame it shows.

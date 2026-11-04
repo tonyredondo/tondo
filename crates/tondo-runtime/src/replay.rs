@@ -8,9 +8,11 @@
 //! library's functions (`link::elf`, `tondo_rr_<name>` for `<name>`); each
 //! calls the real one as `tondo_real_<name>`.
 //!
-//! A call another thread makes is the world's, as the debugger's own. A
-//! thread the program starts runs where the recording cannot follow: the
-//! recording marks it, and a replay ends there.
+//! A call another thread makes is the world's, as the debugger's own. The
+//! threads of C the program starts run again in a replay, for real, and
+//! what they do besides calling the program is not recorded. When one calls
+//! the program it takes the baton (`Baton`), and a replay holds it back
+//! until the recording says.
 
 #![cfg_attr(not(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))), allow(dead_code))]
 
@@ -58,6 +60,271 @@ static LOG: Mutex<Log> = Mutex::new(Log { file: None, buffer: Vec::new(), record
 
 fn log() -> std::sync::MutexGuard<'static, Log> {
     LOG.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// One thread at a time runs the program's code, as one worker does in a
+/// recorded run, and a thread of C that calls the program waits for its
+/// turn: the baton says whose it is. The thread that has it lets go where
+/// the program waits, in C or for its tasks, and at a turn of the worker
+/// when another waits; each time it changes hands the recording says so,
+/// and a replay moves it at the same places, whenever the threads of C get
+/// there. Tickets keep the order the threads asked in.
+struct Baton {
+    /// The thread that had it last, by the order they first took it.
+    owner: u32,
+    held: bool,
+    known: u32,
+    tickets: u64,
+    serving: u64,
+    /// How the last thread let go, which a move of the baton keeps: at one
+    /// place of the program a call of C and the end of a callback may come
+    /// one after the other.
+    how: u8,
+}
+
+/// In a call of C, at a turn, in a wait, at the end of a call from C; and,
+/// in a replay, where a thread reads the recording and any move is due.
+const IN_C: u8 = 0;
+const AT_TURN: u8 = 1;
+const WAITS: u8 = 2;
+const CALL_ENDS: u8 = 3;
+const ANY: u8 = 4;
+
+static BATON: Mutex<Baton> = Mutex::new(Baton { owner: 1, held: true, known: 1, tickets: 1, serving: 0, how: WAITS });
+static MOVED: std::sync::Condvar = std::sync::Condvar::new();
+/// The calls of C the program made, which with the probes it passed place
+/// a move of the baton.
+static C_CALLS: AtomicU64 = AtomicU64::new(0);
+/// Threads of C run in this replay, which a fork would lose.
+static THREADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How long a replay waits for a call from a thread of C the recording has.
+const CALL_FROM_C: std::time::Duration = std::time::Duration::from_secs(30);
+/// A move of the baton in a recording, among the calls: the program's calls
+/// of C in the place of a result, how it was let go in that of `errno`, and
+/// the thread it went to and the function that thread called.
+const HAND: u32 = 0x4841_4e44;
+
+thread_local! {
+    /// This thread, as `Baton::owner` says; the first one is the program's.
+    static NUMBER: Cell<u32> = const { Cell::new(0) };
+    static HOLDS: Cell<bool> = const { Cell::new(false) };
+    /// What a thread of C calls, which tells it from others in a replay.
+    static CALLED: Cell<u64> = const { Cell::new(0) };
+}
+
+fn baton() -> std::sync::MutexGuard<'static, Baton> {
+    BATON.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A move of the baton: to which thread, for which function, how it was
+/// let go, and how long its entry is.
+struct Hand {
+    to: u32,
+    called: u64,
+    how: u8,
+    size: usize,
+}
+
+/// The move of the baton that comes next in the recording, if the program
+/// got to it: until then the thread that has the baton may let go, in C,
+/// and takes it again.
+fn next_hand(log: &Log) -> Option<Hand> {
+    let head = log.recorded.get(log.at..log.at + 25 + 4 + 12)?;
+    let tick = u64::from_le_bytes(head[4..12].try_into().expect("8 bytes"));
+    let calls = u64::from_le_bytes(head[12..20].try_into().expect("8 bytes"));
+    let here = tick == TICKS.load(Ordering::Relaxed) && calls == C_CALLS.load(Ordering::Relaxed);
+    if u32::from_le_bytes(head[0..4].try_into().expect("4 bytes")) != HAND || !here {
+        return None;
+    }
+    Some(Hand {
+        to: u32::from_le_bytes(head[29..33].try_into().expect("4 bytes")),
+        called: u64::from_le_bytes(head[33..41].try_into().expect("8 bytes")),
+        how: head[20],
+        size: head.len(),
+    })
+}
+
+/// This thread takes the baton, when it is its turn.
+fn take() {
+    if HOLDS.get() {
+        return;
+    }
+    // Its waits read the clock, which is not the program's.
+    let _outside = Outside::enter();
+    let mut baton = baton();
+    if MODE.load(Ordering::Relaxed) == RECORD {
+        let ticket = baton.tickets;
+        baton.tickets += 1;
+        while baton.serving != ticket {
+            baton = MOVED.wait(baton).unwrap_or_else(|e| e.into_inner());
+        }
+        if NUMBER.get() == 0 {
+            baton.known += 1;
+            NUMBER.set(baton.known);
+        }
+        if baton.owner != NUMBER.get() {
+            baton.owner = NUMBER.get();
+            let mut log = log();
+            let buffer = &mut log.buffer;
+            buffer.extend_from_slice(&HAND.to_le_bytes());
+            buffer.extend_from_slice(&TICKS.load(Ordering::Relaxed).to_le_bytes());
+            buffer.extend_from_slice(&C_CALLS.load(Ordering::Relaxed).to_le_bytes());
+            buffer.extend_from_slice(&i32::from(baton.how).to_le_bytes());
+            buffer.push(1);
+            buffer.extend_from_slice(&12u32.to_le_bytes());
+            buffer.extend_from_slice(&baton.owner.to_le_bytes());
+            buffer.extend_from_slice(&CALLED.get().to_le_bytes());
+        }
+    } else {
+        let mut since = None;
+        loop {
+            if !baton.held {
+                let mut log = log();
+                let next = next_hand(&log);
+                let number = NUMBER.get();
+                let how = baton.how;
+                match next.filter(|hand| hand.how == how || how == ANY) {
+                    Some(hand) if hand.to == number => {
+                        log.at += hand.size;
+                        baton.owner = number;
+                        break;
+                    }
+                    Some(hand) if number == 0 && hand.to > baton.known && hand.called == CALLED.get() => {
+                        log.at += hand.size;
+                        NUMBER.set(hand.to);
+                        baton.known = hand.to;
+                        baton.owner = hand.to;
+                        break;
+                    }
+                    Some(hand) if hand.to > baton.known => {
+                        let waited = since.get_or_insert_with(std::time::Instant::now).elapsed();
+                        if waited > CALL_FROM_C {
+                            drop(log);
+                            drop(baton);
+                            INSIDE.set(true);
+                            crate::debugger::stop_for_good(
+                                "the replay ends here: the recording has a call from a thread of C that did not come"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Some(_) => {}
+                    None if baton.owner == number => break,
+                    None => {}
+                }
+            }
+            let waited = MOVED.wait_timeout(baton, std::time::Duration::from_millis(10));
+            baton = waited.unwrap_or_else(|e| e.into_inner()).0;
+        }
+    }
+    baton.held = true;
+    HOLDS.set(true);
+    MOVED.notify_all();
+}
+
+/// This thread lets go of the baton, if it has it.
+fn let_go(how: u8) {
+    if HOLDS.replace(false) {
+        let mut baton = baton();
+        baton.held = false;
+        baton.serving += 1;
+        baton.how = how;
+        MOVED.notify_all();
+    }
+}
+
+/// While it lives this thread has the baton: what it records or replays
+/// comes in its place among the program's.
+pub(crate) struct Held(bool);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if self.0 {
+            let_go(WAITS);
+        }
+    }
+}
+
+/// The baton for this thread. In a replay one that has it lets go first
+/// where the recording moves it.
+pub(crate) fn held() -> Held {
+    if !on() {
+        return Held(false);
+    }
+    let had = HOLDS.get();
+    if had && replaying() && next_hand(&log()).is_some() {
+        let_go(ANY);
+    }
+    take();
+    Held(!had)
+}
+
+/// The program calls C, which may take long.
+pub(crate) fn calls_c() {
+    if on() {
+        C_CALLS.fetch_add(1, Ordering::Relaxed);
+        let_go(IN_C);
+    }
+}
+
+/// The program waits for what comes: another thread may run it.
+pub(crate) fn waits() {
+    if on() {
+        let_go(WAITS);
+    }
+}
+
+/// The wait ended.
+pub(crate) fn waited() {
+    if on() {
+        take();
+    }
+}
+
+/// A turn of the worker: another thread that waits for the baton has it
+/// now, or where the recording says.
+pub(crate) fn turn() {
+    if !on() {
+        return;
+    }
+    let moves = match replaying() {
+        true => next_hand(&log()).is_some_and(|hand| hand.how == AT_TURN),
+        false => {
+            let baton = baton();
+            baton.tickets > baton.serving + 1
+        }
+    };
+    if moves {
+        let_go(AT_TURN);
+        take();
+    }
+}
+
+/// A thread of C calls `function` of the program, which it runs when it
+/// has the baton, as a thread of the program, until `left`.
+pub(crate) fn entered(function: usize) {
+    if on() {
+        THREADED.store(true, Ordering::Relaxed);
+        CALLED.set(function as u64);
+        take();
+        let first = !PROGRAM.replace(true);
+        // The keys of its hash maps, as in `begin`.
+        if first {
+            let _ = std::collections::hash_map::RandomState::new();
+        }
+    }
+}
+
+pub(crate) fn left() {
+    if on() {
+        PROGRAM.set(false);
+        let_go(CALL_ENDS);
+    }
+}
+
+/// Threads of C run here: a replay cannot be forked and go on.
+pub(crate) fn threaded() -> bool {
+    THREADED.load(Ordering::Relaxed)
 }
 
 /// Whether the runtime records or replays the program.
@@ -243,6 +510,8 @@ pub(crate) fn orphaned() -> bool {
 pub(crate) fn begin() {
     if on() {
         PROGRAM.set(true);
+        NUMBER.set(1);
+        HOLDS.set(true);
         // The keys of the thread's hash maps, which the Rust library draws
         // from the system the first time it makes one: here, a call the
         // recording has, and not where the program, or the debugger at its
@@ -265,8 +534,14 @@ pub(crate) fn kept(make: impl FnOnce() -> Vec<u8>) -> Vec<u8> {
 /// The worker would wait for a task to run: a replay has nothing to wait
 /// for once its recording ends.
 pub(crate) fn waiting() {
-    #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
-    calls::waiting();
+    // Another thread comes first, which may have ended what this one waits
+    // for: the worker looks again.
+    if next_hand(&log()).is_some() {
+        drop(held());
+    } else {
+        #[cfg(all(tondo_staticlib, any(target_os = "linux", target_os = "macos")))]
+        calls::waiting();
+    }
 }
 
 /// A signal the worker takes at its turn `turn`, in the recording.
@@ -530,6 +805,7 @@ mod calls {
     /// Records a call: its result, `errno`, and the bytes at each of `outs`.
     fn record(id: u32, result: i64, outs: &[(*mut u8, usize)]) {
         let error = unsafe { *errno() };
+        let _held = held();
         // What runs meanwhile, as an allocation the profiler watches, is
         // the recording's own.
         let _outside = Outside::enter();
@@ -559,6 +835,7 @@ mod calls {
     /// result, and the bytes it wrote copied to `outs`, which its result
     /// gives. Another call, or none, ends the replay.
     fn replay(id: u32, name: &str, outs: impl FnOnce(i64) -> Vec<(*mut u8, usize)>) -> i64 {
+        let _held = held();
         let _outside = Outside::enter();
         let mut log = log();
         let Log { recorded, at, .. } = &mut *log;
@@ -1622,7 +1899,7 @@ mod calls {
     }
 
     /// A thread the program starts: the recording marks where, and a replay
-    /// ends there, as what it does is not recorded.
+    /// starts it again, as what it does is not recorded.
     #[unsafe(export_name = "tondo_rr_pthread_create")]
     pub unsafe extern "C" fn pthread_create_wrapper(
         thread: *mut libc::pthread_t,
@@ -1648,10 +1925,8 @@ mod calls {
             }
             Here::Replay => {
                 replay(ID, "pthread_create", none_vec);
-                ended(
-                    "the program starts a thread, as fs.watch, the profiler and C libraries do, \
-                     whose calls the recording does not have",
-                )
+                THREADED.store(true, Ordering::Relaxed);
+                inside(|| unsafe { real(thread, attributes, start, argument) })
             }
         }
     }

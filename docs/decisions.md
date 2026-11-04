@@ -4874,3 +4874,24 @@ for notify. On Apple's arm64 a variadic argument is on the stack, where a
 function of Rust does not look, and stable Rust cannot define a variadic
 function: `open`, `openat`, `fcntl` and `ioctl` enter through a few
 instructions that load it into the next register.
+
+## 2026-11-04 — Threads of C in a recorded run
+
+A function of the program that a thread of C calls ran on that thread, at
+once, beside the worker: nothing placed it among the program's calls, and
+a callback that waited hung, the only worker being in `pthread_join`. C's
+own work cannot be recorded in general: what it writes through a pointer
+has no size the runtime knows, so a replay does not give back C's results,
+it runs C again. What a replay can hold is the order. One thread at a time
+now runs the program's code, whichever has the baton: it lets go in C, in
+a wait, at a turn when another asks, and at the end of a callback, and
+each move goes in the recording, with the probes, the calls of C and the
+way it was let go, which together place it exactly: one place of the
+program may let go several ways. A callback that waits works as a worker
+on its own thread, and a task that waits with C's frames on its stack gets
+a thread that stands in for its worker. A thread that stands in stops by
+the task's state, not when the worker sees it, which depends on time. A
+fork loses threads, so `back` runs such a replay from the start. C that
+reads the world from its threads is not exact, which only recording every
+thread at the level of the system would be, as rr does, and that is
+another mechanism, unknown on macOS.

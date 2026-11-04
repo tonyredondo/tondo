@@ -1074,8 +1074,8 @@ ejecución es la misma cada vez, con sus horas y sus datos, y no toca el
 mundo: un fallo que pasó una vez se depura con todas las órdenes de esta
 sección. El editor lo hace con `"replay"` en `launch`, y el servidor MCP con
 `record` en `run` y `replay` en `debug_start`. En Linux y en macOS. Mientras se
-graba, una lectura de la entrada estándar o de un archivo detiene las demás
-tareas. La red y HTTP (`std.net`, `std.http`, `std.grpc` y los módulos que
+graba, una lectura de la entrada estándar o de un archivo, o una llamada a C
+que tarda, detiene las demás tareas. La red y HTTP (`std.net`, `std.http`, `std.grpc` y los módulos que
 los usan) y los procesos (`std.process`) se graban también: lo que el
 runtime hace con ellos en threads propios lo hace ese mismo thread entre
 tareas, y `fs.watch` también, que lee inotify o kqueue en ese thread. En
@@ -1085,11 +1085,20 @@ ve. Un hijo que es un build de depuración de Tondo graba su propia
 ejecución en `children/<pid>` del directorio, que se reproduce igual, y así
 sus hijos. Del perfilador por muestreo, cuyas señales llegan cuando dice el
 tiempo de procesador, se graban las muestras que el programa recibe, y la
-reproducción las da sin muestrear. Lo que corre en threads que el runtime no
-pone en ese orden no se graba: las funciones de C que llaman al programa
-desde sus threads. La reproducción para donde el programa empieza uno de
-esos threads, o donde hace una llamada distinta de la grabada, y dice por
-qué. El
+reproducción las da sin muestrear. Un solo thread ejecuta el código del
+programa a la vez: un thread de C que llama al programa espera su turno, que
+llega cuando el programa está en C, espera o cambia de tarea, y cada vez que
+el turno cambia de thread la grabación lo dice. En la reproducción el código
+de C corre otra vez, de verdad, con sus threads, y cada llamada suya al
+programa espera a su sitio en la grabación, así que se repite igual el C que
+solo depende de lo que recibe. Lo que el C hace por su cuenta desde sus
+threads no se graba: si lee la red o archivos, o escribe en ellos, la
+reproducción lo hace otra vez y toca el mundo, y si eso cambia lo que hace,
+puede no ser la misma. Con threads de C vivos una reproducción no se copia,
+así que `back` y `why` la corren desde el principio. La reproducción para
+donde el programa hace una llamada distinta de la grabada, o donde la
+grabación tiene una llamada de un thread de C que no llega, y dice por qué.
+El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que
 se repite igual en otra máquina del mismo sistema, desde cualquier
