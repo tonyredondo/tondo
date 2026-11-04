@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -24,6 +25,10 @@ const FUNCTIONS: &str = "@functions";
 /// The key of the breakpoints at events, which the exception filters set.
 const EVENTS: &str = "@events";
 const DATA: &str = "@data ";
+
+/// The requests that search a replay over the run, which take long in a
+/// long run: `cancel` ends them, and the editor shows them as they go.
+const SEARCHES: &[&str] = &["diff", "effects", "origins", "timeline", "when", "why"];
 
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
@@ -279,12 +284,35 @@ pub(crate) fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option
 /// Serves an editor until it disconnects.
 pub fn serve(builds: Builds) -> Result<(), String> {
     let editor = Editor { out: Arc::new(Mutex::new((std::io::stdout(), 0))) };
-    let stdin = std::io::stdin();
-    let mut input = stdin.lock();
+    // What the editor sends is read while a request runs, as a long search
+    // of a replay: its `cancel` ends it.
+    let (requests, incoming) = mpsc::channel();
+    let running = Arc::new(AtomicU64::new(0));
+    let (reader, watched) = (editor.clone(), running.clone());
+    std::thread::spawn(move || {
+        let mut input = BufReader::new(std::io::stdin());
+        while let Some(request) = read_message(&mut input) {
+            if request["command"] != "cancel" || request["type"] != "request" {
+                if requests.send(request).is_err() {
+                    return;
+                }
+                continue;
+            }
+            let arguments = &request["arguments"];
+            let searching = watched.load(Ordering::SeqCst);
+            if searching != 0
+                && (arguments["requestId"] == searching || arguments["progressId"] == searching.to_string().as_str())
+            {
+                crate::debug::cancel_search();
+            }
+            reader.respond(&request, Ok(json!({})));
+        }
+    });
     let mut debuggee: Option<Debuggee> = None;
     let mut dumped: Option<Dumped> = None;
+    let mut progress = false;
     let mut breakpoints: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
-    while let Some(request) = read_message(&mut input) {
+    while let Ok(request) = incoming.recv() {
         // The editor's answers to the adapter's own requests.
         if request["type"] == "response" {
             continue;
@@ -308,8 +336,14 @@ pub fn serve(builds: Builds) -> Result<(), String> {
             continue;
         }
         let result: Result<Value, String> = match command {
-            "initialize" => Ok(json!({
+            "initialize" => {
+                progress = arguments["supportsProgressReporting"] == true;
+                Ok(json!({
                 "supportsConfigurationDoneRequest": true,
+                "supportsCancelRequest": true,
+                "supportsReadMemoryRequest": true,
+                "supportsWriteMemoryRequest": true,
+                "supportsDisassembleRequest": true,
                 "supportsConditionalBreakpoints": true,
                 "supportsHitConditionalBreakpoints": true,
                 "supportsLogPoints": true,
@@ -337,7 +371,8 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                     { "filter": "wait", "label": "Long Waits", "description": "Stop a task that waited long for a lock, a channel or a task", "default": false,
                       "supportsCondition": true, "conditionDescription": "Milliseconds, 100 by default" }
                 ],
-            })),
+                }))
+            }
             "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),
             "launch" if arguments["dump"].is_string() => {
                 let path = PathBuf::from(arguments["dump"].as_str().unwrap_or_default());
@@ -367,6 +402,27 @@ pub fn serve(builds: Builds) -> Result<(), String> {
             },
             _ => match debuggee.as_mut() {
                 None => Err("launch or attach first".to_string()),
+                Some(program) if program.replaying.is_some() && SEARCHES.contains(&command) => {
+                    let seq = request["seq"].as_u64().unwrap_or(0);
+                    let id = seq.to_string();
+                    if progress {
+                        let title = "Searching the run";
+                        let body = json!({ "progressId": id, "title": title, "requestId": seq, "cancellable": true });
+                        editor.event("progressStart", body);
+                    }
+                    crate::debug::search_begins();
+                    running.store(seq, Ordering::SeqCst);
+                    let result = handle(program, command, arguments, &mut breakpoints);
+                    running.store(0, Ordering::SeqCst);
+                    if progress {
+                        editor.event("progressEnd", json!({ "progressId": id }));
+                    }
+                    // What it found before is not an answer.
+                    match crate::debug::search_cancelled() {
+                        true => Err(crate::debug::CANCELLED.to_string()),
+                        false => result,
+                    }
+                }
                 Some(program) => handle(program, command, arguments, &mut breakpoints),
             },
         };
@@ -393,6 +449,46 @@ pub fn serve(builds: Builds) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The address a memory request names: its reference and offset.
+fn memory_address(arguments: &Value) -> Result<u64, String> {
+    let reference = arguments["memoryReference"].as_str().unwrap_or_default();
+    let address = u64::from_str_radix(reference.trim_start_matches("0x"), 16);
+    let address = address.map_err(|_| format!("`{reference}` is not an address"))?;
+    Ok(address.wrapping_add_signed(arguments["offset"].as_i64().unwrap_or(0)))
+}
+
+/// The address of an instruction the editor is given.
+fn hex_of(instruction: &Value) -> Option<u64> {
+    u64::from_str_radix(instruction["address"].as_str()?.trim_start_matches("0x"), 16).ok()
+}
+
+fn from_hex(hex: &str) -> Vec<u8> {
+    let digit = |pair: &[u8]| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok();
+    hex.as_bytes().chunks(2).filter_map(digit).collect()
+}
+
+fn from_base64(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut word, mut bits) = (0u32, 0);
+    for byte in text.bytes().filter(|&b| b != b'=') {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err("the data is not base64".to_string()),
+        };
+        word = word << 6 | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((word >> bits) as u8);
+        }
+    }
+    Ok(out)
 }
 
 /// A dump the editor looks at (`launch` with `dump`): its tasks as
@@ -940,6 +1036,9 @@ fn compiled(program: &mut Debuggee, mut answer: Value) -> Result<Value, String> 
 /// array's or a set's the count of its items, which the editor asks for in
 /// pages.
 fn opened(program: &mut Debuggee, task: u64, index: u64, path: &str, answer: &Value, variable: &mut Value) {
+    if let Some(memory) = answer["memory"].as_u64() {
+        variable["memoryReference"] = json!(format!("{memory:#x}"));
+    }
     let parts = answer["children"].as_u64().unwrap_or(0);
     // A view opens to its value as it is, `raw()`, even without parts.
     if answer["viewed"] == true {
@@ -1272,6 +1371,64 @@ fn handle(
                 program.targets.iter().enumerate().map(|(id, label)| json!({ "id": id, "label": label })).collect();
             Ok(json!({ "targets": targets }))
         }
+        "readMemory" => {
+            let address = memory_address(arguments)?;
+            let count = arguments["count"].as_u64().unwrap_or(0);
+            let answer = program.ask(&format!("peek {address} {count}"))?;
+            let bytes = from_hex(answer["bytes"].as_str().unwrap_or_default());
+            Ok(json!({
+                "address": format!("{address:#x}"), "unreadableBytes": count - bytes.len() as u64, "data": crate::runner::base64(&bytes),
+            }))
+        }
+        "writeMemory" => {
+            let address = memory_address(arguments)?;
+            let bytes = from_base64(arguments["data"].as_str().unwrap_or_default())?;
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            let written = program.ask(&format!("poke {address} {hex}"))?["written"].as_u64().unwrap_or(0);
+            if written < bytes.len() as u64 && arguments["allowPartial"] != true {
+                return Err(format!("only {written} of the {} bytes can be written there", bytes.len()));
+            }
+            // What the editor shows may be what changed.
+            program.forget();
+            program.pumped.events.event("invalidated", json!({ "areas": ["variables"] }));
+            Ok(json!({ "bytesWritten": written }))
+        }
+        "disassemble" => {
+            let address = memory_address(arguments)?;
+            let offset = arguments["instructionOffset"].as_i64().unwrap_or(0);
+            let count = arguments["instructionCount"].as_u64().unwrap_or(0) as usize;
+            let root = program.root.clone();
+            let list = crate::disassembly::around(&mut |request| program.ask(request), address, offset, count)?;
+            let instructions = list.iter().map(|instruction| {
+                let mut shown = json!({
+                    "address": format!("{:#x}", instruction.address), "instructionBytes": instruction.bytes,
+                    "instruction": instruction.text,
+                });
+                if let Some(symbol) = &instruction.symbol {
+                    shown["symbol"] = json!(symbol);
+                }
+                if let Some((file, line)) = &instruction.line {
+                    let path = crate::debug::source_for_editor(&root, file);
+                    shown["location"] = json!({ "name": file, "path": path.display().to_string() });
+                    shown["line"] = json!(line);
+                }
+                shown
+            });
+            let mut instructions: Vec<Value> = instructions.collect();
+            // The editor counts on as many as it asked for: past the code
+            // of the program, nothing is known.
+            let last = instructions.last().map_or(address, |shown| hex_of(shown).unwrap_or(address));
+            let missing = (0..count.saturating_sub(instructions.len()) as u64).map(|gap| {
+                json!({ "address": format!("{:#x}", last + 1 + gap), "instruction": "", "presentationHint": "invalid" })
+            });
+            let missing: Vec<Value> = missing.collect();
+            match offset < 0 && instructions.first().is_some_and(|first| hex_of(first) > Some(address)) {
+                true => instructions.splice(0..0, missing),
+                false => instructions.splice(instructions.len().., missing),
+            }
+            .for_each(drop);
+            Ok(json!({ "instructions": instructions }))
+        }
         "pause" => program.ask("pause").map(|_| json!({})),
         "setExceptionBreakpoints" => {
             // Each filter, with the codes or types its condition names.
@@ -1360,10 +1517,14 @@ fn handle(
                     let (place, function) = frame.as_str()?.split_once(" in ")?;
                     let (file, line) = place.rsplit_once(':')?;
                     let path = crate::debug::source_for_editor(&program.root, file);
-                    Some(json!({
+                    let mut frame = json!({
                         "id": frame_id(task, index as u64), "name": function, "line": line.parse::<u64>().ok()?,
                         "column": 1, "source": { "name": file, "path": path.display().to_string() },
-                    }))
+                    });
+                    if let Some(pc) = stack["pcs"][index].as_u64().filter(|&pc| pc != 0) {
+                        frame["instructionPointerReference"] = json!(format!("{pc:#x}"));
+                    }
+                    Some(frame)
                 })
                 .collect();
             // Where the task was spawned, and its spawner, after a label:
@@ -1664,6 +1825,13 @@ fn handle(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn base64_goes_there_and_back() {
+        for bytes in [&b""[..], b"a", b"ab", b"abc", b"abcd", &[0, 255, 16, 200, 7]] {
+            assert_eq!(super::from_base64(&crate::runner::base64(bytes)).unwrap(), bytes);
+        }
+    }
+
     #[test]
     fn finds_the_calls_of_a_line() {
         let line = r#"    let total = plus(twice(1), twice[Int](2)) + [1, 2].map((x) { x * 3 }).length() // keep(1)"#;

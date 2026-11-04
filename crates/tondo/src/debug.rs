@@ -46,6 +46,7 @@ break on spawn|send|receive|wait <ms>           stop a task as it starts, sends 
 freeze <task>, thaw <task>                      the task stays held while the others go on, or goes on again
 retainers <path>                                what keeps a value of the heap alive: the stacks that point to it,
                                                 and the shortest chains of objects from a stack to it
+disassemble [<frame>]                           the instructions around where a frame is, by line
 memory                                          the objects by where they were made, and how each place grew since
                                                 the last `memory`
 watch <expression> [if <condition>] [hits <n>]  stop on the line after the one that changes its value, in this
@@ -470,6 +471,21 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            // The instructions around where a frame is.
+            "disassemble" => {
+                let index = rest.parse::<usize>().unwrap_or(0);
+                let found = ask(&mut session, "stack").and_then(|stack| {
+                    let pc = stack["pcs"][index].as_u64().filter(|&pc| pc != 0);
+                    let pc = pc.ok_or("that frame's code is not known")?;
+                    let list = crate::disassembly::around(&mut |c| ask(&mut session, c), pc, -8, 24)?;
+                    let list: Vec<Value> = list.iter().map(crate::disassembly::data).collect();
+                    Ok(serde_json::json!({ "disassembly": list, "pc": pc }))
+                });
+                match found {
+                    Ok(answer) => session.show(&answer),
+                    Err(message) => session.show(&serde_json::json!({ "error": message })),
+                }
+            }
             // `why`, in the history: the line that gave the value, and
             // where what that line reads got its own.
             "why" if replaying.is_none() => {
@@ -673,6 +689,31 @@ fn attach(program: Program) -> Result<(std::os::unix::net::UnixStream, mpsc::Rec
     Ok((writer, said))
 }
 
+/// What a cancelled request answers, as the protocol of editors names it.
+pub(crate) const CANCELLED: &str = "cancelled";
+
+/// The process that searches a replay now, which `cancel_search` ends, and
+/// whether the search was cancelled.
+static SEARCH: std::sync::Mutex<(Option<u32>, bool)> = std::sync::Mutex::new((None, false));
+
+/// A search begins, not cancelled.
+pub(crate) fn search_begins() {
+    *SEARCH.lock().unwrap() = (None, false);
+}
+
+/// Ends the search that runs: its process, and the ones it would start.
+pub(crate) fn cancel_search() {
+    let mut search = SEARCH.lock().unwrap();
+    search.1 = true;
+    if let Some(pid) = search.0.take() {
+        unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+    }
+}
+
+pub(crate) fn search_cancelled() -> bool {
+    SEARCH.lock().unwrap().1
+}
+
 /// A replay under the debugger: its recording, the commands that set how
 /// the program stops, the process the debugger talks to, and checkpoints:
 /// copies of a replay where it stopped, by the probe they are at.
@@ -712,6 +753,9 @@ impl Running {
     }
 
     pub(crate) fn end(self) {
+        let mut search = SEARCH.lock().unwrap();
+        search.0 = search.0.filter(|&pid| pid != self.pid());
+        drop(search);
         match self {
             Running::Started(mut child) => {
                 let _ = child.kill();
@@ -747,6 +791,9 @@ impl Replaying {
     fn start(&self, from: Option<(u64, u32)>, shown: u64, json: bool) -> Result<(Running, Session), String> {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
+        if search_cancelled() {
+            return Err(CANCELLED.to_string());
+        }
         let (executable, mut command) = replayed(&self.dir)?;
         // One that only looks writes nothing, but for why it ended, if it
         // ends before the program does.
@@ -821,6 +868,10 @@ impl Replaying {
             _ => {}
         }
         let pid = running.pid();
+        // One that only looks is a search.
+        if shown == u64::MAX {
+            SEARCH.lock().unwrap().0 = Some(pid);
+        }
         let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
             Ok(attached) => attached,
             Err(message) => {
@@ -2091,6 +2142,8 @@ impl Session {
                     "the program started {program}, process {pid}: `tondo debug {pid}` debugs it, which waits 5 s for it"
                 ),
             }
+        } else if let Some(list) = value["disassembly"].as_array() {
+            print!("{}", crate::disassembly::text(list, value["pc"].as_u64().unwrap_or(0)));
         } else if let Some(retainers) = value.get("retainers") {
             println!("{}", retainers["object"].as_str().unwrap_or_default());
             let stacks: Vec<String> =

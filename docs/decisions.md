@@ -4928,3 +4928,23 @@ from from `origins`, cut down to the branches that reach a value the other
 run got differently at the same line: the full tree was long, and nearly
 all of it the same in both. Only runs of one build compare, since the
 probes of two builds do not name the same lines.
+
+## Memory and instructions come from the program
+
+An editor asks for bytes and instructions by address, and the debugger is
+inside the program, so reading a wrong address would crash what it looks at.
+`peek` and `poke` go through a pipe: `write` and `read` answer `EFAULT` where
+a load would fault, in Linux and macOS alike, in a container too, with
+nothing that a sandbox may refuse. A disassembler reads the bytes in the
+tool and not in the runtime, which every program links; yaxpeax, in pure
+Rust, adds no C to build, and each target takes only its own architecture.
+Instructions are decoded from the start of a function, as the runtime's
+tables know it, since x86 cannot be decoded backwards and an editor asks
+for those before an address. The first frame is shown where its line starts:
+that is where the stop is, and its real address is inside the runtime's
+call. Breakpoints on a column are left out: a probe is a line, and a stop
+inside one needs a probe per expression.
+
+A long search of a replay is a process of its own, so `cancel` kills that
+process and the session stays where it was. The adapter reads the editor on
+a thread of its own for that, and only the searches can be cancelled.

@@ -315,6 +315,48 @@ fn located(pc: usize) -> Option<(&'static str, u32, &'static str, Inlined)> {
     }
 }
 
+/// The code of a function: its name, where it starts and ends, and where
+/// each of its lines starts.
+pub(crate) struct Code {
+    pub(crate) function: &'static str,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) lines: Vec<(usize, &'static str, u32)>,
+}
+
+/// The code of the function `address` is in.
+pub(crate) fn code_at(address: usize) -> Option<Code> {
+    let (table, start, index) = find(address + 1)?;
+    let of = Of::new(table, index);
+    let (file, mut cursor, end) = of.lines();
+    let (mut at, mut line, mut lines) = (0u64, 0i64, Vec::new());
+    unsafe {
+        while cursor < end {
+            at += leb128(table.blob, &mut cursor, end);
+            let zigzag = leb128(table.blob, &mut cursor, end);
+            line += (zigzag >> 1) as i64 ^ -((zigzag & 1) as i64);
+            let record = (leb128(table.blob, &mut cursor, end) as u32).wrapping_sub(1);
+            let file = match record {
+                u32::MAX => file,
+                record => u32_at(table.blob, of.record(record) + 20),
+            };
+            if line > 0 && file != u32::MAX {
+                lines.push((start + at as usize, named(table, file), line as u32));
+            }
+        }
+    }
+    Some(Code { function: of.function, start, end: start + entries(table)[index].size as usize, lines })
+}
+
+/// Where `line` of `function` starts, as a stop at it is there.
+pub(crate) fn line_start(function: &str, line: u32) -> Option<usize> {
+    let starts = tables().flat_map(|(_, table)| {
+        let of = move |index: usize| Of::new(table, index);
+        entries(table).iter().enumerate().filter(move |(index, _)| of(*index).function == function).map(|(_, f)| f.code)
+    });
+    starts.filter_map(code_at).find_map(|code| code.lines.iter().find(|l| l.2 == line).map(|l| l.0))
+}
+
 /// Where a walk of the stack from `fp` should start to reach compiled code:
 /// at `fp`, unless no frame of compiled code follows it, because code
 /// without frame pointers in between, as Rust's standard library, used the

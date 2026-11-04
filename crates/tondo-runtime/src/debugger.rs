@@ -1041,7 +1041,8 @@ fn native_frame(table: &Table, command: &str, pc: usize, fp: usize) -> String {
     };
     let place = code.at.map_or(String::new(), |(file, line)| format!("{file}:{line} in {}", code.function));
     let at = |offset: isize| (fp as isize + offset) as usize;
-    let frames = [Frame { place, function: Some(function), pointer: fp, addresses: at(addressed), alive: at(living) }];
+    let frames =
+        [Frame { place, function: Some(function), pointer: fp, addresses: at(addressed), alive: at(living), pc }];
     let (word, rest) = command.split_once(' ').unwrap_or((command, ""));
     match word {
         "locals" => format!("{{\"locals\":[{}]}}", locals_of(table, &frames, 0, super::tasks::current_id()).join(",")),
@@ -1727,6 +1728,7 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
             pointer: here.frame,
             addresses: here.addresses,
             alive: here.alive,
+            pc: 0,
         }];
         let value =
             line.expr.as_ref().and_then(|e| evaluating(table, &innermost, 0, |ev| ev.evaluate(e)).ok().map(|v| v.text));
@@ -1775,6 +1777,7 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
             pointer,
             addresses: at(addressed),
             alive: at(living),
+            pc: 0,
         }];
         let now = evaluating(table, &frame, 0, |ev| ev.evaluate(&followed.expr)).ok().map(|v| v.text);
         if let Some(value) = now.as_ref().filter(|now| Some(*now) != followed.last.as_ref()) {
@@ -2423,6 +2426,8 @@ struct Frame {
     pointer: usize,
     addresses: usize,
     alive: usize,
+    /// Where its code is at, in the frames below the first.
+    pc: usize,
 }
 
 /// The frames of a held task, innermost first, as `stack` lists them; of
@@ -2430,7 +2435,7 @@ struct Frame {
 fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
     let function = table.sites.get(held.site).map(|s| s.function);
     let place = place_in(table, held.site);
-    let first = Frame { place, function, pointer: held.frame, addresses: held.addresses, alive: held.alive };
+    let first = Frame { place, function, pointer: held.frame, addresses: held.addresses, alive: held.alive, pc: 0 };
     let mut out = if held.site == WAITING { Vec::new() } else { vec![first] };
     if held.site == usize::MAX {
         return out;
@@ -2450,7 +2455,7 @@ fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
             _ => (0, 0),
         };
         let place = format!("{file}:{line} in {}", described.function);
-        out.push(Frame { place, function, pointer: fp, addresses, alive });
+        out.push(Frame { place, function, pointer: fp, addresses, alive, pc: address });
     }
     out
 }
@@ -2971,6 +2976,34 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
+        "peek" => match rest.split_once(' ').and_then(|(at, count)| Some((at.parse().ok()?, count.parse().ok()?))) {
+            Some((at, count)) if state().past.is_none() => {
+                let bytes = peek(at, usize::min(count, MOST_PEEKED));
+                format!("{{\"bytes\":\"{}\"}}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            }
+            Some(_) => {
+                "{\"error\":\"the history keeps values, not memory: go back to where the program stopped\"}".into()
+            }
+            None => "{\"error\":\"peek takes an address and a count\"}".into(),
+        },
+        "poke" => match poked(rest) {
+            Ok(written) => format!("{{\"written\":{written}}}"),
+            Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+        },
+        "code" => match rest.parse().ok().and_then(super::trace::code_at) {
+            Some(code) => {
+                let line = |&(at, file, line): &(usize, &str, u32)| format!("[{at},{},{line}]", quoted(file));
+                let lines: Vec<String> = code.lines.iter().map(line).collect();
+                format!(
+                    "{{\"function\":{},\"start\":{},\"end\":{},\"lines\":[{}]}}",
+                    quoted(code.function),
+                    code.start,
+                    code.end,
+                    lines.join(",")
+                )
+            }
+            None => "{\"error\":\"no function of the program is there\"}".into(),
+        },
         "memory" => match memory() {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
@@ -3240,7 +3273,9 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let Some(held) = held else {
                 return Some(format!("{{\"error\":{}}}", quoted(&format!("task {task} is not stopped"))));
             };
-            let mut frames: Vec<String> = frames(table, &held).iter().map(|f| f.place.clone()).collect();
+            let frames = frames(table, &held);
+            let pcs: Vec<String> = frames.iter().map(|f| pc_of(table, f).to_string()).collect();
+            let mut frames: Vec<String> = frames.iter().map(|f| f.place.clone()).collect();
             let spawned: Vec<String> = spawned(task).iter().map(|s| quoted(s)).collect();
             // A frame `goto` moves shows where it goes on.
             if let (Some((_, line)), Some(first)) =
@@ -3255,7 +3290,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 true => String::new(),
                 false => format!(",\"spawned\":[{}]", spawned.join(",")),
             };
-            format!("{{\"stack\":[{}]{spawned}}}", frames.join(","))
+            format!("{{\"stack\":[{}],\"pcs\":[{}]{spawned}}}", frames.join(","), pcs.join(","))
         }
         "snapshot" => match snapshot(table) {
             Ok(answer) => answer,
@@ -3472,6 +3507,107 @@ fn retainers(table: &Table, target: &str) -> Result<String, String> {
 
 /// What `memory` counted last time, by where the objects were made.
 static COUNTED: Mutex<Vec<(usize, usize, usize)>> = Mutex::new(Vec::new());
+
+/// The most `peek` reads at once.
+const MOST_PEEKED: usize = 1 << 20;
+
+/// A piece of memory goes through at most this much of a pipe at once, and
+/// never over the end of a page.
+const PIECE: usize = 4096;
+
+/// A pipe, closed with this: its two ends.
+struct Pipe([i32; 2]);
+
+impl Pipe {
+    fn new() -> Option<Pipe> {
+        let mut ends = [0; 2];
+        (unsafe { libc::pipe(ends.as_mut_ptr()) } == 0).then_some(Pipe(ends))
+    }
+}
+
+impl Drop for Pipe {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.0[0]);
+            libc::close(self.0[1]);
+        }
+    }
+}
+
+/// The length of the piece that starts at `at`, of what remains.
+fn piece(at: usize, remaining: usize) -> usize {
+    usize::min(PIECE - at % PIECE, remaining)
+}
+
+/// The bytes at `address`, up to the first that cannot be read. They go
+/// through a pipe, since the system says that memory is not there where
+/// reading it would crash the program.
+fn peek(address: usize, count: usize) -> Vec<u8> {
+    let _outside = super::replay::Outside::enter();
+    let mut bytes = vec![0u8; count];
+    let Some(pipe) = Pipe::new() else { return Vec::new() };
+    let mut done = 0;
+    while done < count {
+        let at = address.wrapping_add(done);
+        let length = piece(at, count - done);
+        if unsafe { libc::write(pipe.0[1], at as *const libc::c_void, length) } != length as isize {
+            break;
+        }
+        unsafe { libc::read(pipe.0[0], bytes[done..].as_mut_ptr().cast(), length) };
+        done += length;
+    }
+    bytes.truncate(done);
+    bytes
+}
+
+/// `poke <address> <hex>`: writes bytes, through a pipe as `peek` reads
+/// them; how many it could.
+fn poked(rest: &str) -> Result<usize, String> {
+    if super::replay::replaying() {
+        return Err("a replay is the run as it was: its memory does not change".into());
+    }
+    if state().past.is_some() {
+        return Err("the history keeps values, not memory: go back to where the program stopped".into());
+    }
+    let (address, hex) = rest.split_once(' ').ok_or("poke takes an address and bytes in hexadecimal")?;
+    let address: usize = address.parse().map_err(|_| "poke takes an address and bytes in hexadecimal")?;
+    let pairs = hex.as_bytes().chunks(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok());
+    let bytes: Vec<u8> = pairs.collect::<Option<_>>().ok_or("poke takes an address and bytes in hexadecimal")?;
+    let _outside = super::replay::Outside::enter();
+    let pipe = Pipe::new().ok_or("no pipe to write through")?;
+    let mut done = 0;
+    while done < bytes.len() {
+        let at = address.wrapping_add(done);
+        let length = piece(at, bytes.len() - done);
+        unsafe { libc::write(pipe.0[1], bytes[done..].as_ptr().cast(), length) };
+        if unsafe { libc::read(pipe.0[0], at as *mut libc::c_void, length) } != length as isize {
+            break;
+        }
+        done += length;
+    }
+    Ok(done)
+}
+
+/// The address of the code a frame is at: a stopped frame, where its line
+/// starts, since a stop is there.
+fn pc_of(table: &Table, frame: &Frame) -> usize {
+    let line = || frame.place.split(" in ").next()?.rsplit_once(':')?.1.parse().ok();
+    match (frame.pc, frame.function, line()) {
+        (0, Some(function), Some(line)) => super::trace::line_start(&table.functions[function].name, line).unwrap_or(0),
+        (pc, ..) => pc,
+    }
+}
+
+/// Where the bytes of a binding at `address` are: there for a number, and
+/// where it points for a value of the heap.
+fn memory_of(binding: &Binding, address: usize) -> usize {
+    const INLINE: &[&str] = &[
+        "Bool", "Byte", "Char", "Float", "Float32", "Int", "Int8", "Int16", "Int32", "Int64", "Int128", "UInt",
+        "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
+    ];
+    let pointer = (!INLINE.contains(&binding.ty.as_str())).then(|| peek(address, 8)).filter(|word| word.len() == 8);
+    pointer.map_or(address, |word| usize::from_ne_bytes(word.try_into().unwrap()))
+}
 
 /// `memory`: the program's objects by where they were made, the places
 /// with the most bytes first, and how each grew since `memory` last
@@ -3871,8 +4007,9 @@ fn locals_of(table: &Table, frames: &[Frame], index: usize, task: u64) -> Vec<St
     let items = visible(table, frames, index)
         .into_iter()
         .zip(&shown)
-        .map(|((binding, _, from), (_, whole))| {
+        .map(|((binding, address, from), (_, whole))| {
             let mut from = from.map_or(String::new(), |from| format!(",\"from\":{}", quoted(from)));
+            from.push_str(&format!(",\"memory\":{}", memory_of(binding, address)));
             // A view opens to its value as it is, too.
             if binding.raw.is_some() {
                 from.push_str(",\"viewed\":true");

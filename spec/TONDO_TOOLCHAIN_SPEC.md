@@ -854,6 +854,8 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   sabe leer y no compila es un error al poner el breakpoint, con el del
   compilador; la que sabe leer y no compila, la lee. Un `reload` que cambia
   el código de esa línea la compila de nuevo para él. `delete <id>` lo quita.
+- `disassemble [<frame>]` da las instrucciones alrededor de donde está un
+  frame, el primero por defecto, por líneas del programa y marcando la suya.
 - `retainers <path>` dice qué mantiene vivo el objeto del heap que tiene un
   binding, o una parte suya: las pilas de las tareas que apuntan a él y las
   cadenas de objetos más cortas desde una pila hasta él, cada objeto con su
@@ -1017,7 +1019,15 @@ suites, con los bindings de cada función, desplegables por partes
 escrita, como la suite de un test, y un ámbito `Context` con los contextos de
 la tarea, `evaluate` de una expresión, y en la consola, en un build live, de una que
 llama al código del programa, como `call`, `stepInTargets` con las llamadas de la línea,
-`gotoTargets` y `goto` en un build live, las órdenes que solo miran
+`gotoTargets` y `goto` en un build live, `readMemory` y `writeMemory` con
+`memoryReference` en cada binding (la dirección de su valor en el frame para un
+número y la del objeto para lo demás; lo que no se puede leer se cuenta en
+`unreadableBytes` y no rompe el programa, y escribir no se puede en una
+reproducción ni en la historia), `disassemble` con
+`instructionPointerReference` en cada frame (el primero, donde empieza su línea,
+que es donde paró), `cancel` y el progreso (`progressStart` cancelable) de
+las búsquedas de una reproducción, que terminan su proceso sin mover la sesión,
+las órdenes que solo miran
 (`memory`, `retainers`, `snapshot`, `tasks`, `freeze`, `thaw`, `record`,
 `context`) escritas en la consola,
 `completions` en la consola (los bindings, los

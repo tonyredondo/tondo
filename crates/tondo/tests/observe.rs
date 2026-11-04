@@ -2709,6 +2709,115 @@ fn debug_adapter_opens_the_recordings_of_children() {
     adapter.stop();
 }
 
+#[test]
+fn debug_adapter_cancels_a_long_search() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-cancel");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn main() {\n    var total = 0\n    for i in 0..3000000 {\n        total = total + i\n    }\n    console.println(\"{total}\")\n}\n";
+    std::fs::write(dir.join("long.to"), program).unwrap();
+    let args = ["run", "--record", "run", "long.to"];
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo", "supportsProgressReporting": true }));
+    adapter.ask("launch", json!({ "replay": "run", "cwd": dir }));
+    let path = dir.join("long.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 8 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    adapter.send("timeline", json!({ "expression": "total", "frameId": frame }));
+    let started = adapter.until("progressStart");
+    assert_eq!(started["cancellable"], true, "{started}");
+    let began = std::time::Instant::now();
+    adapter.send("cancel", json!({ "progressId": started["progressId"] }));
+    let answer = adapter.response("timeline");
+    assert_eq!((&answer["success"], &answer["message"]), (&json!(false), &json!("cancelled")), "{answer}");
+    assert!(began.elapsed().as_secs() < 5, "{:?}", began.elapsed());
+    adapter.until("progressEnd");
+    // Where it stopped, the session goes on.
+    let again = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    assert_eq!(again["stackFrames"][0]["line"], 8, "{again}");
+    adapter.stop();
+}
+
+#[test]
+fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-memory");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    var count = 21\n    let text = \"tondo\"\n    count = twice(count)\n    console.println(\"{count} {text}\")\n}\n";
+    let path = dir.join("memory.to");
+    std::fs::write(&path, program).unwrap();
+    let mut adapter = Adapter::start();
+    let capabilities = adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    assert_eq!(capabilities["supportsDisassembleRequest"], true, "{capabilities}");
+    adapter.ask("launch", json!({ "program": "memory.to", "cwd": dir }));
+    adapter
+        .ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 4 }, { "line": 11 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let pc = |at: usize| trace["stackFrames"][at]["instructionPointerReference"].as_str().unwrap().to_string();
+    // The instructions around a stop, of the line it stopped at.
+    let shown = adapter
+        .ask("disassemble", json!({ "memoryReference": pc(0), "instructionOffset": -4, "instructionCount": 12 }));
+    let list = shown["instructions"].as_array().unwrap();
+    assert_eq!(list.len(), 12, "{shown}");
+    let here = list.iter().find(|i| i["address"] == pc(0)).unwrap_or_else(|| panic!("{} in {shown}", pc(0)));
+    assert_eq!(here["line"], 4, "{shown}");
+    assert!(!here["instruction"].as_str().unwrap().is_empty(), "{shown}");
+    let addresses: Vec<u64> =
+        list.iter().map(|i| u64::from_str_radix(&i["address"].as_str().unwrap()[2..], 16).unwrap()).collect();
+    assert!(addresses.windows(2).all(|pair| pair[0] < pair[1]), "{shown}");
+    // A caller's, at the call.
+    let there = adapter.ask("disassemble", json!({ "memoryReference": pc(1), "instructionCount": 1 }));
+    assert_eq!(there["instructions"][0]["line"], 10, "{there}");
+    // Where a binding's bytes are.
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let scopes = adapter.ask("scopes", json!({ "frameId": frame }));
+    let reference = scopes["scopes"][0]["variablesReference"].clone();
+    let variables = adapter.ask("variables", json!({ "variablesReference": reference }));
+    let named =
+        |name: &str| variables["variables"].as_array().unwrap().iter().find(|v| v["name"] == name).unwrap().clone();
+    let count = named("count");
+    assert_eq!(count["value"], "42", "{variables}");
+    let memory = count["memoryReference"].clone();
+    let read = adapter.ask("readMemory", json!({ "memoryReference": memory, "count": 8 }));
+    assert_eq!(read["data"], "KgAAAAAAAAA=", "{read}");
+    // A string's, on the heap.
+    let text = adapter.ask("readMemory", json!({ "memoryReference": named("text")["memoryReference"], "count": 256 }));
+    assert_ne!(text["data"], read["data"], "{text}");
+    // Writing, and what the program then has.
+    let wrote = adapter.ask("writeMemory", json!({ "memoryReference": memory, "data": "BwAAAAAAAAA=" }));
+    assert_eq!(wrote["bytesWritten"], 8, "{wrote}");
+    adapter.until("invalidated");
+    let printed = adapter.ask("evaluate", json!({ "expression": "count", "frameId": frame, "context": "watch" }));
+    assert_eq!(printed["result"], "7", "{printed}");
+    // What is not there is not read, and does not crash the program.
+    let nothing = adapter.ask("readMemory", json!({ "memoryReference": "0x10", "count": 16 }));
+    assert_eq!((&nothing["unreadableBytes"], &nothing["data"]), (&json!(16), &json!("")), "{nothing}");
+    assert!(
+        adapter.refused("writeMemory", json!({ "memoryReference": "0x10", "data": "AAAA" })).contains("0 of the 3")
+    );
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    let output = adapter.until("output");
+    assert!(output["output"].as_str().unwrap().contains("7 tondo"), "{output}");
+    adapter.until("terminated");
+    adapter.stop();
+}
+
 const SPAWNING: &str = r#"import std.console
 
 fn work(start: Int, done: Sender[Int]) {
@@ -3162,11 +3271,20 @@ impl Adapter {
     }
 
     fn respond(&mut self, command: &str, arguments: Value) -> Value {
+        self.send(command, arguments);
+        self.response(command)
+    }
+
+    /// A request, whose response comes later.
+    fn send(&mut self, command: &str, arguments: Value) {
         self.seq += 1;
         let text =
             json!({ "seq": self.seq, "type": "request", "command": command, "arguments": arguments }).to_string();
         std::io::Write::write_all(&mut self.input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
             .unwrap();
+    }
+
+    fn response(&mut self, command: &str) -> Value {
         loop {
             let message = dap_read(&mut self.output);
             if message["type"] == "response" && message["command"] == command {
@@ -3183,6 +3301,8 @@ impl Adapter {
             if message["type"] == "request" && message["command"] == command {
                 return message["arguments"].clone();
             }
+            // No more requests come: waiting would hang the tests.
+            assert!(message["event"] != "terminated", "the session ended before `{command}`: {:?}", self.events);
             self.events.push(message);
         }
     }

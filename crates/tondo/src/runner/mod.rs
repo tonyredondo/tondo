@@ -17,6 +17,7 @@ mod fuzz;
 mod human;
 mod interrupt;
 mod json;
+pub(crate) use json::base64;
 mod junit;
 mod owners;
 mod select;

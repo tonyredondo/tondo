@@ -55,6 +55,14 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
   );
 }
 
+/** Says why a request failed, unless the person cancelled it. */
+function failed(error: unknown): void {
+  const message = (error as Error).message;
+  if (message !== 'cancelled') {
+    void vscode.window.showErrorMessage(message);
+  }
+}
+
 /** What changed in a replay between another probe and where the program
  *  is, beside the code. */
 async function diff(): Promise<void> {
@@ -75,7 +83,7 @@ async function diff(): Promise<void> {
     const document = await vscode.workspace.openTextDocument({ content: diffMarkdown(found.diff), language: 'markdown' });
     await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
   }
 }
 
@@ -120,7 +128,7 @@ async function when(): Promise<void> {
   try {
     await session.customRequest('when', { condition, which, frameId });
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
   }
 }
 
@@ -138,7 +146,7 @@ async function origins(expression?: string): Promise<void> {
   try {
     found = (await session.customRequest('origins', { expression, frameId })) as typeof found;
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
     return;
   }
   const document = await vscode.workspace.openTextDocument({ content: originsMarkdown(expression, found.origins), language: 'markdown' });
@@ -159,7 +167,7 @@ async function timeline(expression?: string): Promise<void> {
   try {
     found = (await session.customRequest('timeline', { expression, frameId })) as Timeline;
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
     return;
   }
   const panel = vscode.window.createWebviewPanel('tondoTimeline', expression, vscode.ViewColumn.Beside, { enableScripts: true });
@@ -169,7 +177,7 @@ async function timeline(expression?: string): Promise<void> {
       await session.customRequest('seek', { tick: asked.seek });
       await panel.webview.postMessage({ tick: asked.seek });
     } catch (error) {
-      void vscode.window.showErrorMessage((error as Error).message);
+      failed(error);
     }
   });
 }
@@ -186,7 +194,7 @@ async function taskGraph(): Promise<void> {
   try {
     tasks = ((await session.customRequest('tasks')) as { tasks: Task[] }).tasks;
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
     return;
   }
   const content = `# The tasks of ${session.name}\n\n\`\`\`mermaid\n${mermaid(tasks)}\`\`\`\n`;
@@ -243,7 +251,7 @@ async function why(expression?: string): Promise<void> {
   try {
     found = (await session.customRequest('why', { expression, frameId })) as Why;
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
     return;
   }
   const causes = found.causes.slice(0, 3);
@@ -291,7 +299,7 @@ async function showTable(variable?: Variable): Promise<void> {
   try {
     table = await page(0);
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
     return;
   }
   const title = variable.evaluateName ?? variable.name;
@@ -301,7 +309,7 @@ async function showTable(variable?: Variable): Promise<void> {
     try {
       await panel.webview.postMessage(await page(asked.start, asked.stop));
     } catch (error) {
-      void vscode.window.showErrorMessage((error as Error).message);
+      failed(error);
     }
   });
 }
@@ -326,7 +334,7 @@ async function run(uri: vscode.Uri | undefined, command: 'run' | 'watch'): Promi
   try {
     await vscode.tasks.executeTask(tondoTask(command, (await programFor(file)).program, folder));
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
   }
 }
 
@@ -341,7 +349,7 @@ async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> 
   try {
     await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...(await launched(file)) });
   } catch (error) {
-    void vscode.window.showErrorMessage((error as Error).message);
+    failed(error);
   }
 }
 

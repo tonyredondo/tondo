@@ -754,6 +754,10 @@ name lines in their stacks; `tondo dump plugin lldb` (or `gdb`) writes a
 and with `tondo locals` and `tondo print user.name` the selected frame's
 bindings, as `tondo debug` shows them.
 
+`disassemble` shows the instructions around where a frame is, by line; in
+the editor, *Open Disassembly View* does, and *View Binary Data* on a binding
+shows its bytes, which a live program lets you change.
+
 `locals` shows what the code where it stopped can use: its bindings, what a
 closure captured, and those of the functions it is written in whose frames
 are below it, marked with which: a closure's maker, a test's suites.

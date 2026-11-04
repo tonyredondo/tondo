@@ -48,6 +48,9 @@ project, running, debugging and testing it.
   *Compare with Another Moment*, what changed since another probe;
   *Compare Two Recordings*, where a run that passed and one that failed part
   and why;
+  *Open Disassembly View* and *View Binary Data* on a binding, whose bytes a
+  live program lets you change; and a long search of a replay shows its
+  progress and can be cancelled;
   *Show Its Values
   over the Run*, every value a binding took, from which line, on a bar of a
   replay whose marks take the program there; beside each line run, with

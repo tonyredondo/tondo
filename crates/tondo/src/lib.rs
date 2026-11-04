@@ -14,6 +14,7 @@ pub mod debuginfo;
 pub mod deps;
 pub mod derive;
 pub mod diag;
+pub mod disassembly;
 pub mod doctest;
 pub mod driver;
 pub mod elide;
