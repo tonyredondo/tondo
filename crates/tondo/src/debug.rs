@@ -944,10 +944,8 @@ impl Replaying {
             _ => {}
         }
         let pid = running.pid();
-        // One that only looks is a search.
-        if shown == u64::MAX {
-            SEARCH.lock().unwrap().0 = Some(pid);
-        }
+        // A search that cancels ends it, and the session stays where it was.
+        SEARCH.lock().unwrap().0 = Some(pid);
         let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
             Ok(attached) => attached,
             Err(message) => {
@@ -1668,6 +1666,9 @@ fn origins_at(dir: &Path, tick: u64, task: u64, name: &str) -> Option<Value> {
     Some(found.ok()?["origins"].clone())
 }
 
+/// How many of what a line reads a comparison follows back.
+const FOLLOWED: usize = 3;
+
 /// Every cause of a tree of origins.
 fn flatten_causes(causes: &Value, out: &mut Vec<Value>) {
     for cause in causes.as_array().into_iter().flatten() {
@@ -1728,8 +1729,8 @@ pub fn compared(first: &Path, second: &Path) -> Result<Value, String> {
     let (next_a, next_b) = (next(first, &a)?, next(second, &b)?);
     // The last line both ran, and what differs there.
     let last = |trail: &Trail| shared.checked_sub(1).and_then(|at| trail.get(&task)?.get(at)).map(|line| line.0);
-    let (mut after, mut differs) = (None, Vec::new());
-    let mut origins = None;
+    let (mut after, mut differs): (_, Vec<Value>) = (None, Vec::new());
+    let mut origins = Vec::new();
     if let (Some(tick_a), Some(tick_b)) = (last(&a), last(&b)) {
         let ((at, there_a), (_, there_b)) = (look_at(first, tick_a)?, look_at(second, tick_b)?);
         let changed = changes(&there_a, &there_b, tick_a, tick_b);
@@ -1741,14 +1742,23 @@ pub fn compared(first: &Path, second: &Path) -> Result<Value, String> {
             .filter(|binding| binding["frame"].as_str().is_some_and(|frame| frame.starts_with(&own)))
             .cloned()
             .collect();
+        // What the line reads decided where each run went: anything else
+        // that differs, as a clock, did not.
+        let read = line_text(Path::new(""), &at).map_or(Vec::new(), |text| read_by(&text));
+        for binding in &mut differs {
+            binding["read"] = (binding["name"].as_str().is_some_and(|name| read.iter().any(|r| r == name))).into();
+        }
         after = Some(at);
-        if let Some(name) = differs.first().and_then(|binding| binding["name"].as_str())
-            && let (Some(there_a), Some(there_b)) =
+        let decided = differs.iter().filter(|binding| binding["read"] == true);
+        for name in decided.filter_map(|binding| binding["name"].as_str()).take(FOLLOWED) {
+            let (Some(there_a), Some(there_b)) =
                 (origins_at(first, tick_a, task, name), origins_at(second, tick_b, task, name))
-        {
+            else {
+                continue;
+            };
             let mut others = Vec::new();
             flatten_causes(&there_a["causes"], &mut others);
-            origins = Some(serde_json::json!({
+            origins.push(serde_json::json!({
                 "name": name, "why": there_b["why"], "at": there_b["at"], "causes": differing(&others, &there_b["causes"]),
             }));
         }
@@ -1781,20 +1791,25 @@ pub fn compared_text(found: &Value, first: &Path, second: &Path) -> String {
     line(went(first, &found["first"]));
     line(went(second, &found["second"]));
     let bindings = found["bindings"].as_array().map_or(&[][..], Vec::as_slice);
-    if !bindings.is_empty() {
-        line("what differs there, from the first to the second:".to_string());
-    }
     let shown = |value: &Value| value.as_str().unwrap_or("nothing").to_string();
-    for binding in bindings {
-        let (frame, name) =
-            (binding["frame"].as_str().unwrap_or_default(), binding["name"].as_str().unwrap_or_default());
-        line(format!("  {name}: {} → {}   ({frame})", shown(&binding["before"]), shown(&binding["after"])));
-    }
-    let origins = &found["origins"];
-    if let Some(name) = origins["name"].as_str() {
-        let (why, at) = (origins["why"].as_str().unwrap_or_default(), origins["at"].as_str().unwrap_or_default());
+    let mut list = |title: &str, read: bool| {
+        let chosen: Vec<&Value> = bindings.iter().filter(|binding| (binding["read"] == true) == read).collect();
+        if !chosen.is_empty() {
+            line(title.to_string());
+        }
+        for binding in chosen {
+            let (frame, name) =
+                (binding["frame"].as_str().unwrap_or_default(), binding["name"].as_str().unwrap_or_default());
+            line(format!("  {name}: {} → {}   ({frame})", shown(&binding["before"]), shown(&binding["after"])));
+        }
+    };
+    list("what that line reads differs, from the first to the second:", true);
+    list("what also differs there, which that line does not read:", false);
+    for origin in found["origins"].as_array().into_iter().flatten() {
+        let (name, why) = (origin["name"].as_str().unwrap_or_default(), origin["why"].as_str().unwrap_or_default());
+        let at = origin["at"].as_str().unwrap_or_default();
         line(format!("where the `{name}` of the second came from, by what differs: {why}, at {at}"));
-        let causes = origins["causes"].as_array().map_or(&[][..], Vec::as_slice);
+        let causes = origin["causes"].as_array().map_or(&[][..], Vec::as_slice);
         if !causes.is_empty() {
             line(origins_text(causes, "  ").trim_end().to_string());
         }

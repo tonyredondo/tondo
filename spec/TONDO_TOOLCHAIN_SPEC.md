@@ -1127,21 +1127,27 @@ memoria, hasta el tamaño del programa por cada copia, de las que suele haber
 tres. Si la ejecución falla, la copia más vieja queda esperando, y
 `tondo debug --replay` empieza en ella, parado en esa sonda, con todas las
 órdenes de esta sección sobre lo que queda. Las copias duran una hora sin
-usarse, viven en esa máquina y no sobreviven a reiniciarla ni al final de un
+usarse, o lo que diga `--hold <duración>`, viven en esa máquina y no sobreviven a reiniciarla ni al final de un
 contenedor: `--last` es para un programa que se investiga donde corre, y para
 llevarse una grabación a otra máquina, como en CI, se graba entera. Si la
 ejecución va bien, las copias y las llamadas se borran; si es más corta que la
 duración, queda entera. Un programa con threads de C no se copia, porque la
-copia los perdería, y queda entero también.
+copia los perdería, y queda entero también. Las grabaciones de hijos que no
+escribieron nada en esa duración se borran con lo demás.
 `tondo debug --compare <dir> <dir>` compara dos grabaciones del mismo
 ejecutable, como una que pasó y otra que falló, y `debug_compare` en el
 servidor MCP y *Compare Two Recordings* en el editor hacen lo mismo. Cada una
 se reproduce sin parar anotando las líneas que corre cada tarea, y la
 respuesta es la primera línea, por orden de ejecución, en que una tarea de una
 va adonde la misma tarea de la otra no va: qué difiere en sus variables justo
-antes, y de dónde vino en la segunda, siguiendo `origins` solo por los valores
-que en la otra grabación fueron distintos en esa misma línea. Dos grabaciones
+antes, separando lo que esa línea lee, que decidió el camino, de lo que difiere
+sin que ella lo lea, como un reloj; y de dónde vino en la segunda lo que lee,
+hasta tres valores, siguiendo `origins` solo por los valores que en la otra
+grabación fueron distintos en esa misma línea. Dos grabaciones
 de ejecutables distintos no se comparan, porque sus líneas no se corresponden.
+`tondo test --record <dir>` compara solo los tests que pasan y fallan en la misma
+ejecución, con `--repeat` o `--schedules`: guarda la primera vez que pasó y dice
+dónde se separa de la primera que falló.
 El
 directorio guarda también las fuentes del programa, que nombra su DWARF, y
 la reproducción lee de ellas sus líneas cuando el archivo no está, así que

@@ -2081,18 +2081,27 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(_) => return Err(format!("--record takes the directory the recording goes to\n{USAGE}")),
         None => None,
     };
-    // `--last <duration>`, of a recording: how much of its end it keeps.
-    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
-    let last = match args[..end].iter().position(|a| a == "--last") {
-        Some(at) if at + 1 < end && record.is_some() => {
-            let text = args.remove(at + 1);
-            args.remove(at);
-            let text = text.to_string_lossy();
-            Some(milliseconds(&text).ok_or(format!("--last takes a duration, as 5m, 30s or 500ms, not `{text}`"))?)
+    // `--last <duration>`, of a recording: how much of its end it keeps;
+    // and `--hold <duration>`, how long it waits for a debugger.
+    let mut duration = |flag: &str| -> Result<Option<(u64, String)>, String> {
+        let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+        match args[..end].iter().position(|a| a == flag) {
+            Some(at) if at + 1 < end && record.is_some() => {
+                let text = args.remove(at + 1).to_string_lossy().into_owned();
+                args.remove(at);
+                let ms = milliseconds(&text);
+                let ms = ms.ok_or(format!("{flag} takes a duration, as 5m, 30s or 500ms, not `{text}`"))?;
+                Ok(Some((ms, text)))
+            }
+            Some(_) => Err(format!("{flag} goes with --record, and takes a duration\n{USAGE}")),
+            None => Ok(None),
         }
-        Some(_) => return Err(format!("--last goes with --record, and takes a duration\n{USAGE}")),
-        None => None,
     };
+    let last = duration("--last")?.map(|(ms, _)| ms);
+    let hold = duration("--hold")?;
+    if hold.is_some() && last.is_none() {
+        return Err(format!("--hold says how long the end of a run waits: it goes with --last\n{USAGE}"));
+    }
     let (path, rest) = source_argument(&args);
     let (options, rest) = link_options(rest)?;
     let program_args = match rest.as_slice() {
@@ -2101,7 +2110,7 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
     if let Some(dir) = record {
-        return record_run(&path, program_args, options, &dir, last);
+        return record_run(&path, program_args, options, &dir, last, hold);
     }
     if options.watch {
         return watch(&path, program_args, &options);
@@ -2134,6 +2143,7 @@ fn record_run(
     mut options: BuildOptions,
     dir: &Path,
     last: Option<u64>,
+    hold: Option<(u64, String)>,
 ) -> Result<ExitCode, String> {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return Err("a run is recorded on Linux and macOS".into());
@@ -2174,6 +2184,7 @@ fn record_run(
         .env("TONDO_RT_RECORD", dir.join("calls"))
         .env("TONDO_RT_SCHEDULE", format!("{seed:x}"))
         .envs(last.map(|ms| ("TONDO_RT_RECORD_LAST", ms.to_string())))
+        .envs(hold.as_ref().map(|(ms, _)| ("TONDO_RT_RECORD_HOLD", ms.to_string())))
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
     // Ctrl-C is the program's to handle; the recording ends with it.
@@ -2184,7 +2195,8 @@ fn record_run(
     let shown = dir.display();
     match last.map_or(Kept::Whole, |_| tondo::debug::end_held(dir, status.success())) {
         Kept::Copies => eprintln!(
-            "tondo: the end of the run is held in {shown} for an hour, on this machine: `tondo debug --replay {shown}` runs it again"
+            "tondo: the end of the run is held in {shown} for {}, on this machine: `tondo debug --replay {shown}` runs it again",
+            hold.map_or("an hour".to_string(), |(_, text)| text)
         ),
         Kept::Whole => eprintln!("tondo: the run is recorded in {shown}: `tondo debug --replay {shown}` runs it again"),
         Kept::Nothing => eprintln!("tondo: the run went well, and nothing of its end is kept"),

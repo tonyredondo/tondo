@@ -28,7 +28,7 @@ const DATA: &str = "@data ";
 
 /// The requests that search a replay over the run, which take long in a
 /// long run: `cancel` ends them, and the editor shows them as they go.
-const SEARCHES: &[&str] = &["diff", "effects", "origins", "timeline", "when", "why"];
+const SEARCHES: &[&str] = &["diff", "effects", "origins", "seek", "timeline", "when", "why"];
 
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
@@ -449,6 +449,13 @@ pub fn serve(builds: Builds) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The reference to the bytes of a part of a binding, when they are
+/// known: not those of a part of a map, say.
+fn memory_of(program: &mut Debuggee, path: &str) -> Option<String> {
+    let found = program.ask(&format!("memories {path}")).ok()?;
+    found["memories"][path].as_u64().map(|memory| format!("{memory:#x}"))
 }
 
 /// The address a memory request names: its reference and offset.
@@ -1655,6 +1662,9 @@ fn handle(
                     let path = part["path"].as_str().unwrap_or_default().to_string();
                     let mut variable =
                         json!({ "name": shown, "value": part["value"], "evaluateName": path, "variablesReference": 0 });
+                    if let Some(memory) = memory_of(program, &path) {
+                        variable["memoryReference"] = json!(memory);
+                    }
                     opened(program, task, index, &path, part, &mut variable);
                     variables.push(variable);
                 }
@@ -1822,6 +1832,9 @@ fn handle(
                 Err(read) => return Err(read),
             };
             let mut result = json!({ "result": value["value"], "type": value["type"], "variablesReference": 0 });
+            if let Some(memory) = memory_of(program, &path) {
+                result["memoryReference"] = json!(memory);
+            }
             if let Some(path) = value["path"].as_str() {
                 opened(program, task, index, path, &value, &mut result);
             }

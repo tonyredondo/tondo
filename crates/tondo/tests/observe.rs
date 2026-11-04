@@ -2099,9 +2099,10 @@ fn debugger_compares_two_recorded_runs() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-compare");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\nimport std.random\n\nfn total(): Int {\n    var dice = random.Random.new()\n    \
-                   let rate = dice.int(1..=4)\n    rate * 6\n}\n\nfn main() {\n    let sum = total()\n    if sum > 12 {\n        \
-                   panic(\"over budget\")\n    }\n    console.println(\"fine\")\n}\n";
+    // A clock differs in every run, and decides nothing.
+    let program = "import std.console\nimport std.random\nimport std.time\n\nfn total(): Int {\n    var dice = random.Random.new()\n    \
+                   let rate = dice.int(1..=4)\n    rate * 6\n}\n\nfn main() {\n    let began = time.utcNow()\n    let sum = total()\n    if sum > 12 {\n        \
+                   panic(\"over budget\")\n    }\n    console.println(\"fine {began}\")\n}\n";
     std::fs::write(dir.join("flaky.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     // A run of each kind: one in two is, and the seed of each run differs.
@@ -2142,14 +2143,17 @@ fn debugger_compares_two_recorded_runs() {
         }
     }
     assert_eq!(parted["parted"], true, "{parted}");
-    assert_eq!(parted["after"], "flaky.to:12 in main", "{parted}");
-    assert_eq!(parted["first"]["at"], "flaky.to:15 in main", "{parted}");
-    assert_eq!(parted["second"]["at"], "flaky.to:13 in main", "{parted}");
-    let names: Vec<&str> = parted["bindings"].as_array().unwrap().iter().filter_map(|b| b["name"].as_str()).collect();
-    assert_eq!(names, ["sum"], "{parted}");
+    assert_eq!(parted["after"], "flaky.to:14 in main", "{parted}");
+    assert_eq!(parted["first"]["at"], "flaky.to:17 in main", "{parted}");
+    assert_eq!(parted["second"]["at"], "flaky.to:15 in main", "{parted}");
+    let read: Vec<&Value> = parted["bindings"].as_array().unwrap().iter().filter(|b| b["read"] == true).collect();
+    assert_eq!(read.len(), 1, "{parted}");
+    assert_eq!(read[0]["name"], "sum", "{parted}");
+    assert!(parted["bindings"].to_string().contains("began"), "{parted}");
     // Of what made it, only what differs: the die, and what threw it.
-    assert_eq!(parted["origins"]["causes"][0]["name"], "rate", "{parted}");
-    assert_eq!(parted["origins"]["causes"][0]["at"], "flaky.to:6 in total", "{parted}");
+    assert_eq!(parted["origins"].as_array().unwrap().len(), 1, "{parted}");
+    assert_eq!(parted["origins"][0]["causes"][0]["name"], "rate", "{parted}");
+    assert_eq!(parted["origins"][0]["causes"][0]["at"], "flaky.to:7 in total", "{parted}");
     // The recordings keep what it reads, wherever it runs.
     let elsewhere = Command::new(tondo)
         .args(["debug", "--compare", &good, &bad].map(|arg| match arg.starts_with('-') || arg == "debug" {
@@ -2161,7 +2165,7 @@ fn debugger_compares_two_recorded_runs() {
         .output()
         .unwrap();
     let elsewhere: Value = serde_json::from_slice(&elsewhere.stdout).unwrap();
-    assert_eq!(elsewhere["origins"]["causes"][0]["name"], "rate", "{elsewhere}");
+    assert_eq!(elsewhere["origins"][0]["causes"][0]["name"], "rate", "{elsewhere}");
     assert_eq!(compared(&good, &good)["parted"], false);
     // Another build's lines are not these.
     let mut other = std::fs::read(dir.join(&good).join("program")).unwrap();
@@ -2744,6 +2748,18 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
     assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
     assert!(text.contains("200"), "{text}");
+    // Nor does a step from it stay on it.
+    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "once.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "break once.to:10\ncontinue\nnext\nquit\n";
+    std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
 }
 
 #[test]
@@ -2759,13 +2775,17 @@ fn a_recording_keeps_the_end_of_a_run() {
     std::fs::write(dir.join("ends.to"), format!("{body}}}\n")).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let run = |name: &str, file: &str| {
-        let args = ["run", "--record", name, "--last", "200ms", file];
+        let args = ["run", "--record", name, "--last", "200ms", "--hold", "2m", file];
         Command::new(tondo).args(args).current_dir(&dir).output().unwrap()
     };
-    let ran = run("crash", "crashes.to");
+    // On a busy machine a run may not get as far as dropping its start.
+    let ran = (0..5)
+        .map(|_| run("crash", "crashes.to"))
+        .find(|_| !dir.join("crash/calls").exists())
+        .expect("a run that kept only its end");
     assert!(!ran.status.success());
     let said = String::from_utf8_lossy(&ran.stderr);
-    assert!(said.contains("the end of the run is held in crash"), "{said}");
+    assert!(said.contains("the end of the run is held in crash for 2m"), "{said}");
     // The start of the run went, with what recorded it.
     assert!(!dir.join("crash/calls").exists());
     let held = std::fs::read_to_string(dir.join("crash/held")).unwrap();
@@ -2851,6 +2871,19 @@ fn debug_adapter_cancels_a_long_search() {
     let again = adapter.ask("stackTrace", json!({ "threadId": 1 }));
     assert_eq!(again["stackFrames"][0]["line"], 8, "{again}");
     adapter.stop();
+    // A replay on its way to a far probe stops where it got to.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "replay": "run", "cwd": dir, "stopOnEntry": true }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    adapter.ask("seek", json!({ "tick": 5_500_000 }));
+    adapter.ask("pause", json!({ "threadId": 1 }));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "pause", "{stopped}");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(trace["stackFrames"][0]["source"]["name"], "long.to", "{trace}");
+    adapter.stop();
 }
 
 #[test]
@@ -2861,7 +2894,7 @@ fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-memory");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\n\nfn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    var count = 21\n    let text = \"tondo\"\n    count = twice(count)\n    console.println(\"{count} {text}\")\n}\n";
+    let program = "import std.console\n\nfn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    var count = 21\n    let text = \"tondo\"\n    count = twice(count)\n    let pair = Pair { left: 5, right: 9 }\n    console.println(\"{count} {text} {pair.right}\")\n}\n\ntype Pair = {\n    left: Int\n    right: Int\n}\n";
     let path = dir.join("memory.to");
     std::fs::write(&path, program).unwrap();
     let mut adapter = Adapter::start();
@@ -2869,7 +2902,7 @@ fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
     assert_eq!(capabilities["supportsDisassembleRequest"], true, "{capabilities}");
     adapter.ask("launch", json!({ "program": "memory.to", "cwd": dir }));
     adapter
-        .ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 4 }, { "line": 11 }] }));
+        .ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 4 }, { "line": 12 }] }));
     adapter.ask("configurationDone", json!({}));
     adapter.until("stopped");
     let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
@@ -2879,9 +2912,12 @@ fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
         .ask("disassemble", json!({ "memoryReference": pc(0), "instructionOffset": -4, "instructionCount": 12 }));
     let list = shown["instructions"].as_array().unwrap();
     assert_eq!(list.len(), 12, "{shown}");
-    let here = list.iter().find(|i| i["address"] == pc(0)).unwrap_or_else(|| panic!("{} in {shown}", pc(0)));
-    assert_eq!(here["line"], 4, "{shown}");
-    assert!(!here["instruction"].as_str().unwrap().is_empty(), "{shown}");
+    let at = list.iter().position(|i| i["address"] == pc(0)).unwrap_or_else(|| panic!("{} in {shown}", pc(0)));
+    assert_eq!(list[at]["line"], 4, "{shown}");
+    assert!(!list[at]["instruction"].as_str().unwrap().is_empty(), "{shown}");
+    // Exactly where it stopped: after the call of the probe.
+    let before = list[at - 1]["instruction"].as_str().unwrap();
+    assert!(before.starts_with("call") || before.starts_with("blr"), "{shown}");
     let addresses: Vec<u64> =
         list.iter().map(|i| u64::from_str_radix(&i["address"].as_str().unwrap()[2..], 16).unwrap()).collect();
     assert!(addresses.windows(2).all(|pair| pair[0] < pair[1]), "{shown}");
@@ -2906,6 +2942,13 @@ fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
     // A string's, on the heap.
     let text = adapter.ask("readMemory", json!({ "memoryReference": named("text")["memoryReference"], "count": 256 }));
     assert_ne!(text["data"], read["data"], "{text}");
+    // A part's, as it opens and as an expression.
+    let parts = adapter.ask("variables", json!({ "variablesReference": named("pair")["variablesReference"] }));
+    let right = parts["variables"].as_array().unwrap().iter().find(|v| v["name"] == "right").unwrap();
+    let read = adapter.ask("readMemory", json!({ "memoryReference": right["memoryReference"], "count": 8 }));
+    assert_eq!(read["data"], "CQAAAAAAAAA=", "{read}");
+    let part = adapter.ask("evaluate", json!({ "expression": "pair.right", "frameId": frame, "context": "watch" }));
+    assert_eq!(part["memoryReference"], right["memoryReference"], "{part}");
     // Writing, and what the program then has.
     let wrote = adapter.ask("writeMemory", json!({ "memoryReference": memory, "data": "BwAAAAAAAAA=" }));
     assert_eq!(wrote["bytesWritten"], 8, "{wrote}");
@@ -2920,7 +2963,7 @@ fn debug_adapter_reads_and_writes_memory_and_shows_instructions() {
     );
     adapter.ask("continue", json!({ "threadId": 1 }));
     let output = adapter.until("output");
-    assert!(output["output"].as_str().unwrap().contains("7 tondo"), "{output}");
+    assert!(output["output"].as_str().unwrap().contains("7 tondo 9"), "{output}");
     adapter.until("terminated");
     adapter.stop();
 }

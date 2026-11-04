@@ -313,7 +313,7 @@ fn compares_two_recordings() {
     let (found, text) = agent.call("debug_compare", json!({ "first": "one", "second": "two" }));
     assert_eq!(found["parted"], true, "{found}");
     assert_eq!(found["second"]["at"], "src/main.to:7 in main", "{found}");
-    assert_eq!(found["origins"]["at"], "src/main.to:5 in main", "{found}");
+    assert_eq!(found["origins"][0]["at"], "src/main.to:5 in main", "{found}");
     assert!(text.contains("the runs part in task 1, after src/main.to:6 in main"), "{text}");
     agent.stop();
 }

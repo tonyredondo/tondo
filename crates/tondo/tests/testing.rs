@@ -1018,6 +1018,39 @@ test fails {
 }
 
 #[test]
+fn a_test_that_passes_and_fails_says_where_its_runs_part() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let tests = "\
+import std.random
+
+fn roll(): Int {
+    var dice = random.Random.new()
+    dice.int(0..2)
+}
+
+test sometimes {
+    let rolled = roll()
+    if rolled == 0 {
+        assert(rolled == 1, \"rolled {rolled}\")
+    }
+}
+";
+    let dir = project("records-flaky", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--record", "target/recordings", "--repeat", "40"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.contains("app::unit::app::sometimes passed and failed"), "{stdout}");
+    assert!(stdout.contains("the runs part in task"), "{stdout}");
+    assert!(stdout.contains("what that line reads differs"), "{stdout}");
+    assert!(stdout.contains("rolled: 1 → 0"), "{stdout}");
+    // Of the runs that passed, the one it compares with stays.
+    let kept = std::fs::read_dir(dir.join("target/recordings")).unwrap().count();
+    let failed = stdout.matches("  tondo debug --replay target/recordings").count();
+    assert_eq!(kept, failed + 1, "{stdout}");
+}
+
+#[test]
 fn fails_tests_that_leave_tasks_running() {
     let tests = "\
 // It keeps a sender of its own channel, which so never closes.

@@ -369,6 +369,18 @@ pub(crate) fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
 }
 
+/// Whether `every` probes passed since this last said so, in `next`. A
+/// loop's probes may never fall on a multiple of it.
+#[inline]
+pub(crate) fn look_at(next: &AtomicU64, every: u64) -> bool {
+    let ticks = TICKS.load(Ordering::Relaxed);
+    let due = ticks >= next.load(Ordering::Relaxed);
+    if due {
+        next.store(ticks + every, Ordering::Relaxed);
+    }
+    due
+}
+
 /// While it lives, the calls of the program's thread are not the
 /// program's but the debugger's, or the runtime's own, which a replay makes
 /// again.
@@ -424,6 +436,9 @@ pub(crate) fn start() -> bool {
         let last = std::env::var("TONDO_RT_RECORD_LAST").ok().and_then(|ms| ms.parse().ok()).unwrap_or(0);
         unsafe { std::env::remove_var("TONDO_RT_RECORD_LAST") };
         LAST.store(last, Ordering::Relaxed);
+        let hold = std::env::var("TONDO_RT_RECORD_HOLD").ok().and_then(|ms| ms.parse().ok());
+        unsafe { std::env::remove_var("TONDO_RT_RECORD_HOLD") };
+        HOLD_FOR.store(hold.unwrap_or(HOUR), Ordering::Relaxed);
         unsafe extern "C" {
             fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
         }
@@ -585,6 +600,14 @@ pub(crate) fn ending() {
 /// How much of its end a recording keeps, in milliseconds, or all of it.
 static LAST: AtomicU64 = AtomicU64::new(0);
 
+/// How long a copy waits unused, in milliseconds, as a checkpoint does.
+const HOUR: u64 = 3_600_000;
+static HOLD_FOR: AtomicU64 = AtomicU64::new(HOUR);
+
+pub(crate) fn hold_for() -> std::time::Duration {
+    std::time::Duration::from_millis(HOLD_FOR.load(Ordering::Relaxed))
+}
+
 /// A copy of the program held at a probe, for `--last`: where the recording
 /// goes on from, in the segment it started; the start of the run is one, in
 /// no process.
@@ -628,8 +651,9 @@ fn calls_from(calls: &Path, first: u32) -> Result<Vec<u8>, String> {
 /// run that has them keeps it all.
 #[inline]
 pub(crate) fn copy_due() -> bool {
+    static LOOK: AtomicU64 = AtomicU64::new(0);
     let last = LAST.load(Ordering::Relaxed);
-    if last == 0 || !TICKS.load(Ordering::Relaxed).is_multiple_of(1 << 12) || !PROGRAM.get() || threaded() {
+    if last == 0 || !look_at(&LOOK, 1 << 12) || !PROGRAM.get() || threaded() {
         return false;
     }
     let _outside = Outside::enter();
@@ -692,10 +716,27 @@ pub(crate) fn copy(copied: impl FnOnce(u32)) {
             let _ = std::fs::remove_file(segment_path(&calls, segment));
         }
     }
+    prune_children(&calls, window);
     let text: String = held.iter().map(|h| format!("{} {}\n", h.tick, h.pid)).collect();
     let (list, written) = (calls.with_file_name("held"), calls.with_file_name("held.new"));
     if std::fs::write(&written, text).is_ok() {
         let _ = std::fs::rename(&written, list);
+    }
+}
+
+/// The recordings of children that wrote nothing for as long as the end of
+/// the run is kept go: they started before it, and no replay reaches them.
+fn prune_children(calls: &Path, window: std::time::Duration) {
+    let children = calls.with_file_name("children");
+    let now = std::time::SystemTime::now();
+    let old = |dir: &Path| {
+        let written = std::fs::metadata(dir.join("calls")).and_then(|calls| calls.modified());
+        written.is_ok_and(|at| now.duration_since(at).is_ok_and(|age| age >= window))
+    };
+    for child in std::fs::read_dir(children).into_iter().flatten().flatten() {
+        if old(&child.path()) {
+            let _ = std::fs::remove_dir_all(child.path());
+        }
     }
 }
 

@@ -743,7 +743,10 @@ what the program read. `tondo debug --compare good bad` takes two recordings
 of the same build, as a run that passed and one that failed: it gives the
 first line where a task of one goes where the same task of the other does
 not, what differs just before, and where that came from, following only the
-values that differ. A recording keeps the program's sources, so the
+values that differ, and of those only what that line reads, since that is
+what decided: a clock that differs in every run is listed apart. `tondo test
+--record rec --repeat 50` does it by itself for a test that passes and fails.
+A recording keeps the program's sources, so the
 directory replays the same on another machine of the same system, as one
 CI uploads; with `--static`, on Linux, it does not depend on that machine's
 C library either.
@@ -751,8 +754,8 @@ C library either.
 For a program that runs for days, `tondo run --record rec --last 5m app.to`
 keeps only the end of the run: every half of that time the program leaves a
 sleeping copy of itself, with `fork`, and what is older goes. When the run
-fails, the oldest copy waits for an hour and `tondo debug --replay rec`
-starts from it, with all of the above over those minutes. The copies live on
+fails, the oldest copy waits for an hour, or what `--hold 2h` says, and
+`tondo debug --replay rec` starts from it, with all of the above over those minutes. The copies live on
 that machine, so to take a recording elsewhere, as from CI, record it whole;
 its calls are compressed. A run that goes well keeps
 nothing, and one with threads of C is kept whole.

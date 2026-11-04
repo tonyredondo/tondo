@@ -999,8 +999,8 @@ export interface Compared {
   after?: string | null;
   first?: { at: string | null; tick: number | null };
   second?: { at: string | null; tick: number | null };
-  bindings?: { frame: string; name: string; before: string | null; after: string | null }[];
-  origins?: { name: string; why: string; at: string; causes: Origin[] } | null;
+  bindings?: { frame: string; name: string; before: string | null; after: string | null; read?: boolean }[];
+  origins?: { name: string; why: string; at: string; causes: Origin[] }[];
 }
 
 /** Where two recordings part, as Markdown: the lines each goes on to, what
@@ -1018,14 +1018,18 @@ export function comparedMarkdown(found: Compared, first: string, second: string)
     next(first, found.first),
     next(second, found.second),
   ];
-  if (found.bindings?.length) {
-    lines.push('', '## What differs there', '');
-    for (const change of found.bindings) {
+  const list = (title: string, read: boolean) => {
+    const chosen = (found.bindings ?? []).filter((change) => (change.read === true) === read);
+    if (chosen.length > 0) {
+      lines.push('', `## ${title}`, '');
+    }
+    for (const change of chosen) {
       lines.push(`- \`${change.name}\`: \`${change.before ?? 'nothing'}\` → \`${change.after ?? 'nothing'}\``);
     }
-  }
-  if (found.origins) {
-    const { name, why, at, causes } = found.origins;
+  };
+  list('What that line reads differs', true);
+  list('What also differs, which that line does not read', false);
+  for (const { name, why, at, causes } of found.origins ?? []) {
     lines.push('', `## Where the \`${name}\` of ${second} came from`, '', `${why}, at \`${at}\``, '', ...causeLines(causes));
   }
   return `${lines.join('\n')}\n`;

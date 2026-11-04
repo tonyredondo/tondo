@@ -15,7 +15,8 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]",
             "          [--target <target>] [--diagnostic-format human|json] [-- <argument>...]",
-            "tondo run --record <recording> [--last <duration>] [<project>|<file.to>] [--link <library>]...",
+            "tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]",
+            "          [--link <library>]...",
             "          [-- <argument>...]",
         ],
         summary: &[

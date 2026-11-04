@@ -1041,6 +1041,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(last) = args.text("last") {
                 argv.extend(["--last".into(), last]);
             }
+            if let Some(hold) = args.text("hold") {
+                argv.extend(["--hold".into(), hold]);
+            }
             let program_args = args.list("args");
             if !program_args.is_empty() {
                 argv.push("--".into());
@@ -1946,6 +1949,7 @@ message, data, source and stack, as data.",
                 "string",
                 "With `record`, keep only the end of the run, as 5m: a run that fails is held in memory for an hour, on this machine, and one that goes well keeps nothing.",
             ),
+            ("hold", "string", "With `last`, how long the end of a failed run waits, as 2h; an hour by default."),
             STATIC,
             DEBUG,
             TARGET,

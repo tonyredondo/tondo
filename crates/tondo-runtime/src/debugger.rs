@@ -735,8 +735,10 @@ pub(crate) fn start_stopped() {
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Run,
+    /// One line on, in `frame` or in what it calls.
     Step {
         task: u64,
+        frame: usize,
     },
     Next {
         task: u64,
@@ -796,6 +798,8 @@ struct Stop {
 
 struct State {
     mode: Mode,
+    /// Where the code of each stopped task is at, when known.
+    code: Vec<(u64, usize)>,
     stopped: Option<Stop>,
     /// Counts the times the program went on; a stopped task waits for it to
     /// change.
@@ -981,6 +985,7 @@ fn pieces(message: &str) -> Vec<(&str, Option<Result<Expr, String>>)> {
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
+    code: Vec::new(),
     mode: Mode::Run,
     stopped: None,
     resumed: 0,
@@ -1128,7 +1133,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     // A replay that runs keeps a checkpoint now and then, looked at every
     // so many probes.
     let every = EVERY.load(Ordering::Relaxed);
-    if every > 0 && super::replay::ticks().is_multiple_of(1 << 14) {
+    if every > 0 && super::replay::look_at(&CHECKPOINT_LOOK, 1 << 14) {
         let _outside = super::replay::Outside::enter();
         periodic(
             &table,
@@ -1212,6 +1217,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         // A step goes over code the program's files do not have, the
         // standard library's and the derived, unless it started there.
         let standard = || table.sites.get(site).is_some_and(Site::generated);
+        let goes_on = table.sites.get(site).is_some_and(|s| s.goes_on);
         let stepped = match state.mode {
             // The call asked for, made by the frame itself, or the frame's
             // next line.
@@ -1228,8 +1234,9 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
                 false
             }
             Mode::Run => false,
-            Mode::Step { task: t } => t == task,
-            Mode::Next { task: t, frame: f } => t == task && frame >= f,
+            // The line it stepped from going on is no new line.
+            Mode::Step { task: t, frame: f } => t == task && !(frame == f && goes_on),
+            Mode::Next { task: t, frame: f } => t == task && frame >= f && !(frame == f && goes_on),
             Mode::Finish { task: t, frame: f } => t == task && frame > f,
             // The first line of the call that restarted the frame.
             Mode::Restarted { task: t } => {
@@ -1368,6 +1375,8 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
 /// did.
 static EVERY: AtomicU64 = AtomicU64::new(0);
 static LAST: Mutex<Option<(std::time::Instant, u64)>> = Mutex::new(None);
+/// The probe at which to see next if a checkpoint is due.
+static CHECKPOINT_LOOK: AtomicU64 = AtomicU64::new(0);
 /// So many probes make a checkpoint due too, as a replay may run them
 /// faster than the time does.
 const PROBES: u64 = 1 << 22;
@@ -1479,14 +1488,14 @@ fn kept(table: &Table) -> i32 {
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { unsafe { libc::_exit(0) } };
     // One the debugger never heard of, or forgot, ends after an hour
-    // unused; any, once the debugger is gone.
+    // unused, or what `--hold` says; any, once the debugger is gone.
     let mut idle = libc::pollfd { fd: std::os::fd::AsRawFd::as_raw_fd(&listener), events: libc::POLLIN, revents: 0 };
     let mut unused = std::time::Duration::ZERO;
     loop {
         match unsafe { libc::poll(&mut idle, 1, 10_000) } {
             0 => {
                 unused += std::time::Duration::from_secs(10);
-                if unused >= std::time::Duration::from_secs(3600) || super::replay::orphaned() {
+                if unused >= super::replay::hold_for() || super::replay::orphaned() {
                     let _ = std::fs::remove_file(&path);
                     unsafe { libc::_exit(0) };
                 }
@@ -2010,6 +2019,11 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     let _outside = super::replay::Outside::enter();
     let task = stop.task;
     let frozen = |state: &State| state.frozen.contains(&task);
+    // Where its code is: the call of the probe that stopped it.
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let code = super::trace::callers(super::trace::frame_pointer(), bounds).find(|&(fp, _)| fp == stop.frame);
+    state.code.retain(|&(held, _)| held != task);
+    state.code.extend(code.map(|(_, address)| (task, address)));
     if let Some(why) = why {
         stop.why = why;
         tell(&stopped_event(&stop));
@@ -2438,7 +2452,7 @@ fn resume(mode: Mode) {
         RESTART_FRAME.store(0, Ordering::Relaxed);
     }
     let stepping = match mode {
-        Mode::Step { task } | Mode::Next { task, .. } | Mode::Finish { task, .. } | Mode::Into { task, .. } => task,
+        Mode::Step { task, .. } | Mode::Next { task, .. } | Mode::Finish { task, .. } | Mode::Into { task, .. } => task,
         Mode::Run | Mode::Restarted { .. } => 0,
     };
     STEPPING.store(stepping, Ordering::Relaxed);
@@ -2945,7 +2959,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     *INTO.lock().unwrap_or_else(|e| e.into_inner()) = rest["into ".len()..].trim().to_string();
                     Mode::Into { task: stop.task, frame: stop.frame }
                 }
-                "step" => Mode::Step { task: stop.task },
+                "step" => Mode::Step { task: stop.task, frame: stop.frame },
                 "next" => Mode::Next { task: stop.task, frame: stop.frame },
                 _ => Mode::Finish { task: stop.task, frame: stop.frame },
             };
@@ -2953,6 +2967,9 @@ pub(crate) fn command(line: &str) -> Option<String> {
             "{\"running\":true}".into()
         }
         "pause" => {
+            // A replay on its way to a probe stops where it got to.
+            AIM.store(u64::MAX, Ordering::Relaxed);
+            SCANNING.store(false, Ordering::Relaxed);
             HOLD.store(true, Ordering::Relaxed);
             "{\"pausing\":true}".into()
         }
@@ -3024,19 +3041,34 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let state = state();
             let task = rest.parse::<u64>().ok().or(state.stopped.as_ref().map(|s| s.task));
             let held = task.and_then(|task| stop_of(&state, task));
+            let code = state.code.iter().find(|&&(at, _)| Some(at) == task).map(|&(_, code)| code);
             drop(state);
             let Some(held) = held else { return Some(not_stopped()) };
-            let pcs: Vec<String> = frames(table, &held).iter().map(|f| pc_of(table, f).to_string()).collect();
+            let frames = frames(table, &held);
+            let pc = |(index, frame): (usize, &Frame)| match (index, code) {
+                (0, Some(code)) => code,
+                _ => pc_of(table, frame),
+            };
+            let pcs: Vec<String> = frames.iter().enumerate().map(|at| pc(at).to_string()).collect();
             format!("{{\"pcs\":[{}]}}", pcs.join(","))
         }
-        // Where the bytes of each binding of the frame looked at are.
+        // Where the bytes of each binding of the frame looked at are, or
+        // of a part of one.
         "memories" if state().past.is_none() => match selected(table) {
-            Ok((frames, index)) => {
+            Ok((frames, index)) if rest.is_empty() => {
                 let visible = visible(table, &frames, index);
-                let at =
-                    visible.iter().map(|(b, address, _)| format!("{}:{}", quoted(&b.name), memory_of(b, *address)));
-                format!("{{\"memories\":{{{}}}}}", at.collect::<Vec<_>>().join(","))
+                let memory = |(b, at, _): &(&Binding, usize, _)| {
+                    format!("{}:{}", quoted(&b.name), memory_of(table, b.layout, *at))
+                };
+                let at: Vec<String> = visible.iter().map(memory).collect();
+                format!("{{\"memories\":{{{}}}}}", at.join(","))
             }
+            Ok((frames, index)) => match located(table, &frames, index, rest, false) {
+                Ok((at, layout, _)) => {
+                    format!("{{\"memories\":{{{}:{}}}}}", quoted(rest), memory_of(table, layout, at))
+                }
+                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+            },
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
         "peek" => match rest.split_once(' ').and_then(|(at, count)| Some((at.parse().ok()?, count.parse().ok()?))) {
@@ -3659,15 +3691,16 @@ fn pc_of(table: &Table, frame: &Frame) -> usize {
     }
 }
 
-/// Where the bytes of a binding at `address` are: there for a number, and
-/// where it points for a value of the heap.
-fn memory_of(binding: &Binding, address: usize) -> usize {
-    const INLINE: &[&str] = &[
-        "Bool", "Byte", "Char", "Float", "Float32", "Int", "Int8", "Int16", "Int32", "Int64", "Int128", "UInt",
-        "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
-    ];
-    let pointer = (!INLINE.contains(&binding.ty.as_str())).then(|| peek(address, 8)).filter(|word| word.len() == 8);
-    pointer.map_or(address, |word| usize::from_ne_bytes(word.try_into().unwrap()))
+/// Where the bytes of a value at `address` are: there for a number or a
+/// record, and where it points for one of the heap.
+fn memory_of(table: &Table, layout: usize, address: usize) -> usize {
+    let inline = match &table.layouts[layout] {
+        Layout::Scalar(ty) => ty != "String",
+        Layout::Fields(_) | Layout::Plain(..) => true,
+        Layout::Array(..) | Layout::Shared | Layout::Other => false,
+    };
+    let word = (!inline).then(|| peek(address, 8)).filter(|word| word.len() == 8);
+    word.map_or(address, |word| usize::from_ne_bytes(word.try_into().unwrap()))
 }
 
 /// `memory`: the program's objects by where they were made, the places

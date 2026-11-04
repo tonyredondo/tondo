@@ -612,9 +612,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let aggregates = aggregates(tree, &attempts);
     let mut failed = failed(&aggregates, &attempts, options);
     // The runs of the tests that failed stay recorded, to replay.
-    let recordings = match &options.record {
+    let (recordings, parted) = match &options.record {
         Some(recordings) => recorded(recordings, executable, tree, &attempts).map_err(Failure::Output)?,
-        None => Vec::new(),
+        None => Default::default(),
     };
     let profiles = match &collected {
         Some((kind, from)) => {
@@ -701,6 +701,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         for recording in &recordings {
             eprintln!("tondo: recorded: tondo debug --replay {}", recording.display());
         }
+        for (test, text) in &parted {
+            eprintln!("tondo: {test} passed and failed:\n{text}");
+        }
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
         if !recordings.is_empty() {
@@ -708,6 +711,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             for recording in &recordings {
                 say!("  tondo debug --replay {}", recording.display());
             }
+        }
+        for (test, text) in &parted {
+            say!("\n{test} passed and failed:\n{}", text.trim_end());
         }
         if !profiles.is_empty() {
             say!("\nprofiles, for `tondo profile show <file>`:");
@@ -1142,23 +1148,62 @@ impl Options {
     }
 }
 
+/// The recordings of the runs that failed, and where a test that passed and
+/// failed parted: its id, and that in words.
+type Recorded = (Vec<PathBuf>, Vec<(String, String)>);
+
 /// The recordings of the attempts that failed, made a whole with the tests'
-/// executable; those of the attempts that did not fail go.
-fn recorded(recordings: &Path, executable: &Path, tree: &Tree, attempts: &[Attempt]) -> Result<Vec<PathBuf>, String> {
+/// executable; those of the attempts that did not fail go, but for one of a
+/// test that also failed, which says where a run that passed and one that
+/// failed part: for each such test, its id and that.
+fn recorded(
+    recordings: &Path,
+    executable: &Path,
+    tree: &Tree,
+    attempts: &[Attempt],
+) -> Result<Recorded, String> {
+    let tests = || attempts.iter().filter(|a| !tree.suite(a.node));
+    let dir_of =
+        |attempt: &Attempt| recordings.join(worker::recording(tree, attempt.node, attempt.iteration, attempt.round));
+    let went_well = |attempt: &Attempt| matches!(attempt.status, Status::Passed | Status::Skipped(_));
+    let kept_up = |dir: &Path| {
+        std::fs::copy(executable, dir.join("program")).map_err(|e| format!("cannot write {}: {e}", dir.display()))
+    };
     let mut kept = Vec::new();
-    for attempt in attempts.iter().filter(|a| !tree.suite(a.node)) {
-        let dir = recordings.join(worker::recording(tree, attempt.node, attempt.iteration, attempt.round));
-        if !dir.join("run.json").is_file() {
+    let mut parted = Vec::new();
+    let mut compared: Vec<u32> = Vec::new();
+    for attempt in tests().filter(|a| dir_of(a).join("run.json").is_file()) {
+        let dir = dir_of(attempt);
+        if went_well(attempt) {
             continue;
         }
-        if matches!(attempt.status, Status::Passed | Status::Skipped(_)) {
-            let _ = std::fs::remove_dir_all(&dir);
-            continue;
+        kept_up(&dir)?;
+        kept.push(dir.clone());
+        let passed = tests().find(|a| a.node == attempt.node && matches!(a.status, Status::Passed));
+        if let Some(passed) = passed.filter(|_| !compared.contains(&attempt.node)) {
+            let good = dir_of(passed);
+            if good.join("run.json").is_file() {
+                compared.push(attempt.node);
+                kept_up(&good)?;
+                let text = match crate::debug::compared(&good, &dir) {
+                    Ok(found) => crate::debug::compared_text(&found, &good, &dir),
+                    Err(message) => format!("the two runs do not compare: {message}\n"),
+                };
+                parted.push((tree.id(attempt.node).to_string(), text));
+            }
         }
-        std::fs::copy(executable, dir.join("program")).map_err(|e| format!("cannot write {}: {e}", dir.display()))?;
-        kept.push(dir);
     }
-    Ok(kept)
+    // What nothing compares with goes.
+    let compared_with = |attempt: &&Attempt| {
+        compared.contains(&attempt.node)
+            && tests()
+                .find(|a| a.node == attempt.node && matches!(a.status, Status::Passed))
+                .is_some_and(|first| (first.iteration, first.round) == (attempt.iteration, attempt.round))
+    };
+    for attempt in tests().filter(|a| went_well(a)).filter(|a| !compared_with(a)) {
+        let _ = std::fs::remove_dir_all(dir_of(attempt));
+    }
+    Ok((kept, parted))
 }
 
 /// The seed of iteration `iteration` of `--schedules` from `seed`: the
