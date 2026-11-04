@@ -1470,9 +1470,11 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                         }
                         None => poll(poller, polled, next),
                     };
-                    drop(queue);
-                    super::replay::waited();
-                    queue = self::queue();
+                    if super::replay::on() {
+                        drop(queue);
+                        super::replay::waited();
+                        queue = self::queue();
+                    }
                     looked = false;
                     continue;
                 }
@@ -1502,9 +1504,14 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                         },
                     };
                     drop(outside);
-                    drop(woken);
-                    super::replay::waited();
-                    self::queue()
+                    match super::replay::on() {
+                        true => {
+                            drop(woken);
+                            super::replay::waited();
+                            self::queue()
+                        }
+                        false => woken,
+                    }
                 };
                 queue.idle -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
