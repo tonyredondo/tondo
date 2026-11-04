@@ -687,10 +687,12 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
     }
     // The program's side of a piped input closes, so the child sees its end.
     running.streams[0] = None;
+    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
+    let stop = || stop_all(&pids, group, grace, &reaped);
     let statuses: Vec<(i64, bool)> = running
         .children
         .iter_mut()
-        .map(|child| match exited(child) {
+        .map(|child| match exited(child, &stop) {
             Ok(status) => match (status.code(), status.signal()) {
                 (Some(code), _) => (code as i64, code == 0),
                 (None, Some(signal)) => (128 + signal as i64, false),
@@ -713,20 +715,29 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
 
 /// Waits for a child to end. In a recorded run, the worker drives its
 /// runtime meanwhile, which polls the child's pidfd: what drains the
-/// child's pipes runs there.
-fn exited(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
-    if recorded().is_some()
-        && let Some(fd) = pidfd(child.id())
-    {
-        super::http::wait(async move {
-            let interest = tokio::io::Interest::READABLE;
-            // The pidfd, open until the wait ends.
-            if let Ok(fd) = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, interest) } {
-                let _ = fd.readable().await;
-            }
-        });
+/// child's pipes runs there. A task cancelled meanwhile `stop`s the child,
+/// as `host_cancellable` does elsewhere, and the worker goes on driving
+/// what ends it after its grace.
+fn exited(child: &mut Child, stop: &dyn Fn()) -> std::io::Result<std::process::ExitStatus> {
+    let (Some(runtime), Some(fd)) = (recorded(), pidfd(child.id())) else { return child.wait() };
+    let waited = super::http::wait(async move {
+        let interest = tokio::io::Interest::READABLE;
+        // The pidfd, open until the wait ends.
+        if let Ok(fd) = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, interest) } {
+            let _ = fd.readable().await;
+        }
+    });
+    if waited.is_some() {
+        return child.wait();
     }
-    child.wait()
+    stop();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        super::http::drive(runtime, false, None);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 /// A descriptor that becomes readable when the child `pid` ends, where a
