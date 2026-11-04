@@ -463,10 +463,14 @@ impl Drop for Busy {
 /// back.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn collect_for_memory() -> bool {
-    if collecting_here() || COLLECTOR.get().is_none() {
+    // One worker collects at its safe points, with no thread of the
+    // collector yet, and may be far from the next.
+    if collecting_here() || (COLLECTOR.get().is_none() && !super::tasks::deterministic()) {
         return false;
     }
     let _busy = Busy::enter();
+    // The clock of this wait, and the thread, are not the program's.
+    let _outside = super::replay::Outside::enter();
     let paused = super::tasks::pause_here();
     let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     let seen = *done;
