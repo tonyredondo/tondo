@@ -249,7 +249,7 @@ fn users(): Int {
 }
 
 fn main() {
-    for _ in 0..480 {
+    for _ in 0..4000 {
         users()
         profile.withLabels(["endpoint": "/orders"], () { fib(23) })
     }
