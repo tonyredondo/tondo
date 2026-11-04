@@ -1362,6 +1362,11 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     super::signals::at_turn();
                     super::http::deferred();
                     queue = self::queue();
+                    // The program may have ended meanwhile, on a thread of
+                    // C that ran its task, with nobody asleep to hear it.
+                    if main && MAIN_DONE.load(Ordering::SeqCst) {
+                        continue;
+                    }
                 }
                 fire_timers(&mut queue);
                 // Now and then a worker with tasks to run looks at the
