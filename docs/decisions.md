@@ -5146,3 +5146,18 @@ from what it saved; the lines come from the trace table of the executable, which
 has a mark too, as a `--strip` build has no symbols. Values would need the layout of
 every type and the code that shows it, which a core does not run, so it says where
 things were and no more, and turns into a dump for all that already reads one.
+
+## A copy of a process has one thread, and the memory of them all
+
+A checkpoint is a fork, and a fork keeps every thread's memory and none of the
+threads. What the others were doing stays half done, with no one to end it: three
+bugs came from that. A result left on the debugger thread's stack, which glibc gave
+to the next thread of the copy; the table a copy's own stack still held, so a patch
+waited for ever; and a stop of the world nobody was left to end. So every copy that
+goes on comes from one place, which holds what the scheduler shares across the fork
+and ends a stop, a command of the debugger and a copy wait for each other by flags
+the copy can clear, and what a job gives is not on the stack of who asked.
+
+What a thread other than these holds at that moment stays held: locks of the
+runtime's other threads, and the allocator's. They are held for moments, and those
+threads are idle while a replay runs, so it is not worth a lock of every lock.

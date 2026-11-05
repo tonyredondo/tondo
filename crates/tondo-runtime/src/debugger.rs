@@ -1106,7 +1106,9 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     // then, which a replay goes on from.
     if super::replay::copy_due() {
         let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
-        copied(site as usize, frame, addresses as usize, alive as usize);
+        if let Some(stop) = copied(site as usize, frame, addresses as usize, alive as usize) {
+            hold(state(), stop, Some(CHECKPOINT.into()));
+        }
     }
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);
@@ -1116,7 +1118,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if (calling != 0 && calling == super::tasks::current_id()) || SHOWING.get() {
         return 0;
     }
-    let Some(table) = table() else { return 0 };
+    let Some(mut table) = table() else { return 0 };
     let site = site as usize;
     super::live::forget_goto(super::tasks::current_id());
     // The frame of the function that has the probe.
@@ -1139,19 +1141,19 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let every = EVERY.load(Ordering::Relaxed);
     if every > 0 && super::replay::look_at(&CHECKPOINT_LOOK, 1 << 14) {
         let _outside = super::replay::Outside::enter();
-        periodic(
-            &table,
-            Stop {
-                task,
-                site,
-                frame,
-                bounds: (0, 0),
-                addresses: addresses as usize,
-                alive: alive as usize,
-                why: String::new(),
-            },
-            every,
-        );
+        let here = Stop {
+            task,
+            site,
+            frame,
+            bounds: (0, 0),
+            addresses: addresses as usize,
+            alive: alive as usize,
+            why: String::new(),
+        };
+        if let Some(stop) = periodic(&table, here, every) {
+            let Some(again) = at_checkpoint(table, stop) else { return 0 };
+            table = again;
+        }
     }
     if !marked
         && !watching
@@ -1370,7 +1372,7 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
     // the copy, without that thread, has it free: it asks for this one by
     // `on_task`, and may still be on its way to wait for it.
     let locks = (state(), CLIENT.lock(), WORKED.lock(), WORK.lock());
-    let forked = unsafe { libc::fork() };
+    let forked = super::tasks::fork_copy();
     drop(locks);
     match forked {
         -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
@@ -1943,9 +1945,9 @@ fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
 /// debugger's state and connection held across the fork, so that the copy
 /// has none another thread held; the debugger hears where it is. A replay
 /// forked from it later stops at that probe.
-fn periodic(table: &Table, mut here: Stop, every: u64) {
+fn periodic(table: &Table, mut here: Stop, every: u64) -> Option<Stop> {
     if super::replay::threaded() {
-        return;
+        return None;
     }
     let (now, tick) = (std::time::Instant::now(), super::replay::ticks());
     {
@@ -1954,31 +1956,81 @@ fn periodic(table: &Table, mut here: Stop, every: u64) {
             now.duration_since(at).as_millis() >= every as u128 || tick - probe >= PROBES
         };
         if last.is_some_and(|last| !due(last)) {
-            return;
+            return None;
         }
         *last = Some((now, tick));
     }
+    let busy = idle_debugger()?;
     let state = state();
     let client = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
     // A debugger that left would never hear of it.
     if client.is_none() {
-        return;
+        return None;
     }
-    match unsafe { libc::fork() } {
+    match super::tasks::fork_copy() {
         0 => {
-            drop(client);
-            drop(state);
+            drop((busy, client, state));
             kept(table);
             here.bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
-            hold(self::state(), here, Some(CHECKPOINT.into()));
+            Some(here)
         }
-        -1 => {}
+        -1 => None,
         pid => {
-            drop(client);
-            drop(state);
+            drop((busy, client, state));
             tell(&format!("{{\"checkpointed\":{{\"pid\":{pid},\"tick\":{}}}}}", super::replay::ticks()));
+            None
         }
     }
+}
+
+/// While the debugger's thread runs a command it may hold the table, which
+/// a copy could never have back: a copy waits for one that does not run,
+/// and a command for a copy that is being taken. Not a lock: the copy that
+/// a command itself asks for has to be able to clear it.
+static COMMANDING: AtomicBool = AtomicBool::new(false);
+static COPYING: AtomicBool = AtomicBool::new(false);
+
+struct Commanding;
+
+impl Commanding {
+    fn enter() -> Commanding {
+        COMMANDING.store(true, Ordering::SeqCst);
+        while COPYING.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        Commanding
+    }
+}
+
+impl Drop for Commanding {
+    fn drop(&mut self) {
+        COMMANDING.store(false, Ordering::SeqCst);
+    }
+}
+
+struct Copying;
+
+impl Drop for Copying {
+    fn drop(&mut self) {
+        COPYING.store(false, Ordering::SeqCst);
+    }
+}
+
+fn idle_debugger() -> Option<Copying> {
+    COPYING.store(true, Ordering::SeqCst);
+    let copying = Copying;
+    (!COMMANDING.load(Ordering::SeqCst)).then_some(copying)
+}
+
+/// Stands a copy at its checkpoint, without the table its caller read: a
+/// patch may come, which needs it. Gives it back.
+fn at_checkpoint(
+    table: std::sync::RwLockReadGuard<'static, Table>,
+    stop: Stop,
+) -> Option<std::sync::RwLockReadGuard<'static, Table>> {
+    drop(table);
+    hold(state(), stop, Some(CHECKPOINT.into()));
+    self::table()
 }
 
 /// Why a replay forked from a checkpoint is stopped.
@@ -1986,21 +2038,23 @@ const CHECKPOINT: &str = "checkpoint";
 
 /// A copy of a run being recorded, at a probe: as a checkpoint, held until
 /// a replay goes on from here, of what was recorded after it.
-fn copied(site: usize, frame: usize, addresses: usize, alive: usize) {
-    let Some(table) = table() else { return };
+fn copied(site: usize, frame: usize, addresses: usize, alive: usize) -> Option<Stop> {
+    let table = table()?;
     let _outside = super::replay::Outside::enter();
     let task = super::tasks::current_id();
+    let busy = idle_debugger()?;
     let state = state();
     let client = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
-    let mut parent = Some((client, state));
+    let mut parent = Some((busy, client, state));
+    let mut here = None;
     super::replay::copy(|segment| {
         drop(parent.take());
         let debugger = kept(&table);
         super::replay::replay_from(segment, debugger);
         let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
-        let here = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
-        hold(self::state(), here, Some(CHECKPOINT.into()));
+        here = Some(Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
     });
+    here
 }
 
 /// A checkpoint, until a replay forked from it goes on from here, which
@@ -2009,6 +2063,7 @@ fn copied(site: usize, frame: usize, addresses: usize, alive: usize) {
 /// asked.
 fn kept(table: &Table) -> i32 {
     use std::io::Write;
+    COMMANDING.store(false, Ordering::SeqCst);
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     ATTACHED.store(false, Ordering::Relaxed);
     {
@@ -3377,6 +3432,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
     if line == "sources" {
         return Some(format!("{{\"sources\":{}}}", quoted(&super::diagnostics::roots())));
     }
+    let _commanding = Commanding::enter();
     let table = table()?;
     let table = &*table;
     let (word, rest) = line.split_once(' ').unwrap_or((line, ""));

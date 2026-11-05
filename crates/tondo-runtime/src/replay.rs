@@ -683,7 +683,7 @@ pub(crate) fn copy(copied: impl FnOnce(u32)) {
     }
     let mut log = log();
     let baton = baton();
-    let pid = unsafe { libc::fork() };
+    let pid = super::tasks::fork_copy();
     if pid == 0 {
         drop(baton);
         drop(file);

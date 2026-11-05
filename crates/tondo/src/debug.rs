@@ -102,6 +102,7 @@ reload                                          a live build: its code as its fi
 goto <line>                                     a live build: the stopped frame goes on at that line of its function
 call <expression>                               a live build: what an expression gives that calls the program's
                                                 code, run by the stopped task: total(items), user.describe()
+checkpoints [<ms>]                              a replay: the probes of the copies it keeps; how often it keeps one
 restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
@@ -531,6 +532,15 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            "checkpoints" if rest.trim().is_empty() && replaying.is_some() => {
+                let replaying = replaying.as_mut().expect("a replay");
+                replaying.gather(&mut session);
+                let ticks: Vec<u64> = replaying.checkpoints.iter().map(|&(tick, _)| tick).collect();
+                match session.json {
+                    true => session.show(&serde_json::json!({ "checkpoints": ticks })),
+                    false => println!("{ticks:?}"),
+                }
+            }
             "seek" if replaying.is_some() => {
                 let replaying = replaying.as_mut().expect("a replay");
                 let sought = match rest.trim().parse::<u64>() {
@@ -603,8 +613,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "why" | "tick" | "timeline" | "ran" | "tasks" | "cancel" | "restart" | "select" | "children" | "task"
-            | "catch" | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
-            | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" | "follow" => {
+            | "checkpoints" | "catch" | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward"
+            | "reverse" | "until" | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" | "follow" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),

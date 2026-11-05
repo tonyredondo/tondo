@@ -4852,3 +4852,65 @@ fn reads_a_core_with_the_tasks_that_waited() {
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("--executable"), "{refused:?}");
 }
+
+/// A copy a replay keeps as it runs stands at its checkpoint without the
+/// table of the debugger, which what is compiled for a call adds to.
+#[test]
+fn a_call_answers_at_a_checkpoint_a_replay_kept() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-kept-call");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "fn step(value: Int): Int {\n    value % 7 + 1\n}\n\nfn main() {\n    var total = 0\n    \
+        for i in 0..100000 {\n        total += step(i)\n    }\n    _ = total\n}\n";
+    std::fs::write(dir.join("kept.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let recorded =
+        Command::new(tondo_bin).args(["run", "--record", "run", "kept.to"]).current_dir(&dir).output().unwrap();
+    assert!(recorded.status.success());
+    let mut child = Command::new(tondo_bin)
+        .args(["debug", "--json", "--replay", "run"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut commands = child.stdin.take().unwrap();
+    let mut said = BufReader::new(child.stdout.take().unwrap());
+    std::io::Write::write_all(&mut commands, b"checkpoints 1\nbreak kept.to:10\ncontinue\ncheckpoints\n").unwrap();
+    // What used to happen was to wait for ever.
+    let pid = child.id().to_string();
+    let (ended, ending) = std::sync::mpsc::channel::<()>();
+    let limit = std::thread::spawn(move || {
+        if ending.recv_timeout(std::time::Duration::from_secs(300)).is_err() {
+            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+        }
+    });
+    let mut read = || {
+        let mut line = String::new();
+        assert!(said.read_line(&mut line).unwrap() > 0, "the debugger ended");
+        serde_json::from_str::<Value>(&line).unwrap_or(Value::Null)
+    };
+    let kept = loop {
+        let line = read();
+        if let Some(kept) = line["checkpoints"].as_array().filter(|kept| kept.len() > 4) {
+            break kept[kept.len() / 2].as_u64().unwrap();
+        }
+    };
+    let script = format!("seek {kept}\ncall step(5)\nquit\n");
+    std::io::Write::write_all(&mut commands, script.as_bytes()).unwrap();
+    let answer = loop {
+        let line = read();
+        if line["name"] == "step(5)" {
+            break line;
+        }
+    };
+    assert_eq!(answer["value"], "6");
+    drop(commands);
+    drop(ended);
+    limit.join().unwrap();
+    let _ = child.wait();
+}

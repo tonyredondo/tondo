@@ -1378,7 +1378,8 @@ empezaron o terminaron, y la memoria por el sitio que la hizo.
 línea que dio a la expresión su valor, o sin expresión la línea donde está,
 y por cada binding que lee esa línea, la línea que le dio el suyo, y así
 hasta lo que el programa leyó, como el reloj, un archivo o los bytes
-aleatorios; cada línea se mira una vez, hasta 24 y 8 de profundidad.
+aleatorios; cada línea se mira una vez, hasta 24 y 8 de profundidad. `checkpoints` da los probes de los que guarda, y
+`checkpoints <ms>` cada cuánto guarda uno mientras corre.
 
 ### 7.7 Librerías para C
 

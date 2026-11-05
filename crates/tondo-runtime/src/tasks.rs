@@ -1095,6 +1095,36 @@ pub(crate) fn stop_world(timeout: Duration) -> bool {
     }
 }
 
+/// A lock if it comes soon: another thread may be in what it guards, and
+/// a fork does not wait for long.
+fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>> {
+    for _ in 0..50 {
+        match lock.try_lock() {
+            Ok(held) => return Some(held),
+            Err(std::sync::TryLockError::Poisoned(held)) => return Some(held.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    None
+}
+
+/// Forks a copy of the process that goes on running, on this thread alone.
+/// What another thread is in the middle of stays so in the copy, with no
+/// one to end it: the scheduler's locks are held across the fork, so that the
+/// copy has them free, and a stop of the world ends there.
+pub(crate) fn fork_copy() -> i32 {
+    let held = (soon(&QUEUE), soon(&IN_TONDO), soon(super::cycles::wanted()));
+    let pid = unsafe { libc::fork() };
+    drop(held);
+    if pid == 0 {
+        if STOPPING.swap(false, Ordering::SeqCst) {
+            attend(false);
+        }
+        super::cycles::forked();
+    }
+    pid
+}
+
 pub(crate) fn resume_world() {
     STOPPING.store(false, Ordering::SeqCst);
     attend(false);
