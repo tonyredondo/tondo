@@ -2930,6 +2930,8 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
         assert_eq!(found["state"], "fetched", "{found}");
         assert_eq!(std::fs::read_to_string(found["path"].as_str().unwrap()).unwrap(), text);
     }
+    let found = tondo_in(&["source", "<std>/console.to", "--from", dump, "--json"]);
+    assert!(found.status.success(), "{}", String::from_utf8_lossy(&found.stderr));
     // The executable says the same, and with `--no-source-links` nothing.
     let found = tondo_in(&["source", "greet/src/greet.to", "--from", "api", "--json"]);
     assert!(found.status.success(), "{}", String::from_utf8_lossy(&found.stderr));
@@ -2952,6 +2954,13 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     let reference = source["sourceReference"].as_u64().unwrap_or_else(|| panic!("{trace}"));
     let opened = adapter.ask("source", json!({ "source": source, "sourceReference": reference }));
     assert_eq!(opened["content"], library, "{opened}");
+    // The standard library's come with `tondo`.
+    let standard = frames.iter().find(|f| f["source"]["name"].as_str().is_some_and(|n| n.starts_with("<std>/")));
+    if let Some(frame) = standard {
+        let source = &frame["source"];
+        let opened = adapter.ask("source", json!({ "source": source, "sourceReference": source["sourceReference"] }));
+        assert!(opened["content"].as_str().unwrap().contains("fn "), "{opened}");
+    }
     adapter.stop();
 
     // And a breakpoint stops in it, in a program that runs.

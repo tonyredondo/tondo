@@ -244,6 +244,10 @@ pub enum Found {
 impl Roots {
     /// Where `file` is, for a tool that runs in `root`.
     pub fn find(&self, root: &Path, file: &str) -> Found {
+        // The standard library's comes with `tondo`.
+        if file.starts_with("<std>/") {
+            return Found::Elsewhere;
+        }
         let here = root.join(file);
         let known = self.files.get(file);
         match (std::fs::read(&here), known, self.place(file)) {
@@ -259,6 +263,9 @@ impl Roots {
     /// repository, or from there: only what that file needs, with the
     /// credentials `git` has. It stays in the cache, by its commit.
     pub fn fetch(&self, file: &str) -> Result<PathBuf, String> {
+        if let Some(name) = file.strip_prefix("<std>/") {
+            return standard(name);
+        }
         let (root, path) = self.place(file).ok_or_else(|| format!("no repository is known for {file}"))?;
         let kept = crate::driver::cache_dir().join("sources").join(&root.commit).join(file);
         if kept.is_file() {
@@ -274,6 +281,17 @@ impl Roots {
         std::fs::write(&kept, bytes).map_err(|e| format!("cannot write {}: {e}", kept.display()))?;
         Ok(kept)
     }
+}
+
+/// A file of the standard library, as this `tondo` has it.
+fn standard(name: &str) -> Result<PathBuf, String> {
+    let module = name.strip_suffix(".to").unwrap_or(name);
+    let text = crate::stdlib::text(module).ok_or_else(|| format!("the standard library has no {name}"))?;
+    let kept = crate::driver::cache_dir().join("sources").join(crate::driver::VERSION).join(name);
+    let parent = kept.parent().expect("a file in the cache");
+    std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    std::fs::write(&kept, text).map_err(|e| format!("cannot write {}: {e}", kept.display()))?;
+    Ok(kept)
 }
 
 /// A file at a commit: a repository without its files is cloned once, and

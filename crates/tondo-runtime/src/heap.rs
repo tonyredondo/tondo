@@ -348,6 +348,7 @@ pub(crate) fn objects() -> Option<Objects> {
     let index = |word: usize| all.binary_search_by_key(&word, |&(a, _)| a).ok();
     let mut edges = Vec::new();
     let mut list = Vec::with_capacity(all.len());
+    let shown = !TEXTS_HIDDEN.load(Ordering::Relaxed) && super::diagnostics::values_shown();
     for (from, &(address, (size, site))) in all.iter().enumerate() {
         for offset in (0..size / 8).map(|w| w * 8) {
             let word = unsafe { *((address + offset) as *const usize) };
@@ -357,7 +358,6 @@ pub(crate) fn objects() -> Option<Objects> {
         }
         // A string's header is its count, length and room, then its bytes.
         let is_string = super::trace::describe(site).and_then(|d| d.ty) == Some("String");
-        let shown = !TEXTS_HIDDEN.load(Ordering::Relaxed) && super::diagnostics::values_shown();
         let text = (is_string && shown).then(|| {
             let header = super::HEADER;
             let length = unsafe { *((address + 8) as *const usize) }.min(size.saturating_sub(header)).min(200);
