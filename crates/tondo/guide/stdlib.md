@@ -713,13 +713,16 @@ on its stack.
 as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
 changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or
 `memory=512m`, `memory=90%` of its cgroup's limit, which the kernel kills it at
-without a dump, `cpu=90`, `keep=10` and `size=1g`, a program dumps by itself,
+without a dump, `stall=30s` with work and nothing moving, `request=5s` for a slow
+request, `cpu=90`, `keep=10` and `size=1g`, a program dumps by itself,
 and `tondo dump trend <dir>` says what keeps growing over those dumps: a leak
-by the line that makes it. With `TONDO_DUMP`, `kill -QUIT` asks for a dump and
+by the line that makes it, or tasks piling up in one place. With `TONDO_DUMP`, `kill -QUIT` asks for a dump and
 the program goes on. `TONDO_DUMP_COMMAND` is a shell command that takes each
 dump away, with its path in `TONDO_DUMP_FILE`, before a container disappears
 with it. `tondo dump group <dir>` says how many failures a directory of dumps
-is, by their signature, and `tondo dump report <file>` makes one page of a dump.
+is, by their signature, with the commit each was first seen at, `tondo dump report
+<file>` makes one page of a dump, and `tondo dump redact <file> <output>` one to
+share, with where each task was and nothing the program held.
 
 `tondo dump read <file> why` says what went wrong as far as the dump can tell:
 tasks that wait for each other, those that hold others up, the longest wait,

@@ -107,6 +107,7 @@ tondo source lib/x.to --from a.dump  a file as the build had it, from its reposi
 tondo dump diff a.dump b.dump     what changed between two dumps of a program
 tondo dump group dumps/           the dumps by the failure they are, the most frequent first
 tondo dump report a.dump          all of it as one page of HTML; --output a file
+tondo dump redact a.dump b.dump   a dump to share, without what the program held
 tondo dump trend dumps/           what keeps growing over dumps: a leak, by its line
 ```
 

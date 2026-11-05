@@ -127,6 +127,13 @@ impl Drop for Flown {
     }
 }
 
+/// The requests in flight: the number of each, what it is and how long it
+/// has taken.
+fn flights_now() -> Vec<(u64, String, std::time::Duration)> {
+    let flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+    flights.iter().map(|flight| (flight.id, flight.text(), flight.since.elapsed())).collect()
+}
+
 /// The requests in flight as JSON: a thread that stopped may hold the
 /// list, and then a dump goes without it.
 fn flights_json() -> String {
@@ -1315,15 +1322,19 @@ struct Schedule {
     keep: usize,
     /// How many bytes all of them may take.
     room: Option<u64>,
+    /// How long work may wait with nothing moving, and a request take.
+    stall: Option<std::time::Duration>,
+    request: Option<std::time::Duration>,
 }
 
 impl Schedule {
     fn parse(text: &str) -> Result<Schedule, String> {
-        let mut schedule = Schedule { every: None, memory: None, cpu: None, keep: 10, room: None };
+        let mut schedule =
+            Schedule { every: None, memory: None, cpu: None, keep: 10, room: None, stall: None, request: None };
         for part in text.split(',').map(str::trim) {
             let wrong = || {
                 format!(
-                    "TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, memory=90%, cpu=90, keep=10 or size=1g"
+                    "TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, memory=90%, cpu=90, stall=30s, request=5s, keep=10 or size=1g"
                 )
             };
             let (name, value) = part.split_once('=').ok_or_else(wrong)?;
@@ -1333,6 +1344,8 @@ impl Schedule {
                 "cpu" => schedule.cpu = Some(value.parse().map_err(|_| wrong())?),
                 "keep" => schedule.keep = value.parse().map_err(|_| wrong())?,
                 "size" => schedule.room = Some(size(value).ok_or_else(wrong)? as u64),
+                "stall" => schedule.stall = Some(interval(value).ok_or_else(wrong)?),
+                "request" => schedule.request = Some(interval(value).ok_or_else(wrong)?),
                 _ => return Err(wrong()),
             }
         }
@@ -1475,9 +1488,29 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
     let mut written: std::collections::VecDeque<(PathBuf, u64)> = Default::default();
     let (mut number, mut used, mut measured) = (0, processor_time(), Instant::now());
     let (mut last_timed, mut last_over) = (Instant::now(), None::<Instant>);
+    let (mut turns, mut still_from, mut slow_seen) = (super::tasks::turns(), Instant::now(), None::<u64>);
     loop {
         std::thread::sleep(tick);
         let now = Instant::now();
+        // Nothing moved while there was work: tasks that wait for a worker,
+        // or requests no task answers.
+        let requests = flights_now();
+        let turned = super::tasks::turns();
+        if turned != turns || (super::tasks::ready_tasks() == 0 && requests.is_empty()) {
+            (turns, still_from) = (turned, now);
+        }
+        let stalled = schedule.stall.filter(|&stall| now.duration_since(still_from) >= stall).map(|stall| {
+            still_from = now;
+            let (ready, flying) = (super::tasks::ready_tasks(), requests.len());
+            format!("nothing moved for {stall:?}, with {ready} tasks ready and {flying} requests in flight")
+        });
+        // A request past its limit, once each.
+        let slow = schedule.request.and_then(|limit| {
+            let past = |(id, ..): &&(u64, String, std::time::Duration)| slow_seen.is_none_or(|seen| *id > seen);
+            let found = requests.iter().filter(past).find(|(.., took)| *took >= limit)?;
+            slow_seen = Some(found.0);
+            Some(format!("{} took {:?}", found.1, found.2))
+        });
         let spent = processor_time();
         let busy = (spent - used).as_secs_f64() / now.duration_since(measured).as_secs_f64().max(0.001) * 100.0;
         (used, measured) = (spent, now);
@@ -1487,6 +1520,7 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
             _ => None,
         };
         let over = over.filter(|_| last_over.is_none_or(|at| now.duration_since(at) >= least));
+        let over = stalled.or(slow).or(over);
         let timed =
             schedule.every.filter(|&every| now.duration_since(last_timed) >= every).map(|_| "on time".to_string());
         let Some(why) = over.clone().or(timed) else { continue };

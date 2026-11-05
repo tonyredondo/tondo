@@ -802,7 +802,10 @@ de los frames que están en ambos y los contadores.
 Con `TONDO_DUMP_WHEN` junto a `TONDO_DUMP` el programa se vuelca solo, sin parar:
 `every=5m` cada ese tiempo, `memory=512m` sobre esa memoria residente, o `memory=90%`
 sobre ese porcentaje de lo que el programa puede tener: el límite más bajo de su
-cgroup, pasado el cual el kernel lo mata sin volcado, o la memoria de la máquina; `cpu=90`
+cgroup, pasado el cual el kernel lo mata sin volcado, o la memoria de la máquina;
+`stall=30s` cuando pasa ese tiempo sin que nada se mueva habiendo tareas listas o
+peticiones en curso; `request=5s` cuando una petición lleva ese tiempo, una vez cada
+una; `cpu=90`
 sobre ese porcentaje de un núcleo, `keep=10` guarda los últimos diez y `size=1g`
 los que quepan en ese espacio, separados por comas. Lo que pasa de un umbral vuelca
 como mucho una vez por minuto. Con `TONDO_DUMP`, `kill -QUIT` pide un volcado sin
@@ -830,6 +833,11 @@ sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
 crecen: los que suben en cuatro de cada cinco pasos, de más a menos, con su ritmo.
+Lo mismo de las tareas por el lugar donde están: una fuga de tareas es un sitio que
+se llena. `tondo dump redact <archivo> <salida>` deja un volcado que se puede
+compartir: sin valores, contextos, argumentos, peticiones, eventos, textos de objetos
+ni las palabras del pánico, y con dónde estaba cada tarea. `dump group` dice el commit
+donde se vio cada fallo por primera vez y por última.
 
 Lo que el programa marca `@secret` (9.2 del lenguaje) se muestra como `<secret>`
 en el volcado, el depurador y sus partes; en un build de depuración que tiene
@@ -1692,8 +1700,8 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
-| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file` y sus tiempos |
-| `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks` y `memory`, lo que crece |
+| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file`, sus tiempos y `first_commit` y `last_commit` |
+| `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text` y `values` |

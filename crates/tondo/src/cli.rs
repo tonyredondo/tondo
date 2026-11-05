@@ -256,6 +256,11 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
+        usage: &["tondo dump redact <file> <output>"],
+        summary: &["the dump without what the program held, to attach", "where anyone reads it"],
+    },
+    Command {
+        name: "dump",
         usage: &["tondo dump report <file> [--output <path>]"],
         summary: &["all a dump says, as one page of HTML"],
     },

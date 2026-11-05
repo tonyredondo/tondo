@@ -2867,6 +2867,68 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
+fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-stall");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let program = format!(
+        "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    let secret = \"hidden{{id}}\"\n    \
+         time.sleep(time.seconds(60))\n    secret\n}}\n\nfn main(): !http.HttpError {{\n    \
+         var app = http.App.new()\n    app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
+    );
+    std::fs::write(dir.join("hangs.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut server = Command::new(dir.join("hangs"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
+        .spawn()
+        .unwrap();
+    let client = (0..200).find_map(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::net::TcpStream::connect(("127.0.0.1", port)).ok()
+    });
+    let mut client = client.unwrap();
+    std::io::Write::write_all(&mut client, b"GET /slow/7 HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
+    // A request past its limit, then nothing moving, each with its dump.
+    let mut messages: Vec<String> = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        messages.clear();
+        for file in std::fs::read_dir(dir.join("dumps")).unwrap().flatten() {
+            let read = Command::new(tondo_bin).args(["dump", "read"]).arg(file.path()).arg("--json").output().unwrap();
+            messages.push(String::from_utf8_lossy(&read.stdout).into_owned());
+        }
+        let seen = |text: &str| messages.iter().any(|message| message.contains(text));
+        if seen("GET /slow/7 took") && seen("nothing moved for") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = server.kill();
+    let _ = server.wait();
+    assert!(messages.iter().any(|m| m.contains("GET /slow/7 took")), "{messages:?}");
+    assert!(messages.iter().any(|m| m.contains("nothing moved for")), "{messages:?}");
+    // What can be shared has where it was, and nothing it held.
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let shared = dir.join("shared.dump.json");
+    let redacted = Command::new(tondo_bin).args(["dump", "redact"]).arg(&dump).arg(&shared).output().unwrap();
+    assert!(redacted.status.success(), "{redacted:?}");
+    let text = std::fs::read_to_string(&shared).unwrap();
+    assert!(!text.contains("hidden7") && !text.contains("/slow/7"), "{text}");
+    let tasks = Command::new(tondo_bin).args(["dump", "read"]).arg(&shared).arg("tasks").output().unwrap();
+    assert!(String::from_utf8_lossy(&tasks.stdout).contains("hangs.to:6 in slow"), "{tasks:?}");
+}
+
+#[test]
 fn a_dump_says_what_keeps_memory_alive() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
@@ -3171,6 +3233,10 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     let dump = dump.to_str().unwrap();
     let summary = tondo_in(&["dump", "read", dump]);
     assert!(String::from_utf8_lossy(&summary.stdout).contains("built from "), "{summary:?}");
+    // A failure says the commit it was first seen at.
+    let grouped = tondo_in(&["dump", "group", dir.join("dumps").to_str().unwrap(), "--json"]);
+    let grouped: Value = serde_json::from_slice(&grouped.stdout).unwrap();
+    assert!(grouped["groups"][0]["first_commit"].as_str().is_some_and(|c| c.len() == 40), "{grouped}");
     // A file that changed since comes as it was, from its repository, and
     // one of a dependency that is not here too, from a cache that starts
     // with none of it.
@@ -3589,6 +3655,23 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     assert_eq!(trend["held"]["rising"], true, "{trend}");
     let first = trend["memory"][0]["place"].as_str().unwrap_or_else(|| panic!("{trend}"));
     assert!(first.contains("leaks.to:8"), "{trend}");
+    // Tasks left behind pile up in one place too.
+    let piling = "import std.console\nimport std.time\n\nfn forgotten() {\n    time.sleep(time.seconds(60))\n}\n\n\
+        fn main() {\n    for _ in 0..150 {\n        spawn detached forgotten()\n        \
+        time.sleep(time.milliseconds(20))\n    }\n    console.println(\"end\")\n}\n";
+    std::fs::write(dir.join("piles.to"), piling).unwrap();
+    let built =
+        Command::new(tondo_bin).args(["build", "piles.to", "--output", "piles"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    std::fs::create_dir_all(dir.join("piled")).unwrap();
+    Command::new(dir.join("piles"))
+        .env("TONDO_DUMP", dir.join("piled"))
+        .env("TONDO_DUMP_WHEN", "every=300ms,keep=100")
+        .output()
+        .unwrap();
+    let trend = tondo(&["dump", "trend", dir.join("piled").to_str().unwrap(), "--json"]);
+    let place = trend["tasks"]["piling"][0]["place"].as_str().unwrap_or_else(|| panic!("{trend}"));
+    assert!(place.contains("piles.to:5 in forgotten"), "{trend}");
     // Fewer dumps than `keep` fit in the room they are given.
     let ran = Command::new(dir.join("leaks"))
         .env("TONDO_DUMP", dir.join("small"))

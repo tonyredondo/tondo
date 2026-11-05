@@ -928,21 +928,25 @@ pub fn dumped_bindings(dump: &Value, file: &str, name: &str) -> Vec<String> {
     found
 }
 
-/// A dump from its file, compressed or not, with every frame named.
-pub fn load(path: &std::path::Path) -> Result<Value, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+/// The JSON of a dump's file, compressed or not.
+fn raw(path: &std::path::Path, bytes: &[u8]) -> Result<Value, String> {
     let mut text = Vec::new();
     let bytes = match bytes.starts_with(&[0x1f, 0x8b]) {
         true => {
-            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            let mut decoder = flate2::read::GzDecoder::new(bytes);
             std::io::Read::read_to_end(&mut decoder, &mut text)
                 .map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
-            &text
+            &text[..]
         }
-        false => &bytes,
+        false => bytes,
     };
-    let mut dump: Value =
-        serde_json::from_slice(bytes).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+    serde_json::from_slice(bytes).map_err(|e| format!("{} is not a dump: {e}", path.display()))
+}
+
+/// A dump from its file, compressed or not, with every frame named.
+pub fn load(path: &std::path::Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut dump = raw(path, &bytes)?;
     if dump.get("dump").is_none() {
         return Err(format!("{} is not a dump of a Tondo program", path.display()));
     }
@@ -979,6 +983,45 @@ fn signature(dump: &Value) -> String {
     crate::driver::fingerprint(&parts.map(str::as_bytes))[..12].to_string()
 }
 
+/// The commit of the program a dump is of, if it says.
+fn commit_of(dump: &Value) -> Value {
+    roots_of(dump).roots.first().filter(|root| root.prefix.is_empty()).map_or(Value::Null, |root| json!(root.commit))
+}
+
+/// `tondo dump redact <file> <output>`: the dump without what the program
+/// held, to attach where anyone reads it: where it was and how it went
+/// stay; values, contexts, requests, texts and the words of a panic go.
+pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut dump = raw(path, &bytes)?;
+    if dump.get("dump").is_none() {
+        return Err(format!("{} is not a dump of a Tondo program", path.display()));
+    }
+    // Of what it says, only the code of a panic is not the program's.
+    let code = dump["message"].as_str().unwrap_or_default().split(':').next().filter(|code| code.starts_with("panic["));
+    dump["message"] = json!(code.unwrap_or_default());
+    dump["info"]["arguments"] = json!([]);
+    dump["values"] = json!([]);
+    dump["values_off"] = json!(true);
+    if let Some(object) = dump.as_object_mut() {
+        object.remove("requests");
+        object.remove("events");
+    }
+    for task in dump["tasks"].as_array_mut().into_iter().flatten() {
+        task["contexts"] = json!([]);
+        if task["wait"].is_object() {
+            task["wait"]["for"] = json!("a value");
+        }
+    }
+    for object in dump["objects"]["list"].as_array_mut().into_iter().flatten() {
+        if let Some(fields) = object.as_object_mut() {
+            fields.remove("text");
+        }
+    }
+    let text = serde_json::to_string(&dump).unwrap_or_default();
+    std::fs::write(output, text).map_err(|e| format!("cannot write {}: {e}", output.display()))
+}
+
 /// `tondo dump group <dir>`: the dumps of a directory by the failure they
 /// are, the most frequent first.
 pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
@@ -991,6 +1034,7 @@ pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
                 group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
                 group["last_ms"] = time.clone();
                 group["file"] = json!(path);
+                group["last_commit"] = commit_of(&dump);
             }
             None => {
                 let tasks = tasks(&dump);
@@ -999,6 +1043,7 @@ pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
                     "signature": id, "count": 1, "reason": dump["reason"], "file": path,
                     "message": dump["message"].as_str().unwrap_or_default().lines().next(),
                     "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
+                    "first_commit": commit_of(&dump), "last_commit": commit_of(&dump),
                 }));
             }
         }
@@ -1016,6 +1061,13 @@ pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
         println!("{} x {} {}", group["count"], text("signature"), text("reason"));
         println!("  {}", text("message"));
         println!("  at {}", group["at"].as_str().unwrap_or("nowhere known"));
+        if let Some(first) = group["first_commit"].as_str() {
+            let short = |commit: &str| commit[..commit.len().min(10)].to_string();
+            match group["last_commit"].as_str().filter(|last| *last != first) {
+                Some(last) => println!("  first seen at {}, and still at {}", short(first), short(last)),
+                None => println!("  seen at {}", short(first)),
+            }
+        }
         println!("  the last: {}", text("file"));
     }
     Ok(())
@@ -1211,12 +1263,35 @@ fn trends(dumps: &[Value]) -> Value {
         json!({ "first": series[0], "last": series[series.len() - 1], "per_minute": per_minute(grew), "rising": rising(&series) })
     };
     let tasks: Vec<f64> = dumps.iter().map(|dump| dump["tasks"].as_array().map_or(0.0, |t| t.len() as f64)).collect();
+    // The tasks by where they are: a leak of them is a place that fills up.
+    let mut places: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for (index, dump) in dumps.iter().enumerate() {
+        for group in stacks(&self::tasks(dump)) {
+            let frames: Vec<&str> = group["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let place = frames
+                .first()
+                .map_or(String::new(), |at| format!("{} {at}", group["state"].as_str().unwrap_or_default()));
+            places.entry(place).or_insert_with(|| vec![0.0; dumps.len()])[index] +=
+                group["count"].as_f64().unwrap_or(0.0);
+        }
+    }
+    let mut piling: Vec<(String, Vec<f64>)> =
+        places.into_iter().filter(|(place, series)| !place.is_empty() && rising(series)).collect();
+    piling.sort_by(|a, b| {
+        let grew = |series: &[f64]| series[series.len() - 1] - series[0];
+        grew(&b.1).total_cmp(&grew(&a.1))
+    });
+    let piling: Vec<Value> = piling
+        .iter()
+        .map(|(place, series)| json!({ "place": place, "first": series[0] as u64, "last": series[series.len() - 1] as u64 }))
+        .collect();
     let task_count = |count: f64| count as u64;
     json!({
         "program": program_name(&last["info"]), "pid": last["info"]["pid"], "dumps": dumps.len(), "seconds": seconds,
         "held": level("memory.held"), "resident": level("os.resident"), "memory": memory,
         "tasks": {
             "first": task_count(tasks[0]), "last": task_count(tasks[tasks.len() - 1]), "rising": rising(&tasks),
+            "piling": piling,
         },
     })
 }
@@ -1242,6 +1317,10 @@ fn trend_text(found: &Value) -> String {
     let tasks = &found["tasks"];
     let goes = if tasks["rising"] == true { ", and rising" } else { "" };
     out.push_str(&format!("tasks: {} to {}{goes}\n", tasks["first"], tasks["last"]));
+    for place in tasks["piling"].as_array().into_iter().flatten().take(10) {
+        let at = place["place"].as_str().unwrap_or_default();
+        out.push_str(&format!("  {} to {} {at}\n", place["first"], place["last"]));
+    }
     let places = found["memory"].as_array().map_or(&[][..], Vec::as_slice);
     if !places.is_empty() {
         out.push_str("what keeps growing:\n");

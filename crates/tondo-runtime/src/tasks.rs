@@ -2383,6 +2383,17 @@ pub(crate) struct Scheduler {
     pub c_calls: usize,
 }
 
+/// How many times workers looked for a task: what moves while anything
+/// does.
+pub(crate) fn turns() -> u64 {
+    queue().picks as u64
+}
+
+/// The tasks ready to run, that wait for a worker.
+pub(crate) fn ready_tasks() -> usize {
+    scheduler().ready
+}
+
 pub(crate) fn scheduler() -> Scheduler {
     let live = tasks().len();
     let queue = queue();
