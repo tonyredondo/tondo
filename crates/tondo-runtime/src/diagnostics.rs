@@ -838,7 +838,8 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             other => format!("{{\"error\":{}}}", quoted(&format!("unknown request `{other}`"))),
         };
-        if send(client, &reply).is_err() {
+        // A logpoint answers by itself.
+        if !reply.is_empty() && send(client, &reply).is_err() {
             return false;
         }
         super::debugger::answered();

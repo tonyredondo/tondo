@@ -459,3 +459,74 @@ fn live_sessions_reload() {
     assert_eq!(stopped["running"], false);
     agent.stop();
 }
+
+#[test]
+fn reads_dumps_sources_and_a_running_program() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let source = "import std.console\nimport std.time\n\nfn work(round: Int): Int {\n    let next = round + 1\n    next\n}\n\n\
+        fn main() {\n    var round = 0\n    console.println(\"ready\")\n    let _ = console.flush()\n    for round < 3000 {\n        \
+        round = work(round)\n        time.sleep(time.milliseconds(5))\n    }\n}\n";
+    let falls = "fn main() {\n    panic(\"it fell\")\n}\n";
+    let dir = project("mcp-dumps", &[("runs.to", source), ("falls.to", falls)]);
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    for (file, output) in [("falls.to", "falls"), ("runs.to", "runs")] {
+        let built = Command::new(tondo).args(["build", file, "--output", output]).current_dir(&dir).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    }
+    for _ in 0..3 {
+        Command::new(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    }
+    let mut agent = Agent::start(&dir);
+    let dumps = dir.join("dumps");
+    // What a tool says, whether it could or not.
+    let said = |agent: &mut Agent, tool: &str, arguments: Value| {
+        let result = agent.request("tools/call", json!({ "name": tool, "arguments": arguments }));
+        result["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    let text = said(&mut agent, "dump_group", json!({ "dir": dumps }));
+    let found: Value = serde_json::from_str(&text).unwrap_or_else(|_| panic!("{text}"));
+    assert_eq!(found["groups"][0]["count"], 3, "{text}");
+    // Those are three processes, and a trend is of one.
+    let text = said(&mut agent, "dump_trend", json!({ "dir": dumps }));
+    assert!(text.contains("a trend takes 3 dumps"), "{text}");
+    let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
+    let text = said(&mut agent, "dump_read", json!({ "file": dump, "view": "why" }));
+    assert!(text.contains("it fell"), "{text}");
+    // The file is here as it was built.
+    let text = said(&mut agent, "source", json!({ "file": "falls.to", "from": dump }));
+    assert!(text.contains("\"state\":\"same\""), "{text}");
+
+    // A logpoint needs Linux, and says so elsewhere.
+    let mut child = Command::new(dir.join("runs"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let pid = child.id().to_string();
+    let arguments = json!({ "program": pid, "place": "runs.to:5", "text": "at {round}", "max": 2, "seconds": 30 });
+    let mut text = String::new();
+    for _ in 0..200 {
+        text = said(&mut agent, "logpoint", arguments.clone());
+        if !text.contains("answers") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    agent.stop();
+    match cfg!(target_os = "linux") {
+        true => {
+            let found: Value = serde_json::from_str(&text).unwrap_or_else(|_| panic!("{text}"));
+            let hits = found["hits"].as_array().unwrap_or_else(|| panic!("{text}"));
+            assert_eq!(hits.len(), 2, "{text}");
+            assert!(hits[0]["text"].as_str().unwrap().starts_with("at "), "{text}");
+        }
+        false => assert!(text.contains("needs Linux"), "{text}"),
+    }
+}

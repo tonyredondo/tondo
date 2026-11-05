@@ -1961,7 +1961,9 @@ pub fn logpoint(
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
     }
-    eprintln!("tondo: a logpoint on {place}, in {} places: it ends after {max} times", answer["places"]);
+    if !json {
+        eprintln!("tondo: a logpoint on {place}, in {} places: it ends after {max} times", answer["places"]);
+    }
     let waiting = seconds.map(Duration::from_secs);
     let _ = program.reader.get_ref().set_read_timeout(waiting);
     let deadline = waiting.map(|waiting| std::time::Instant::now() + waiting);

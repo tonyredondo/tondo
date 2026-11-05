@@ -28,8 +28,8 @@ static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
 
-/// `logpoint <max> <file:line>`: gives its number and how many places the
-/// line has, or why not.
+/// `logpoint <max> <file:line>`: tells the tool its number and how many
+/// places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
@@ -56,7 +56,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
             _ => format!("line {line} has no place for a logpoint"),
         });
     }
-    let Ok(client) = client.try_clone() else { return error("the tool went away") };
+    let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
     if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
         return error("the program did not stop for the logpoint: try again");
     }
@@ -68,9 +68,12 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     };
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let count = sites.len();
+    // The answer goes first: a hit counts once it is in the list, and must
+    // not reach the tool before it.
+    let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
+    let _ = client.write_all(answered.as_bytes());
     lock().push(Logpoint { id, sites, left: max, client });
-    format!("{{\"logpoint\":{id},\"places\":{count}}}")
+    String::new()
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Vec<Logpoint>> {
