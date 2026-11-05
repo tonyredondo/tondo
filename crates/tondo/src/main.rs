@@ -963,15 +963,17 @@ fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--max <n>] [--for <seconds>] [--json]";
-    let (mut given, mut max, mut seconds, mut json, mut condition) = (Vec::new(), 100, None, false, None);
+    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--dump <file>] [--max <n>] [--for <seconds>] [--json]";
+    let (mut given, mut max, mut seconds, mut json, mut condition) = (Vec::new(), None, None, false, None);
+    let mut dump = None;
     let mut rest = args.iter().filter_map(|a| a.to_str());
     while let Some(arg) = rest.next() {
         match arg {
             "--json" => json = true,
-            "--max" => max = rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
+            "--max" => max = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
             "--for" => seconds = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
             "--if" => condition = Some(rest.next().ok_or(USAGE)?.to_string()),
+            "--dump" => dump = Some(PathBuf::from(rest.next().ok_or(USAGE)?)),
             other if !other.starts_with("--") => given.push(other),
             _ => return Err(USAGE.to_string()),
         }
@@ -981,7 +983,9 @@ fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(USAGE.to_string());
     }
     let (name, place, text) = (name.to_string(), place.to_string(), text.first().map(|text| text.to_string()));
-    let asked = tondo::observe::Logpoint { name, place, text, condition, max, seconds };
+    // A dump is of one time: each would write over the last.
+    let max = max.unwrap_or(if dump.is_some() { 1 } else { 100 });
+    let asked = tondo::observe::Logpoint { name, place, text, condition, dump, max, seconds };
     tondo::observe::logpoint(&asked, json).map(|()| ExitCode::SUCCESS)
 }
 

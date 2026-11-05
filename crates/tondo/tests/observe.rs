@@ -3150,6 +3150,15 @@ fn a_logpoint_reads_a_running_release_build() {
     let ids: Vec<u64> =
         matching["hits"].as_array().unwrap().iter().map(|h| h["text"].as_str().unwrap().parse().unwrap()).collect();
     assert!(ids.len() == 2 && ids.iter().all(|id| id % 7 == 3), "{matching}");
+    // The whole program, as it was the first time that held.
+    let dump = dir.join("there.dump.json");
+    let dumped = logpoint(&["orders.to:8", "--if", "order.id % 5 == 2", "--dump", dump.to_str().unwrap(), "--json"]);
+    assert!(dumped.status.success(), "{dumped:?}");
+    let dumped: Value = serde_json::from_slice(&dumped.stdout).unwrap();
+    assert_eq!(dumped["hits"].as_array().unwrap().len(), 1, "{dumped}");
+    assert_eq!(dumped["hits"][0]["dump"], dump.to_str().unwrap(), "{dumped}");
+    let read = tondo(&["dump", "read", dump.to_str().unwrap(), "stacks", "--json"]).to_string();
+    assert!(read.contains("orders.to:8 in charge"), "{read}");
     let wrong = logpoint(&["orders.to:8", "--if", "order.id >", "--max", "1"]);
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("the condition"), "{wrong:?}");
     // A tight loop has no place, and it says which line has.

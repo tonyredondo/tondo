@@ -933,7 +933,10 @@ Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambi
 su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
 un 2 % como mucho, y el ejecutable crece menos del 1 %. El editor pone un logpoint
 en la línea del cursor de un programa que elige de los que corren, con su texto y su
-condición, y muestra lo que llega en un panel.
+condición, y muestra lo que llega en un panel. Con `--dump <archivo>` esa vez deja
+además un volcado de todo el programa tal como estaba allí, sin pararlo más que el
+volcado: una foto de producción en el momento que importa. Vale para una sola vez,
+salvo que `--max` diga otra cosa.
 
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
@@ -1733,7 +1736,7 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
-| `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text` y `values` |
+| `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

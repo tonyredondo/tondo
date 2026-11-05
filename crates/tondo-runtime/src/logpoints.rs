@@ -18,6 +18,8 @@ struct Logpoint {
     client: UnixStream,
     /// What must hold for a time to count.
     condition: Option<String>,
+    /// Where each time leaves a dump of the program, as it was there.
+    dump: Option<String>,
 }
 
 struct Site {
@@ -30,15 +32,15 @@ static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
 
-/// `logpoint <max> <file:line>[\t<condition>]`: tells the tool its number
-/// and how many places the line has, or gives why not.
+/// `logpoint <max> <file:line>[\t<condition>[\t<dump>]]`: tells the tool its
+/// number and how many places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
-    let (request, condition) = match request.split_once('\t') {
-        Some((request, condition)) => (request, Some(condition.to_string())),
-        None => (request, None),
-    };
+    let mut fields = request.split('\t');
+    let request = fields.next().unwrap_or_default();
+    let mut given = || fields.next().filter(|field| !field.is_empty()).map(str::to_string);
+    let (condition, dump) = (given(), given());
     if let Some(Err(message)) = condition.as_deref().map(super::debugger::valid_expression) {
         return error(&format!("the condition: {message}"));
     }
@@ -81,7 +83,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client, condition });
+    lock().push(Logpoint { id, sites, left: max, client, condition, dump });
     String::new()
 }
 
@@ -180,10 +182,10 @@ extern "C" fn hit(saved: *const usize) {
         set.iter().find_map(|logpoint| {
             let site = logpoint.sites.iter().find(|site| site.address + site.length == address)?.address;
             let client = logpoint.client.try_clone().ok().filter(|_| logpoint.left > 0)?;
-            Some((logpoint.id, site, client, logpoint.condition.clone()))
+            Some((logpoint.id, site, client, logpoint.condition.clone(), logpoint.dump.clone()))
         })
     };
-    let Some((id, site, mut client, condition)) = found else { return };
+    let Some((id, site, mut client, condition, dump)) = found else { return };
     // Those that come while one is shown go by.
     let Ok(_shown) = HIT.try_lock() else { return };
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
@@ -200,7 +202,12 @@ extern "C" fn hit(saved: *const usize) {
         logpoint.left == 0
     };
     let task = super::tasks::current_id();
-    let line = format!("{{\"hit\":{id},\"task\":{task},\"values\":[{}]}}\n", values.join(","));
+    let dumped = dump.filter(|path| {
+        let here = std::iter::once(address).chain(super::trace::walk(fp, bounds)).collect();
+        super::diagnostics::dump_here(path, here)
+    });
+    let dumped = dumped.map_or(String::new(), |path| format!(",\"dump\":{}", super::diagnostics::quoted(&path)));
+    let line = format!("{{\"hit\":{id},\"task\":{task}{dumped},\"values\":[{}]}}\n", values.join(","));
     if client.write_all(line.as_bytes()).is_err() {
         forget(id);
     }

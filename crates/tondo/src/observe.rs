@@ -2046,6 +2046,8 @@ pub struct Logpoint {
     pub text: Option<String>,
     /// What must hold for a time to count: `order.total > 100`.
     pub condition: Option<String>,
+    /// Where each time leaves a dump of the whole program, as it was there.
+    pub dump: Option<PathBuf>,
     pub max: u64,
     pub seconds: Option<u64>,
 }
@@ -2054,13 +2056,12 @@ pub struct Logpoint {
 /// running program holds each time it goes by, up to `max` times or for
 /// `seconds`, without stopping it. `{user.id}` in the text reads a part.
 pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
-    let Logpoint { name, place, text, condition, max, seconds } = asked;
+    let Logpoint { name, place, text, condition, dump, max, seconds } = asked;
     let (text, max) = (text.as_deref(), *max);
     let mut program = connect(name)?;
-    let request = match condition {
-        Some(condition) => format!("logpoint {max} {place}\t{condition}"),
-        None => format!("logpoint {max} {place}"),
-    };
+    let here = std::env::current_dir().map_err(|e| e.to_string())?;
+    let dump = dump.as_ref().map_or(String::new(), |path| here.join(path).display().to_string());
+    let request = format!("logpoint {max} {place}\t{}\t{dump}", condition.as_deref().unwrap_or_default());
     let answer = program.ask(&request)?;
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
@@ -2089,8 +2090,15 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
             continue;
         }
         match json {
-            true => hits.push(json!({ "task": hit["task"], "text": logged(&hit, text), "values": hit["values"] })),
-            false => println!("{}", logged(&hit, text)),
+            true => hits.push(
+                json!({ "task": hit["task"], "text": logged(&hit, text), "values": hit["values"], "dump": hit["dump"] }),
+            ),
+            false => {
+                println!("{}", logged(&hit, text));
+                if let Some(dump) = hit["dump"].as_str() {
+                    eprintln!("tondo: a dump of the program as it was there is in {dump}");
+                }
+            }
         }
     }
     if json {
@@ -2144,7 +2152,7 @@ pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
 fn why_text(found: &Value) -> String {
     let mut out = String::new();
     // A program that went on has nothing to say of why it was dumped.
-    if !matches!(found["reason"].as_str().unwrap_or_default(), "request" | "schedule" | "signal" | "") {
+    if !matches!(found["reason"].as_str().unwrap_or_default(), "request" | "schedule" | "signal" | "logpoint" | "") {
         out.push_str(&format!("it stopped at a {}\n", found["reason"].as_str().unwrap_or_default()));
         for line in found["message"].as_str().unwrap_or_default().lines() {
             out.push_str(&format!("  {line}\n"));

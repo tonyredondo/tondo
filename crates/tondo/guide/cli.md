@@ -96,6 +96,7 @@ tondo profile show cpu.pb.gz      the functions and lines that take the most; --
 tondo dump api                    its tasks, where each is, counters and live memory
 tondo blocked api                 who waits for whom now
 tondo logpoint api app.to:12 "order {order.id}"   what a line holds as it goes by
+tondo logpoint api app.to:12 --if "total > 100" --dump d.json   the whole program, that time
 tondo dump read api.dump why      what went wrong, as far as it can tell
 tondo dump read api.dump stacks   the tasks by the stack they share
 tondo dump read api.dump requests the HTTP and gRPC requests in flight

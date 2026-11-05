@@ -1270,6 +1270,16 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
     dumped(&path);
 }
 
+/// A dump at a logpoint, of the program as it stands where this thread is.
+pub(crate) fn dump_here(path: &str, here: Vec<usize>) -> bool {
+    let paused = super::tasks::pause_here();
+    let text = dump("logpoint", "a logpoint was reached", Some(here), Some(std::time::Duration::from_millis(100)));
+    if paused {
+        super::tasks::enter_tondo();
+    }
+    std::fs::write(path, text).is_ok()
+}
+
 /// How long `TONDO_DUMP_COMMAND` has: a program that falls waits for it, or
 /// a restart would take the dump with its container.
 const COMMAND_TIME: std::time::Duration = std::time::Duration::from_secs(60);
