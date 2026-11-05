@@ -838,6 +838,15 @@ primero, y `tondo dump report <archivo>` da todo lo que dice uno como una págin
 sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
 *Open Dump Report* del editor la abre y las sigue, también en lo que no esté aquí.
 
+Un programa que muere sin volcado puede dejar un core del sistema, en Linux. `tondo
+dump read <core>` lo lee como un volcado, y `tondo dump core <core> [--executable
+<archivo>] [--output <ruta>]` lo escribe como uno, junto al core por omisión, para
+un ejecutable que no esté donde el core dice o para que lo lea lo demás. Da la señal
+y dónde estaba cada tarea, también las que esperaban, y cada hilo con código del
+programa, con las líneas de la tabla del ejecutable, que un build con `--strip`
+conserva; no da lo que tenían: valores, contadores ni memoria por sitio. Un
+ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
+
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
 crecen: los que suben en cuatro de cada cinco pasos, de más a menos, con su ritmo.
@@ -1719,6 +1728,7 @@ campos de su resultado:
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file`, sus tiempos y `first_commit` y `last_commit` |
+| `dump core` | `tondo-dump-core-0.1/1` | `file` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |

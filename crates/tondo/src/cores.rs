@@ -1,0 +1,570 @@
+//! A core the system wrote of a Linux program, read as a dump (toolchain
+//! 7.5): the signal that ended it, and where each of its tasks and threads
+//! was, by the trace table of the program's executable. A core is the memory
+//! of a process with no runtime left to ask, so what the program held, as
+//! values and counters, is not read.
+
+use crate::roots::Roots;
+use serde_json::{Map, Value, json};
+use std::os::unix::fs::FileExt;
+use std::path::{Path, PathBuf};
+
+/// What starts the trace table in a program's data, as the runtime's
+/// `trace::Table`.
+pub const MAGIC: &[u8; 16] = b"TONDOTRACE1\n\0\0\0\0";
+
+/// What starts a live task in memory, as the runtime's `tasks::Task`, and
+/// where its stack pointer, number, state and whether it is the main task
+/// are from there.
+const TASK: u64 = u64::from_le_bytes(*b"TONDOTSK");
+const TASK_FIELDS: usize = 32;
+const PARKED: u8 = 2;
+
+/// The longest stack a dump keeps.
+const FRAMES: usize = 256;
+const CALL: usize = 24;
+const RECORD: usize = 24;
+
+fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn u64_at(bytes: &[u8], at: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+}
+
+/// A segment of an ELF file: where it goes in memory, where it is in the
+/// file and how much of it the file holds.
+#[derive(Clone, Copy)]
+struct Segment {
+    address: u64,
+    offset: u64,
+    size: u64,
+}
+
+/// The segments of a type in the ELF header `header` starts with.
+fn segments(header: &[u8], read: impl Fn(u64, usize) -> Option<Vec<u8>>, kind: u32) -> Option<Vec<Segment>> {
+    let (at, size, count) = (u64_at(header, 0x20)?, u16_at(header, 0x36)? as u64, u16_at(header, 0x38)? as u64);
+    let table = read(at, (size * count) as usize)?;
+    let mut found = Vec::new();
+    for entry in (0..count as usize).map(|index| index * size as usize) {
+        if u32_at(&table, entry)? == kind {
+            let (offset, address) = (u64_at(&table, entry + 8)?, u64_at(&table, entry + 16)?);
+            found.push(Segment { address, offset, size: u64_at(&table, entry + 32)? });
+        }
+    }
+    Some(found)
+}
+
+/// A thread as the core has it.
+struct Thread {
+    id: u32,
+    pc: u64,
+    sp: u64,
+    fp: u64,
+    /// Where a call on aarch64 leaves its return address.
+    link: Option<u64>,
+}
+
+/// A file mapped into the process: its addresses, where they are in it,
+/// and its path.
+struct Mapped {
+    start: u64,
+    end: u64,
+    offset: u64,
+    path: String,
+}
+
+/// What the notes of a core say.
+#[derive(Default)]
+struct Notes {
+    threads: Vec<Thread>,
+    signal: u32,
+    code: i32,
+    address: u64,
+    entry: u64,
+    files: Vec<Mapped>,
+    command: String,
+}
+
+/// The notes in `bytes`, for a machine of ELF number `machine`.
+fn notes(bytes: &[u8], machine: u16, found: &mut Notes) -> Option<()> {
+    let mut at = 0;
+    while at + 12 <= bytes.len() {
+        let (name, size, kind) = (u32_at(bytes, at)? as usize, u32_at(bytes, at + 4)? as usize, u32_at(bytes, at + 8)?);
+        let start = at + 12 + name.next_multiple_of(4);
+        let note = bytes.get(start..start + size)?;
+        at = start + size.next_multiple_of(4);
+        match kind {
+            1 => {
+                let register = |index: usize| u64_at(note, 112 + index * 8);
+                let id = u32_at(note, 32)?;
+                found.threads.push(match machine {
+                    62 => Thread { id, pc: register(16)?, sp: register(19)?, fp: register(4)?, link: None },
+                    _ => Thread { id, pc: register(32)?, sp: register(31)?, fp: register(29)?, link: register(30) },
+                });
+            }
+            3 => {
+                let text = note.get(56..136)?;
+                let end = text.iter().position(|&b| b == 0).unwrap_or(text.len());
+                found.command = String::from_utf8_lossy(&text[..end]).trim().to_string();
+            }
+            6 => {
+                let pairs = note.as_chunks::<16>().0.iter();
+                let pairs = pairs.filter_map(|pair| Some((u64_at(pair, 0)?, u64_at(pair, 8)?)));
+                found.entry = pairs.into_iter().find(|&(key, _)| key == 9).map_or(0, |(_, value)| value);
+            }
+            0x4649_4c45 => {
+                let (count, page) = (u64_at(note, 0)? as usize, u64_at(note, 8)?);
+                let mut names = note.get(16 + count * 24..)?.split(|&b| b == 0);
+                for entry in (0..count).map(|index| 16 + index * 24) {
+                    found.files.push(Mapped {
+                        start: u64_at(note, entry)?,
+                        end: u64_at(note, entry + 8)?,
+                        offset: u64_at(note, entry + 16)? * page,
+                        path: String::from_utf8_lossy(names.next()?).into_owned(),
+                    });
+                }
+            }
+            0x5349_4749 => {
+                found.signal = u32_at(note, 0)?;
+                found.code = u32_at(note, 8)? as i32;
+                found.address = u64_at(note, 16)?;
+            }
+            _ => {}
+        }
+    }
+    Some(())
+}
+
+/// The memory of the process: what the core kept, and what it did not
+/// because it is in the executable, placed `bias` from where the file says.
+struct Memory<'a> {
+    core: &'a std::fs::File,
+    kept: Vec<Segment>,
+    program: &'a [u8],
+    loads: Vec<Segment>,
+    bias: u64,
+}
+
+impl<'a> Memory<'a> {
+    /// Reads from `at` into `into` as far as one segment goes: how far.
+    fn piece(&self, at: u64, into: &mut [u8]) -> Option<usize> {
+        if let Some(kept) = self.kept.iter().find(|s| s.address <= at && at < s.address + s.size) {
+            let length = into.len().min((kept.address + kept.size - at) as usize);
+            self.core.read_exact_at(&mut into[..length], kept.offset + at - kept.address).ok()?;
+            return Some(length);
+        }
+        let file = self.in_program(at.wrapping_sub(self.bias))?;
+        let length = into.len().min(file.len());
+        into[..length].copy_from_slice(&file[..length]);
+        Some(length)
+    }
+
+    fn read(&self, mut at: u64, length: usize) -> Option<Vec<u8>> {
+        let mut bytes = vec![0; length];
+        let mut done = 0;
+        while done < length {
+            let got = self.piece(at, &mut bytes[done..])?;
+            done += got;
+            at += got as u64;
+        }
+        Some(bytes)
+    }
+
+    fn word(&self, at: u64) -> Option<u64> {
+        u64_at(&self.read(at, 8)?, 0)
+    }
+
+    /// What the executable has from a linked address to the end of its
+    /// segment.
+    fn in_program(&self, at: u64) -> Option<&'a [u8]> {
+        let load = self.loads.iter().find(|s| s.address <= at && at < s.address + s.size)?;
+        self.program.get((load.offset + at - load.address) as usize..(load.offset + load.size) as usize)
+    }
+}
+
+/// The trace table of the program, as `trace` reads it in the runtime.
+struct Code<'a> {
+    functions: Vec<(u64, u32, u32)>,
+    blob: &'a [u8],
+    files: usize,
+}
+
+impl<'a> Code<'a> {
+    fn of(memory: &Memory<'a>) -> Option<Code<'a>> {
+        let found = memory.program.windows(MAGIC.len()).position(|window| window == MAGIC)? as u64;
+        let load = memory.loads.iter().find(|s| s.offset <= found && found < s.offset + s.size)?;
+        let table = memory.read(load.address + found - load.offset + memory.bias, 64)?;
+        let (entries, count) = (u64_at(&table, 16)?, u64_at(&table, 24)? as usize);
+        let (blob, files) = (u64_at(&table, 32)?, u64_at(&table, 40)? as usize);
+        let entries = memory.read(entries, count.min(memory.program.len()) * 16)?;
+        let mut functions = Vec::with_capacity(count);
+        for entry in entries.as_chunks::<16>().0 {
+            functions.push((u64_at(entry, 0)?, u32_at(entry, 8)?, u32_at(entry, 12)?));
+        }
+        functions.sort();
+        Some(Code { functions, blob: memory.in_program(blob.wrapping_sub(memory.bias))?, files })
+    }
+
+    /// The function whose code holds the byte before `address`.
+    fn function(&self, address: u64) -> Option<(u64, usize)> {
+        let at = self.functions.partition_point(|f| f.0 < address).checked_sub(1)?;
+        let (code, size, meta) = self.functions[at];
+        (address <= code.wrapping_add(size as u64)).then_some((code, meta as usize))
+    }
+
+    fn text(&self, at: usize, length: usize) -> Option<String> {
+        Some(String::from_utf8_lossy(self.blob.get(at..at + length)?).into_owned())
+    }
+
+    fn named(&self, index: u32) -> Option<String> {
+        let mut at = self.files + 4;
+        for _ in 0..index {
+            at = (at + 4 + u32_at(self.blob, at)? as usize + 3) & !3;
+        }
+        self.text(at + 4, u32_at(self.blob, at)? as usize)
+    }
+
+    /// Where a function's calls are, and how many.
+    fn calls(&self, meta: usize) -> Option<(usize, usize)> {
+        let name = u32_at(self.blob, meta)? as usize;
+        Some(((meta + 8 + name + 3) & !3, u32_at(self.blob, meta + 4)? as usize))
+    }
+
+    /// Where a function's lines are: their file, start and end.
+    fn lines(&self, meta: usize) -> Option<(u32, usize, usize)> {
+        let (calls, count) = self.calls(meta)?;
+        let lines = calls + count * CALL;
+        Some((u32_at(self.blob, lines)?, lines + 8, lines + 8 + u32_at(self.blob, lines + 4)? as usize))
+    }
+
+    fn record(&self, meta: usize, index: u32) -> Option<usize> {
+        let (_, _, end) = self.lines(meta)?;
+        Some(((end + 3) & !3) + index as usize * RECORD)
+    }
+
+    /// The name of the function inlined as `record`, or the function's.
+    fn name(&self, meta: usize, record: u32) -> Option<String> {
+        match record {
+            u32::MAX => self.text(meta + 8, u32_at(self.blob, meta)? as usize),
+            index => self.named(u32_at(self.blob, self.record(meta, index)?)?),
+        }
+    }
+
+    /// Whether `address` is where a call of compiled code returns to.
+    fn call(&self, address: u64) -> Option<usize> {
+        let (start, meta) = self.function(address)?;
+        let (sites, calls) = self.calls(meta)?;
+        let offset = (address - start) as u32;
+        (0..calls).map(|k| sites + k * CALL).find(|&site| u32_at(self.blob, site) == Some(offset))
+    }
+
+    /// The line of `pc`, and the inlined call it is in.
+    fn line(&self, pc: u64) -> Option<(u32, u32, u32)> {
+        let (start, meta) = self.function(pc + 1)?;
+        let (file, mut cursor, end) = self.lines(meta)?;
+        let mut number = || {
+            let (mut value, mut shift) = (0u64, 0);
+            while cursor < end {
+                let byte = self.blob[cursor];
+                cursor += 1;
+                value |= ((byte & 0x7f) as u64) << shift;
+                shift += 7;
+                if byte & 0x80 == 0 {
+                    break;
+                }
+            }
+            (value, cursor < end)
+        };
+        let (mut at, mut line, mut found, offset) = (0u64, 0i64, (0i64, 0u64), pc - start);
+        loop {
+            let (step, _) = number();
+            at += step;
+            let (zigzag, _) = number();
+            line += (zigzag >> 1) as i64 ^ -((zigzag & 1) as i64);
+            let (inlined, more) = number();
+            if at > offset {
+                break;
+            }
+            found = (line, inlined);
+            if !more {
+                break;
+            }
+        }
+        let record = (found.1 as u32).wrapping_sub(1);
+        let file = match record {
+            u32::MAX => file,
+            index => u32_at(self.blob, self.record(meta, index)? + 20)?,
+        };
+        (found.0 > 0 && file != u32::MAX).then_some((file, found.0 as u32, record))
+    }
+
+    /// A frame as a dump has it: at `address`, the next instruction to run
+    /// when `exact` and otherwise where a call returns to.
+    fn frame(&self, address: u64, exact: bool) -> Option<Value> {
+        let (_, meta) = self.function(if exact { address.wrapping_add(1) } else { address })?;
+        let site = if exact { None } else { self.call(address) };
+        let (file, line, record) = match site {
+            Some(site) => (u32_at(self.blob, site + 12)?, u32_at(self.blob, site + 4)?, u32_at(self.blob, site + 20)?),
+            None => self.line(if exact { address } else { address - 1 })?,
+        };
+        let mut inlined = Vec::new();
+        let mut outer = record;
+        while outer != u32::MAX {
+            let at = self.record(meta, outer)?;
+            let parent = u32_at(self.blob, at + 16)?;
+            inlined.push(json!({
+                "function": self.name(meta, parent)?,
+                "file": self.named(u32_at(self.blob, at + 12)?)?,
+                "line": u32_at(self.blob, at + 4)?,
+            }));
+            outer = parent;
+        }
+        Some(
+            json!({ "function": self.name(meta, record)?, "file": self.named(file)?, "line": line, "inlined": inlined }),
+        )
+    }
+}
+
+/// Adds to `stack` what the chain of frame pointers compiled code and the
+/// runtime keep says, from `frame` out.
+fn follow(mut frame: u64, memory: &Memory, stack: &mut Vec<u64>) {
+    while stack.len() < FRAMES && frame != 0 {
+        let (Some(next), Some(back)) = (memory.word(frame), memory.word(frame.wrapping_add(8))) else { break };
+        if back == 0 || next == frame {
+            break;
+        }
+        if stack.last() != Some(&back) {
+            stack.push(back);
+        }
+        frame = next;
+    }
+}
+
+/// The addresses of a thread's stack, from the innermost out. C code may
+/// not keep the chain: what it was called from is then the first return
+/// address of compiled code above it.
+fn stack(thread: &Thread, memory: &Memory, code: &Code) -> Vec<u64> {
+    let mut stack = vec![thread.pc];
+    if code.function(thread.pc.wrapping_add(1)).is_none() {
+        let end = thread.fp.min(thread.sp.saturating_add(0x10000));
+        let above = (thread.sp..end).step_by(8).filter_map(|at| memory.word(at));
+        let caller = thread.link.into_iter().chain(above).find(|&word| code.call(word).is_some());
+        stack.extend(caller);
+    }
+    follow(thread.fp, memory, &mut stack);
+    stack
+}
+
+/// A task in memory: its saved stack pointer, number, state, and whether
+/// it is the main task.
+struct Task {
+    sp: u64,
+    id: u64,
+    state: u8,
+    main: bool,
+}
+
+/// The tasks alive in the memory a core kept, each found by its mark: the
+/// runtime's lists would need the layout of what holds them.
+fn tasks(memory: &Memory) -> Vec<Task> {
+    const CHUNK: usize = 1 << 22;
+    let mut found = Vec::new();
+    for segment in &memory.kept {
+        let mut bytes = vec![0; CHUNK.min(segment.size as usize)];
+        let mut done = 0;
+        while done < segment.size {
+            let length = bytes.len().min((segment.size - done) as usize);
+            if memory.core.read_exact_at(&mut bytes[..length], segment.offset + done).is_err() {
+                break;
+            }
+            for at in (0..length.saturating_sub(7)).step_by(8) {
+                if u64_at(&bytes, at) != Some(TASK) {
+                    continue;
+                }
+                let Some(fields) = memory.read(segment.address + done + at as u64, TASK_FIELDS) else { continue };
+                let (sp, id) = (u64_at(&fields, 8).unwrap_or(0), u64_at(&fields, 16).unwrap_or(0));
+                if id != 0 && id < 1 << 48 {
+                    found.push(Task { sp, id, state: fields[24], main: fields[25] != 0 });
+                }
+            }
+            done += length as u64;
+        }
+    }
+    found.sort_by_key(|task| task.id);
+    found
+}
+
+fn signal_name(signal: u32) -> String {
+    let name = match signal {
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        5 => "SIGTRAP",
+        6 => "SIGABRT",
+        7 => "SIGBUS",
+        8 => "SIGFPE",
+        11 => "SIGSEGV",
+        31 => "SIGSYS",
+        _ => return format!("signal {signal}"),
+    };
+    format!("{name} (signal {signal})")
+}
+
+/// The core at `path` as a dump, its executable where the core says unless
+/// `executable` says otherwise.
+pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
+    let shown = path.display();
+    let not_core = || format!("{shown} is not a core of a 64-bit Linux program");
+    let file = std::fs::File::open(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let mut header = [0; 64];
+    file.read_exact_at(&mut header, 0).map_err(|_| not_core())?;
+    if header.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        return Err(format!("{shown} is compressed: `zstd -d` or `coredumpctl dump -o <file>` writes it whole"));
+    }
+    let machine = u16_at(&header, 0x12).unwrap_or(0);
+    if !header.starts_with(b"\x7fELF\x02\x01") || u16_at(&header, 0x10) != Some(4) || ![62, 183].contains(&machine) {
+        return Err(not_core());
+    }
+    let from_core = |at: u64, length: usize| {
+        let mut bytes = vec![0; length];
+        file.read_exact_at(&mut bytes, at).ok().map(|()| bytes)
+    };
+    let mut found = Notes::default();
+    for note in segments(&header, from_core, 4).ok_or_else(not_core)? {
+        let bytes = from_core(note.offset, note.size as usize).ok_or_else(|| format!("{shown} is cut short"))?;
+        notes(&bytes, machine, &mut found).ok_or_else(not_core)?;
+    }
+    if found.threads.is_empty() {
+        return Err(format!("{shown} has no threads"));
+    }
+
+    let mapped = found.files.iter().find(|file| file.start <= found.entry && found.entry < file.end);
+    let program = match (executable, mapped) {
+        (Some(path), _) => path.to_path_buf(),
+        (None, Some(mapped)) => PathBuf::from(&mapped.path),
+        (None, None) => return Err(format!("{shown} does not say its program: name it with `--executable <file>`")),
+    };
+    let bytes = std::fs::read(&program).map_err(|e| {
+        format!("cannot read the program of this core, {}: {e}; name it with `--executable <file>`", program.display())
+    })?;
+    let from_program = |at: u64, length: usize| bytes.get(at as usize..at as usize + length).map(<[u8]>::to_vec);
+    let wrong = || format!("{} is not an ELF program for this core", program.display());
+    let same = bytes.starts_with(b"\x7fELF\x02\x01") && u16_at(&bytes, 0x12) == Some(machine);
+    let loads = same.then(|| segments(&bytes, from_program, 1)).flatten().ok_or_else(wrong)?;
+    let entry = u64_at(&bytes, 0x18).ok_or_else(wrong)?;
+    let bias = found.entry.wrapping_sub(entry);
+
+    let mut kept = segments(&header, from_core, 1).ok_or_else(not_core)?;
+    kept.retain(|segment| segment.size > 0);
+    let memory = Memory { core: &file, kept, program: &bytes, loads, bias };
+    // The core keeps the first page of what is mapped from a file, so a
+    // build that is not this one shows.
+    let first =
+        found.files.iter().find(|file| file.offset == 0 && Some(file.path.as_str()) == mapped.map(|m| m.path.as_str()));
+    if let Some(kept) = first.and_then(|first| memory.kept.iter().find(|s| s.address == first.start)) {
+        let length = kept.size.min(4096) as usize;
+        if from_core(kept.offset, length).as_deref() != bytes.get(..length) {
+            let name = program.display();
+            return Err(format!("{name} is not the build this core is of: give that one with `--executable <file>`"));
+        }
+    }
+    let code = Code::of(&memory).ok_or_else(|| {
+        format!("{} is not a Tondo program of this version, or the core is cut short", program.display())
+    })?;
+
+    // Each task: on a thread when its stack is the one the thread is on,
+    // where the thread says; otherwise where it saved its registers.
+    let same_stack = |first: u64, second: u64| {
+        let holds = |segment: &&Segment, at: u64| segment.address <= at && at < segment.address + segment.size;
+        memory.kept.iter().find(|segment| holds(segment, first)).is_some_and(|segment| holds(&segment, second))
+    };
+    let saved = if machine == 62 { 5 * 8 } else { 10 * 8 };
+    let mut rows: Vec<(u64, bool, &str, Vec<u64>, bool)> = Vec::new();
+    let threads: Vec<(&Thread, Vec<u64>)> =
+        found.threads.iter().map(|thread| (thread, stack(thread, &memory, &code))).collect();
+    let mut placed = vec![false; threads.len()];
+    for task in tasks(&memory) {
+        let thread = threads.iter().position(|(thread, _)| same_stack(task.sp, thread.sp));
+        match thread.filter(|_| task.state != PARKED) {
+            Some(index) => {
+                placed[index] = true;
+                rows.push((task.id, task.main, "runs", threads[index].1.clone(), index == 0));
+            }
+            None => {
+                let mut stack = Vec::new();
+                follow(memory.word(task.sp.wrapping_add(saved)).unwrap_or(0), &memory, &mut stack);
+                let state = if task.state == PARKED { "waits" } else { "ready" };
+                rows.push((task.id, task.main, state, stack, false));
+            }
+        }
+    }
+    // A thread with no task, as one in the runtime or in C, shows when it
+    // has the program's code, or is what the signal stopped.
+    for (index, (thread, stack)) in threads.iter().enumerate() {
+        let compiled = stack.iter().any(|&address| code.function(address.wrapping_add(1)).is_some());
+        if !placed[index] && (index == 0 || compiled) {
+            rows.push((thread.id as u64, false, "runs", stack.clone(), index == 0));
+        }
+    }
+    rows.sort_by_key(|row| !row.4);
+
+    let mut frames = Map::new();
+    let image = program.display().to_string();
+    let own = mapped.map_or("", |mapped| mapped.path.as_str());
+    let mut tasks = Vec::new();
+    for (id, main, state, addresses, stopped) in rows {
+        for (at, &address) in addresses.iter().enumerate() {
+            let frame = code.frame(address, stopped && at == 0).unwrap_or_else(|| {
+                match found.files.iter().find(|file| file.start <= address && address < file.end) {
+                    Some(file) if file.path != own => {
+                        json!({ "image": file.path, "offset": address - file.start + file.offset })
+                    }
+                    _ => json!({ "image": image, "offset": address.wrapping_sub(bias) }),
+                }
+            });
+            frames.insert(format!("{address:x}"), frame);
+        }
+        let stack: Vec<String> = addresses.iter().map(|address| format!("{address:x}")).collect();
+        tasks.push(json!({
+            "id": id, "main": main, "state": state,
+            "cancelled": false, "stack": stack, "spawned": [], "locks": [], "contexts": [],
+        }));
+    }
+    let signal = signal_name(found.signal);
+    let place = if found.code > 0 { format!(" at address {:#x}", found.address) } else { String::new() };
+    let time = std::fs::metadata(path).and_then(|data| data.modified()).ok();
+    let time = time.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |time| time.as_millis());
+    let arguments: Vec<&str> = found.command.split_whitespace().skip(1).collect();
+    Ok(json!({
+        "dump": 1,
+        "reason": "fault",
+        "message": format!("{signal}{place}, from a system core, which says where tasks were and not what they held"),
+        "info": { "pid": found.threads[0].id, "program": image, "arguments": arguments, "uptime_ms": 0 },
+        "time_ms": time,
+        "stopped": true,
+        "counters": [],
+        "tasks": tasks,
+        "heap": { "rate": 0, "dropped": 0, "samples": [] },
+        "requests": [],
+        "events": [],
+        "sources": Roots::text_in(&bytes).unwrap_or_default(),
+        "lock_order": [],
+        "values": [],
+        "frames": frames,
+    }))
+}
+
+/// `tondo dump core`: writes a core as a dump, which every other command
+/// then reads.
+pub fn convert(core: &Path, executable: Option<&Path>, output: Option<&Path>) -> Result<PathBuf, String> {
+    let dump = read(core, executable)?;
+    let output = output.map_or_else(|| PathBuf::from(format!("{}.dump.json", core.display())), Path::to_path_buf);
+    let text = serde_json::to_string(&dump).map_err(|e| e.to_string())?;
+    std::fs::write(&output, text).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+    Ok(output)
+}

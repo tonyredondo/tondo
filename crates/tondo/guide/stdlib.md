@@ -724,6 +724,13 @@ is, by their signature, with the commit each was first seen at, `tondo dump repo
 <file>` makes one page of a dump, and `tondo dump redact <file> <output>` one to
 share, with where each task was and nothing the program held.
 
+A program that dies with no dump left, as one with no `TONDO_DUMP`, may leave a
+core of the system, on Linux. `tondo dump read <core> stacks` reads it as a dump,
+with the program where the core says, and `tondo dump core <core> --executable
+<file> --output <path>` writes the dump, for a program that is somewhere else: the
+signal and where every task and thread was, even in a build with `--strip`, not
+what they held. `coredumpctl dump <pid> -o <file>` takes one out of systemd.
+
 `tondo dump read <file> why` says what went wrong as far as the dump can tell:
 tasks that wait for each other, those that hold others up, the longest wait,
 many tasks in one place, the oldest requests, where the memory is. `stacks`

@@ -946,7 +946,10 @@ fn raw(path: &std::path::Path, bytes: &[u8]) -> Result<Value, String> {
 /// A dump from its file, compressed or not, with every frame named.
 pub fn load(path: &std::path::Path) -> Result<Value, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut dump = raw(path, &bytes)?;
+    let mut dump = match bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        true => crate::cores::read(path, None)?,
+        false => raw(path, &bytes)?,
+    };
     if dump.get("dump").is_none() {
         return Err(format!("{} is not a dump of a Tondo program", path.display()));
     }

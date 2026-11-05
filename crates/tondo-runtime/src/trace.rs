@@ -25,6 +25,8 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 /// call or parent is `u32::MAX`.
 #[repr(C)]
 pub struct Table {
+    /// What finds the table in a file, for what reads a core (toolchain 7.5).
+    magic: [u8; 16],
     functions: *const Function,
     count: u64,
     blob: *const u8,

@@ -5134,3 +5134,15 @@ is held is an edge of a graph, and a cycle is the bug without the bad luck. It c
 load for tasks that hold nothing. A lock is known by its address, and forgotten when
 it is freed, as another may come there. In a test it fails only when asked: the
 order may be fine for reasons the graph cannot see.
+
+## A core is read for where tasks were
+
+A program that dies with no dump leaves at most a core, and the runtime is not
+there to ask. A core has the threads, which in Tondo are mostly idle workers: what
+matters is on the stacks of tasks. Each task starts with a mark while it lives, so
+a scan of the memory finds them, without knowing how the runtime's lists are laid
+out, and even when those lists are what broke. The stack of a waiting task follows
+from what it saved; the lines come from the trace table of the executable, which
+has a mark too, as a `--strip` build has no symbols. Values would need the layout of
+every type and the code that shows it, which a core does not run, so it says where
+things were and no more, and turns into a dump for all that already reads one.

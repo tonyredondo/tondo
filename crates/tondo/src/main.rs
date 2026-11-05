@@ -1214,6 +1214,22 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         ["redact", file, output] => {
             tondo::observe::redact(Path::new(file), Path::new(output)).map(|()| ExitCode::SUCCESS)
         }
+        ["core", core, rest @ ..] => {
+            let (mut executable, mut output) = (None, None);
+            for pair in rest.chunks(2) {
+                match pair {
+                    ["--executable", file] => executable = Some(Path::new(*file)),
+                    ["--output", file] => output = Some(Path::new(*file)),
+                    _ => return Err(usage("dump core takes --executable <file> and --output <path>")),
+                }
+            }
+            let written = tondo::cores::convert(Path::new(core), executable, output)?;
+            match json {
+                true => println!("{}", serde_json::json!({ "schema": "tondo-dump-core-0.1/1", "file": written })),
+                false => println!("{}", written.display()),
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         ["report", file] => tondo::observe::report(Path::new(file), None).map(|()| ExitCode::SUCCESS),
         ["report", file, "--output", output] => {
             tondo::observe::report(Path::new(file), Some(Path::new(output))).map(|()| ExitCode::SUCCESS)

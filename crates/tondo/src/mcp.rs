@@ -1151,6 +1151,15 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
         "dump_group" => push(&["dump", "group", &args.need("dir")?, "--json"]),
+        "dump_core" => {
+            push(&["dump", "core", &args.need("core")?, "--json"]);
+            if let Some(executable) = args.text("executable") {
+                push(&["--executable", &executable]);
+            }
+            if let Some(output) = args.text("output") {
+                push(&["--output", &output]);
+            }
+        }
         "logpoint" => {
             push(&["logpoint", &args.need("program")?, &args.need("place")?]);
             if let Some(text) = args.text("text") {
@@ -2146,6 +2155,17 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
 are 3 bugs are 3 lines.",
         kind: Kind::Reads,
         params: &[("dir", "string!", "The directory of the dumps.")],
+    },
+    Tool {
+        name: "dump_core",
+        description: "Writes a core of the system as a dump, which `dump_read` and the other tools read: the signal, and \
+where each task and thread was. Linux; not what the program held.",
+        kind: Kind::Edits,
+        params: &[
+            ("core", "string!", "The core file, decompressed."),
+            ("executable", "string", "The program, when it is not where the core says."),
+            ("output", "string", "Where to write the dump; by default the core's path and `.dump.json`."),
+        ],
     },
     Tool {
         name: "dump_trend",

@@ -237,6 +237,7 @@ pub enum ResultKind {
 /// The states of a task: it runs, it is switching out to wait, it waits,
 /// or it was notified before it could wait; or it waits on its thread,
 /// since C frames on its stack keep it there.
+const TASK_MARK: u64 = u64::from_le_bytes(*b"TONDOTSK");
 const RUNNING: u8 = 0;
 const PARKING: u8 = 1;
 const PARKED: u8 = 2;
@@ -247,11 +248,17 @@ const PINNED: u8 = 4;
 static PINNED_LOCK: Mutex<()> = Mutex::new(());
 static PINNED_WAKE: Condvar = Condvar::new();
 
+#[repr(C)]
 pub(crate) struct Task {
+    /// `TASK_MARK` while the task is alive: what finds it in a core, which
+    /// knows the fields up to `main` (toolchain 7.5).
+    mark: u64,
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
     /// Its number in a trace, from 1 for the main task.
     pub(crate) id: u64,
+    state: AtomicU8,
+    main: bool,
     /// Where the set of tasks alive keeps it.
     slot: usize,
     /// None before a spawned task first runs: one started and not run yet
@@ -264,7 +271,6 @@ pub(crate) struct Task {
     join: *mut JoinObject,
     /// Its `defer` cleanups, innermost last (13.7).
     cleanups: Vec<(Cleanup, usize)>,
-    state: AtomicU8,
     /// Set by `cancel` (11.15): the task's waits end at once, and compiled
     /// code unwinds after them.
     cancelled: AtomicBool,
@@ -292,7 +298,6 @@ pub(crate) struct Task {
     /// When it blocked there, in milliseconds of `WAITS_FROM`.
     blocked_since: AtomicU64,
     finished: bool,
-    main: bool,
     /// For a task that runs a callback for a thread of C, the call.
     foreign: *const ForeignCall,
     /// Whether its clock is a test's virtual clock (testing 7.9).
@@ -1600,6 +1605,7 @@ fn run(task: *mut Task) {
                 recycle(stack);
             }
             unregister(task);
+            (*task).mark = 0;
             // A spawned task lives in its join's block.
             if join.is_null() {
                 drop(Box::from_raw(task));
@@ -2584,6 +2590,7 @@ fn new_task(
         super::debugger::began(id);
     }
     let task = Task {
+        mark: TASK_MARK,
         sp,
         id,
         slot: 0,

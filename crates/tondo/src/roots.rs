@@ -147,12 +147,17 @@ impl Roots {
     /// The table in an executable.
     pub fn of_executable(path: &Path) -> Result<Roots, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let text = Roots::text_in(&bytes).ok_or_else(|| format!("{} says nothing of its sources", path.display()))?;
+        Ok(Roots::parse(&text))
+    }
+
+    /// The table's text in the bytes of an executable.
+    pub fn text_in(bytes: &[u8]) -> Option<String> {
         let magic = MAGIC.as_bytes();
-        let start = bytes.windows(magic.len()).position(|window| window == magic);
-        let start = start.ok_or_else(|| format!("{} says nothing of its sources", path.display()))?;
+        let start = bytes.windows(magic.len()).position(|window| window == magic)?;
         let end = END.as_bytes();
         let length = bytes[start..].windows(end.len()).position(|window| window == end).unwrap_or(0);
-        Ok(Roots::parse(&String::from_utf8_lossy(&bytes[start..start + length])))
+        Some(String::from_utf8_lossy(&bytes[start..start + length]).into_owned())
     }
 
     /// The repository a file of the program is in, and its path there.

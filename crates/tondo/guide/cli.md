@@ -108,6 +108,7 @@ tondo dump diff a.dump b.dump     what changed between two dumps of a program
 tondo dump group dumps/           the dumps by the failure they are, the most frequent first
 tondo dump report a.dump          all of it as one page of HTML; --output a file
 tondo dump redact a.dump b.dump   a dump to share, without what the program held
+tondo dump core core.123          a core of the system as a dump; --executable, --output
 tondo dump trend dumps/           what keeps growing over dumps: a leak, by its line
 ```
 

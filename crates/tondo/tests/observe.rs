@@ -4700,3 +4700,154 @@ fn debug_adapter_stops_at_panics_and_opens_dumps() {
     assert_eq!(task["variables"][0]["name"], "state");
     adapter.stop();
 }
+
+/// A core of a running child as the kernel writes one, from what `/proc`
+/// says of it: its memory and files, and the signal that would have ended
+/// it. `None` under an emulator, whose process is not the program.
+#[cfg(target_os = "linux")]
+fn core_of(pid: u32, executable: &Path, core: &Path) -> Option<()> {
+    use std::os::unix::fs::FileExt;
+    let le = |value: u64| value.to_le_bytes();
+    let auxv = std::fs::read(format!("/proc/{pid}/auxv")).unwrap();
+    let entry = auxv.as_chunks::<16>().0.iter().find(|pair| pair[..8] == le(9))?;
+    let entry = u64::from_le_bytes(entry[8..].try_into().unwrap());
+    let memory = std::fs::File::open(format!("/proc/{pid}/mem")).unwrap();
+    let (mut files, mut names, mut segments) = (Vec::new(), Vec::new(), Vec::new());
+    let mut image = false;
+    for line in std::fs::read_to_string(format!("/proc/{pid}/maps")).unwrap().lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let (start, end) = fields[0].split_once('-').unwrap();
+        let (start, end) = (u64::from_str_radix(start, 16).unwrap(), u64::from_str_radix(end, 16).unwrap());
+        let offset = u64::from_str_radix(fields[2], 16).unwrap();
+        let path = fields.get(5).copied().unwrap_or_default();
+        if path.starts_with('/') {
+            files.extend([le(start), le(end), le(offset / 4096)].concat());
+            names.extend(path.as_bytes().iter().copied().chain([0]));
+            image |= start <= entry && entry < end && Path::new(path) == executable;
+        }
+        // As the kernel does: what the program wrote, not its code.
+        if fields[1].starts_with('r') && !fields[1].contains('x') && !path.starts_with("[v") {
+            let mut bytes = vec![0; (end - start) as usize];
+            if memory.read_exact_at(&mut bytes, start).is_ok() {
+                segments.push((start, bytes));
+            }
+        }
+    }
+    if !image {
+        return None;
+    }
+    let mut mapped = [le(files.len() as u64 / 24), le(4096)].concat();
+    mapped.extend(files);
+    mapped.extend(names);
+    let mut status = vec![0; 112 + 34 * 8];
+    status[32..36].copy_from_slice(&pid.to_le_bytes());
+    let mut signal = vec![0; 128];
+    signal[0] = 6;
+    let notes = [(1u32, status), (6, auxv), (0x4649_4c45, mapped), (0x5349_4749, signal)];
+    let mut note = Vec::new();
+    for (kind, bytes) in notes {
+        note.extend(5u32.to_le_bytes());
+        note.extend((bytes.len() as u32).to_le_bytes());
+        note.extend(kind.to_le_bytes());
+        note.extend(b"CORE\0\0\0\0");
+        note.extend(&bytes);
+        note.resize(note.len().next_multiple_of(4), 0);
+    }
+    let machine: u16 = if cfg!(target_arch = "x86_64") { 62 } else { 183 };
+    let mut header = b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0".to_vec();
+    header.extend(4u16.to_le_bytes());
+    header.extend(machine.to_le_bytes());
+    header.extend(1u32.to_le_bytes());
+    header.extend([0; 8]);
+    header.extend(le(64));
+    header.extend([0; 8]);
+    header.extend([0; 4]);
+    header.extend(64u16.to_le_bytes());
+    header.extend(56u16.to_le_bytes());
+    header.extend((segments.len() as u16 + 1).to_le_bytes());
+    header.extend([0; 6]);
+    let mut at = 64 + 56 * (segments.len() as u64 + 1);
+    let mut entry = |kind: u32, address: u64, size: u64| {
+        header.extend(kind.to_le_bytes());
+        header.extend([0; 4]);
+        header.extend([le(at), le(address), [0; 8], le(size), le(size), [0; 8]].concat());
+        at += size;
+    };
+    entry(4, 0, note.len() as u64);
+    for (address, bytes) in &segments {
+        entry(1, *address, bytes.len() as u64);
+    }
+    header.extend(note);
+    for (_, bytes) in segments {
+        header.extend(bytes);
+    }
+    std::fs::write(core, header).unwrap();
+    Some(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reads_a_core_with_the_tasks_that_waited() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("observe-core");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn deep(rounds: Int): Int {\n    let _ = console.readLine()\n    rounds + 1\n}\n\n\
+        fn middle(rounds: Int): Int {\n    let value = deep(rounds)\n    console.println(\"{value}\")\n    value\n}\n\n\
+        fn main() {\n    let other = spawn middle(2)\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
+        console.println(\"{other.wait()}\")\n}\n";
+    std::fs::write(dir.join("waits.to"), program).unwrap();
+    let executable = dir.join("waits");
+    let build = |output: &Path, flags: &[&str]| {
+        let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["build", "waits.to", "--output"])
+            .arg(output)
+            .args(flags)
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    // Without its symbols: the table of lines stays.
+    build(&executable, &["--strip"]);
+    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut said = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    said.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "ready");
+    // The task that reads is left waiting, or on a thread, in its own time.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let core = dir.join("waits.core");
+    let written = core_of(child.id(), &executable, &core);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    if written.is_none() {
+        return;
+    }
+
+    let core = core.to_str().unwrap();
+    let dump = tondo(&["dump", "read", core, "--json"]);
+    assert!(dump["summary"].as_str().unwrap().contains("SIGABRT (signal 6)"), "{dump}");
+    let stacks = tondo(&["dump", "read", core, "stacks", "--json"]);
+    let text = stacks.to_string();
+    assert!(text.contains("waits.to:18 in main"), "{text}");
+    assert!(text.contains("waits.to:4 in deep") && text.contains("waits.to:9 in middle"), "{text}");
+
+    // As a file, for a program that moved, for all that reads a dump.
+    let moved = dir.join("elsewhere");
+    std::fs::rename(&executable, &moved).unwrap();
+    let refused = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read", core]).output().unwrap();
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--executable"));
+    let dumps = dir.join("dumps");
+    std::fs::create_dir_all(&dumps).unwrap();
+    let output = dumps.join("waits.dump.json");
+    let args = ["dump", "core", core, "--executable", moved.to_str().unwrap(), "--output"];
+    let answer = tondo(&[&args[..], &[output.to_str().unwrap(), "--json"]].concat());
+    assert_eq!(answer["file"], output.to_str().unwrap());
+    assert_eq!(tondo(&["dump", "group", dumps.to_str().unwrap(), "--json"])["groups"][0]["count"], 1);
+
+    // Another build is not this one.
+    build(&dir.join("other"), &["--debug"]);
+    let args = ["dump", "core", core, "--executable", "other"];
+    let refused = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--executable"), "{refused:?}");
+}

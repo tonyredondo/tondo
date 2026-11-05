@@ -2936,19 +2936,20 @@ impl Codegen<'_> {
         }
         let handled = handlers.len() as u64 / 12;
         let handlers = define(&mut self.module, "tondo_trace_handlers", handlers);
-        let mut header = vec![0u8; 48];
-        header[8..16].copy_from_slice(&(self.traced.len() as u64).to_le_bytes());
-        header[24..32].copy_from_slice(&files_at.to_le_bytes());
-        header[40..48].copy_from_slice(&handled.to_le_bytes());
+        let mut header = vec![0u8; 64];
+        header[..16].copy_from_slice(crate::cores::MAGIC);
+        header[24..32].copy_from_slice(&(self.traced.len() as u64).to_le_bytes());
+        header[40..48].copy_from_slice(&files_at.to_le_bytes());
+        header[56..64].copy_from_slice(&handled.to_le_bytes());
         let mut data = DataDescription::new();
         data.define(header.into_boxed_slice());
         data.set_align(8);
         let functions = self.module.declare_data_in_data(functions, &mut data);
         let blob = self.module.declare_data_in_data(blob, &mut data);
         let handlers = self.module.declare_data_in_data(handlers, &mut data);
-        data.write_data_addr(0, functions, 0);
-        data.write_data_addr(16, blob, 0);
-        data.write_data_addr(32, handlers, 0);
+        data.write_data_addr(16, functions, 0);
+        data.write_data_addr(32, blob, 0);
+        data.write_data_addr(48, handlers, 0);
         self.module.define_data(id, &data).expect("trace table");
     }
 

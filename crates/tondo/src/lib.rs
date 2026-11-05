@@ -8,6 +8,7 @@ pub mod check;
 pub mod cli;
 pub mod codegen;
 pub mod compact;
+pub mod cores;
 pub mod dap;
 pub mod debug;
 pub mod debuginfo;
