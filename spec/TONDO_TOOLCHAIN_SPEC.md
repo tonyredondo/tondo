@@ -520,7 +520,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   parámetros en un tipo nuevo, escrito antes de ella como `Punto: x, y`, y sus
   llamadas pasan ese tipo (`tondo.group`); sobre un método, hacer un trait de varios
   métodos del tipo, escrito como `Forma: area, nombre`, con un `impl` que los llama,
-  ya que las llamadas sobre el tipo van a sus métodos (`tondo.trait`); y sobre una función, tipo, enum o constante que nada usa,
+  ya que las llamadas sobre el tipo van a sus métodos (`tondo.trait`); convertir una
+  función en método de su primer parámetro y un método en función, con sus llamadas
+  (`tondo.toMethod`, `tondo.toFunction`); escribir un `alias` donde se usa y quitarlo
+  (`tondo.inlineAlias`); y sobre una función, tipo, enum o constante que nada usa,
   borrarla con los comentarios de encima. Todo se
   comprueba analizando el programa como quedaría: lo que no compila se rechaza
   con su error. Al pasar sobre una función, el hover dice cómo puede fallar, en

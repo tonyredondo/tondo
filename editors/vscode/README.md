@@ -19,7 +19,8 @@ project, running, debugging and testing it.
   whole workspace too, with their quick fixes and a link to what their
   code means; hover; go to definition, type definition and
   implementations; references; call and type hierarchies; how many tests reach each function; group parameters
-  into a type, extract a trait, delete what nothing uses; change a signature,
+  into a type, extract a trait, make a function a method and back, inline an
+  alias, delete what nothing uses; change a signature,
   move a declaration to another module and inline a call, checked by compiling;
   rename, of
   files and folders too; completion, which writes the import of a module

@@ -1925,3 +1925,53 @@ fn extracts_a_trait_links_names_and_answers_for_diagnostics() {
     assert!(report["items"].as_array().unwrap().iter().any(|d| d["severity"] == 1), "{report}");
     editor.stop();
 }
+
+#[test]
+fn moves_between_functions_and_methods_and_inlines_aliases() {
+    let main = "import app.shapes\n\npub type Square = { side: Int }\n\nalias Side = Int\n\n\
+        pub fn area(square: Square, by: Side): Int {\n    square.side * square.side * by\n}\n\n\
+        pub fn Square.twice(self, more: Int): Int {\n    self.side * 2 + more\n}\n\n\
+        fn main() {\n    let one = Square { side: 2 }\n    _ = area(one, 3) + one.twice(1) + shapes.same(one)\n}\n";
+    let shapes = "import app\n\npub fn same(square: app.Square): Int {\n    app.area(square, 1) + square.twice(0)\n}\n";
+    let dir = project(
+        "lsp-to-method",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"),
+            ("src/main.to", main),
+            ("src/shapes/shapes.to", shapes),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let position = |word: &str| {
+        let at = main.find(word).unwrap();
+        json!({ "line": main[..at].matches('\n').count(), "character": at - main[..at].rfind('\n').map_or(0, |i| i + 1) })
+    };
+    let run = |editor: &mut Editor, command: &str, word: &str| {
+        let params = json!({ "command": command, "arguments": [uri, position(word)] });
+        let answer = editor.request("workspace/executeCommand", params);
+        assert!(answer["error"].is_null(), "{answer}");
+        applied(&answer["edit"], &dir)
+    };
+    let edited = run(&mut editor, "tondo.toMethod", "area(square");
+    let text = &edited["src/main.to"];
+    assert!(text.contains("pub fn Square.area(self, by: Side): Int {\n    self.side * self.side * by"), "{text}");
+    assert!(text.contains("one.area(3)"), "{text}");
+    assert!(edited["src/shapes/shapes.to"].contains("square.area(1)"), "{}", edited["src/shapes/shapes.to"]);
+
+    let edited = run(&mut editor, "tondo.toFunction", "twice(self");
+    let text = &edited["src/main.to"];
+    assert!(text.contains("pub fn twice(square: Square, more: Int): Int {\n    square.side * 2 + more"), "{text}");
+    assert!(text.contains("twice(one, 1)"), "{text}");
+    assert!(edited["src/shapes/shapes.to"].contains("app.twice(square, 0)"), "{}", edited["src/shapes/shapes.to"]);
+
+    let at = position("Side = Int");
+    let range = json!({ "start": at, "end": at });
+    let params = json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } });
+    let found = editor.request("textDocument/codeAction", params).to_string();
+    assert!(found.contains("Inline the alias `Side`"), "{found}");
+    let edited = run(&mut editor, "tondo.inlineAlias", "Side = Int");
+    let text = &edited["src/main.to"];
+    assert!(text.contains("by: Int") && !text.contains("alias"), "{text}");
+    editor.stop();
+}

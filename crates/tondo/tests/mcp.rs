@@ -586,3 +586,21 @@ fn tests_by_what_changed_and_by_commit() {
     assert!(text.contains("unreached") || found.to_string().contains("unreached"), "{found}{text}");
     agent.stop();
 }
+
+#[test]
+fn refactors_rewrite_the_files() {
+    let main = "pub type Square = { side: Int }\n\npub fn area(square: Square): Int {\n    square.side * square.side\n}\n\n\
+        fn unused(): Int {\n    1\n}\n\nfn main() {\n    _ = area(Square { side: 2 })\n}\n";
+    let dir = project("mcp-refactor", &[("main.to", main)]);
+    let mut agent = Agent::start(&dir);
+    let file = dir.join("main.to");
+    let (_, text) = agent.call("refactor", json!({ "file": file, "line": 3, "column": 8, "kind": "to_method" }));
+    assert!(text.contains("main.to"), "{text}");
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(written.contains("pub fn Square.area(self): Int"), "{written}");
+    let line = written.lines().position(|l| l.contains("fn unused")).unwrap() + 1;
+    agent.call("refactor", json!({ "file": file, "line": line, "column": 4, "kind": "delete" }));
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(!written.contains("unused"), "{written}");
+    agent.stop();
+}

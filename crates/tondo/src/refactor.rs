@@ -105,6 +105,36 @@ pub fn parameter_name(text: &str) -> &str {
     text.split([':', ' ']).next().unwrap_or(text)
 }
 
+/// Where the value a `.` at `dot` is after starts: a name, what calls and
+/// indexes follow it, and the names before it.
+pub fn receiver_start(text: &str, dot: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut at = dot;
+    while at > 0 {
+        let byte = bytes[at - 1];
+        if byte == b')' || byte == b']' {
+            let open = if byte == b')' { b'(' } else { b'[' };
+            let mut depth = 0;
+            while at > 0 {
+                at -= 1;
+                if bytes[at] == byte {
+                    depth += 1;
+                } else if bytes[at] == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+            }
+        } else if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' {
+            at -= 1;
+        } else {
+            break;
+        }
+    }
+    at
+}
+
 /// A list of parameters as a person writes it: `a: Int, b: String = "x"`.
 pub fn parameters(list: &str) -> Result<Vec<Parameter>, String> {
     let bytes = list.as_bytes();

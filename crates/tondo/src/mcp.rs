@@ -195,9 +195,8 @@ impl Server {
                 }
                 Ok(Reply::new(graph.text(view), graph.json(view == View::Packages)))
             }
-            "definition" | "references" | "hover" | "complete" | "rename" | "symbols" | "implementations" | "calls" => {
-                language(name, args)
-            }
+            "definition" | "references" | "hover" | "complete" | "rename" | "refactor" | "symbols"
+            | "implementations" | "calls" => language(name, args),
             "profile" => profile(args),
             "explain" => {
                 let code = args.need("code")?;
@@ -806,6 +805,38 @@ fn language(name: &str, args: &Args) -> Result<Reply, String> {
             };
             Ok(Reply::new(text, json!({ "places": places })))
         }
+        "refactor" => {
+            let kind = args.need("kind")?;
+            let names: Vec<&str> = REFACTORS.iter().map(|(name, _)| *name).collect();
+            let (_, how) = REFACTORS
+                .iter()
+                .find(|(name, _)| *name == kind)
+                .ok_or_else(|| format!("`kind` is one of {}", names.join(", ")))?;
+            let answer = match how.strip_prefix("tondo.") {
+                Some(_) => {
+                    let mut arguments = vec![document["uri"].clone(), position.clone()];
+                    arguments.extend(args.text("argument").map(Value::from));
+                    server.ask("workspace/executeCommand", &json!({ "command": how, "arguments": arguments }))?
+                }
+                None => {
+                    let range = json!({ "start": position, "end": position });
+                    let context = json!({ "diagnostics": [] });
+                    let params = json!({ "textDocument": document, "range": range, "context": context });
+                    let actions = server.ask("textDocument/codeAction", &params)?;
+                    let found = actions
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|action| action["title"].as_str().is_some_and(|title| title.starts_with(how)));
+                    found.cloned().ok_or(format!("`{kind}` does not apply at that line and column"))?
+                }
+            };
+            if let Some(error) = answer["error"].as_str() {
+                return Err(error.to_string());
+            }
+            let changes = answer["edit"]["changes"].as_object().ok_or("that refactor changes nothing there")?;
+            written(changes)
+        }
         "hover" => {
             let answer = server.ask("textDocument/hover", &at)?;
             let text = answer["contents"]["value"].as_str().unwrap_or("nothing is known there").to_string();
@@ -843,35 +874,51 @@ fn language(name: &str, args: &Args) -> Result<Reply, String> {
             let Some(changes) = answer["changes"].as_object() else {
                 return Err("no declaration of the program is named there".into());
             };
-            let mut changed = Vec::new();
-            for (uri, edits) in changes {
-                let path = crate::lsp::uri_path(uri).ok_or_else(|| format!("cannot rename in {uri}"))?;
-                let mut text =
-                    std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-                let mut spans: Vec<(usize, usize, &str)> = edits
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|edit| {
-                        let start = offset(&text, &edit["range"]["start"])?;
-                        Some((start, offset(&text, &edit["range"]["end"])?, edit["newText"].as_str()?))
-                    })
-                    .collect();
-                spans.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
-                for (start, end, replacement) in &spans {
-                    text.replace_range(start..end, replacement);
-                }
-                std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-                changed.push(json!({ "file": relative(&path), "edits": spans.len() }));
-            }
-            let text = changed
-                .iter()
-                .map(|c| format!("{}: {} edits\n", c["file"].as_str().unwrap_or_default(), c["edits"]))
-                .collect();
-            Ok(Reply::new(text, json!({ "changed": changed })))
+            written(changes)
         }
     }
 }
+
+/// Writes the edits of an answer, by file: what changed.
+fn written(changes: &serde_json::Map<String, Value>) -> Result<Reply, String> {
+    let mut changed = Vec::new();
+    for (uri, edits) in changes {
+        let path = crate::lsp::uri_path(uri).ok_or_else(|| format!("cannot edit {uri}"))?;
+        let mut text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut spans: Vec<(usize, usize, &str)> = edits
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|edit| {
+                let start = offset(&text, &edit["range"]["start"])?;
+                Some((start, offset(&text, &edit["range"]["end"])?, edit["newText"].as_str()?))
+            })
+            .collect();
+        spans.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        for (start, end, replacement) in &spans {
+            text.replace_range(start..end, replacement);
+        }
+        std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        changed.push(json!({ "file": relative(&path), "edits": spans.len() }));
+    }
+    let text =
+        changed.iter().map(|c| format!("{}: {} edits\n", c["file"].as_str().unwrap_or_default(), c["edits"])).collect();
+    Ok(Reply::new(text, json!({ "changed": changed })))
+}
+
+/// The refactors of the language server, by the name the tool gives them:
+/// its command, or the start of its code action's title.
+const REFACTORS: [(&str, &str); 9] = [
+    ("signature", "tondo.signature"),
+    ("move", "tondo.moveTo"),
+    ("group", "tondo.group"),
+    ("trait", "tondo.trait"),
+    ("to_method", "tondo.toMethod"),
+    ("to_function", "tondo.toFunction"),
+    ("inline_alias", "tondo.inlineAlias"),
+    ("inline_call", "Inline this call"),
+    ("delete", "Delete `"),
+];
 
 /// The lines of the files places are in, read once.
 #[derive(Default)]
@@ -1910,6 +1957,20 @@ imports. Given a directory or file inside a project, its project, and the module
         description: "Rename the program's declaration at a place, and every reference to it, rewriting the files.",
         kind: Kind::Edits,
         params: &[FILE, LINE, COLUMN, ("new_name", "string!", "The new name.")],
+    },
+    Tool {
+        name: "refactor",
+        description: "A refactor at a place, rewriting the files, refused if the program would not check: `signature` \
+with the new parameters, `move` with a module, `group` with `Point: x, y`, `trait` with `Shape: area, name`, \
+`to_method`, `to_function`, `inline_alias`, `inline_call`, `delete`.",
+        kind: Kind::Edits,
+        params: &[
+            FILE,
+            LINE,
+            COLUMN,
+            ("kind", "string!", "Which refactor."),
+            ("argument", "string", "What it takes, for `signature`, `move`, `group` and `trait`."),
+        ],
     },
     Tool {
         name: "implementations",

@@ -376,7 +376,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait",
+                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
@@ -582,6 +582,9 @@ impl Server {
             "tondo.moveTo" => return Some(answer(self.move_to(arguments))),
             "tondo.group" => return Some(answer(self.group_parameters(arguments))),
             "tondo.trait" => return Some(answer(self.extract_trait(arguments))),
+            "tondo.toMethod" => return Some(answer(self.function_as_method(arguments))),
+            "tondo.toFunction" => return Some(answer(self.method_as_function(arguments))),
+            "tondo.inlineAlias" => return Some(answer(self.inline_alias(arguments))),
             "tondo.modules" => return self.own_modules(arguments),
             "tondo.useDump" => {
                 let file = arguments[0].as_str().map(Path::new);
@@ -2723,6 +2726,32 @@ impl Server {
             let command = json!({ "title": "Extract", "command": "tondo.extractTrait", "arguments": place });
             actions.push(json!({ "title": "Extract a trait from methods", "kind": "refactor", "command": command }));
         }
+        // The rest ask nothing: the client runs them, and they say why not.
+        let refactor = |title: String, name: &str| {
+            let mut arguments = json!([name]);
+            arguments.as_array_mut().expect("an array").extend(place.as_array().expect("an array").iter().cloned());
+            let command = json!({ "title": title, "command": "tondo.refactor", "arguments": arguments });
+            json!({ "title": title, "kind": "refactor", "command": command })
+        };
+        match declared.kind {
+            DefKind::Function if declared.name != "main" => {
+                actions.push(refactor(
+                    format!("Make `{}` a method of its first parameter", declared.name),
+                    "tondo.toMethod",
+                ));
+            }
+            DefKind::Method => {
+                actions.push(refactor(format!("Make `{}` a function", declared.name), "tondo.toFunction"));
+            }
+            DefKind::Type => {
+                let home = analyzed.analysis.sources.file_of(declared.decl_span.start);
+                let at = (declared.decl_span.start - home.base) as usize;
+                if home.text[at..].trim_start_matches("pub ").starts_with("alias ") {
+                    actions.push(refactor(format!("Inline the alias `{}`", declared.name), "tondo.inlineAlias"));
+                }
+            }
+            _ => {}
+        }
         if matches!(declared.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const) {
             let command = json!({ "title": "Move", "command": "tondo.moveToModule", "arguments": place });
             actions.push(json!({ "title": format!("Move `{}` to another module", declared.name), "kind": "refactor.move", "command": command }));
@@ -2752,6 +2781,152 @@ impl Server {
         let edits = vec![(Span::new(home.base + start as u32, home.base + end as u32), String::new())];
         let edit = self.checked_edit(&path, &edits).ok()?;
         Some(json!({ "title": format!("Delete `{name}`, which nothing uses"), "kind": "refactor", "edit": edit }))
+    }
+
+    /// `tondo.toMethod`: `fn area(s: Square)` as `fn Square.area(self)`, what
+    /// reads `s` as `self`, and its calls as `value.area()`.
+    fn function_as_method(&mut self, arguments: &Value) -> Result<Value, String> {
+        use crate::refactor::{list_at, parameter_name};
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no function here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let sources = &analyzed.analysis.sources;
+        let declared = &index.defs[def];
+        let home = sources.file_of(declared.name_span.start);
+        let list = list_at(&home.text, (declared.name_span.end - home.base) as usize).ok_or("no parameters here")?;
+        let &(first_start, first_end) = list.items.first().ok_or("it has no parameter to be the method of")?;
+        let first = &home.text[first_start..first_end];
+        let (name, ty) = first.split_once(':').ok_or("its first parameter has no type here")?;
+        let (name, ty) = (parameter_name(name), ty.split('=').next().unwrap_or_default().trim());
+        if !ty.chars().all(|c| c.is_alphanumeric() || c == '_') || ty.is_empty() {
+            return Err(format!("`{ty}` is not a type of this project a method can be declared on"));
+        }
+        let name_at = declared.name_span;
+        let mut edits = vec![(name_at, format!("{ty}.{}", declared.name))];
+        // `self`, then what came after it.
+        let rest = list.items.get(1).map_or(list.close, |&(start, _)| start);
+        edits.push((Span::new(home.base + first_start as u32, home.base + rest as u32), {
+            if list.items.len() > 1 { "self, ".to_string() } else { "self".to_string() }
+        }));
+        for (id, parameter) in index.defs.iter().enumerate() {
+            let inside = declared.decl_span.start <= parameter.name_span.start
+                && parameter.name_span.end <= declared.decl_span.end;
+            if parameter.kind == DefKind::Parameter && inside && parameter.name == name {
+                for read in index.references(id).into_iter().filter(|read| *read != parameter.name_span) {
+                    edits.push((read, "self".to_string()));
+                }
+            }
+        }
+        for span in index.references(def).into_iter().filter(|span| *span != name_at) {
+            let file = sources.file_of(span.start);
+            let call = list_at(&file.text, (span.end - file.base) as usize).ok_or_else(|| {
+                let (_, line, _) = sources.position(span.start);
+                format!("`{}` is used as a value at {}:{line}: change that first", declared.name, file.logical)
+            })?;
+            let &(start, end) = call.items.first().ok_or("a call passes nothing")?;
+            let receiver = &file.text[start..end];
+            let plain = receiver.chars().all(|c| c.is_alphanumeric() || "_.()[]".contains(c));
+            let receiver = if plain { receiver.to_string() } else { format!("({receiver})") };
+            // From a qualifier on, as `shapes.area`.
+            let before = &file.text[..(span.start - file.base) as usize];
+            let qualifier =
+                before.len() - before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.').len();
+            let begin = file.base + (before.len() - qualifier) as u32;
+            let others: Vec<&str> = call.items[1..].iter().map(|&(a, b)| &file.text[a..b]).collect();
+            let written = format!("{receiver}.{}({})", declared.name, others.join(", "));
+            edits.push((Span::new(begin, file.base + call.close as u32 + 1), written));
+        }
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits)
+    }
+
+    /// `tondo.toFunction`: `fn Square.area(self)` as `fn area(square: Square)`,
+    /// and its calls as `area(value)`.
+    fn method_as_function(&mut self, arguments: &Value) -> Result<Value, String> {
+        use crate::refactor::list_at;
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no method here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let sources = &analyzed.analysis.sources;
+        let declared = &index.defs[def];
+        let home = sources.file_of(declared.name_span.start);
+        let start = (declared.name_span.start - home.base) as usize;
+        let dot = home.text[..start].rfind('.').ok_or("this is not a method of a type")?;
+        let ty_at = home.text[..dot].rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |at| at + 1);
+        let ty = &home.text[ty_at..dot];
+        let list = list_at(&home.text, start + declared.name.len()).ok_or("no parameters here")?;
+        let &(first_start, first_end) = list.items.first().ok_or("it has no `self`")?;
+        if home.text[first_start..first_end].trim() != "self" {
+            return Err("only a method that takes `self` as it is becomes a function".to_string());
+        }
+        let bound = {
+            let mut letters = ty.chars();
+            letters.next().map_or(String::new(), |c| c.to_lowercase().chain(letters).collect())
+        };
+        let mut edits = vec![
+            (Span::new(home.base + ty_at as u32, declared.name_span.end), declared.name.clone()),
+            (Span::new(home.base + first_start as u32, home.base + first_end as u32), format!("{bound}: {ty}")),
+        ];
+        // What reads `self`, in the body.
+        let body = &home.text[list.close..(declared.decl_span.end - home.base) as usize];
+        let base = home.base + list.close as u32;
+        let tokens = body.match_indices("self").filter(|(at, _)| {
+            let before = body[..*at].chars().next_back();
+            let after = body[at + 4..].chars().next();
+            let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            !word(before) && !word(after)
+        });
+        edits.extend(tokens.map(|(at, _)| (Span::new(base + at as u32, base + at as u32 + 4), bound.clone())));
+        let module = home.module.rsplit('.').next().unwrap_or_default().to_string();
+        for span in index.references(def).into_iter().filter(|span| *span != declared.name_span) {
+            let file = sources.file_of(span.start);
+            let name_at = (span.start - file.base) as usize;
+            let call = list_at(&file.text, (span.end - file.base) as usize).ok_or_else(|| {
+                let (_, line, _) = sources.position(span.start);
+                format!("`{}` is used as a value at {}:{line}: change that first", declared.name, file.logical)
+            })?;
+            let receiver_end =
+                name_at.checked_sub(1).filter(|&at| file.text.as_bytes()[at] == b'.').ok_or_else(|| {
+                    let (_, line, _) = sources.position(span.start);
+                    format!("a call at {}:{line} does not go through a value: change that first", file.logical)
+                })?;
+            let receiver_start = crate::refactor::receiver_start(&file.text, receiver_end);
+            let receiver = &file.text[receiver_start..receiver_end];
+            let mut passed = vec![receiver.to_string()];
+            passed.extend(call.items.iter().map(|&(a, b)| file.text[a..b].to_string()));
+            let name =
+                if file.base == home.base { declared.name.clone() } else { format!("{module}.{}", declared.name) };
+            let written = format!("{name}({})", passed.join(", "));
+            edits.push((Span::new(file.base + receiver_start as u32, file.base + call.close as u32 + 1), written));
+        }
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits)
+    }
+
+    /// `tondo.inlineAlias`: what names an alias names what it stands for, and
+    /// the alias goes.
+    fn inline_alias(&mut self, arguments: &Value) -> Result<Value, String> {
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no alias here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let declared = &index.defs[def];
+        let home = analyzed.analysis.sources.file_of(declared.name_span.start);
+        let start = (declared.decl_span.start - home.base) as usize;
+        let end = (declared.decl_span.end - home.base) as usize;
+        let (_, stands_for) = home.text[start..end].split_once('=').ok_or("this is not an alias")?;
+        let stands_for = stands_for.trim().to_string();
+        let (first, last) = declaration_lines(home, declared);
+        let mut edits = vec![(Span::new(home.base + first as u32, home.base + last as u32), String::new())];
+        let uses = index.references(def).into_iter().filter(|span| *span != declared.name_span);
+        edits.extend(uses.map(|span| (span, stands_for.clone())));
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits)
     }
 
     /// `tondo.trait`: `Named: area, name` gives the type of the method at a

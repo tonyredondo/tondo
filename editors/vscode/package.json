@@ -384,6 +384,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.refactor",
+        "title": "Apply a Refactor",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.moveToModule",
         "title": "Move to Another Module",
         "category": "Tondo"
@@ -751,6 +756,10 @@
         },
         {
           "command": "tondo.bisectTest",
+          "when": "false"
+        },
+        {
+          "command": "tondo.refactor",
           "when": "false"
         }
       ],

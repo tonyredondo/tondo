@@ -156,3 +156,7 @@ declarations.
 
 `api_diff` says what a project's public API lost or changed since a commit, and
 `unreached` what code neither `main` nor a test reaches.
+
+`refactor` changes a signature, moves a declaration, groups parameters, extracts a
+trait, makes a function a method or the reverse, inlines an alias or a call, or deletes
+what nothing uses, refused if the program would not check.
