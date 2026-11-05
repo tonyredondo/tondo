@@ -868,6 +868,8 @@ pub enum View {
     Requests,
     /// What the program did last.
     Events,
+    /// Where its files came from, and whether those at hand are the same.
+    Sources,
     /// Where a text is: in values, stacks, contexts and the memory's sites.
     Find(String),
 }
@@ -1071,6 +1073,8 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Stacks => stacks_text(&stacks(&tasks)),
         View::Requests if json => return shown("requests", Value::Array(requests(&dump))),
         View::Requests => requests_text(&requests(&dump)),
+        View::Sources if json => return shown("sources", sources(&dump)),
+        View::Sources => sources_text(&sources(&dump)),
         View::Events if json => return shown("events", Value::Array(events(&dump))),
         View::Events => events_text(&events(&dump)),
         View::Find(text) => {
@@ -1269,10 +1273,10 @@ fn diff_text(found: &Value) -> String {
 
 /// A dump as a debugger shows it after the fact (toolchain 7.6): its
 /// summary, each task with its stack in words, and the memory by site.
-pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value), String> {
+pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value, crate::roots::Roots), String> {
     let dump = load(path)?;
     let summary = format!("{}\n{}\n", why_text(&why(&dump)), summary(&dump).trim_end());
-    Ok((summary, tasks(&dump), heap(&dump)))
+    Ok((summary, tasks(&dump), heap(&dump), roots_of(&dump)))
 }
 
 /// Names each frame the program did not, from the symbols of its files.
@@ -1394,6 +1398,100 @@ fn task_text(task: &Value, whole: bool) -> String {
         out.push_str(&format!("  {}: {}\n", context["name"].as_str().unwrap_or_default(), fields.join(", ")));
     }
     out
+}
+
+/// The table of where a dump's program came from.
+pub(crate) fn roots_of(dump: &Value) -> crate::roots::Roots {
+    crate::roots::Roots::parse(dump["sources"].as_str().unwrap_or_default())
+}
+
+/// Each file of a dump's program, where it is for a tool here, and where it
+/// came from.
+fn sources(dump: &Value) -> Value {
+    use crate::roots::Found;
+    let roots = roots_of(dump);
+    let here = std::env::current_dir().unwrap_or_default();
+    let file = |file: &String| {
+        let state = match roots.find(&here, file) {
+            Found::Same(_) => "same",
+            Found::Changed(_) => "changed",
+            Found::Elsewhere => "elsewhere",
+            Found::Lost => "lost",
+        };
+        json!({ "file": file, "state": state, "link": roots.link(file, 1) })
+    };
+    let repositories: Vec<Value> = roots
+        .roots
+        .iter()
+        .map(|root| json!({ "prefix": root.prefix, "repository": root.repository, "commit": root.commit }))
+        .collect();
+    json!({ "repositories": repositories, "files": roots.files.keys().map(file).collect::<Vec<_>>() })
+}
+
+fn sources_text(found: &Value) -> String {
+    let mut out = String::new();
+    let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
+    if list("repositories").is_empty() {
+        return "this dump does not say where its files came from".to_string();
+    }
+    for root in list("repositories") {
+        let (repository, commit) =
+            (root["repository"].as_str().unwrap_or_default(), root["commit"].as_str().unwrap_or_default());
+        match root["prefix"].as_str().unwrap_or_default() {
+            "" => out.push_str(&format!("the program: {repository} at {commit}\n")),
+            prefix => out.push_str(&format!("{}: {repository} at {commit}\n", prefix.trim_end_matches('/'))),
+        }
+    }
+    for file in list("files") {
+        let (name, link) = (file["file"].as_str().unwrap_or_default(), file["link"].as_str().unwrap_or_default());
+        match file["state"].as_str().unwrap_or_default() {
+            "same" => out.push_str(&format!("  {name}\n")),
+            "changed" => out.push_str(&format!("  {name}: it changed since the build\n")),
+            "elsewhere" => {
+                out.push_str(&format!("  {name}: not as it was here; `tondo source {name} --from <dump>`, {link}\n"))
+            }
+            _ => out.push_str(&format!("  {name}: lost\n")),
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// `tondo source <file> --from <dump|recording|executable>`: the file of a
+/// build, as it was: here if it is the same, or from the commit it was
+/// built from, which comes from its repository the first time.
+pub fn source(file: &str, from: &std::path::Path, line: u64, json: bool) -> Result<(), String> {
+    use crate::roots::{Found, Roots};
+    let program = from.join("program");
+    let roots = match (program.is_file(), load(from)) {
+        (true, _) => Roots::of_executable(&program)?,
+        (_, Ok(dump)) => roots_of(&dump),
+        _ => Roots::of_executable(from)?,
+    };
+    let here = std::env::current_dir().unwrap_or_default();
+    let found = roots.find(&here, file);
+    let link = roots.link(file, line);
+    let (path, state) = match found {
+        Found::Same(path) => (path, "same"),
+        Found::Changed(path) => (path, "changed"),
+        Found::Elsewhere => {
+            let fetched = roots.fetch(file).map_err(|e| match &link {
+                Some(link) => format!("{e}; it is at {link}"),
+                None => e,
+            })?;
+            (fetched, "fetched")
+        }
+        Found::Lost => return Err(format!("{} does not say where {file} came from", from.display())),
+    };
+    if json {
+        let commit = roots.place(file).map(|(root, _)| root.commit.clone());
+        crate::cli::print_json("source", true, json!({ "path": path, "state": state, "link": link, "commit": commit }));
+        return Ok(());
+    }
+    println!("{}", path.display());
+    if state == "changed" {
+        eprintln!("tondo: {file} changed since the build, so its lines may not be those of the build");
+    }
+    Ok(())
 }
 
 /// What the program did last, the oldest first, with places in words.
@@ -1888,6 +1986,14 @@ fn summary(dump: &Value) -> String {
         reason => format!("at a {reason}"),
     };
     let mut out = format!("{} (pid {}), dumped {reason}, after {uptime}\n", program_name(info), info["pid"]);
+    if let Some(built) = roots_of(dump).summary() {
+        out.push_str(&format!("{built}\n"));
+    }
+    let found = sources(dump);
+    let others = found["files"].as_array().into_iter().flatten().filter(|file| file["state"] != "same").count();
+    if others > 0 {
+        out.push_str(&format!("{others} of its files are not here as it was built: `dump read <file> sources`\n"));
+    }
     for line in dump["message"].as_str().unwrap_or_default().lines() {
         out.push_str(&format!("  {line}\n"));
     }

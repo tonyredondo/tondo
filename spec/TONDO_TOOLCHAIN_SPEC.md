@@ -102,6 +102,7 @@ outputs = ["proto.user"]
   los nombra, y `check` lo comprueba solo para ellos. `tondo new` escribe
   `version = "0.1.0"`.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
+- `[source]`, con `url`, dice cómo enlazar una línea en un host propio (7.5).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
   las pruebas del proyecto (5.5 de la especificación de testing): los
   archivos `_test.to` y los de `tests/` las importan, el programa no, y
@@ -840,6 +841,28 @@ hasta 256: las tareas que empezó y que acabaron, los pánicos, también los que
 `recover` paró, las peticiones, las esperas de 100 ms o más y las pausas del
 colector, cada uno con cuánto antes del volcado fue. Solo los apunta un programa
 con `TONDO_DUMP`, `TONDO_DUMP_VALUES=off` los quita, y `why` da los diez últimos.
+
+Cada ejecutable guarda de dónde vienen sus fuentes, salvo con `tondo build
+--no-source-links`: el repositorio y el commit del programa, el `remote.origin.url`
+de su repositorio y su `HEAD`, y los de cada dependencia, la URL y el commit de
+`tondo.lock`, sin credenciales, y un hash de cada archivo; `<std>/` viene con el
+propio `tondo`. Los volcados lo copian, `dump read` dice de qué commit es y cuántos
+archivos no están aquí como se compilaron, y `sources` da cada uno. `tondo source
+<archivo> --from <volcado|grabación|ejecutable>` da el archivo tal como se compiló:
+el de aquí si su hash coincide, o el del commit, que llega de la caché de `tondo` o
+de su repositorio con las credenciales de git, trayendo solo ese archivo, y se
+queda en la caché. El hash dice también si el build tenía cambios sin confirmar: el
+archivo del commit no coincidirá. `tondo dap` da en los marcos una referencia a lo
+que no está aquí como se compiló, y al abrirla el editor lo descarga: se navega y
+admite breakpoints como un archivo local. Si no llega, por un repositorio privado
+sin acceso, dice dónde está. El enlace de una línea sale de plantillas para GitHub,
+GitLab, Bitbucket, Gitea, Forgejo y Azure DevOps, por el dominio; otro host escribe
+la suya en `tondo.toml`, con `{repo}`, `{commit}`, `{path}` y `{line}`:
+
+~~~toml
+[source]
+url = "https://git.acme.com/{repo}/blob/{commit}/{path}#L{line}"
+~~~
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.

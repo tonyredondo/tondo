@@ -2855,6 +2855,121 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     assert!(String::from_utf8_lossy(&tasks.stdout).contains("in measure"), "{tasks:?}");
 }
 
+/// Runs git in `dir`, which must work.
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(["-c", "user.email=a@example.com", "-c", "user.name=a"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn a_build_says_where_its_files_came_from_and_brings_them_back() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sources");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    // A library and a service in a directory of a repository, both pushed.
+    for bare in ["lib.git", "app.git"] {
+        git(&dir, &["init", "--quiet", "--bare", bare]);
+    }
+    git(&dir, &["clone", "--quiet", "lib.git", "lib"]);
+    let lib = dir.join("lib");
+    std::fs::create_dir_all(lib.join("src")).unwrap();
+    std::fs::write(lib.join("tondo.toml"), "[package]\nname = \"greet\"\nversion = \"1.0.0\"\n").unwrap();
+    let library = "pub fn hello(name: String): String {\n    panic(\"boom {name}\")\n}\n";
+    std::fs::write(lib.join("src/greet.to"), library).unwrap();
+    git(&lib, &["add", "-A"]);
+    git(&lib, &["commit", "--quiet", "-m", "one"]);
+    git(&lib, &["push", "--quiet", "origin", "HEAD"]);
+    let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&lib).output().unwrap();
+    let commit = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    git(&dir, &["clone", "--quiet", "app.git", "app"]);
+    let app = dir.join("app/services/api");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    let manifest = format!(
+        "[package]\nname = \"api\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = {{ git = \"file://{}\", rev = \"{commit}\" }}\n",
+        dir.join("lib.git").display()
+    );
+    std::fs::write(app.join("tondo.toml"), manifest).unwrap();
+    let main = "import greet\n\nfn main() {\n    greet.hello(\"ada\")\n}\n";
+    std::fs::write(app.join("src/main.to"), main).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let cache = dir.join("cache");
+    let tondo_in = |args: &[&str]| {
+        let mut command = Command::new(tondo_bin);
+        command.args(args).current_dir(&app).env("XDG_CACHE_HOME", &cache);
+        command.output().unwrap()
+    };
+    assert!(tondo_in(&["check", "."]).status.success());
+    git(&app, &["add", "-A"]);
+    git(&app, &["commit", "--quiet", "-m", "one"]);
+    git(&app, &["push", "--quiet", "origin", "HEAD"]);
+    let built = tondo_in(&["build", ".", "--output", "api"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(app.join("api")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let dump = dump.to_str().unwrap();
+    let summary = tondo_in(&["dump", "read", dump]);
+    assert!(String::from_utf8_lossy(&summary.stdout).contains("built from "), "{summary:?}");
+    // A file that changed since comes as it was, from its repository, and
+    // one of a dependency that is not here too, from a cache that starts
+    // with none of it.
+    std::fs::write(app.join("src/main.to"), format!("// changed\n{main}")).unwrap();
+    let cache_of_builds = cache.join("tondo/deps");
+    let _ = std::fs::remove_dir_all(&cache_of_builds);
+    for (file, text) in [("src/main.to", main), ("greet/src/greet.to", library)] {
+        let found = tondo_in(&["source", file, "--from", dump, "--json"]);
+        assert!(found.status.success(), "{}", String::from_utf8_lossy(&found.stderr));
+        let found: Value = serde_json::from_slice(&found.stdout).unwrap();
+        assert_eq!(found["state"], "fetched", "{found}");
+        assert_eq!(std::fs::read_to_string(found["path"].as_str().unwrap()).unwrap(), text);
+    }
+    // The executable says the same, and with `--no-source-links` nothing.
+    let found = tondo_in(&["source", "greet/src/greet.to", "--from", "api", "--json"]);
+    assert!(found.status.success(), "{}", String::from_utf8_lossy(&found.stderr));
+    assert!(tondo_in(&["build", ".", "--no-source-links", "--output", "quiet"]).status.success());
+    assert!(!tondo_in(&["source", "src/main.to", "--from", "quiet"]).status.success());
+    let bytes = std::fs::read(app.join("quiet")).unwrap();
+    assert!(!bytes.windows(7).any(|window| window == b"app.git"));
+
+    // The editor opens what is not here as if it were, in a dump.
+    let mut adapter = Adapter::start_in(&cache);
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "dump": dump, "cwd": app }));
+    adapter.until("initialized");
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let frames = trace["stackFrames"].as_array().unwrap();
+    let hello = frames.iter().find(|f| f["source"]["name"] == "greet/src/greet.to");
+    let source = &hello.unwrap_or_else(|| panic!("{trace}"))["source"];
+    let reference = source["sourceReference"].as_u64().unwrap_or_else(|| panic!("{trace}"));
+    let opened = adapter.ask("source", json!({ "source": source, "sourceReference": reference }));
+    assert_eq!(opened["content"], library, "{opened}");
+    adapter.stop();
+
+    // And a breakpoint stops in it, in a program that runs.
+    std::fs::write(app.join("src/main.to"), main).unwrap();
+    let mut adapter = Adapter::start_in(&cache);
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": ".", "cwd": app }));
+    adapter.until("initialized");
+    let source = json!({ "name": "greet/src/greet.to", "path": "greet/src/greet.to", "sourceReference": 1 });
+    let set = adapter.ask("setBreakpoints", json!({ "source": source, "breakpoints": [{ "line": 2 }] }));
+    assert_eq!(set["breakpoints"][0]["verified"], true, "{set}");
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(trace["stackFrames"][0]["source"]["name"], "greet/src/greet.to", "{trace}");
+    adapter.stop();
+}
+
 #[test]
 fn a_call_in_a_replay_changes_nothing() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
@@ -3924,8 +4039,18 @@ struct Adapter {
 
 impl Adapter {
     fn start() -> Adapter {
+        Adapter::with(&[])
+    }
+
+    /// With the cache of `tondo` in a directory of its own.
+    fn start_in(cache: &Path) -> Adapter {
+        Adapter::with(&[("XDG_CACHE_HOME", cache.as_os_str())])
+    }
+
+    fn with(variables: &[(&str, &std::ffi::OsStr)]) -> Adapter {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("dap")
+            .envs(variables.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()

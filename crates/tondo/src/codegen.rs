@@ -138,6 +138,7 @@ enum Rt {
     DebugTable,
     /// What the dumps of a build without probes show.
     DumpTable,
+    SourceRoots,
     /// Before a panic, the registers its dump reads.
     KeepRegisters,
     /// Before a panic the program wrote, the numbers its dump shows.
@@ -430,6 +431,7 @@ impl Rt {
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::DumpTable => ("tondo_rt_dump_table", &[I64], &[]),
+            Rt::SourceRoots => ("tondo_rt_source_roots", &[I64], &[]),
             Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
             Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
@@ -870,11 +872,13 @@ pub struct Options<'o> {
     /// the dependencies' code too, and tells the runtime what the counted
     /// code compares.
     pub fuzz: bool,
+    /// Where the program comes from (`roots.rs`), or nothing.
+    pub roots: &'o str,
 }
 
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
-    let Options { meta, debug, target, mut live, coverage, fuzz } = options;
+    let Options { meta, debug, target, mut live, coverage, fuzz, roots } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -891,6 +895,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
+        roots,
         module: ObjectModule::new(builder),
         types: &program.types,
         sources,
@@ -1123,6 +1128,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 }
 
 struct Codegen<'a> {
+    /// Where the program comes from, which the runtime gives to tools.
+    roots: &'a str,
     module: ObjectModule,
     types: &'a Types,
     /// Each context's functions and the type of its record (11.16).
@@ -3260,6 +3267,10 @@ impl Codegen<'_> {
             let dump = e.fb.ins().symbol_value(POINTER, dump);
             e.call_rt(Rt::DumpTable, &[dump]);
         }
+        if !e.cg.roots.is_empty() {
+            let text = e.string_ptr(e.cg.roots);
+            e.call_rt(Rt::SourceRoots, &[text]);
+        }
         e.fb.ins().return_(&[]);
         e.fb.seal_all_blocks();
         let config = e.cg.module.isa().frontend_config();
@@ -3302,6 +3313,10 @@ impl Codegen<'_> {
             let dump = e.cg.module.declare_data_in_func(dump, e.fb.func);
             let dump = e.fb.ins().symbol_value(POINTER, dump);
             e.call_rt(Rt::DumpTable, &[dump]);
+        }
+        if !e.cg.roots.is_empty() {
+            let text = e.string_ptr(e.cg.roots);
+            e.call_rt(Rt::SourceRoots, &[text]);
         }
         // A program that reads its metrics counts them from the start
         // (standard library 14.25).

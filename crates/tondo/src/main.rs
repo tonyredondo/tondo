@@ -97,6 +97,7 @@ fn main() -> ExitCode {
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "blocked" => blocked_command(&args[1..]),
+        "source" => source_command(&args[1..]),
         "relay" => match args.get(1).and_then(|a| a.to_str()) {
             Some(name) => tondo::observe::relay(name).map(|_| ExitCode::SUCCESS),
             None => Err(format!("relay takes a running program's process ID or name\n{USAGE}")),
@@ -928,6 +929,23 @@ fn ps_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 /// Shows the counters of a running program.
+fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
+    const USAGE: &str = "usage: tondo source <file> --from <dump|recording|executable> [--line <n>] [--json]";
+    let (mut file, mut from, mut line, mut json) = (None, None, 1, false);
+    let mut rest = args.iter().filter_map(|a| a.to_str());
+    while let Some(arg) = rest.next() {
+        match arg {
+            "--json" => json = true,
+            "--from" => from = Some(rest.next().ok_or(USAGE)?),
+            "--line" => line = rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
+            other if !other.starts_with('-') && file.is_none() => file = Some(other),
+            _ => return Err(USAGE.to_string()),
+        }
+    }
+    let (Some(file), Some(from)) = (file, from) else { return Err(USAGE.to_string()) };
+    tondo::observe::source(file, Path::new(from), line, json).map(|()| ExitCode::SUCCESS)
+}
+
 fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {
     const USAGE: &str = "usage: tondo blocked <pid|name> [--json]";
     let json = args.iter().any(|a| a == "--json");
@@ -1123,6 +1141,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 ["stacks"] => tondo::observe::View::Stacks,
                 ["requests"] => tondo::observe::View::Requests,
                 ["events"] => tondo::observe::View::Events,
+                ["sources"] => tondo::observe::View::Sources,
                 ["find", text] => tondo::observe::View::Find(text.to_string()),
                 ["heap"] => tondo::observe::View::Heap,
                 ["objects"] => tondo::observe::View::Objects,
@@ -1141,7 +1160,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 }
                 _ => {
                     return Err(usage(
-                        "dump read shows why, tasks, stacks, requests, events, task <id>, locals, print <path>, find <text>, heap, objects or object <address>",
+                        "dump read shows why, tasks, stacks, requests, events, sources, task <id>, locals, print <path>, find <text>, heap, objects or object <address>",
                     ));
                 }
             };
@@ -2000,6 +2019,7 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (options, rest) = link_options(rest)?;
     let mut output = None;
     let mut strip = false;
+    let mut links = true;
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str() {
@@ -2008,6 +2028,7 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
                 None => return Err(format!("--output needs a path\n{USAGE}")),
             },
             Some("--strip") if !strip => strip = true,
+            Some("--no-source-links") if links => links = false,
             _ => return Err(format!("unexpected arguments\n{USAGE}")),
         }
     }
@@ -2015,7 +2036,10 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(output) => output,
         None => program_name(&path)?,
     };
-    let analysis = driver::analyze(&path)?;
+    let mut analysis = driver::analyze(&path)?;
+    if !links {
+        analysis.project = None;
+    }
     let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
     if !json {
         show(&analysis, options.shown);

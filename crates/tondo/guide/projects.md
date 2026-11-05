@@ -55,6 +55,9 @@ zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
 
 [native]
 libraries = ["sqlite3"]               # C libraries for `extern fn`
+
+[source]                              # a line's page, on a host of your own
+url = "https://git.acme.com/{repo}/blob/{commit}/{path}#L{line}"
 ```
 
 A dependency is imported by its alias: `import units`, `import units.si`.

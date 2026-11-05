@@ -46,6 +46,8 @@ project, running, debugging and testing it.
   Come From?*, in a replay, the whole chain back to what the program read;
   *Go to When a Condition Holds*, the first or the last time in the run;
   *Compare with Another Moment*, what changed since another probe;
+  a frame in a file that is not here as it was built opens it from its
+  repository, at the build's commit, as if it were here, with breakpoints;
   *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
   dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part

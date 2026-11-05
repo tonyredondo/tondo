@@ -35,7 +35,7 @@ pub fn inputs(dir: &Path) -> Vec<PathBuf> {
 
 /// The `.git` directory of the repository that holds `dir`, following the
 /// `gitdir:` of a worktree.
-fn repository(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn repository(dir: &Path) -> Option<PathBuf> {
     let dir = dir.canonicalize().ok()?;
     let found = dir.ancestors().map(|d| d.join(".git")).find(|git| git.exists())?;
     if found.is_dir() {
@@ -47,7 +47,7 @@ fn repository(dir: &Path) -> Option<PathBuf> {
 }
 
 /// The commit `HEAD` names, read from the repository's files.
-fn commit(git: &Path) -> Option<String> {
+pub(crate) fn commit(git: &Path) -> Option<String> {
     let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
     let Some(reference) = head.trim().strip_prefix("ref: ") else { return Some(head.trim().to_string()) };
     // A worktree keeps its refs in the main repository.

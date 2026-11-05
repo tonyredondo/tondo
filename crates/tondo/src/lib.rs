@@ -57,6 +57,7 @@ pub mod prove;
 #[allow(dead_code)]
 #[path = "../../tondo-runtime/src/regex_dialect.rs"]
 mod regex_dialect;
+pub mod roots;
 pub mod runner;
 pub mod setup;
 pub mod source;

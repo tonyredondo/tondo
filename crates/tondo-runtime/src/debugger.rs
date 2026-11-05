@@ -3227,6 +3227,9 @@ pub(crate) fn command(line: &str) -> Option<String> {
     if line == "checkpoint" && super::replay::replaying() {
         return Some(take_checkpoint());
     }
+    if line == "sources" {
+        return Some(format!("{{\"sources\":{}}}", quoted(&super::diagnostics::roots())));
+    }
     let table = table()?;
     let table = &*table;
     let (word, rest) = line.split_once(' ').unwrap_or((line, ""));

@@ -4,6 +4,7 @@
 //! goes to the editor as an event when it comes.
 
 use crate::observe;
+use crate::roots::Roots;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -114,6 +115,9 @@ struct Debuggee {
     replaying: Option<crate::debug::Replaying>,
     kept: bool,
     after: Option<Value>,
+    /// Where the program's files came from, and those given a reference.
+    roots: Roots,
+    sources: Vec<String>,
 }
 
 /// A frame's id: its task, and its place in the task's stack.
@@ -381,9 +385,10 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                     .map(PathBuf::from)
                     .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
                 match observe::opened(&root.join(&path)) {
-                    Ok((summary, tasks, heap)) => {
+                    Ok((summary, tasks, heap, roots)) => {
                         editor.event("output", json!({ "category": "console", "output": summary.clone() }));
-                        dumped = Some(Dumped { summary, tasks, heap, root, opened: Default::default() });
+                        let (opened, sources) = Default::default();
+                        dumped = Some(Dumped { summary, tasks, heap, root, roots, sources, opened });
                         editor.respond(&request, Ok(json!({})));
                         editor.event("initialized", json!({}));
                         continue;
@@ -506,6 +511,9 @@ struct Dumped {
     tasks: Vec<Value>,
     heap: Value,
     root: PathBuf,
+    /// Where the program's files came from, and those given a reference.
+    roots: Roots,
+    sources: std::cell::RefCell<Vec<String>>,
     /// The bindings or parts each reference above `OPENED` opens to.
     opened: std::cell::RefCell<Vec<Value>>,
 }
@@ -535,6 +543,7 @@ impl Dumped {
         let task = |id: &Value| self.tasks.iter().find(|t| t["id"] == *id);
         match command {
             "setBreakpoints" => Ok(json!({ "breakpoints": [] })),
+            "source" => Ok(source_text(&self.roots, &self.sources.borrow(), arguments)),
             "setExceptionBreakpoints" | "configurationDone" => Ok(json!({})),
             "threads" => {
                 let threads: Vec<Value> = self
@@ -569,8 +578,7 @@ impl Dumped {
                             frame["name"] = json!(function);
                             frame["line"] = json!(line.parse::<u64>().unwrap_or(0));
                             frame["column"] = json!(1);
-                            frame["source"] =
-                                json!({ "name": file, "path": self.root.join(file).display().to_string() });
+                            frame["source"] = source_of(&self.root, &self.roots, &mut self.sources.borrow_mut(), file);
                         }
                         frame
                     })
@@ -802,6 +810,36 @@ fn forward(
     }
 }
 
+/// A file as a frame names it for the editor: where it is here, if it is as
+/// the build had it; or a reference, which `source` answers from the commit
+/// it was built from, when the editor opens it, as if it were here.
+fn source_of(root: &Path, roots: &Roots, sources: &mut Vec<String>, file: &str) -> Value {
+    let here = crate::debug::source_for_editor(root, file);
+    if here == root.join(file) && roots.find(root, file) == crate::roots::Found::Elsewhere {
+        let at = sources.iter().position(|known| known == file).unwrap_or_else(|| {
+            sources.push(file.to_string());
+            sources.len() - 1
+        });
+        return json!({ "name": file, "path": file, "sourceReference": at + 1, "origin": "at the commit it was built from" });
+    }
+    json!({ "name": file, "path": here.display().to_string() })
+}
+
+/// The text of a file `source_of` gave a reference to; what cannot come
+/// says where the file is.
+fn source_text(roots: &Roots, sources: &[String], arguments: &Value) -> Value {
+    let reference = arguments["source"]["sourceReference"].as_u64().or(arguments["sourceReference"].as_u64());
+    let Some(file) = reference.and_then(|at| sources.get((at as usize).checked_sub(1)?)) else {
+        return json!({ "content": "" });
+    };
+    let text = roots.fetch(file).and_then(|path| std::fs::read_to_string(&path).map_err(|e| e.to_string()));
+    let content = text.unwrap_or_else(|message| {
+        let link = roots.link(file, 1).map_or(String::new(), |link| format!("\n// It is at {link}"));
+        format!("// {file} could not come from its repository: {message}{link}\n")
+    });
+    json!({ "content": content, "mimeType": "text/x-tondo" })
+}
+
 /// Starts the program the editor names, or attaches to a running one.
 fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> Result<Debuggee, String> {
     let root =
@@ -953,11 +991,28 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         replaying.take_over(first);
     }
     let (handles, targets, kept, after) = (Vec::new(), Vec::new(), false, None);
-    let mut debuggee =
-        Debuggee { pid, writer, answers, child, root, handles, forgotten: 0, targets, pumped, replaying, kept, after };
+    let mut debuggee = Debuggee {
+        pid,
+        writer,
+        answers,
+        child,
+        root,
+        handles,
+        forgotten: 0,
+        targets,
+        pumped,
+        replaying,
+        kept,
+        after,
+        roots: Roots::default(),
+        sources: Vec::new(),
+    };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
+    }
+    if let Ok(answer) = debuggee.ask("sources") {
+        debuggee.roots = Roots::parse(answer["sources"].as_str().unwrap_or_default());
     }
     // A replay keeps checkpoints as it runs, to go back from.
     if debuggee.replaying.is_some() {
@@ -1171,6 +1226,7 @@ fn handle(
             breakpoints.insert(path, ids);
             Ok(json!({ "breakpoints": set }))
         }
+        "source" => Ok(source_text(&program.roots, &program.sources, arguments)),
         // Where each function of a name starts.
         "setFunctionBreakpoints" => {
             for id in breakpoints.remove(FUNCTIONS).unwrap_or_default() {
@@ -1595,10 +1651,10 @@ fn handle(
                 .filter_map(|(index, frame)| {
                     let (place, function) = frame.as_str()?.split_once(" in ")?;
                     let (file, line) = place.rsplit_once(':')?;
-                    let path = crate::debug::source_for_editor(&program.root, file);
+                    let source = source_of(&program.root, &program.roots, &mut program.sources, file);
                     let mut frame = json!({
                         "id": frame_id(task, index as u64), "name": function, "line": line.parse::<u64>().ok()?,
-                        "column": 1, "source": { "name": file, "path": path.display().to_string() },
+                        "column": 1, "source": source,
                     });
                     if let Some(pc) = pcs["pcs"][index].as_u64().filter(|&pc| pc != 0) {
                         frame["instructionPointerReference"] = json!(format!("{pc:#x}"));
@@ -1618,11 +1674,11 @@ fn handle(
             for (index, place) in spawned.iter().enumerate() {
                 let Some((at, function)) = place.as_str().and_then(|p| p.split_once(" in ")) else { continue };
                 let Some((file, line)) = at.rsplit_once(':') else { continue };
-                let path = crate::debug::source_for_editor(&program.root, file);
+                let source = source_of(&program.root, &program.roots, &mut program.sources, file);
                 frames.push(json!({
                     "id": frame_id(task, SPAWNED + 1 + index as u64), "name": function,
                     "line": line.parse::<u64>().unwrap_or(0), "column": 1, "presentationHint": "subtle",
-                    "source": { "name": file, "path": path.display().to_string() },
+                    "source": source,
                 }));
             }
             Ok(json!({ "stackFrames": frames, "totalFrames": frames.len() }))

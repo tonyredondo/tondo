@@ -135,6 +135,9 @@ pub struct Analysis {
     pub expansions: Vec<crate::meta::Expansion>,
     /// For an editor: each declaration and each name that refers to one.
     pub index: Option<crate::index::Index>,
+    /// Where the program comes from, which its executable keeps; none with
+    /// `--no-source-links`.
+    pub project: Option<crate::roots::Project>,
 }
 
 thread_local! {
@@ -343,8 +346,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         dir: path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
         dependencies: Vec::new(),
     };
+    let mut project = crate::roots::Project { dir: built.dir.clone(), ..Default::default() };
     let module = if path.is_dir() {
         let packages = deps::resolve(path, None)?;
+        project.dir = path.to_path_buf();
         let system = system();
         for package in &packages {
             if !package.systems.is_empty() && !package.systems.contains(&system) {
@@ -357,6 +362,12 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 ));
             }
         }
+        project.dependencies = packages[1..]
+            .iter()
+            .filter(|p| !p.tests_only)
+            .map(|p| (p.name.clone(), p.dir.clone(), p.origin.clone()))
+            .collect();
+        project.template = packages[0].source_url.clone();
         elsewhere = packages.iter().flat_map(|package| declared_elsewhere(package, system)).collect();
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
         built = ast::Built {
@@ -496,7 +507,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             drop_dependency_warnings(&mut diags, &sources, &dependencies);
             diags.sort(&sources);
             let index = None;
-            return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
+            return Ok(Analysis {
+                sources,
+                diags,
+                program: None,
+                source_id,
+                libraries,
+                meta,
+                expansions,
+                index,
+                project: Some(project.clone()),
+            });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
         let generators: Vec<Vec<deps::Generator>> = packages.iter().map(|p| p.generators.clone()).collect();
@@ -528,7 +549,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             Some(module) => module,
             None => {
                 let index = None;
-                return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
+                return Ok(Analysis {
+                    sources,
+                    diags,
+                    program: None,
+                    source_id,
+                    libraries,
+                    meta,
+                    expansions,
+                    index,
+                    project: Some(project.clone()),
+                });
             }
         };
         if stdlib::needed(&module) {
@@ -575,7 +606,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         }
         drop_dependency_warnings(&mut diags, &sources, &dependencies);
         diags.sort(&sources);
-        return Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index });
+        return Ok(Analysis {
+            sources,
+            diags,
+            program,
+            source_id,
+            libraries,
+            meta,
+            expansions,
+            index,
+            project: Some(project.clone()),
+        });
     }
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| {
@@ -593,7 +634,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     });
     drop_dependency_warnings(&mut diags, &sources, &dependencies);
     diags.sort(&sources);
-    Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index: None })
+    Ok(Analysis {
+        sources,
+        diags,
+        program,
+        source_id,
+        libraries,
+        meta,
+        expansions,
+        index: None,
+        project: Some(project.clone()),
+    })
 }
 
 /// Checks an example of documentation (21.6) as the root file of a
@@ -932,8 +983,15 @@ pub fn object_counting(
     let bodies = lower::lower(program, false, debug);
     let mut counted = Vec::new();
     let triple = target.map(Target::triple);
-    let options =
-        codegen::Options { meta: analysis.meta, debug, target: triple, live: None, coverage: Some(&mut counted), fuzz };
+    let options = codegen::Options {
+        meta: analysis.meta,
+        debug,
+        target: triple,
+        live: None,
+        roots: "",
+        coverage: Some(&mut counted),
+        fuzz,
+    };
     let object = codegen::compile(program, &bodies, &analysis.sources, options)?;
     Ok((object, counted))
 }
@@ -958,7 +1016,16 @@ pub fn compile(
         crate::prove::prove(&mut bodies, &program.types);
         lower::drop_dead_checks(&mut bodies);
     }
-    let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None, fuzz: false };
+    let roots = analysis.project.as_ref().map_or(String::new(), |p| crate::roots::table(p, &analysis.sources));
+    let options = codegen::Options {
+        meta: analysis.meta,
+        debug,
+        target: triple,
+        live,
+        coverage: None,
+        fuzz: false,
+        roots: &roots,
+    };
     codegen::compile(program, &bodies, &analysis.sources, options)
 }
 

@@ -50,6 +50,22 @@ pub(crate) fn enabled() -> bool {
     hooks() & WATCHED != 0
 }
 
+/// Where the program comes from, as the compiler wrote it.
+static ROOTS: AtomicPtr<super::Str> = AtomicPtr::new(std::ptr::null_mut());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_source_roots(text: *mut super::Str) {
+    ROOTS.store(text, Ordering::Relaxed);
+}
+
+/// Where the program comes from, for the tools.
+pub(crate) fn roots() -> String {
+    match ROOTS.load(Ordering::Relaxed) {
+        text if text.is_null() => String::new(),
+        text => String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned(),
+    }
+}
+
 /// A request the program serves, as a dump shows it: its method, path,
 /// when it came, and the task that answers it, when one does.
 struct Flight {
@@ -1177,6 +1193,7 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         }
         false => out.push_str(",\"values_off\":true"),
     }
+    let _ = write!(out, ",\"sources\":{}", quoted(&roots()));
     let _ = write!(out, ",\"values\":[{}]", values.join(","));
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     out

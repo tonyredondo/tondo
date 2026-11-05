@@ -723,6 +723,14 @@ flight, `events` what the program did last, and `find <text>` looks for a user
 or request in every value.
 `tondo blocked <pid|name>` shows who waits for whom in a running program.
 
+An executable keeps where its sources came from: the repository and commit of
+the program and of each dependency, without credentials, and a hash of each
+file. `tondo source <file> --from <dump>` gives a file as the build had it, from
+its repository when the one at hand is not it, and the editor opens those by
+itself, with breakpoints, as if they were here. `tondo build --no-source-links`
+keeps none of it. `[source] url` in `tondo.toml` says how a host that is not
+GitHub, GitLab, Bitbucket, Gitea, Forgejo or Azure DevOps links to a line.
+
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for
 its values: dumps, the debugger and its parts. The program itself is not
 touched: `Display`, JSON and `==` see the value. On a type it goes with the

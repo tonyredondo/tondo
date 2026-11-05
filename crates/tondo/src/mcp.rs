@@ -1150,6 +1150,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
+        "source" => {
+            push(&["source", &args.need("file")?, "--from", &args.need("from")?, "--json"]);
+            if let Some(line) = args.text("line") {
+                push(&["--line", &line]);
+            }
+        }
         "dump_read" => {
             push(&["dump", "read", &args.need("file")?]);
             match args.text("view").as_deref().unwrap_or("summary") {
@@ -1169,10 +1175,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                         }
                     }
                 }
-                view @ ("why" | "tasks" | "stacks" | "requests" | "events" | "heap" | "objects") => push(&[view]),
+                view @ ("why" | "tasks" | "stacks" | "requests" | "events" | "sources" | "heap" | "objects") => {
+                    push(&[view])
+                }
                 other => {
                     return Err(format!(
-                        "no view `{other}`: summary, why, tasks, stacks, requests, events, task, locals, print, find, heap, objects or object"
+                        "no view `{other}`: summary, why, tasks, stacks, requests, events, sources, task, locals, print, find, heap, objects or object"
                     ));
                 }
             }
@@ -2096,6 +2104,17 @@ its tasks, the bindings of the frames both have, and its counters.",
         params: &[("first", "string!", "The earlier dump."), ("second", "string!", "The later dump.")],
     },
     Tool {
+        name: "source",
+        description: "The file of a build as it was: here if it is the same, or from its repository at the build's \
+commit, which it brings the first time with the credentials of git. Gives where it is, and its page at the provider.",
+        kind: Kind::Reads,
+        params: &[
+            ("file", "string!", "The file, as a stack names it: src/main.to, or greet/src/greet.to of a dependency."),
+            ("from", "string!", "The dump, recording or executable that says where it came from."),
+            ("line", "integer", "The line of its page at the provider."),
+        ],
+    },
+    Tool {
         name: "dump_trend",
         description: "What keeps growing over the dumps of a program in a directory, as TONDO_DUMP_WHEN leaves them: \
 the memory by where it was made, and its tasks.",
@@ -2112,7 +2131,7 @@ the memory by where it was made, and its tasks.",
                 "view",
                 "string",
                 "summary (by default), why (who waits for whom, the longest wait, where the memory is), tasks, stacks \
-(the tasks by the stack they share), requests (the HTTP and gRPC requests in flight), events (what it did last), task, locals, print, find, heap, objects or object.",
+(the tasks by the stack they share), requests (the HTTP and gRPC requests in flight), events (what it did last), sources (where its files came from), task, locals, print, find, heap, objects or object.",
             ),
             ("task", "integer", "The task the task, locals and print views show."),
             ("frame", "integer", "The frame of that task the locals and print views show: 0 by default."),

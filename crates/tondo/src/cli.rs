@@ -29,7 +29,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "build",
         usage: &[
-            "tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]",
+            "tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]",
             "          [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]",
         ],
         summary: &[
@@ -178,6 +178,14 @@ pub const COMMANDS: &[Command] = &[
         summary: &["list the running Tondo programs"],
     },
     Command {
+        name: "source",
+        usage: &["tondo source <file> --from <dump|recording|executable> [--line <n>] [--json]"],
+        summary: &[
+            "the file of a build as it was: here if it is the same,",
+            "or from its repository, at the build's commit",
+        ],
+    },
+    Command {
         name: "blocked",
         usage: &["tondo blocked <pid|name> [--json]"],
         summary: &["say who waits for whom in a running program"],
@@ -221,7 +229,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "dump",
         usage: &[
-            "tondo dump read <file> [why | tasks | stacks | requests | events | task <id>",
+            "tondo dump read <file> [why | tasks | stacks | requests | events | sources | task <id>",
             "                       | locals [<task> [<frame>]]",
             "                       | print <path> [<task> [<frame>]] | find <text>",
             "                       | heap | objects | object <address>] [--json]",

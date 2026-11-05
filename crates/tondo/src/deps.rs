@@ -15,6 +15,10 @@ pub struct Package {
     /// Its `[package] version`, or `0.0.0`.
     pub version: String,
     pub dir: PathBuf,
+    /// The repository and commit it was fetched from, if it was.
+    pub origin: Option<(String, String)>,
+    /// `[source] url`: the page of a line at the project's own host.
+    pub source_url: Option<String>,
     /// Its dependencies by alias, as indices into the graph.
     pub dependencies: Vec<(String, usize)>,
     /// The project's dependencies that only its tests import
@@ -85,6 +89,7 @@ impl Source {
 }
 
 struct Manifest {
+    source_url: Option<String>,
     name: Option<String>,
     version: Option<String>,
     dependencies: Vec<(String, Source)>,
@@ -99,6 +104,7 @@ struct Manifest {
 fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
     let mut manifest = Manifest {
+        source_url: None,
         name: None,
         version: None,
         dependencies: Vec::new(),
@@ -166,6 +172,18 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     }
                 }
             }
+            ("source", false) => {
+                for (key, value, line) in table.entries {
+                    match (key.as_str(), value.as_str()) {
+                        ("url", Some(url)) if url.contains("{path}") => manifest.source_url = Some(url.to_string()),
+                        ("url", _) => {
+                            let usage = "`url` is the page of a line, as \"https://git.acme.com/{repo}/blob/{commit}/{path}#L{line}\"";
+                            return Err(at(line, usage.into()));
+                        }
+                        _ => return Err(at(line, format!("unknown key `{key}` in `[source]`"))),
+                    }
+                }
+            }
             ("native", false) => {
                 for (key, value, line) in table.entries {
                     let usage = "`libraries = [\"sqlite3\", \"static:z\", \"vendor/libpng.a\"]` lists libraries by name or file";
@@ -203,7 +221,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             (name, _) => {
                 let message = format!(
-                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[source]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
                 );
                 return Err(at(table.line, message));
             }
@@ -333,7 +351,14 @@ fn dependency(alias: &str, value: &Value) -> Result<Source, String> {
 pub fn resolve(dir: &Path, update: Option<&[String]>) -> Result<Vec<Package>, String> {
     let lock_path = dir.join("tondo.lock");
     let pins = read_lock(&lock_path)?;
-    let mut resolver = Resolver { pins, update, used: BTreeMap::new(), packages: Vec::new(), visiting: Vec::new() };
+    let mut resolver = Resolver {
+        pins,
+        update,
+        used: BTreeMap::new(),
+        packages: Vec::new(),
+        origins: BTreeMap::new(),
+        visiting: Vec::new(),
+    };
     resolver.visit(dir, None)?;
     // What the program's dependencies do not reach only the tests use.
     let mut reached = vec![false; resolver.packages.len()];
@@ -369,6 +394,8 @@ struct Resolver<'a> {
     /// The pins of the dependencies reached, which the lockfile keeps.
     used: BTreeMap<String, String>,
     packages: Vec<Package>,
+    /// Where each directory of a repository's commit came from.
+    origins: BTreeMap<PathBuf, (String, String)>,
     /// The directories being visited, to report cycles.
     visiting: Vec<PathBuf>,
 }
@@ -401,6 +428,8 @@ impl Resolver<'_> {
         self.packages.push(Package {
             name: name.clone(),
             version: manifest.version.unwrap_or_else(|| "0.0.0".into()),
+            origin: self.origins.get(&dir).cloned(),
+            source_url: manifest.source_url,
             dir: dir.clone(),
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
@@ -454,7 +483,8 @@ impl Resolver<'_> {
             Source::Git { url, reference } => {
                 let (commit, dir) = git_checkout(url, reference, pinned.as_deref())
                     .map_err(|e| format!("dependency `{alias}` ({url}): {e}"))?;
-                self.used.insert(key, commit);
+                self.used.insert(key, commit.clone());
+                self.origins.insert(std::fs::canonicalize(&dir).unwrap_or(dir.clone()), (url.clone(), commit));
                 dir
             }
             Source::Archive { url, sha256 } => {

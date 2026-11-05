@@ -5059,3 +5059,19 @@ that was there anyway, and the copy ends with it: called twice, a counter says
 the same. Recordings are live builds for this, which cost nothing that could be
 measured, and a call is then any expression, with what `tondo debug --live` has.
 What the code asks of the world is not in the recording, so it reads nothing true.
+
+## Code that is not here is fetched, as if it were
+
+The build knows the repository and commit of everything in it, and the file a
+stack points to is often elsewhere: a dependency, or a version that moved on. So
+the executable keeps those and a hash of each file, and a tool opens what the
+build had, not what happens to be on disk. A stale file with the right name is
+the worst case, as it shows wrong lines without a word.
+
+It goes through git, with what the person already has: a partial clone brings
+one file, over whatever keys or helpers reach the repository, on any host, where
+a provider's raw URLs would need a token and a template each. Templates are only
+for links to read. The hash also tells a dirty build, so nothing runs `git status`
+at each build, and sources that did not change need no new build for a new commit:
+the older commit has the same files. The editor gets a reference, not a path, so
+nothing is fetched until a file is opened.
