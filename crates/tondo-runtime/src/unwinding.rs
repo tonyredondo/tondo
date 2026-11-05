@@ -4,6 +4,8 @@
 //! code had in its registers. Only frames with a frame pointer: others
 //! are not on the walk.
 
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 /// The registers of a frame, by their DWARF numbers.
 pub(crate) type Registers = [Option<usize>; 32];
 /// What a task left as it switched out: its registers, and where it goes on.
