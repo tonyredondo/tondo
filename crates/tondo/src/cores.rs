@@ -103,6 +103,10 @@ fn notes(bytes: &[u8], machine: u16, found: &mut Notes) -> Option<()> {
             1 => {
                 let register = |index: usize| u64_at(note, 112 + index * 8);
                 let id = u32_at(note, 32)?;
+                // Not all that write cores say the signal elsewhere.
+                if found.threads.is_empty() {
+                    found.signal = u16_at(note, 12)? as u32;
+                }
                 found.threads.push(match machine {
                     62 => Thread { id, pc: register(16)?, sp: register(19)?, fp: register(4)?, link: None },
                     _ => Thread { id, pc: register(32)?, sp: register(31)?, fp: register(29)?, link: register(30) },
