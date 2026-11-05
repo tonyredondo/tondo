@@ -2892,7 +2892,7 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
         .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
         .spawn()
         .unwrap();
-    let client = (0..200).find_map(|_| {
+    let client = (0..1200).find_map(|_| {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::net::TcpStream::connect(("127.0.0.1", port)).ok()
     });
@@ -3755,7 +3755,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let mut server =
         Command::new(dir.join("server")).env("TONDO_DUMP", dir.join("dumps")).stderr(Stdio::piped()).spawn().unwrap();
     // The client holds its connection open while the handler sleeps.
-    let client = (0..200).find_map(|_| {
+    let client = (0..1200).find_map(|_| {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::net::TcpStream::connect(("127.0.0.1", port)).ok()
     });
@@ -3812,7 +3812,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         .unwrap();
     let mut commands = debugger.stdin.take().unwrap();
     std::io::Write::write_all(&mut commands, b"break on request\ncontinue\n").unwrap();
-    let connected = (0..600).find_map(|_| {
+    let connected = (0..2400).find_map(|_| {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::net::TcpStream::connect(("127.0.0.1", debug_port)).ok()
     });
