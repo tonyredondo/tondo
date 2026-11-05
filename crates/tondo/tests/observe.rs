@@ -175,11 +175,18 @@ fn profiles_time_memory_and_tasks() {
     let show = |args: &[&str]| -> Value {
         serde_json::from_str(&run(&[&["profile", "show"], args, &["--json"]].concat())).unwrap()
     };
-    // Processor time, by function and by the program's own lines.
-    run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
+    // Processor time, by function and by the program's own lines; a run this
+    // short may end between two samples on a machine that is busy.
     // `crunch`, inlined, has no time of its own, so it ranks after every
     // function that has some, which an emulator gives more of.
-    let cpu = show(&["cpu.pprof", "--top", "1000"]);
+    let mut cpu = Value::Null;
+    for _ in 0..5 {
+        run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
+        cpu = show(&["cpu.pprof", "--top", "1000"]);
+        if cpu["functions"].as_array().is_some_and(|functions| !functions.is_empty()) {
+            break;
+        }
+    }
     assert_eq!(
         (&cpu["format"], &cpu["type"], &cpu["unit"]),
         (&json!("tondo-profile-show-0.1/1"), &json!("cpu"), &json!("nanoseconds"))

@@ -296,6 +296,10 @@ fn expand_command(args: &[OsString]) -> Result<ExitCode, String> {
 
 /// Builds the tests of a project, runs those selected and reports them
 /// (testing 10).
+fn rest_json(args: &[OsString]) -> bool {
+    args.iter().any(|arg| arg == "--json")
+}
+
 fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     use tondo::runner::{self, Codeowners, Glob, Order, Selector};
     let (path, rest) = match args.first() {
@@ -349,7 +353,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             .ok_or_else(|| usage(format!("{flag} takes a number written without sign or leading zeros")))
     };
     let (mut seed, mut random, mut seen) = (None, false, Vec::new());
-    let (mut schedules, mut affected) = (None, None);
+    let (mut schedules, mut affected, mut bisect) = (None, None, None);
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
@@ -366,6 +370,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 return Err(usage("give only one of --filter, --glob and --exact".into()));
             }
             "--affected" => affected = Some(value()?),
+            "--bisect" => bisect = Some(value()?),
             "--filter" => options.selector = Selector::Filter(value()?),
             "--glob" => options.selector = Selector::Glob(Glob::parse(&value()?).map_err(usage)?),
             "--exact" => options.selector = Selector::Exact(vec![value()?]),
@@ -539,6 +544,15 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let given = |flag: &str| seen.iter().any(|s| s == flag);
+    if let Some(good) = bisect {
+        let selection = match &options.selector {
+            Selector::Exact(ids) => ids.iter().flat_map(|id| ["--exact".to_string(), id.clone()]).collect(),
+            Selector::Filter(text) => vec!["--filter".to_string(), text.clone()],
+            _ => return Err(usage("--bisect takes the test to look for, with --exact or --filter".into())),
+        };
+        let json = rest_json(args);
+        return tondo::bisect::bisect(&path, &good, &selection, json).map(|()| ExitCode::SUCCESS);
+    }
     if let Some(rev) = affected {
         if !matches!(options.selector, Selector::All) {
             return Err(usage("--affected chooses the tests: it does not go with --filter, --glob or --exact".into()));

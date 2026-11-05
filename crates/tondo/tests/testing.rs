@@ -1796,3 +1796,49 @@ fn runs_the_tests_a_change_reaches() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("viaOuter") && !out.contains("onAlone"), "{out}");
 }
+
+/// `--bisect` finds the commit that broke a test written today, without
+/// touching what is being edited.
+#[test]
+fn finds_the_commit_that_broke_a_test() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bisect");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"found\"\nversion = \"0.1.0\"\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    let write = |body: &str| {
+        std::fs::write(
+            dir.join("src/main.to"),
+            format!("pub fn twice(n: Int): Int {{\n    {body}\n}}\n\nfn main() {{}}\n"),
+        )
+        .unwrap();
+    };
+    git(&["init", "--quiet"]);
+    let mut commits = Vec::new();
+    for (index, body) in ["n * 2", "n + n", "n * 2 + 0", "n * 3", "n * 3 + 0", "n * 3 + 1"].iter().enumerate() {
+        write(body);
+        git(&["add", "-A"]);
+        git(&["commit", "--quiet", "-m", &format!("step {index}")]);
+        let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
+        commits.push(String::from_utf8_lossy(&head.stdout).trim().to_string());
+    }
+    // A test no commit has, and a change being made.
+    std::fs::write(dir.join("src/main_test.to"), "test doubles {\n    assert(twice(2) == 4)\n}\n").unwrap();
+    let (out, err, code) = tondo(&dir, &["test", "--bisect", &commits[0], "--filter", "doubles", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(found["commit"], commits[3].as_str(), "{found}");
+    assert_eq!(found["title"], "step 3", "{found}");
+    assert!(dir.join("src/main_test.to").exists());
+    let worktrees = Command::new("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&worktrees.stdout).lines().count(), 1);
+}

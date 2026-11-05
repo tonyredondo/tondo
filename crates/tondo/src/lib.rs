@@ -4,6 +4,7 @@ pub mod affected;
 pub mod api;
 pub mod ast;
 pub mod bind;
+pub mod bisect;
 pub mod built;
 pub mod check;
 pub mod cli;
