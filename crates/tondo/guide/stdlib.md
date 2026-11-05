@@ -699,8 +699,10 @@ contexts a `with` set, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it
 (`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
 program that panics, crashes or deadlocks leaves its dump there. The dump
-of a `--debug` build has every object: `objects` by type, and `object
-<address>` with what keeps it alive, `task 1 -> Map[...] -> String`.
+of a `--debug` build has every object: `objects` by type and what keeps the
+most alive, and `object <address>` with what holds it, `task 1 -> Map[...] ->
+String`. In any build, `heap` gives the live memory by site and by type, from
+samples; `TONDO_HEAP_RATE=4096` takes more of them.
 
 A dump keeps the bindings of every frame of every task, in any build, so a
 service that fell in production has them too: there a binding the code no

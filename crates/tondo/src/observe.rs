@@ -1027,7 +1027,7 @@ fn report_html(dump: &Value) -> String {
     let tasks = tasks(dump);
     let mut out = String::from(REPORT_HEAD);
     let info = &dump["info"];
-    out.push_str(&format!("<h1>{}</h1>\n", escape(&program_name(info))));
+    out.push_str(&format!("<h1>{}</h1>\n", escape(program_name(info))));
     out.push_str(&format!("<pre>{}</pre>\n", escape(summary(dump).trim_end())));
     // What other parts of the page say, it does not say twice.
     let mut found = why(dump);
@@ -2126,7 +2126,20 @@ fn heap(dump: &Value) -> Value {
         .collect();
     rows.sort_by(|a, b| b["bytes"].as_f64().partial_cmp(&a["bytes"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
     let total = rows.iter().filter_map(|r| r["bytes"].as_f64()).fold(0.0, |sum, bytes| sum + bytes);
-    json!({ "bytes": total, "rate": rate, "dropped": dump["heap"]["dropped"], "sites": rows })
+    // The same by kind, whatever made it.
+    let mut kinds: std::collections::BTreeMap<String, (f64, f64)> = Default::default();
+    for row in &rows {
+        let entry = kinds.entry(row["kind"].as_str().unwrap_or_default().to_string()).or_default();
+        entry.0 += row["bytes"].as_f64().unwrap_or(0.0);
+        entry.1 += row["objects"].as_f64().unwrap_or(0.0);
+    }
+    let mut kinds: Vec<(String, (f64, f64))> = kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+    let kinds: Vec<Value> = kinds
+        .into_iter()
+        .map(|(kind, (bytes, objects))| json!({ "kind": kind, "bytes": bytes, "objects": objects }))
+        .collect();
+    json!({ "bytes": total, "rate": rate, "dropped": dump["heap"]["dropped"], "sites": rows, "kinds": kinds })
 }
 
 /// What a runtime function allocates, by its name.
@@ -2157,6 +2170,18 @@ fn heap_text(heap: &Value) -> String {
             row["objects"].as_f64().unwrap_or(0.0) as u64,
             row["site"].as_str().unwrap_or_default(),
             row["kind"].as_str().unwrap_or_default()
+        ));
+    }
+    let kinds = heap["kinds"].as_array().map_or(&[][..], Vec::as_slice);
+    if !kinds.is_empty() {
+        out.push_str(&format!("\n{:>12} {:>10}  BY TYPE\n", "BYTES", "OBJECTS"));
+    }
+    for kind in kinds {
+        out.push_str(&format!(
+            "{:>12} {:>10}  {}\n",
+            bytes(kind["bytes"].as_f64().unwrap_or(0.0)),
+            kind["objects"].as_f64().unwrap_or(0.0) as u64,
+            kind["kind"].as_str().unwrap_or_default()
         ));
     }
     if heap["dropped"].as_u64().unwrap_or(0) > 0 {
@@ -2248,7 +2273,88 @@ fn objects_by_type(dump: &Value) -> Value {
     let mut rows: Vec<Value> =
         types.into_iter().map(|(ty, (count, bytes))| json!({ "type": ty, "objects": count, "bytes": bytes })).collect();
     rows.sort_by(|a, b| b["bytes"].as_u64().cmp(&a["bytes"].as_u64()));
-    json!({ "types": rows })
+    json!({ "types": rows, "largest": largest_objects(dump) })
+}
+
+/// What each object keeps alive, itself included: all that nothing else
+/// reaches from a task's stack, by the dominators of the graph of objects
+/// (Cooper, Harvey and Kennedy). Gives the objects that keep the most.
+fn largest_objects(dump: &Value) -> Vec<Value> {
+    let objects = &dump["objects"];
+    let list = objects["list"].as_array().map_or(&[][..], Vec::as_slice);
+    let pair = |e: &Value| Some((e[0].as_u64()? as usize, e[1].as_u64()? as usize));
+    let count = list.len();
+    // The stacks are one more node, from which the roots hang.
+    let mut after: Vec<Vec<usize>> = vec![Vec::new(); count + 1];
+    let mut before: Vec<Vec<usize>> = vec![Vec::new(); count + 1];
+    let mut link = |from: usize, to: usize| {
+        if from <= count && to < count {
+            after[from].push(to);
+            before[to].push(from);
+        }
+    };
+    objects["edges"].as_array().into_iter().flatten().filter_map(pair).for_each(|(from, to)| link(from, to));
+    objects["roots"].as_array().into_iter().flatten().filter_map(pair).for_each(|(_, to)| link(count, to));
+    // Each node after all it reaches, without recursion: chains are long.
+    let (mut order, mut seen, mut stack) = (Vec::new(), vec![false; count + 1], vec![(count, 0)]);
+    seen[count] = true;
+    while let Some((node, next)) = stack.pop() {
+        match after[node].get(next) {
+            Some(&to) => {
+                stack.push((node, next + 1));
+                if !seen[to] {
+                    seen[to] = true;
+                    stack.push((to, 0));
+                }
+            }
+            None => order.push(node),
+        }
+    }
+    let mut position = vec![usize::MAX; count + 1];
+    for (at, &node) in order.iter().enumerate() {
+        position[node] = at;
+    }
+    let mut dominator = vec![usize::MAX; count + 1];
+    dominator[count] = count;
+    let meet = |dominator: &[usize], mut a: usize, mut b: usize| {
+        while a != b {
+            while position[a] < position[b] {
+                a = dominator[a];
+            }
+            while position[b] < position[a] {
+                b = dominator[b];
+            }
+        }
+        a
+    };
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &node in order.iter().rev().skip(1) {
+            let known = before[node].iter().copied().filter(|&from| dominator[from] != usize::MAX);
+            let found = known.reduce(|a, b| meet(&dominator, a, b));
+            if let Some(found) = found.filter(|&found| dominator[node] != found) {
+                dominator[node] = found;
+                changed = true;
+            }
+        }
+    }
+    let mut kept: Vec<u64> = list.iter().map(|object| object["size"].as_u64().unwrap_or(0)).chain([0]).collect();
+    for &node in &order {
+        if node != count {
+            kept[dominator[node]] += kept[node];
+        }
+    }
+    let mut largest: Vec<usize> = order.iter().copied().filter(|&node| node != count).collect();
+    largest.sort_by_key(|&node| std::cmp::Reverse(kept[node]));
+    let shown = |&node: &usize| {
+        let object = &list[node];
+        json!({
+            "address": object["address"], "type": object_type(dump, object), "size": object["size"],
+            "retained": kept[node],
+        })
+    };
+    largest.iter().take(10).map(shown).collect()
 }
 
 fn objects_text(by_type: &Value) -> String {
@@ -2259,6 +2365,19 @@ fn objects_text(by_type: &Value) -> String {
             bytes(row["bytes"].as_f64().unwrap_or(0.0)),
             row["objects"].as_u64().unwrap_or(0),
             row["type"].as_str().unwrap_or_default()
+        ));
+    }
+    let largest = by_type["largest"].as_array().map_or(&[][..], Vec::as_slice);
+    if !largest.is_empty() {
+        out.push_str(&format!("\n{:>12} {:>12}  WHAT KEEPS THE MOST ALIVE\n", "RETAINED", "ITS OWN"));
+    }
+    for object in largest {
+        out.push_str(&format!(
+            "{:>12} {:>12}  {} {}\n",
+            bytes(object["retained"].as_f64().unwrap_or(0.0)),
+            bytes(object["size"].as_f64().unwrap_or(0.0)),
+            object["type"].as_str().unwrap_or_default(),
+            object["address"].as_str().unwrap_or_default()
         ));
     }
     out.push_str("`object <address>` shows one and what holds it; `--json` lists them\n");

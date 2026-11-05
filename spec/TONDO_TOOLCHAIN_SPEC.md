@@ -801,6 +801,11 @@ señal. Estos volcados, de un programa que sigue, van comprimidos en
 `.dump.json.gz`; el de un fallo no, porque allí corre lo menos posible. Todas las
 herramientas leen los dos.
 
+`heap` da la memoria viva también por tipo. Son muestras: `TONDO_HEAP_RATE=4096`, los
+bytes entre dos, la acerca a la cuenta exacta. Una cuenta exacta en un build sin
+sondas recorrería la pila en cada asignación; 4096 costó un 7 % más que el valor por
+omisión en un programa que solo asigna, y 512 un 55 %.
+
 Con `TONDO_DUMP_COMMAND` en el entorno, cada volcado que se escribe se entrega a ese
 comando de `sh`, con su ruta en `TONDO_DUMP_FILE`, que lo saca de una máquina o un
 contenedor que van a desaparecer. Un programa que cae lo espera hasta 60 segundos.
@@ -832,6 +837,7 @@ memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
 viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con
 todos sus marcos; `heap`, la memoria viva por sitio y tipo; y, en el
 volcado de un build de depuración, `objects`, cada objeto vivo por tipo, y
+lo que más memoria mantiene viva, por los dominadores del grafo de objetos, y
 `object <address>` uno: su tipo, su tamaño, dónde se hizo, su texto si es un
 string, los objetos que apuntan a él y la cadena más corta que lo mantiene
 vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON, en

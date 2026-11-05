@@ -2867,6 +2867,53 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
+fn a_dump_says_what_keeps_memory_alive() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-retained");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("debug")).unwrap();
+    std::fs::create_dir_all(dir.join("release")).unwrap();
+    let program = "import std.console\n\nfn fill(count: Int): Array[String] {\n    var rows: Array[String] = []\n    \
+        for i in 0..count {\n        rows.push(\"row {i} with text that takes some room in memory, more than a little\")\n    \
+        }\n    rows\n}\n\nfn main() {\n    let rows = fill(3000)\n    console.println(\"{rows.length()}\")\n    \
+        panic(\"look\")\n}\n";
+    std::fs::write(dir.join("keeps.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    for (name, flags) in [("debug", &["--debug"][..]), ("release", &[][..])] {
+        let output = format!("keeps-{name}");
+        let built = Command::new(tondo_bin)
+            .args(["build", "keeps.to", "--output", &output])
+            .args(flags)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let ran = Command::new(dir.join(&output))
+            .env("TONDO_DUMP", dir.join(name))
+            .env("TONDO_HEAP_RATE", "4096")
+            .output()
+            .unwrap();
+        assert!(!ran.status.success());
+    }
+    // The array keeps its strings, which each take much less.
+    let dump = std::fs::read_dir(dir.join("debug")).unwrap().next().unwrap().unwrap().path();
+    let objects = tondo(&["dump", "read", dump.to_str().unwrap(), "objects", "--json"]);
+    let largest = &objects["objects"]["largest"][0];
+    assert!(largest["type"].as_str().unwrap().starts_with("Array"), "{largest}");
+    assert!(largest["retained"].as_u64().unwrap() > 3000 * 60, "{largest}");
+    assert!(largest["retained"].as_u64() > largest["size"].as_u64(), "{largest}");
+    // In a build without objects, the samples say the same by type, and
+    // more of them say it closer.
+    let dump = std::fs::read_dir(dir.join("release")).unwrap().next().unwrap().unwrap().path();
+    let heap = tondo(&["dump", "read", dump.to_str().unwrap(), "heap", "--json"]);
+    let kinds = heap["heap"]["kinds"].as_array().unwrap();
+    let strings = kinds.iter().find(|k| k["kind"] == "String").unwrap_or_else(|| panic!("{heap}"));
+    assert!(strings["objects"].as_f64().unwrap() > 1500.0, "{strings}");
+}
+
+#[test]
 fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
     let _ = std::fs::remove_dir_all(&dir);
