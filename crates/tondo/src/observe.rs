@@ -40,6 +40,17 @@ impl Program {
 
 /// The programs running now, each with its `info`. A socket whose
 /// program is gone is removed.
+/// Whether a process runs. One that ended and nobody collected still
+/// answers a signal, as an orphan does in a container with no init, which
+/// never collects it.
+pub(crate) fn alive(pid: u32) -> bool {
+    if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        return false;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    !stat.rsplit_once(") ").is_some_and(|(_, state)| state.starts_with('Z'))
+}
+
 fn running() -> Vec<Value> {
     let Ok(entries) = std::fs::read_dir(directory()) else { return Vec::new() };
     let mut found = Vec::new();
@@ -48,7 +59,7 @@ fn running() -> Vec<Value> {
         let info = Program::connect(pid).map_err(|e| e.to_string()).and_then(|mut p| p.ask("info"));
         match info {
             Ok(info) => found.push(info),
-            Err(_) if unsafe { libc::kill(pid as i32, 0) } != 0 => {
+            Err(_) if !alive(pid) => {
                 let _ = std::fs::remove_file(entry.path());
             }
             Err(_) => {}
@@ -549,7 +560,7 @@ pub(crate) fn started(executable: &std::path::Path, pid: u32) -> Result<Program,
         if let Ok(program) = Program::connect(pid) {
             return Ok(program);
         }
-        if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        if !alive(pid) {
             return Err(format!("{} ended before it could be traced", executable.display()));
         }
         if std::time::Instant::now() > deadline {
@@ -2663,6 +2674,20 @@ fn object_text(object: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_nobody_collected_has_ended() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        for _ in 0..500 {
+            if !super::alive(child.id()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!super::alive(child.id()));
+        child.wait().unwrap();
+    }
+
     /// A function of an executable for macOS is found by its offset from
     /// where the executable's header is loaded, as the runtime gives it.
     #[test]

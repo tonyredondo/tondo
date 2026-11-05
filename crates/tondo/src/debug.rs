@@ -677,7 +677,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 if quit {
                     Running::Forked(pid, None).end();
                 }
-                while unsafe { libc::kill(pid as i32, 0) } == 0 {
+                while observe::alive(pid) {
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 return Ok(0);
@@ -756,7 +756,7 @@ pub(crate) fn resumed(
     let stream = loop {
         match std::os::unix::net::UnixStream::connect(&path) {
             Ok(stream) => break stream,
-            Err(_) if std::time::Instant::now() < deadline && unsafe { libc::kill(checkpoint as i32, 0) } == 0 => {
+            Err(_) if std::time::Instant::now() < deadline && observe::alive(checkpoint) => {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(e) => return Err(format!("the checkpoint {checkpoint} is gone: {e}")),
@@ -802,7 +802,7 @@ pub(crate) fn held_copy(dir: &Path) -> Result<Option<Checkpoint>, String> {
     if copies.first().is_some_and(|&(_, pid)| pid == 0) {
         return Ok(None);
     }
-    let alive = copies.into_iter().find(|&(_, pid)| unsafe { libc::kill(pid as i32, 0) } == 0);
+    let alive = copies.into_iter().find(|&(_, pid)| observe::alive(pid));
     alive.map(Some).ok_or(format!(
         "the copies of the program that held the end of {} are gone: they last an hour unused, on the machine it ran on, and end with a run that went well",
         dir.display()
