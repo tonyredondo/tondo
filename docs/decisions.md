@@ -5161,3 +5161,11 @@ the copy can clear, and what a job gives is not on the stack of who asked.
 What a thread other than these holds at that moment stays held: locks of the
 runtime's other threads, and the allocator's. They are held for moments, and those
 threads are idle while a replay runs, so it is not worth a lock of every lock.
+
+## A failure in a dump becomes a test
+
+A dump holds what a function was called with, and a test is that call written down,
+so a failure in production can be reproduced at a desk with no guessing. Values are
+written as the program shows them, which is what its code reads, and the test is run
+before it is kept, so what does not write back is refused and what does is known to
+fail the same way.

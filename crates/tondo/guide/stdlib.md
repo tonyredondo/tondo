@@ -731,6 +731,12 @@ with the program where the core says, and `tondo dump core <core> --executable
 signal and where every task and thread was, even in a build with `--strip`, not
 what they held. `coredumpctl dump <pid> -o <file>` takes one out of systemd.
 
+`tondo dump test <file>` turns a failure into a test: it calls the innermost function
+of the task that failed whose arguments the dump has, with those values, in the
+module's test file, and says whether it fails the same way. A build with `--debug`
+keeps them all; a release build, what the optimizer left. `--frame <n>` picks the
+function.
+
 `tondo dump read <file> why` says what went wrong as far as the dump can tell:
 tasks that wait for each other, those that hold others up, the longest wait,
 many tasks in one place, the oldest requests, where the memory is. `stacks`

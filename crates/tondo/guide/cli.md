@@ -110,6 +110,7 @@ tondo dump group dumps/           the dumps by the failure they are, the most fr
 tondo dump report a.dump          all of it as one page of HTML; --output a file
 tondo dump redact a.dump b.dump   a dump to share, without what the program held
 tondo dump core core.123          a core of the system as a dump; --executable, --output
+tondo dump test a.dump            a test that fails as the dump did, with its values
 tondo dump trend dumps/           what keeps growing over dumps: a leak, by its line
 ```
 

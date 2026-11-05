@@ -1002,6 +1002,143 @@ fn commit_of(dump: &Value) -> Value {
     roots_of(dump).roots.first().filter(|root| root.prefix.is_empty()).map_or(Value::Null, |root| json!(root.commit))
 }
 
+/// What `dump test` found to call: where the test goes, and what it says.
+struct Reproduction {
+    file: PathBuf,
+    name: String,
+    text: String,
+}
+
+/// A test that calls the function of `frame` of the task that failed with
+/// what the dump says it had; the innermost it can, when no frame is asked.
+fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String> {
+    let tasks = tasks(dump);
+    let running = tasks.iter().find(|t| t["state"] == "runs" && !tondo_frames(t).is_empty());
+    let task = running.or(tasks.first()).ok_or("the dump has no tasks")?;
+    let values = dump["values"].as_array().map_or(&[][..], Vec::as_slice);
+    let of_task: Vec<&Value> = values.iter().filter(|v| v["task"] == task["id"]).collect();
+    let mut frames: Vec<u64> = of_task.iter().filter_map(|v| v["frame"].as_u64()).collect();
+    frames.dedup();
+    let mut why = String::new();
+    for &at in frames.iter().filter(|&&at| frame.is_none_or(|frame| frame == at)) {
+        let bound: Vec<&&Value> = of_task.iter().filter(|v| v["frame"] == at).collect();
+        let place = bound[0]["at"].as_str().unwrap_or_default();
+        let Some((file, function)) = place.split_once(" in ") else { continue };
+        let file = file.rsplit_once(':').map_or(file, |(file, _)| file);
+        if function == "main" || function.starts_with("spawn ") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(file) else {
+            why = format!("{file} is not here: run this where the program's sources are");
+            continue;
+        };
+        let Some(start) = text.find(&format!("fn {function}(")).or_else(|| text.find(&format!("fn {function}[")))
+        else {
+            why = format!("`{function}` is not in {file}: it changed since this build");
+            continue;
+        };
+        let after = start + "fn ".len() + function.len();
+        let Some(list) = crate::refactor::list_at(&text, after) else { continue };
+        let names: Vec<&str> = list.items.iter().map(|&(a, b)| crate::refactor::parameter_name(&text[a..b])).collect();
+        let value = |name: &str| bound.iter().find(|v| v["name"] == name).and_then(|v| v["value"].as_str());
+        if let Some(missing) = names.iter().find(|name| value(name).is_none_or(|value| value.contains('?'))) {
+            why = format!("the dump has no value of `{missing}` in `{function}`: a build with --debug keeps them all");
+            continue;
+        }
+        let rest = text[list.close + 1..].lines().next().unwrap_or_default();
+        let question = if rest.contains('!') { "?" } else { "" };
+        let gives = rest.trim_start().starts_with(':') && !rest.trim_start().starts_with(": !");
+        let mut body = String::new();
+        let mut arguments = Vec::new();
+        for name in &names {
+            let shown = value(name).unwrap_or_default();
+            let bound = if *name == "self" { "receiver" } else { name };
+            body.push_str(&format!("    let {bound} = {shown}\n"));
+            if *name != "self" {
+                arguments.push(name.to_string());
+            }
+        }
+        let called = match (names.first(), function.split_once('.')) {
+            (Some(&"self"), Some((_, method))) => format!("receiver.{method}({})", arguments.join(", ")),
+            _ => format!("{function}({})", arguments.join(", ")),
+        };
+        body.push_str(&match gives {
+            true => format!("    _ = {called}{question}\n"),
+            false => format!("    {called}{question}\n"),
+        });
+        let path = std::path::Path::new(file);
+        let stem = path.file_stem().map_or(String::new(), |stem| stem.to_string_lossy().into_owned());
+        let tests = path.with_file_name(format!("{stem}_test.to"));
+        let existing = std::fs::read_to_string(&tests).unwrap_or_default();
+        let base: String = function.split('.').map(|part| part[..1].to_uppercase() + &part[1..]).collect();
+        let mut name = format!("failedIn{base}");
+        let mut number = 1;
+        while existing.contains(&format!("test {name} ")) {
+            number += 1;
+            name = format!("failedIn{base}{number}");
+        }
+        let message = dump["message"].as_str().unwrap_or_default().lines().next().unwrap_or_default().to_string();
+        let test = format!("// From a dump: {message}\ntest {name} {{\n{body}}}\n");
+        return Ok(Reproduction { file: tests, name, text: test });
+    }
+    Err(match why.is_empty() {
+        true => "the dump has no function with values to call".to_string(),
+        false => why,
+    })
+}
+
+/// `tondo dump test <file> [--frame <n>]`: writes the test of a failure in a
+/// dump, next to the function, and says whether it fails as the dump did.
+pub fn dump_test(path: &std::path::Path, frame: Option<u64>, json: bool) -> Result<(), String> {
+    let dump = load(path)?;
+    let found = reproduction(&dump, frame)?;
+    let before = std::fs::read_to_string(&found.file).ok();
+    let gap = match before.as_deref() {
+        None | Some("") => "",
+        Some(text) if text.ends_with('\n') => "\n",
+        Some(_) => "\n\n",
+    };
+    let written = format!("{}{gap}{}", before.as_deref().unwrap_or_default(), found.text);
+    std::fs::write(&found.file, &written).map_err(|e| format!("cannot write {}: {e}", found.file.display()))?;
+    // A value may not write back as code: what cannot compile does not stay.
+    let tondo = std::env::current_exe().map_err(|e| e.to_string())?;
+    let ran = std::process::Command::new(&tondo)
+        .args(["test", "--filter", &found.name, "--json"])
+        .current_dir(project_of(&found.file))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&ran.stdout).unwrap_or(Value::Null);
+    if report["compiled"] == false || report["summary"]["executed"].as_u64().unwrap_or(0) == 0 {
+        match before {
+            Some(text) => std::fs::write(&found.file, text),
+            None => std::fs::remove_file(&found.file),
+        }
+        .map_err(|e| e.to_string())?;
+        let said = String::from_utf8_lossy(&ran.stderr);
+        let said = said.lines().find(|line| line.starts_with("error")).unwrap_or("it does not compile");
+        return Err(format!("a value does not write back as code: {said}\nthe test was:\n{}", found.text));
+    }
+    let reproduces = !ran.status.success();
+    let shown = found.file.display();
+    match json {
+        true => crate::cli::print_json(
+            "dump-test",
+            true,
+            json!({ "file": found.file, "test": found.name, "reproduces": reproduces }),
+        ),
+        false if reproduces => println!("{shown}: `{}` fails as the dump did", found.name),
+        false => println!("{shown}: `{}` passes: the failure takes more than these values", found.name),
+    }
+    Ok(())
+}
+
+/// The project a file is in, or where the file is.
+fn project_of(file: &std::path::Path) -> PathBuf {
+    let directory = file.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let directory = directory.canonicalize().unwrap_or_else(|_| directory.to_path_buf());
+    directory.ancestors().find(|dir| dir.join("tondo.toml").exists()).unwrap_or(&directory).to_path_buf()
+}
+
 /// `tondo dump redact <file> <output>`: the dump without what the program
 /// held, to attach where anyone reads it: where it was and how it went
 /// stay; values, contexts, requests, texts and the words of a panic go.

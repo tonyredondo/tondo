@@ -258,6 +258,11 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
+        usage: &["tondo dump test <file> [--frame <n>] [--json]"],
+        summary: &["a test that calls the function that failed with", "what the dump says it had"],
+    },
+    Command {
+        name: "dump",
         usage: &["tondo dump core <core> [--executable <file>] [--output <path>] [--json]"],
         summary: &["a core of the system as a dump: the signal, and", "where each task and thread was (Linux)"],
     },

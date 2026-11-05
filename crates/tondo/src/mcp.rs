@@ -1151,6 +1151,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
         "dump_group" => push(&["dump", "group", &args.need("dir")?, "--json"]),
+        "dump_test" => {
+            push(&["dump", "test", &args.need("file")?, "--json"]);
+            if let Some(frame) = args.text("frame") {
+                push(&["--frame", &frame]);
+            }
+        }
         "dump_core" => {
             push(&["dump", "core", &args.need("core")?, "--json"]);
             if let Some(executable) = args.text("executable") {
@@ -2159,6 +2165,16 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
 are 3 bugs are 3 lines.",
         kind: Kind::Reads,
         params: &[("dir", "string!", "The directory of the dumps.")],
+    },
+    Tool {
+        name: "dump_test",
+        description: "Writes a test that calls the function that failed with what the dump says it had, in the module's \
+test file, and says whether it fails as the dump did. Run it where the program's sources are.",
+        kind: Kind::Edits,
+        params: &[
+            ("file", "string!", "The dump."),
+            ("frame", "integer", "The frame to call, as `dump_read` numbers them; by default the innermost it can."),
+        ],
     },
     Tool {
         name: "dump_core",

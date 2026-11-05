@@ -4954,3 +4954,48 @@ fn a_dump_does_not_make_values_up() {
     assert_eq!(named("mode"), 0, "{values:?}");
     assert_eq!(named("later"), 0, "{values:?}");
 }
+
+#[test]
+fn a_failure_in_a_dump_becomes_a_test() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n").unwrap();
+    let program = "import std.console\n\npub type Item = { name: String, price: Float }\n\n\
+        pub enum Mode { Fast, Slow(Int) }\n\npub fn Item.total(self, rate: Float): Float {\n    \
+        let sum = self.price * rate\n    if sum > 10.0 {\n        panic(\"too much\")\n    }\n    sum\n}\n\n\
+        pub fn charge(item: Item, rate: Float, mode: Mode): Float {\n    let total = item.total(rate)\n    \
+        _ = mode\n    total\n}\n\nfn main() {\n    let item = Item { name: \"tea\", price: 9.5 }\n    \
+        console.println(\"{charge(item, 1.5, Mode.Slow(3))}\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "--debug", "--output", "shop"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("shop")).env("TONDO_DUMP", dir.join("dumps")).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
+    let test = |args: &[&str]| {
+        let run =
+            Command::new(tondo_bin).args(["dump", "test"]).arg(&dump).args(args).current_dir(&dir).output().unwrap();
+        assert!(run.status.success(), "{run:?}");
+        serde_json::from_slice::<Value>(&run.stdout).unwrap()
+    };
+    // The innermost: a method, on what it was called on.
+    let answer = test(&["--json"]);
+    assert_eq!(answer["test"], "failedInItemTotal", "{answer}");
+    assert_eq!(answer["reproduces"], true, "{answer}");
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("let receiver = Item { name: \"tea\", price: 9.5 }"), "{written}");
+    assert!(written.contains("receiver.total(rate)"), "{written}");
+    // One further out, with an enum, beside it.
+    let answer = test(&["--frame", "1", "--json"]);
+    assert_eq!(answer["test"], "failedInCharge", "{answer}");
+    assert_eq!(answer["reproduces"], true, "{answer}");
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("let mode = Mode.Slow(3)") && written.contains("failedInItemTotal"), "{written}");
+}

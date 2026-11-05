@@ -847,6 +847,13 @@ programa, con las líneas de la tabla del ejecutable, que un build con `--strip`
 conserva; no da lo que tenían: valores, contadores ni memoria por sitio. Un
 ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
 
+`tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función
+más interna de la tarea que falló de la que el volcado tiene todos los argumentos, o
+la del marco `<n>`, y escribe en el archivo de tests de su módulo un test que la llama
+con esos valores, escritos como código. Luego lo ejecuta y dice si falla como el
+volcado. Si un valor no se puede escribir como código, no deja nada y dice por qué.
+Se ejecuta donde están las fuentes del programa.
+
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
 crecen: los que suben en cuatro de cada cinco pasos, de más a menos, con su ritmo.
@@ -1733,6 +1740,7 @@ campos de su resultado:
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file`, sus tiempos y `first_commit` y `last_commit` |
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
+| `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
