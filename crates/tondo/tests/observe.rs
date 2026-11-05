@@ -3611,6 +3611,10 @@ impl Adapter {
 
     /// The arguments of a request the adapter makes of the editor.
     fn asked(&mut self, command: &str) -> Value {
+        // It may have come while the answer to another request was awaited.
+        if let Some(at) = self.events.iter().position(|e| e["type"] == "request" && e["command"] == command) {
+            return self.events.remove(at)["arguments"].clone();
+        }
         loop {
             let message = dap_read(&mut self.output);
             if message["type"] == "request" && message["command"] == command {
