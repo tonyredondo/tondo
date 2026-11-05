@@ -369,6 +369,16 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.changeSignature",
+        "title": "Change Signature",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.moveToModule",
+        "title": "Move to Another Module",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.dumpReport",
         "title": "Open Dump Report",
         "category": "Tondo"
@@ -638,6 +648,14 @@
         },
         {
           "command": "tondo.compareTest",
+          "when": "false"
+        },
+        {
+          "command": "tondo.changeSignature",
+          "when": "false"
+        },
+        {
+          "command": "tondo.moveToModule",
           "when": "false"
         },
         {

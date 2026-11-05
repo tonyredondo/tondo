@@ -18,7 +18,9 @@ project, running, debugging and testing it.
 - **Editing**, from `tondo lsp`: diagnostics as you type, those of the
   whole workspace too, with their quick fixes and a link to what their
   code means; hover; go to definition, type definition and
-  implementations; references; call and type hierarchies; rename, of
+  implementations; references; call and type hierarchies; change a signature,
+  move a declaration to another module and inline a call, checked by compiling;
+  rename, of
   files and folders too; completion, which writes the import of a module
   it names, and in an `import` lists the modules there are, each standard
   one with what it offers; signature help; inlay hints of types and parameters; symbols;
@@ -48,7 +50,8 @@ project, running, debugging and testing it.
   *Compare with Another Moment*, what changed since another probe;
   a frame in a file that is not here as it was built opens it from its
   repository, at the build's commit, as if it were here, with breakpoints;
-  *Open Dump Report* shows all a dump says beside the code, with places that open;
+  *Open Dump Report* shows all a dump says beside the code, with places that
+  open, and while it is open a hover says what its frames held;
   *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
   dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part

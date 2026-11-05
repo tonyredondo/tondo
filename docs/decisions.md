@@ -5086,3 +5086,22 @@ each place has its own storage and credentials, and `aws s3 cp` already knows th
 
 Many instances fall the same way. A signature goes by the panic's code and the
 functions, not its text or lines, as those differ with each value and build.
+
+## Incremental analysis waits, because the numbers say so
+
+It was worth asking again now that the editor does more. A project of 72,000
+lines in 61 modules checks whole in 0.16 s with a release build, and an edit gets
+its answer in the same time, as parsing and checking already run in parallel.
+Reusing parts of an analysis would add invalidation to everything that reads it,
+to save time nobody waits for. It comes back when a real project is slow.
+
+## A refactor is what still compiles
+
+Changing a signature, moving a declaration or inlining a call edit text across
+files, and text is not the program: a comma in a string, a name passed as a value,
+a private helper left behind. Each edit is checked by analyzing the program as it
+would be before the editor hears of it, so one that would break it is refused with
+the error it would make. That keeps the code that writes edits small.
+
+A hint that a `pub` is for nothing lives in the editor only: in a program it
+is a tidy-up, in a library it is a mistake, and `tondo check` has no opinion.

@@ -1661,3 +1661,151 @@ fn runs_tests_from_lenses_and_formats_closed_blocks() {
     assert_eq!(edits[0]["newText"], "    if n > 1 {\n        return n * 2\n    }\n", "{edits}");
     editor.stop();
 }
+
+/// The edits of an answer, each file's as it ends up.
+fn applied(answer: &Value, root: &Path) -> std::collections::HashMap<String, String> {
+    let changes = answer["changes"].as_object().unwrap_or_else(|| panic!("{answer}"));
+    let mut files = std::collections::HashMap::new();
+    for (uri, edits) in changes {
+        let path = uri.strip_prefix("file://").unwrap();
+        let mut text = std::fs::read_to_string(path).unwrap();
+        let offset = |text: &str, at: &Value| {
+            let line = at["line"].as_u64().unwrap() as usize;
+            let start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+            let rest = &text[start..];
+            let chars = at["character"].as_u64().unwrap() as usize;
+            start + rest.char_indices().nth(chars).map_or(rest.len(), |(at, _)| at)
+        };
+        let mut edits: Vec<&Value> = edits.as_array().unwrap().iter().collect();
+        edits.sort_by_key(|edit| std::cmp::Reverse(offset(&text, &edit["range"]["start"])));
+        for edit in edits {
+            let (from, to) = (offset(&text, &edit["range"]["start"]), offset(&text, &edit["range"]["end"]));
+            text.replace_range(from..to, edit["newText"].as_str().unwrap());
+        }
+        let name = Path::new(path).strip_prefix(root).unwrap().display().to_string();
+        files.insert(name, text);
+    }
+    files
+}
+
+#[test]
+fn changes_signatures_moves_declarations_and_inlines_calls() {
+    let tondo_toml = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+    let main = "import app.tools\nimport std.console\n\nfn twice(value: Int): Int {\n    value * 2\n}\n\n\
+        fn label(name: String, times: Int): String {\n    \"{name} {times}\"\n}\n\nfn main() {\n    \
+        console.println(label(\"a, b\", twice(2)))\n    console.println(\"{tools.size(\"x\", 3)}\")\n}\n";
+    let tools = "pub fn size(text: String, extra: Int): Int {\n    text.length() + extra\n}\n\npub fn idle(): Int {\n    0\n}\n";
+    let other = "pub fn nothing(): Int {\n    1\n}\n";
+    let dir = project(
+        "lsp-refactors",
+        &[
+            ("tondo.toml", tondo_toml),
+            ("src/main.to", main),
+            ("src/tools/tools.to", tools),
+            ("src/other/other.to", other),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let tools_uri = editor.open(&dir.join("src/tools/tools.to"));
+    let position = |text: &str, word: &str| {
+        let at = text.find(word).unwrap();
+        let line = text[..at].matches('\n').count();
+        let character = at - text[..at].rfind('\n').map_or(0, |i| i + 1);
+        json!({ "line": line, "character": character })
+    };
+    let actions = |editor: &mut Editor, uri: &str, at: Value| {
+        let range = json!({ "start": at, "end": at });
+        let params = json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } });
+        editor.request("textDocument/codeAction", params).as_array().unwrap().clone()
+    };
+
+    // The editor is offered what it then asks for.
+    let found = actions(&mut editor, &uri, position(main, "label(name"));
+    let change = found.iter().find(|a| a["title"] == "Change the signature of `label`").unwrap();
+    assert_eq!(change["command"]["arguments"][2], "name: String, times: Int");
+
+    // Parameters reordered, one added: every call follows, also across a
+    // comma inside a text.
+    let at = position(main, "label(name");
+    let wanted = "times: Int, name: String, tail: String = \"!\"";
+    let params = json!({ "command": "tondo.signature", "arguments": [uri, at, wanted] });
+    let answer = editor.request("workspace/executeCommand", params);
+    let edited = applied(&answer["edit"], &dir);
+    let text = &edited["src/main.to"];
+    assert!(text.contains("fn label(times: Int, name: String, tail: String): String"), "{text}");
+    assert!(text.contains("label(twice(2), \"a, b\", \"!\")"), "{text}");
+
+    // What would not compile is refused, saying why.
+    let params =
+        json!({ "command": "tondo.signature", "arguments": [uri, position(main, "label(name"), "name: String"] });
+    let answer = editor.request("workspace/executeCommand", params);
+    assert!(answer["error"].as_str().unwrap().contains("would not check"), "{answer}");
+
+    // A call of a function of one expression.
+    let found = actions(&mut editor, &uri, position(main, "twice(2)"));
+    let inline =
+        found.iter().find(|a| a["title"] == "Inline this call of `twice`").unwrap_or_else(|| panic!("{found:?}"));
+    let text = &applied(&inline["edit"], &dir)["src/main.to"];
+    assert!(text.contains("label(\"a, b\", (2 * 2))"), "{text}");
+
+    // To another module: the declaration, and all that names it.
+    let params = json!({ "command": "tondo.modules", "arguments": [tools_uri, position(tools, "size")] });
+    let modules = editor.request("workspace/executeCommand", params);
+    assert!(modules.as_array().unwrap().iter().any(|m| m == "app.other"), "{modules}");
+    let params = json!({ "command": "tondo.moveTo", "arguments": [tools_uri, position(tools, "size"), "app.other"] });
+    let answer = editor.request("workspace/executeCommand", params);
+    let edited = applied(&answer["edit"], &dir);
+    assert!(edited["src/other/other.to"].contains("pub fn size(text: String, extra: Int): Int {"), "{edited:?}");
+    assert!(!edited["src/tools/tools.to"].contains("fn size"), "{edited:?}");
+    assert!(edited["src/main.to"].contains("import app.other\n"), "{edited:?}");
+    assert!(edited["src/main.to"].contains("{other.size(\"x\", 3)}"), "{edited:?}");
+
+    // `pub` for nothing, in a program: a hint, and its repair.
+    let (path, hints) = editor
+        .diagnostics
+        .iter()
+        .rev()
+        .find(|(path, _)| path.ends_with("tools.to"))
+        .cloned()
+        .unwrap_or_else(|| panic!("no diagnostics of tools.to"));
+    let hint =
+        hints.as_array().unwrap().iter().find(|d| d["code"] == "H1001").unwrap_or_else(|| panic!("{path}: {hints}"));
+    assert!(hint["message"].as_str().unwrap().contains("`idle`"), "{hint}");
+    assert_eq!(hint["severity"], 4);
+    let found = actions(&mut editor, &tools_uri, position(tools, "pub fn idle"));
+    assert!(found.iter().any(|a| a["title"] == "remove `pub`"), "{found:?}");
+    editor.stop();
+}
+
+#[test]
+fn a_hover_says_what_an_open_dump_held() {
+    let source = "fn work(limit: Int): Int {\n    let doubled = limit * 2\n    if doubled > 0 {\n        panic(\"look\")\n    }\n    doubled\n}\n\nfn main() {\n    _ = work(21)\n}\n";
+    let dir = project("lsp-dump", &[("late.to", source), ("dumps/.keep", "")]);
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built = std::process::Command::new(tondo)
+        .args(["build", "late.to", "--debug", "--output", "late"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    std::process::Command::new(dir.join("late")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("dumps"))
+        .unwrap()
+        .flatten()
+        .map(|f| f.path())
+        .find(|p| p.to_string_lossy().contains(".dump.json"))
+        .unwrap();
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("late.to"));
+    editor.request("workspace/executeCommand", json!({ "command": "tondo.useDump", "arguments": [dump] }));
+    let position = json!({ "line": 1, "character": 8 });
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": position }));
+    let text = hover["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("In the dump:") && text.contains("`42`"), "{text}");
+    // Without it, as ever.
+    editor.request("workspace/executeCommand", json!({ "command": "tondo.useDump", "arguments": [null] }));
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": position }));
+    assert!(!hover["contents"]["value"].as_str().unwrap().contains("In the dump:"), "{hover}");
+    editor.stop();
+}

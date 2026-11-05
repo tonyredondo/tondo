@@ -172,6 +172,8 @@ struct Server {
     dirty: HashSet<PathBuf>,
     /// The files of each root that the editor shows diagnostics for.
     published: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// The dump the editor has open, whose values a hover shows.
+    dump: Option<Value>,
     /// Where the standard modules are written, for definitions in them.
     std: Option<PathBuf>,
     /// Whether the editor asked for the tests of each project
@@ -365,7 +367,9 @@ impl Server {
                 "colorProvider": true,
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
-                "executeCommandProvider": { "commands": ["tondo.runTest"] },
+                "executeCommandProvider": { "commands": [
+                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump",
+                ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
                 "callHierarchyProvider": true,
@@ -527,10 +531,23 @@ impl Server {
     /// file's project with `tondo test`, apart from the server, and says how
     /// it went.
     fn execute(&mut self, params: &Value) -> Option<Value> {
-        if params["command"] != "tondo.runTest" {
-            return None;
-        }
         let arguments = &params["arguments"];
+        let answer = |result: Result<Value, String>| match result {
+            Ok(edit) => json!({ "edit": edit }),
+            Err(message) => json!({ "error": message }),
+        };
+        match params["command"].as_str()? {
+            "tondo.runTest" => {}
+            "tondo.signature" => return Some(answer(self.change_signature(arguments))),
+            "tondo.moveTo" => return Some(answer(self.move_to(arguments))),
+            "tondo.modules" => return self.own_modules(arguments),
+            "tondo.useDump" => {
+                let file = arguments[0].as_str().map(Path::new);
+                self.dump = file.and_then(|file| crate::observe::load(file).ok());
+                return Some(Value::Null);
+            }
+            _ => return None,
+        }
         let path = uri_path(arguments[0].as_str()?)?;
         let id = arguments[1].as_str()?.to_string();
         let suite = arguments[2].as_bool().unwrap_or(false);
@@ -721,6 +738,13 @@ impl Server {
             }
             by_file.entry(path).or_default().push(published);
         }
+        // What is `pub` for nothing, which only the editor says: a library's
+        // are for whoever uses it.
+        for (span, message) in unused_public(analyzed) {
+            let Some((path, range)) = self.place(analyzed, span) else { continue };
+            let hint = json!({ "range": range, "severity": 4, "tags": [1], "code": "H1001", "source": "tondo", "message": message });
+            by_file.entry(path).or_default().push(hint);
+        }
         let before = self.published.remove(root).unwrap_or_default();
         for path in before.iter().filter(|path| !by_file.contains_key(*path)) {
             let uri = self.uri(path);
@@ -818,7 +842,31 @@ impl Server {
         Some((analyzed, path.to_string(), target, span))
     }
 
+    /// What a hover says, and what the dump the editor has open held in the
+    /// binding it points at.
     fn hover(&mut self, params: &Value) -> Option<Value> {
+        let mut found = self.described(params)?;
+        if let Some(values) = self.dumped_at(params).filter(|values| !values.is_empty())
+            && let Some(text) = found["contents"]["value"].as_str()
+        {
+            let lines: Vec<String> = values.iter().take(5).map(|value| format!("- {value}")).collect();
+            found["contents"]["value"] = json!(format!("{text}\n\nIn the dump:\n{}", lines.join("\n")));
+        }
+        Some(found)
+    }
+
+    fn dumped_at(&self, params: &Value) -> Option<Vec<String>> {
+        let dump = self.dump.as_ref()?;
+        let (analyzed, def, span) = self.def_at(params)?;
+        let declared = &analyzed.analysis.index.as_ref()?.defs[def];
+        if !matches!(declared.kind, DefKind::Local | DefKind::Parameter) {
+            return None;
+        }
+        let file = analyzed.analysis.sources.file_of(span.start);
+        Some(crate::observe::dumped_bindings(dump, &file.logical, &declared.name))
+    }
+
+    fn described(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
         if let Some((analyzed, module, _, span)) = self.imported(params) {
             let (_, range) = self.place(analyzed, span)?;
@@ -2280,11 +2328,19 @@ impl Server {
                 "edit": { "changes": changes },
             }));
         }
+        for (span, _) in unused_public(analyzed).into_iter().filter(|(span, _)| span.start <= to && from <= span.end) {
+            if wants("quickfix") {
+                let edit = json!({ "changes": self.edits(analyzed, &[(span, String::new())]) });
+                actions.push(json!({ "title": "remove `pub`", "kind": "quickfix", "edit": edit }));
+            }
+        }
         if refactor {
             actions.extend(self.refactors(params));
         }
         if wants("refactor") && params["context"]["triggerKind"].as_u64() != Some(2) {
             actions.extend(self.inline(params));
+            actions.extend(self.inline_call(params));
+            actions.extend(self.declaration_actions(params));
         }
         if wants("refactor") {
             actions.extend(self.test_action(params));
@@ -2415,6 +2471,324 @@ impl Server {
         let analyzed = self.analyses.get(&key_of(&path))?;
         let title = format!("Inline `{}`", index_name(analyzed, def));
         Some(json!({ "title": title, "kind": "refactor.inline", "edit": { "changes": self.edits(analyzed, &edits) } }))
+    }
+
+    /// On a call of a function that is one expression: that expression, with
+    /// the arguments in place of its parameters, when the program checks
+    /// the same.
+    fn inline_call(&mut self, params: &Value) -> Option<Value> {
+        let at = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let (analyzed, def, span) = self.def_at(&at)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let declared = &index.defs[def];
+        if declared.kind != DefKind::Function || span == declared.name_span {
+            return None;
+        }
+        let sources = &analyzed.analysis.sources;
+        let home = sources.file_of(declared.name_span.start);
+        let from = (declared.decl_span.start - home.base) as usize;
+        let text = &home.text[from..(declared.decl_span.end - home.base) as usize];
+        let name_end = (declared.name_span.end - home.base) as usize - from;
+        let list = crate::refactor::list_at(text, name_end)?;
+        let (body_from, body_to) = crate::refactor::single_expression(text, list.close)?;
+        let here = sources.file_of(span.start);
+        let call = crate::refactor::list_at(&here.text, (span.end - here.base) as usize)?;
+        if call.items.len() != list.items.len() {
+            return None;
+        }
+        // Each parameter's reads in the body.
+        let mut reads: Vec<(usize, usize, String)> = Vec::new();
+        for (&(a, b), &(c, d)) in list.items.iter().zip(&call.items) {
+            let name = crate::refactor::parameter_name(&text[a..b]);
+            let argument = here.text[c..d].to_string();
+            let inside = |def: &crate::index::Def| {
+                def.kind == DefKind::Parameter
+                    && def.name == name
+                    && declared.decl_span.start <= def.name_span.start
+                    && def.name_span.end <= declared.decl_span.end
+            };
+            let parameter = index.defs.iter().position(inside)?;
+            let used: Vec<Span> =
+                index.references(parameter).into_iter().filter(|s| *s != index.defs[parameter].name_span).collect();
+            let simple = argument.chars().all(|c| c.is_alphanumeric() || "._\"".contains(c));
+            // What is read more than once, or never, must not run a call.
+            if used.len() != 1 && !simple {
+                return None;
+            }
+            let written = if simple { argument } else { format!("({argument})") };
+            for read in used {
+                let at = (read.start - home.base) as usize - from;
+                reads.push((at, at + (read.end - read.start) as usize, written.clone()));
+            }
+        }
+        reads.sort_by_key(|&(at, ..)| std::cmp::Reverse(at));
+        let mut body = text[body_from..body_to].to_string();
+        for (start, end, written) in reads {
+            if start < body_from || end > body_to {
+                return None;
+            }
+            body.replace_range(start - body_from..end - body_from, &written);
+        }
+        let name = declared.name.clone();
+        let start = (span.start - here.base) as usize;
+        // With what names it: `module.f(...)` goes whole.
+        let qualified =
+            here.text[..start].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let whole = Span::new(here.base + qualified as u32, here.base + call.close as u32 + 1);
+        let edits = vec![(whole, format!("({body})"))];
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        self.checked_edit(&path, &edits).ok().map(
+            |edit| json!({ "title": format!("Inline this call of `{name}`"), "kind": "refactor.inline", "edit": edit }),
+        )
+    }
+
+    /// What can be done with the declaration a request points at: its
+    /// signature, and where it lives. Each asks the editor for what it needs.
+    fn declaration_actions(&mut self, params: &Value) -> Vec<Value> {
+        let at = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let Some((analyzed, def, _)) = self.def_at(&at) else { return Vec::new() };
+        let Some(index) = analyzed.analysis.index.as_ref() else { return Vec::new() };
+        let declared = &index.defs[def];
+        let mut actions = Vec::new();
+        let place = json!([params["textDocument"]["uri"], params["range"]["start"]]);
+        if matches!(declared.kind, DefKind::Function | DefKind::Method)
+            && let Some((list, _)) = self.parameters_of(analyzed, def)
+        {
+            let mut arguments = place.clone();
+            arguments.as_array_mut().expect("an array").push(json!(list));
+            let command =
+                json!({ "title": "Change signature", "command": "tondo.changeSignature", "arguments": arguments });
+            actions.push(json!({ "title": format!("Change the signature of `{}`", declared.name), "kind": "refactor", "command": command }));
+        }
+        if matches!(declared.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const) {
+            let command = json!({ "title": "Move", "command": "tondo.moveToModule", "arguments": place });
+            actions.push(json!({ "title": format!("Move `{}` to another module", declared.name), "kind": "refactor.move", "command": command }));
+        }
+        actions
+    }
+
+    /// The parameters a function declares, as written, but `self`; and
+    /// whether it has that one.
+    fn parameters_of(&self, analyzed: &Analyzed, def: usize) -> Option<(String, bool)> {
+        let declared = &analyzed.analysis.index.as_ref()?.defs[def];
+        let home = analyzed.analysis.sources.file_of(declared.name_span.start);
+        let list = crate::refactor::list_at(&home.text, (declared.name_span.end - home.base) as usize)?;
+        let items: Vec<&str> = list.items.iter().map(|&(a, b)| &home.text[a..b]).collect();
+        let receiver = items.first().is_some_and(|first| crate::refactor::parameter_name(first) == "self");
+        Some((items[usize::from(receiver)..].join(", "), receiver))
+    }
+
+    /// `tondo.signature`: the function at a place takes the parameters of a
+    /// list, and each of its calls follows.
+    fn change_signature(&mut self, arguments: &Value) -> Result<Value, String> {
+        use crate::refactor::{arguments as moved, list_at, parameters};
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let wanted = parameters(arguments[2].as_str().unwrap_or_default())?;
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no function here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let declared = &index.defs[def];
+        let (written, receiver) = self.parameters_of(analyzed, def).ok_or("this declaration takes no parameters")?;
+        let old: Vec<String> =
+            crate::refactor::parameters(&written)?.into_iter().map(|parameter| parameter.name).collect();
+        let sources = &analyzed.analysis.sources;
+        let home = sources.file_of(declared.name_span.start);
+        let list = list_at(&home.text, (declared.name_span.end - home.base) as usize).ok_or("no parameters here")?;
+        let declaration = wanted.iter().map(|parameter| parameter.declared.clone()).collect::<Vec<_>>().join(", ");
+        let declaration = match (receiver, declaration.is_empty()) {
+            (true, true) => "self".to_string(),
+            (true, false) => {
+                format!("{}, {declaration}", list.items.first().map_or("self", |&(a, b)| &home.text[a..b]))
+            }
+            _ => declaration,
+        };
+        let inside =
+            |base: u32, list: &crate::refactor::List| Span::new(base + list.open as u32 + 1, base + list.close as u32);
+        let mut edits = vec![(inside(home.base, &list), declaration)];
+        for span in index.references(def).into_iter().filter(|span| *span != declared.name_span) {
+            let file = sources.file_of(span.start);
+            let name_end = (span.end - file.base) as usize;
+            let Some(call) = list_at(&file.text, name_end) else {
+                let (_, line, _) = sources.position(span.start);
+                return Err(format!(
+                    "`{}` is used as a value at {}:{line}: change that first",
+                    declared.name, file.logical
+                ));
+            };
+            let given: Vec<&str> = call.items.iter().map(|&(a, b)| &file.text[a..b]).collect();
+            // `Type.method(value, ...)` passes `self` first.
+            let (kept, given) = match receiver && given.len() == old.len() + 1 {
+                true => (Some(given[0]), &given[1..]),
+                false => (None, &given[..]),
+            };
+            let written = moved(&old, &wanted, given)?;
+            let written = kept.map(str::to_string).into_iter().chain(written).collect::<Vec<_>>().join(", ");
+            edits.push((inside(file.base, &call), written));
+        }
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits)
+    }
+
+    /// The modules of the project, for the editor to offer.
+    fn own_modules(&mut self, arguments: &Value) -> Option<Value> {
+        let at = json!({ "textDocument": { "uri": arguments[0] }, "position": arguments[1] });
+        self.prepare(&at)?;
+        let (analyzed, here, _) = self.at(&at)?;
+        let sources = &analyzed.analysis.sources;
+        let mut modules: Vec<String> = (0..sources.len())
+            .filter(|&i| sources.file(i).own && i != here)
+            .map(|i| sources.file(i).module.clone())
+            .filter(|module| *module != sources.file(here).module)
+            .collect();
+        modules.sort();
+        modules.dedup();
+        Some(json!(modules))
+    }
+
+    /// `tondo.moveTo`: the declaration at a place goes to the end of a
+    /// module, with the imports it needs, and all that names it follows.
+    fn move_to(&mut self, arguments: &Value) -> Result<Value, String> {
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let target_module = arguments[2].as_str().unwrap_or_default().to_string();
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is nothing to move here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let declared = &index.defs[def];
+        let sources = &analyzed.analysis.sources;
+        let home = sources.file_of(declared.name_span.start);
+        let target = (0..sources.len()).map(|i| sources.file(i)).find(|file| file.module == target_module && file.own);
+        let target = target.ok_or_else(|| format!("the project has no module `{target_module}`"))?;
+        if target.base == home.base {
+            return Err(format!("`{}` is in that module already", declared.name));
+        }
+        let last = target_module.rsplit('.').next().unwrap_or(&target_module);
+        // The declaration, with the comments above it and its line's end.
+        let mut start = (declared.decl_span.start - home.base) as usize;
+        start = home.text[..start].rfind('\n').map_or(0, |i| i + 1);
+        while start > 0 {
+            let above = home.text[..start - 1].rfind('\n').map_or(0, |i| i + 1);
+            let line = home.text[above..start].trim_start();
+            if !(line.starts_with("//") || line.starts_with('@')) {
+                break;
+            }
+            start = above;
+        }
+        let end = (declared.decl_span.end - home.base) as usize;
+        let end = home.text[end..].find('\n').map_or(home.text.len(), |i| end + i + 1);
+        let end = if home.text[end..].starts_with('\n') { end + 1 } else { end };
+        let moved = home.text[start..end].trim_end();
+        let name_line = (declared.name_span.start - home.base) as usize;
+        let public =
+            home.text[..name_line].rsplit('\n').next().is_some_and(|line| line.trim_start().starts_with("pub "));
+        let written = match public {
+            true => moved.to_string(),
+            false => {
+                let at = (declared.decl_span.start - home.base) as usize - start;
+                format!("{}pub {}", &moved[..at], &moved[at..])
+            }
+        };
+        let import_line = |module: &str| format!("import {module}\n");
+        let import_place = |text: &str| {
+            let last = text
+                .match_indices("\nimport ")
+                .map(|(at, _)| at + 1)
+                .chain(text.starts_with("import ").then_some(0))
+                .last();
+            last.map_or(0, |at| text[at..].find('\n').map_or(text.len(), |i| at + i + 1))
+        };
+        let mut edits = vec![(Span::new(home.base + start as u32, home.base + end as u32), String::new())];
+        // The imports the moved code reads, which the module may lack.
+        let mut needed = Vec::new();
+        for line in home.text.lines().filter_map(|line| line.strip_prefix("import ")) {
+            let module = line.split_whitespace().next().unwrap_or(line);
+            let short = module.rsplit('.').next().unwrap_or(module);
+            let already = target.text.lines().any(|l| l.trim() == format!("import {module}"));
+            if moved.contains(&format!("{short}.")) && !already && module != target_module {
+                needed.push(import_line(module));
+            }
+        }
+        if !needed.is_empty() {
+            let place = target.base + import_place(&target.text) as u32;
+            edits.push((Span::new(place, place), needed.concat()));
+        }
+        let gap = if target.text.ends_with("\n\n") {
+            ""
+        } else if target.text.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+        let target_end = target.base + target.text.len() as u32;
+        edits.push((Span::new(target_end, target_end), format!("{gap}{written}\n")));
+        // All that names it, but in what moves.
+        let mut imported: Vec<u32> = Vec::new();
+        for span in index.references(def).into_iter().filter(|span| *span != declared.name_span) {
+            let file = sources.file_of(span.start);
+            let offset = (span.start - file.base) as usize;
+            if file.base == home.base && (start..end).contains(&offset) {
+                continue;
+            }
+            let before = &file.text[..offset];
+            let qualifier = before.strip_suffix('.').map(|head| {
+                head.len()
+                    - head
+                        .chars()
+                        .rev()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                        .map(char::len_utf8)
+                        .sum::<usize>()
+            });
+            let from = file.base + qualifier.unwrap_or(offset) as u32;
+            let name = &declared.name;
+            let replacement = if file.base == target.base { name.clone() } else { format!("{last}.{name}") };
+            edits.push((Span::new(from, span.end), replacement));
+            let has = file.text.lines().any(|line| line.trim() == format!("import {target_module}"));
+            if file.base != target.base && !has && !imported.contains(&file.base) {
+                imported.push(file.base);
+                let place = file.base + import_place(&file.text) as u32;
+                edits.push((Span::new(place, place), import_line(&target_module)));
+            }
+        }
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits).map_err(|message| {
+            format!("{message}; what moves may use what stays: move that too, or make it `pub` and import it")
+        })
+    }
+
+    /// The edits of `edits` for the editor, when the program checks after
+    /// them as it did before; or the error it would have.
+    fn checked_edit(&mut self, path: &Path, edits: &[(Span, String)]) -> Result<Value, String> {
+        let analyzed = self.analyses.get(&key_of(path)).ok_or("this file is not analyzed")?;
+        let before = errors_of(analyzed);
+        let sources = &analyzed.analysis.sources;
+        let mut files: HashMap<PathBuf, FileEdits> = HashMap::new();
+        for (span, replacement) in edits {
+            let index = (0..sources.len()).rev().find(|&i| sources.file(i).base <= span.start).ok_or("no such file")?;
+            let file = sources.file(index);
+            let file_path = analyzed.paths[index].clone().ok_or_else(|| format!("{} cannot change", file.logical))?;
+            let entry = files.entry(file_path).or_insert_with(|| (file.text.clone(), file.base, Vec::new()));
+            entry.2.push((*span, replacement.clone()));
+        }
+        let mut open: HashMap<PathBuf, String> =
+            self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
+        for (file_path, (text, base, mut changes)) in files {
+            changes.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
+            let mut edited = text;
+            for (span, replacement) in changes {
+                edited.replace_range((span.start - base) as usize..(span.end - base) as usize, &replacement);
+            }
+            open.insert(file_path, edited);
+        }
+        let (root, _) = root_of(path);
+        let after = self.analyzed(&root, open).ok_or("the program does not check after that")?;
+        let new = errors_of(&after).into_iter().find(|error| !before.contains(error));
+        if let Some((code, message)) = new {
+            return Err(format!("the program would not check: {code} {message}"));
+        }
+        let analyzed = self.analyses.get(&key_of(path)).ok_or("this file is not analyzed")?;
+        Ok(json!({ "changes": self.edits(analyzed, edits) }))
     }
 
     /// Refactors of a selection: an expression into a variable, whole lines
@@ -3575,6 +3949,47 @@ fn arguments(tokens: &[crate::lexer::Token]) -> Vec<(usize, u32, bool, Option<St
 }
 
 /// The errors of an analysis, by code and message.
+/// A file's text and base, and the edits of it.
+type FileEdits = (String, u32, Vec<(Span, String)>);
+
+/// The `pub` of each declaration of a program's files that no other file
+/// uses, and what to say of it.
+fn unused_public(analyzed: &Analyzed) -> Vec<(Span, String)> {
+    let Some(index) = analyzed.analysis.index.as_ref() else { return Vec::new() };
+    let sources = &analyzed.analysis.sources;
+    let exported = |def: &crate::index::Def| {
+        matches!(def.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const | DefKind::Trait)
+    };
+    let own = |def: &crate::index::Def| sources.file_of(def.name_span.start).own;
+    // A package without `main` is a library.
+    if !index.defs.iter().any(|def| def.kind == DefKind::Function && def.name == "main" && own(def)) {
+        return Vec::new();
+    }
+    let mut elsewhere = HashSet::new();
+    for &(span, def) in &index.uses {
+        if sources.file_of(span.start).base != sources.file_of(index.defs[def].name_span.start).base {
+            elsewhere.insert(def);
+        }
+    }
+    let mut found = Vec::new();
+    for (_, def) in
+        index.defs.iter().enumerate().filter(|(id, def)| exported(def) && own(def) && !elsewhere.contains(id))
+    {
+        let file = sources.file_of(def.name_span.start);
+        let at = (def.name_span.start - file.base) as usize;
+        let start = file.text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let indent = file.text[start..at].len() - file.text[start..at].trim_start().len();
+        if file.text[start + indent..at].starts_with("pub ") {
+            let keyword = file.base + (start + indent) as u32;
+            found.push((
+                Span::new(keyword, keyword + 4),
+                format!("no other file uses `{}`, so it need not be `pub`", def.name),
+            ));
+        }
+    }
+    found
+}
+
 fn errors_of(analyzed: &Analyzed) -> Vec<(String, String)> {
     let diagnostics = analyzed.analysis.diags.list.iter();
     let errors = diagnostics.filter(|d| d.severity == crate::diag::Severity::Error);

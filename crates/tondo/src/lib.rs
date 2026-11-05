@@ -54,6 +54,7 @@ pub mod proto;
 pub mod protobuf;
 pub mod prove;
 // Its kinds of error are the runtime's; the compiler reads only their names.
+pub mod refactor;
 #[allow(dead_code)]
 #[path = "../../tondo-runtime/src/regex_dialect.rs"]
 mod regex_dialect;

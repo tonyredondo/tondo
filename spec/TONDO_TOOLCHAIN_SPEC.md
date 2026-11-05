@@ -499,6 +499,16 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
   ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
   varias (la que sigue empieza por `.`), como pistas en línea.
+- Sobre una función, el editor ofrece cambiar su firma: la lista de parámetros
+  se reordena, se recorta y se amplía, con `limit: Int = 10` para lo que pasan
+  sus llamadas (`tondo.signature`); sobre una función, tipo, enum o constante,
+  moverla a otro módulo del proyecto con los imports que lleve, y lo que la nombra
+  la sigue (`tondo.moveTo`); y sobre una llamada a una función de una expresión,
+  escribir esa expresión con sus argumentos. Todo se comprueba analizando el
+  programa como quedaría: lo que no compila se rechaza con su error. En un programa,
+  no en una librería, un `pub` que ningún otro archivo usa, tests incluidos, es
+  una pista (`H1001`) con su reparación, que solo da el editor. Con un volcado
+  abierto (`tondo.useDump`), `hover` añade lo que sus frames tenían en esa variable.
 - Mientras el depurador está parado (`textDocument/inlineValue`), las
   variables y parámetros que usan las líneas de la función donde paró hasta
   esa línea, para que el editor muestre su valor junto a ellas.

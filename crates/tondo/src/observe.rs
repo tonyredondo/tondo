@@ -905,8 +905,31 @@ pub fn dumped_value<'a>(frame: &'a Value, path: &str) -> Option<&'a Value> {
     Some(value)
 }
 
+/// What a dump's frames in `file` held in a binding named `name`: each
+/// different value, with its task and line, for an editor to show.
+pub fn dumped_bindings(dump: &Value, file: &str, name: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for task in tasks(dump) {
+        for frame in task["frames"].as_array().into_iter().flatten() {
+            let at = frame["at"].as_str().unwrap_or_default();
+            if !at.starts_with(&format!("{file}:")) {
+                continue;
+            }
+            let bindings = frame["bindings"].as_array().into_iter().flatten();
+            for binding in bindings.filter(|binding| binding["name"] == name) {
+                let value = binding["value"].as_str().unwrap_or_default();
+                let line = format!("`{value}` (task {}, {at})", task["id"]);
+                if !found.contains(&line) {
+                    found.push(line);
+                }
+            }
+        }
+    }
+    found
+}
+
 /// A dump from its file, compressed or not, with every frame named.
-fn load(path: &std::path::Path) -> Result<Value, String> {
+pub fn load(path: &std::path::Path) -> Result<Value, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mut text = Vec::new();
     let bytes = match bytes.starts_with(&[0x1f, 0x8b]) {

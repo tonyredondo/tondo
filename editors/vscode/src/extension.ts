@@ -9,6 +9,7 @@ import { registerDebugging } from './debugging';
 import { registerLive } from './live';
 import { registerModules } from './modules';
 import { registerObserving } from './observe';
+import { registerRefactors } from './refactors';
 import { registerProfiles } from './profiles';
 import { registerStatus } from './status';
 import { registerTasks } from './tasks';
@@ -54,6 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   await startClient(output);
   registerDebugging(context);
+  registerRefactors(context);
   registerLive(context, output);
   registerModules(context);
   registerObserving(context, output);

@@ -131,6 +131,9 @@ async function dumpReport(uri?: vscode.Uri): Promise<void> {
   const options = { enableScripts: true, retainContextWhenHidden: true };
   const panel = vscode.window.createWebviewPanel('tondoDump', path.basename(file), vscode.ViewColumn.Beside, options);
   panel.webview.html = dumpPage(ran.stdout, randomBytes(16).toString('hex'));
+  // While it is open, a hover says what its frames held.
+  void vscode.commands.executeCommand('tondo.useDump', file);
+  panel.onDidDispose(() => void vscode.commands.executeCommand('tondo.useDump', null));
   panel.webview.onDidReceiveMessage(async (asked: { file: string; line: number }) => {
     const found = await exec(['source', asked.file, '--from', file, '--json'], cwd);
     if (found.code !== 0) {
