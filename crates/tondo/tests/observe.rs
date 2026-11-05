@@ -3644,8 +3644,9 @@ fn dumps_come_on_a_schedule_and_differ() {
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
     let mut dumps: Vec<_> = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().map(|f| f.path()).collect();
     dumps.sort_by_key(|dump| dump.metadata().unwrap().modified().unwrap());
-    assert_eq!(dumps.len(), 2, "{dumps:?}");
-    let diff = Command::new(tondo).arg("dump").arg("diff").args(&dumps).output().unwrap();
+    // One more, if the program ended as the oldest was about to go.
+    assert!((2..=3).contains(&dumps.len()), "{dumps:?}");
+    let diff = Command::new(tondo).arg("dump").arg("diff").args(&dumps[dumps.len() - 2..]).output().unwrap();
     let text = String::from_utf8_lossy(&diff.stdout);
     assert!(diff.status.success(), "{}", String::from_utf8_lossy(&diff.stderr));
     // What it says depends on where each dump found the task.

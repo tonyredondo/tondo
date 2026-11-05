@@ -1536,18 +1536,24 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
         let path = dir.join(format!("{program}-{}-{number}.dump.json.gz", std::process::id()));
         let text = compressed(&dump("schedule", &why, None, Some(std::time::Duration::from_millis(100))));
         let length = text.len() as u64;
-        // The oldest goes first: the program may end at any moment.
-        let room = schedule.room.unwrap_or(u64::MAX);
-        while written.len() >= schedule.keep.max(1)
-            || !written.is_empty() && written.iter().map(|(_, size)| size).sum::<u64>() + length > room
-        {
+        let forget = |written: &mut std::collections::VecDeque<(PathBuf, u64)>| {
             if let Some((oldest, _)) = written.pop_front() {
                 let _ = std::fs::remove_file(oldest);
             }
+        };
+        // The room holds before a dump is written. What it keeps goes only
+        // once the new one is there: the program may end at any moment, and
+        // the last ones are what is wanted of a program that ended.
+        let room = schedule.room.unwrap_or(u64::MAX);
+        while !written.is_empty() && written.iter().map(|(_, size)| size).sum::<u64>() + length > room {
+            forget(&mut written);
         }
         if std::fs::write(&path, text).is_ok() {
+            written.push_back((path.clone(), length));
+            while written.len() > schedule.keep.max(1) {
+                forget(&mut written);
+            }
             dumped(&path);
-            written.push_back((path, length));
         }
     }
 }
