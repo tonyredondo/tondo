@@ -3020,7 +3020,7 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\nimport std.sync\nimport std.time\n\n\
         fn hold(lock: sync.Mutex[Int], ready: Sender[Bool], go: Receiver[Bool]) {\n    lock.update((value) {\n        \
-        ready.send(true)\n        _ = go.receive()\n        value = value + 1\n    })\n}\n\n\
+        ready.send(true)\n        _ = go.receive()\n        time.sleep(time.seconds(1))\n        value = value + 1\n    })\n}\n\n\
         fn sleeper() {\n    time.sleep(time.seconds(60))\n}\n\n\
         fn main() {\n    let lock = sync.Mutex(0)\n    let (ready, started) = channel[Bool](1)\n    \
         let (go, going) = channel[Bool](1)\n    let holder = spawn hold(lock, ready, going)\n    \
