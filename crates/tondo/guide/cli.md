@@ -101,6 +101,7 @@ tondo dump api                    its tasks, where each is, counters and live me
 tondo blocked api                 who waits for whom now
 tondo logpoint api app.to:12 "order {order.id}"   what a line holds as it goes by
 tondo logpoint api app.to:12 --if "total > 100" --dump d.json   the whole program, that time
+tondo logpoint api app.to:12 --stop 60   a breakpoint of that task alone, in a Release build
 tondo dump read api.dump why      what went wrong, as far as it can tell
 tondo dump read api.dump stacks   the tasks by the stack they share
 tondo dump read api.dump requests the HTTP and gRPC requests in flight

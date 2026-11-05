@@ -980,7 +980,11 @@ en la línea del cursor de un programa que elige de los que corren, con su texto
 condición, y muestra lo que llega en un panel. Con `--dump <archivo>` esa vez deja
 además un volcado de todo el programa tal como estaba allí, sin pararlo más que el
 volcado: una foto de producción en el momento que importa. Vale para una sola vez,
-salvo que `--max` diga otra cosa.
+salvo que `--max` diga otra cosa. Con `--stop <segundos>` esa vez es un breakpoint de esa
+tarea sola, en un build sin sondas: la tarea espera, con dónde está y sus valores, hasta
+que se pulse Enter, pase el tiempo o se vaya la herramienta, y el resto del programa
+sigue, lo que deja mirarlo con `dump`, `blocked` o `counters`. El tiempo es obligatorio:
+un servicio no se queda parado porque alguien se fue.
 
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
@@ -1783,7 +1787,7 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
-| `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump` |
+| `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

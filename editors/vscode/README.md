@@ -55,7 +55,8 @@ project, running, debugging and testing it.
   *Open Dump Report* shows all a dump says beside the code, with places that
   open, and while it is open a hover says what its frames held;
   *Add a Logpoint to a Running Program* shows what the line of the cursor holds
-  in a running program, in a panel, without stopping it; *Show Failures From
+  in a running program, in a panel, without stopping it; *Stop a Task of a Running Program
+  Here* a breakpoint of that task alone, in a build without probes; *Show Failures From
   Dumps* marks in the code where the dumps of a directory fell, and the locks
   they found taken in orders that can deadlock; *Debug a Dump* opens a core of the
   system too, and *Read a Core of the System* one whose program is elsewhere;

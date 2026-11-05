@@ -192,7 +192,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "logpoint",
         usage: &[
-            "tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--dump <file>] [--max <n>] [--for <seconds>] [--json]",
+            "tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]",
         ],
         summary: &["what a line of a running program holds as it goes", "by, without stopping it, in any build"],
     },

@@ -1245,6 +1245,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(dump) = args.text("dump") {
                 push(&["--dump", &dump]);
             }
+            if let Some(stop) = args.number("stop") {
+                push(&["--stop", &stop.to_string()]);
+            }
             let seconds = args.text("seconds").unwrap_or_else(|| "10".to_string());
             push(&["--max", &args.text("max").unwrap_or_else(|| "20".to_string()), "--for", &seconds, "--json"]);
         }
@@ -2239,6 +2242,11 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
             ("text", "string", "What to say of each time, as `order {order.id}`; by default, every binding."),
             ("if", "string", "What must hold for a time to count, as `order.total > 100`."),
             ("dump", "string", "A file for a dump of the whole program as it was the time it counted."),
+            (
+                "stop",
+                "integer",
+                "Hold the task that gets there for so many seconds, with where it is, as a breakpoint of that task alone; the others go on.",
+            ),
             ("max", "integer", "How many times, 20 by default."),
             ("seconds", "integer", "For how long, 10 by default."),
         ],

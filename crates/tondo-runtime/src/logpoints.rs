@@ -20,6 +20,9 @@ struct Logpoint {
     condition: Option<String>,
     /// Where each time leaves a dump of the program, as it was there.
     dump: Option<String>,
+    /// For how long, in seconds, each time holds its task, as a breakpoint
+    /// of that task alone: the others go on.
+    stop: Option<u64>,
 }
 
 struct Site {
@@ -32,15 +35,43 @@ static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
 
-/// `logpoint <max> <file:line>[\t<condition>[\t<dump>]]`: tells the tool its
-/// number and how many places the line has, or gives why not.
+/// The logpoints whose held task may go on, and what wakes it.
+static GOING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+static GO: std::sync::Condvar = std::sync::Condvar::new();
+
+/// `go <id>`: the task a logpoint holds goes on.
+pub(crate) fn go(id: &str) -> String {
+    if let Ok(id) = id.trim().parse() {
+        GOING.lock().unwrap_or_else(|e| e.into_inner()).push(id);
+        GO.notify_all();
+    }
+    String::new()
+}
+
+/// Holds this task at logpoint `id`, out of Tondo code so that collections
+/// and dumps go on, until the tool says or the time ends.
+fn held(id: u64, seconds: u64) {
+    let paused = super::tasks::pause_here();
+    let going = GOING.lock().unwrap_or_else(|e| e.into_inner());
+    let time = std::time::Duration::from_secs(seconds);
+    let (mut going, _) =
+        GO.wait_timeout_while(going, time, |going| !going.contains(&id)).unwrap_or_else(|e| e.into_inner());
+    going.retain(|&other| other != id);
+    drop(going);
+    if paused {
+        super::tasks::enter_tondo();
+    }
+}
+
+/// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>]]]`: tells
+/// the tool its number and how many places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
     let mut fields = request.split('\t');
     let request = fields.next().unwrap_or_default();
     let mut given = || fields.next().filter(|field| !field.is_empty()).map(str::to_string);
-    let (condition, dump) = (given(), given());
+    let (condition, dump, stop) = (given(), given(), given().and_then(|seconds| seconds.parse().ok()));
     if let Some(Err(message)) = condition.as_deref().map(super::debugger::valid_expression) {
         return error(&format!("the condition: {message}"));
     }
@@ -83,7 +114,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client, condition, dump });
+    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop });
     String::new()
 }
 
@@ -163,6 +194,8 @@ pub(crate) fn tool_gone(client: i32) {
         mine.is_some() && mine == other
     };
     let ids: Vec<u64> = lock().iter().filter(|logpoint| same(logpoint)).map(|logpoint| logpoint.id).collect();
+    // A task it holds goes on with it.
+    ids.iter().for_each(|id| drop(go(&id.to_string())));
     ids.into_iter().for_each(remove);
 }
 
@@ -182,10 +215,11 @@ extern "C" fn hit(saved: *const usize) {
         set.iter().find_map(|logpoint| {
             let site = logpoint.sites.iter().find(|site| site.address + site.length == address)?.address;
             let client = logpoint.client.try_clone().ok().filter(|_| logpoint.left > 0)?;
-            Some((logpoint.id, site, client, logpoint.condition.clone(), logpoint.dump.clone()))
+            let (condition, dump) = (logpoint.condition.clone(), logpoint.dump.clone());
+            Some((logpoint.id, site, client, condition, dump, logpoint.stop))
         })
     };
-    let Some((id, site, mut client, condition, dump)) = found else { return };
+    let Some((id, site, mut client, condition, dump, stop)) = found else { return };
     // Those that come while one is shown go by.
     let Ok(_shown) = HIT.try_lock() else { return };
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
@@ -207,9 +241,17 @@ extern "C" fn hit(saved: *const usize) {
         super::diagnostics::dump_here(path, here)
     });
     let dumped = dumped.map_or(String::new(), |path| format!(",\"dump\":{}", super::diagnostics::quoted(&path)));
-    let line = format!("{{\"hit\":{id},\"task\":{task}{dumped},\"values\":[{}]}}\n", values.join(","));
+    // Where a task that stops is, which is what a debugger shows first.
+    let stack = stop.map_or(String::new(), |seconds| {
+        let here = std::iter::once(address).chain(super::trace::walk(fp, bounds));
+        let places = here.flat_map(super::trace::scopes_at).map(|(_, place)| super::diagnostics::quoted(&place));
+        format!(",\"stopped\":{seconds},\"stack\":[{}]", places.collect::<Vec<_>>().join(","))
+    });
+    let line = format!("{{\"hit\":{id},\"task\":{task}{dumped}{stack},\"values\":[{}]}}\n", values.join(","));
     if client.write_all(line.as_bytes()).is_err() {
         forget(id);
+    } else if let Some(seconds) = stop {
+        held(id, seconds);
     }
     if last {
         let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());

@@ -3166,6 +3166,30 @@ fn a_logpoint_reads_a_running_release_build() {
     assert_eq!(dumped["hits"][0]["dump"], dump.to_str().unwrap(), "{dumped}");
     let read = tondo(&["dump", "read", dump.to_str().unwrap(), "stacks", "--json"]).to_string();
     assert!(read.contains("orders.to:8 in charge"), "{read}");
+    // A breakpoint of one task, in a build that has none: where it is, and it
+    // waits for Enter while the program answers.
+    let mut stopping = Command::new(tondo_bin)
+        .arg("logpoint")
+        .arg(&pid)
+        .args(["orders.to:8", "{order.id}", "--stop", "60"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut said = BufReader::new(stopping.stdout.take().unwrap());
+    let (mut shown, mut line) = (String::new(), String::new());
+    while !line.contains("stands here") {
+        line.clear();
+        assert!(said.read_line(&mut line).unwrap() > 0, "{shown}");
+        shown.push_str(&line);
+    }
+    assert!(shown.contains("orders.to:8 in charge") && shown.contains("in main"), "{shown}");
+    tondo(&["blocked", &pid, "--json"]);
+    let started = std::time::Instant::now();
+    std::io::Write::write_all(stopping.stdin.as_mut().unwrap(), b"\n").unwrap();
+    assert!(stopping.wait().unwrap().success());
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
     let wrong = logpoint(&["orders.to:8", "--if", "order.id >", "--max", "1"]);
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("the condition"), "{wrong:?}");
     // A tight loop has no place, and it says which line has.

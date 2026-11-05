@@ -2321,6 +2321,8 @@ pub struct Logpoint {
     pub condition: Option<String>,
     /// Where each time leaves a dump of the whole program, as it was there.
     pub dump: Option<PathBuf>,
+    /// For how long each time holds its task, in seconds.
+    pub stop: Option<u64>,
     pub max: u64,
     pub seconds: Option<u64>,
 }
@@ -2329,12 +2331,13 @@ pub struct Logpoint {
 /// running program holds each time it goes by, up to `max` times or for
 /// `seconds`, without stopping it. `{user.id}` in the text reads a part.
 pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
-    let Logpoint { name, place, text, condition, dump, max, seconds } = asked;
+    let Logpoint { name, place, text, condition, dump, stop, max, seconds } = asked;
     let (text, max) = (text.as_deref(), *max);
     let mut program = connect(name)?;
     let here = std::env::current_dir().map_err(|e| e.to_string())?;
     let dump = dump.as_ref().map_or(String::new(), |path| here.join(path).display().to_string());
-    let request = format!("logpoint {max} {place}\t{}\t{dump}", condition.as_deref().unwrap_or_default());
+    let held = stop.map_or(String::new(), |seconds| seconds.to_string());
+    let request = format!("logpoint {max} {place}\t{}\t{dump}\t{held}", condition.as_deref().unwrap_or_default());
     let answer = program.ask(&request)?;
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
@@ -2370,6 +2373,16 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
                 println!("{}", logged(&hit, text));
                 if let Some(dump) = hit["dump"].as_str() {
                     eprintln!("tondo: a dump of the program as it was there is in {dump}");
+                }
+                for frame in hit["stack"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    println!("  {frame}");
+                }
+                if let Some(seconds) = hit["stopped"].as_u64() {
+                    println!("task {} stands here for {seconds} seconds, the others go on: Enter lets it go", hit["task"]);
+                    let _ = std::io::stdout().flush();
+                    let mut enter = String::new();
+                    let _ = std::io::stdin().read_line(&mut enter);
+                    let _ = writeln!(program.writer, "go {}", hit["hit"]);
                 }
             }
         }

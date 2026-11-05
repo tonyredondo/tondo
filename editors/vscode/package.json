@@ -399,6 +399,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.stopTask",
+        "title": "Stop a Task of a Running Program Here",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.showFailures",
         "title": "Show Failures From Dumps",
         "category": "Tondo"
