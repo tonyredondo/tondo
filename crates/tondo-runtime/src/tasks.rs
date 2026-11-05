@@ -1872,9 +1872,36 @@ unsafe fn switched_out(task: *mut Task) -> Option<(usize, (usize, usize))> {
     }
 }
 
+/// The callee-saved registers `switch` left on the stack of a task, and
+/// where it will go on.
+unsafe fn switched_registers(task: *mut Task) -> super::unwinding::Switched {
+    let mut registers = [None; 32];
+    unsafe {
+        let sp = (*task).sp as *const usize;
+        #[cfg(target_arch = "x86_64")]
+        {
+            for (slot, register) in [15, 14, 13, 12, 3].into_iter().enumerate() {
+                registers[register] = Some(*sp.add(slot));
+            }
+            (registers, *sp.add(6))
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            for slot in 0..10 {
+                registers[19 + slot] = Some(*sp.add(slot));
+            }
+            (registers, *sp.add(11))
+        }
+    }
+}
+
+/// A task's id, its frame pointer, its stack, and what `switch` left.
+pub(crate) type Standing = (u64, usize, (usize, usize), Option<super::unwinding::Switched>);
+
 /// The tasks that are not running on this thread, each where it stands:
-/// its id, the frame pointer of the place it stopped in, and its stack.
-pub(crate) fn standing() -> Vec<(u64, usize, (usize, usize))> {
+/// its id, the frame pointer of the place it stopped in, its stack, and
+/// for one switched out, its registers and where it goes on.
+pub(crate) fn standing() -> Vec<Standing> {
     let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
@@ -1886,18 +1913,18 @@ pub(crate) fn standing() -> Vec<(u64, usize, (usize, usize))> {
         let bounds = (stack.base as usize + GUARD, stack.top() as usize);
         let paused = runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task);
         let in_c = callers.iter().find(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task);
-        let frame = if let Some(caller) = in_c {
+        let (frame, saved) = if let Some(caller) = in_c {
             let depth = (caller.depth.load(Ordering::SeqCst) - 1).min(caller.frames.len() - 1);
-            caller.frames[depth].load(Ordering::Relaxed)
+            (caller.frames[depth].load(Ordering::Relaxed), None)
         } else if let Some(runner) = paused {
-            runner.frame.load(Ordering::SeqCst)
+            (runner.frame.load(Ordering::SeqCst), None)
         } else {
             match unsafe { switched_out(task) } {
-                Some((frame, _)) => frame,
+                Some((frame, _)) => (frame, Some(unsafe { switched_registers(task) })),
                 None => continue,
             }
         };
-        out.push((shown.id, frame, bounds));
+        out.push((shown.id, frame, bounds, saved));
     }
     out.sort_by_key(|&(id, ..)| id);
     out

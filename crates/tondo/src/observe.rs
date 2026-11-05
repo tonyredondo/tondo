@@ -1508,9 +1508,12 @@ fn stacks_text(groups: &[Value]) -> String {
     out.trim_end().to_string()
 }
 
+/// Tasks that others wait for, each with those.
+type HeldUp = Vec<(u64, Vec<u64>)>;
+
 /// Who waits for whom among the tasks, each by the tasks that can end its
 /// wait: the cycles, and for each task that holds others up, which.
-fn waits(tasks: &[Value]) -> (Vec<Vec<u64>>, Vec<(u64, Vec<u64>)>) {
+fn waits(tasks: &[Value]) -> (Vec<Vec<u64>>, HeldUp) {
     let on = |task: &Value| -> Vec<u64> {
         task["wait"]["on"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect()
     };
@@ -1550,7 +1553,7 @@ fn waits(tasks: &[Value]) -> (Vec<Vec<u64>>, Vec<(u64, Vec<u64>)>) {
             behind.entry(on).or_default().push(task);
         }
     }
-    let mut holding: Vec<(u64, Vec<u64>)> = behind.into_iter().collect();
+    let mut holding: HeldUp = behind.into_iter().collect();
     holding.sort_by_key(|(_, held)| std::cmp::Reverse(held.len()));
     (cycles, holding)
 }

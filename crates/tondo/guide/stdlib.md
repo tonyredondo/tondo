@@ -704,7 +704,8 @@ of a `--debug` build has every object: `objects` by type, and `object
 
 A dump keeps the bindings of every frame of every task, in any build, so a
 service that fell in production has them too: there a binding the code no
-longer needed may be gone, and a task that waits shows what was on its stack.
+longer needed may be gone, and on macOS a task that waits shows only what was
+on its stack.
 `tondo dump read
 <file> locals [<task> [<frame>]]` shows them, and `print user.name` a part,
 as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what

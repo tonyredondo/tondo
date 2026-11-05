@@ -2853,6 +2853,38 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
 }
 
 #[test]
+fn a_task_that_waits_shows_what_its_registers_held() {
+    // The tables of the runtime's frames are those of ELF.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-waiting");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    let program = "import std.console\nimport std.time\n\n\
+        fn consume(job: Int, limit: Int, inbox: Receiver[Int]): Int {\n    var seen = job * 3\n    \
+        var count = limit + 5\n    for {\n        let next = inbox.receive()\n        match next {\n            \
+        some(value) => {\n                seen = seen + value\n                count = count + 1\n                \
+        if value > 100 {\n                    console.println(\"{seen} {count} {limit}\")\n                }\n            \
+        }\n            none => {\n                return seen + count\n            }\n        }\n    }\n}\n\n\
+        fn main() {\n    let (sender, inbox) = channel[Int]()\n    let job = spawn consume(7, 40, inbox)\n    \
+        sender.send(5)\n    sender.send(6)\n    time.sleep(time.milliseconds(200))\n    \
+        panic(\"look at the task that waits\")\n    job.wait()\n}\n";
+    std::fs::write(dir.join("waits.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "waits.to", "--output", "waits"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let read = Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).args(["locals", "2"]).output().unwrap();
+    let locals = String::from_utf8_lossy(&read.stdout);
+    assert!(locals.contains("seen: Int = 32"), "{locals}");
+    assert!(locals.contains("count: Int = 47"), "{locals}");
+    assert!(locals.contains("limit: Int = 40"), "{locals}");
+}
+
+#[test]
 fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;

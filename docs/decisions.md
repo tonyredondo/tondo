@@ -5008,9 +5008,12 @@ Two limits are the optimizer's. A value that nothing reads later is gone,
 and at a panic nothing is read later: so a `panic` the program wrote stores
 its numbers in code only that panic runs, which keeps them alive until then.
 Bounds checks do not, as they sit in hot loops, and values of the heap do not,
-as a dead one may have been moved. And past the runtime's own frames the
-registers are not known without its unwind tables, so a task that waits shows
-only what the compiler spilled.
+as a dead one may have been moved. Past the runtime's own frames a task that
+waits has its registers from the unwind tables the executable keeps: `switch`
+left them on its stack, and each frame of the runtime says what it saved, which
+a small reader of `.eh_frame` follows in the copy that shows values. macOS keeps
+those tables in another form, so there a task that waits shows only what the
+compiler spilled.
 
 ## What is secret is what the program says is secret
 

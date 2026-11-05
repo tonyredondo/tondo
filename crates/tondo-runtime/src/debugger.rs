@@ -1497,9 +1497,9 @@ pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Ve
     lines
 }
 
-/// Where a task stands in a dump: its id, the code of a fault, its frame
-/// and its stack.
-type TaskStop = (u64, Option<usize>, usize, (usize, usize));
+/// Where a task stands in a dump: its id, the code of a fault, its frame,
+/// its stack, and for one switched out, its registers and where it was.
+type TaskStop = (u64, Option<usize>, usize, (usize, usize), Option<super::unwinding::Switched>);
 
 /// In the copy of the program, shows the bindings from the `from`th on,
 /// a line each on `out`.
@@ -1522,8 +1522,8 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
     }
     let _quiet = super::heap::Quiet::enter();
     let mut stops: Vec<TaskStop> =
-        here.into_iter().map(|(pc, fp, bounds)| (super::tasks::current_id(), pc, fp, bounds)).collect();
-    stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds)| (id, None, fp, bounds)));
+        here.into_iter().map(|(pc, fp, bounds)| (super::tasks::current_id(), pc, fp, bounds, None)).collect();
+    stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds, saved)| (id, None, fp, bounds, saved)));
     let mut index = 0;
     let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, glue: Show, address: usize| {
         index += 1;
@@ -1542,7 +1542,7 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
         unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
     };
     let release = table.is_none().then(dump_functions);
-    for (task, pc, frame, bounds) in stops {
+    for (task, pc, frame, bounds, switched) in stops {
         // Past the frames of the Rust library, which may have no pointers.
         let frame = if pc.is_none() { super::trace::through(frame, bounds) } else { frame };
         if let Some(table) = table {
@@ -1561,12 +1561,16 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
             if pc.is_some() {
                 registers = super::diagnostics::faulted_registers();
             }
+            // One that switched out left them where it did, in the
+            // runtime's frame that called the switch.
+            if let Some((saved, address)) = switched {
+                registers = super::unwinding::restored(address, frame, &saved, bounds);
+            }
             let (kept_at, kept) = PANIC_REGISTERS.get();
             for (fp, address) in top.into_iter().chain(super::trace::callers(frame, bounds)) {
-                // Past the runtime's own frames nothing is known, but what
-                // a panic kept.
+                // The runtime's frames saved what the program's code had.
                 let Some((function, start)) = super::trace::function_at(address) else {
-                    registers = [None; 32];
+                    registers = super::unwinding::restored(address, fp, &registers, bounds);
                     continue;
                 };
                 if fp == kept_at {
@@ -1635,7 +1639,7 @@ struct DumpFunction {
 }
 
 /// The registers of a frame, those known.
-type Registers = [Option<usize>; 32];
+use super::unwinding::Registers;
 
 /// The callee-saved registers, as the ABI says.
 #[cfg(target_arch = "x86_64")]
