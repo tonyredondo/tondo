@@ -2122,7 +2122,7 @@ fn debugger_compares_two_recorded_runs() {
     let compared = |first: &str, second: &str| {
         let args = ["debug", "--compare", first, second, "--json"];
         let output = Command::new(tondo).args(args).current_dir(&dir).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(output.status.success(), "{output:?}");
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let parted = compared(&good, &bad);
