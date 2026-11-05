@@ -109,8 +109,10 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
         .env("XDG_CACHE_HOME", scratch.join("cache"));
-    // Long enough for an emulator: a build that hangs names its case.
-    let build = run_with_timeout(&mut build, 300).map_err(|e| format!("its build: {e}"))?;
+    // Long enough for a debug build of `tondo` under an emulator, where a
+    // case that uses much of the standard library takes minutes: a build
+    // that hangs names its case.
+    let build = run_with_timeout(&mut build, 1200).map_err(|e| format!("its build: {e}"))?;
     let diagnostics = String::from_utf8_lossy(&build.stderr);
     let matches = |line: &str, severity: &str, expected: &str| {
         let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
