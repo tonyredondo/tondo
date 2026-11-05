@@ -1975,3 +1975,43 @@ fn moves_between_functions_and_methods_and_inlines_aliases() {
     assert!(text.contains("by: Int") && !text.contains("alias"), "{text}");
     editor.stop();
 }
+
+#[test]
+fn writes_constants_and_branches_and_marks_what_is_deprecated() {
+    let main = "/// Old.\n@deprecated(\"use `fresh`\")\npub fn stale(n: Int): Int {\n    n\n}\n\npub fn fresh(n: Int): Int {\n    \
+        if n > 3 {\n        n * 60\n    } else {\n        stale(n)\n    }\n}\n\nfn main() {\n    _ = fresh(1)\n}\n";
+    let dir = project(
+        "lsp-branches",
+        &[("tondo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), ("src/main.to", main)],
+    );
+    let mut editor = Editor::start_with(json!({ "pullDiagnostics": true }));
+    let uri = editor.open(&dir.join("src/main.to"));
+    let position = |word: &str| {
+        let at = main.find(word).unwrap();
+        json!({ "line": main[..at].matches('\n').count(), "character": at - main[..at].rfind('\n').map_or(0, |i| i + 1) })
+    };
+    // What goes away shows struck through, saying what to use.
+    let report = editor.request("textDocument/diagnostic", json!({ "textDocument": { "uri": uri } }));
+    let items = report["items"].as_array().unwrap();
+    let warned = items.iter().find(|d| d["code"] == "W1015").unwrap_or_else(|| panic!("{report}"));
+    assert_eq!(warned["tags"], json!([2]), "{warned}");
+    assert!(warned["message"].as_str().unwrap().contains("use `fresh`"), "{warned}");
+
+    let params = json!({ "command": "tondo.ifMatch", "arguments": [uri, position("if n > 3")] });
+    let answer = editor.request("workspace/executeCommand", params);
+    assert!(answer["error"].is_null(), "{answer}");
+    let text = applied(&answer["edit"], &dir)["src/main.to"].clone();
+    assert!(text.contains("match n > 3 {\n        true => {\n            n * 60\n        }\n        false => {\n            stale(n)\n        }\n    }"), "{text}");
+
+    // A number chosen, as a constant before its function.
+    let at = position("60");
+    let end = json!({ "line": at["line"], "character": at["character"].as_u64().unwrap() + 2 });
+    let context = json!({ "diagnostics": [], "triggerKind": 1 });
+    let params = json!({ "textDocument": { "uri": uri }, "range": { "start": at, "end": end }, "context": context });
+    let actions = editor.request("textDocument/codeAction", params);
+    let found = actions.as_array().unwrap().iter().find(|a| a["title"] == "Extract into a constant");
+    let found = found.unwrap_or_else(|| panic!("{actions}"));
+    let text = &applied(&found["edit"], &dir)["src/main.to"];
+    assert!(text.contains("const NewConstant = 60\n\npub fn fresh") && text.contains("n * NewConstant"), "{text}");
+    editor.stop();
+}

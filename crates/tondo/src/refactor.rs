@@ -105,6 +105,67 @@ pub fn parameter_name(text: &str) -> &str {
     text.split([':', ' ']).next().unwrap_or(text)
 }
 
+/// A block's lines, one level further in or out than they are.
+fn indented(block: &str, by: isize) -> String {
+    let moved = block.trim_end().trim_start_matches('\n').lines().map(|line| match by {
+        4 if !line.is_empty() => format!("    {line}\n"),
+        -4 => format!("{}\n", line.strip_prefix("    ").unwrap_or(line)),
+        _ => format!("{line}\n"),
+    });
+    moved.collect()
+}
+
+/// The `if condition { a } else { b }` that starts the line at `start` as a
+/// `match` of its condition: where it ends, and the text.
+pub fn if_as_match(text: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = text.as_bytes();
+    let line_end = text[start..].find('\n')? + start;
+    let line = &text[start..line_end];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    let condition = line.trim().strip_prefix("if ")?.strip_suffix('{')?.trim();
+    let open = line_end - 1;
+    let close = closing(bytes, open)?;
+    let rest = text[close + 1..].strip_prefix(" else {")?;
+    let second = close + 1 + " else {".len() - 1;
+    let end = closing(bytes, second)?;
+    if !rest.starts_with('\n') {
+        return None;
+    }
+    let (first, other) = (indented(&text[open + 1..close], 4), indented(&text[second + 1..end], 4));
+    let inner = format!("{indent}    ");
+    let written = format!(
+        "{indent}match {condition} {{\n{inner}true => {{\n{first}{inner}}}\n{inner}false => {{\n{other}{inner}}}\n{indent}}}"
+    );
+    Some((end + 1, written))
+}
+
+/// The `match` of `true` and `false` that starts the line at `start` as an
+/// `if`: where it ends, and the text.
+pub fn match_as_if(text: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = text.as_bytes();
+    let line_end = text[start..].find('\n')? + start;
+    let line = &text[start..line_end];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    let condition = line.trim().strip_prefix("match ")?.strip_suffix('{')?.trim();
+    let open = line_end - 1;
+    let end = closing(bytes, open)?;
+    // Each arm: its value, and its block, or the rest of its line.
+    let arm = |name: &str| -> Option<String> {
+        let at = text[open..end].find(&format!("{name} =>"))? + open + name.len() + " =>".len();
+        let body = text[at..end].trim_start();
+        let from = end - body.len();
+        match body.starts_with('{') {
+            true => Some(indented(&text[from + 1..closing(bytes, from)?], -4)),
+            false => {
+                let value = body.lines().next()?.trim().trim_end_matches(',');
+                Some(format!("{indent}    {value}\n"))
+            }
+        }
+    };
+    let (yes, no) = (arm("true")?, arm("false")?);
+    Some((end + 1, format!("{indent}if {condition} {{\n{yes}{indent}}} else {{\n{no}{indent}}}")))
+}
+
 /// Where the value a `.` at `dot` is after starts: a name, what calls and
 /// indexes follow it, and the names before it.
 pub fn receiver_start(text: &str, dot: usize) -> usize {

@@ -819,8 +819,13 @@ fn language(name: &str, args: &Args) -> Result<Reply, String> {
                     server.ask("workspace/executeCommand", &json!({ "command": how, "arguments": arguments }))?
                 }
                 None => {
-                    let range = json!({ "start": position, "end": position });
-                    let context = json!({ "diagnostics": [] });
+                    // What goes up to a place is a selection.
+                    let end = match (args.number("end_line"), args.number("end_column")) {
+                        (Some(line), Some(column)) => json!({ "line": line - 1.0, "character": column - 1.0 }),
+                        _ => position.clone(),
+                    };
+                    let range = json!({ "start": position, "end": end });
+                    let context = json!({ "diagnostics": [], "triggerKind": 1 });
                     let params = json!({ "textDocument": document, "range": range, "context": context });
                     let actions = server.ask("textDocument/codeAction", &params)?;
                     let found = actions
@@ -908,7 +913,7 @@ fn written(changes: &serde_json::Map<String, Value>) -> Result<Reply, String> {
 
 /// The refactors of the language server, by the name the tool gives them:
 /// its command, or the start of its code action's title.
-const REFACTORS: [(&str, &str); 9] = [
+const REFACTORS: [(&str, &str); 13] = [
     ("signature", "tondo.signature"),
     ("move", "tondo.moveTo"),
     ("group", "tondo.group"),
@@ -916,6 +921,10 @@ const REFACTORS: [(&str, &str); 9] = [
     ("to_method", "tondo.toMethod"),
     ("to_function", "tondo.toFunction"),
     ("inline_alias", "tondo.inlineAlias"),
+    ("if_match", "tondo.ifMatch"),
+    ("extract_variable", "Extract into a variable"),
+    ("extract_function", "Extract into a function"),
+    ("extract_constant", "Extract into a constant"),
     ("inline_call", "Inline this call"),
     ("delete", "Delete `"),
 ];
@@ -1965,7 +1974,8 @@ imports. Given a directory or file inside a project, its project, and the module
         name: "refactor",
         description: "A refactor at a place, rewriting the files, refused if the program would not check: `signature` \
 with the new parameters, `move` with a module, `group` with `Point: x, y`, `trait` with `Shape: area, name`, \
-`to_method`, `to_function`, `inline_alias`, `inline_call`, `delete`.",
+`to_method`, `to_function`, `if_match`, `inline_alias`, `inline_call`, `delete`, and with `end_line` and \
+`end_column` the selection of `extract_variable`, `extract_function` or `extract_constant`.",
         kind: Kind::Edits,
         params: &[
             FILE,
@@ -1973,6 +1983,8 @@ with the new parameters, `move` with a module, `group` with `Point: x, y`, `trai
             COLUMN,
             ("kind", "string!", "Which refactor."),
             ("argument", "string", "What it takes, for `signature`, `move`, `group` and `trait`."),
+            ("end_line", "integer", "Where a selection ends: its line, from 1."),
+            ("end_column", "integer", "Where a selection ends: its column, from 1."),
         ],
     },
     Tool {

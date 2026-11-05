@@ -46,6 +46,11 @@ fn check_with<'a>(
     meta: bool,
     index: Option<crate::index::Index>,
 ) -> (Option<hir::Program>, Option<crate::index::Index>) {
+    // What uses a deprecated declaration is known by the index, which a
+    // program that has none does without.
+    let deprecated = deprecated_names(module);
+    let asked = index.is_some();
+    let index = index.or_else(|| (!deprecated.is_empty()).then(crate::index::Index::default));
     let mut checker = Checker {
         index,
         index_exprs: Vec::new(),
@@ -139,7 +144,17 @@ fn check_with<'a>(
     checker.declare_prelude();
     let program = checker.program(module);
     checker.index_finish();
-    (program, checker.index)
+    if let Some(index) = checker.index.as_ref().filter(|_| !meta && !deprecated.is_empty()) {
+        let mut warned = HashSet::new();
+        for &(span, def) in &index.uses {
+            let declared = &index.defs[def];
+            let inside = declared.decl_span.start <= span.start && span.end <= declared.decl_span.end;
+            if let Some(text) = deprecated.get(&declared.name_span).filter(|_| !inside && warned.insert(span)) {
+                checker.diags.warning("W1015", span, format!("`{}` is deprecated: {text}", declared.name));
+            }
+        }
+    }
+    (program, checker.index.filter(|_| asked))
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
@@ -431,6 +446,30 @@ fn wire(field: &ast::FieldDecl) -> Option<String> {
 /// Whether a declaration is of a type marked `@secret`.
 fn secret_type(item: &ast::Item) -> bool {
     matches!(item, ast::Item::Type(decl) if decl.annotations.iter().any(|a| a.name.name == "secret"))
+}
+
+const DEPRECATED_TEXT: &str = "`@deprecated` says what to use instead: write `@deprecated(\"use `other`\")`";
+
+/// What `@deprecated("...")` says, if an annotation is that.
+fn deprecation(annotation: &ast::Annotation) -> Option<&str> {
+    match (annotation.name.name.as_str(), &annotation.argument) {
+        ("deprecated", Some(ast::AnnotationArg::Text(text))) => Some(text),
+        _ => None,
+    }
+}
+
+/// The declarations marked `@deprecated`, by where their names are.
+fn deprecated_names(module: &ast::Module) -> HashMap<Span, String> {
+    let mut found = HashMap::new();
+    for item in &module.items {
+        let (name, annotations) = match item {
+            ast::Item::Fn(f) => (&f.name, &f.annotations),
+            ast::Item::Type(t) => (&t.name, &t.annotations),
+            _ => continue,
+        };
+        found.extend(annotations.iter().filter_map(deprecation).map(|text| (name.span, text.to_string())));
+    }
+    found
 }
 
 /// That the language's annotation `@name` does not go on `what` (27.13).
@@ -3921,7 +3960,8 @@ impl<'a> Checker<'a> {
             // are `none`; `@secret` hides the type's values from the tools.
             let record = matches!(decl.body, ast::TypeBody::Record(_));
             let fits = |a: &&ast::Annotation| {
-                a.argument.is_none() && (a.name.name == "secret" || record && a.name.name == "omitNone")
+                deprecation(a).is_some()
+                    || a.argument.is_none() && (a.name.name == "secret" || record && a.name.name == "omitNone")
             };
             if let Some(annotation) = decl.annotations.iter().find(|a| !fits(a)) {
                 let (code, message) = match annotation.name.name.as_str() {
@@ -3933,6 +3973,7 @@ impl<'a> Checker<'a> {
                         ),
                     ),
                     "secret" => ("E1102", "`@secret` takes nothing: write `@secret`".to_string()),
+                    "deprecated" => ("E1102", DEPRECATED_TEXT.to_string()),
                     name => ("E1619", misplaced_annotation(name, "a type")),
                 };
                 self.diags.error(code, annotation.span, message);
@@ -4108,12 +4149,12 @@ impl<'a> Checker<'a> {
         for (index, f) in bodies.iter().enumerate() {
             let id = FnId(index as u32);
             if f.foreign.is_none() {
-                for annotation in &f.annotations {
-                    self.diags.error(
-                        "E1619",
-                        annotation.span,
-                        misplaced_annotation(&annotation.name.name, "a function"),
-                    );
+                for annotation in f.annotations.iter().filter(|a| deprecation(a).is_none()) {
+                    let (code, message) = match annotation.name.name.as_str() {
+                        "deprecated" => ("E1102", DEPRECATED_TEXT.to_string()),
+                        name => ("E1619", misplaced_annotation(name, "a function")),
+                    };
+                    self.diags.error(code, annotation.span, message);
                 }
             }
             self.annotate(Annotated::Function(id), &f.uses, f.module);

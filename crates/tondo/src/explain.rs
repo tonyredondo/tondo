@@ -239,6 +239,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "unused-negation",
         "A statement that is a negative value nobody uses, as a subtraction split before its `-`.",
     ),
+    ("W1015", "deprecated", "A use of a declaration marked `@deprecated`, which says what to use instead."),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

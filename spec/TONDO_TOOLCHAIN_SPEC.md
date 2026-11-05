@@ -505,6 +505,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - `tondo check --unreached` da el código propio que ni `main` ni un test alcanzan, por lo
   que nombran: en una librería lo `pub` lo alcanzan otros, los métodos de un `impl` su
   trait, y lo anotado quien lee las anotaciones. Es una pista en el editor (`H1002`).
+- Escribir un `if` con `else` como un `match` de su condición, y al revés
+  (`tondo.ifMatch`), y extraer un número o una cadena seleccionados a una constante
+  antes de su función.
 - El nombre de una variable o un parámetro se edita a la vez en toda su función
   (`textDocument/linkedEditingRange`). Un cliente que prefiere pedir los diagnósticos
   a recibirlos lo dice con `pullDiagnostics` en `initializationOptions`, y entonces

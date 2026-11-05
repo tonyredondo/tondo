@@ -1,0 +1,29 @@
+// A use of a declaration marked `@deprecated` warns, saying what to use.
+
+import std.console
+
+@deprecated("use `fresh`")
+fn stale(n: Int): Int {
+    if n > 0 {
+        return stale(n - 1)
+    }
+    n
+}
+
+@deprecated("use `Fresh`")
+type Stale = { n: Int }
+
+fn fresh(n: Int): Int {
+    n + 1
+}
+
+fn main() {
+    console.println("{stale(2)}")
+    let old: Stale = Stale { n: fresh(1) }
+    console.println("{old.n}")
+}
+
+// expect-stdout: 0
+// expect-stdout: 2
+// expect-warning: W1015 `stale` is deprecated: use `fresh`
+// expect-warning: W1015 `Stale` is deprecated: use `Fresh`

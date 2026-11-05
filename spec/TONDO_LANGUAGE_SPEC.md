@@ -2013,6 +2013,10 @@ anotación en minúscula es error; los campos de un contexto admiten en su lugar
 `@log` y `@label` (11.16). Un campo también lleva las anotaciones que declara
 el programa, que se escriben con la mayúscula de su tipo (27.13).
 
+`@deprecated("texto")`, antes de una función, un método o un `type`, dice que la
+declaración está de salida: cada uso, fuera de ella misma, da `W1015` con ese texto,
+que dice qué usar en su lugar. No cambia lo que hace el programa. Sin texto es `E1102`.
+
 `@secret`, en un campo de un record, de una variante o de un contexto, o antes
 de un `type`, oculta sus valores a las herramientas: el depurador, los volcados y
 las grabaciones al mostrarlos escriben `<secret>` (7.4 del toolchain). No cambia
@@ -8826,6 +8830,7 @@ oculten un diagnóstico independiente.
 | `W1012` | `converted-field-missing` | `reflect.convert` rellena con `none` un campo opcional del destino que el origen no tiene. |
 | `W1013` | `serial-spawn-in-loop` | `spawn` cuyo `Join` nadie consume dentro de un bucle: cada iteración espera a su tarea. |
 | `W1014` | `unused-negation` | Sentencia que es un valor negativo que nada usa, como una resta partida antes de su `-`. |
+| `W1015` | `deprecated` | Uso de una declaración marcada `@deprecated`, con lo que dice usar en su lugar. |
 
 #### Pánicos del lenguaje
 

@@ -376,7 +376,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias",
+                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
@@ -585,6 +585,7 @@ impl Server {
             "tondo.toMethod" => return Some(answer(self.function_as_method(arguments))),
             "tondo.toFunction" => return Some(answer(self.method_as_function(arguments))),
             "tondo.inlineAlias" => return Some(answer(self.inline_alias(arguments))),
+            "tondo.ifMatch" => return Some(answer(self.if_match(arguments))),
             "tondo.modules" => return self.own_modules(arguments),
             "tondo.useDump" => {
                 let file = arguments[0].as_str().map(Path::new);
@@ -782,6 +783,10 @@ impl Server {
             // What nothing uses or nothing reaches, which editors fade.
             if matches!(code, "W1001" | "W1002" | "W1003" | "W1006" | "W1007") {
                 published["tags"] = json!([1]);
+            }
+            // What is on its way out, which editors strike through.
+            if code == "W1015" {
+                published["tags"] = json!([2]);
             }
             // The code opens what it means (`tondo explain`).
             if crate::explain::CODES.iter().any(|(c, ..)| *c == code) {
@@ -2494,6 +2499,7 @@ impl Server {
             actions.extend(self.inline(params));
             actions.extend(self.inline_call(params));
             actions.extend(self.declaration_actions(params));
+            actions.extend(self.branch_action(params));
         }
         if wants("refactor") {
             actions.extend(self.test_action(params));
@@ -2905,6 +2911,42 @@ impl Server {
         }
         let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
         self.checked_edit(&path, &edits)
+    }
+
+    /// On a line that starts an `if` or a `match`, the other way to write it.
+    fn branch_action(&self, params: &Value) -> Option<Value> {
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let line = params["range"]["start"]["line"].as_u64()? as usize;
+        let text = self.open.get(&path).map(|document| document.text.clone())?;
+        let written = text.lines().nth(line)?.trim_start();
+        let title = match written.split(' ').next()? {
+            "if" => "Write this `if` as a `match`",
+            "match" => "Write this `match` as an `if`",
+            _ => return None,
+        };
+        let arguments = json!(["tondo.ifMatch", uri, params["range"]["start"]]);
+        let command = json!({ "title": title, "command": "tondo.refactor", "arguments": arguments });
+        Some(json!({ "title": title, "kind": "refactor", "command": command }))
+    }
+
+    /// `tondo.ifMatch`: the `if` with an `else` at a place as a `match` of
+    /// its condition, or such a `match` as an `if`.
+    fn if_match(&mut self, arguments: &Value) -> Result<Value, String> {
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        let analyzed = self.analyses.get(&key_of(&path)).ok_or("this file is not analyzed")?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path())).ok_or("not analyzed")?;
+        let source = analyzed.analysis.sources.file(file);
+        let line = arguments[1]["line"].as_u64().ok_or("no line")? as usize;
+        let start: usize = source.text.split_inclusive('\n').take(line).map(str::len).sum();
+        let (end, written) = crate::refactor::if_as_match(&source.text, start)
+            .or_else(|| crate::refactor::match_as_if(&source.text, start))
+            .ok_or("this line starts no `if` with an `else`, nor a `match` of `true` and `false`")?;
+        let span = Span::new(source.base + start as u32, source.base + end as u32);
+        self.checked_edit(&path, &[(span, written)])
     }
 
     /// `tondo.inlineAlias`: what names an alias names what it stands for, and
@@ -3325,6 +3367,9 @@ impl Server {
         let mut candidates = Vec::new();
         if let Some(edits) = extract_variable(index, &text, base, selected) {
             candidates.push(("Extract into a variable", edits));
+        }
+        if let Some(edits) = extract_constant(index, &text, base, selected) {
+            candidates.push(("Extract into a constant", edits));
         }
         if let Some(edits) = extract_function(index, source, selected) {
             candidates.push(("Extract into a function", edits));
@@ -4472,6 +4517,36 @@ fn declaration_lines(home: &SourceFile, declared: &crate::index::Def) -> (usize,
     let end = home.text[end..].find('\n').map_or(home.text.len(), |i| end + i + 1);
     let end = if home.text[end..].starts_with('\n') { end + 1 } else { end };
     (start, end)
+}
+
+/// A literal selected, as a constant before the function it is in, with a
+/// name the editor then renames.
+fn extract_constant(index: &Index, text: &str, base: u32, selected: Span) -> Option<Vec<(Span, String)>> {
+    let (a, b) = ((selected.start - base) as usize, (selected.end - base) as usize);
+    let written = text.get(a..b)?;
+    let number = written.chars().next().is_some_and(|c| c.is_ascii_digit());
+    let plain = written.len() > 1 && written.starts_with('"') && written.ends_with('"') && !written.contains('{');
+    if !(number && written.chars().all(|c| c.is_ascii_alphanumeric() || "._".contains(c)) || plain) {
+        return None;
+    }
+    let enclosing = index
+        .defs
+        .iter()
+        .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+        .filter(|d| d.decl_span.start <= selected.start && selected.end <= d.decl_span.end)
+        .min_by_key(|d| d.decl_span.end - d.decl_span.start)?;
+    let mut start = (enclosing.decl_span.start - base) as usize;
+    start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+    while start > 0 {
+        let above = text[..start - 1].rfind('\n').map_or(0, |at| at + 1);
+        if !text[above..start].trim_start().starts_with("//") && !text[above..start].trim_start().starts_with('@') {
+            break;
+        }
+        start = above;
+    }
+    let name = unused_name("NewConstant", text);
+    let place = base + start as u32;
+    Some(vec![(Span::new(place, place), format!("const {name} = {written}\n\n")), (selected, name)])
 }
 
 /// A file's text and base, and the edits of it.
