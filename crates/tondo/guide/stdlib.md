@@ -725,7 +725,7 @@ is, by their signature, with the commit each was first seen at, `tondo dump repo
 share, with where each task was and nothing the program held.
 
 A program that dies with no dump left, as one with no `TONDO_DUMP`, may leave a
-core of the system, on Linux. `tondo dump read <core> stacks` reads it as a dump,
+core of the system, on Linux or macOS, where it needs `--executable`. `tondo dump read <core> stacks` reads it as a dump,
 with the program where the core says, and `tondo dump core <core> --executable
 <file> --output <path>` writes the dump, for a program that is somewhere else: the
 signal, where every task and thread was and what it waited for, even in a build

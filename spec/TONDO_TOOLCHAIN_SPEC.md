@@ -850,7 +850,8 @@ sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
 *Show Failures From Dumps* marca en el código dónde cayó cada fallo de un directorio,
 y las líneas de los órdenes de locks que pueden bloquearse, que aún no cayeron.
 
-Un programa que muere sin volcado puede dejar un core del sistema, en Linux. `tondo
+Un programa que muere sin volcado puede dejar un core del sistema, en Linux o en
+macOS, que no dice su ejecutable y necesita `--executable`. `tondo
 dump read <core>` lo lee como un volcado, y `tondo dump core <core> [--executable
 <archivo>] [--output <ruta>]` lo escribe como uno, junto al core por omisión, para
 un ejecutable que no esté donde el core dice o para que lo lea lo demás. Da la señal

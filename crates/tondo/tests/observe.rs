@@ -5052,3 +5052,52 @@ fn a_failure_in_a_dump_becomes_a_test() {
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.contains("let mode = Mode.Slow(3)") && written.contains("failedInItemTotal"), "{written}");
 }
+
+/// A core of macOS, as `gcore` takes it of a program signed to allow it. It
+/// writes gigabytes, so it runs when asked: `TONDO_TEST_MACOS_CORE=1`.
+#[cfg(target_os = "macos")]
+#[test]
+fn reads_a_core_of_macos() {
+    if std::env::var_os("TONDO_TEST_MACOS_CORE").is_none() {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("observe-core-macos");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn stay(rounds: Int): Int {\n    time.sleep(time.seconds(30))\n    \
+        rounds + 1\n}\n\nfn main() {\n    let other = spawn stay(2)\n    console.println(\"ready\")\n    \
+        let _ = console.flush()\n    console.println(\"{other.wait()}\")\n}\n";
+    std::fs::write(dir.join("stays.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "stays.to", "--output", "stays"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let allow = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
+        <key>com.apple.security.get-task-allow</key><true/></dict></plist>\n";
+    std::fs::write(dir.join("allow.plist"), allow).unwrap();
+    let signed = Command::new("codesign")
+        .args(["-s", "-", "-f", "--entitlements", "allow.plist", "stays"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(signed.status.success(), "{signed:?}");
+    let mut child = Command::new(dir.join("stays")).stdout(Stdio::piped()).spawn().unwrap();
+    let mut said = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    said.read_line(&mut line).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let taken =
+        Command::new("gcore").args(["-o", "stays.core", &child.id().to_string()]).current_dir(&dir).output().unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(taken.status.success(), "{taken:?}");
+    let dump = dir.join("stays.dump.json");
+    let args = ["dump", "core", "stays.core", "--executable", "stays", "--output", "stays.dump.json"];
+    let ran = Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+    let _ = std::fs::remove_file(dir.join("stays.core"));
+    assert!(ran.status.success(), "{ran:?}");
+    let dump = dump.to_str().unwrap();
+    let stacks = tondo(&["dump", "read", dump, "stacks", "--json"]).to_string();
+    assert!(stacks.contains("stays.to:5 in stay"), "{stacks}");
+    assert!(stacks.contains("in main"), "{stacks}");
+}

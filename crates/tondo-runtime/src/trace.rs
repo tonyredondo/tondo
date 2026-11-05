@@ -1127,10 +1127,19 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             libc::SIGBUS => format!("SIGBUS: invalid memory access at {address:#x}"),
             _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
         };
-        let frames = std::iter::once(pc).chain(first).chain(walk).collect();
+        let frames: Vec<usize> = std::iter::once(pc).chain(first).chain(walk).collect();
         crate::diagnostics::fault_registers(&fault_registers(context), !in_c);
         crate::diagnostics::faulted_at(if in_c { link } else { pc }, fp, bounds);
-        crate::diagnostics::crash_dump("fault", &message, frames, false);
+        crate::diagnostics::crash_dump("fault", &message, frames.clone(), false);
+        // A fault of the runtime has no line of the program to show. Last,
+        // as this reads the executable, and memory may be what broke.
+        if function_at(pc).is_none() {
+            let names: Vec<&str> = frames.iter().take(8).filter_map(|&address| crate::symbols::name(address)).collect();
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                format!("tondo runtime: the fault is in {}\n", names.join(" < ")).as_bytes(),
+            );
+        }
         crate::debugger::crashed();
         // A recorded run ends here, its recording as it was.
         crate::replay::ending();

@@ -274,7 +274,7 @@ pub const COMMANDS: &[Command] = &[
         usage: &["tondo dump core <core|pid|-> [--executable <file>] [--output <path>] [--json]"],
         summary: &[
             "a core of the system as a dump: the signal, and",
-            "where each task and thread was (Linux); by pid from",
+            "where each task and thread was; by pid from",
             "coredumpctl, - from a pipe, as core_pattern gives it",
         ],
     },

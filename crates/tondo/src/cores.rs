@@ -1,5 +1,5 @@
-//! A core the system wrote of a Linux program, read as a dump (toolchain
-//! 7.5): the signal that ended it, and where each of its tasks and threads
+//! A core the system wrote of a program, on Linux or macOS, read as a dump
+//! (toolchain 7.5): the signal that ended it, and where each of its tasks and threads
 //! was, by the trace table of the program's executable, and the numbers and
 //! strings in its frames. A core is the memory of a process with no runtime
 //! left to ask: what only the program's code can show, and counters, are not
@@ -14,6 +14,96 @@ use std::path::{Path, PathBuf};
 /// What starts the trace table in a program's data, as the runtime's
 /// `trace::Table`.
 pub const MAGIC: &[u8; 16] = b"TONDOTRACE1\n\0\0\0\0";
+
+/// What a Mach-O file starts with, 64 bits, little-endian.
+const MACH_O: [u8; 4] = [0xcf, 0xfa, 0xed, 0xfe];
+const MACH_ARM64: u32 = 0x0100_000c;
+const MACH_X86_64: u32 = 0x0100_0007;
+const MACH_SEGMENT: u32 = 0x19;
+const MACH_THREAD: u32 = 4;
+
+type Commands = Vec<(u32, Vec<u8>)>;
+
+/// The load commands of a Mach-O file, by a reader of it: each one's kind
+/// and bytes, and its processor, by the number ELF gives it.
+fn mach_commands(header: &[u8], read: impl Fn(u64, usize) -> Option<Vec<u8>>) -> Option<(u16, Commands)> {
+    let machine = match u32_at(header, 4)? {
+        MACH_ARM64 => 183,
+        MACH_X86_64 => 62,
+        _ => return None,
+    };
+    let (count, size) = (u32_at(header, 16)? as usize, u32_at(header, 20)? as usize);
+    let bytes = read(32, size)?;
+    let (mut at, mut commands) = (0, Vec::with_capacity(count));
+    for _ in 0..count {
+        let (kind, length) = (u32_at(&bytes, at)?, u32_at(&bytes, at + 4)? as usize);
+        commands.push((kind, bytes.get(at..at + length)?.to_vec()));
+        at += length;
+    }
+    Some((machine, commands))
+}
+
+/// A segment of a load command.
+fn mach_segment(command: &[u8]) -> Option<Segment> {
+    Some(Segment { address: u64_at(command, 24)?, offset: u64_at(command, 40)?, size: u64_at(command, 48)? })
+}
+
+/// The threads and memory of a core of macOS.
+fn mach_core(header: &[u8], read: impl Fn(u64, usize) -> Option<Vec<u8>>) -> Option<(u16, Notes, Vec<Segment>)> {
+    if u32_at(header, 12)? != 4 {
+        return None;
+    }
+    let (machine, commands) = mach_commands(header, read)?;
+    let (mut found, mut kept) = (Notes::default(), Vec::new());
+    for (kind, command) in &commands {
+        match *kind {
+            MACH_SEGMENT => kept.extend(mach_segment(command)),
+            MACH_THREAD => {
+                // Threads have no number here, and tasks count from one.
+                let id = 1_000_000 + found.threads.len() as u32;
+                found.threads.extend(mach_thread(command, machine, id));
+            }
+            _ => {}
+        }
+    }
+    Some((machine, found, kept))
+}
+
+/// The state of a thread, of those a command holds, as Mach-O says it.
+fn mach_thread(command: &[u8], machine: u16, id: u32) -> Option<Thread> {
+    let mut at = 8;
+    while at + 8 <= command.len() {
+        let (flavor, count) = (u32_at(command, at)?, u32_at(command, at + 4)? as usize);
+        let state = command.get(at + 8..at + 8 + count * 4)?;
+        at += 8 + count * 4;
+        let word = |index: usize| u64_at(state, index * 8);
+        let mut registers = [None; 32];
+        match (machine, flavor) {
+            (183, 6) => {
+                (0..31).for_each(|number| registers[number] = word(number));
+                return Some(Thread { id, pc: word(32)?, sp: word(31)?, fp: word(29)?, link: word(30), registers });
+            }
+            (62, 4) => {
+                let order = [0, 3, 2, 1, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+                order.iter().enumerate().for_each(|(index, &number)| registers[number] = word(index));
+                return Some(Thread { id, pc: word(16)?, sp: word(7)?, fp: word(6)?, link: None, registers });
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The processor and segments of an executable of macOS.
+fn mach_program(bytes: &[u8]) -> Option<(u16, Vec<Segment>)> {
+    if !bytes.starts_with(&MACH_O) {
+        return None;
+    }
+    let read = |at: u64, length: usize| bytes.get(at as usize..at as usize + length).map(<[u8]>::to_vec);
+    let (machine, commands) = mach_commands(bytes, read)?;
+    let segments = commands.iter().filter(|(kind, _)| *kind == MACH_SEGMENT);
+    Some((machine, segments.filter_map(|(_, command)| mach_segment(command)).collect()))
+}
 
 /// What starts a live task in memory, as the runtime's `tasks::Task`, and
 /// where its stack pointer, number, state and whether it is the main task
@@ -749,6 +839,7 @@ fn tasks(memory: &Memory) -> (Vec<Task>, Option<u64>) {
 
 fn signal_name(signal: u32) -> String {
     let name = match signal {
+        0 => return "taken from a program that ran".to_string(),
         3 => "SIGQUIT",
         4 => "SIGILL",
         5 => "SIGTRAP",
@@ -766,26 +857,36 @@ fn signal_name(signal: u32) -> String {
 /// `executable` says otherwise.
 pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     let shown = path.display();
-    let not_core = || format!("{shown} is not a core of a 64-bit Linux program");
+    let not_core = || format!("{shown} is not a core of a 64-bit program of Linux or macOS");
     let file = std::fs::File::open(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
     let mut header = [0; 64];
     file.read_exact_at(&mut header, 0).map_err(|_| not_core())?;
     if header.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
         return Err(format!("{shown} is compressed: `zstd -d` or `coredumpctl dump -o <file>` writes it whole"));
     }
-    let machine = u16_at(&header, 0x12).unwrap_or(0);
-    if !header.starts_with(b"\x7fELF\x02\x01") || u16_at(&header, 0x10) != Some(4) || ![62, 183].contains(&machine) {
-        return Err(not_core());
-    }
     let from_core = |at: u64, length: usize| {
         let mut bytes = vec![0; length];
         file.read_exact_at(&mut bytes, at).ok().map(|()| bytes)
     };
-    let mut found = Notes::default();
-    for note in segments(&header, from_core, 4).ok_or_else(not_core)? {
-        let bytes = from_core(note.offset, note.size as usize).ok_or_else(|| format!("{shown} is cut short"))?;
-        notes(&bytes, machine, &mut found).ok_or_else(not_core)?;
-    }
+    let macho = header.starts_with(&MACH_O);
+    let (machine, found, mut kept) = match macho {
+        true => mach_core(&header, from_core).ok_or_else(not_core)?,
+        false => {
+            let machine = u16_at(&header, 0x12).unwrap_or(0);
+            let elf = header.starts_with(b"\x7fELF\x02\x01") && u16_at(&header, 0x10) == Some(4);
+            if !elf || ![62, 183].contains(&machine) {
+                return Err(not_core());
+            }
+            let mut found = Notes::default();
+            for note in segments(&header, from_core, 4).ok_or_else(not_core)? {
+                let bytes =
+                    from_core(note.offset, note.size as usize).ok_or_else(|| format!("{shown} is cut short"))?;
+                notes(&bytes, machine, &mut found).ok_or_else(not_core)?;
+            }
+            (machine, found, segments(&header, from_core, 1).ok_or_else(not_core)?)
+        }
+    };
+    kept.retain(|segment| segment.size > 0);
     if found.threads.is_empty() {
         return Err(format!("{shown} has no threads"));
     }
@@ -800,20 +901,32 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         format!("cannot read the program of this core, {}: {e}; name it with `--executable <file>`", program.display())
     })?;
     let from_program = |at: u64, length: usize| bytes.get(at as usize..at as usize + length).map(<[u8]>::to_vec);
-    let wrong = || format!("{} is not an ELF program for this core", program.display());
-    let same = bytes.starts_with(b"\x7fELF\x02\x01") && u16_at(&bytes, 0x12) == Some(machine);
-    let loads = same.then(|| segments(&bytes, from_program, 1)).flatten().ok_or_else(wrong)?;
-    let entry = u64_at(&bytes, 0x18).ok_or_else(wrong)?;
-    let bias = found.entry.wrapping_sub(entry);
-
-    let mut kept = segments(&header, from_core, 1).ok_or_else(not_core)?;
-    kept.retain(|segment| segment.size > 0);
+    let wrong = || format!("{} is not a program for this core", program.display());
+    // Where the program is, and where the core kept its first page, so that
+    // a build that is not this one shows.
+    let (loads, bias, first) = match macho {
+        true => {
+            let (cpu, loads) = mach_program(&bytes).ok_or_else(wrong)?;
+            // Not `__PAGEZERO`, which is at no offset either and holds nothing.
+            let linked = loads.iter().find(|load| load.offset == 0 && load.size > 0).ok_or_else(wrong)?.address;
+            let executable_header = |segment: &&Segment| {
+                let start = from_core(segment.offset, 16);
+                start.is_some_and(|start| start.starts_with(&MACH_O) && u32_at(&start, 12) == Some(2))
+            };
+            let base = kept.iter().find(executable_header).filter(|_| cpu == machine).ok_or_else(wrong)?;
+            (loads, base.address.wrapping_sub(linked), Some(base.address))
+        }
+        false => {
+            let same = bytes.starts_with(b"\x7fELF\x02\x01") && u16_at(&bytes, 0x12) == Some(machine);
+            let loads = same.then(|| segments(&bytes, from_program, 1)).flatten().ok_or_else(wrong)?;
+            let entry = u64_at(&bytes, 0x18).ok_or_else(wrong)?;
+            let own = mapped.map(|mapped| mapped.path.as_str());
+            let first = found.files.iter().find(|file| file.offset == 0 && Some(file.path.as_str()) == own);
+            (loads, found.entry.wrapping_sub(entry), first.map(|first| first.start))
+        }
+    };
     let memory = Memory { core: &file, kept, program: &bytes, loads, bias };
-    // The core keeps the first page of what is mapped from a file, so a
-    // build that is not this one shows.
-    let first =
-        found.files.iter().find(|file| file.offset == 0 && Some(file.path.as_str()) == mapped.map(|m| m.path.as_str()));
-    if let Some(kept) = first.and_then(|first| memory.kept.iter().find(|s| s.address == first.start)) {
+    if let Some(kept) = first.and_then(|first| memory.kept.iter().find(|s| s.address == first)) {
         let length = kept.size.min(4096) as usize;
         if from_core(kept.offset, length).as_deref() != bytes.get(..length) {
             let name = program.display();
