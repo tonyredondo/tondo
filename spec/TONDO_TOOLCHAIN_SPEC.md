@@ -938,9 +938,14 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   Con `task <id>` tras el lugar, el breakpoint es solo de esa tarea.
   `break on spawn` para cada tarea que empieza en su primera línea, con
   dónde se lanzó; `break on send` y `break on receive`, una tarea que va a
-  enviar o recibir por un canal, con lo que tiene; y `break on wait <ms>`,
+  enviar o recibir por un canal, con lo que tiene; `break on lock`, una que
+  encuentra tomado un lock de `std.sync`, con quién lo tiene; `break on request`,
+  la que recoge una petición HTTP o gRPC; `break on recover`, un pánico que un
+  `recover` va a parar, aunque `catch` no pare en pánicos; y `break on wait <ms>`,
   una que esperó más de esos milisegundos un lock, un canal u otra tarea,
-  al acabar la espera. `delete <id>` los quita como a los demás.
+  al acabar la espera. `delete <id>` los quita como a los demás. `cancel <id>`
+  cancela una tarea, como `job.cancel()`, y `tondo dap` lo hace con
+  `terminateThreads`, que el editor ofrece en cada tarea.
   La condición es una expresión que da un `Bool`; si no lo da, o falla, no se
   cumple. `hits` cuenta las veces que se cumple y para en la
   `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con

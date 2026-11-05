@@ -602,8 +602,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 session.show(&serde_json::json!({ "blocked": crate::observe::blocked(&answer) }));
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "why" | "tick" | "timeline" | "ran" | "tasks" | "restart" | "select" | "children" | "task" | "catch"
-            | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
+            | "why" | "tick" | "timeline" | "ran" | "tasks" | "cancel" | "restart" | "select" | "children" | "task"
+            | "catch" | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
             | "snapshot" | "freeze" | "thaw" | "retainers" | "memory" | "follow" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {

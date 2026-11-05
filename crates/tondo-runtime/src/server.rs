@@ -1007,6 +1007,7 @@ pub extern "C" fn tondo_rt_http_request_answering(object: *mut NativeObject) {
     if let Some(flight) = &request.flight {
         flight.answered_by(super::tasks::current_id());
     }
+    super::debugger::serving(&request.method, &request.path);
     answering.cancel_if_gone();
 }
 

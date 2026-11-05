@@ -1202,19 +1202,22 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     // A task that started while a breakpoint stops tasks as they start, at
     // its first line of the program's code.
     let function = table.sites.get(site).map(|s| table.functions[s.function].name.as_str());
-    let started = STARTED.load(Ordering::Relaxed) && function.is_some_and(|f| !f.starts_with("spawn ")) && {
+    let starts = STARTED.load(Ordering::Relaxed) && function.is_some_and(|f| !f.starts_with("spawn "));
+    let started = starts.then(|| {
+        let own = table.sites.get(site).is_some_and(|s| !s.generated());
         let mut starting = STARTING.lock().unwrap_or_else(|e| e.into_inner());
-        let found = starting.iter().position(|&t| t == task).map(|at| starting.swap_remove(at)).is_some();
+        let at = starting.iter().position(|(t, why)| *t == task && (why.is_none() || own));
+        let found = at.map(|at| starting.swap_remove(at).1);
         STARTED.store(!starting.is_empty(), Ordering::Relaxed);
         found
-    };
+    });
     let why = if frozen || state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
         // Another task stopped, or the debugger asked all to, or this task
         // stays where it is.
         if frozen || state.stopped.is_some() { None } else { Some("pause".to_string()) }
-    } else if started {
+    } else if let Some(Some(told)) = started {
         let from = spawned(task).first().map_or(String::new(), |at| format!(", spawned at {at}"));
-        Some(format!("task {task} starts{from}"))
+        Some(told.unwrap_or_else(|| format!("task {task} starts{from}")))
     } else {
         // A step goes over code the program's files do not have, the
         // standard library's and the derived, unless it started there.
@@ -2633,6 +2636,14 @@ pub(crate) fn panicked(message: &str) {
     stop_here(message.to_string());
 }
 
+/// A panic a `recover` will stop, which ends nothing: a breakpoint on that
+/// stops where the program's code panicked.
+pub(crate) fn recovering(message: &str) {
+    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_RECOVER != 0 && !calling_here() {
+        stop_here(message.to_string());
+    }
+}
+
 /// The events breakpoints stop at (`break on ...`), a bit each, and the
 /// least wait in milliseconds that stops: a task's start, a channel's send
 /// or receive, a long wait.
@@ -2642,6 +2653,9 @@ const ON_SPAWN: u8 = 1;
 const ON_SEND: u8 = 2;
 const ON_RECEIVE: u8 = 4;
 const ON_WAIT: u8 = 8;
+const ON_LOCK: u8 = 16;
+const ON_REQUEST: u8 = 32;
+const ON_RECOVER: u8 = 64;
 
 /// An event a breakpoint stops at.
 #[derive(Clone, Copy, PartialEq)]
@@ -2650,17 +2664,21 @@ enum Event {
     Send,
     Receive,
     Wait(u64),
+    Lock,
+    Request,
+    Recover,
 }
 
 /// The tasks that started while a breakpoint stops tasks as they start,
-/// which stop at their first line.
-static STARTING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+/// which stop at their first line; those that took a request, at their
+/// first of the program's own, saying which.
+static STARTING: Mutex<Vec<(u64, Option<String>)>> = Mutex::new(Vec::new());
 static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// A task starts.
 pub(crate) fn began(task: u64) {
     if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_SPAWN != 0 {
-        STARTING.lock().unwrap_or_else(|e| e.into_inner()).push(task);
+        STARTING.lock().unwrap_or_else(|e| e.into_inner()).push((task, None));
         STARTED.store(true, Ordering::Relaxed);
     }
 }
@@ -2676,6 +2694,26 @@ pub(crate) fn channel_used(kind: u8, channel: usize) {
     let filled = capacity.map_or(format!("{count}"), |capacity| format!("{count} of {capacity}"));
     let verb = if event == ON_SEND { "sends on" } else { "receives from" };
     stop_here(format!("{verb} a channel that holds {filled}"));
+}
+
+/// A task finds a lock taken: a breakpoint on that stops it, before it waits.
+pub(crate) fn lock_taken(object: usize) {
+    if !ATTACHED.load(Ordering::Relaxed) || EVENTS.load(Ordering::Relaxed) & ON_LOCK == 0 || calling_here() {
+        return;
+    }
+    let held: Vec<String> =
+        super::tasks::holders(object).iter().map(|(t, _, at)| format!("task {t} holds, taken at {at}")).collect();
+    stop_here(format!("wants a std.sync lock {}", held.join(" and ")));
+}
+
+/// A task takes a request to answer: a breakpoint on that stops it where
+/// the program's handler starts.
+pub(crate) fn serving(method: &str, path: &str) {
+    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_REQUEST != 0 {
+        let told = Some(format!("serves {method} {path}"));
+        STARTING.lock().unwrap_or_else(|e| e.into_inner()).push((super::tasks::current_id(), told));
+        STARTED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// A task's wait ended after `waited`: a breakpoint on waits longer stops
@@ -3712,6 +3750,46 @@ pub(crate) fn command(line: &str) -> Option<String> {
             state.selected = Some((task, frame as usize));
             format!("{{\"selected\":{{\"task\":{task},\"frame\":{frame}}}}}")
         }
+        // All of a value, which `print` cuts short.
+        "whole" => {
+            let (frames, index) = match selected(table) {
+                Ok(selected) => selected,
+                Err(message) => return Some(format!("{{\"error\":{}}}", quoted(&message))),
+            };
+            let found = expression::parse(rest).and_then(|e| evaluating(table, &frames, index, |ev| ev.evaluate(&e)));
+            match found {
+                Ok(evaluated) => format!("{{\"whole\":{}}}", quoted(&evaluated.text)),
+                Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
+            }
+        }
+        // `cancel <task>`: it stops at its next wait, once it runs.
+        "cancel" => match rest.parse::<u64>() {
+            Ok(task) => {
+                super::tasks::cancel_by_id(task);
+                format!("{{\"cancelled\":{task}}}")
+            }
+            Err(_) => "{\"error\":\"cancel takes a task's number, as `tasks` lists them\"}".to_string(),
+        },
+        // `lines <from> <to> <file>`: where in those lines a breakpoint stops.
+        "lines" => {
+            let mut words = rest.splitn(3, ' ');
+            let number = |word: Option<&str>| word.and_then(|w| w.parse::<u32>().ok()).unwrap_or(0);
+            let (from, to, file) = (number(words.next()), number(words.next()), words.next().unwrap_or_default());
+            let in_file = |site: &&Site| file == site.file || file.ends_with(&format!("/{}", site.file));
+            let mut lines: Vec<u32> =
+                table.sites.iter().filter(in_file).filter(|s| !s.goes_on).map(|s| s.line).collect();
+            lines.retain(|line| (from..=to).contains(line));
+            lines.sort_unstable();
+            lines.dedup();
+            format!("{{\"lines\":{lines:?}}}")
+        }
+        // The files of the program's code.
+        "files" => {
+            let mut files: Vec<&str> = table.sites.iter().map(|site| site.file.as_str()).collect();
+            files.sort_unstable();
+            files.dedup();
+            format!("{{\"files\":[{}]}}", files.iter().map(|f| quoted(f)).collect::<Vec<_>>().join(","))
+        }
         "locals" | "print" | "children" if state().past.is_some() => {
             let state = state();
             let frame = state.selected.map_or(0, |(_, frame)| frame);
@@ -4704,6 +4782,9 @@ fn remark(table: &Table, state: &State) {
             Event::Spawn => ON_SPAWN,
             Event::Send => ON_SEND,
             Event::Receive => ON_RECEIVE,
+            Event::Lock => ON_LOCK,
+            Event::Request => ON_REQUEST,
+            Event::Recover => ON_RECOVER,
             Event::Wait(ms) => {
                 longest = longest.min(ms);
                 ON_WAIT
@@ -4713,21 +4794,25 @@ fn remark(table: &Table, state: &State) {
     EVENTS.store(events, Ordering::Relaxed);
     LONGEST.store(longest, Ordering::Relaxed);
     // Tasks that started stop no more once no breakpoint asks.
-    if events & ON_SPAWN == 0 {
+    if events & (ON_SPAWN | ON_REQUEST) == 0 {
         STARTING.lock().unwrap_or_else(|e| e.into_inner()).clear();
         STARTED.store(false, Ordering::Relaxed);
     }
 }
 
-/// `break on spawn|send|receive|wait <ms>`: a breakpoint at an event.
+/// `break on spawn|send|receive|lock|request|recover|wait <ms>`: a
+/// breakpoint at an event.
 fn event_breakpoint(table: &Table, text: &str) -> String {
     let event = match text.split_whitespace().collect::<Vec<_>>()[..] {
         ["spawn"] => Event::Spawn,
         ["send"] => Event::Send,
         ["receive"] => Event::Receive,
+        ["lock"] => Event::Lock,
+        ["request"] => Event::Request,
+        ["recover"] => Event::Recover,
         ["wait", ms] if ms.parse::<u64>().is_ok() => Event::Wait(ms.parse().unwrap_or(0)),
         _ => {
-            let message = "break on takes `spawn`, `send`, `receive` or `wait <ms>`, as `break on wait 100`";
+            let message = "break on takes `spawn`, `send`, `receive`, `lock`, `request`, `recover` or `wait <ms>`, as `break on wait 100`";
             return format!("{{\"error\":{}}}", quoted(message));
         }
     };

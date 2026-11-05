@@ -255,6 +255,7 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
             o.waiting.push_back((Arc::as_ptr(&wait), exclusive, since));
         }
         unlock(&o.queue);
+        super::debugger::lock_taken(object as usize);
         match super::tasks::blocked_in(super::tasks::LOCK, object as usize, || wait.block_on_task()) {
             CANCELLED => {
                 lock(&o.queue);

@@ -2867,6 +2867,78 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
+fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.sync\nimport std.time\n\n\
+        fn hold(lock: sync.Mutex[Int], ready: Sender[Bool], go: Receiver[Bool]) {\n    lock.update((value) {\n        \
+        ready.send(true)\n        _ = go.receive()\n        value = value + 1\n    })\n}\n\n\
+        fn sleeper() {\n    time.sleep(time.seconds(60))\n}\n\n\
+        fn main() {\n    let lock = sync.Mutex(0)\n    let (ready, started) = channel[Bool](1)\n    \
+        let (go, going) = channel[Bool](1)\n    let holder = spawn hold(lock, ready, going)\n    \
+        _ = started.receive()\n    go.send(true)\n    lock.update((value) { value = value + 1 })\n    \
+        holder.wait()\n    let caught = recover { panic(\"caught here\") }\n    \
+        console.println(\"{caught.isErr()}\")\n    let job = spawn sleeper()\n    time.sleep(time.milliseconds(1))\n    \
+        let long = \"x\".repeat(10000)\n    console.println(\"{long.length()}\")\n    _ = job.wait()\n    \
+        console.println(\"ended\")\n}\n";
+    std::fs::write(dir.join("events.to"), program).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "events.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let line = program.lines().position(|l| l.contains("long.length()")).unwrap() + 1;
+    let script = format!(
+        "catch none\nbreak on lock\nbreak on recover\nbreak events.to:{line}\ncontinue\ncontinue\ncontinue\ncancel 3\ncontinue\n"
+    );
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
+    let why = |index: usize| stops[index]["why"].as_str().unwrap_or_default();
+    assert!(why(1).starts_with("wants a std.sync lock task 2 holds, taken at"), "{stops:?}");
+    assert!(why(2).contains("caught here"), "{stops:?}");
+    assert_eq!(stops[3]["at"].as_str().unwrap(), format!("events.to:{line} in main"), "{stops:?}");
+    // The task it cancelled does not sleep its minute.
+    assert!(text.contains("ended"), "{text}");
+
+    // In the editor: the lines that stop, the files, all of a value and
+    // the task it cancels.
+    let mut adapter = Adapter::start();
+    let capabilities = adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    assert_eq!(capabilities["supportsTerminateThreadsRequest"], true);
+    adapter.ask("launch", json!({ "program": "events.to", "cwd": dir }));
+    adapter.until("initialized");
+    let source = json!({ "name": "events.to", "path": dir.join("events.to") });
+    adapter.ask("setBreakpoints", json!({ "source": source, "breakpoints": [{ "line": line }] }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let located = adapter.ask("breakpointLocations", json!({ "source": source, "line": 1, "endLine": line }));
+    let located: Vec<u64> =
+        located["breakpoints"].as_array().unwrap().iter().map(|b| b["line"].as_u64().unwrap()).collect();
+    assert!(located.contains(&(line as u64)) && !located.contains(&1), "{located:?}");
+    let loaded = adapter.ask("loadedSources", json!({}));
+    assert!(
+        loaded["sources"].as_array().unwrap().iter().any(|s| s["path"].as_str().unwrap().ends_with("events.to")),
+        "{loaded}"
+    );
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let frame = &trace["stackFrames"][0]["id"];
+    let whole = adapter.ask("evaluate", json!({ "expression": "long", "frameId": frame, "context": "clipboard" }));
+    assert_eq!(whole["result"].as_str().unwrap().len(), 10002, "{whole}");
+    adapter.ask("terminateThreads", json!({ "threadIds": [3] }));
+    adapter.ask("continue", json!({ "threadId": stopped["threadId"] }));
+    adapter.until("terminated");
+    adapter.stop();
+}
+
+#[test]
 fn dumps_leave_by_a_command_and_group_by_their_failure() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
@@ -2877,7 +2949,8 @@ fn dumps_leave_by_a_command_and_group_by_their_failure() {
     std::fs::create_dir_all(dir.join("away")).unwrap();
     // The value in the message changes; the failure is the same. Another
     // argument fails elsewhere.
-    let program = "import std.env\n\nfn first(which: String) {\n    panic(\"it fell with {which}\")\n}\n\n\
+    let program = "import std.env\n\nfn first(which: String) {\n    _ = recover { panic(\"it went on\") }\n    \
+        panic(\"it fell with {which}\")\n}\n\n\
         fn second(items: Array[Int]): Int {\n    items[items.length()]\n}\n\n\
         fn main() {\n    let which = env.args()[0]\n    if which == \"other\" {\n        \
         _ = second([1])\n    }\n    first(which)\n}\n";
@@ -2908,7 +2981,9 @@ fn dumps_leave_by_a_command_and_group_by_their_failure() {
     let report = Command::new(tondo_bin).args(["dump", "report", dump, "--output"]).arg(&page).output().unwrap();
     assert!(report.status.success(), "{report:?}");
     let html = std::fs::read_to_string(&page).unwrap();
-    assert!(html.contains("data-file=\"falls.to\" data-line=\"4\""), "{html}");
+    assert!(html.contains("data-file=\"falls.to\" data-line=\"5\""), "{html}");
+    // Its events have the panic that a `recover` stopped too.
+    assert!(html.contains("it went on"), "{html}");
     assert!(html.contains("signature: "), "{html}");
     // What it is not told to run does not stop a dump, and a percentage is
     // a limit it can read.
@@ -3424,6 +3499,43 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert_eq!(request["path"], "/slow/77", "{requests}");
     assert_ne!(request["task"], 0, "{requests}");
     assert!(request["ms"].as_u64().unwrap() >= 400, "{requests}");
+    // A breakpoint on requests stops the task that takes one.
+    let debugged = dir.join("debugged");
+    std::fs::create_dir_all(&debugged).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let debug_port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let program = format!(
+        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+         app.get(\"/one\", () {{ \"done\" }})\n    app.listen({debug_port})?\n}}\n"
+    );
+    std::fs::write(debugged.join("server.to"), program).unwrap();
+    let mut debugger = Command::new(tondo_bin)
+        .args(["debug", "--json", "server.to"])
+        .current_dir(&debugged)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut commands = debugger.stdin.take().unwrap();
+    std::io::Write::write_all(&mut commands, b"break on request\ncontinue\n").unwrap();
+    let connected = (0..600).find_map(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::net::TcpStream::connect(("127.0.0.1", debug_port)).ok()
+    });
+    let mut connected = connected.unwrap();
+    std::io::Write::write_all(&mut connected, b"GET /one HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
+    let mut said = BufReader::new(debugger.stdout.take().unwrap());
+    let mut stop = String::new();
+    while !stop.contains("serves GET /one") {
+        stop.clear();
+        assert!(said.read_line(&mut stop).unwrap() > 0, "the debugger ended before the request");
+    }
+    assert!(stop.contains("server.to:5"), "{stop}");
+    drop(commands);
+    let _ = debugger.kill();
+    let _ = debugger.wait();
     // What came before it, in order.
     let events = tondo(&["dump", "read", dump.to_str().unwrap(), "events", "--json"]);
     let what: Vec<&str> = events["events"].as_array().unwrap().iter().map(|e| e["what"].as_str().unwrap()).collect();

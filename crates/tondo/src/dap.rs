@@ -345,6 +345,10 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 Ok(json!({
                 "supportsConfigurationDoneRequest": true,
                 "supportsCancelRequest": true,
+                "supportsTerminateThreadsRequest": true,
+                "supportsBreakpointLocationsRequest": true,
+                "supportsLoadedSourcesRequest": true,
+                "supportsClipboardContext": true,
                 "supportsReadMemoryRequest": true,
                 "supportsWriteMemoryRequest": true,
                 "supportsDisassembleRequest": true,
@@ -820,7 +824,8 @@ fn source_of(root: &Path, roots: &Roots, sources: &mut Vec<String>, file: &str) 
             sources.push(file.to_string());
             sources.len() - 1
         });
-        return json!({ "name": file, "path": file, "sourceReference": at + 1, "origin": "at the commit it was built from" });
+        let origin = if file.starts_with('<') { "of this tondo" } else { "at the commit it was built from" };
+        return json!({ "name": file, "path": file, "sourceReference": at + 1, "origin": origin });
     }
     json!({ "name": file, "path": here.display().to_string() })
 }
@@ -1227,6 +1232,28 @@ fn handle(
             Ok(json!({ "breakpoints": set }))
         }
         "source" => Ok(source_text(&program.roots, &program.sources, arguments)),
+        // A task of the program, cancelled from the editor.
+        "terminateThreads" => {
+            for task in arguments["threadIds"].as_array().into_iter().flatten() {
+                program.ask(&format!("cancel {task}"))?;
+            }
+            Ok(json!({}))
+        }
+        "breakpointLocations" => {
+            let path = arguments["source"]["path"].as_str().unwrap_or_default();
+            let from = arguments["line"].as_u64().unwrap_or(0);
+            let to = arguments["endLine"].as_u64().unwrap_or(from);
+            let answer = program.ask(&format!("lines {from} {to} {path}"))?;
+            let lines = answer["lines"].as_array().into_iter().flatten();
+            Ok(json!({ "breakpoints": lines.map(|line| json!({ "line": line })).collect::<Vec<_>>() }))
+        }
+        "loadedSources" => {
+            let answer = program.ask("files")?;
+            let files: Vec<&str> = answer["files"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let sources: Vec<Value> =
+                files.iter().map(|file| source_of(&program.root, &program.roots, &mut program.sources, file)).collect();
+            Ok(json!({ "sources": sources }))
+        }
         // Where each function of a name starts.
         "setFunctionBreakpoints" => {
             for id in breakpoints.remove(FUNCTIONS).unwrap_or_default() {
@@ -1909,6 +1936,11 @@ fn handle(
                 }
             };
             program.ask(&format!("select {task} {index}"))?;
+            // What is copied is all of it, not what fits on a line.
+            if arguments["context"] == "clipboard" {
+                let answer = program.ask(&format!("whole {path}"))?;
+                return Ok(json!({ "result": answer["whole"], "variablesReference": 0 }));
+            }
             // In the console, the debugger's own commands that only look.
             let word = path.split_whitespace().next().unwrap_or_default();
             if arguments["context"] == "repl" && word == "blocked" {

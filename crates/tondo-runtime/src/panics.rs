@@ -408,6 +408,11 @@ pub(crate) unsafe fn record(code: u32, message: *const Str, location: *const Str
     }
     let resumed = resumed_stack();
     let panic = Panic::new(code, crate::panic_name(code), message, location);
+    let text = panic.headline();
+    if crate::events::on() {
+        crate::events::add(crate::events::What::Panicked(format!("{text} at {}", panic.location)));
+    }
+    crate::debugger::recovering(&text);
     let record = match resumed {
         Some(stack) => Record { panic, frames: frames_of(&stack), stack, deadline: None },
         None => Record { panic, stack: crate::trace::report(), frames: crate::trace::report_json(), deadline: None },

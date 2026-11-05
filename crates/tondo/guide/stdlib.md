@@ -758,7 +758,8 @@ locals | print user.name        the bindings, or a part of one: items[2], map["k
 children user | stack | frame 1 a value's parts, the calls, a caller's bindings
 context                         the task's contexts, and the `with` that set each field
 set count 3 | catch none        change a binding; do not stop at panics
-tasks | task 2 | blocked | pause | delete 1 | quit
+tasks | task 2 | blocked | cancel 2 | pause | delete 1 | quit
+break on spawn | send | receive | lock | request | recover | wait 100
 ```
 
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
