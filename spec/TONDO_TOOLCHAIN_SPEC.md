@@ -834,7 +834,9 @@ contenedor que van a desaparecer. Un programa que cae lo espera hasta 60 segundo
 Cada volcado tiene una firma: el motivo, el código del pánico y las funciones donde
 estaba, sin valores ni líneas, que cambian de un fallo o un build a otro. `tondo dump
 group <dir>` agrupa por ella los volcados de un directorio, los fallos más frecuentes
-primero, y `tondo dump report <archivo>` da todo lo que dice uno como una página HTML
+primero, con `--since <commit>` los que aparecen después de él, según el repositorio
+de aquí; `tondo dump issue <dir> <firma>` escribe uno como una incidencia en Markdown,
+y `tondo dump report <archivo>` da todo lo que dice uno como una página HTML
 sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
 *Open Dump Report* del editor la abre y las sigue, también en lo que no esté aquí.
 
@@ -850,6 +852,10 @@ las tareas paradas también, con los registros que guardaron y lo que dicen las 
 de marcos del ejecutable; un valor de un tipo del programa necesita su código para
 mostrarse y no sale. No da contadores ni memoria por sitio. Un
 ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
+`<core>` puede ser el pid de un proceso que `coredumpctl` tiene, o `-` para leerlo de
+la entrada, como lo da el kernel: con `|/usr/bin/tondo dump core - --output
+/var/dumps/%e-%p.dump.json` en `core_pattern` cada fallo deja un volcado y no un core
+de gigas.
 
 `tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función
 más interna de la tarea que falló de la que el volcado tiene todos los argumentos, o
@@ -1742,7 +1748,7 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
-| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file`, sus tiempos y `first_commit` y `last_commit` |
+| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `file`, sus tiempos y `first_commit` y `last_commit` |
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
 | `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |

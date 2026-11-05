@@ -107,9 +107,12 @@ tondo dump read api.dump locals   the bindings of a frame; `print user.name` a p
 tondo source lib/x.to --from a.dump  a file as the build had it, from its repository
 tondo dump diff a.dump b.dump     what changed between two dumps of a program
 tondo dump group dumps/           the dumps by the failure they are, the most frequent first
+tondo dump group dumps/ --since v1.2   the failures new after a commit
+tondo dump issue dumps/ 8517      a failure as an issue, in Markdown
 tondo dump report a.dump          all of it as one page of HTML; --output a file
 tondo dump redact a.dump b.dump   a dump to share, without what the program held
 tondo dump core core.123          a core of the system as a dump; --executable, --output
+tondo dump core 4211              the core coredumpctl has of that process
 tondo dump test a.dump            a test that fails as the dump did, with its values
 tondo dump trend dumps/           what keeps growing over dumps: a leak, by its line
 ```

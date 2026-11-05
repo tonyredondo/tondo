@@ -253,8 +253,16 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
-        usage: &["tondo dump group <dir> [--json]"],
-        summary: &["the dumps of a directory by the failure they are,", "the most frequent first"],
+        usage: &["tondo dump group <dir> [--since <commit>] [--json]"],
+        summary: &[
+            "the dumps of a directory by the failure they are,",
+            "the most frequent first; those new after a commit",
+        ],
+    },
+    Command {
+        name: "dump",
+        usage: &["tondo dump issue <dir> <signature>"],
+        summary: &["a failure of a directory of dumps as an issue to", "file, in Markdown"],
     },
     Command {
         name: "dump",
@@ -263,8 +271,12 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
-        usage: &["tondo dump core <core> [--executable <file>] [--output <path>] [--json]"],
-        summary: &["a core of the system as a dump: the signal, and", "where each task and thread was (Linux)"],
+        usage: &["tondo dump core <core|pid|-> [--executable <file>] [--output <path>] [--json]"],
+        summary: &[
+            "a core of the system as a dump: the signal, and",
+            "where each task and thread was (Linux); by pid from",
+            "coredumpctl, - from a pipe, as core_pattern gives it",
+        ],
     },
     Command {
         name: "dump",

@@ -1175,31 +1175,13 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
 
 /// `tondo dump group <dir>`: the dumps of a directory by the failure they
 /// are, the most frequent first.
-pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
-    let mut groups: Vec<Value> = Vec::new();
-    for (path, dump) in dumps_in(dir)? {
-        let id = signature(&dump);
-        let time = &dump["time_ms"];
-        match groups.iter_mut().find(|g| g["signature"] == id) {
-            Some(group) => {
-                group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
-                group["last_ms"] = time.clone();
-                group["file"] = json!(path);
-                group["last_commit"] = commit_of(&dump);
-            }
-            None => {
-                let tasks = tasks(&dump);
-                let at = tasks.iter().find(|t| t["state"] == "runs" && t["at"].is_string()).or(tasks.first());
-                groups.push(json!({
-                    "signature": id, "count": 1, "reason": dump["reason"], "file": path,
-                    "message": dump["message"].as_str().unwrap_or_default().lines().next(),
-                    "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
-                    "first_commit": commit_of(&dump), "last_commit": commit_of(&dump),
-                }));
-            }
-        }
+pub fn group(dir: &std::path::Path, since: Option<&str>, json: bool) -> Result<(), String> {
+    let mut groups = groups_in(dir)?;
+    // What came with a change: failures first seen after that commit, as
+    // the repository here says.
+    if let Some(since) = since {
+        groups.retain(|group| group["first_commit"].as_str().is_some_and(|first| after(first, since)));
     }
-    groups.sort_by_key(|group| std::cmp::Reverse(group["count"].as_u64()));
     if json {
         crate::cli::print_json("dump-group", true, json!({ "groups": groups }));
         return Ok(());
@@ -1221,6 +1203,69 @@ pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
         }
         println!("  the last: {}", text("file"));
     }
+    Ok(())
+}
+
+/// The failures in a directory of dumps, the most frequent first.
+fn groups_in(dir: &std::path::Path) -> Result<Vec<Value>, String> {
+    let mut groups: Vec<Value> = Vec::new();
+    for (path, dump) in dumps_in(dir)? {
+        let id = signature(&dump);
+        let time = &dump["time_ms"];
+        match groups.iter_mut().find(|g| g["signature"] == id) {
+            Some(group) => {
+                group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
+                group["last_ms"] = time.clone();
+                group["file"] = json!(path);
+                group["last_commit"] = commit_of(&dump);
+            }
+            None => {
+                let tasks = tasks(&dump);
+                let at = tasks.iter().find(|t| t["state"] == "runs" && t["at"].is_string()).or(tasks.first());
+                groups.push(json!({
+                    "signature": id, "count": 1, "reason": dump["reason"], "file": path,
+                    "message": dump["message"].as_str().unwrap_or_default().lines().next(),
+                    "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
+                    "first_commit": commit_of(&dump), "last_commit": commit_of(&dump),
+                    "stack": at.map_or(Vec::new(), tondo_frames),
+                }));
+            }
+        }
+    }
+    groups.sort_by_key(|group| std::cmp::Reverse(group["count"].as_u64()));
+    Ok(groups)
+}
+
+/// Whether `commit` came after `since`, in the repository here.
+fn after(commit: &str, since: &str) -> bool {
+    let ancestor = |first: &str, second: &str| {
+        let run = std::process::Command::new("git").args(["merge-base", "--is-ancestor", first, second]).output();
+        run.is_ok_and(|run| run.status.success())
+    };
+    ancestor(since, commit) && !ancestor(commit, since)
+}
+
+/// `tondo dump issue <dir> <signature>`: a failure of a directory of dumps
+/// as an issue to file, in Markdown.
+pub fn issue(dir: &std::path::Path, wanted: &str) -> Result<(), String> {
+    let groups = groups_in(dir)?;
+    let matching = |group: &&Value| group["signature"].as_str().is_some_and(|id| id.starts_with(wanted));
+    let group = groups.iter().find(matching).ok_or_else(|| {
+        format!("{} has no failure {wanted}: `tondo dump group {}` lists them", dir.display(), dir.display())
+    })?;
+    let text = |key: &str| group[key].as_str().unwrap_or_default();
+    println!("# {}\n", text("message"));
+    println!("Seen {} times, at {}.", group["count"], group["at"].as_str().unwrap_or("nowhere known"));
+    match (group["first_commit"].as_str(), group["last_commit"].as_str()) {
+        (Some(first), Some(last)) if first != last => println!("First seen at {first}, and still at {last}."),
+        (Some(first), _) => println!("Seen at {first}."),
+        _ => {}
+    }
+    println!("\n```");
+    for frame in group["stack"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        println!("{frame}");
+    }
+    println!("```\n\nSignature `{}`. The last dump is {}.", text("signature"), text("file"));
     Ok(())
 }
 

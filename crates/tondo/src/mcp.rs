@@ -1150,7 +1150,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
-        "dump_group" => push(&["dump", "group", &args.need("dir")?, "--json"]),
+        "dump_group" => {
+            push(&["dump", "group", &args.need("dir")?, "--json"]);
+            if let Some(since) = args.text("since") {
+                push(&["--since", &since]);
+            }
+        }
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             if let Some(frame) = args.text("frame") {
@@ -2164,7 +2169,10 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
         description: "The dumps of a directory by the failure they are, the most frequent first: 500 crashes that \
 are 3 bugs are 3 lines.",
         kind: Kind::Reads,
-        params: &[("dir", "string!", "The directory of the dumps.")],
+        params: &[
+            ("dir", "string!", "The directory of the dumps."),
+            ("since", "string", "Only the failures first seen after this commit, in the repository here."),
+        ],
     },
     Tool {
         name: "dump_test",

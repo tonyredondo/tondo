@@ -988,9 +988,56 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
 /// `tondo dump core`: writes a core as a dump, which every other command
 /// then reads.
 pub fn convert(core: &Path, executable: Option<&Path>, output: Option<&Path>) -> Result<PathBuf, String> {
-    let dump = read(core, executable)?;
-    let output = output.map_or_else(|| PathBuf::from(format!("{}.dump.json", core.display())), Path::to_path_buf);
+    let name = core.to_string_lossy();
+    let pid = name.parse::<u32>().ok().filter(|_| !core.exists());
+    // A core that comes from elsewhere stays only until it is read: the
+    // dump is a thousandth of its size.
+    let taken = match (pid, name.as_ref()) {
+        (Some(pid), _) => Some(from_coredumpctl(pid, output)?),
+        (None, "-") => Some(from_pipe(output)?),
+        _ => None,
+    };
+    let file = taken.as_deref().unwrap_or(core);
+    let dump = read(file, executable);
+    if let Some(taken) = &taken {
+        let _ = std::fs::remove_file(taken);
+    }
+    let dump = dump?;
+    let output = output.map_or_else(|| PathBuf::from(format!("{}.dump.json", name)), Path::to_path_buf);
     let text = serde_json::to_string(&dump).map_err(|e| e.to_string())?;
     std::fs::write(&output, text).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
     Ok(output)
+}
+
+/// Where a core goes for a moment: beside the dump, as there may be no room
+/// for it in a temporary directory.
+fn beside(output: Option<&Path>) -> PathBuf {
+    let name = format!("tondo-core-{}", std::process::id());
+    match output.and_then(Path::parent).filter(|dir| !dir.as_os_str().is_empty()) {
+        Some(dir) => dir.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
+/// The core of process `pid`, out of what systemd keeps.
+fn from_coredumpctl(pid: u32, output: Option<&Path>) -> Result<PathBuf, String> {
+    let file = beside(output);
+    let ran = std::process::Command::new("coredumpctl")
+        .args(["dump", &pid.to_string(), "-o"])
+        .arg(&file)
+        .output()
+        .map_err(|e| format!("cannot run coredumpctl: {e}: give the core as a file"))?;
+    if !ran.status.success() {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("coredumpctl has no core of {pid}: {}", String::from_utf8_lossy(&ran.stderr).trim()));
+    }
+    Ok(file)
+}
+
+/// The core on standard input, as the kernel gives it to `core_pattern`.
+fn from_pipe(output: Option<&Path>) -> Result<PathBuf, String> {
+    let file = beside(output);
+    let mut written = std::fs::File::create(&file).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+    std::io::copy(&mut std::io::stdin(), &mut written).map_err(|e| format!("cannot read the core: {e}"))?;
+    Ok(file)
 }

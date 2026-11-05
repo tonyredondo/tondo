@@ -1214,7 +1214,11 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
             tondo::observe::diff(Path::new(first), Path::new(second), json).map(|()| ExitCode::SUCCESS)
         }
         ["trend", dir] => tondo::observe::trend(Path::new(dir), json).map(|()| ExitCode::SUCCESS),
-        ["group", dir] => tondo::observe::group(Path::new(dir), json).map(|()| ExitCode::SUCCESS),
+        ["group", dir] => tondo::observe::group(Path::new(dir), None, json).map(|()| ExitCode::SUCCESS),
+        ["group", dir, "--since", commit] => {
+            tondo::observe::group(Path::new(dir), Some(commit), json).map(|()| ExitCode::SUCCESS)
+        }
+        ["issue", dir, signature] => tondo::observe::issue(Path::new(dir), signature).map(|()| ExitCode::SUCCESS),
         ["redact", file, output] => {
             tondo::observe::redact(Path::new(file), Path::new(output)).map(|()| ExitCode::SUCCESS)
         }

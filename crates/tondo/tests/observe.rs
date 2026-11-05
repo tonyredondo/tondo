@@ -3293,7 +3293,12 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     // A failure says the commit it was first seen at.
     let grouped = tondo_in(&["dump", "group", dir.join("dumps").to_str().unwrap(), "--json"]);
     let grouped: Value = serde_json::from_slice(&grouped.stdout).unwrap();
-    assert!(grouped["groups"][0]["first_commit"].as_str().is_some_and(|c| c.len() == 40), "{grouped}");
+    let commit = grouped["groups"][0]["first_commit"].as_str().unwrap();
+    assert_eq!(commit.len(), 40, "{grouped}");
+    // It came with that commit, so nothing is new after it.
+    let newer = tondo_in(&["dump", "group", dir.join("dumps").to_str().unwrap(), "--since", commit, "--json"]);
+    let newer: Value = serde_json::from_slice(&newer.stdout).unwrap();
+    assert_eq!(newer["groups"], json!([]), "{newer}");
     // A file that changed since comes as it was, from its repository, and
     // one of a dependency that is not here too, from a cache that starts
     // with none of it.
@@ -4862,6 +4867,26 @@ fn reads_a_core_with_the_tasks_that_waited() {
     let answer = tondo(&[&args[..], &[output.to_str().unwrap(), "--json"]].concat());
     assert_eq!(answer["file"], output.to_str().unwrap());
     assert_eq!(tondo(&["dump", "group", dumps.to_str().unwrap(), "--json"])["groups"][0]["count"], 1);
+    // From a pipe, as `core_pattern` gives it, leaving only the dump.
+    let piped = dumps.join("piped.dump.json");
+    let args = ["dump", "core", "-", "--executable", moved.to_str().unwrap(), "--output", piped.to_str().unwrap()];
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(args)
+        .stdin(std::fs::File::open(core).unwrap())
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{ran:?}");
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 2);
+    assert_eq!(tondo(&["dump", "group", dumps.to_str().unwrap(), "--json"])["groups"][0]["count"], 2);
+    // A failure as an issue, by the start of its signature.
+    let group = tondo(&["dump", "group", dumps.to_str().unwrap(), "--json"]);
+    let signature = group["groups"][0]["signature"].as_str().unwrap();
+    let issue = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["dump", "issue", dumps.to_str().unwrap(), &signature[..6]])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&issue.stdout);
+    assert!(said.starts_with("# SIGABRT") && said.contains("Seen 2 times") && said.contains("```"), "{said}");
 
     // Another build is not this one.
     build(&dir.join("other"), &["--debug"]);
