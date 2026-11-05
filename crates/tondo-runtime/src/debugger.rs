@@ -189,7 +189,9 @@ fn called(table: &Table, rest: &str) -> Result<String, String> {
         state.selected.map_or(stop.task, |(task, _)| task)
     };
     *CALLED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let asking = state();
     *CALL.lock().unwrap_or_else(|e| e.into_inner()) = Some((task, code, addresses));
+    drop(asking);
     RESUMED.notify_all();
     let called = CALLED.lock().unwrap_or_else(|e| e.into_inner());
     let (mut called, _) = CALLED_DONE
@@ -2606,9 +2608,10 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     // Out of Tondo code while it waits, so collections and dumps go on.
     let paused = super::tasks::pause_here();
     let resumed = state.resumed;
-    // A frozen task stays while the others go on.
+    // A frozen task stays while the others go on. What the debugger's thread
+    // asks is looked at before each wait, with `state`, which it holds to ask:
+    // the next request may come while the last one ends.
     while state.resumed == resumed || frozen(&state) {
-        state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
         // Work the debugger's thread asks of this task, as showing a value
         // through a view.
         let work = WORK.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, _)| *t == task);
@@ -2624,6 +2627,7 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
             *WORKED.lock().unwrap_or_else(|e| e.into_inner()) = true;
             WORK_DONE.notify_all();
             state = self::state();
+            continue;
         }
         // A call the debugger asks this task to make, on its own stack.
         let asked = CALL.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, ..)| *t == task);
@@ -2645,7 +2649,9 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
                 Some(text.ok_or_else(|| "the call panicked".to_string()));
             CALLED_DONE.notify_all();
             state = self::state();
+            continue;
         }
+        state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
     }
     state.held.retain(|held| held.task != task);
     drop(state);
@@ -3242,7 +3248,9 @@ fn on_task<T: Send>(task: u64, work: impl FnOnce() -> T + Send) -> Option<T> {
     // The job borrows what this thread holds, which waits until it ran.
     let job: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(job) };
     *WORKED.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    let asking = state();
     *WORK.lock().unwrap_or_else(|e| e.into_inner()) = Some((task, job));
+    drop(asking);
     RESUMED.notify_all();
     let worked = WORKED.lock().unwrap_or_else(|e| e.into_inner());
     let (worked, timeout) = WORK_DONE
