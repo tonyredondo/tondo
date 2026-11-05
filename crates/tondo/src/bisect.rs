@@ -25,9 +25,25 @@ enum Verdict {
 }
 
 /// A worktree that goes away with its value.
-struct Worktree {
+pub(crate) struct Worktree {
     repository: PathBuf,
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
+}
+
+impl Worktree {
+    /// The project at `root` as it was at `rev`: its worktree, and where
+    /// the project is in it.
+    pub(crate) fn at(root: &Path, rev: &str) -> Result<(Worktree, PathBuf), String> {
+        let root = if root.is_dir() { root } else { root.parent().unwrap_or(Path::new(".")) };
+        let top = PathBuf::from(git(root, &["rev-parse", "--show-toplevel"])?);
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let inside = root.strip_prefix(&top).unwrap_or(Path::new("")).to_path_buf();
+        let dir = std::env::temp_dir().join(format!("tondo-worktree-{}", std::process::id()));
+        let shown = dir.to_string_lossy().into_owned();
+        git(&top, &["worktree", "add", "--quiet", "--detach", &shown, rev])?;
+        let project = dir.join(&inside);
+        Ok((Worktree { repository: top, dir }, project))
+    }
 }
 
 impl Drop for Worktree {

@@ -499,6 +499,12 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
   ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
   varias (la que sigue empieza por `.`), como pistas en línea.
+- `tondo api --diff <commit>` dice qué perdió o cambió la API pública desde ese commit,
+  lo que rompe a quien la usa y hace que termine con 1, y qué ganó. El editor lo marca
+  en el código con *Show What Breaks the API*.
+- `tondo check --unreached` da el código propio que ni `main` ni un test alcanzan, por lo
+  que nombran: en una librería lo `pub` lo alcanzan otros, los métodos de un `impl` su
+  trait, y lo anotado quien lee las anotaciones. Es una pista en el editor (`H1002`).
 - El nombre de una variable o un parámetro se edita a la vez en toda su función
   (`textDocument/linkedEditingRange`). Un cliente que prefiere pedir los diagnósticos
   a recibirlos lo dice con `pullDiagnostics` en `initializationOptions`, y entonces
@@ -1768,6 +1774,8 @@ campos de su resultado:
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `lock_orders`, `file`, sus tiempos y `first_commit` y `last_commit` |
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
+| `api --diff` | `tondo-api-diff-0.1/1` | `breaks`, `removed`, `changed` y `added`, cada uno con `name` y su texto |
+| `check --unreached` | `tondo-check-unreached-0.1/1` | `unreached`: cada uno con `name`, `file` y `line` |
 | `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |

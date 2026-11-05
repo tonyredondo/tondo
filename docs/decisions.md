@@ -5171,3 +5171,10 @@ so a failure in production can be reproduced at a desk with no guessing. Values 
 written as the program shows them, which is what its code reads, and the test is run
 before it is kept, so what does not write back is refused and what does is known to
 fail the same way.
+
+## What reaches what is read from names
+
+Which tests a change reaches, and what no test or `main` reaches, come from what the
+code names: exact for calls, and a superset where a value is passed around, since
+naming a function is what reaches it. No run is needed, and an answer that is too
+wide costs a test that did not have to run, never one that had to and did not.

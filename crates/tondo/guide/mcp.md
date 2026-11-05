@@ -153,3 +153,6 @@ take the most, each with its code.
 `tondo://guide/<topic>` is a topic of the guide, `tondo://skill` the
 overview as an agent skill, and `tondo://api/<module>` a standard module's
 declarations.
+
+`api_diff` says what a project's public API lost or changed since a commit, and
+`unreached` what code neither `main` nor a test reaches.

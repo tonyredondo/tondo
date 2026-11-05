@@ -579,5 +579,10 @@ fn tests_by_what_changed_and_by_commit() {
     // What changed since the good commit reaches one of the two.
     let (ran, text) = agent.call("test", json!({ "affected": good }));
     assert_eq!(ran["report"]["summary"]["executed"], 1, "{ran}{text}");
+    // Nothing of the API changed but what it says; `main` reaches nothing.
+    let (found, _) = agent.call("api_diff", json!({ "rev": good }));
+    assert_eq!(found["report"]["breaks"], false, "{found}");
+    let (found, text) = agent.call("unreached", json!({}));
+    assert!(text.contains("unreached") || found.to_string().contains("unreached"), "{found}{text}");
     agent.stop();
 }

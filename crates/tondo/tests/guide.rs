@@ -135,12 +135,14 @@ fn what_observes_is_in_the_tools_and_the_editor() {
             name.starts_with('<') || name == "plugin" || reached.iter().any(|(usage, ..)| usage.ends_with(name));
         assert!(known, "`tondo dump {name}` is in neither the tools nor the editor: add it here too");
     }
-    // What `tondo test` takes for this, with the tool's name of it.
+    // What other commands take for this, with the tool's name of it.
     for (flag, tool, editor) in [
+        ("api --diff", "\"api_diff\"", "tondo.apiDiff"),
         ("--affected", "\"affected\"", "tondo.affectedTests"),
         ("--bisect", "\"test_bisect\"", "tondo.bisectTest"),
         ("--lock-order", "\"lock_order\"", "tondo.lockOrderTests"),
     ] {
+        assert!(CLI.contains(flag), "`{flag}` is gone: take it from this list");
         assert!(MCP.contains(tool), "`{flag}` has no tool");
         assert!(EDITOR.contains(&format!("\"command\": \"{editor}\"")), "`{flag}`: no `{editor}`");
     }

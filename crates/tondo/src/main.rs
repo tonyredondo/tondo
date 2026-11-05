@@ -247,10 +247,15 @@ fn analyze(path: &Path, library: bool, shown: Shown) -> Result<Option<driver::An
 
 fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (json, library) = (args.iter().any(|a| a == "--json"), args.iter().any(|a| a == "--library"));
-    let args: Vec<OsString> = args.iter().filter(|a| *a != "--json" && *a != "--library").cloned().collect();
+    let unreached = args.iter().any(|a| a == "--unreached");
+    let flags = ["--json", "--library", "--unreached"];
+    let args: Vec<OsString> = args.iter().filter(|a| !flags.iter().any(|flag| *a == flag)).cloned().collect();
     let (path, rest) = source_argument(&args);
     if !rest.is_empty() {
         return Err(format!("unexpected arguments\n{USAGE}"));
+    }
+    if unreached {
+        return tondo::affected::report_unreached(&path, json).map(|()| ExitCode::SUCCESS);
     }
     let analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
     let ok = analysis.program.is_some();
@@ -1864,7 +1869,7 @@ fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// project or its dependencies, or a file; the whole package without one.
 fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut private, mut list, mut json, mut project, mut target) = (false, false, false, PathBuf::from("."), None);
-    let mut search = None;
+    let (mut search, mut diff) = (None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str() {
@@ -1874,12 +1879,19 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
             Some("--search") => {
                 search = Some(rest.next().and_then(|a| a.to_str()).ok_or(format!("--search takes words\n{USAGE}"))?)
             }
+            Some("--diff") => {
+                diff = Some(rest.next().and_then(|a| a.to_str()).ok_or("--diff takes a commit")?.to_string());
+            }
             Some("--project") => {
                 project = rest.next().map(PathBuf::from).ok_or(format!("--project names a directory\n{USAGE}"))?
             }
             Some(name) if !name.starts_with('-') && target.is_none() => target = Some(name.to_string()),
             _ => return Err(format!("unexpected argument `{}`\n{USAGE}", arg.to_string_lossy())),
         }
+    }
+    if let Some(rev) = diff {
+        let breaks = tondo::apidiff::diff(&project, &rev, json)?;
+        return Ok(if breaks { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     // The modules of the project and of its dependencies, by name.
     let modules = || -> Result<Vec<(String, Vec<PathBuf>, bool)>, String> {

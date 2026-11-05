@@ -1100,6 +1100,19 @@ export function logpointArgs(
   return ['logpoint', pid, place, ...shown, ...only, ...whole, '--max', String(max)];
 }
 
+/** A declaration of `tondo api --diff --json` that changed. */
+export interface ApiChange {
+  name: string;
+  was: string;
+  file: string;
+  line: number;
+}
+
+/** Where each change of the public API goes in the editor. */
+export function apiMarks(changes: ApiChange[]): { file: string; line: number; text: string }[] {
+  return changes.map(({ name, was, file, line }) => ({ file, line, text: `\`${name}\` was \`${was}\`: this breaks who uses it` }));
+}
+
 /** A failure of `tondo dump group --json`. */
 export interface Failure {
   count: number;

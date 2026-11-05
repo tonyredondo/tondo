@@ -122,3 +122,71 @@ pub fn tests(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     };
     Ok(reaching(index, &nodes).iter().filter(|test| hit(test)).map(|(node, _)| node.id.clone()).collect())
 }
+
+/// What neither `main` nor a test reaches, of the project's own code: each
+/// declaration's number. A library's `pub` is what others reach; the methods
+/// of an `impl` are reached through their trait, and what is annotated by
+/// what reads annotations.
+pub fn unreached(index: &Index, sources: &SourceMap, tests: &[TestNodeInfo]) -> Vec<usize> {
+    let names = Names::of(index);
+    let own = |def: &crate::index::Def| sources.file_of(def.name_span.start).own;
+    let before = |span: Span| {
+        let file = sources.file_of(span.start);
+        (&file.text[..(span.start - file.base) as usize], &file.text[(span.start - file.base) as usize..])
+    };
+    let program = index.defs.iter().any(|def| def.kind == DefKind::Function && def.name == "main" && own(def));
+    let root = |def: &crate::index::Def| {
+        let (above, from) = before(def.decl_span);
+        let annotated = above.trim_end().rsplit('\n').next().is_some_and(|line| line.trim_start().starts_with('@'));
+        let implemented = index.implemented.iter().any(|&(_, span)| span == def.name_span);
+        (def.kind == DefKind::Function && def.name == "main")
+            || implemented
+            || annotated
+            || (!program && from.starts_with("pub "))
+    };
+    let kept = |kind: DefKind| {
+        matches!(kind, DefKind::Function | DefKind::Method | DefKind::Type | DefKind::Enum | DefKind::Const)
+    };
+    let mut reached: HashSet<usize> = HashSet::new();
+    for (at, def) in index.defs.iter().enumerate().filter(|(_, def)| own(def) && root(def)) {
+        reached.insert(at);
+        reached.extend(names.reached(index, def.decl_span));
+    }
+    for test in tests {
+        reached.extend(names.reached(index, test.whole));
+    }
+    let left = index.defs.iter().enumerate().filter(|(at, def)| kept(def.kind) && own(def) && !reached.contains(at));
+    left.map(|(at, _)| at).collect()
+}
+
+/// `tondo check --unreached`: where each is.
+pub fn report_unreached(root: &Path, json: bool) -> Result<(), String> {
+    let mut analysis = crate::driver::analyze_for_editor(root, root.is_dir(), Default::default())
+        .map_err(|_| "the project does not compile: `tondo check` says why".to_string())?;
+    let nodes = analysis.program.take().map(|program| program.tests).unwrap_or_default();
+    let index = analysis.index.as_ref().ok_or("the project does not compile: `tondo check` says why")?;
+    let found: Vec<serde_json::Value> = unreached(index, &analysis.sources, &nodes)
+        .into_iter()
+        .map(|at| {
+            let def = &index.defs[at];
+            let (file, line, _) = analysis.sources.position(def.name_span.start);
+            serde_json::json!({ "name": def.name, "file": file, "line": line })
+        })
+        .collect();
+    if json {
+        crate::cli::print_json("check-unreached", true, serde_json::json!({ "unreached": found }));
+        return Ok(());
+    }
+    for item in &found {
+        println!(
+            "{}:{}: nothing reaches `{}`",
+            item["file"].as_str().unwrap_or(""),
+            item["line"],
+            item["name"].as_str().unwrap_or("")
+        );
+    }
+    if found.is_empty() {
+        println!("main and the tests reach all the code");
+    }
+    Ok(())
+}

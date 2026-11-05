@@ -1842,3 +1842,53 @@ fn finds_the_commit_that_broke_a_test() {
     let worktrees = Command::new("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&worktrees.stdout).lines().count(), 1);
 }
+
+/// `check --unreached` and `api --diff`, which read what the code names.
+#[test]
+fn says_what_nothing_reaches_and_what_breaks_the_api() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("unreached");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"reach\"\nversion = \"0.1.0\"\n").unwrap();
+    let main = "pub fn used(n: Int): Int {\n    helper(n) + 1\n}\n\nfn helper(n: Int): Int {\n    n\n}\n\n\
+        pub fn tested(n: Int): Int {\n    n\n}\n\npub fn lost(n: Int): Int {\n    deeper(n)\n}\n\n\
+        fn deeper(n: Int): Int {\n    n\n}\n\nfn main() {\n    _ = used(1)\n}\n";
+    std::fs::write(dir.join("src/main.to"), main).unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test works {\n    assert(tested(1) == 1)\n}\n").unwrap();
+    let (out, err, code) = tondo(&dir, &["check", "--unreached", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let names: Vec<&str> = found["unreached"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["lost", "deeper"], "{out}");
+
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "one"]);
+    let (out, err, code) = tondo(&dir, &["api", "--diff", "HEAD"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("as it was"), "{out}");
+    // One changed, one gone, one new.
+    let changed = main
+        .replace("pub fn used(n: Int): Int", "pub fn used(n: Int, m: Int): Int")
+        .replace("_ = used(1)", "_ = used(1, 2)")
+        .replace("pub fn lost(n: Int): Int {\n    deeper(n)\n}\n\n", "pub fn fresh(): Int {\n    deeper(1)\n}\n\n");
+    std::fs::write(dir.join("src/main.to"), changed).unwrap();
+    let (out, err, code) = tondo(&dir, &["api", "--diff", "HEAD", "--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(found["breaks"], true);
+    assert_eq!(found["removed"][0]["name"], "reach.lost", "{out}");
+    assert_eq!(found["changed"][0]["name"], "reach.used", "{out}");
+    assert_eq!(found["changed"][0]["line"], 1, "{out}");
+    assert_eq!(found["added"][0]["name"], "reach.fresh", "{out}");
+}

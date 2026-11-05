@@ -2,6 +2,7 @@
 
 pub mod affected;
 pub mod api;
+pub mod apidiff;
 pub mod ast;
 pub mod bind;
 pub mod bisect;

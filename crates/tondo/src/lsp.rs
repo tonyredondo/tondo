@@ -793,6 +793,16 @@ impl Server {
             let hint = json!({ "range": range, "severity": 4, "tags": [1], "code": "H1001", "source": "tondo", "message": message });
             by_file.entry(path).or_default().push(hint);
         }
+        // What neither `main` nor a test reaches, as far as names say.
+        if let (Some(index), Some(tests)) = (analyzed.analysis.index.as_ref(), analyzed.tests.as_ref()) {
+            for def in crate::affected::unreached(index, &analyzed.analysis.sources, tests) {
+                let declared = &index.defs[def];
+                let Some((path, range)) = self.place(analyzed, declared.name_span) else { continue };
+                let message = format!("neither `main` nor a test reaches `{}`", declared.name);
+                let hint = json!({ "range": range, "severity": 4, "tags": [1], "code": "H1002", "source": "tondo", "message": message });
+                by_file.entry(path).or_default().push(hint);
+            }
+        }
         let before = self.published.remove(root).unwrap_or_default();
         for path in before.iter().filter(|path| !by_file.contains_key(*path)) {
             self.latest.remove(path);

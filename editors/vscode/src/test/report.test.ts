@@ -20,6 +20,7 @@ import {
   outcomes,
   place,
   dumpPage,
+  apiMarks,
   failureMarks,
   logpointArgs,
   programOf,
@@ -638,6 +639,9 @@ test('the failures of dumps go to the lines of the program', () => {
   assert.deepEqual(marks, [
     { file: 'src/main.to', line: 12, text: 'Fell here 3 times, first at abcdef0123: panic[P0008]: boom' },
     { file: 'src/a.to', line: 2, text: 'Fell here once: ' },
+  ]);
+  assert.deepEqual(apiMarks([{ name: 'm.f', was: 'pub fn f()', file: 'a.to', line: 3 }]), [
+    { file: 'a.to', line: 3, text: '`m.f` was `pub fn f()`: this breaks who uses it' },
   ]);
   const orders = failureMarks([
     { count: 1, at: null, lock_orders: ['locks taken in orders that can deadlock: here a.to:3 then b.to:9, and elsewhere <std>/x.to:1 then a.to:7'] },

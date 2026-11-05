@@ -1163,6 +1163,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 push(&["--since", &since]);
             }
         }
+        "unreached" => push(&["check", &path, "--unreached", "--json"]),
+        "api_diff" => {
+            push(&["api", "--diff", &args.need("rev")?, "--project", &path, "--json"]);
+        }
         "dump_serve" => push(&["dump", "serve", &args.need("dir")?, "--output", &args.need("output")?]),
         "dump_issue" => push(&["dump", "issue", &args.need("dir")?, &args.need("signature")?]),
         "dump_report" => push(&["dump", "report", &args.need("file")?, "--output", &args.need("output")?]),
@@ -2205,6 +2209,22 @@ are here, so one written today finds when a bug came. A commit that does not com
         description: "What the tasks of a running program wait for, and who holds them up.",
         kind: Kind::Reads,
         params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "unreached",
+        description: "The code of a project neither `main` nor a test reaches, by what it names.",
+        kind: Kind::Reads,
+        params: &[("path", "string", "The project directory; the server's directory by default.")],
+    },
+    Tool {
+        name: "api_diff",
+        description: "What a project's public API lost or changed since a commit, which breaks who uses it, and what \
+it gained.",
+        kind: Kind::Reads,
+        params: &[
+            ("rev", "string!", "The commit to compare with."),
+            ("path", "string", "The project directory; the server's directory by default."),
+        ],
     },
     Tool {
         name: "dump_serve",

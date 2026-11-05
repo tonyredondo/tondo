@@ -45,8 +45,11 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "check",
-        usage: &["tondo check [<project>|<file.to>] [--library] [--json]"],
-        summary: &["report diagnostics only (of a library; as JSON)"],
+        usage: &["tondo check [<project>|<file.to>] [--library] [--unreached] [--json]"],
+        summary: &[
+            "report diagnostics only (of a library; as JSON);",
+            "--unreached, the code neither main nor a test reaches",
+        ],
     },
     Command {
         name: "fix",
@@ -68,6 +71,7 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]",
             "tondo api --search <words> [--project <dir>] [--json]",
+            "tondo api --diff <commit> [--project <dir>] [--json]",
         ],
         summary: &[
             "show a module's declarations, documentation and examples,",

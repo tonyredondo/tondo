@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec } from './cli';
 import { tondo } from './extension';
-import { Failure, counterRows, dumpPage, failureMarks, logpointArgs, running, traced } from './report';
+import { ApiChange, Failure, apiMarks, counterRows, dumpPage, failureMarks, logpointArgs, running, traced } from './report';
 
 /** A running program, picked: its process ID, or nothing. */
 export async function pickProcess(): Promise<string | undefined> {
@@ -106,6 +106,8 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.readCore', readCore),
     vscode.commands.registerCommand('tondo.blocked', blocked),
     vscode.commands.registerCommand('tondo.serveDumps', serveDumps),
+    vscode.commands.registerCommand('tondo.apiDiff', apiDiff),
+    breaking,
     { dispose: () => serving?.kill() },
     vscode.commands.registerCommand('tondo.logpoint', logpoint),
     vscode.commands.registerCommand('tondo.showFailures', showFailures),
@@ -295,6 +297,39 @@ async function readCore(): Promise<void> {
     return;
   }
   await vscode.commands.executeCommand('tondo.debugDump', vscode.Uri.file(output));
+}
+
+/** The public declarations that changed since a commit. */
+const breaking = vscode.languages.createDiagnosticCollection('tondo-api');
+
+/** Marks what breaks who uses the project, against a commit, and says what
+ *  went altogether. */
+async function apiDiff(): Promise<void> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const rev = root && (await vscode.window.showInputBox({ prompt: 'Against this commit', value: 'HEAD' }));
+  if (!root || !rev) {
+    return;
+  }
+  const ran = await exec(['api', '--diff', rev, '--project', root, '--json'], root);
+  if (!ran.stdout) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo api --diff failed');
+    return;
+  }
+  const found = JSON.parse(ran.stdout) as { removed: { name: string }[]; changed: ApiChange[] };
+  const byFile = new Map<string, vscode.Diagnostic[]>();
+  for (const { file, line, text } of apiMarks(found.changed)) {
+    const range = new vscode.Range(line - 1, 0, line - 1, Number.MAX_SAFE_INTEGER);
+    const mark = new vscode.Diagnostic(range, text, vscode.DiagnosticSeverity.Warning);
+    mark.source = 'tondo api';
+    byFile.set(file, [...(byFile.get(file) ?? []), mark]);
+  }
+  breaking.clear();
+  for (const [file, marked] of byFile) {
+    breaking.set(vscode.Uri.file(path.resolve(root, file)), marked);
+  }
+  const gone = found.removed.map((item) => item.name).join(', ');
+  const said = gone ? `Removed: ${gone}.` : 'Nothing was removed.';
+  void vscode.window.showInformationMessage(`${found.changed.length} declarations changed. ${said}`);
 }
 
 /** The page of failures this window serves, one at a time. */
