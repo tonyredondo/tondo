@@ -178,6 +178,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["list the running Tondo programs"],
     },
     Command {
+        name: "blocked",
+        usage: &["tondo blocked <pid|name> [--json]"],
+        summary: &["say who waits for whom in a running program"],
+    },
+    Command {
         name: "counters",
         usage: &["tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--via <command>] [--json]"],
         summary: &["watch a running program's counters, the runtime's", "and its own (std.diagnostics)"],
@@ -216,7 +221,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "dump",
         usage: &[
-            "tondo dump read <file> [tasks | task <id> | locals [<task> [<frame>]] | print <path> [<task> [<frame>]]",
+            "tondo dump read <file> [why | tasks | stacks | task <id> | locals [<task> [<frame>]]",
+            "                       | print <path> [<task> [<frame>]] | find <text>",
             "                       | heap | objects | object <address>] [--json]",
         ],
         summary: &["show a dump, as one written at a crash with", "TONDO_DUMP=<dir>"],

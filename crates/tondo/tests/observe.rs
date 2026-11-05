@@ -2936,6 +2936,79 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
 }
 
 #[test]
+fn a_dump_says_who_waits_for_whom() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-why");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    // One task holds a lock while it waits, and five wait for the lock.
+    let waits = "import std.console\nimport std.sync\nimport std.time\n\n\
+        fn hold(lock: sync.Mutex[Int], gate: Receiver[Int]) {\n    lock.update((value) {\n        \
+        _ = gate.receive()\n        value = value + 1\n    })\n}\n\n\
+        fn want(lock: sync.Mutex[Int]) {\n    lock.update((value) { value = value + 1 })\n}\n\n\
+        fn main() {\n    let order = \"order-77\"\n    let lock = sync.Mutex(0)\n    \
+        let (sender, gate) = channel[Int]()\n    let holder = spawn hold(lock, gate)\n    \
+        time.sleep(time.milliseconds(50))\n    var group = Group.new[Unit]()\n    for _ in 0..5 {\n        \
+        group.add(spawn want(lock))\n    }\n    time.sleep(time.milliseconds(200))\n    \
+        console.println(\"ready\")\n    if order != \"\" {\n        panic(\"look now\")\n    }\n    \
+        sender.close()\n    holder.wait()\n    group.wait()\n}\n";
+    std::fs::write(dir.join("waits.to"), waits).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo_bin)
+        .args(["build", "waits.to", "--debug", "--output", "waits"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let read = |view: &[&str]| tondo(&[&["dump", "read", dump.to_str().unwrap()], view, &["--json"]].concat());
+    let why = &read(&["why"])["why"];
+    assert_eq!(why["holding"][0]["task"], 2, "{why}");
+    assert_eq!(why["holding"][0]["holds_up"].as_array().unwrap().len(), 5, "{why}");
+    assert_eq!(why["longest"]["task"], 2, "{why}");
+    assert!(why["longest"]["ms"].as_u64().unwrap() >= 200, "{why}");
+    assert_eq!(why["crowded"][0]["count"], 5, "{why}");
+    let stacks = read(&["stacks"]);
+    assert_eq!(stacks["stacks"][0]["count"], 5, "{stacks}");
+    assert!(stacks["stacks"][0]["stack"][0].as_str().unwrap().contains("in want"), "{stacks}");
+    // The text of a value, with where it is.
+    let found = read(&["find", "ORDER-77"]);
+    let value = found["found"].as_array().unwrap().iter().find(|f| f["in"] == "value");
+    assert_eq!(value.unwrap()["path"], "order", "{found}");
+    let none = read(&["find", "nothing-of-this"]);
+    assert_eq!(none["found"], json!([]), "{none}");
+    // Two tasks that wait for each other are a cycle.
+    std::fs::create_dir_all(dir.join("deadlock")).unwrap();
+    let cases = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/panic_deadlock_locks.to");
+    let built = Command::new(tondo_bin).args(["build", cases, "--output"]).arg(dir.join("cycle")).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(dir.join("cycle")).env("TONDO_DUMP", dir.join("deadlock")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("deadlock")).unwrap().next().unwrap().unwrap().path();
+    let why = tondo(&["dump", "read", dump.to_str().unwrap(), "why", "--json"]);
+    let cycle = why["why"]["cycles"][0].as_array().unwrap();
+    assert_eq!((cycle.len(), &cycle[0]["task"], &cycle[1]["task"]), (2, &json!(1), &json!(2)), "{why}");
+    // The debugger shows the same of a program that stands still.
+    let mut child = Command::new(tondo_bin)
+        .args(["debug", "waits.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let line = waits.lines().position(|l| l.contains("panic(")).unwrap() + 1;
+    let script = format!("break waits.to:{line}\ncontinue\nblocked\nquit\n");
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("task 2 holds up 5 tasks (3, 4, 5, 6, 7)"), "{text}");
+}
+
+#[test]
 fn dumps_come_on_a_schedule_and_differ() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;

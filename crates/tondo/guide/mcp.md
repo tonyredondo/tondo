@@ -85,7 +85,7 @@ continue   step   next   finish   steps all   pause   wait
 record   back 3   forward   reverse   record off
 locals   print items[i + 1].name   print total / count   children items 100 50
 set count count + 1   set user.age = 37   context   stack   frame 1   task 2
-tasks   reload   restart   goto 12   call total(items)
+tasks   blocked   reload   restart   goto 12   call total(items)
 ```
 
 `locals` lists what the stopped line can use: its bindings, what a closure
@@ -104,7 +104,8 @@ where an error starts, a `fail` or a `?` on what the standard library
 failed with. `children` gives a page of a large value's parts from
 `start`. Steps go over the standard library's code unless `steps all`,
 and one that leaves a function says what it `returned`. `tasks` lists the
-tasks that wait too, whose frames `task 2` and `stack 2` show.
+tasks that wait too, whose frames `task 2` and `stack 2` show, and `blocked`
+says who waits for whom.
 `record` keeps each line the tasks run with its bindings, which `back`,
 `forward` and `reverse` go through while the program is stopped.
 `snapshot` gives a stop at once: why, every frame with its bindings

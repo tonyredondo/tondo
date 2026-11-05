@@ -96,6 +96,7 @@ fn main() -> ExitCode {
         }
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
+        "blocked" => blocked_command(&args[1..]),
         "relay" => match args.get(1).and_then(|a| a.to_str()) {
             Some(name) => tondo::observe::relay(name).map(|_| ExitCode::SUCCESS),
             None => Err(format!("relay takes a running program's process ID or name\n{USAGE}")),
@@ -927,6 +928,14 @@ fn ps_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 /// Shows the counters of a running program.
+fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {
+    const USAGE: &str = "usage: tondo blocked <pid|name> [--json]";
+    let json = args.iter().any(|a| a == "--json");
+    let mut names = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
+    let (Some(name), None) = (names.next(), names.next()) else { return Err(USAGE.to_string()) };
+    tondo::observe::blocked_in(name, json).map(|()| ExitCode::SUCCESS)
+}
+
 fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
     let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
     let usage = |message: &str| format!("{message}\n{USAGE}");
@@ -1110,6 +1119,9 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
             let view = match view {
                 [] => tondo::observe::View::Summary,
                 ["tasks"] => tondo::observe::View::Tasks,
+                ["why"] => tondo::observe::View::Why,
+                ["stacks"] => tondo::observe::View::Stacks,
+                ["find", text] => tondo::observe::View::Find(text.to_string()),
                 ["heap"] => tondo::observe::View::Heap,
                 ["objects"] => tondo::observe::View::Objects,
                 ["object", address] => tondo::observe::View::Object(address.to_string()),
@@ -1127,7 +1139,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 }
                 _ => {
                     return Err(usage(
-                        "dump read shows tasks, task <id>, locals, print <path>, heap, objects or object <address>",
+                        "dump read shows why, tasks, stacks, task <id>, locals, print <path>, find <text>, heap, objects or object <address>",
                     ));
                 }
             };

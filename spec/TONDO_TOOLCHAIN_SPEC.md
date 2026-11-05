@@ -813,6 +813,19 @@ string, los objetos que apuntan a él y la cadena más corta que lo mantiene
 vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON, en
 `tondo-dump-read-0.1/1` (sección 7.12).
 
+Cada tarea del volcado que espera un lock, un canal o a otra tarea lleva qué
+espera, las tareas que pueden acabar la espera y cuánto lleva. `why` diagnostica
+con eso: el mensaje, las tareas que se esperan en ciclo, las que retienen a otras
+y a cuántas, directa o indirectamente, la espera más larga, los grupos de tareas
+en una misma pila y dónde está la memoria; es también lo primero que `tondo dap`
+escribe al abrir un volcado. `stacks` agrupa las tareas por su pila y las da de
+las más pobladas a las menos, y `find <texto>` busca sin mirar mayúsculas en el
+mensaje, las variables y sus partes, los contextos, las pilas, los textos de los
+objetos y los sitios de memoria, cada sitio una vez y lo más hondo que esté.
+
+`tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
+comando `blocked` del depurador el de un programa parado.
+
 `dump plugin <lldb|gdb>` escribe en la caché de `tondo` el comando `tondo`
 de lldb o de gdb, un script de Python, y dice cómo cargarlo: `command script
 import <archivo>` o `source <archivo>`. Con el programa parado, `tondo
@@ -1585,7 +1598,7 @@ campos de su resultado:
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
-| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
+| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

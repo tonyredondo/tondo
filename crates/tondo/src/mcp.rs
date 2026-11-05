@@ -1155,6 +1155,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 "summary" => {}
                 "task" => push(&["task", &args.need("task")?]),
                 "object" => push(&["object", &args.need("address")?]),
+                "find" => push(&["find", &args.need("text")?]),
                 view @ ("locals" | "print") => {
                     push(&[view]);
                     if view == "print" {
@@ -1167,10 +1168,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                         }
                     }
                 }
-                view @ ("tasks" | "heap" | "objects") => push(&[view]),
+                view @ ("why" | "tasks" | "stacks" | "heap" | "objects") => push(&[view]),
                 other => {
                     return Err(format!(
-                        "no view `{other}`: summary, tasks, task, locals, print, heap, objects or object"
+                        "no view `{other}`: summary, why, tasks, stacks, task, locals, print, find, heap, objects or object"
                     ));
                 }
             }
@@ -2099,11 +2100,17 @@ its tasks, the bindings of the frames both have, and its counters.",
         kind: Kind::Reads,
         params: &[
             ("file", "string!", "The dump."),
-            ("view", "string", "summary (by default), tasks, task, locals, print, heap, objects or object."),
+            (
+                "view",
+                "string",
+                "summary (by default), why (who waits for whom, the longest wait, where the memory is), tasks, stacks \
+(the tasks by the stack they share), task, locals, print, find, heap, objects or object.",
+            ),
             ("task", "integer", "The task the task, locals and print views show."),
             ("frame", "integer", "The frame of that task the locals and print views show: 0 by default."),
             ("path", "string", "What the print view shows: a binding or a part of one, as user.name or items[2]."),
             ("address", "string", "The object the object view shows."),
+            ("text", "string", "What the find view looks for, in values, stacks, contexts and memory sites."),
         ],
     },
     Tool {

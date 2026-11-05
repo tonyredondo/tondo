@@ -859,6 +859,13 @@ pub enum View {
     Locals(Option<u64>, usize),
     /// A binding or a part of one, as `user.name` or `items[2]`.
     Print(String, Option<u64>, usize),
+    /// What the dump says went wrong: who waits for whom, and where the
+    /// memory is.
+    Why,
+    /// The tasks by the stack they share.
+    Stacks,
+    /// Where a text is: in values, stacks, contexts and the memory's sites.
+    Find(String),
 }
 
 /// The frame of a dump's task that a view names.
@@ -919,6 +926,20 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
                 return shown("task", task.clone());
             }
             task_text(task, true)
+        }
+        View::Why if json => return shown("why", why(&dump)),
+        View::Why => why_text(&why(&dump)),
+        View::Stacks if json => return shown("stacks", Value::Array(stacks(&tasks))),
+        View::Stacks => stacks_text(&stacks(&tasks)),
+        View::Find(text) => {
+            let found = find(&dump, &tasks, &text);
+            if json {
+                return shown("found", Value::Array(found));
+            }
+            match found.is_empty() {
+                true => format!("`{text}` is nowhere in this dump"),
+                false => found.iter().filter_map(|f| f["text"].as_str()).collect::<Vec<_>>().join("\n"),
+            }
         }
         View::Locals(..) | View::Print(..) if dump["values_off"] == true => {
             return Err("this dump has no values: the program ran with TONDO_DUMP_VALUES=off".into());
@@ -1123,7 +1144,8 @@ pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value), Str
         return Err(format!("{} is not a dump of a Tondo program", path.display()));
     }
     name_frames(&mut dump);
-    Ok((summary(&dump), tasks(&dump), heap(&dump)))
+    let summary = format!("{}\n{}\n", why_text(&why(&dump)), summary(&dump).trim_end());
+    Ok((summary, tasks(&dump), heap(&dump)))
 }
 
 /// Names each frame the program did not, from the symbols of its files.
@@ -1202,7 +1224,7 @@ fn tasks(dump: &Value) -> Vec<Value> {
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
             "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
-            "frames": frames,
+            "frames": frames, "wait": task["wait"],
         }));
     }
     out
@@ -1218,6 +1240,10 @@ fn task_text(task: &Value, whole: bool) -> String {
         out.push_str(", cancelled");
     }
     out.push('\n');
+    if let Some(wait) = task["wait"]["for"].as_str() {
+        let waited = duration(task["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        out.push_str(&format!("  waited {waited} for {wait}\n"));
+    }
     // A short view shows the program's frames; the whole one, every frame.
     let lines: Vec<&str> = task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     let shown: Vec<&&str> = lines.iter().filter(|l| whole || l.contains(" in ")).collect();
@@ -1239,6 +1265,321 @@ fn task_text(task: &Value, whole: bool) -> String {
             .map(|(name, value)| format!("{name} = {}", value.as_str().unwrap_or_default()))
             .collect();
         out.push_str(&format!("  {}: {}\n", context["name"].as_str().unwrap_or_default(), fields.join(", ")));
+    }
+    out
+}
+
+/// A task's state, said of several.
+fn plural(state: &str) -> String {
+    match state {
+        "waits" => "wait".to_string(),
+        "runs" => "run".to_string(),
+        other => format!("are {other}"),
+    }
+}
+
+/// The frames of a task's stack that are code of Tondo.
+fn tondo_frames(task: &Value) -> Vec<&str> {
+    task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|l| l.contains(" in ")).collect()
+}
+
+/// The tasks by the stack they share, the most crowded first.
+fn stacks(tasks: &[Value]) -> Vec<Value> {
+    let mut groups: Vec<(String, Vec<&str>, Vec<&Value>)> = Vec::new();
+    for task in tasks {
+        let (state, stack) = (task["state"].as_str().unwrap_or_default().to_string(), tondo_frames(task));
+        match groups.iter_mut().find(|(s, frames, _)| *s == state && *frames == stack) {
+            Some((.., members)) => members.push(task),
+            None => groups.push((state, stack, vec![task])),
+        }
+    }
+    groups.sort_by_key(|(.., members)| std::cmp::Reverse(members.len()));
+    let group = |(state, stack, members): (String, Vec<&str>, Vec<&Value>)| {
+        let longest = members.iter().filter_map(|t| t["wait"]["ms"].as_f64()).fold(0.0, f64::max);
+        let ids: Vec<&Value> = members.iter().map(|t| &t["id"]).collect();
+        json!({ "count": members.len(), "state": state, "tasks": ids, "stack": stack, "waited_ms": longest })
+    };
+    groups.into_iter().map(group).collect()
+}
+
+fn stacks_text(groups: &[Value]) -> String {
+    let mut out = String::new();
+    for group in groups {
+        let ids: Vec<String> = group["tasks"].as_array().into_iter().flatten().map(Value::to_string).collect();
+        let shown = ids.iter().take(10).cloned().collect::<Vec<_>>().join(", ");
+        let more = if ids.len() > 10 { ", ..." } else { "" };
+        let state = group["state"].as_str().unwrap_or_default();
+        let waited = group["waited_ms"].as_f64().filter(|ms| *ms > 0.0);
+        let waited = waited.map_or(String::new(), |ms| format!(", the longest for {}", duration(ms / 1000.0)));
+        let (tasks, state) = match ids.len() {
+            1 => ("task", state.to_string()),
+            _ => ("tasks", plural(state)),
+        };
+        out.push_str(&format!("{} {tasks} {state} ({shown}{more}){waited}\n", ids.len()));
+        for frame in group["stack"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            out.push_str(&format!("    {frame}\n"));
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// Who waits for whom among the tasks, each by the tasks that can end its
+/// wait: the cycles, and for each task that holds others up, which.
+fn waits(tasks: &[Value]) -> (Vec<Vec<u64>>, Vec<(u64, Vec<u64>)>) {
+    let on = |task: &Value| -> Vec<u64> {
+        task["wait"]["on"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect()
+    };
+    let edges: std::collections::BTreeMap<u64, Vec<u64>> =
+        tasks.iter().filter_map(|t| Some((t["id"].as_u64()?, on(t)))).filter(|(_, on)| !on.is_empty()).collect();
+    let mut cycles: Vec<Vec<u64>> = Vec::new();
+    // Each path from a task, which ends in a cycle when it comes back.
+    fn walk(at: u64, path: &mut Vec<u64>, edges: &std::collections::BTreeMap<u64, Vec<u64>>, out: &mut Vec<Vec<u64>>) {
+        if let Some(start) = path.iter().position(|&t| t == at) {
+            let mut cycle = path[start..].to_vec();
+            let lowest = cycle.iter().enumerate().min_by_key(|(_, t)| **t).map_or(0, |(i, _)| i);
+            cycle.rotate_left(lowest);
+            if !out.contains(&cycle) {
+                out.push(cycle);
+            }
+            return;
+        }
+        path.push(at);
+        for &next in edges.get(&at).map_or(&[][..], Vec::as_slice) {
+            walk(next, path, edges, out);
+        }
+        path.pop();
+    }
+    for &task in edges.keys() {
+        walk(task, &mut Vec::new(), &edges, &mut cycles);
+    }
+    // Those the rest wait for, directly or not, by how many.
+    let mut behind: std::collections::BTreeMap<u64, Vec<u64>> = Default::default();
+    for &task in edges.keys() {
+        let (mut seen, mut next) = (std::collections::BTreeSet::new(), edges[&task].clone());
+        while let Some(on) = next.pop() {
+            if seen.insert(on) {
+                next.extend(edges.get(&on).into_iter().flatten());
+            }
+        }
+        for on in seen.into_iter().filter(|on| !edges.contains_key(on)) {
+            behind.entry(on).or_default().push(task);
+        }
+    }
+    let mut holding: Vec<(u64, Vec<u64>)> = behind.into_iter().collect();
+    holding.sort_by_key(|(_, held)| std::cmp::Reverse(held.len()));
+    (cycles, holding)
+}
+
+/// Who holds whom up among some tasks: the cycles, the tasks the rest wait
+/// for, and the longest wait.
+fn wait_graph(tasks: &[Value]) -> Value {
+    let (cycles, holding) = waits(tasks);
+    let task = |id: u64| tasks.iter().find(|t| t["id"] == id);
+    let brief = |id: u64| {
+        let task = task(id);
+        json!({ "task": id, "at": task.map(|t| &t["at"]), "for": task.map(|t| &t["wait"]["for"]) })
+    };
+    let cycles: Vec<Value> = cycles.iter().map(|c| Value::Array(c.iter().map(|&t| brief(t)).collect())).collect();
+    let holding: Vec<Value> = holding
+        .iter()
+        .take(5)
+        .map(|(id, held)| {
+            let at = task(*id).map(|t| &t["at"]);
+            let state = task(*id).map(|t| &t["state"]);
+            json!({ "task": id, "at": at, "state": state, "holds_up": held })
+        })
+        .collect();
+    let longest = tasks
+        .iter()
+        .filter(|t| t["wait"].is_object())
+        .max_by(|a, b| a["wait"]["ms"].as_f64().unwrap_or(0.0).total_cmp(&b["wait"]["ms"].as_f64().unwrap_or(0.0)));
+    let longest =
+        longest.map(|t| json!({ "task": t["id"], "at": t["at"], "for": t["wait"]["for"], "ms": t["wait"]["ms"] }));
+    json!({ "cycles": cycles, "holding": holding, "longest": longest })
+}
+
+/// What a dump says went wrong, as far as it can tell: the tasks that wait
+/// for each other, those that hold others up, the longest wait, many tasks
+/// in one place, and where the memory is.
+fn why(dump: &Value) -> Value {
+    let tasks = tasks(dump);
+    let mut found = wait_graph(&tasks);
+    let heap = heap(dump);
+    found["reason"] = dump["reason"].clone();
+    found["message"] = dump["message"].clone();
+    found["crowded"] = stacks(&tasks).into_iter().filter(|g| g["count"].as_u64() > Some(1)).take(5).collect();
+    found["memory"] = heap["sites"].as_array().into_iter().flatten().take(3).cloned().collect();
+    found["bytes"] = heap["bytes"].clone();
+    found
+}
+
+/// `blocked` in a debugger: who waits for whom now, from what `tasks`
+/// answers, or from a running program's dump.
+pub(crate) fn blocked(answer: &Value) -> Value {
+    let task = |t: &Value| {
+        let wait = t.get("for").map_or(Value::Null, |wanted| json!({ "for": wanted, "on": t["on"], "ms": t["ms"] }));
+        let state = if t["why"].as_str().is_some_and(|why| why.starts_with("wait")) { "waits" } else { "stopped" };
+        json!({ "id": t["task"], "at": t["at"], "state": state, "wait": wait })
+    };
+    let tasks: Vec<Value> = answer["tasks"].as_array().into_iter().flatten().map(task).collect();
+    let mut graph = wait_graph(&tasks);
+    graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object()).cloned().collect();
+    graph
+}
+
+/// `blocked` as text: each wait, then what they add up to.
+pub(crate) fn blocked_text(graph: &Value) -> String {
+    let list = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
+    if list.is_empty() {
+        return "no task waits for another".to_string();
+    }
+    let lines = list.iter().map(|t| {
+        let waited = duration(t["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let (at, wanted) = (t["at"].as_str().unwrap_or("nowhere known"), t["wait"]["for"].as_str().unwrap_or_default());
+        format!("task {} at {at} has waited {waited} for {wanted}", t["id"])
+    });
+    format!("{}\n{}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
+}
+
+/// `tondo blocked <pid|name>`: who waits for whom in a running program.
+pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
+    let mut program = connect(name)?;
+    let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_secs(60)));
+    let mut dump = program.ask("dump")?;
+    if dump.get("dump").is_none() {
+        return Err(format!("the program {} gave no dump: {dump}", program.pid));
+    }
+    name_frames(&mut dump);
+    let tasks = tasks(&dump);
+    let mut graph = wait_graph(&tasks);
+    graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object()).cloned().collect();
+    match as_json {
+        true => crate::cli::print_json("blocked", true, graph),
+        false => println!("{}", blocked_text(&graph)),
+    }
+    Ok(())
+}
+
+fn why_text(found: &Value) -> String {
+    let mut out = String::new();
+    match found["reason"].as_str().unwrap_or_default() {
+        "request" | "" => {}
+        reason => out.push_str(&format!("it stopped at a {reason}\n")),
+    }
+    for line in found["message"].as_str().unwrap_or_default().lines() {
+        out.push_str(&format!("  {line}\n"));
+    }
+    let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
+    let text = |value: &Value| value.as_str().unwrap_or("nowhere known").to_string();
+    for cycle in list("cycles") {
+        out.push_str("these tasks wait for each other, and none can go on:\n");
+        for member in cycle.as_array().into_iter().flatten() {
+            let wants = text(&member["for"]);
+            out.push_str(&format!("  task {} at {} waits for {wants}\n", member["task"], text(&member["at"])));
+        }
+    }
+    for task in list("holding") {
+        let held: Vec<String> = task["holds_up"].as_array().into_iter().flatten().map(Value::to_string).collect();
+        let what = if held.len() == 1 { "task" } else { "tasks" };
+        let state = text(&task["state"]);
+        let ids = held.iter().take(10).cloned().collect::<Vec<_>>().join(", ");
+        let more = if held.len() > 10 { ", ..." } else { "" };
+        let (id, count, at) = (&task["task"], held.len(), text(&task["at"]));
+        out.push_str(&format!("task {id} holds up {count} {what} ({ids}{more}): it {state} at {at}\n"));
+    }
+    if found["longest"].is_object() {
+        let longest = &found["longest"];
+        let waited = duration(longest["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let (id, at, wants) = (&longest["task"], text(&longest["at"]), text(&longest["for"]));
+        out.push_str(&format!("the longest wait: task {id}, {waited} at {at}, for {wants}\n"));
+    }
+    for group in list("crowded") {
+        let at = group["stack"][0].as_str().unwrap_or("nowhere known");
+        out.push_str(&format!("{} tasks {} at {at}\n", group["count"], plural(&text(&group["state"]))));
+    }
+    let total = found["bytes"].as_f64().unwrap_or(0.0);
+    for site in list("memory") {
+        let held = site["bytes"].as_f64().unwrap_or(0.0);
+        let share = if total > 0.0 { held / total * 100.0 } else { 0.0 };
+        let (at, kind) = (text(&site["site"]), text(&site["kind"]));
+        out.push_str(&format!("{} of the live memory ({share:.0} %) is {kind} from {at}\n", bytes(held)));
+    }
+    match out.is_empty() {
+        true => "nothing stands out in this dump".to_string(),
+        false => out.trim_end().to_string(),
+    }
+}
+
+/// Where `text` is in a dump, without minding case: each place once, as
+/// deep as it is, so `user.name` and not `user` as well.
+fn find(dump: &Value, tasks: &[Value], text: &str) -> Vec<Value> {
+    let wanted = text.to_lowercase();
+    let has = |value: &str| value.to_lowercase().contains(&wanted);
+    let mut out = Vec::new();
+    let mut found = |place: Value, line: String| {
+        let mut entry = place;
+        entry["text"] = json!(line);
+        out.push(entry);
+    };
+    if has(dump["message"].as_str().unwrap_or_default()) {
+        found(json!({ "in": "message" }), format!("in the message: {}", dump["message"].as_str().unwrap_or_default()));
+    }
+    // The deepest parts of a value that hold the text.
+    fn parts(value: &Value, path: &str, has: &dyn Fn(&str) -> bool, out: &mut Vec<(String, String)>) {
+        let before = out.len();
+        for part in value["parts"].as_array().into_iter().flatten() {
+            let name = part["name"].as_str().unwrap_or_default();
+            parts(part, &format!("{path}{name}"), has, out);
+        }
+        let text = value["value"].as_str().unwrap_or_default();
+        if out.len() == before && has(text) {
+            out.push((path.to_string(), text.to_string()));
+        }
+    }
+    for task in tasks {
+        let id = &task["id"];
+        for frame in task["frames"].as_array().into_iter().flatten() {
+            let at = frame["at"].as_str().unwrap_or_default();
+            for binding in frame["bindings"].as_array().into_iter().flatten() {
+                let mut places = Vec::new();
+                parts(binding, binding["name"].as_str().unwrap_or_default(), &has, &mut places);
+                for (path, value) in places {
+                    let place = json!({ "in": "value", "task": id, "frame": frame["frame"], "at": at, "path": path, "value": value });
+                    found(place, format!("task {id}, {at}: {path} = {value}"));
+                }
+            }
+        }
+        for context in task["contexts"].as_array().into_iter().flatten() {
+            for (name, value) in context["fields"].as_object().into_iter().flatten() {
+                let value = value.as_str().unwrap_or_default();
+                if has(value) {
+                    let context = context["name"].as_str().unwrap_or_default();
+                    found(
+                        json!({ "in": "context", "task": id, "path": format!("{context}.{name}"), "value": value }),
+                        format!("task {id}, context {context}: {name} = {value}"),
+                    );
+                }
+            }
+        }
+        for frame in task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|f| has(f)) {
+            found(json!({ "in": "stack", "task": id, "at": frame }), format!("task {id} is in {frame}"));
+        }
+    }
+    for object in dump["objects"]["list"].as_array().into_iter().flatten() {
+        let value = object["text"].as_str().unwrap_or_default();
+        if has(value) {
+            let address = object["address"].as_str().unwrap_or_default();
+            found(json!({ "in": "object", "address": address, "value": value }), format!("object {address}: {value}"));
+        }
+    }
+    for site in heap(dump)["sites"].as_array().into_iter().flatten() {
+        let at = site["site"].as_str().unwrap_or_default();
+        if has(at) {
+            found(
+                json!({ "in": "memory", "at": at }),
+                format!("memory: {} from {at}", bytes(site["bytes"].as_f64().unwrap_or(0.0))),
+            );
+        }
     }
     out
 }

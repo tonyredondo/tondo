@@ -711,6 +711,12 @@ as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
 changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or
 `memory=512m`, `cpu=90` and `keep=10`, a program dumps by itself.
 
+`tondo dump read <file> why` says what went wrong as far as the dump can tell:
+tasks that wait for each other, those that hold others up, the longest wait,
+many tasks in one place, where the memory is. `stacks` groups the tasks by
+their stack, and `find <text>` looks for a user or request in every value.
+`tondo blocked <pid|name>` shows who waits for whom in a running program.
+
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for
 its values: dumps, the debugger and its parts. The program itself is not
 touched: `Display`, JSON and `==` see the value. On a type it goes with the
@@ -734,7 +740,7 @@ locals | print user.name        the bindings, or a part of one: items[2], map["k
 children user | stack | frame 1 a value's parts, the calls, a caller's bindings
 context                         the task's contexts, and the `with` that set each field
 set count 3 | catch none        change a binding; do not stop at panics
-tasks | task 2 | pause | delete 1 | quit
+tasks | task 2 | blocked | pause | delete 1 | quit
 ```
 
 In a live build, `tondo debug app.to --live`, a condition is compiled, and

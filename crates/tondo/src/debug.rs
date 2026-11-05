@@ -591,6 +591,12 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
             }
+            // Who waits for whom, from what each task waits for.
+            "blocked" => {
+                session.send("tasks")?;
+                let answer = session.answer()?;
+                session.show(&serde_json::json!({ "blocked": crate::observe::blocked(&answer) }));
+            }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "why" | "tick" | "timeline" | "ran" | "tasks" | "restart" | "select" | "children" | "task" | "catch"
             | "set" | "context" | "watch" | "steps" | "record" | "back" | "forward" | "reverse" | "until"
@@ -2266,6 +2272,8 @@ impl Session {
             for place in snapshot["spawned"].as_array().into_iter().flatten() {
                 println!("   spawned at {}", place.as_str().unwrap_or_default());
             }
+        } else if value["blocked"].is_object() {
+            println!("{}", crate::observe::blocked_text(&value["blocked"]));
         } else if let Some(tasks) = value["tasks"].as_array() {
             for task in tasks {
                 println!(

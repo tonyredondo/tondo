@@ -1047,9 +1047,17 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
     for (index, task) in tasks.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let locks: Vec<String> = task.locks.iter().map(|l| quoted(l)).collect();
+        let wait = task.wait.as_ref().map_or(String::new(), |(text, on, object, ms)| {
+            let on: Vec<String> = on.iter().map(u64::to_string).collect();
+            format!(
+                ",\"wait\":{{\"for\":{},\"on\":[{}],\"object\":\"{object:#x}\",\"ms\":{ms}}}",
+                quoted(text),
+                on.join(",")
+            )
+        });
         let _ = write!(
             out,
-            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}}}",
+            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}{wait}}}",
             task.id,
             task.main,
             task.state,

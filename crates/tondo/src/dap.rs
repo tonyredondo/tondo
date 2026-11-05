@@ -1855,6 +1855,10 @@ fn handle(
             program.ask(&format!("select {task} {index}"))?;
             // In the console, the debugger's own commands that only look.
             let word = path.split_whitespace().next().unwrap_or_default();
+            if arguments["context"] == "repl" && word == "blocked" {
+                let graph = crate::observe::blocked(&program.ask("tasks")?);
+                return Ok(json!({ "result": crate::observe::blocked_text(&graph), "variablesReference": 0 }));
+            }
             let looking = ["memory", "retainers", "snapshot", "tasks", "freeze", "thaw", "record", "context"];
             if arguments["context"] == "repl" && looking.contains(&word) {
                 let answer = program.ask(&path)?;

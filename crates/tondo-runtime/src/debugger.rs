@@ -2719,7 +2719,7 @@ fn stop_here(why: String) -> bool {
 
 /// What a task waits for, in words, and the tasks that keep it waiting:
 /// those that hold the lock it wants, or the one it waits to finish.
-fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
+pub(crate) fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
     use super::tasks::{JOIN, LOCK, RECEIVING, SENDING};
     let (kind, object) = super::tasks::blocked_of(task)?;
     let filled = |object: usize| {
@@ -3855,7 +3855,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
                     // What it waits for, and the tasks that hold that.
                     let waits = waits_for(task).map_or(String::new(), |(text, on)| {
                         let on: Vec<String> = on.iter().map(u64::to_string).collect();
-                        format!(",\"for\":{},\"on\":[{}]", quoted(&text), on.join(","))
+                        let ms = super::tasks::blocked_for(task);
+                        format!(",\"for\":{},\"on\":[{}],\"ms\":{ms}", quoted(&text), on.join(","))
                     });
                     waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}}}"));
                 }

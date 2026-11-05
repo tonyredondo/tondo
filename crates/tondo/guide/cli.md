@@ -94,6 +94,10 @@ tondo profile api --cpu           where it spends its time; --memory, --tasks
 tondo profile -- ./app arg        a program it starts, until it ends
 tondo profile show cpu.pb.gz      the functions and lines that take the most; --html
 tondo dump api                    its tasks, where each is, counters and live memory
+tondo blocked api                 who waits for whom now
+tondo dump read api.dump why      what went wrong, as far as it can tell
+tondo dump read api.dump stacks   the tasks by the stack they share
+tondo dump read api.dump find id  where a text is, in values, stacks and contexts
 tondo dump read api.dump tasks    read a dump; TONDO_DUMP=<dir> writes one at a crash
 tondo dump read api.dump locals   the bindings of a frame; `print user.name` a part
 tondo dump diff a.dump b.dump     what changed between two dumps of a program

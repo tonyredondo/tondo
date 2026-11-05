@@ -289,6 +289,8 @@ pub(crate) struct Task {
     /// to finish (`LOCK`…), 0 when it runs.
     blocked: AtomicUsize,
     blocked_kind: AtomicU8,
+    /// When it blocked there, in milliseconds of `WAITS_FROM`.
+    blocked_since: AtomicU64,
     finished: bool,
     main: bool,
     /// For a task that runs a callback for a thread of C, the call.
@@ -1702,6 +1704,10 @@ pub(crate) struct Shot {
     /// Where it took each `std.sync` lock it holds.
     pub locks: Vec<String>,
     pub cancelled: bool,
+    /// What it waits for, in words; the tasks that can end that wait; the
+    /// object, which tasks that wait for the same one share; and for how
+    /// many milliseconds.
+    pub wait: Option<(String, Vec<u64>, usize, u64)>,
 }
 
 /// In the handler of `SIGPROF`: answers a dump that asked this thread where
@@ -1815,6 +1821,8 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
                 spawned: shown.origin.map(|o| o.frames().to_vec()).unwrap_or_default(),
                 locks,
                 cancelled: shown.cancelled.load(Ordering::Relaxed),
+                wait: super::debugger::waits_for(shown.id)
+                    .map(|(text, on)| (text, on, shown.blocked.load(Ordering::Relaxed), blocked_for(shown.id))),
             }
         })
         .collect()
@@ -1915,11 +1923,13 @@ pub(crate) const JOIN: u8 = 4;
 /// `kind`, which the debugger shows while it waits.
 pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize) -> usize {
     let task = current();
+    let since = Instant::now();
     if let Some(task) = unsafe { task.as_ref() } {
+        let from = *WAITS_FROM.get_or_init(|| since);
+        task.blocked_since.store(since.duration_since(from).as_millis() as u64, Ordering::Relaxed);
         task.blocked.store(object, Ordering::Relaxed);
         task.blocked_kind.store(kind, Ordering::Release);
     }
-    let since = Instant::now();
     let fired = block();
     if let Some(task) = unsafe { task.as_ref() } {
         // A debugger that stops long waits stops this one, as it ends.
@@ -1927,6 +1937,16 @@ pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize)
         task.blocked_kind.store(0, Ordering::Release);
     }
     fired
+}
+
+/// What `blocked_since` counts from.
+static WAITS_FROM: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// How long the task `id` has been blocked, in milliseconds.
+pub(crate) fn blocked_for(id: u64) -> u64 {
+    let Some(task) = (unsafe { by_id(id).and_then(|task| task.as_ref()) }) else { return 0 };
+    let now = WAITS_FROM.get().map_or(0, |from| from.elapsed().as_millis() as u64);
+    now.saturating_sub(task.blocked_since.load(Ordering::Relaxed))
 }
 
 /// What the task `id` is blocked on: its kind and the object.
@@ -2536,6 +2556,7 @@ fn new_task(
         held: Vec::new(),
         blocked: AtomicUsize::new(0),
         blocked_kind: AtomicU8::new(0),
+        blocked_since: AtomicU64::new(0),
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),

@@ -5027,3 +5027,13 @@ glue of its own. What the mark cannot follow is a plain `String`: a string does
 not know whose it is, so a debug dump of a program with secrets leaves out the
 text of its objects, and a field's value copied to a binding shows there. That
 is why the guide says to prefer the type.
+
+## A dump answers before it is read
+
+A dump of a service with two thousand tasks is data, and someone at three in
+the morning wants an answer. So each task's dump says what it waits for and
+for how long, which the wait already knew, and `dump read why` adds it up.
+The graph goes by who can end a wait, so a task behind a lock leads to the one
+that holds it, and that one to what it waits for: the root is what to look at.
+A channel has no such edge, as anyone may send on it. The same code reads the
+debugger's `tasks`, so `blocked` is this graph live.
