@@ -132,7 +132,7 @@ pub const COMMANDS: &[Command] = &[
             "tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>...] [--shard <i/n>] [--watch]",
             "          [--order canonical|random] [--schedules <n>] [--seed <hex>] [--record <dir>] [--list] [--jobs <n>]",
             "          [--timeout <seconds>]",
-            "          [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]",
+            "          [--retry <n>] [--allow-flaky] [--lock-order] [--repeat <n>] [--codeowners auto|none|<path>]",
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>",
             "                    | html=<path>]... [--coverage]",
@@ -187,7 +187,9 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "logpoint",
-        usage: &["tondo logpoint <pid|name> <file:line> [<text>] [--max <n>] [--for <seconds>] [--json]"],
+        usage: &[
+            "tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--max <n>] [--for <seconds>] [--json]",
+        ],
         summary: &["what a line of a running program holds as it goes", "by, without stopping it, in any build"],
     },
     Command {

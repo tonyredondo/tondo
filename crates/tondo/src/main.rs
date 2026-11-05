@@ -318,6 +318,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         allow_empty: false,
         deny_skips: false,
         allow_flaky: false,
+        lock_order: false,
         json: false,
         events: false,
         reports: Vec::new(),
@@ -490,6 +491,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
+            "--lock-order" => options.lock_order = true,
             // The report as JSON, as `--test-format json` gives it.
             "--json" => options.json = true,
             "--update-snapshots" => options.update_snapshots = true,
@@ -961,14 +963,15 @@ fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--max <n>] [--for <seconds>] [--json]";
-    let (mut given, mut max, mut seconds, mut json) = (Vec::new(), 100, None, false);
+    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--max <n>] [--for <seconds>] [--json]";
+    let (mut given, mut max, mut seconds, mut json, mut condition) = (Vec::new(), 100, None, false, None);
     let mut rest = args.iter().filter_map(|a| a.to_str());
     while let Some(arg) = rest.next() {
         match arg {
             "--json" => json = true,
             "--max" => max = rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
             "--for" => seconds = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
+            "--if" => condition = Some(rest.next().ok_or(USAGE)?.to_string()),
             other if !other.starts_with("--") => given.push(other),
             _ => return Err(USAGE.to_string()),
         }
@@ -977,7 +980,9 @@ fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
     if text.len() > 1 {
         return Err(USAGE.to_string());
     }
-    tondo::observe::logpoint(name, place, text.first().copied(), max, seconds, json).map(|()| ExitCode::SUCCESS)
+    let (name, place, text) = (name.to_string(), place.to_string(), text.first().map(|text| text.to_string()));
+    let asked = tondo::observe::Logpoint { name, place, text, condition, max, seconds };
+    tondo::observe::logpoint(&asked, json).map(|()| ExitCode::SUCCESS)
 }
 
 fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {

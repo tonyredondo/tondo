@@ -2929,6 +2929,44 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
 }
 
 #[test]
+fn locks_taken_in_both_orders_are_found_before_they_deadlock() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lock-order");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    // One after the other, so it never deadlocks: only the orders tell.
+    let program = "import std.sync\n\npub fn one(a: sync.Mutex[Int], b: sync.Mutex[Int]) {\n    a.update((x) {\n        \
+        b.update((y) { y += 1 })\n        x += 1\n    })\n}\n\n\
+        pub fn other(a: sync.Mutex[Int], b: sync.Mutex[Int]) {\n    b.update((y) {\n        \
+        a.update((x) { x += 1 })\n        y += 1\n    })\n}\n\n\
+        fn main() {\n    let a = sync.Mutex(0)\n    let b = sync.Mutex(0)\n    one(a, b)\n    other(a, b)\n    \
+        panic(\"look\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"orders\"\nversion = \"0.1.0\"\n").unwrap();
+    let test = "import std.sync\n\ntest both_orders {\n    let a = sync.Mutex(0)\n    let b = sync.Mutex(0)\n    \
+        one(a, b)\n    other(a, b)\n}\n";
+    std::fs::write(dir.join("src/main_test.to"), test).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    // Without asking, the test passes; asked, it fails, saying where.
+    let plain = Command::new(tondo_bin).arg("test").current_dir(&dir).output().unwrap();
+    assert!(plain.status.success(), "{plain:?}");
+    let asked = Command::new(tondo_bin).args(["test", "--lock-order"]).current_dir(&dir).output().unwrap();
+    let said = String::from_utf8_lossy(&asked.stdout);
+    assert!(!asked.status.success() && said.contains("orders that can deadlock"), "{said}");
+    assert!(said.contains("src/main.to:4") && said.contains("src/main.to:11"), "{said}");
+    // A program that dumps keeps it, and `why` says it.
+    let built = Command::new(tondo_bin).args(["build", ".", "--output", "built"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(dir.join("built")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let why = tondo(&["dump", "read", dump.to_str().unwrap(), "why", "--json"]);
+    assert!(why["why"]["lock_order"][0].as_str().unwrap_or_default().contains("can deadlock"), "{why}");
+}
+
+#[test]
 fn a_dump_says_what_keeps_memory_alive() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
@@ -3041,6 +3079,8 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
     let frame = &trace["stackFrames"][0]["id"];
     let whole = adapter.ask("evaluate", json!({ "expression": "long", "frameId": frame, "context": "clipboard" }));
     assert_eq!(whole["result"].as_str().unwrap().len(), 10002, "{whole}");
+    let hex = adapter.ask("evaluate", json!({ "expression": "1 + 15", "frameId": frame, "format": { "hex": true } }));
+    assert_eq!(hex["result"], "0x10", "{hex}");
     adapter.ask("terminateThreads", json!({ "threadIds": [3] }));
     adapter.ask("continue", json!({ "threadId": stopped["threadId"] }));
     adapter.until("terminated");
@@ -3104,6 +3144,14 @@ fn a_logpoint_reads_a_running_release_build() {
     let read: Vec<f64> = said.iter().map(|hit| hit.parse().unwrap_or_else(|_| panic!("{said:?}"))).collect();
     assert_eq!(read.len(), 3, "{numbers}");
     assert!(read[1] == read[0] + 1.0 && read[2] == read[1] + 1.0, "{said:?}");
+    // Only the times that matter, which are all the limit counts.
+    let matching = logpoint(&["orders.to:8", "{order.id}", "--if", "order.id % 7 == 3", "--max", "2", "--json"]);
+    let matching: Value = serde_json::from_slice(&matching.stdout).unwrap();
+    let ids: Vec<u64> =
+        matching["hits"].as_array().unwrap().iter().map(|h| h["text"].as_str().unwrap().parse().unwrap()).collect();
+    assert!(ids.len() == 2 && ids.iter().all(|id| id % 7 == 3), "{matching}");
+    let wrong = logpoint(&["orders.to:8", "--if", "order.id >", "--max", "1"]);
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("the condition"), "{wrong:?}");
     // A tight loop has no place, and it says which line has.
     let line = program.lines().position(|l| l.contains("sum = sum + rows[i]")).unwrap() + 1;
     let refused = logpoint(&[&format!("orders.to:{line}")]);

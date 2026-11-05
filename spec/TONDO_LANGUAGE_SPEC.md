@@ -8848,6 +8848,7 @@ oculten un diagnóstico independiente.
 | `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. | — |
 | `P0017` | `invalid-panic-code` | El `code` calculado de `panic` no es un código propio (15.7). | `code` |
 | `P0018` | `negative-exponent` | `pow` de un entero, o una de sus variantes, recibe un exponente negativo (18.9). | `exponent` |
+| `P0019` | `lock-order` | Locks tomados en órdenes que pueden bloquearse, con `tondo test --lock-order` |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. | — |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. | — |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. | — |

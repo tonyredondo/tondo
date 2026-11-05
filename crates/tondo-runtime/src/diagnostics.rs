@@ -675,6 +675,7 @@ pub(crate) fn start() {
     }
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
+    super::lockorder::start(debugged || std::env::var_os("TONDO_DUMP").is_some());
     let live = super::live::on() && std::env::var_os("TONDO_DIAGNOSTICS").is_none_or(|value| value != "0");
     // `cpu`: a profile of processor time, which counting the memory would
     // change.
@@ -1204,6 +1205,8 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         false => out.push_str(",\"values_off\":true"),
     }
     let _ = write!(out, ",\"sources\":{}", quoted(&roots()));
+    let orders: Vec<String> = super::lockorder::found().iter().map(|text| quoted(text)).collect();
+    let _ = write!(out, ",\"lock_order\":[{}]", orders.join(","));
     let _ = write!(out, ",\"values\":[{}]", values.join(","));
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     out

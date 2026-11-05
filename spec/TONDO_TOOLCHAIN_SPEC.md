@@ -499,6 +499,8 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
   ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
   varias (la que sigue empieza por `.`), como pistas en línea.
+- `tondo dap` da en hexadecimal los números de lo que muestra si el editor lo pide
+  (`format.hex`).
 - Sobre una función, el editor ofrece cambiar su firma: la lista de parámetros
   se reordena, se recorta y se amplía, con `limit: Int = 10` para lo que pasan
   sus llamadas (`tondo.signature`); sobre una función, tipo, enum o constante,
@@ -908,11 +910,19 @@ pararlo ni compilarlo de nuevo, también en un build sin sondas: con el texto
 deja al principio de cada línea de un build sin sondas una llamada que no es nada:
 unos `nop` que no tocan registros, salvo en los bucles que no llaman a nada, donde se
 notaría. El logpoint escribe la llamada con todos los hilos parados y la quita al
-llegar a `--max`, 100 por omisión, o al irse la herramienta. Cada vez detiene esa
+llegar a `--max`, 100 por omisión, o al irse la herramienta. Con `--if <condición>`
+solo cuentan las veces en que se cumple, que se evalúa en la copia del proceso, así
+que las demás cuestan igual. Cada vez detiene esa
 tarea mientras una copia del proceso muestra los valores, como en un volcado.
 Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambiar
 su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
 un 2 % como mucho, y el ejecutable crece menos del 1 %.
+
+Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
+orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
+interbloqueo que aún no ocurrió: lo dice por stderr y `why` lo repite, con dónde se
+tomó cada uno, aunque las tareas nunca coincidan. `tondo test --lock-order` hace
+fallar con `P0019` el test que lo cierra. Dos lectores no se esperan, y no cuentan.
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.

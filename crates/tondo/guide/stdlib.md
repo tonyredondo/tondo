@@ -733,7 +733,8 @@ or request in every value.
 `tondo blocked <pid|name>` shows who waits for whom in a running program.
 `tondo logpoint <pid|name> app.to:12 "order {order.id}"` says what a line holds
 each time it goes by, without stopping the program or a new build, up to
-`--max 100` times: on Linux, with `TONDO_DIAGNOSTICS=1`. Each time pauses that
+`--max 100` times, and with `--if "order.total > 100"` only when that holds: on
+Linux, with `TONDO_DIAGNOSTICS=1`. Each time pauses that
 task while a copy of the process shows the values, so it is for a line that runs
 now and then, and a loop that calls nothing has no place for it.
 
@@ -744,6 +745,10 @@ its repository when the one at hand is not it, and the editor opens those by
 itself, with breakpoints, as if they were here. `tondo build --no-source-links`
 keeps none of it. `[source] url` in `tondo.toml` says how a host that is not
 GitHub, GitLab, Bitbucket, Gitea, Forgejo or Azure DevOps links to a line.
+
+A program with `TONDO_DUMP`, in the debugger or with `TONDO_LOCK_ORDER=1` notes
+the order its tasks take locks in, and says when two are taken in both, a deadlock
+that did not happen yet; `tondo test --lock-order` fails the test that does it.
 
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for
 its values: dumps, the debugger and its parts. The program itself is not

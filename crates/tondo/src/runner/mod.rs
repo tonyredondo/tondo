@@ -62,6 +62,9 @@ pub struct Options {
     /// `--record dir`: each test runs alone, recorded (toolchain 7.6), and
     /// the recordings of those that fail stay in the directory.
     pub record: Option<PathBuf>,
+    /// `--lock-order`: locks taken in orders that can deadlock fail the
+    /// test that took them.
+    pub lock_order: bool,
     pub codeowners: Codeowners,
     pub show_output: bool,
     pub allow_empty: bool,

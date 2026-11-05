@@ -214,6 +214,13 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
         super::raise(14, &message, location);
         return 0;
     }
+    if !holds.is_empty()
+        && super::lockorder::on()
+        && let Some(message) = super::lockorder::taking(address, exclusive, location, holds)
+    {
+        super::raise(19, &message, location);
+        return 0;
+    }
     let guard = address | (!exclusive) as usize;
     let o = unsafe { &mut *object };
     let mut spins = 0;
@@ -473,6 +480,9 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
             cycles::forget(object as *const u8);
         }
         super::live::forget_object(object as usize);
+        if super::lockorder::on() {
+            super::lockorder::forget(object as usize);
+        }
         let o = Box::from_raw(object);
         if let Some(release) = o.release {
             release(o.value);

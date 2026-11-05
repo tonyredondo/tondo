@@ -56,7 +56,7 @@ suite slow {
   found for people: failures, skips, benchmarks and coverage; the Markdown
   fits a pull request or a CI summary, the HTML is one file with charts.
 - `tondo test --filter text`, `--exact id` (again for more), `--list`, `--jobs n`,
-  `--timeout s`, `--retry n`, `--order random --seed hex`,
+  `--timeout s`, `--retry n`, `--lock-order`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and
   `--test-format events` a line of JSON for each result as it comes.
 - A test that calls `testing.bench` in its body is a benchmark (below).

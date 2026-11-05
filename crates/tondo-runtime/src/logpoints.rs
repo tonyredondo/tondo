@@ -16,6 +16,8 @@ struct Logpoint {
     sites: Vec<Site>,
     left: u64,
     client: UnixStream,
+    /// What must hold for a time to count.
+    condition: Option<String>,
 }
 
 struct Site {
@@ -28,11 +30,18 @@ static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
 
-/// `logpoint <max> <file:line>`: tells the tool its number and how many
-/// places the line has, or gives why not.
+/// `logpoint <max> <file:line>[\t<condition>]`: tells the tool its number
+/// and how many places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
+    let (request, condition) = match request.split_once('\t') {
+        Some((request, condition)) => (request, Some(condition.to_string())),
+        None => (request, None),
+    };
+    if let Some(Err(message)) = condition.as_deref().map(super::debugger::valid_expression) {
+        return error(&format!("the condition: {message}"));
+    }
     let Some((max, place)) = request.split_once(' ') else { return error("logpoint takes a limit and file:line") };
     let (Ok(max), Some((file, line))) = (max.parse::<u64>(), place.rsplit_once(':')) else {
         return error("logpoint takes a limit and file:line");
@@ -72,7 +81,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client });
+    lock().push(Logpoint { id, sites, left: max, client, condition });
     String::new()
 }
 
@@ -167,32 +176,33 @@ extern "C" fn hit(saved: *const usize) {
     let (registers, floats, address, fp) = unsafe { registers_of(saved) };
     // A site's call is its whole length before where it returns to.
     let found = {
-        let mut set = lock();
-        let place = set.iter_mut().find_map(|logpoint| {
+        let set = lock();
+        set.iter().find_map(|logpoint| {
             let site = logpoint.sites.iter().find(|site| site.address + site.length == address)?.address;
-            Some((logpoint, site))
-        });
-        match place {
-            Some((logpoint, _)) if logpoint.left == 0 => None,
-            Some((logpoint, site)) => {
-                logpoint.left -= 1;
-                let last = logpoint.left == 0;
-                logpoint.client.try_clone().ok().map(|client| (logpoint.id, site, last, client))
-            }
-            None => None,
-        }
+            let client = logpoint.client.try_clone().ok().filter(|_| logpoint.left > 0)?;
+            Some((logpoint.id, site, client, logpoint.condition.clone()))
+        })
     };
-    let Some((id, site, last, mut client)) = found else { return };
+    let Some((id, site, mut client, condition)) = found else { return };
     // Those that come while one is shown go by.
-    if let Ok(_shown) = HIT.try_lock() {
-        let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
-        let values = super::debugger::frame_values(site, fp, bounds, &registers, &floats);
-        let task = super::tasks::current_id();
-        let line = format!("{{\"hit\":{id},\"task\":{task},\"values\":[{}]}}\n", values.join(","));
-        let sent = client.write_all(line.as_bytes()).is_ok();
-        if !sent {
-            forget(id);
-        }
+    let Ok(_shown) = HIT.try_lock() else { return };
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let values = super::debugger::frame_values(site, fp, bounds, &registers, &floats, condition);
+    // A condition that does not hold leaves nothing, and takes no time of
+    // the limit.
+    if values.is_empty() {
+        return;
+    }
+    let last = {
+        let mut set = lock();
+        let Some(logpoint) = set.iter_mut().find(|logpoint| logpoint.id == id && logpoint.left > 0) else { return };
+        logpoint.left -= 1;
+        logpoint.left == 0
+    };
+    let task = super::tasks::current_id();
+    let line = format!("{{\"hit\":{id},\"task\":{task},\"values\":[{}]}}\n", values.join(","));
+    if client.write_all(line.as_bytes()).is_err() {
+        forget(id);
     }
     if last {
         let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());

@@ -1156,6 +1156,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(text) = args.text("text") {
                 push(&[&text]);
             }
+            if let Some(condition) = args.text("if") {
+                push(&["--if", &condition]);
+            }
             let seconds = args.text("seconds").unwrap_or_else(|| "10".to_string());
             push(&["--max", &args.text("max").unwrap_or_else(|| "20".to_string()), "--for", &seconds, "--json"]);
         }
@@ -2132,6 +2135,7 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
             ("program", "string!", "The running program: its process ID or name."),
             ("place", "string!", "The line, as src/main.to:12."),
             ("text", "string", "What to say of each time, as `order {order.id}`; by default, every binding."),
+            ("if", "string", "What must hold for a time to count, as `order.total > 100`."),
             ("max", "integer", "How many times, 20 by default."),
             ("seconds", "integer", "For how long, 10 by default."),
         ],

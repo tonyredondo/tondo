@@ -5125,3 +5125,12 @@ that, with every thread stopped: nothing moves, and no instruction is emulated.
 
 A line in such a loop is refused, saying the nearest that can take one. It would
 be hit millions of times anyway, and each hit forks.
+
+## A deadlock is found by the orders that could cause it
+
+A deadlock needs two tasks at the wrong moment, which a test run rarely is. The
+orders locks are taken in are there on every run, so each lock taken while another
+is held is an edge of a graph, and a cycle is the bug without the bad luck. It costs a
+load for tasks that hold nothing. A lock is known by its address, and forgotten when
+it is freed, as another may come there. In a test it fails only when asked: the
+order may be fine for reasons the graph cannot see.

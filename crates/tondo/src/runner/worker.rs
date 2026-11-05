@@ -207,6 +207,7 @@ fn worker(
     command
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)
+        .envs(run.options.lock_order.then_some(("TONDO_LOCK_ORDER", "fail")))
         .env("TONDO_TEST_NONCE", &nonce)
         .env("TONDO_TEST_SNAPSHOTS", stores.entries)
         .env("TONDO_TEST_FUZZ", stores.fuzzed)

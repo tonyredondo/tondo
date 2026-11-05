@@ -37,6 +37,7 @@ mod json;
 mod labels;
 mod live;
 mod locales;
+mod lockorder;
 mod logpoints;
 mod math;
 mod memory;
@@ -2549,6 +2550,7 @@ pub(crate) fn panic_name(code: u32) -> &'static str {
         16 => "nul-in-c-string",
         17 => "invalid-panic-code",
         18 => "negative-exponent",
+        19 => "lock-order",
         2001 => "test-skip-during-cleanup",
         2002 => "test-tag-conflict",
         2003 => "test-virtual-time-deadlock",

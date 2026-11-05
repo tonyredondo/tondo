@@ -1472,15 +1472,25 @@ pub(crate) fn frame_values(
     bounds: (usize, usize),
     registers: &[usize; 32],
     floats: &[usize; 32],
+    condition: Option<String>,
 ) -> Vec<String> {
     super::diagnostics::fault_registers(registers, true);
     FLOATS.iter().zip(floats).for_each(|(slot, &value)| slot.store(value, Ordering::Relaxed));
+    *CONDITION.lock().unwrap_or_else(|e| e.into_inner()) = condition;
     LOGGING.store(true, Ordering::Relaxed);
     let found = rendered(Some((Some(pc), fp, bounds)), true);
     LOGGING.store(false, Ordering::Relaxed);
     super::diagnostics::fault_registers(registers, false);
     found
 }
+
+/// Whether an expression reads.
+pub(crate) fn valid_expression(text: &str) -> Result<(), String> {
+    expression::parse(text).map(drop)
+}
+
+/// What must hold for the frame a logpoint shows to be shown.
+static CONDITION: Mutex<Option<String>> = Mutex::new(None);
 
 /// While a logpoint shows a frame, the low half of each register of numbers.
 static LOGGING: AtomicBool = AtomicBool::new(false);
@@ -1607,6 +1617,10 @@ fn render(
         stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds, saved)| (id, None, fp, bounds, saved)));
     }
     let mut index = 0;
+    // A logpoint's condition reads all the frame has, so what it shows
+    // waits for that.
+    let condition = alone.then(|| CONDITION.lock().unwrap_or_else(|e| e.into_inner()).clone()).flatten();
+    let mut waiting: Vec<(String, String, String)> = Vec::new();
     let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, glue: Show, address: usize| {
         index += 1;
         if index <= from {
@@ -1621,7 +1635,10 @@ fn render(
             quoted(&clipped(&text)),
             dumped_parts(&text, DUMPED_DEPTH),
         );
-        unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
+        match condition.is_some() {
+            true => waiting.push((name.to_string(), text, line)),
+            false => drop(unsafe { libc::write(out, line.as_ptr().cast(), line.len()) }),
+        }
     };
     let release = table.is_none().then(dump_functions);
     for (task, pc, frame, bounds, switched) in stops {
@@ -1685,6 +1702,16 @@ fn render(
                 let saved = found.map_or(&[][..], |f| &f.saved);
                 registers = caller_registers(&registers, fp, saved);
             }
+        }
+    }
+    let Some(condition) = &condition else { return };
+    let read = |name: &str| {
+        let found = waiting.iter().find(|(binding, ..)| binding == name);
+        found.map(|(_, text, _)| text.clone()).ok_or(format!("no binding `{name}` holds a value here"))
+    };
+    if expression::parse(condition).is_ok_and(|expr| Evaluator::new(&read).holds(&expr)) {
+        for (.., line) in &waiting {
+            unsafe { libc::write(out, line.as_ptr().cast(), line.len()) };
         }
     }
 }

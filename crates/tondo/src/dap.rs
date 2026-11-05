@@ -56,7 +56,20 @@ impl Editor {
         self.send(json!({ "type": "request", "command": command, "arguments": arguments }));
     }
 
-    fn respond(&self, request: &Value, body: Result<Value, String>) {
+    fn respond(&self, request: &Value, mut body: Result<Value, String>) {
+        // The numbers of what it shows in hexadecimal, when the editor asks.
+        if request["arguments"]["format"]["hex"] == true
+            && let Ok(body) = &mut body
+        {
+            if let Some(result) = body["result"].as_str() {
+                body["result"] = json!(hexadecimal(result));
+            }
+            for variable in body["variables"].as_array_mut().into_iter().flatten() {
+                if let Some(value) = variable["value"].as_str() {
+                    variable["value"] = json!(hexadecimal(value));
+                }
+            }
+        }
         let mut response = json!({
             "type": "response", "request_seq": request["seq"], "command": request["command"], "success": body.is_ok(),
         });
@@ -66,6 +79,30 @@ impl Editor {
         }
         self.send(response);
     }
+}
+
+/// A value's text with its whole numbers in hexadecimal, but in its texts.
+fn hexadecimal(text: &str) -> String {
+    let (mut out, mut rest, mut quoted) = (String::new(), text, false);
+    while let Some(first) = rest.chars().next() {
+        let starts_word = !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
+        if !quoted && first.is_ascii_digit() && starts_word {
+            let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+            let after = rest[digits..].chars().next();
+            let number =
+                rest[..digits].parse::<u64>().ok().filter(|_| !after.is_some_and(|c| c == '.' || c.is_alphanumeric()));
+            match number {
+                Some(number) => out.push_str(&format!("{number:#x}")),
+                None => out.push_str(&rest[..digits]),
+            }
+            rest = &rest[digits..];
+            continue;
+        }
+        quoted ^= first == '"' && !out.ends_with('\\');
+        out.push(first);
+        rest = &rest[first.len_utf8()..];
+    }
+    out
 }
 
 fn read_message(input: &mut impl BufRead) -> Option<Value> {
@@ -349,6 +386,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsBreakpointLocationsRequest": true,
                 "supportsLoadedSourcesRequest": true,
                 "supportsClipboardContext": true,
+                "supportsValueFormattingOptions": true,
                 "supportsReadMemoryRequest": true,
                 "supportsWriteMemoryRequest": true,
                 "supportsDisassembleRequest": true,
@@ -2011,6 +2049,19 @@ fn handle(
 
 #[cfg(test)]
 mod tests {
+    use super::hexadecimal;
+
+    #[test]
+    fn whole_numbers_show_in_hexadecimal_and_the_rest_as_it_is() {
+        assert_eq!(hexadecimal("255"), "0xff");
+        assert_eq!(
+            hexadecimal("User { id: 16, name: \"7 \\\" 8\", ratio: 1.5, x2: 3 }"),
+            "User { id: 0x10, name: \"7 \\\" 8\", ratio: 1.5, x2: 0x3 }"
+        );
+        assert_eq!(hexadecimal("[1, 2]"), "[0x1, 0x2]");
+        assert_eq!(hexadecimal("-1"), "-0x1");
+    }
+
     #[test]
     fn base64_goes_there_and_back() {
         for bytes in [&b""[..], b"a", b"ab", b"abc", b"abcd", &[0, 255, 16, 200, 7]] {

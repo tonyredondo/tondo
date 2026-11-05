@@ -1986,6 +1986,7 @@ fn why(dump: &Value) -> Value {
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
     found["signature"] = json!(signature(dump));
+    found["lock_order"] = dump["lock_order"].clone();
     let events = events(dump);
     found["events"] = events[events.len().saturating_sub(10)..].to_vec().into();
     found["requests"] = requests(dump).into_iter().take(5).collect();
@@ -2024,19 +2025,29 @@ pub(crate) fn blocked_text(graph: &Value) -> String {
     format!("{}\n{}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
 }
 
+/// What `tondo logpoint` is asked for.
+pub struct Logpoint {
+    pub name: String,
+    pub place: String,
+    pub text: Option<String>,
+    /// What must hold for a time to count: `order.total > 100`.
+    pub condition: Option<String>,
+    pub max: u64,
+    pub seconds: Option<u64>,
+}
+
 /// `tondo logpoint <pid|name> <file:line> [<text>]`: what a line of a
 /// running program holds each time it goes by, up to `max` times or for
 /// `seconds`, without stopping it. `{user.id}` in the text reads a part.
-pub fn logpoint(
-    name: &str,
-    place: &str,
-    text: Option<&str>,
-    max: u64,
-    seconds: Option<u64>,
-    json: bool,
-) -> Result<(), String> {
+pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
+    let Logpoint { name, place, text, condition, max, seconds } = asked;
+    let (text, max) = (text.as_deref(), *max);
     let mut program = connect(name)?;
-    let answer = program.ask(&format!("logpoint {max} {place}"))?;
+    let request = match condition {
+        Some(condition) => format!("logpoint {max} {place}\t{condition}"),
+        None => format!("logpoint {max} {place}"),
+    };
+    let answer = program.ask(&request)?;
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
     }
@@ -2127,6 +2138,9 @@ fn why_text(found: &Value) -> String {
     }
     let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
     let text = |value: &Value| value.as_str().unwrap_or("nowhere known").to_string();
+    for order in list("lock_order") {
+        out.push_str(&format!("{}\n", text(order)));
+    }
     for cycle in list("cycles") {
         out.push_str("these tasks wait for each other, and none can go on:\n");
         for member in cycle.as_array().into_iter().flatten() {
