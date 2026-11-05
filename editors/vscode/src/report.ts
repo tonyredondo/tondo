@@ -1058,3 +1058,12 @@ export function diffMarkdown(diff: Diff): string {
   }
   return `${lines.join('\n')}\n`;
 }
+
+/** What a launch with `last` runs: the program recorded, keeping the end
+ *  of the run. */
+export function recordedRun(config: Record<string, unknown>): string[] {
+  const hold = config.hold ? ['--hold', String(config.hold)] : [];
+  const args = Array.isArray(config.args) ? config.args.map(String) : [];
+  const recording = String(config.recording ?? '.tondo/recording');
+  return ['run', '--record', recording, '--last', String(config.last), ...hold, String(config.program), '--', ...args];
+}

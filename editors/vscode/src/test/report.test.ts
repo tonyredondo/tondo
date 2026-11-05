@@ -20,6 +20,7 @@ import {
   outcomes,
   place,
   programOf,
+  recordedRun,
   reloadShown,
   reloaded,
   rendered,
@@ -599,4 +600,13 @@ test('what changed between two moments shows frame by frame, then the tasks and 
       '',
     ].join('\n'),
   );
+});
+
+test('a launch with `last` runs the program recorded, with its arguments after it', () => {
+  assert.deepEqual(recordedRun({ program: 'app.to', last: '5m' }), [
+    'run', '--record', '.tondo/recording', '--last', '5m', 'app.to', '--',
+  ]);
+  assert.deepEqual(recordedRun({ program: '.', last: '1h', hold: '2h', recording: 'rec', args: ['a', 3] }), [
+    'run', '--record', 'rec', '--last', '1h', '--hold', '2h', '.', '--', 'a', '3',
+  ]);
 });

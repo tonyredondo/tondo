@@ -46,6 +46,8 @@ project, running, debugging and testing it.
   Come From?*, in a replay, the whole chain back to what the program read;
   *Go to When a Condition Holds*, the first or the last time in the run;
   *Compare with Another Moment*, what changed since another probe;
+  *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
+  dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part
   and why;
   *Open Disassembly View* and *View Binary Data* on a binding, whose bytes a
@@ -81,7 +83,8 @@ project, running, debugging and testing it.
   *Benchmark* profile measures the tests that call `testing.bench`: each
   benchmark's time, spread and allocations go to its output, and the
   report opens beside the code, compared with a baseline when the settings
-  give one. A test that calls `testing.fuzz` is searched with *Fuzz Test*,
+  give one. *Why It Fails Sometimes*, on a test, runs it until it passes and
+  fails, and says where the two runs part. A test that calls `testing.fuzz` is searched with *Fuzz Test*,
   beside it in the Testing view and in the menu of its button in the
   editor, until its notification's Stop or `tondo.fuzz.time` seconds: how
   the search goes shows in the test's output, and an input that fails, as
@@ -124,7 +127,9 @@ project, running, debugging and testing it.
   are saved or change (on by default); off, *Tondo: Reload* does it.
 - `tondo.run.args` and `tondo.run.env`: the arguments and the variables of
   the programs run or debugged from the editor without a `launch.json`,
-  and of the tasks; a `launch.json` gives its own `args` and `env`.
+  and of the tasks; a `launch.json` gives its own `args` and `env`, and with
+  `last`, as `"5m"`, it runs recorded in a terminal and a run that fails is
+  replayed from the end it kept (`hold`, `recording`).
 - `tondo.test.args` and `tondo.test.env`: what `tondo test` takes in the
   Testing view, as `["--jobs", "4"]`, and the tests' variables.
 - `tondo.bench.args`: what the *Benchmark* profile adds to `tondo test

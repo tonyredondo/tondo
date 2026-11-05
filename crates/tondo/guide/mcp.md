@@ -136,8 +136,10 @@ and one that failed, and says where they part and why.
 builds; `counters`, `trace`, `dump` and `dump_read` look into one by
 `program`, its process ID or name, and with `via`, as `ssh host`, they and
 `ps` and `reload` reach one on another machine or in a container.
-`dump_read` with the view `locals` or `print` gives what a frame held, of any
-build, and `dump_diff` what changed between two dumps. `profile` profiles a `path` it runs, a
+`dump_read` with the view `why` says what went wrong, as far as the dump can
+tell, `locals` or `print` what a frame held, of any build, and `find` where a
+text is; `dump_diff` says what changed between two dumps, and `dump_trend` what
+keeps growing over a directory of them. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `memory` or `tasks`, and gives the functions and the program's lines that
 take the most, each with its code.

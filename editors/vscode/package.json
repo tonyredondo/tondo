@@ -210,6 +210,19 @@
                 "type": "string",
                 "description": "A recording of `tondo run --record <dir>`, run again the same, which steps back to the whole program as it was."
               },
+              "last": {
+                "type": "string",
+                "description": "Run it recorded in a terminal, keeping this much of the end of the run, as `5m`, and replay that when a failed run ends (`tondo run --record <dir> --last 5m`)."
+              },
+              "hold": {
+                "type": "string",
+                "description": "With `last`: how long the copies of a failed run wait to be replayed, as `2h`."
+              },
+              "recording": {
+                "type": "string",
+                "description": "With `last`: the directory of the recording.",
+                "default": ".tondo/recording"
+              },
               "record": {
                 "type": [
                   "boolean",
@@ -356,6 +369,16 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.compareDumps",
+        "title": "Compare Two Dumps",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.dumpTrend",
+        "title": "What Keeps Growing Over Dumps",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.reload",
         "title": "Reload the Live Program",
         "category": "Tondo"
@@ -382,6 +405,12 @@
         "title": "Fuzz Test",
         "category": "Tondo",
         "icon": "$(search-fuzzy)"
+      },
+      {
+        "command": "tondo.compareTest",
+        "title": "Why It Fails Sometimes",
+        "category": "Tondo",
+        "icon": "$(git-compare)"
       },
       {
         "command": "tondo.restartLanguageServer",
@@ -603,6 +632,10 @@
           "when": "false"
         },
         {
+          "command": "tondo.compareTest",
+          "when": "false"
+        },
+        {
           "command": "tondo.profile",
           "when": "resourceLangId == tondo"
         },
@@ -659,6 +692,11 @@
         {
           "command": "tondo.fuzzTest",
           "when": "controllerId == tondo && testId in tondo.fuzzTests",
+          "group": "1_run"
+        },
+        {
+          "command": "tondo.compareTest",
+          "when": "controllerId == tondo && testId =~ /^(?!doc:|project:)/",
           "group": "1_run"
         },
         {

@@ -570,6 +570,24 @@ export function registerTesting(
       const request = new vscode.TestRunRequest(included(test, chosen), undefined, measure);
       return run(request, new vscode.CancellationTokenSource().token);
     }),
+    // A test that fails now and then, run until it did both, and where the
+    // two runs parted.
+    vscode.commands.registerCommand('tondo.compareTest', async (test?: vscode.TestItem) => {
+      const dir = test && projectOf.get(test);
+      if (!dir) {
+        return;
+      }
+      const title = `Running ${test.label} until it passes and fails`;
+      const recordings = await fs.mkdtemp(path.join(os.tmpdir(), 'tondo-compare-'));
+      const args = ['test', '--record', recordings, '--repeat', '20', '--exact', test.id];
+      const ran = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+        (_, token) => exec(args, dir, token),
+      );
+      const content = `${ran.stdout}${ran.stderr}`;
+      const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
+      await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+    }),
     // A search runs until it is stopped, from a notification.
     vscode.commands.registerCommand('tondo.fuzzTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
       const request = new vscode.TestRunRequest(included(test, chosen), undefined, fuzz);

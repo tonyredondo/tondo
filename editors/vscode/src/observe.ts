@@ -91,15 +91,59 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.debugDump', async (uri?: vscode.Uri) => {
       const file =
         uri ??
-        (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json'] }, openLabel: 'Debug this dump' }))?.[0];
+        (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel: 'Debug this dump' }))?.[0];
       if (file) {
         const folder = vscode.workspace.getWorkspaceFolder(file) ?? vscode.workspace.workspaceFolders?.[0];
         const cwd = folder?.uri.fsPath ?? path.dirname(file.fsPath);
         await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name: 'Debug a dump', dump: file.fsPath, cwd });
       }
     }),
+    vscode.commands.registerCommand('tondo.compareDumps', compareDumps),
+    vscode.commands.registerCommand('tondo.dumpTrend', dumpTrend),
     { dispose: stop },
   );
+}
+
+/** What a command says, in a document beside the code. */
+async function show(content: string): Promise<void> {
+  const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
+  await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+}
+
+/** What changed from one dump of a program to a later one. */
+async function compareDumps(): Promise<void> {
+  const pick = async (openLabel: string) =>
+    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel }))?.[0].fsPath;
+  const first = await pick('The earlier dump');
+  const second = first && (await pick('The later dump'));
+  if (!first || !second) {
+    return;
+  }
+  const ran = await exec(['dump', 'diff', first, second], path.dirname(first));
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump diff failed');
+    return;
+  }
+  await show(ran.stdout);
+}
+
+/** What keeps growing over the dumps of a program in a directory. */
+async function dumpTrend(): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    openLabel: 'The directory of the dumps',
+  });
+  const dir = picked?.[0].fsPath;
+  if (!dir) {
+    return;
+  }
+  const ran = await exec(['dump', 'trend', dir], dir);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump trend failed');
+    return;
+  }
+  await show(ran.stdout);
 }
 
 /** Records a running program for a while, and opens the timeline in

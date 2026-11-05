@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec, programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Compared, Diff, Origin, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, originsMarkdown, shortPlace, tableHtml, timelineHtml } from './report';
+import { Compared, Diff, Origin, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -29,6 +29,10 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
         }
         if (config.request === 'launch' && !config.cwd) {
           config.cwd = folder?.uri.fsPath ?? path.dirname(String(config.program ?? ''));
+        }
+        if (config.request === 'launch' && config.last) {
+          await recordTheEnd(folder, config);
+          return undefined;
         }
         return config;
       },
@@ -85,6 +89,32 @@ async function diff(): Promise<void> {
   } catch (error) {
     failed(error);
   }
+}
+
+/** A launch with `last`: the program runs recorded in a terminal, where it
+ *  reads and writes, and the debugger replays the end of a run that fails. */
+async function recordTheEnd(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): Promise<void> {
+  const cwd = String(config.cwd);
+  const task = new vscode.Task(
+    { type: 'tondo', command: 'run', target: String(config.program) },
+    folder ?? vscode.TaskScope.Workspace,
+    `record ${path.basename(String(config.program))}`,
+    'tondo',
+    new vscode.ProcessExecution(tondo(), recordedRun(config), { cwd }),
+  );
+  const running = await vscode.tasks.executeTask(task);
+  const ended = vscode.tasks.onDidEndTaskProcess((end) => {
+    if (end.execution !== running) {
+      return;
+    }
+    ended.dispose();
+    if (end.exitCode === 0) {
+      void vscode.window.showInformationMessage('The run went well, and nothing of its end is kept.');
+      return;
+    }
+    const replay = String(config.recording ?? '.tondo/recording');
+    void vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name: `Replay ${config.name}`, replay, cwd });
+  });
 }
 
 /** Where two recordings of a program part and why, beside the code. */

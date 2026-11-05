@@ -1338,7 +1338,10 @@ fn debugger_stops_at_a_deadlock() {
     assert!(stop["why"].as_str().unwrap().starts_with("panic[P0013]: deadlock"), "{stop}");
     let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
     let waits = json!({ "task": 2, "at": "deadlocked.to:3 in waiter", "why": "waits", "for": "a value of a channel that holds 0 of 1", "on": [] });
-    assert_eq!(tasks[1], waits);
+    // How long it has waited, which changes.
+    let mut task = tasks[1].clone();
+    assert!(task.as_object_mut().unwrap().remove("ms").unwrap().is_u64(), "{task}");
+    assert_eq!(task, waits);
     assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
     // Going on, the program ends with the deadlock.
     assert!(String::from_utf8_lossy(&output.stderr).contains("panic[P0013]: deadlock"));
