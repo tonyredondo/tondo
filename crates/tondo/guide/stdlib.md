@@ -716,8 +716,9 @@ the program goes on.
 
 `tondo dump read <file> why` says what went wrong as far as the dump can tell:
 tasks that wait for each other, those that hold others up, the longest wait,
-many tasks in one place, where the memory is. `stacks` groups the tasks by
-their stack, and `find <text>` looks for a user or request in every value.
+many tasks in one place, the oldest requests, where the memory is. `stacks`
+groups the tasks by their stack, `requests` lists the HTTP and gRPC requests in
+flight, and `find <text>` looks for a user or request in every value.
 `tondo blocked <pid|name>` shows who waits for whom in a running program.
 
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for

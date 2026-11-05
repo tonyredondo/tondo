@@ -307,6 +307,8 @@ fn note_exceeded(error: &(dyn std::error::Error + 'static), exceeded: &std::sync
 struct Request {
     failure: Failure,
     open: bool,
+    /// While a dump would show it.
+    flight: Option<super::diagnostics::Flown>,
     method: String,
     path: String,
     query: String,
@@ -337,6 +339,7 @@ struct Request {
 impl Request {
     fn closed() -> Request {
         Request {
+            flight: None,
             failure: Mutex::new(None),
             open: false,
             method: String::new(),
@@ -849,6 +852,7 @@ async fn handle(
     let incoming = Request {
         failure: Mutex::new(None),
         open: true,
+        flight: super::diagnostics::Flown::new(parts.method.as_str(), parts.uri.path()),
         method: parts.method.to_string(),
         path: parts.uri.path().to_string(),
         query: parts.uri.query().unwrap_or_default().to_string(),
@@ -997,8 +1001,12 @@ impl Host for RequestBody {
 /// the response cancels.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_answering(object: *mut NativeObject) {
-    let answering = &request(object).answering;
+    let request = request(object);
+    let answering = &request.answering;
     answering.task.store(super::tasks::current_id(), std::sync::atomic::Ordering::SeqCst);
+    if let Some(flight) = &request.flight {
+        flight.answered_by(super::tasks::current_id());
+    }
     answering.cancel_if_gone();
 }
 

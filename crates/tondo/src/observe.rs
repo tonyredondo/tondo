@@ -864,6 +864,8 @@ pub enum View {
     Why,
     /// The tasks by the stack they share.
     Stacks,
+    /// The requests in flight, the oldest first.
+    Requests,
     /// Where a text is: in values, stacks, contexts and the memory's sites.
     Find(String),
 }
@@ -1065,6 +1067,8 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Why => why_text(&why(&dump)),
         View::Stacks if json => return shown("stacks", Value::Array(stacks(&tasks))),
         View::Stacks => stacks_text(&stacks(&tasks)),
+        View::Requests if json => return shown("requests", Value::Array(requests(&dump))),
+        View::Requests => requests_text(&requests(&dump)),
         View::Find(text) => {
             let found = find(&dump, &tasks, &text);
             if json {
@@ -1388,6 +1392,28 @@ fn task_text(task: &Value, whole: bool) -> String {
     out
 }
 
+/// The requests in flight, the oldest first.
+fn requests(dump: &Value) -> Vec<Value> {
+    let mut list = dump["requests"].as_array().cloned().unwrap_or_default();
+    list.sort_by_key(|request| std::cmp::Reverse(request["ms"].as_u64()));
+    list
+}
+
+fn requests_text(list: &[Value]) -> String {
+    let line = |request: &Value| {
+        let (method, path) =
+            (request["method"].as_str().unwrap_or_default(), request["path"].as_str().unwrap_or_default());
+        let waited = duration(request["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let task = request["task"].as_u64().filter(|task| *task != 0);
+        let answer = task.map_or(", no task has it yet".to_string(), |task| format!(", in task {task}"));
+        format!("{method} {path} for {waited}{answer}")
+    };
+    match list.is_empty() {
+        true => "no request in flight".to_string(),
+        false => list.iter().map(line).collect::<Vec<_>>().join("\n"),
+    }
+}
+
 /// A task's state, said of several.
 fn plural(state: &str) -> String {
     match state {
@@ -1526,6 +1552,8 @@ fn why(dump: &Value) -> Value {
     let heap = heap(dump);
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
+    found["requests"] = requests(dump).into_iter().take(5).collect();
+    found["in_flight"] = json!(dump["requests"].as_array().map_or(0, Vec::len));
     found["crowded"] = stacks(&tasks).into_iter().filter(|g| g["count"].as_u64() > Some(1)).take(5).collect();
     found["memory"] = heap["sites"].as_array().into_iter().flatten().take(3).cloned().collect();
     found["bytes"] = heap["bytes"].clone();
@@ -1581,12 +1609,12 @@ pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
 
 fn why_text(found: &Value) -> String {
     let mut out = String::new();
-    match found["reason"].as_str().unwrap_or_default() {
-        "request" | "schedule" | "signal" | "" => {}
-        reason => out.push_str(&format!("it stopped at a {reason}\n")),
-    }
-    for line in found["message"].as_str().unwrap_or_default().lines() {
-        out.push_str(&format!("  {line}\n"));
+    // A program that went on has nothing to say of why it was dumped.
+    if !matches!(found["reason"].as_str().unwrap_or_default(), "request" | "schedule" | "signal" | "") {
+        out.push_str(&format!("it stopped at a {}\n", found["reason"].as_str().unwrap_or_default()));
+        for line in found["message"].as_str().unwrap_or_default().lines() {
+            out.push_str(&format!("  {line}\n"));
+        }
     }
     let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
     let text = |value: &Value| value.as_str().unwrap_or("nowhere known").to_string();
@@ -1615,6 +1643,12 @@ fn why_text(found: &Value) -> String {
     for group in list("crowded") {
         let at = group["stack"][0].as_str().unwrap_or("nowhere known");
         out.push_str(&format!("{} tasks {} at {at}\n", group["count"], plural(&text(&group["state"]))));
+    }
+    if !list("requests").is_empty() {
+        out.push_str(&format!("{} requests in flight, the oldest:\n", found["in_flight"]));
+        for line in requests_text(list("requests")).lines() {
+            out.push_str(&format!("  {line}\n"));
+        }
     }
     let total = found["bytes"].as_f64().unwrap_or(0.0);
     for site in list("memory") {
@@ -1682,6 +1716,15 @@ fn find(dump: &Value, tasks: &[Value], text: &str) -> Vec<Value> {
         }
         for frame in task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|f| has(f)) {
             found(json!({ "in": "stack", "task": id, "at": frame }), format!("task {id} is in {frame}"));
+        }
+    }
+    for request in dump["requests"].as_array().into_iter().flatten() {
+        let path = request["path"].as_str().unwrap_or_default();
+        if has(path) {
+            found(
+                json!({ "in": "request", "task": request["task"], "path": path }),
+                format!("request: {}", requests_text(std::slice::from_ref(request))),
+            );
         }
     }
     for object in dump["objects"]["list"].as_array().into_iter().flatten() {

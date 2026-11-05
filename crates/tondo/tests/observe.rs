@@ -3103,6 +3103,71 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
 }
 
 #[test]
+fn a_dump_of_a_server_has_its_requests_in_flight() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-requests");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let program = format!(
+        "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    time.sleep(time.seconds(60))\n    \
+         \"done {{id}}\"\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+         app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
+    );
+    std::fs::write(dir.join("server.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut server =
+        Command::new(dir.join("server")).env("TONDO_DUMP", dir.join("dumps")).stderr(Stdio::piped()).spawn().unwrap();
+    // The client holds its connection open while the handler sleeps.
+    let client = (0..200).find_map(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::net::TcpStream::connect(("127.0.0.1", port)).ok()
+    });
+    let mut client = client.unwrap();
+    std::io::Write::write_all(&mut client, b"GET /slow/77?token=hidden HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let pid = server.id().to_string();
+    assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let dump = loop {
+        let found = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next();
+        if let Some(found) = found.filter(|_| std::time::Instant::now() < deadline) {
+            break found.path();
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    // A file is there before all of it; a dump that reads is all of it.
+    let mut requests = Value::Null;
+    for _ in 0..100 {
+        let read =
+            Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).args(["requests", "--json"]).output().unwrap();
+        if read.status.success() {
+            requests = serde_json::from_slice(&read.stdout).unwrap();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = server.kill();
+    let output = server.wait_with_output().unwrap();
+    let request = &requests["requests"][0];
+    assert_eq!(request["method"], "GET", "{requests}");
+    assert_eq!(request["path"], "/slow/77", "{requests}");
+    assert_ne!(request["task"], 0, "{requests}");
+    assert!(request["ms"].as_u64().unwrap() >= 400, "{requests}");
+    // What breaks the copy that shows the values says nothing here.
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(!said.contains("memory allocation") && !said.contains("panicked"), "{said}");
+}
+
+#[test]
 fn a_line_stops_once_however_many_blocks_it_takes() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");
     let _ = std::fs::remove_dir_all(&dir);

@@ -1169,10 +1169,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                         }
                     }
                 }
-                view @ ("why" | "tasks" | "stacks" | "heap" | "objects") => push(&[view]),
+                view @ ("why" | "tasks" | "stacks" | "requests" | "heap" | "objects") => push(&[view]),
                 other => {
                     return Err(format!(
-                        "no view `{other}`: summary, why, tasks, stacks, task, locals, print, find, heap, objects or object"
+                        "no view `{other}`: summary, why, tasks, stacks, requests, task, locals, print, find, heap, objects or object"
                     ));
                 }
             }
@@ -2112,7 +2112,7 @@ the memory by where it was made, and its tasks.",
                 "view",
                 "string",
                 "summary (by default), why (who waits for whom, the longest wait, where the memory is), tasks, stacks \
-(the tasks by the stack they share), task, locals, print, find, heap, objects or object.",
+(the tasks by the stack they share), requests (the HTTP and gRPC requests in flight), task, locals, print, find, heap, objects or object.",
             ),
             ("task", "integer", "The task the task, locals and print views show."),
             ("frame", "integer", "The frame of that task the locals and print views show: 0 by default."),

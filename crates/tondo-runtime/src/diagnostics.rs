@@ -50,6 +50,69 @@ pub(crate) fn enabled() -> bool {
     hooks() & WATCHED != 0
 }
 
+/// A request the program serves, as a dump shows it: its method, path,
+/// when it came, and the task that answers it, when one does.
+struct Flight {
+    id: u64,
+    method: String,
+    path: String,
+    since: Instant,
+    task: u64,
+}
+
+/// The requests in flight, in a program that dumps or is watched.
+static FLIGHTS: Mutex<Vec<Flight>> = Mutex::new(Vec::new());
+
+/// A request in `FLIGHTS`, until it ends.
+pub(crate) struct Flown(u64);
+
+impl Flown {
+    /// In a program that shows them, a request that came.
+    pub(crate) fn new(method: &str, path: &str) -> Option<Flown> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        enabled().then(|| {
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let (method, path) = (method.to_string(), path.to_string());
+            let flight = Flight { id, method, path, since: Instant::now(), task: 0 };
+            FLIGHTS.lock().unwrap_or_else(|e| e.into_inner()).push(flight);
+            Flown(id)
+        })
+    }
+
+    /// `task` answers it.
+    pub(crate) fn answered_by(&self, task: u64) {
+        let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(flight) = flights.iter_mut().find(|flight| flight.id == self.0) {
+            flight.task = task;
+        }
+    }
+}
+
+impl Drop for Flown {
+    fn drop(&mut self) {
+        let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(index) = flights.iter().position(|flight| flight.id == self.0) {
+            flights.swap_remove(index);
+        }
+    }
+}
+
+/// The requests in flight as JSON: a thread that stopped may hold the
+/// list, and then a dump goes without it.
+fn flights_json() -> String {
+    let Ok(flights) = FLIGHTS.try_lock() else { return String::new() };
+    let flight = |f: &Flight| {
+        format!(
+            "{{\"method\":{},\"path\":{},\"ms\":{},\"task\":{}}}",
+            quoted(&f.method),
+            quoted(&f.path),
+            f.since.elapsed().as_millis(),
+            f.task
+        )
+    };
+    format!(",\"requests\":[{}]", flights.iter().map(flight).collect::<Vec<_>>().join(","))
+}
+
 /// A count of the runtime: a total that only grows, or a level.
 pub(crate) struct Count(AtomicI64);
 
@@ -1090,8 +1153,9 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let roots: Vec<String> = objects.roots.iter().map(|(task, to)| format!("[{task},{to}]")).collect();
         let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
     }
-    if !values_shown() {
-        out.push_str(",\"values_off\":true");
+    match values_shown() {
+        true => out.push_str(&flights_json()),
+        false => out.push_str(",\"values_off\":true"),
     }
     let _ = write!(out, ",\"values\":[{}]", values.join(","));
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);

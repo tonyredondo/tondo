@@ -831,6 +831,10 @@ escribe al abrir un volcado. `stacks` agrupa las tareas por su pila y las da de
 las más pobladas a las menos, y `find <texto>` busca sin mirar mayúsculas en el
 mensaje, las variables y sus partes, los contextos, las pilas, los textos de los
 objetos y los sitios de memoria, cada sitio una vez y lo más hondo que esté.
+`requests` da las peticiones HTTP y gRPC en curso, de la más antigua a la más
+nueva: su método, su ruta sin la query, cuánto llevan y qué tarea las atiende.
+Solo un programa con `TONDO_DUMP` o `TONDO_DIAGNOSTICS` las apunta, y
+`TONDO_DUMP_VALUES=off` las quita.
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.
@@ -1607,7 +1611,7 @@ campos de su resultado:
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
-| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
+| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
