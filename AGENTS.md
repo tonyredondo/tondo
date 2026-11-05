@@ -110,6 +110,10 @@ TONDO_CASES_DEBUG=1 cargo test -p tondo --test cases
 TONDO_CASES_REPLAY=1 cargo test -p tondo --test cases cases
 ```
 
+`.github/scripts/local.sh` runs what CI and the Nightly add, in containers
+on this machine: the servers, no C compiler, musl, emulation, and the tests that
+race with little CPU, which is where a failure otherwise shows hours later.
+
 - The implementation follows the specifications. Changing one is the
   maintainer's decision: propose it, with a recommendation, before
   writing it.
