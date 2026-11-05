@@ -276,6 +276,8 @@ fn imported(function: &str) -> String {
         ["stat", "lstat", "fstat", "fstatat", "opendir", "fdopendir", "readdir", "readdir_r", "statfs", "fstatfs"];
     match function {
         "realpath" => "realpath$DARWIN_EXTSN".into(),
+        // As the Rust library calls it there.
+        "close" if cfg!(target_arch = "x86_64") => "close$NOCANCEL".into(),
         _ if cfg!(target_arch = "x86_64") && inode64.contains(&function) => format!("{function}$INODE64"),
         _ => function.into(),
     }
