@@ -368,7 +368,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump",
+                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
@@ -540,6 +540,7 @@ impl Server {
             "tondo.runTest" => {}
             "tondo.signature" => return Some(answer(self.change_signature(arguments))),
             "tondo.moveTo" => return Some(answer(self.move_to(arguments))),
+            "tondo.group" => return Some(answer(self.group_parameters(arguments))),
             "tondo.modules" => return self.own_modules(arguments),
             "tondo.useDump" => {
                 let file = arguments[0].as_str().map(Path::new);
@@ -852,7 +853,69 @@ impl Server {
             let lines: Vec<String> = values.iter().take(5).map(|value| format!("- {value}")).collect();
             found["contents"]["value"] = json!(format!("{text}\n\nIn the dump:\n{}", lines.join("\n")));
         }
+        if let Some(ways) = self.failures_at(params).filter(|ways| !ways.is_empty())
+            && let Some(text) = found["contents"]["value"].as_str()
+        {
+            let lines: Vec<String> = ways.iter().take(8).map(|way| format!("- {way}")).collect();
+            let more = if ways.len() > 8 { format!("\n- and {} more", ways.len() - 8) } else { String::new() };
+            found["contents"]["value"] = json!(format!("{text}\n\nCan fail:\n{}{more}", lines.join("\n")));
+        }
         Some(found)
+    }
+
+    /// How the function a request points at can fail, in its own code or in
+    /// what it calls of the project's: where it fails, propagates or panics.
+    fn failures_at(&self, params: &Value) -> Option<Vec<String>> {
+        let (analyzed, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        if !matches!(index.defs[def].kind, DefKind::Function | DefKind::Method) {
+            return None;
+        }
+        let sources = &analyzed.analysis.sources;
+        let (mut seen, mut left, mut ways) = (HashSet::new(), vec![(def, 0)], Vec::new());
+        while let Some((function, depth)) = left.pop() {
+            if !seen.insert(function) || seen.len() > 50 {
+                continue;
+            }
+            let declared = &index.defs[function];
+            let file = sources.file_of(declared.name_span.start);
+            if !file.own {
+                continue;
+            }
+            let span = declared.decl_span;
+            let via = if function == def { String::new() } else { format!(" in `{}`", declared.name) };
+            let mut way = |what: &str, at: u32| {
+                let (_, line, _) = sources.position(at);
+                ways.push(format!("{what}{via} at {}:{line}", file.logical));
+            };
+            for &(_, exit) in index.exits.iter().filter(|(name, _)| *name == declared.name_span) {
+                let text = &file.text[(exit.start - file.base) as usize..(exit.end - file.base) as usize];
+                if text.starts_with("fail") {
+                    way("fails", exit.start);
+                } else if text.ends_with('?') {
+                    way("passes on a failure", exit.end - 1);
+                }
+            }
+            let tokens = crate::lexer::lex(file, Some(span), &mut crate::diag::Diagnostics::default());
+            for pair in tokens.windows(2) {
+                match (&pair[0].tok, &pair[1].tok) {
+                    (Tok::Ident(name), Tok::LParen) if name == "panic" => way("panics", pair[0].span.start),
+                    (Tok::Dot, Tok::Ident(name)) if name == "unwrap" => way("panics on `none`", pair[1].span.start),
+                    _ => {}
+                }
+            }
+            for &(used, target) in
+                index.uses.iter().filter(|(used, _)| span.start <= used.start && used.end <= span.end)
+            {
+                let callable = matches!(index.defs[target].kind, DefKind::Function | DefKind::Method);
+                if callable && target != function && used != declared.name_span && depth < 3 {
+                    left.push((target, depth + 1));
+                }
+            }
+        }
+        ways.sort();
+        ways.dedup();
+        Some(ways)
     }
 
     fn dumped_at(&self, params: &Value) -> Option<Vec<String>> {
@@ -2560,11 +2623,146 @@ impl Server {
                 json!({ "title": "Change signature", "command": "tondo.changeSignature", "arguments": arguments });
             actions.push(json!({ "title": format!("Change the signature of `{}`", declared.name), "kind": "refactor", "command": command }));
         }
+        if declared.kind == DefKind::Function
+            && let Some((list, false)) = self.parameters_of(analyzed, def)
+            && crate::refactor::parameters(&list).is_ok_and(|parameters| parameters.len() > 1)
+        {
+            let mut arguments = place.clone();
+            arguments.as_array_mut().expect("an array").push(json!(list));
+            let command = json!({ "title": "Group", "command": "tondo.groupParameters", "arguments": arguments });
+            actions.push(json!({ "title": format!("Group parameters of `{}` into a type", declared.name), "kind": "refactor", "command": command }));
+        }
         if matches!(declared.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const) {
             let command = json!({ "title": "Move", "command": "tondo.moveToModule", "arguments": place });
             actions.push(json!({ "title": format!("Move `{}` to another module", declared.name), "kind": "refactor.move", "command": command }));
         }
+        actions.extend(self.safe_delete(def, params));
         actions
+    }
+
+    /// A declaration nothing uses, with its comments, gone: when the program
+    /// checks the same.
+    fn safe_delete(&mut self, def: usize, params: &Value) -> Option<Value> {
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let declared = &index.defs[def];
+        let deletable = matches!(declared.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const);
+        if !deletable || declared.name == "main" {
+            return None;
+        }
+        let home = analyzed.analysis.sources.file_of(declared.name_span.start);
+        let inside = |span: &Span| declared.decl_span.start <= span.start && span.end <= declared.decl_span.end;
+        if !index.references(def).iter().all(inside) {
+            return None;
+        }
+        let (start, end) = declaration_lines(home, declared);
+        let name = declared.name.clone();
+        let edits = vec![(Span::new(home.base + start as u32, home.base + end as u32), String::new())];
+        let edit = self.checked_edit(&path, &edits).ok()?;
+        Some(json!({ "title": format!("Delete `{name}`, which nothing uses"), "kind": "refactor", "edit": edit }))
+    }
+
+    /// `tondo.group`: `Point: x, y` takes those parameters of the function
+    /// at a place into a new record, and its calls follow.
+    fn group_parameters(&mut self, arguments: &Value) -> Result<Value, String> {
+        use crate::refactor::{list_at, parameter_name};
+        let usage = "write the type and the parameters, as `Point: x, y`";
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let (ty, names) = arguments[2].as_str().and_then(|text| text.split_once(':')).ok_or(usage)?;
+        let ty = ty.trim();
+        let names: Vec<&str> = names.split(',').map(str::trim).filter(|name| !name.is_empty()).collect();
+        if ty.is_empty() || names.len() < 2 {
+            return Err(usage.to_string());
+        }
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no function here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let declared = &index.defs[def];
+        let sources = &analyzed.analysis.sources;
+        let home = sources.file_of(declared.name_span.start);
+        let list = list_at(&home.text, (declared.name_span.end - home.base) as usize).ok_or("no parameters here")?;
+        let written: Vec<&str> = list.items.iter().map(|&(a, b)| &home.text[a..b]).collect();
+        let named: Vec<&str> = written.iter().map(|item| parameter_name(item)).collect();
+        if let Some(missing) = names.iter().find(|name| !named.contains(name)) {
+            return Err(format!("`{}` has no parameter `{missing}`", declared.name));
+        }
+        let first = named.iter().position(|name| names.contains(name)).expect("a parameter it groups");
+        let record = {
+            let mut letters = ty.chars();
+            letters.next().map_or(String::new(), |c| c.to_lowercase().chain(letters).collect())
+        };
+        // The record, before the function, as visible as the function is.
+        let (start, _) = declaration_lines(home, declared);
+        let public = home.text[(declared.decl_span.start - home.base) as usize..].starts_with("pub ");
+        let fields: Vec<String> = written
+            .iter()
+            .zip(&named)
+            .filter(|(_, name)| names.contains(name))
+            .map(|(item, _)| format!("    {}\n", item.trim_start_matches("mut ")))
+            .collect();
+        let keyword = if public { "pub type" } else { "type" };
+        let declaration = format!("{keyword} {ty} = {{\n{}}}\n\n", fields.concat());
+        let place = home.base + start as u32;
+        let mut edits = vec![(Span::new(place, place), declaration)];
+        // Its parameters, and what reads them.
+        let kept: Vec<String> = written
+            .iter()
+            .zip(&named)
+            .enumerate()
+            .filter_map(|(at, (item, name))| match (at == first, names.contains(name)) {
+                (true, _) => Some(format!("{record}: {ty}")),
+                (_, true) => None,
+                _ => Some(item.to_string()),
+            })
+            .collect();
+        let inside =
+            |file: u32, list: &crate::refactor::List| Span::new(file + list.open as u32 + 1, file + list.close as u32);
+        edits.push((inside(home.base, &list), kept.join(", ")));
+        for (id, parameter) in index.defs.iter().enumerate() {
+            let own = declared.decl_span.start <= parameter.name_span.start
+                && parameter.name_span.end <= declared.decl_span.end;
+            if parameter.kind == DefKind::Parameter && own && names.contains(&parameter.name.as_str()) {
+                for read in index.references(id).into_iter().filter(|read| *read != parameter.name_span) {
+                    edits.push((read, format!("{record}.{}", parameter.name)));
+                }
+            }
+        }
+        // Its calls: the arguments of those parameters, as a record.
+        let module = home.module.rsplit('.').next().unwrap_or_default().to_string();
+        for span in index.references(def).into_iter().filter(|span| *span != declared.name_span) {
+            let file = sources.file_of(span.start);
+            let call = list_at(&file.text, (span.end - file.base) as usize).ok_or_else(|| {
+                let (_, line, _) = sources.position(span.start);
+                format!("`{}` is used as a value at {}:{line}: change that first", declared.name, file.logical)
+            })?;
+            let given: Vec<&str> = call.items.iter().map(|&(a, b)| &file.text[a..b]).collect();
+            if given.len() != named.len() {
+                return Err(format!("a call of `{}` in {} does not pass all it takes", declared.name, file.logical));
+            }
+            let parts: Vec<String> = named
+                .iter()
+                .zip(&given)
+                .filter(|(name, _)| names.contains(name))
+                .map(|(name, argument)| format!("{name}: {argument}"))
+                .collect();
+            let qualified = if file.base == home.base { ty.to_string() } else { format!("{module}.{ty}") };
+            let made = format!("{qualified} {{ {} }}", parts.join(", "));
+            let passed: Vec<String> = named
+                .iter()
+                .zip(&given)
+                .enumerate()
+                .filter_map(|(at, (name, argument))| match (at == first, names.contains(name)) {
+                    (true, _) => Some(made.clone()),
+                    (_, true) => None,
+                    _ => Some(argument.to_string()),
+                })
+                .collect();
+            edits.push((inside(file.base, &call), passed.join(", ")));
+        }
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &edits)
     }
 
     /// The parameters a function declares, as written, but `self`; and
@@ -2664,20 +2862,7 @@ impl Server {
             return Err(format!("`{}` is in that module already", declared.name));
         }
         let last = target_module.rsplit('.').next().unwrap_or(&target_module);
-        // The declaration, with the comments above it and its line's end.
-        let mut start = (declared.decl_span.start - home.base) as usize;
-        start = home.text[..start].rfind('\n').map_or(0, |i| i + 1);
-        while start > 0 {
-            let above = home.text[..start - 1].rfind('\n').map_or(0, |i| i + 1);
-            let line = home.text[above..start].trim_start();
-            if !(line.starts_with("//") || line.starts_with('@')) {
-                break;
-            }
-            start = above;
-        }
-        let end = (declared.decl_span.end - home.base) as usize;
-        let end = home.text[end..].find('\n').map_or(home.text.len(), |i| end + i + 1);
-        let end = if home.text[end..].starts_with('\n') { end + 1 } else { end };
+        let (start, end) = declaration_lines(home, declared);
         let moved = home.text[start..end].trim_end();
         let name_line = (declared.name_span.start - home.base) as usize;
         let public =
@@ -3949,6 +4134,25 @@ fn arguments(tokens: &[crate::lexer::Token]) -> Vec<(usize, u32, bool, Option<St
 }
 
 /// The errors of an analysis, by code and message.
+/// Where a declaration's text is in its file: from the comments and
+/// annotations above it to the blank line after it.
+fn declaration_lines(home: &SourceFile, declared: &crate::index::Def) -> (usize, usize) {
+    let mut start = (declared.decl_span.start - home.base) as usize;
+    start = home.text[..start].rfind('\n').map_or(0, |i| i + 1);
+    while start > 0 {
+        let above = home.text[..start - 1].rfind('\n').map_or(0, |i| i + 1);
+        let line = home.text[above..start].trim_start();
+        if !(line.starts_with("//") || line.starts_with('@')) {
+            break;
+        }
+        start = above;
+    }
+    let end = (declared.decl_span.end - home.base) as usize;
+    let end = home.text[end..].find('\n').map_or(home.text.len(), |i| end + i + 1);
+    let end = if home.text[end..].starts_with('\n') { end + 1 } else { end };
+    (start, end)
+}
+
 /// A file's text and base, and the edits of it.
 type FileEdits = (String, u32, Vec<(Span, String)>);
 

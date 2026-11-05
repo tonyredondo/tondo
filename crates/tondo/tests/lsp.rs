@@ -1809,3 +1809,59 @@ fn a_hover_says_what_an_open_dump_held() {
     assert!(!hover["contents"]["value"].as_str().unwrap().contains("In the dump:"), "{hover}");
     editor.stop();
 }
+
+#[test]
+fn says_what_can_fail_deletes_what_is_unused_and_groups_parameters() {
+    let tondo_toml = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+    let main = "import app.shapes\nimport std.console\n\nfn inner(value: Int): Int {\n    if value < 0 {\n        panic(\"negative\")\n    }\n    value\n}\n\n\
+        fn outer(value: Int): Int {\n    // Not a panic(\"here\").\n    inner(value) + 1\n}\n\n/// Nobody calls this.\nfn unused(): Int {\n    1\n}\n\n\
+        fn main() {\n    console.println(\"{outer(1)} {shapes.area(2, 3, \"m\")}\")\n}\n";
+    let shapes = "pub fn area(width: Int, height: Int, unit: String): String {\n    \"{width * height} {unit}\"\n}\n";
+    let dir = project(
+        "lsp-fail-delete-group",
+        &[("tondo.toml", tondo_toml), ("src/main.to", main), ("src/shapes/shapes.to", shapes)],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let shapes_uri = editor.open(&dir.join("src/shapes/shapes.to"));
+    let position = |text: &str, word: &str| {
+        let at = text.find(word).unwrap();
+        let line = text[..at].matches('\n').count();
+        json!({ "line": line, "character": at - text[..at].rfind('\n').map_or(0, |i| i + 1) })
+    };
+    // What a call can end in, through what it calls.
+    let at = position(main, "outer(value");
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": at }));
+    let text = hover["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("Can fail:") && text.contains("panics in `inner` at src/main.to:6"), "{text}");
+    assert_eq!(text.matches("panics").count(), 1, "{text}");
+
+    // What nothing uses goes, with its comment; what something uses, not.
+    let actions = |editor: &mut Editor, at: Value| {
+        let range = json!({ "start": at, "end": at });
+        let params = json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } });
+        editor.request("textDocument/codeAction", params).as_array().unwrap().clone()
+    };
+    let found = actions(&mut editor, position(main, "unused(): Int"));
+    let delete = found
+        .iter()
+        .find(|a| a["title"] == "Delete `unused`, which nothing uses")
+        .unwrap_or_else(|| panic!("{found:?}"));
+    let text = &applied(&delete["edit"], &dir)["src/main.to"];
+    assert!(!text.contains("unused") && !text.contains("Nobody calls"), "{text}");
+    let found = actions(&mut editor, position(main, "inner(value: Int)"));
+    assert!(!found.iter().any(|a| a["title"].as_str().unwrap().starts_with("Delete")), "{found:?}");
+
+    // Parameters into a type, in another file's calls too.
+    let at = position(shapes, "area(width");
+    let params = json!({ "command": "tondo.group", "arguments": [shapes_uri, at, "Size: width, height"] });
+    let answer = editor.request("workspace/executeCommand", params);
+    let edited = applied(&answer["edit"], &dir);
+    let text = &edited["src/shapes/shapes.to"];
+    assert!(text.contains("pub type Size = {\n    width: Int\n    height: Int\n}\n"), "{text}");
+    assert!(text.contains("pub fn area(size: Size, unit: String): String"), "{text}");
+    assert!(text.contains("{size.width * size.height}"), "{text}");
+    let text = &edited["src/main.to"];
+    assert!(text.contains("shapes.area(shapes.Size { width: 2, height: 3 }, \"m\")"), "{text}");
+    editor.stop();
+}

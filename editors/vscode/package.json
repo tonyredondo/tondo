@@ -374,8 +374,28 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.groupParameters",
+        "title": "Group Parameters Into a Type",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.moveToModule",
         "title": "Move to Another Module",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.logpoint",
+        "title": "Add a Logpoint to a Running Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.showFailures",
+        "title": "Show Failures From Dumps",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.clearFailures",
+        "title": "Clear Failures From Dumps",
         "category": "Tondo"
       },
       {
@@ -656,6 +676,10 @@
         },
         {
           "command": "tondo.moveToModule",
+          "when": "false"
+        },
+        {
+          "command": "tondo.groupParameters",
           "when": "false"
         },
         {

@@ -36,6 +36,13 @@ export function registerRefactors(context: vscode.ExtensionContext): void {
         await applied(await vscode.commands.executeCommand<Answer>('tondo.signature', uri, position, wanted));
       }
     }),
+    vscode.commands.registerCommand('tondo.groupParameters', async (uri: string, position: unknown, list: string) => {
+      const prompt = `The type and the parameters it takes, of ${list}, as \`Point: x, y\``;
+      const wanted = await vscode.window.showInputBox({ prompt });
+      if (wanted !== undefined) {
+        await applied(await vscode.commands.executeCommand<Answer>('tondo.group', uri, position, wanted));
+      }
+    }),
     vscode.commands.registerCommand('tondo.moveToModule', async (uri: string, position: unknown) => {
       const modules = await vscode.commands.executeCommand<string[]>('tondo.modules', uri, position);
       const module = await vscode.window.showQuickPick(modules ?? [], { placeHolder: 'The module it goes to' });

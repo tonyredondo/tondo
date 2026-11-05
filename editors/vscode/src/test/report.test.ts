@@ -20,6 +20,8 @@ import {
   outcomes,
   place,
   dumpPage,
+  failureMarks,
+  logpointArgs,
   programOf,
   recordedRun,
   reloadShown,
@@ -616,4 +618,24 @@ test('a dump report in a webview runs its own script only, and says what is clic
   const page = dumpPage('<html><head><title>t</title></head><body><a data-file="a.to" data-line="3">a.to:3</a></body></html>', 'n1');
   assert.match(page, /<head><meta http-equiv="Content-Security-Policy" content="default-src 'none'.*script-src 'nonce-n1'/);
   assert.match(page, /<script nonce="n1">[\s\S]*postMessage\(\{ file: link\.dataset\.file[\s\S]*<\/script><\/body>/);
+});
+
+test('a logpoint asks for its text and condition only when they are given', () => {
+  assert.deepEqual(logpointArgs('12', 'src/a.to:3', '', '', 100), ['logpoint', '12', 'src/a.to:3', '--max', '100']);
+  assert.deepEqual(logpointArgs('12', 'a.to:3', 'at {x}', 'x > 1', 5), [
+    'logpoint', '12', 'a.to:3', 'at {x}', '--if', 'x > 1', '--max', '5',
+  ]);
+});
+
+test('the failures of dumps go to the lines of the program', () => {
+  const marks = failureMarks([
+    { count: 3, at: 'src/main.to:12 in main', message: 'panic[P0008]: boom', first_commit: 'abcdef0123456789' },
+    { count: 1, at: 'src/a.to:2 in f', message: null },
+    { count: 2, at: '<std>/http.to:9 in serve', message: 'in the library' },
+    { count: 2, at: null },
+  ]);
+  assert.deepEqual(marks, [
+    { file: 'src/main.to', line: 12, text: 'Fell here 3 times, first at abcdef0123: panic[P0008]: boom' },
+    { file: 'src/a.to', line: 2, text: 'Fell here once: ' },
+  ]);
 });

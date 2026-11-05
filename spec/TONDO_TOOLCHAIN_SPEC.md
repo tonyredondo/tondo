@@ -506,8 +506,14 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   sus llamadas (`tondo.signature`); sobre una función, tipo, enum o constante,
   moverla a otro módulo del proyecto con los imports que lleve, y lo que la nombra
   la sigue (`tondo.moveTo`); y sobre una llamada a una función de una expresión,
-  escribir esa expresión con sus argumentos. Todo se comprueba analizando el
-  programa como quedaría: lo que no compila se rechaza con su error. En un programa,
+  escribir esa expresión con sus argumentos; sobre una función, agrupar varios
+  parámetros en un tipo nuevo, escrito antes de ella como `Punto: x, y`, y sus
+  llamadas pasan ese tipo (`tondo.group`); y sobre una función, tipo, enum o
+  constante que nada usa, borrarla con los comentarios de encima. Todo se
+  comprueba analizando el programa como quedaría: lo que no compila se rechaza
+  con su error. Al pasar sobre una función, el hover dice cómo puede fallar, en
+  su código o en el del proyecto que llama hasta tres niveles: dónde falla, dónde
+  propaga un fallo con `?`, y dónde hace `panic` o `unwrap`. En un programa,
   no en una librería, un `pub` que ningún otro archivo usa, tests incluidos, es
   una pista (`H1001`) con su reparación, que solo da el editor. Con un volcado
   abierto (`tondo.useDump`), `hover` añade lo que sus frames tenían en esa variable.
@@ -916,7 +922,9 @@ que las demás cuestan igual. Cada vez detiene esa
 tarea mientras una copia del proceso muestra los valores, como en un volcado.
 Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambiar
 su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
-un 2 % como mucho, y el ejecutable crece menos del 1 %.
+un 2 % como mucho, y el ejecutable crece menos del 1 %. El editor pone un logpoint
+en la línea del cursor de un programa que elige de los que corren, con su texto y su
+condición, y muestra lo que llega en un panel.
 
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un

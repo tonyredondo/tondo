@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec } from './cli';
 import { tondo } from './extension';
-import { counterRows, dumpPage, running, traced } from './report';
+import { Failure, counterRows, dumpPage, failureMarks, logpointArgs, running, traced } from './report';
 
 /** A running program, picked: its process ID, or nothing. */
 export async function pickProcess(): Promise<string | undefined> {
@@ -100,6 +100,10 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
       }
     }),
     vscode.commands.registerCommand('tondo.dumpReport', dumpReport),
+    vscode.commands.registerCommand('tondo.logpoint', logpoint),
+    vscode.commands.registerCommand('tondo.showFailures', showFailures),
+    vscode.commands.registerCommand('tondo.clearFailures', () => failures.clear()),
+    failures,
     vscode.commands.registerCommand('tondo.compareDumps', compareDumps),
     vscode.commands.registerCommand('tondo.dumpTrend', dumpTrend),
     { dispose: stop },
@@ -110,6 +114,78 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
 async function show(content: string): Promise<void> {
   const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
   await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+}
+
+/** The lines where the dumps of a directory fell. */
+const failures = vscode.languages.createDiagnosticCollection('tondo-failures');
+
+/** Marks the lines the dumps of a directory fell at, in the code they came
+ *  from, with how many times and since when. */
+async function showFailures(): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    openLabel: 'The directory of the dumps',
+  });
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const dir = picked?.[0].fsPath;
+  if (!dir || !root) {
+    return;
+  }
+  const ran = await exec(['dump', 'group', dir, '--json'], root);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump group failed');
+    return;
+  }
+  const marks = failureMarks((JSON.parse(ran.stdout) as { groups: Failure[] }).groups);
+  const byFile = new Map<string, vscode.Diagnostic[]>();
+  for (const { file, line, text } of marks) {
+    const range = new vscode.Range(line - 1, 0, line - 1, Number.MAX_SAFE_INTEGER);
+    const mark = new vscode.Diagnostic(range, text, vscode.DiagnosticSeverity.Warning);
+    mark.source = 'tondo dumps';
+    byFile.set(file, [...(byFile.get(file) ?? []), mark]);
+  }
+  failures.clear();
+  for (const [file, marked] of byFile) {
+    failures.set(vscode.Uri.file(path.resolve(root, file)), marked);
+  }
+  void vscode.window.showInformationMessage(`${marks.length} failures marked in the code.`);
+}
+
+const logpoints = vscode.window.createOutputChannel('Tondo Logpoints');
+
+/** What the line of the cursor holds in a running program, each time it goes
+ *  by, in a panel, until it reaches its limit or the person stops it. */
+async function logpoint(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (editor?.document.languageId !== 'tondo') {
+    void vscode.window.showInformationMessage('Put the cursor on the line of a Tondo file.');
+    return;
+  }
+  const pid = await pickProcess();
+  const prompt = 'What to say each time, as `order {order.id}`; empty, every binding';
+  const text = pid && (await vscode.window.showInputBox({ prompt }));
+  if (!pid || text === undefined) {
+    return;
+  }
+  const condition = await vscode.window.showInputBox({ prompt: 'Only when this holds, as `order.total > 100`; empty, always' });
+  if (condition === undefined) {
+    return;
+  }
+  const file = vscode.workspace.asRelativePath(editor.document.uri, false);
+  const place = `${file}:${editor.selection.active.line + 1}`;
+  logpoints.show(true);
+  logpoints.appendLine(`a logpoint on ${place}`);
+  const title = `A logpoint on ${place}: Cancel takes it out`;
+  const options = { location: vscode.ProgressLocation.Notification, title, cancellable: true };
+  const ran = await vscode.window.withProgress(options, (_, token) =>
+    exec(logpointArgs(pid, place, text, condition, 100), path.dirname(editor.document.uri.fsPath), token, (line) =>
+      logpoints.appendLine(line),
+    ),
+  );
+  if (ran.code !== 0 && ran.code !== null) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo logpoint failed');
+  }
 }
 
 /** A dump as one page beside the code, whose places open: here, or from the

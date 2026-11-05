@@ -1084,3 +1084,32 @@ document.addEventListener('click', (event) => {
 </script>`;
   return html.replace('<head>', `<head>${policy}`).replace('</body>', `${script}</body>`);
 }
+
+/** What `tondo logpoint` runs for a line of a running program. */
+export function logpointArgs(pid: string, place: string, text: string, condition: string, max: number): string[] {
+  const shown = text ? [text] : [];
+  const only = condition ? ['--if', condition] : [];
+  return ['logpoint', pid, place, ...shown, ...only, '--max', String(max)];
+}
+
+/** A failure of `tondo dump group --json`. */
+export interface Failure {
+  count: number;
+  at?: string | null;
+  message?: string | null;
+  first_commit?: string | null;
+}
+
+/** Where each failure of a group of dumps goes in the editor: the line of
+ *  the program it fell at, and what to say there. */
+export function failureMarks(failures: Failure[]): { file: string; line: number; text: string }[] {
+  return failures.flatMap((failure) => {
+    const found = /^(.*):(\d+) in /.exec(failure.at ?? '');
+    if (!found || found[1].startsWith('<')) {
+      return [];
+    }
+    const times = failure.count === 1 ? 'once' : `${failure.count} times`;
+    const since = failure.first_commit ? `, first at ${failure.first_commit.slice(0, 10)}` : '';
+    return [{ file: found[1], line: Number(found[2]), text: `Fell here ${times}${since}: ${failure.message ?? ''}` }];
+  });
+}

@@ -52,6 +52,9 @@ project, running, debugging and testing it.
   repository, at the build's commit, as if it were here, with breakpoints;
   *Open Dump Report* shows all a dump says beside the code, with places that
   open, and while it is open a hover says what its frames held;
+  *Add a Logpoint to a Running Program* shows what the line of the cursor holds
+  in a running program, in a panel, without stopping it; *Show Failures From
+  Dumps* marks in the code where the dumps of a directory fell;
   *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
   dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part
