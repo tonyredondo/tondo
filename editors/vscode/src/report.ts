@@ -1098,18 +1098,31 @@ export interface Failure {
   at?: string | null;
   message?: string | null;
   first_commit?: string | null;
+  lock_orders?: string[];
+}
+
+/** Each line an order of locks that can deadlock names, with what to say
+ *  there. */
+function orderMarks(failure: Failure): { file: string; line: number; text: string }[] {
+  return (failure.lock_orders ?? []).flatMap((order) =>
+    [...order.matchAll(/([^\s,]+\.to):(\d+)/g)]
+      .filter((found) => !found[1].startsWith('<'))
+      .map((found) => ({ file: found[1], line: Number(found[2]), text: order })),
+  );
 }
 
 /** Where each failure of a group of dumps goes in the editor: the line of
- *  the program it fell at, and what to say there. */
+ *  the program it fell at, and what to say there; and the lines of the
+ *  orders of locks that can deadlock, which did not fall yet. */
 export function failureMarks(failures: Failure[]): { file: string; line: number; text: string }[] {
   return failures.flatMap((failure) => {
+    const orders = orderMarks(failure);
     const found = /^(.*):(\d+) in /.exec(failure.at ?? '');
     if (!found || found[1].startsWith('<')) {
-      return [];
+      return orders;
     }
     const times = failure.count === 1 ? 'once' : `${failure.count} times`;
     const since = failure.first_commit ? `, first at ${failure.first_commit.slice(0, 10)}` : '';
-    return [{ file: found[1], line: Number(found[2]), text: `Fell here ${times}${since}: ${failure.message ?? ''}` }];
+    return [...orders, { file: found[1], line: Number(found[2]), text: `Fell here ${times}${since}: ${failure.message ?? ''}` }];
   });
 }

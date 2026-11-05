@@ -4804,6 +4804,7 @@ fn core_of(pid: u32, executable: &Path, core: &Path) -> Option<()> {
 #[test]
 fn reads_a_core_with_the_tasks_that_waited() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("observe-core");
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\n\nfn deep(rounds: Int): Int {\n    let _ = console.readLine()\n    rounds + 1\n}\n\n\
         fn middle(rounds: Int): Int {\n    let value = deep(rounds)\n    console.println(\"{value}\")\n    value\n}\n\n\
@@ -4854,6 +4855,17 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // A number of a task that waited, through the frames of the runtime.
     let locals = tondo(&["dump", "read", core, "locals", "2", "--json"]).to_string();
     assert!(locals.contains("rounds") && locals.contains("\"2\""), "{locals}");
+
+    // In the editor, as any dump.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "dump": core, "cwd": dir }));
+    adapter.until("initialized");
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let threads = adapter.ask("threads", json!({}));
+    assert!(threads["threads"].as_array().unwrap().len() >= 2, "{threads}");
+    adapter.stop();
 
     // As a file, for a program that moved, for all that reads a dump.
     let moved = dir.join("elsewhere");

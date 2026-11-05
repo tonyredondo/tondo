@@ -92,7 +92,7 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.debugDump', async (uri?: vscode.Uri) => {
       const file =
         uri ??
-        (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel: 'Debug this dump' }))?.[0];
+        (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'], 'Cores and all files': ['*'] }, openLabel: 'Debug this dump' }))?.[0];
       if (file) {
         const folder = vscode.workspace.getWorkspaceFolder(file) ?? vscode.workspace.workspaceFolders?.[0];
         const cwd = folder?.uri.fsPath ?? path.dirname(file.fsPath);
@@ -193,7 +193,7 @@ async function logpoint(): Promise<void> {
 async function dumpReport(uri?: vscode.Uri): Promise<void> {
   const file =
     uri?.fsPath ??
-    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel: 'Read this dump' }))?.[0].fsPath;
+    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'], 'Cores and all files': ['*'] }, openLabel: 'Read this dump' }))?.[0].fsPath;
   if (!file) {
     return;
   }
@@ -225,7 +225,7 @@ async function dumpReport(uri?: vscode.Uri): Promise<void> {
 /** What changed from one dump of a program to a later one. */
 async function compareDumps(): Promise<void> {
   const pick = async (openLabel: string) =>
-    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel }))?.[0].fsPath;
+    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'], 'Cores and all files': ['*'] }, openLabel }))?.[0].fsPath;
   const first = await pick('The earlier dump');
   const second = first && (await pick('The later dump'));
   if (!first || !second) {

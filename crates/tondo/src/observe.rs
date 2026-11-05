@@ -1218,6 +1218,12 @@ fn groups_in(dir: &std::path::Path) -> Result<Vec<Value>, String> {
                 group["last_ms"] = time.clone();
                 group["file"] = json!(path);
                 group["last_commit"] = commit_of(&dump);
+                let known = group["lock_orders"].as_array_mut().expect("a list");
+                for order in dump["lock_order"].as_array().into_iter().flatten() {
+                    if !known.contains(order) {
+                        known.push(order.clone());
+                    }
+                }
             }
             None => {
                 let tasks = tasks(&dump);
@@ -1228,6 +1234,7 @@ fn groups_in(dir: &std::path::Path) -> Result<Vec<Value>, String> {
                     "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
                     "first_commit": commit_of(&dump), "last_commit": commit_of(&dump),
                     "stack": at.map_or(Vec::new(), tondo_frames),
+                    "lock_orders": dump["lock_order"].as_array().cloned().unwrap_or_default(),
                 }));
             }
         }

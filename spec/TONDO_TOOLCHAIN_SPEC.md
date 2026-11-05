@@ -839,6 +839,8 @@ de aquí; `tondo dump issue <dir> <firma>` escribe uno como una incidencia en Ma
 y `tondo dump report <archivo>` da todo lo que dice uno como una página HTML
 sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
 *Open Dump Report* del editor la abre y las sigue, también en lo que no esté aquí.
+*Show Failures From Dumps* marca en el código dónde cayó cada fallo de un directorio,
+y las líneas de los órdenes de locks que pueden bloquearse, que aún no cayeron.
 
 Un programa que muere sin volcado puede dejar un core del sistema, en Linux. `tondo
 dump read <core>` lo lee como un volcado, y `tondo dump core <core> [--executable
@@ -1748,7 +1750,7 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
-| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `file`, sus tiempos y `first_commit` y `last_commit` |
+| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `lock_orders`, `file`, sus tiempos y `first_commit` y `last_commit` |
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
 | `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |

@@ -54,7 +54,9 @@ project, running, debugging and testing it.
   open, and while it is open a hover says what its frames held;
   *Add a Logpoint to a Running Program* shows what the line of the cursor holds
   in a running program, in a panel, without stopping it; *Show Failures From
-  Dumps* marks in the code where the dumps of a directory fell;
+  Dumps* marks in the code where the dumps of a directory fell, and the locks
+  they found taken in orders that can deadlock; *Debug a Dump* opens a core of the
+  system too;
   *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
   dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part
