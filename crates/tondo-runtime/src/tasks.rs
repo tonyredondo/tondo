@@ -1158,6 +1158,9 @@ fn stalled(queue: &Queue) -> Stalled {
         || crate::live::barrier()
         // A signal the program waits for.
         || crate::signals::listening()
+        // A program being ended: its tasks wait for the cancellation to
+        // reach them, and that is no deadlock.
+        || ENDING.load(Ordering::SeqCst) != usize::MAX
         || nexts().any(|next| !next.task.load(Ordering::Acquire).is_null() || !next.tasks().0.is_empty())
     {
         return Stalled::No;
