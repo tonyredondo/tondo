@@ -22,6 +22,8 @@ run() {
         read -r call < "$thread/syscall"
         echo "  $name: $call"
       done
+      # What it waits for is often a process it started.
+      ps -eo pid,ppid,etimes,stat,wchan:20,args | cut -c1-200
       kill -9 $pid
       return 1
     fi
