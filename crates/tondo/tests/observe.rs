@@ -2930,7 +2930,7 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
         assert_eq!(found["state"], "fetched", "{found}");
         assert_eq!(std::fs::read_to_string(found["path"].as_str().unwrap()).unwrap(), text);
     }
-    let found = tondo_in(&["source", "<std>/console.to", "--from", dump, "--json"]);
+    let found = tondo_in(&["source", "<std>/http.to", "--from", dump, "--json"]);
     assert!(found.status.success(), "{}", String::from_utf8_lossy(&found.stderr));
     // The executable says the same, and with `--no-source-links` nothing.
     let found = tondo_in(&["source", "greet/src/greet.to", "--from", "api", "--json"]);
