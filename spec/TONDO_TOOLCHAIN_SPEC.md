@@ -792,6 +792,17 @@ Con `TONDO_DUMP_WHEN` junto a `TONDO_DUMP` el programa se vuelca solo, sin parar
 sobre ese porcentaje de un núcleo, y `keep=10` guarda los últimos diez, separados
 por comas. Lo que pasa de un umbral vuelca como mucho una vez por minuto.
 
+Lo que el programa marca `@secret` (9.2 del lenguaje) se muestra como `<secret>`
+en el volcado, el depurador y sus partes; en un build de depuración que tiene
+algo marcado, los objetos del volcado no llevan el texto de sus `String`, que no
+saben de quién son. Nada se oculta por su nombre o su tipo sin esa marca. Una
+grabación guarda los bytes que entraron al programa, y un depurador vivo puede
+leer su memoria: `@secret` protege lo que se muestra, no el proceso. Con
+`TONDO_DUMP_VALUES=off` en el entorno del programa el volcado no lleva valores:
+ni variables, ni campos de contextos, ni textos de objetos, y `dump read locals`
+lo dice; otro valor que no sea `on` hace lo mismo, para que una errata no los
+muestre. El mensaje del pánico sigue en él, porque lo escribe el programa.
+
 `dump read` muestra un volcado: sin más, un resumen, con por qué se tomó, la
 memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
 viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con

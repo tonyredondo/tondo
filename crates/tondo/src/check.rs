@@ -428,6 +428,11 @@ fn wire(field: &ast::FieldDecl) -> Option<String> {
     wire
 }
 
+/// Whether a declaration is of a type marked `@secret`.
+fn secret_type(item: &ast::Item) -> bool {
+    matches!(item, ast::Item::Type(decl) if decl.annotations.iter().any(|a| a.name.name == "secret"))
+}
+
 /// That the language's annotation `@name` does not go on `what` (27.13).
 fn misplaced_annotation(name: &str, what: &str) -> String {
     format!(
@@ -3052,8 +3057,8 @@ impl<'a> Checker<'a> {
             };
             let template = self.types.declare_template(name.into(), params.clone());
             let fields = vec![
-                Field { name: "collection".into(), ty: collection, private: false },
-                Field { name: "position".into(), ty: Ty::INT, private: false },
+                Field { name: "collection".into(), ty: collection, private: false, secret: false },
+                Field { name: "position".into(), ty: Ty::INT, private: false, secret: false },
             ];
             self.types.define_template(template, AdtKind::Record(fields));
             self.types.declare_cursor(template, kind);
@@ -3337,17 +3342,17 @@ impl<'a> Checker<'a> {
             self.types.define_adt(id, AdtKind::Enum(variants));
             let (id, status) = self.types.declare_adt(format!("{prefix}.ExitStatus"));
             let fields = vec![
-                Field { name: "code".into(), ty: Ty::INT, private: false },
-                Field { name: "success".into(), ty: Ty::BOOL, private: false },
+                Field { name: "code".into(), ty: Ty::INT, private: false, secret: false },
+                Field { name: "success".into(), ty: Ty::BOOL, private: false, secret: false },
             ];
             self.types.define_adt(id, AdtKind::Record(fields));
             let statuses = self.types.intern(TyKind::Array(status));
             let (id, result) = self.types.declare_adt(format!("{prefix}.ProcessOutput"));
             let fields = vec![
-                Field { name: "stdout".into(), ty: bytes, private: false },
-                Field { name: "stderr".into(), ty: bytes, private: false },
-                Field { name: "combined".into(), ty: bytes, private: false },
-                Field { name: "statuses".into(), ty: statuses, private: false },
+                Field { name: "stdout".into(), ty: bytes, private: false, secret: false },
+                Field { name: "stderr".into(), ty: bytes, private: false, secret: false },
+                Field { name: "combined".into(), ty: bytes, private: false, secret: false },
+                Field { name: "statuses".into(), ty: statuses, private: false, secret: false },
             ];
             self.types.define_adt(id, AdtKind::Record(fields));
             let (id, error) = self.types.declare_adt(format!("{prefix}.ProcessError"));
@@ -3391,7 +3396,7 @@ impl<'a> Checker<'a> {
             self.instant = Some(ty);
             let (id, ty) = self.types.declare_adt(format!("{}.DateTime", name.name));
             let fields = ["year", "month", "day", "hour", "minute", "second", "nanosecond"]
-                .map(|name| Field { name: name.into(), ty: Ty::INT, private: false })
+                .map(|name| Field { name: name.into(), ty: Ty::INT, private: false, secret: false })
                 .to_vec();
             self.types.define_adt(id, AdtKind::Record(fields));
             self.types.shown.insert(ty, Shown::DateTime);
@@ -3656,6 +3661,9 @@ impl<'a> Checker<'a> {
                 };
                 let params = self.declare_generics(generics, false, module);
                 let template = self.types.declare_template(self.shown_type_name(&name.name, module), params.clone());
+                if secret_type(item) {
+                    self.types.hide_template(template);
+                }
                 self.declare_type_name(name, TypeName::Template(template));
                 templates.push((item, name, template, generics, params));
                 continue;
@@ -3676,6 +3684,9 @@ impl<'a> Checker<'a> {
                 false => name.name.clone(),
             };
             let (id, ty) = self.types.declare_adt(shown);
+            if secret_type(item) {
+                self.types.hide_adt(id);
+            }
             if let ast::Item::Type(decl) = item
                 && decl.context
             {
@@ -3905,9 +3916,12 @@ impl<'a> Checker<'a> {
     fn c_type_declaration(&mut self, decl: &ast::TypeDecl) -> bool {
         if !decl.foreign {
             // `@omitNone` leaves out of every format the record's fields that
-            // are `none`.
+            // are `none`; `@secret` hides the type's values from the tools.
             let record = matches!(decl.body, ast::TypeBody::Record(_));
-            if let Some(annotation) = decl.annotations.iter().find(|a| !(record && a.name.name == "omitNone")) {
+            let fits = |a: &&ast::Annotation| {
+                a.argument.is_none() && (a.name.name == "secret" || record && a.name.name == "omitNone")
+            };
+            if let Some(annotation) = decl.annotations.iter().find(|a| !fits(a)) {
                 let (code, message) = match annotation.name.name.as_str() {
                     "packed" | "align" | "union" => (
                         "E1704",
@@ -3916,6 +3930,7 @@ impl<'a> Checker<'a> {
                             annotation.name.name, decl.name.name
                         ),
                     ),
+                    "secret" => ("E1102", "`@secret` takes nothing: write `@secret`".to_string()),
                     name => ("E1619", misplaced_annotation(name, "a type")),
                 };
                 self.diags.error(code, annotation.span, message);
@@ -4511,7 +4526,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            resolved.push(Field { name: field.name.name.clone(), ty, private: false });
+            resolved.push(Field { name: field.name.name.clone(), ty, private: false, secret: false });
         }
         resolved
     }
@@ -4530,6 +4545,10 @@ impl<'a> Checker<'a> {
             let ty = self.resolve_type(&field.ty);
             for annotation in &field.annotations {
                 match (annotation.name.name.as_str(), &annotation.argument) {
+                    ("secret", None) => {}
+                    ("secret", Some(_)) => {
+                        self.diags.error("E1102", annotation.span, "`@secret` takes nothing: write `@secret`");
+                    }
                     ("log" | "label", None | Some(ast::AnnotationArg::Text(_))) if context => {}
                     (name, _) if context => {
                         let message = format!(
@@ -4564,14 +4583,15 @@ impl<'a> Checker<'a> {
                     }
                     _ => {
                         let message = format!(
-                            "unknown annotation `@{}`; a field takes `@name(\"text\")`, `@ignore` or `@omitNone`",
+                            "unknown annotation `@{}`; a field takes `@name(\"text\")`, `@ignore`, `@omitNone` or `@secret`",
                             annotation.name.name
                         );
                         self.diags.error("E1001", annotation.span, message);
                     }
                 }
             }
-            resolved.push(Field { name: field.name.name.clone(), ty, private: field.private });
+            let secret = field.annotations.iter().any(|a| a.name.name == "secret");
+            resolved.push(Field { name: field.name.name.clone(), ty, private: field.private, secret });
         }
         resolved
     }
@@ -6953,7 +6973,11 @@ impl<'a> Checker<'a> {
         let inner = std::mem::replace(cx, *parent);
         self.unused(&inner, &locals);
 
-        let fields = inner.captures.iter().map(|c| Field { name: c.name.clone(), ty: c.ty, private: false }).collect();
+        let fields = inner
+            .captures
+            .iter()
+            .map(|c| Field { name: c.name.clone(), ty: c.ty, private: false, secret: false })
+            .collect();
         self.types.define_template(template, AdtKind::Record(fields));
         let info = self.types.closure_info_mut(template);
         info.result = result;
@@ -7063,7 +7087,7 @@ impl<'a> Checker<'a> {
         let fields = values
             .iter()
             .enumerate()
-            .map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty, private: false })
+            .map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty, private: false, secret: false })
             .collect();
         self.types.define_template(template, AdtKind::Record(fields));
         let env_ty = self.types.instantiate(template, generics.clone());
@@ -11243,7 +11267,16 @@ impl<'a> Checker<'a> {
                     TyKind::Option(inner) => inner,
                     _ => field_ty,
                 };
-                for annotation in &field.annotations {
+                let told = |a: &&ast::Annotation| a.name.name != "secret";
+                let hidden = field.annotations.iter().any(|a| a.name.name == "secret") || self.types.secret(shown);
+                for annotation in field.annotations.iter().filter(told) {
+                    if hidden {
+                        let message = format!(
+                            "`@{}` writes {what} where anyone reads it, and it is `@secret`: leave one of the two",
+                            annotation.name.name
+                        );
+                        self.diags.error("E1616", annotation.span, message);
+                    }
                     if !self.types.has_error(shown) && !self.satisfies(shown, DISPLAY, &[]) {
                         let message = format!(
                             "`@{}` shows {what} as text, but {} has no `Display`",
@@ -11266,7 +11299,7 @@ impl<'a> Checker<'a> {
                     values.push((index as u32, value));
                     continue;
                 }
-                if let Some(annotation) = field.annotations.first() {
+                if let Some(annotation) = field.annotations.iter().find(told) {
                     let message = format!(
                         "`@{}` shows {what} when it is not its initial value, which must then be a constant, and this one is computed: give it a constant, or leave out `@{}`",
                         annotation.name.name, annotation.name.name
@@ -14220,7 +14253,12 @@ impl<'a> Checker<'a> {
                 let fields: Vec<Field> = named
                     .iter()
                     .zip(&values)
-                    .map(|((name, _), value)| Field { name: name.name.clone(), ty: value.ty, private: false })
+                    .map(|((name, _), value)| Field {
+                        name: name.name.clone(),
+                        ty: value.ty,
+                        private: false,
+                        secret: false,
+                    })
                     .collect();
                 let shown: Vec<String> =
                     fields.iter().map(|f| format!("{}: {}", f.name, self.types.display(f.ty))).collect();

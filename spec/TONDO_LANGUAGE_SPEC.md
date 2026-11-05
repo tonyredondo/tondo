@@ -2013,6 +2013,15 @@ anotación en minúscula es error; los campos de un contexto admiten en su lugar
 `@log` y `@label` (11.16). Un campo también lleva las anotaciones que declara
 el programa, que se escriben con la mayúscula de su tipo (27.13).
 
+`@secret`, en un campo de un record, de una variante o de un contexto, o antes
+de un `type`, oculta sus valores a las herramientas: el depurador, los volcados y
+las grabaciones al mostrarlos escriben `<secret>` (7.4 del toolchain). No cambia
+nada del programa: `Display`, los formatos y `==` ven el valor. En un tipo va con
+el valor a donde vaya, también en un newtype de él; en un campo vale solo en ese
+campo, y una variable a la que se copie muestra su valor. Con argumento es
+`E1102`; un campo que lleva `@log` o `@label` y es `@secret`, o cuyo tipo lo es,
+`E1616`.
+
 ### 9.3 Actualización de records
 
 Tondo 0.1 utiliza actualización funcional explícita mediante la keyword `with`:
@@ -4176,7 +4185,7 @@ tarea y de dónde viene cada valor (7.4, 7.5 y 7.6 del toolchain).
 
 `context` solo es una palabra del lenguaje al principio de una declaración,
 seguido del nombre (5.5). Un campo sin valor inicial, que no cumple `Send` o
-`Copy`, con una anotación que no es `@log` ni `@label`, o con una cuyo tipo no
+`Copy`, con una anotación que no es `@log`, `@label` ni `@secret`, o con una cuyo tipo no
 tiene `Display` o cuyo valor inicial se calcula, produce `E1616`, como los
 valores iniciales que se leen en ciclo. Un `with` sobre algo que no es un contexto
 produce `E1617`; sus campos se comprueban como los de la actualización de un

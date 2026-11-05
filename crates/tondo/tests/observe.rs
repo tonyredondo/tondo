@@ -2853,6 +2853,89 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
 }
 
 #[test]
+fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("secret");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\n@secret\ntype Token = String\n\ntype Wrapped = Token\n\n\
+        @secret\ntype Pair[T] = { first: T, second: T }\n\n\
+        type User = { name: String, @secret password: String, token: Token, tokens: Array[Token] }\n\n\
+        enum Login {\n    Anonymous,\n    Named { user: String, @secret pin: Int },\n}\n\n\
+        context Auth = {\n    who: String = \"nobody\"\n    @secret session: String = \"\"\n}\n\n\
+        fn work(user: User, _wrapped: Wrapped, pair: Pair[Int], login: Login) {\n    \
+        with Auth { who: \"ximena\", session: \"s3cr3t\" }\n    console.println(user.password)\n    \
+        console.println(\"{pair.first}\")\n    \
+        panic(\"stop here\")\n}\n\n\
+        fn main() {\n    let tail = \"ter2\"\n    let user = User { name: \"ximena\", password: \"hun{tail}\", \
+        token: Token(\"abc{tail}\"), tokens: [Token(\"k1{tail}\")] }\n    \
+        work(user, Wrapped(Token(\"xyz{tail}\")), Pair { first: 1, second: 2 }, \
+        Login.Named { user: \"ximena\", pin: 987654321 })\n}\n";
+    std::fs::write(dir.join("secret.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    // The program itself sees its values.
+    let ran = Command::new(tondo).args(["run", "secret.to"]).current_dir(&dir).output().unwrap();
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("hunter2\n1\n"), "{ran:?}");
+    let leaks = |text: &str| {
+        ["hunter2", "s3cr3t", "987654321", "xyzter2", "abcter2", "k1ter2"].iter().any(|s| text.contains(s))
+    };
+    // In every build, and in the texts of a debug build's objects.
+    for (name, flags) in [("release", &[][..]), ("debug", &["--debug"][..])] {
+        let built = Command::new(tondo)
+            .args(["build", "secret.to", "--output", name])
+            .args(flags)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let dumps = dir.join(format!("{name}-dumps"));
+        std::fs::create_dir_all(&dumps).unwrap();
+        let ran = Command::new(dir.join(name)).env("TONDO_DUMP", &dumps).output().unwrap();
+        assert!(!ran.status.success());
+        let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
+        let text = std::fs::read_to_string(&dump).unwrap();
+        assert!(!leaks(&text), "{text}");
+        let read = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
+        let locals = String::from_utf8_lossy(&read.stdout);
+        assert!(locals.contains("password: <secret>, token: <secret>, tokens: [<secret>]"), "{locals}");
+        assert!(locals.contains("login: Login = Login.Named(\"ximena\", <secret>)"), "{locals}");
+        // Nothing of it at all when the service says so.
+        let dumps = dir.join(format!("{name}-off"));
+        std::fs::create_dir_all(&dumps).unwrap();
+        Command::new(dir.join(name)).env("TONDO_DUMP", &dumps).env("TONDO_DUMP_VALUES", "off").output().unwrap();
+        let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
+        let text = std::fs::read_to_string(&dump).unwrap();
+        assert!(!text.contains("ximena") && !text.contains("<secret>"), "{text}");
+        let read = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
+        assert!(String::from_utf8_lossy(&read.stderr).contains("TONDO_DUMP_VALUES=off"), "{read:?}");
+    }
+    // The debugger shows the same, and a part cannot be opened.
+    let mut child = Command::new(tondo)
+        .args(["debug", "secret.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let line = program.lines().position(|l| l.contains("panic(")).unwrap() + 1;
+    let script =
+        format!("break secret.to:{line}\ncontinue\nlocals\nprint user.password\nprint user.tokens[0]\ncontext\nquit\n");
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    // What the program wrote comes first.
+    let text = text.split_once("stopped at").unwrap().1;
+    assert!(!leaks(text), "{text}");
+    assert!(text.contains("user.password = <secret>"), "{text}");
+    assert!(text.contains("user.tokens[0] = <secret>"), "{text}");
+    assert!(text.contains("session = <secret>"), "{text}");
+}
+
+#[test]
 fn dumps_come_on_a_schedule_and_differ() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;

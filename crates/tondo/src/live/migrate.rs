@@ -261,7 +261,12 @@ impl<'a> Rebuild<'a> {
                 .iter()
                 .map(|field| {
                     let ty = each(r, field[1].as_str()?)?;
-                    Some(Field { name: field[0].as_str()?.to_string(), ty, private: field[2].as_bool()? })
+                    Some(Field {
+                        name: field[0].as_str()?.to_string(),
+                        ty,
+                        private: field[2].as_bool()?,
+                        secret: false,
+                    })
                 })
                 .collect::<Option<Vec<Field>>>()
         };

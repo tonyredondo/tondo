@@ -1002,6 +1002,12 @@ fn contexts_json(described: Vec<super::contexts::Described>) -> String {
     format!("[{}]", contexts.join(","))
 }
 
+/// Whether a dump holds values: not with `TONDO_DUMP_VALUES=off`. A value
+/// it does not know also turns them off, as a mistake must not show them.
+pub(crate) fn values_shown() -> bool {
+    std::env::var_os("TONDO_DUMP_VALUES").is_none_or(|value| value == "on")
+}
+
 /// A dump of the program, as JSON: its counters, every task and where it
 /// is, and the samples of its live memory. The workers stop for it a while
 /// when `wait` says, so that the running tasks show where they are; `here`
@@ -1012,12 +1018,13 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let current = here.is_some();
         let tasks = super::tasks::snapshot(here);
         // The bindings of the frames, while nothing moves.
-        let values = super::debugger::values(current.then(here_now));
+        let shown = values_shown();
+        let values = if shown { super::debugger::values(current.then(here_now)) } else { Vec::new() };
         // Each task's contexts (language 11.16), the fields a `with` set:
         // not at a fault, where showing them could not allocate.
         let contexts: Vec<String> = tasks
             .iter()
-            .map(|task| match super::tasks::by_id(task.id).filter(|_| reason != "fault") {
+            .map(|task| match super::tasks::by_id(task.id).filter(|_| shown && reason != "fault") {
                 Some(pointer) => contexts_json(unsafe { super::contexts::described(pointer) }),
                 None => "[]".to_string(),
             })
@@ -1074,6 +1081,9 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let edges: Vec<String> = objects.edges.iter().map(|(from, to)| format!("[{from},{to}]")).collect();
         let roots: Vec<String> = objects.roots.iter().map(|(task, to)| format!("[{task},{to}]")).collect();
         let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
+    }
+    if !values_shown() {
+        out.push_str(",\"values_off\":true");
     }
     let _ = write!(out, ",\"values\":[{}]", values.join(","));
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);

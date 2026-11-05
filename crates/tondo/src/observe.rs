@@ -920,6 +920,9 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
             }
             task_text(task, true)
         }
+        View::Locals(..) | View::Print(..) if dump["values_off"] == true => {
+            return Err("this dump has no values: the program ran with TONDO_DUMP_VALUES=off".into());
+        }
         View::Locals(task, frame) => {
             let frame = dump_frame(&tasks, task, frame)?;
             if json {

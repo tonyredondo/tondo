@@ -327,6 +327,14 @@ pub(crate) struct Objects {
     pub roots: Vec<(u64, usize)>,
 }
 
+/// Leaves the text of strings out of what a dump says of its objects: a
+/// string does not know that it is `@secret`.
+pub(crate) fn hide_texts() {
+    TEXTS_HIDDEN.store(true, Ordering::Relaxed);
+}
+
+static TEXTS_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn objects() -> Option<Objects> {
     if !OBJECTS_ON.load(Ordering::Relaxed) {
         return None;
@@ -349,7 +357,8 @@ pub(crate) fn objects() -> Option<Objects> {
         }
         // A string's header is its count, length and room, then its bytes.
         let is_string = super::trace::describe(site).and_then(|d| d.ty) == Some("String");
-        let text = is_string.then(|| {
+        let shown = !TEXTS_HIDDEN.load(Ordering::Relaxed) && super::diagnostics::values_shown();
+        let text = (is_string && shown).then(|| {
             let header = super::HEADER;
             let length = unsafe { *((address + 8) as *const usize) }.min(size.saturating_sub(header)).min(200);
             let bytes = unsafe { std::slice::from_raw_parts((address + header) as *const u8, length) };

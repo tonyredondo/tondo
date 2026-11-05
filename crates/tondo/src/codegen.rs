@@ -806,6 +806,22 @@ enum Glue {
     Show,
     /// The same, without the view: the value as it is (`raw()`).
     ShowRaw,
+    /// Appends what the tools show for a value of a `@secret` type or
+    /// field; `Show` of such a type is this.
+    Secret,
+}
+
+/// What the tools show for what is `@secret`.
+const SECRET: &str = "<secret>";
+
+/// Which glue function serves `kind` for `ty`: one for all that a type's
+/// representation decides, and one for what is secret, which a newtype's
+/// representation would lose.
+fn glue_key(types: &Types, kind: Glue, ty: Ty) -> (Glue, Ty) {
+    match kind {
+        Glue::Show | Glue::ShowRaw if types.secret(ty) => (Glue::Secret, Ty::UNIT),
+        _ => (kind, types.repr(ty)),
+    }
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -1831,7 +1847,7 @@ impl<'t> Shapes<'t> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.make_signature();
         signature.params.push(AbiParam::new(POINTER));
-        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show | Glue::ShowRaw) {
+        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show | Glue::ShowRaw | Glue::Secret) {
             signature.params.push(AbiParam::new(POINTER));
         }
         if kind == Glue::Equal {
@@ -2228,7 +2244,7 @@ impl Codegen<'_> {
 
     /// The glue function of `kind` for values of type `ty`, defined later.
     fn glue(&mut self, kind: Glue, ty: Ty) -> FuncId {
-        let ty = self.types.repr(ty);
+        let (kind, ty) = glue_key(self.types, kind, ty);
         if let Some(&id) = self.glue.get(&(kind, ty)) {
             return id;
         }
@@ -2977,6 +2993,9 @@ impl Codegen<'_> {
         for layout in layouts {
             text.push_str(&format!("D\t{layout}\n"));
         }
+        if self.types.any_secret() {
+            text.push_str("H\n");
+        }
         for &(start, function, goes_on) in &self.debug_sites {
             let (file, line, _) = self.sources.position(start);
             text.push_str(&format!("S\t{file}\t{line}\t{function}\t{}\n", u8::from(goes_on)));
@@ -3438,7 +3457,7 @@ impl Emit<'_, Codegen<'_>> {
             // where they are, since the record holds zeros for them.
             let fields = match self.cg.types().kind(record) {
                 TyKind::Adt(id) => match &self.cg.types().adt(*id).kind {
-                    AdtKind::Record(fields) => fields.iter().map(|f| f.name.clone()).collect(),
+                    AdtKind::Record(fields) => fields.iter().map(|f| (f.name.clone(), f.secret)).collect(),
                     _ => Vec::new(),
                 },
                 _ => Vec::new(),
@@ -3447,9 +3466,10 @@ impl Emit<'_, Codegen<'_>> {
             if fns.computed.is_empty() || slots.iter().any(|slot| slot.boxed) {
                 continue;
             }
-            for (name, slot) in fields.iter().zip(&slots) {
+            for ((name, secret), slot) in fields.iter().zip(&slots) {
                 let offset = self.fb.ins().iconst(types::I64, i64::from(slot.offset));
                 let show = match self.cg.class(slot.ty) {
+                    _ if *secret => self.glue_address(Glue::Secret, Ty::UNIT),
                     Class::Zero => self.fb.ins().iconst(POINTER, 0),
                     _ => self.glue_address(Glue::Show, slot.ty),
                 };
@@ -3896,6 +3916,10 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                             text(self, &format!("{} {{ ", types.adt(*id).name));
                             for (index, field) in fields.iter().enumerate() {
                                 text(self, &format!("{}{}: ", if index > 0 { ", " } else { "" }, field.name));
+                                if field.secret {
+                                    text(self, SECRET);
+                                    continue;
+                                }
                                 let slot = self.cg.slot(ty, Proj::Field(index as u32));
                                 part(self, ty, &slot);
                             }
@@ -3909,6 +3933,17 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 let Some(variants) = types.variants(ty) else {
                     text(self, &types.display(ty));
                     return;
+                };
+                // The fields of each variant the tools do not show.
+                let hidden = |variant: usize, index: usize| match types.kind(repr) {
+                    TyKind::Adt(id) => match &types.adt(*id).kind {
+                        AdtKind::Enum(variants) => match &variants[variant].payload {
+                            crate::types::Payload::Record(fields) => fields[index].secret,
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    _ => false,
                 };
                 let tag = self.tag(ty, value);
                 let done = self.fb.create_block();
@@ -3926,6 +3961,10 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                         for index in 0..components.len() {
                             if index > 0 {
                                 text(self, ", ");
+                            }
+                            if hidden(variant, index) {
+                                text(self, SECRET);
+                                continue;
                             }
                             let slot = self.cg.slot(ty, Proj::Variant(variant as u32, index as u32));
                             part(self, ty, &slot);
@@ -4466,6 +4505,11 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
         (Glue::Display, _) => {
             let value = e.value_at(params[1], ty);
             e.append_display(params[0], ty, value);
+            e.fb.ins().return_(&[]);
+        }
+        (Glue::Secret, _) => {
+            let secret = e.string_ptr(SECRET);
+            e.call_rt(Rt::SbStr, &[params[0], secret]);
             e.fb.ins().return_(&[]);
         }
         // A type the program views otherwise shows as its view.

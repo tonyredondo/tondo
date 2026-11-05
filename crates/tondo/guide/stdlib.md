@@ -711,6 +711,14 @@ as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
 changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or
 `memory=512m`, `cpu=90` and `keep=10`, a program dumps by itself.
 
+`@secret` on a field, or before a `type`, makes the tools show `<secret>` for
+its values: dumps, the debugger and its parts. The program itself is not
+touched: `Display`, JSON and `==` see the value. On a type it goes with the
+value; on a field it holds there only, so a binding it was copied to shows it:
+for a password or a token, prefer `@secret type Token = String`. A recording
+still keeps the bytes the program read. `TONDO_DUMP_VALUES=off` in the program's
+environment leaves every value out of its dumps.
+
 ## Debugging
 
 `tondo debug app.to` builds it with `--debug` (unoptimized, with a probe at

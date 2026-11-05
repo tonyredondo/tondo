@@ -5011,3 +5011,19 @@ Bounds checks do not, as they sit in hot loops, and values of the heap do not,
 as a dead one may have been moved. And past the runtime's own frames the
 registers are not known without its unwind tables, so a task that waits shows
 only what the compiler spilled.
+
+## What is secret is what the program says is secret
+
+A dump of a service has its users' data in it, now that it keeps bindings. The
+tools could guess by names like `password`, but a guess that misses leaks with
+a good conscience and one that hits hides what someone needed to see. So
+nothing hides by itself: `@secret`, on a field or a type, says it, and
+`TONDO_DUMP_VALUES=off` takes every value out when no marking is enough.
+
+The mark lives in Show glue alone, so every tool that prints a value gets it at
+once, and a part cannot be opened because parts are read from the text. A
+newtype shares its representation's glue, so Show of a secret type goes to one
+glue of its own. What the mark cannot follow is a plain `String`: a string does
+not know whose it is, so a debug dump of a program with secrets leaves out the
+text of its objects, and a field's value copied to a binding shows there. That
+is why the guide says to prefer the type.

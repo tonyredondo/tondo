@@ -668,6 +668,8 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
                     function.bindings.push(Binding { name, ty, show, layout, raw });
                 }
             }
+            // The program has secrets, which any of its texts may hold.
+            ["H"] => super::heap::hide_texts(),
             ["D", layout] => {
                 let words: Vec<&str> = layout.split(' ').collect();
                 layouts.push(match words.as_slice() {

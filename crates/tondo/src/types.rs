@@ -390,6 +390,8 @@ pub struct AdtDef {
     pub kind: AdtKind,
     /// For an instance of a generic type: its template and arguments.
     pub instance: Option<(TemplateId, Vec<Ty>)>,
+    /// `@secret`: the tools show `<secret>` for its values.
+    pub secret: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -403,6 +405,8 @@ pub struct Template {
     pub params: Vec<Ty>,
     /// Filled in once the declaration is resolved.
     pub kind: Option<AdtKind>,
+    /// `@secret`, for all its instances.
+    pub secret: bool,
 }
 
 /// The body and signature of a closure expression (11.8). Its type is an
@@ -485,6 +489,8 @@ pub struct Field {
     pub ty: Ty,
     /// Declared `priv`: other modules and reflection do not see it.
     pub private: bool,
+    /// `@secret`: the tools show `<secret>` for it.
+    pub secret: bool,
 }
 
 fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
@@ -685,8 +691,41 @@ impl Types {
     /// Declares a nominal type; its definition is filled in by `define_adt`.
     pub fn declare_adt(&mut self, name: String) -> (AdtId, Ty) {
         let id = AdtId(self.adts.len() as u32);
-        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()), instance: None });
+        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()), instance: None, secret: false });
         (id, self.intern(TyKind::Adt(id)))
+    }
+
+    /// Marks a type `@secret`.
+    pub fn hide_adt(&mut self, id: AdtId) {
+        self.adts[id.0 as usize].secret = true;
+    }
+
+    /// Marks a generic type `@secret`.
+    pub fn hide_template(&mut self, id: TemplateId) {
+        self.templates[id.0 as usize].secret = true;
+    }
+
+    /// Whether the tools hide the values of a type: it is `@secret`, or a
+    /// newtype of one.
+    pub fn secret(&self, ty: Ty) -> bool {
+        let TyKind::Adt(id) = *self.kind(ty) else { return false };
+        let adt = self.adt(id);
+        adt.secret || matches!(adt.kind, AdtKind::Newtype(inner) if self.secret(inner))
+    }
+
+    /// Whether the program marks anything `@secret`.
+    pub fn any_secret(&self) -> bool {
+        let hidden = |fields: &[Field]| fields.iter().any(|f| f.secret);
+        self.adts.iter().any(|adt| {
+            adt.secret
+                || match &adt.kind {
+                    AdtKind::Record(fields) => hidden(fields),
+                    AdtKind::Enum(variants) => {
+                        variants.iter().any(|v| matches!(&v.payload, Payload::Record(fields) if hidden(fields)))
+                    }
+                    AdtKind::Newtype(_) => false,
+                }
+        })
     }
 
     pub fn define_adt(&mut self, id: AdtId, kind: AdtKind) {
@@ -726,7 +765,7 @@ impl Types {
     }
 
     pub fn declare_template(&mut self, name: String, params: Vec<Ty>) -> TemplateId {
-        self.templates.push(Template { name, params, kind: None });
+        self.templates.push(Template { name, params, kind: None, secret: false });
         TemplateId(self.templates.len() as u32 - 1)
     }
 
@@ -972,6 +1011,7 @@ impl Types {
         let name = format!("{}[{}]", self.templates[template.0 as usize].name, shown.join(", "));
         let (id, ty) = self.declare_adt(name);
         self.adts[id.0 as usize].instance = Some((template, args.clone()));
+        self.adts[id.0 as usize].secret = self.templates[template.0 as usize].secret;
         self.instances.insert((template, args), ty);
         if self.templates[template.0 as usize].kind.is_some() {
             self.define_instance(id);
@@ -1009,7 +1049,7 @@ impl Types {
     }
 
     fn subst_fields(&mut self, fields: Vec<Field>, map: &HashMap<Ty, Ty>) -> Vec<Field> {
-        fields.into_iter().map(|f| Field { name: f.name, ty: self.subst(f.ty, map), private: f.private }).collect()
+        fields.into_iter().map(|f| Field { ty: self.subst(f.ty, map), ..f }).collect()
     }
 
     /// `ty` with type parameters replaced according to `map`.
