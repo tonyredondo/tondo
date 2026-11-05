@@ -1149,6 +1149,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--via", "via");
         }
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
+        "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
         "dump_read" => {
             push(&["dump", "read", &args.need("file")?]);
             match args.text("view").as_deref().unwrap_or("summary") {
@@ -2093,6 +2094,13 @@ a running program, or of `command`, which it starts.",
 its tasks, the bindings of the frames both have, and its counters.",
         kind: Kind::Reads,
         params: &[("first", "string!", "The earlier dump."), ("second", "string!", "The later dump.")],
+    },
+    Tool {
+        name: "dump_trend",
+        description: "What keeps growing over the dumps of a program in a directory, as TONDO_DUMP_WHEN leaves them: \
+the memory by where it was made, and its tasks.",
+        kind: Kind::Reads,
+        params: &[("dir", "string!", "The directory of the dumps.")],
     },
     Tool {
         name: "dump_read",

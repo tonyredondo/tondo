@@ -1148,6 +1148,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         ["diff", first, second] => {
             tondo::observe::diff(Path::new(first), Path::new(second), json).map(|()| ExitCode::SUCCESS)
         }
+        ["trend", dir] => tondo::observe::trend(Path::new(dir), json).map(|()| ExitCode::SUCCESS),
         ["plugin", debugger] => tondo::observe::plugin(debugger, json).map(|()| ExitCode::SUCCESS),
         [name] if !name.starts_with('-') => tondo::observe::dump(name, None, json).map(|()| ExitCode::SUCCESS),
         [name, "--output", path] => {

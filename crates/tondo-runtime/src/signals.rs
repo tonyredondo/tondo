@@ -103,6 +103,12 @@ pub(crate) fn start() {
                     _ => return,
                 }
                 let signal = byte as i32;
+                // `kill -QUIT` asks a program that dumps for one, and it
+                // goes on.
+                if signal == libc::SIGQUIT && !routed(signal) {
+                    super::diagnostics::dump_on_signal();
+                    continue;
+                }
                 // A recorded run takes it at the worker's next turn; a
                 // replay, where its recording does.
                 if super::replay::on() {
@@ -118,6 +124,9 @@ pub(crate) fn start() {
         if watching.is_ok() {
             catch(libc::SIGINT);
             catch(libc::SIGTERM);
+            if std::env::var_os("TONDO_DUMP").is_some() && !super::replay::on() {
+                catch(libc::SIGQUIT);
+            }
         }
     });
 }

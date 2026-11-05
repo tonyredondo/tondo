@@ -1164,19 +1164,23 @@ struct Schedule {
     memory: Option<i64>,
     cpu: Option<f64>,
     keep: usize,
+    /// How many bytes all of them may take.
+    room: Option<u64>,
 }
 
 impl Schedule {
     fn parse(text: &str) -> Result<Schedule, String> {
-        let mut schedule = Schedule { every: None, memory: None, cpu: None, keep: 10 };
+        let mut schedule = Schedule { every: None, memory: None, cpu: None, keep: 10, room: None };
         for part in text.split(',').map(str::trim) {
-            let wrong = || format!("TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, cpu=90 or keep=10");
+            let wrong =
+                || format!("TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, cpu=90, keep=10 or size=1g");
             let (name, value) = part.split_once('=').ok_or_else(wrong)?;
             match name {
                 "every" => schedule.every = Some(interval(value).ok_or_else(wrong)?),
                 "memory" => schedule.memory = Some(size(value).ok_or_else(wrong)?),
                 "cpu" => schedule.cpu = Some(value.parse().map_err(|_| wrong())?),
                 "keep" => schedule.keep = value.parse().map_err(|_| wrong())?,
+                "size" => schedule.room = Some(size(value).ok_or_else(wrong)? as u64),
                 _ => return Err(wrong()),
             }
         }
@@ -1217,6 +1221,35 @@ fn processor_time() -> std::time::Duration {
     of(usage.ru_utime) + of(usage.ru_stime)
 }
 
+/// The stack of a thread that writes dumps, which it compresses.
+const DUMPING_STACK: usize = 512 * 1024;
+
+/// A dump as a program that goes on writes it, which takes a tenth of the
+/// room; one at a crash stays as it is, as little as possible runs there.
+fn compressed(text: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let written = encoder.write_all(text.as_bytes());
+    written.and_then(|()| encoder.finish()).unwrap_or_default()
+}
+
+/// `kill -QUIT`, with `TONDO_DUMP`: a dump of the program, which goes on.
+pub(crate) fn dump_on_signal() {
+    static NUMBER: AtomicU64 = AtomicU64::new(0);
+    let Some(dir) = std::env::var_os("TONDO_DUMP") else { return };
+    let number = NUMBER.fetch_add(1, Ordering::Relaxed) + 1;
+    let _ = super::tasks::try_spawn_thread(Some(DUMPING_STACK), move || {
+        retire_here();
+        let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
+        let program = program.unwrap_or_else(|| "tondo".into());
+        let path = PathBuf::from(dir).join(format!("{program}-{}-quit-{number}.dump.json.gz", std::process::id()));
+        let text = dump("signal", "SIGQUIT", None, Some(std::time::Duration::from_millis(100)));
+        if std::fs::write(&path, compressed(&text)).is_ok() {
+            let _ = writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display());
+        }
+    });
+}
+
 /// Starts the thread of `TONDO_DUMP_WHEN`, when it is set with `TONDO_DUMP`.
 fn schedule_dumps() {
     let (Some(when), Some(dir)) = (std::env::var("TONDO_DUMP_WHEN").ok(), std::env::var_os("TONDO_DUMP")) else {
@@ -1229,7 +1262,8 @@ fn schedule_dumps() {
             return;
         }
     };
-    let _ = super::tasks::try_spawn_thread(Some(128 * 1024), move || dumps_on_schedule(schedule, PathBuf::from(dir)));
+    let _ =
+        super::tasks::try_spawn_thread(Some(DUMPING_STACK), move || dumps_on_schedule(schedule, PathBuf::from(dir)));
 }
 
 fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
@@ -1238,7 +1272,7 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
     let least = std::time::Duration::from_secs(60);
     let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
     let program = program.unwrap_or_else(|| "tondo".into());
-    let mut written: std::collections::VecDeque<PathBuf> = Default::default();
+    let mut written: std::collections::VecDeque<(PathBuf, u64)> = Default::default();
     let (mut number, mut used, mut measured) = (0, processor_time(), Instant::now());
     let (mut last_timed, mut last_over) = (Instant::now(), None::<Instant>);
     loop {
@@ -1262,16 +1296,20 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
             last_timed = now;
         }
         number += 1;
-        let path = dir.join(format!("{program}-{}-{number}.dump.json", std::process::id()));
-        let text = dump("schedule", &why, None, Some(std::time::Duration::from_millis(100)));
+        let path = dir.join(format!("{program}-{}-{number}.dump.json.gz", std::process::id()));
+        let text = compressed(&dump("schedule", &why, None, Some(std::time::Duration::from_millis(100))));
+        let length = text.len() as u64;
         // The oldest goes first: the program may end at any moment.
-        while written.len() >= schedule.keep.max(1) {
-            if let Some(oldest) = written.pop_front() {
+        let room = schedule.room.unwrap_or(u64::MAX);
+        while written.len() >= schedule.keep.max(1)
+            || !written.is_empty() && written.iter().map(|(_, size)| size).sum::<u64>() + length > room
+        {
+            if let Some((oldest, _)) = written.pop_front() {
                 let _ = std::fs::remove_file(oldest);
             }
         }
         if std::fs::write(&path, text).is_ok() {
-            written.push_back(path);
+            written.push_back((path, length));
         }
     }
 }

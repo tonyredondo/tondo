@@ -3048,6 +3048,61 @@ fn dumps_come_on_a_schedule_and_differ() {
 }
 
 #[test]
+fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-trend");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    std::fs::create_dir_all(dir.join("small")).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    var kept: Array[String] = []\n    \
+        for round in 0..300 {\n        for i in 0..400 {\n            \
+        kept.push(\"value {round} {i} with more text in it, as a cache that never lets go of what it holds\")\n        \
+        }\n        time.sleep(time.milliseconds(10))\n    }\n    console.println(\"{kept.length()}\")\n}\n";
+    std::fs::write(dir.join("leaks.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "leaks.to", "--output", "leaks"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let child = Command::new(dir.join("leaks"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .env("TONDO_DUMP_WHEN", "every=200ms,keep=100")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The first dump says it is well under way.
+    while std::fs::read_dir(dir.join("dumps")).unwrap().next().is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let pid = child.id().to_string();
+    assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
+    let output = child.wait_with_output().unwrap();
+    // It went on to its end.
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "120000\n");
+    let dumps: Vec<_> = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().map(|f| f.path()).collect();
+    let asked = dumps.iter().find(|d| d.to_string_lossy().contains("-quit-1.dump.json.gz"));
+    let asked = asked.unwrap_or_else(|| panic!("{dumps:?}"));
+    let summary = tondo(&["dump", "read", asked.to_str().unwrap(), "--json"]);
+    assert!(summary["summary"].as_str().unwrap().contains("dumped on a signal"), "{summary}");
+    let trend = tondo(&["dump", "trend", dir.join("dumps").to_str().unwrap(), "--json"]);
+    assert!(trend["dumps"].as_u64().unwrap() >= 3, "{trend}");
+    assert_eq!(trend["held"]["rising"], true, "{trend}");
+    let first = trend["memory"][0]["place"].as_str().unwrap_or_else(|| panic!("{trend}"));
+    assert!(first.contains("leaks.to:8"), "{trend}");
+    // Fewer dumps than `keep` fit in the room they are given.
+    let ran = Command::new(dir.join("leaks"))
+        .env("TONDO_DUMP", dir.join("small"))
+        .env("TONDO_DUMP_WHEN", "every=200ms,size=1k")
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{ran:?}");
+    assert_eq!(std::fs::read_dir(dir.join("small")).unwrap().count(), 1);
+}
+
+#[test]
 fn a_line_stops_once_however_many_blocks_it_takes() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");
     let _ = std::fs::remove_dir_all(&dir);

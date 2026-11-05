@@ -709,7 +709,10 @@ longer needed may be gone, and a task that waits shows what was on its stack.
 <file> locals [<task> [<frame>]]` shows them, and `print user.name` a part,
 as the editor does when it opens a dump. `tondo dump diff <a> <b>` says what
 changed between two dumps of a program. With `TONDO_DUMP_WHEN=every=5m`, or
-`memory=512m`, `cpu=90` and `keep=10`, a program dumps by itself.
+`memory=512m`, `cpu=90`, `keep=10` and `size=1g`, a program dumps by itself,
+and `tondo dump trend <dir>` says what keeps growing over those dumps: a leak
+by the line that makes it. With `TONDO_DUMP`, `kill -QUIT` asks for a dump and
+the program goes on.
 
 `tondo dump read <file> why` says what went wrong as far as the dump can tell:
 tasks that wait for each other, those that hold others up, the longest wait,

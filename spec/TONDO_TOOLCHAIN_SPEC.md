@@ -789,8 +789,17 @@ de los frames que están en ambos y los contadores.
 
 Con `TONDO_DUMP_WHEN` junto a `TONDO_DUMP` el programa se vuelca solo, sin parar:
 `every=5m` cada ese tiempo, `memory=512m` sobre esa memoria residente, `cpu=90`
-sobre ese porcentaje de un núcleo, y `keep=10` guarda los últimos diez, separados
-por comas. Lo que pasa de un umbral vuelca como mucho una vez por minuto.
+sobre ese porcentaje de un núcleo, `keep=10` guarda los últimos diez y `size=1g`
+los que quepan en ese espacio, separados por comas. Lo que pasa de un umbral vuelca
+como mucho una vez por minuto. Con `TONDO_DUMP`, `kill -QUIT` pide un volcado sin
+herramientas ni socket y el programa sigue, salvo que `process.signals` tome esa
+señal. Estos volcados, de un programa que sigue, van comprimidos en
+`.dump.json.gz`; el de un fallo no, porque allí corre lo menos posible. Todas las
+herramientas leen los dos.
+
+`tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
+por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
+crecen: los que suben en cuatro de cada cinco pasos, de más a menos, con su ritmo.
 
 Lo que el programa marca `@secret` (9.2 del lenguaje) se muestra como `<secret>`
 en el volcado, el depurador y sus partes; en un build de depuración que tiene

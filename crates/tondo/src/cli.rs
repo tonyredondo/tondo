@@ -237,6 +237,11 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
+        usage: &["tondo dump trend <dir> [--json]"],
+        summary: &["what keeps growing over the dumps of a program in a", "directory, as TONDO_DUMP_WHEN leaves them"],
+    },
+    Command {
+        name: "dump",
         usage: &["tondo dump plugin <lldb|gdb> [--json]"],
         summary: &[
             "write the `tondo` command for lldb or gdb, which",

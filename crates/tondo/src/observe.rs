@@ -899,14 +899,148 @@ pub fn dumped_value<'a>(frame: &'a Value, path: &str) -> Option<&'a Value> {
     Some(value)
 }
 
-/// `tondo dump read <file> [tasks | task <id> | heap] [--json]`.
-pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut dump: Value = serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+/// A dump from its file, compressed or not, with every frame named.
+fn load(path: &std::path::Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut text = Vec::new();
+    let bytes = match bytes.starts_with(&[0x1f, 0x8b]) {
+        true => {
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            std::io::Read::read_to_end(&mut decoder, &mut text)
+                .map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+            &text
+        }
+        false => &bytes,
+    };
+    let mut dump: Value =
+        serde_json::from_slice(bytes).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
     if dump.get("dump").is_none() {
         return Err(format!("{} is not a dump of a Tondo program", path.display()));
     }
     name_frames(&mut dump);
+    Ok(dump)
+}
+
+/// `tondo dump trend <dir>`: what grew over the dumps of a program that
+/// are in a directory, as the schedule of `TONDO_DUMP_WHEN` leaves them.
+pub fn trend(dir: &std::path::Path, json: bool) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    let is_dump = |path: &PathBuf| {
+        path.to_string_lossy().ends_with(".dump.json") || path.to_string_lossy().ends_with(".dump.json.gz")
+    };
+    let files = entries.flatten().map(|entry| entry.path()).filter(is_dump);
+    let mut dumps: Vec<Value> = files.filter_map(|path| load(&path).ok()).collect();
+    dumps.sort_by(|a, b| a["time_ms"].as_f64().unwrap_or(0.0).total_cmp(&b["time_ms"].as_f64().unwrap_or(0.0)));
+    // The dumps of the program that dumped last.
+    let last = dumps.last().map(|dump| dump["info"]["pid"].clone()).unwrap_or_default();
+    dumps.retain(|dump| dump["info"]["pid"] == last);
+    if dumps.len() < 3 {
+        return Err(format!("a trend takes 3 dumps of a program, and {} has {}", dir.display(), dumps.len()));
+    }
+    let found = trends(&dumps);
+    if json {
+        crate::cli::print_json("dump-trend", true, found);
+    } else {
+        println!("{}", trend_text(&found).trim_end());
+    }
+    Ok(())
+}
+
+/// How far a series goes up, and whether it does so most of the time:
+/// samples of the memory go up and down a little as they come.
+fn rising(series: &[f64]) -> bool {
+    let steps = series.windows(2).filter(|pair| pair[1] >= pair[0]).count();
+    series[series.len() - 1] > series[0] && steps * 5 >= (series.len() - 1) * 4
+}
+
+fn trends(dumps: &[Value]) -> Value {
+    let (first, last) = (&dumps[0], &dumps[dumps.len() - 1]);
+    let seconds = (last["time_ms"].as_f64().unwrap_or(0.0) - first["time_ms"].as_f64().unwrap_or(0.0)) / 1000.0;
+    let per_minute = |grew: f64| if seconds > 0.0 { grew / seconds * 60.0 } else { 0.0 };
+    // Every place of the memory, by what it held in each dump.
+    let mut sites: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for (index, dump) in dumps.iter().enumerate() {
+        for site in heap(dump)["sites"].as_array().into_iter().flatten() {
+            let place = format!(
+                "{} from {}",
+                site["kind"].as_str().unwrap_or_default(),
+                site["site"].as_str().unwrap_or_default()
+            );
+            sites.entry(place).or_insert_with(|| vec![0.0; dumps.len()])[index] +=
+                site["bytes"].as_f64().unwrap_or(0.0);
+        }
+    }
+    let mut growing: Vec<(String, Vec<f64>)> = sites.into_iter().filter(|(_, series)| rising(series)).collect();
+    growing.sort_by(|a, b| {
+        let grew = |series: &[f64]| series[series.len() - 1] - series[0];
+        grew(&b.1).total_cmp(&grew(&a.1))
+    });
+    let memory: Vec<Value> = growing
+        .iter()
+        .map(|(place, series)| {
+            let grew = series[series.len() - 1] - series[0];
+            json!({ "place": place, "bytes": grew, "per_minute": per_minute(grew), "series": series })
+        })
+        .collect();
+    // The counters that say how the program goes.
+    let counter = |dump: &Value, name: &str| {
+        dump["counters"].as_array().into_iter().flatten().find(|c| c["name"] == name).and_then(|c| c["value"].as_f64())
+    };
+    let level = |name: &str| {
+        let series: Vec<f64> = dumps.iter().map(|dump| counter(dump, name).unwrap_or(0.0)).collect();
+        let grew = series[series.len() - 1] - series[0];
+        json!({ "first": series[0], "last": series[series.len() - 1], "per_minute": per_minute(grew), "rising": rising(&series) })
+    };
+    let tasks: Vec<f64> = dumps.iter().map(|dump| dump["tasks"].as_array().map_or(0.0, |t| t.len() as f64)).collect();
+    let task_count = |count: f64| count as u64;
+    json!({
+        "program": program_name(&last["info"]), "pid": last["info"]["pid"], "dumps": dumps.len(), "seconds": seconds,
+        "held": level("memory.held"), "resident": level("os.resident"), "memory": memory,
+        "tasks": {
+            "first": task_count(tasks[0]), "last": task_count(tasks[tasks.len() - 1]), "rising": rising(&tasks),
+        },
+    })
+}
+
+fn trend_text(found: &Value) -> String {
+    let (dumps, seconds) = (&found["dumps"], found["seconds"].as_f64().unwrap_or(0.0));
+    let mut out = format!(
+        "{} (pid {}), {dumps} dumps over {}\n",
+        found["program"].as_str().unwrap_or_default(),
+        found["pid"],
+        duration(seconds)
+    );
+    for (key, title) in [("held", "memory held"), ("resident", "resident memory")] {
+        let level = &found[key];
+        let number = |name: &str| level[name].as_f64().unwrap_or(0.0);
+        let goes = if level["rising"] == true {
+            format!(", up {} a minute", bytes(number("per_minute")))
+        } else {
+            String::new()
+        };
+        out.push_str(&format!("{title}: {} to {}{goes}\n", bytes(number("first")), bytes(number("last"))));
+    }
+    let tasks = &found["tasks"];
+    let goes = if tasks["rising"] == true { ", and rising" } else { "" };
+    out.push_str(&format!("tasks: {} to {}{goes}\n", tasks["first"], tasks["last"]));
+    let places = found["memory"].as_array().map_or(&[][..], Vec::as_slice);
+    if !places.is_empty() {
+        out.push_str("what keeps growing:\n");
+    }
+    for place in places.iter().take(10) {
+        out.push_str(&format!(
+            "  +{} ({} a minute) {}\n",
+            bytes(place["bytes"].as_f64().unwrap_or(0.0)),
+            bytes(place["per_minute"].as_f64().unwrap_or(0.0)),
+            place["place"].as_str().unwrap_or_default()
+        ));
+    }
+    out
+}
+
+/// `tondo dump read <file> [tasks | task <id> | heap] [--json]`.
+pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String> {
+    let dump = load(path)?;
     let tasks = tasks(&dump);
     // With `--json`, the view under its name.
     let shown = |name: &str, value: Value| {
@@ -994,17 +1128,7 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
 /// program to a later one: its memory by where it was made, its counters,
 /// its tasks, and the bindings of the frames both have.
 pub fn diff(first: &std::path::Path, second: &std::path::Path, json: bool) -> Result<(), String> {
-    let read = |path: &std::path::Path| -> Result<Value, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let mut dump: Value =
-            serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
-        if dump.get("dump").is_none() {
-            return Err(format!("{} is not a dump of a Tondo program", path.display()));
-        }
-        name_frames(&mut dump);
-        Ok(dump)
-    };
-    let (a, b) = (read(first)?, read(second)?);
+    let (a, b) = (load(first)?, load(second)?);
     let found = dumps_differ(&a, &b);
     if json {
         crate::cli::print_json("dump-diff", true, found);
@@ -1138,12 +1262,7 @@ fn diff_text(found: &Value) -> String {
 /// A dump as a debugger shows it after the fact (toolchain 7.6): its
 /// summary, each task with its stack in words, and the memory by site.
 pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut dump: Value = serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
-    if dump.get("dump").is_none() {
-        return Err(format!("{} is not a dump of a Tondo program", path.display()));
-    }
-    name_frames(&mut dump);
+    let dump = load(path)?;
     let summary = format!("{}\n{}\n", why_text(&why(&dump)), summary(&dump).trim_end());
     Ok((summary, tasks(&dump), heap(&dump)))
 }
@@ -1463,7 +1582,7 @@ pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
 fn why_text(found: &Value) -> String {
     let mut out = String::new();
     match found["reason"].as_str().unwrap_or_default() {
-        "request" | "" => {}
+        "request" | "schedule" | "signal" | "" => {}
         reason => out.push_str(&format!("it stopped at a {reason}\n")),
     }
     for line in found["message"].as_str().unwrap_or_default().lines() {
@@ -1670,6 +1789,8 @@ fn summary(dump: &Value) -> String {
     let uptime = duration(info["uptime_ms"].as_f64().unwrap_or(0.0) / 1000.0);
     let reason = match dump["reason"].as_str().unwrap_or_default() {
         "request" => "on request".to_string(),
+        "schedule" => "on schedule".to_string(),
+        "signal" => "on a signal".to_string(),
         reason => format!("at a {reason}"),
     };
     let mut out = format!("{} (pid {}), dumped {reason}, after {uptime}\n", program_name(info), info["pid"]);
