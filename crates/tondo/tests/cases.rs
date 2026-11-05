@@ -98,7 +98,8 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let binary = scratch.join(path.file_stem().unwrap());
     // From its directory, so that locations read `case.to:4:5`.
-    let build = Command::new(compiler)
+    let mut build = Command::new(compiler);
+    build
         .current_dir(path.parent().unwrap())
         .arg("build")
         .arg(path.file_name().unwrap())
@@ -107,9 +108,9 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
         .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
-        .env("XDG_CACHE_HOME", scratch.join("cache"))
-        .output()
-        .unwrap();
+        .env("XDG_CACHE_HOME", scratch.join("cache"));
+    // Long enough for an emulator: a build that hangs names its case.
+    let build = run_with_timeout(&mut build, 300).map_err(|e| format!("its build: {e}"))?;
     let diagnostics = String::from_utf8_lossy(&build.stderr);
     let matches = |line: &str, severity: &str, expected: &str| {
         let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
@@ -170,7 +171,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     if let Some((calls, seed)) = &recording {
         command.env("TONDO_RT_RECORD", calls).env("TONDO_RT_SCHEDULE", seed);
     }
-    let run = run_with_timeout(&mut command)?;
+    let run = run_with_timeout(&mut command, 60)?;
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
@@ -196,7 +197,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
     if let Some((calls, seed)) = &recording {
         let mut replay = program();
-        let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed))
+        let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed), 60)
             .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
         if again.stdout != run.stdout || again.status != run.status {
             let (out, err) = (String::from_utf8_lossy(&again.stdout), String::from_utf8_lossy(&again.stderr));
@@ -209,8 +210,8 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs a program, failing the case when it has not finished in a minute.
-fn run_with_timeout(command: &mut Command) -> Result<std::process::Output, String> {
+/// Runs a program, failing the case when it has not finished in time.
+fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process::Output, String> {
     use std::io::Read;
     use std::process::Stdio;
     let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
@@ -225,7 +226,7 @@ fn run_with_timeout(command: &mut Command) -> Result<std::process::Output, Strin
         let _ = err.read_to_end(&mut bytes);
         bytes
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
@@ -233,7 +234,7 @@ fn run_with_timeout(command: &mut Command) -> Result<std::process::Output, Strin
         if std::time::Instant::now() > deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("timed out after 60s".into());
+            return Err(format!("timed out after {seconds}s"));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
