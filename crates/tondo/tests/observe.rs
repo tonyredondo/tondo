@@ -2915,7 +2915,7 @@ fn a_dump_says_what_keeps_memory_alive() {
 
 #[test]
 fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-locks-and-tasks");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\nimport std.sync\nimport std.time\n\n\
