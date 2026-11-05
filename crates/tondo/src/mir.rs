@@ -395,6 +395,71 @@ pub enum Terminator {
     Unreachable,
 }
 
+/// The blocks of the loops of a body that hold no other loop and call
+/// nothing: where each instruction counts.
+pub fn tight_loops(blocks: &[BlockData]) -> Vec<bool> {
+    let successors = |block: usize| match &blocks[block].terminator {
+        Terminator::Goto(to) => vec![to.0 as usize],
+        Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
+        _ => Vec::new(),
+    };
+    // A jump to a block whose walk has not ended closes a loop.
+    let (mut walked, mut stack, mut closing) = (vec![0u8; blocks.len()], vec![(0, 0)], Vec::new());
+    if blocks.is_empty() {
+        return Vec::new();
+    }
+    walked[0] = 1;
+    while let Some((block, next)) = stack.pop() {
+        match successors(block).get(next).copied() {
+            Some(to) => {
+                stack.push((block, next + 1));
+                match walked[to] {
+                    0 => {
+                        walked[to] = 1;
+                        stack.push((to, 0));
+                    }
+                    1 => closing.push((block, to)),
+                    _ => {}
+                }
+            }
+            None => walked[block] = 2,
+        }
+    }
+    let mut before = vec![Vec::new(); blocks.len()];
+    for block in 0..blocks.len() {
+        for to in successors(block) {
+            before[to].push(block);
+        }
+    }
+    let loops: Vec<(usize, Vec<bool>)> = closing
+        .iter()
+        .map(|&(last, head)| {
+            let mut inside = vec![false; blocks.len()];
+            inside[head] = true;
+            let mut left = vec![last];
+            while let Some(block) = left.pop() {
+                if !inside[block] {
+                    inside[block] = true;
+                    left.extend(&before[block]);
+                }
+            }
+            (head, inside)
+        })
+        .collect();
+    let calls = |block: &BlockData| {
+        let call = |rvalue: &Rvalue| matches!(rvalue, Rvalue::Call(..) | Rvalue::CallIndirect(..));
+        block.stmts.iter().any(|stmt| matches!(stmt, Statement::Assign(_, rvalue, _) if call(rvalue)))
+    };
+    let mut tight = vec![false; blocks.len()];
+    for (head, inside) in &loops {
+        let called = blocks.iter().zip(inside).any(|(block, inside)| *inside && calls(block));
+        if !called && !loops.iter().any(|(other, _)| other != head && inside[*other]) {
+            tight.iter_mut().zip(inside).for_each(|(block, inside)| *block |= inside);
+        }
+    }
+    tight
+}
+
 /// The locals each block reads before writing them, on some path from its
 /// start (toolchain 7.10): what a frame must bring to start there.
 pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {

@@ -37,6 +37,7 @@ mod json;
 mod labels;
 mod live;
 mod locales;
+mod logpoints;
 mod math;
 mod memory;
 mod meta;

@@ -97,6 +97,7 @@ fn main() -> ExitCode {
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "blocked" => blocked_command(&args[1..]),
+        "logpoint" => logpoint_command(&args[1..]),
         "source" => source_command(&args[1..]),
         "relay" => match args.get(1).and_then(|a| a.to_str()) {
             Some(name) => tondo::observe::relay(name).map(|_| ExitCode::SUCCESS),
@@ -957,6 +958,26 @@ fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let (Some(file), Some(from)) = (file, from) else { return Err(USAGE.to_string()) };
     tondo::observe::source(file, Path::new(from), line, json).map(|()| ExitCode::SUCCESS)
+}
+
+fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
+    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--max <n>] [--for <seconds>] [--json]";
+    let (mut given, mut max, mut seconds, mut json) = (Vec::new(), 100, None, false);
+    let mut rest = args.iter().filter_map(|a| a.to_str());
+    while let Some(arg) = rest.next() {
+        match arg {
+            "--json" => json = true,
+            "--max" => max = rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
+            "--for" => seconds = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
+            other if !other.starts_with("--") => given.push(other),
+            _ => return Err(USAGE.to_string()),
+        }
+    }
+    let [name, place, text @ ..] = given.as_slice() else { return Err(USAGE.to_string()) };
+    if text.len() > 1 {
+        return Err(USAGE.to_string());
+    }
+    tondo::observe::logpoint(name, place, text.first().copied(), max, seconds, json).map(|()| ExitCode::SUCCESS)
 }
 
 fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {

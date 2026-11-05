@@ -1461,6 +1461,57 @@ fn frame_at(table: &Table, pc: usize, fp: usize) -> Option<Frame> {
 /// which may crash or hang without harm, and one that crashes goes on from
 /// the next binding. `here` is where this thread's task stands.
 pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Vec<String> {
+    rendered(here, false)
+}
+
+/// What the frame at the site `pc` holds, for a logpoint: as `values`, of
+/// that frame alone, whose registers are all known.
+pub(crate) fn frame_values(
+    pc: usize,
+    fp: usize,
+    bounds: (usize, usize),
+    registers: &[usize; 32],
+    floats: &[usize; 32],
+) -> Vec<String> {
+    super::diagnostics::fault_registers(registers, true);
+    FLOATS.iter().zip(floats).for_each(|(slot, &value)| slot.store(value, Ordering::Relaxed));
+    LOGGING.store(true, Ordering::Relaxed);
+    let found = rendered(Some((Some(pc), fp, bounds)), true);
+    LOGGING.store(false, Ordering::Relaxed);
+    super::diagnostics::fault_registers(registers, false);
+    found
+}
+
+/// While a logpoint shows a frame, the low half of each register of numbers.
+static LOGGING: AtomicBool = AtomicBool::new(false);
+static FLOATS: [std::sync::atomic::AtomicUsize; 32] = [const { std::sync::atomic::AtomicUsize::new(0) }; 32];
+
+/// Each place of the code where a logpoint can go: its address, its length,
+/// its file and its line.
+pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32)> {
+    let raw = DUMP_TABLE.load(Ordering::Relaxed);
+    if raw.is_null() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(unsafe { str_bytes((*raw).text) }).into_owned();
+    let (mut sites, mut function) = (Vec::new(), None);
+    for line in text.lines() {
+        match line.split('\t').collect::<Vec<_>>()[..] {
+            ["F", index] => function = index.parse().ok().and_then(super::trace::function_start),
+            ["P", at, length, file, line] => {
+                if let (Some(start), Ok(at), Ok(length), Ok(line)) =
+                    (function, at.parse::<usize>(), length.parse(), line.parse())
+                {
+                    sites.push((start + at, length, file.to_string(), line));
+                }
+            }
+            _ => {}
+        }
+    }
+    sites
+}
+
+fn rendered(here: Option<(Option<usize>, usize, (usize, usize))>, alone: bool) -> Vec<String> {
     use std::io::Read;
     use std::os::fd::FromRawFd;
     let table = table();
@@ -1479,7 +1530,7 @@ pub(crate) fn values(here: Option<(Option<usize>, usize, (usize, usize))>) -> Ve
             -1 => break,
             0 => {
                 unsafe { libc::close(ends[0]) };
-                render(table.as_deref(), here, lines.len() + skipped, ends[1]);
+                render(table.as_deref(), here, lines.len() + skipped, ends[1], alone);
                 unsafe { libc::_exit(0) };
             }
             pid => {
@@ -1526,7 +1577,13 @@ type TaskStop = (u64, Option<usize>, usize, (usize, usize), Option<super::unwind
 
 /// In the copy of the program, shows the bindings from the `from`th on,
 /// a line each on `out`.
-fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usize))>, from: usize, out: i32) {
+fn render(
+    table: Option<&Table>,
+    here: Option<(Option<usize>, usize, (usize, usize))>,
+    from: usize,
+    out: i32,
+    alone: bool,
+) {
     RENDERING.store(true, Ordering::Relaxed);
     // A value that breaks this copy only skips that binding: at once, as
     // a core takes seconds, and without a word on the program's stderr.
@@ -1546,7 +1603,9 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
     let _quiet = super::heap::Quiet::enter();
     let mut stops: Vec<TaskStop> =
         here.into_iter().map(|(pc, fp, bounds)| (super::tasks::current_id(), pc, fp, bounds, None)).collect();
-    stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds, saved)| (id, None, fp, bounds, saved)));
+    if !alone {
+        stops.extend(super::tasks::standing().into_iter().map(|(id, fp, bounds, saved)| (id, None, fp, bounds, saved)));
+    }
     let mut index = 0;
     let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, glue: Show, address: usize| {
         index += 1;
@@ -1620,6 +1679,9 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
                     }
                     at += 1;
                 }
+                if alone {
+                    break;
+                }
                 let saved = found.map_or(&[][..], |f| &f.saved);
                 registers = caller_registers(&registers, fp, saved);
             }
@@ -1650,6 +1712,8 @@ struct DumpBinding {
 enum Place {
     Frame(isize),
     Register(usize),
+    /// A register of numbers, which only a logpoint saves.
+    Float(usize),
 }
 
 /// What a dump reads of a function of a build without probes.
@@ -1757,6 +1821,10 @@ impl DumpBinding {
                 peek(address, 8).try_into().ok().map(usize::from_ne_bytes)?
             }
             Place::Register(number) => (*registers.get(number)?)?,
+            Place::Float(number) => {
+                let known = LOGGING.load(Ordering::Relaxed);
+                known.then(|| FLOATS.get(number).map(|float| float.load(Ordering::Relaxed)))??
+            }
         };
         if self.pointer {
             return Some(value);
@@ -1827,6 +1895,7 @@ fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
             ["R", start, end, kind, at] => {
                 let place = match kind {
                     "f" => at.parse().ok().map(Place::Frame),
+                    "x" => at.parse().ok().map(Place::Float),
                     _ => at.parse().ok().map(Place::Register),
                 };
                 if let (Some(binding), Ok(start), Ok(end), Some(place)) =

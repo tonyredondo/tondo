@@ -776,6 +776,7 @@ fn serve(listener: UnixListener) {
                 if super::debugger::is_client(client.as_raw_fd()) {
                     super::debugger::detach();
                 }
+                super::logpoints::tool_gone(client.as_raw_fd());
             }
             kept
         });
@@ -815,6 +816,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             "release" => super::live::let_go(),
             _ if line.starts_with("again ") => super::live::again(&line["again ".len()..]),
             _ if line.starts_with("patch ") => super::live::patch(&line["patch ".len()..]),
+            _ if line.starts_with("logpoint ") => super::logpoints::set(&line["logpoint ".len()..], client),
             "counters" => counters(),
             "memory" => {
                 let mut frames = Frames::default();

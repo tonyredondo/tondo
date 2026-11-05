@@ -728,6 +728,11 @@ groups the tasks by their stack, `requests` lists the HTTP and gRPC requests in
 flight, `events` what the program did last, and `find <text>` looks for a user
 or request in every value.
 `tondo blocked <pid|name>` shows who waits for whom in a running program.
+`tondo logpoint <pid|name> app.to:12 "order {order.id}"` says what a line holds
+each time it goes by, without stopping the program or a new build, up to
+`--max 100` times: on Linux, with `TONDO_DIAGNOSTICS=1`. Each time pauses that
+task while a copy of the process shows the values, so it is for a line that runs
+now and then, and a loop that calls nothing has no place for it.
 
 An executable keeps where its sources came from: the repository and commit of
 the program and of each dependency, without credentials, and a hash of each

@@ -138,6 +138,7 @@ enum Rt {
     DebugTable,
     /// What the dumps of a build without probes show.
     DumpTable,
+    Site,
     SourceRoots,
     /// Before a panic, the registers its dump reads.
     KeepRegisters,
@@ -432,6 +433,7 @@ impl Rt {
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::DumpTable => ("tondo_rt_dump_table", &[I64], &[]),
             Rt::SourceRoots => ("tondo_rt_source_roots", &[I64], &[]),
+            Rt::Site => ("tondo_rt_site", &[], &[]),
             Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
             Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),
             Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
@@ -1448,6 +1450,8 @@ struct Traced {
     labelled: Vec<(u32, u32, u32, Located)>,
     slots: Vec<(u32, i64)>,
     saved: Vec<(u16, i64)>,
+    /// Its latent sites: where each starts, how long it is, and its site.
+    latent: Vec<(u32, u32, u32)>,
 }
 
 /// Where a statement's code is in the source, the type of the local it
@@ -1491,6 +1495,9 @@ struct Compiled {
     labelled: Vec<(u32, u32, u32, Located)>,
     slots: Vec<(u32, i64)>,
     saved: Vec<(u16, i64)>,
+    /// The calls left as nothing until a logpoint needs them: where each
+    /// starts, how long it is, and its statement's site.
+    latent: Vec<(u32, u32, u32)>,
 }
 
 /// Where a value label is: in a register, by its number and whether it is
@@ -1572,9 +1579,22 @@ fn compile_one(
     context.clear();
     let dumps = function.dfg.values_labels.is_some();
     context.func = function;
+    // What a latent site calls is the runtime, in the same image.
+    for (_, callee) in context.func.dfg.ext_funcs.iter_mut() {
+        callee.colocated |= callee.patchable;
+    }
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
     let code = context.compiled_code().expect("compiled code");
     let sources = code.buffer.get_srclocs_sorted();
+    let site_of = |at: u32| {
+        let source = sources.get(sources.partition_point(|s| s.end <= at)).filter(|s| s.start <= at);
+        source.map_or(0, |source| source.loc.as_abs().bits())
+    };
+    let latent: Vec<(u32, u32, u32)> = code
+        .buffer
+        .patchable_call_sites()
+        .map(|call| (call.ret_addr - call.len, call.len, site_of(call.ret_addr - 1)))
+        .collect();
     let calls = code
         .buffer
         .call_sites()
@@ -1595,15 +1615,29 @@ fn compile_one(
             _ => None,
         })
         .collect();
+    let in_latent = |at: u32| latent.iter().any(|&(start, length, _)| (start..start + length).contains(&at));
     let relocs = code
         .buffer
         .relocs()
         .iter()
+        .filter(|reloc| !in_latent(reloc.offset))
         .map(|reloc| cranelift_module::ModuleReloc::from_mach_reloc(reloc, &context.func, id))
         .collect();
+    // A latent site is nothing until a logpoint writes its call.
+    let mut bytes = code.buffer.data().to_vec();
+    for &(start, length, _) in &latent {
+        let mut at = start as usize;
+        while at < (start + length) as usize {
+            let left = (start + length) as usize - at;
+            let nop = code.buffer.nop_units.iter().rev().find(|nop| nop.len() <= left).expect("a nop that fits");
+            bytes[at..at + nop.len()].copy_from_slice(nop);
+            at += nop.len();
+        }
+    }
     Ok(Compiled {
+        latent,
         alignment: code.buffer.min_alignment as u64,
-        bytes: code.buffer.data().to_vec(),
+        bytes,
         relocs,
         size: code.code_info().total_size,
         calls,
@@ -2333,8 +2367,9 @@ impl Codegen<'_> {
             if let Some(name) = job.traced {
                 let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
                 let (handlers, labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
-                let saved = code.saved;
+                let (saved, latent) = (code.saved, code.latent);
                 self.traced.push(Traced {
+                    latent,
                     id: job.id,
                     name,
                     size,
@@ -2928,6 +2963,11 @@ impl Codegen<'_> {
             for (register, at) in &function.saved {
                 text.push_str(&format!("C\t{register}\t{at}\n"));
             }
+            for &(at, length, site) in &function.latent {
+                let Some(&(start, ..)) = function.sites.get((site as usize).wrapping_sub(1)) else { continue };
+                let (file, line, _) = self.sources.position(start);
+                text.push_str(&format!("P\t{at}\t{length}\t{file}\t{line}\n"));
+            }
             let Some(bindings) = self.dump_bindings.get(&function.body) else { continue };
             for (name, ty, glue, place, keep, scope) in bindings {
                 glues.push(*glue);
@@ -2951,7 +2991,9 @@ impl Codegen<'_> {
                                 Located::Register(number, true) => {
                                     text.push_str(&format!("R\t{start}\t{end}\tr\t{number}\n"));
                                 }
-                                Located::Register(_, false) => {}
+                                Located::Register(number, false) => {
+                                    text.push_str(&format!("R\t{start}\t{end}\tx\t{number}\n"));
+                                }
                             }
                         }
                     }
@@ -4873,6 +4915,11 @@ struct FnCodegen<'a, 'b> {
     /// the local that holds it, and the line each block a restart point
     /// leads to is on.
     probed: Option<ir::Value>,
+    /// The blocks a latent site stays out of, the line of the last, and
+    /// what they call.
+    tight_loops: Vec<bool>,
+    latent_line: Option<usize>,
+    latent_callee: Option<ir::FuncRef>,
     carrying: bool,
     carried: HashMap<usize, (String, usize)>,
     /// The site of the probe just placed, as a value and its number; that
@@ -5088,6 +5135,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             keeping,
             block: 0,
             probed: None,
+            tight_loops: crate::mir::tight_loops(&body.blocks),
+            latent_line: None,
+            latent_callee: None,
             carrying: false,
             carried: HashMap::new(),
             site_now: None,
@@ -5746,6 +5796,35 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         ir::SourceLoc::new(self.sites.len() as u32)
     }
 
+    /// In a build without probes, a place a logpoint can use at the start of
+    /// a line: a call that is nothing until then, and leaves every register
+    /// as it was. Not in a loop that calls nothing, where even that shows.
+    fn latent_site(&mut self, span: Span) {
+        let tight = self.tight_loops.get(self.block).copied().unwrap_or(false);
+        if !self.e.cg.dumps() || tight || span == Span::default() {
+            return;
+        }
+        let (_, line, _) = self.e.cg.sources().position(span.start);
+        if self.latent_line == Some(line) {
+            return;
+        }
+        self.latent_line = Some(line);
+        let callee = match self.latent_callee {
+            Some(callee) => callee,
+            None => {
+                let id = self.e.cg.runtime(Rt::Site);
+                let callee = self.e.cg.declare_func_in_func(id, self.e.fb.func);
+                let data = &mut self.e.fb.func.dfg.ext_funcs[callee];
+                data.patchable = true;
+                let signature = data.signature;
+                self.e.fb.func.dfg.signatures[signature].call_conv = cranelift_codegen::isa::CallConv::PreserveAll;
+                self.latent_callee = Some(callee);
+                callee
+            }
+        };
+        self.e.fb.ins().call(callee, &[]);
+    }
+
     /// In a debug build, notes whether a binding holds a value: a probe
     /// shows only those that do, and none whose value went away.
     fn mark(&mut self, local: Local, holds: bool) {
@@ -5859,6 +5938,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// In a debug build, a probe where a line starts: the debugger stops
     /// there when it is asked to, and reads the bindings.
     fn probe(&mut self, span: Span) {
+        if self.debug.is_none() {
+            self.latent_site(span);
+        }
         let Some(mut debug) = self.debug.take() else { return };
         let (file, line, _) = self.e.cg.sources().position(span.start);
         if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {

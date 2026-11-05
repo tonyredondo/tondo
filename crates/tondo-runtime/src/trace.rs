@@ -344,6 +344,11 @@ pub(crate) fn function_at(address: usize) -> Option<(usize, usize)> {
     find(address).map(|(_, start, index)| (index, start))
 }
 
+/// Where the program's function numbered `index` starts.
+pub(crate) fn function_start(index: usize) -> Option<usize> {
+    tables().next().and_then(|(_, table)| entries(table).get(index).map(|function| function.code))
+}
+
 /// The code of a function: its name, where it starts and ends, and where
 /// each of its lines starts.
 pub(crate) struct Code {

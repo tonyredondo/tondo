@@ -1151,6 +1151,14 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
         "dump_group" => push(&["dump", "group", &args.need("dir")?, "--json"]),
+        "logpoint" => {
+            push(&["logpoint", &args.need("program")?, &args.need("place")?]);
+            if let Some(text) = args.text("text") {
+                push(&[&text]);
+            }
+            let seconds = args.text("seconds").unwrap_or_else(|| "10".to_string());
+            push(&["--max", &args.text("max").unwrap_or_else(|| "20".to_string()), "--for", &seconds, "--json"]);
+        }
         "source" => {
             push(&["source", &args.need("file")?, "--from", &args.need("from")?, "--json"]);
             if let Some(line) = args.text("line") {
@@ -2113,6 +2121,19 @@ commit, which it brings the first time with the credentials of git. Gives where 
             ("file", "string!", "The file, as a stack names it: src/main.to, or greet/src/greet.to of a dependency."),
             ("from", "string!", "The dump, recording or executable that says where it came from."),
             ("line", "integer", "The line of its page at the provider."),
+        ],
+    },
+    Tool {
+        name: "logpoint",
+        description: "What a line of a running program holds each time it goes by, without stopping it, in a build \
+without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends after `max` times or `seconds`.",
+        kind: Kind::Reads,
+        params: &[
+            ("program", "string!", "The running program: its process ID or name."),
+            ("place", "string!", "The line, as src/main.to:12."),
+            ("text", "string", "What to say of each time, as `order {order.id}`; by default, every binding."),
+            ("max", "integer", "How many times, 20 by default."),
+            ("seconds", "integer", "For how long, 10 by default."),
         ],
     },
     Tool {

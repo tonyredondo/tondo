@@ -5105,3 +5105,23 @@ the error it would make. That keeps the code that writes edits small.
 
 A hint that a `pub` is for nothing lives in the editor only: in a program it
 is a tidy-up, in a library it is a mistake, and `tondo check` has no opinion.
+
+## A logpoint in production writes over a nothing the compiler left
+
+Reading a value at a line of a service that cannot stop needs code at that line.
+A debug or live build has it, and runs four to five times slower on code that
+computes. Patching any instruction of a Release build costs nothing until used,
+but moves code under a running program, and needs single-stepping that aarch64
+does not give a process. A check of a flag per line was the safe way: 102 % slower
+in a tight loop over an array, as a load and a branch per line add up and the
+cold call weighs on registers.
+
+Cranelift has what Wasmtime made for this: a patchable call in the `PreserveAll`
+convention, which clobbers nothing, written as `nop`s. That still costs 30 % in the
+same loop, where a call is a barrier the optimizer stops at, so a loop that calls
+nothing has no sites. Measured on five programs, the rest is noise, under 2 %, and
+under 1 % of size. Activating one writes a call over bytes that were put there for
+that, with every thread stopped: nothing moves, and no instruction is emulated.
+
+A line in such a loop is refused, saying the nearest that can take one. It would
+be hit millions of times anyway, and each hit forks.

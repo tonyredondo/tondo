@@ -604,6 +604,13 @@ fn executable(base: *mut u8, length: usize) -> Result<(), String> {
     if unsafe { libc::mprotect(base as *mut libc::c_void, length, libc::PROT_READ | libc::PROT_EXEC) } != 0 {
         return Err(format!("cannot make the patch code: {}", std::io::Error::last_os_error()));
     }
+    code_changed(base as usize, length);
+    Ok(())
+}
+
+/// Code was written at `base`: what the processor caches of it goes.
+pub(crate) fn code_changed(base: usize, length: usize) {
+    let base = base as *mut u8;
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     unsafe {
         unsafe extern "C" {
@@ -631,7 +638,6 @@ fn executable(base: *mut u8, length: usize) -> Result<(), String> {
         std::arch::asm!("dsb ish", "isb");
     }
     let _ = (base, length);
-    Ok(())
 }
 
 /// How a frame at a site of the old code moves to the new: the slot of its

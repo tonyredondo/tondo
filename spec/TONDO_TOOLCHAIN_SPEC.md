@@ -893,6 +893,19 @@ la suya en `tondo.toml`, con `{repo}`, `{commit}`, `{path}` y `{line}`:
 url = "https://git.acme.com/{repo}/blob/{commit}/{path}#L{line}"
 ~~~
 
+`tondo logpoint <pid|nombre> <archivo:línea> [<texto>] [--max <n>] [--for <segundos>]`
+muestra lo que una línea de un programa que corre tiene cada vez que pasa por ella, sin
+pararlo ni compilarlo de nuevo, también en un build sin sondas: con el texto
+`"pedido {order.id}"`, sus partes, y sin él, cada variable. Para eso el compilador
+deja al principio de cada línea de un build sin sondas una llamada que no es nada:
+unos `nop` que no tocan registros, salvo en los bucles que no llaman a nada, donde se
+notaría. El logpoint escribe la llamada con todos los hilos parados y la quita al
+llegar a `--max`, 100 por omisión, o al irse la herramienta. Cada vez detiene esa
+tarea mientras una copia del proceso muestra los valores, como en un volcado.
+Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambiar
+su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
+un 2 % como mucho, y el ejecutable crece menos del 1 %.
+
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.
 
@@ -1683,6 +1696,7 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks` y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
+| `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text` y `values` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

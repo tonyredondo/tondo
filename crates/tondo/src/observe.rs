@@ -1945,6 +1945,77 @@ pub(crate) fn blocked_text(graph: &Value) -> String {
     format!("{}\n{}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
 }
 
+/// `tondo logpoint <pid|name> <file:line> [<text>]`: what a line of a
+/// running program holds each time it goes by, up to `max` times or for
+/// `seconds`, without stopping it. `{user.id}` in the text reads a part.
+pub fn logpoint(
+    name: &str,
+    place: &str,
+    text: Option<&str>,
+    max: u64,
+    seconds: Option<u64>,
+    json: bool,
+) -> Result<(), String> {
+    let mut program = connect(name)?;
+    let answer = program.ask(&format!("logpoint {max} {place}"))?;
+    if let Some(error) = answer["error"].as_str() {
+        return Err(error.to_string());
+    }
+    eprintln!("tondo: a logpoint on {place}, in {} places: it ends after {max} times", answer["places"]);
+    let waiting = seconds.map(Duration::from_secs);
+    let _ = program.reader.get_ref().set_read_timeout(waiting);
+    let deadline = waiting.map(|waiting| std::time::Instant::now() + waiting);
+    let mut hits = Vec::new();
+    loop {
+        let mut line = String::new();
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            break;
+        }
+        match program.reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let Ok(hit) = serde_json::from_str::<Value>(&line) else { continue };
+        if hit.get("done").is_some() {
+            break;
+        }
+        if hit.get("hit").is_none() {
+            continue;
+        }
+        match json {
+            true => hits.push(json!({ "task": hit["task"], "text": logged(&hit, text), "values": hit["values"] })),
+            false => println!("{}", logged(&hit, text)),
+        }
+    }
+    if json {
+        crate::cli::print_json("logpoint", true, json!({ "hits": hits }));
+    }
+    Ok(())
+}
+
+/// A hit of a logpoint as a line: the text with its parts in place, or
+/// every binding.
+fn logged(hit: &Value, text: Option<&str>) -> String {
+    let values = hit["values"].as_array().map_or(&[][..], Vec::as_slice);
+    let frame = json!({ "bindings": values });
+    let at = values.first().and_then(|value| value["at"].as_str()).unwrap_or_default();
+    let shown = |value: &Value| value["value"].as_str().unwrap_or_default().to_string();
+    let Some(text) = text else {
+        let all: Vec<String> =
+            values.iter().map(|v| format!("{} = {}", v["name"].as_str().unwrap_or_default(), shown(v))).collect();
+        return format!("task {} {at}: {}", hit["task"], all.join(", "));
+    };
+    let (mut out, mut rest) = (String::new(), text);
+    while let Some((before, after)) = rest.split_once('{') {
+        let Some((path, tail)) = after.split_once('}') else { break };
+        out.push_str(before);
+        out.push_str(&dumped_value(&frame, path).map_or("?".to_string(), shown));
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `tondo blocked <pid|name>`: who waits for whom in a running program.
 pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
     let mut program = connect(name)?;

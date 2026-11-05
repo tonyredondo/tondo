@@ -2986,6 +2986,80 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
 }
 
 #[test]
+fn a_logpoint_reads_a_running_release_build() {
+    // Only Linux lets a program change its code.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("logpoint");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\ntype Order = { id: Int, total: Float }\n\n\
+        fn charge(order: Order, rate: Float): Float {\n    let fee = order.total * rate\n    \
+        let paid = order.total + fee\n    paid\n}\n\nfn tight(rows: Array[Int]): Int {\n    var sum = 0\n    \
+        var i = 0\n    for i < rows.length() {\n        sum = sum + rows[i]\n        i += 1\n    }\n    sum\n}\n\n\
+        fn scaled(value: Float): Float {\n    let more = value * 2.0\n    more + 1.0\n}\n\n\
+        fn main() {\n    var round = 0\n    var sum = 0.0\n    console.println(\"ready\")\n    \
+        let _ = console.flush()\n    let calls = [scaled]\n    for round < 3000 {\n        \
+        let order = Order { id: round, total: 10.0 + Float(round) }\n        sum = sum + charge(order, 0.25) + calls[round % 1](Float(round))\n        \
+        round += tight([1])\n        time.sleep(time.milliseconds(5))\n    }\n    console.println(\"{sum}\")\n}\n";
+    std::fs::write(dir.join("orders.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "orders.to", "--output", "orders"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut child =
+        Command::new(dir.join("orders")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    let pid = child.id().to_string();
+    let logpoint = |args: &[&str]| Command::new(tondo_bin).arg("logpoint").arg(&pid).args(args).output().unwrap();
+    // It serves the tools a moment after it starts.
+    let mut found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
+    for _ in 0..200 {
+        if found.status.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
+    }
+    assert!(found.status.success(), "{found:?}");
+    let found: Value = serde_json::from_slice(&found.stdout).unwrap();
+    let hits = found["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 2, "{found}");
+    // What it read is what the program had there.
+    let said = hits[0]["text"].as_str().unwrap();
+    let id: u64 = said.split_whitespace().nth(1).unwrap().parse().unwrap_or_else(|_| panic!("{said}"));
+    let total = said.rsplit(' ').next().unwrap();
+    assert_eq!(total.parse::<f64>().ok(), Some(10.0 + id as f64), "{said}");
+    // A number in a register, which only a logpoint's call keeps.
+    let line = program.lines().position(|l| l.contains("let more = value")).unwrap() + 1;
+    let place = format!("orders.to:{line}");
+    let numbers = logpoint(&[&place, "{value}", "--max", "3", "--json"]);
+    let numbers: Value = serde_json::from_slice(&numbers.stdout).unwrap();
+    let said: Vec<&str> = numbers["hits"].as_array().unwrap().iter().map(|h| h["text"].as_str().unwrap()).collect();
+    let read: Vec<f64> = said.iter().map(|hit| hit.parse().unwrap_or_else(|_| panic!("{said:?}"))).collect();
+    assert_eq!(read.len(), 3, "{numbers}");
+    assert!(read[1] == read[0] + 1.0 && read[2] == read[1] + 1.0, "{said:?}");
+    // A tight loop has no place, and it says which line has.
+    let line = program.lines().position(|l| l.contains("sum = sum + rows[i]")).unwrap() + 1;
+    let refused = logpoint(&[&format!("orders.to:{line}")]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success() && said.contains("tight loop") && said.contains("nearest"), "{said}");
+    // Once it ended, a logpoint can come again: it took itself out.
+    let again = logpoint(&["orders.to:8", "--max", "1", "--json"]);
+    assert!(again.status.success(), "{again:?}");
+    // One whose tool goes away goes too: this one sees nothing more.
+    let gone = logpoint(&["orders.to:8", "--max", "1000000", "--for", "1", "--json"]);
+    assert!(gone.status.success(), "{gone:?}");
+    // And all that changes nothing of what the program does.
+    let _ = Command::new("kill").args(["-TERM", &pid]).status();
+    let status = child.wait().unwrap();
+    assert!(status.code() == Some(143) || status.success(), "{status:?}");
+}
+
+#[test]
 fn dumps_leave_by_a_command_and_group_by_their_failure() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;
@@ -3619,8 +3693,9 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         assert!(said.read_line(&mut stop).unwrap() > 0, "the debugger ended before the request");
     }
     assert!(stop.contains("server.to:5"), "{stop}");
+    // `quit` ends what it debugs too.
+    std::io::Write::write_all(&mut commands, b"quit\n").unwrap();
     drop(commands);
-    let _ = debugger.kill();
     let _ = debugger.wait();
     // What came before it, in order.
     let events = tondo(&["dump", "read", dump.to_str().unwrap(), "events", "--json"]);
