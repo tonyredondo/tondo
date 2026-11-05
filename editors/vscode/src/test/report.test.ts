@@ -621,6 +621,7 @@ test('a dump report in a webview runs its own script only, and says what is clic
 });
 
 test('a logpoint asks for its text and condition only when they are given', () => {
+  assert.deepEqual(logpointArgs('7', 'a.to:3', '', 'n > 1', 1, 'd.json'), ['logpoint', '7', 'a.to:3', '--if', 'n > 1', '--dump', 'd.json', '--max', '1']);
   assert.deepEqual(logpointArgs('12', 'src/a.to:3', '', '', 100), ['logpoint', '12', 'src/a.to:3', '--max', '100']);
   assert.deepEqual(logpointArgs('12', 'a.to:3', 'at {x}', 'x > 1', 5), [
     'logpoint', '12', 'a.to:3', 'at {x}', '--if', 'x > 1', '--max', '5',

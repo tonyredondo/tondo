@@ -100,6 +100,11 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
       }
     }),
     vscode.commands.registerCommand('tondo.dumpReport', dumpReport),
+    vscode.commands.registerCommand('tondo.testFromDump', testFromDump),
+    vscode.commands.registerCommand('tondo.failureIssue', failureIssue),
+    vscode.commands.registerCommand('tondo.redactDump', redactDump),
+    vscode.commands.registerCommand('tondo.readCore', readCore),
+    vscode.commands.registerCommand('tondo.blocked', blocked),
     vscode.commands.registerCommand('tondo.logpoint', logpoint),
     vscode.commands.registerCommand('tondo.showFailures', showFailures),
     vscode.commands.registerCommand('tondo.clearFailures', () => failures.clear()),
@@ -132,7 +137,12 @@ async function showFailures(): Promise<void> {
   if (!dir || !root) {
     return;
   }
-  const ran = await exec(['dump', 'group', dir, '--json'], root);
+  const prompt = 'Only those new after this commit; empty, all of them';
+  const since = await vscode.window.showInputBox({ prompt });
+  if (since === undefined) {
+    return;
+  }
+  const ran = await exec(['dump', 'group', dir, ...(since ? ['--since', since] : []), '--json'], root);
   if (ran.code !== 0) {
     void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump group failed');
     return;
@@ -172,6 +182,12 @@ async function logpoint(): Promise<void> {
   if (condition === undefined) {
     return;
   }
+  const whole = await vscode.window.showInputBox({
+    prompt: 'A file for a dump of the whole program the first time; empty, none',
+  });
+  if (whole === undefined) {
+    return;
+  }
   const file = vscode.workspace.asRelativePath(editor.document.uri, false);
   const place = `${file}:${editor.selection.active.line + 1}`;
   logpoints.show(true);
@@ -179,13 +195,118 @@ async function logpoint(): Promise<void> {
   const title = `A logpoint on ${place}: Cancel takes it out`;
   const options = { location: vscode.ProgressLocation.Notification, title, cancellable: true };
   const ran = await vscode.window.withProgress(options, (_, token) =>
-    exec(logpointArgs(pid, place, text, condition, 100), path.dirname(editor.document.uri.fsPath), token, (line) =>
+    exec(logpointArgs(pid, place, text, condition, whole ? 1 : 100, whole), path.dirname(editor.document.uri.fsPath), token, (line) =>
       logpoints.appendLine(line),
     ),
   );
   if (ran.code !== 0 && ran.code !== null) {
     void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo logpoint failed');
   }
+}
+
+/** The dump to work on, picked, and the project it is of. */
+async function pickedDump(): Promise<{ file: string; root: string } | undefined> {
+  const picked = await vscode.window.showOpenDialog({
+    filters: { 'Tondo dumps': ['json', 'gz'], 'Cores and all files': ['*'] },
+    openLabel: 'The dump',
+  });
+  const file = picked?.[0].fsPath;
+  return file ? { file, root: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(file) } : undefined;
+}
+
+/** A test that fails as a dump did, in the module's test file. */
+async function testFromDump(): Promise<void> {
+  const dump = await pickedDump();
+  if (!dump) {
+    return;
+  }
+  const ran = await exec(['dump', 'test', dump.file, '--json'], dump.root);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump test failed');
+    return;
+  }
+  const made = JSON.parse(ran.stdout) as { file: string; test: string; reproduces: boolean };
+  const opened = await vscode.workspace.openTextDocument(path.resolve(dump.root, made.file));
+  await vscode.window.showTextDocument(opened, vscode.ViewColumn.Beside);
+  const said = made.reproduces ? 'fails as the dump did' : 'passes: the failure takes more than these values';
+  void vscode.window.showInformationMessage(`\`${made.test}\` ${said}.`);
+}
+
+/** A failure of a directory of dumps as an issue, beside the code. */
+async function failureIssue(): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    openLabel: 'The directory of the dumps',
+  });
+  const dir = picked?.[0].fsPath;
+  if (!dir) {
+    return;
+  }
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? dir;
+  const listed = await exec(['dump', 'group', dir, '--json'], root);
+  if (listed.code !== 0) {
+    void vscode.window.showErrorMessage(listed.stderr.trim() || 'tondo dump group failed');
+    return;
+  }
+  const groups = (JSON.parse(listed.stdout) as { groups: (Failure & { signature: string })[] }).groups;
+  const items = groups.map((group) => ({ label: group.message ?? group.signature, detail: group.at ?? '', group }));
+  const chosen = await vscode.window.showQuickPick(items, { placeHolder: 'The failure' });
+  if (!chosen) {
+    return;
+  }
+  const ran = await exec(['dump', 'issue', dir, chosen.group.signature], root);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump issue failed');
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument({ content: ran.stdout, language: 'markdown' });
+  await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+}
+
+/** A dump to share, without what the program held. */
+async function redactDump(): Promise<void> {
+  const dump = await pickedDump();
+  const output = dump && (await vscode.window.showSaveDialog({ saveLabel: 'The dump to share' }));
+  if (!dump || !output) {
+    return;
+  }
+  const ran = await exec(['dump', 'redact', dump.file, output.fsPath], dump.root);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump redact failed');
+  }
+}
+
+/** A core of the system as a dump, with the program it is of, opened to
+ *  debug. */
+async function readCore(): Promise<void> {
+  const core = await vscode.window.showOpenDialog({ openLabel: 'The core' });
+  const program = core && (await vscode.window.showOpenDialog({ openLabel: 'Its program' }));
+  if (!core || !program) {
+    return;
+  }
+  const output = `${core[0].fsPath}.dump.json`;
+  const args = ['dump', 'core', core[0].fsPath, '--executable', program[0].fsPath, '--output', output];
+  const ran = await exec(args, path.dirname(core[0].fsPath));
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump core failed');
+    return;
+  }
+  await vscode.commands.executeCommand('tondo.debugDump', vscode.Uri.file(output));
+}
+
+/** What the tasks of a running program wait for, beside the code. */
+async function blocked(): Promise<void> {
+  const pid = await pickProcess();
+  if (!pid) {
+    return;
+  }
+  const ran = await exec(['blocked', pid], os.tmpdir());
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo blocked failed');
+    return;
+  }
+  await show(ran.stdout);
 }
 
 /** A dump as one page beside the code, whose places open: here, or from the

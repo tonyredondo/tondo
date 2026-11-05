@@ -1086,10 +1086,18 @@ document.addEventListener('click', (event) => {
 }
 
 /** What `tondo logpoint` runs for a line of a running program. */
-export function logpointArgs(pid: string, place: string, text: string, condition: string, max: number): string[] {
+export function logpointArgs(
+  pid: string,
+  place: string,
+  text: string,
+  condition: string,
+  max: number,
+  dump = '',
+): string[] {
   const shown = text ? [text] : [];
   const only = condition ? ['--if', condition] : [];
-  return ['logpoint', pid, place, ...shown, ...only, '--max', String(max)];
+  const whole = dump ? ['--dump', dump] : [];
+  return ['logpoint', pid, place, ...shown, ...only, ...whole, '--max', String(max)];
 }
 
 /** A failure of `tondo dump group --json`. */

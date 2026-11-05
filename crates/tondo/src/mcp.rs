@@ -1064,6 +1064,8 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--filter", "filter");
             option(&mut argv, "--glob", "glob");
             option(&mut argv, "--exact", "exact");
+            option(&mut argv, "--affected", "affected");
+            switch(&mut argv, "--lock-order", "lock_order");
             switch(&mut argv, "--library", "library");
             switch(&mut argv, "--update-snapshots", "update_snapshots");
             // Benchmarks, measured and compared (testing 10.4).
@@ -1083,6 +1085,11 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             }
             building(&mut argv);
             argv.extend(args.list("flags"));
+        }
+        "test_bisect" => {
+            push(&["test", &path, "--bisect", &args.need("good")?, "--json"]);
+            option(&mut argv, "--filter", "filter");
+            option(&mut argv, "--exact", "exact");
         }
         "doc_test" => push(&["doc-test", &args.need("file")?]),
         "bind" => {
@@ -1156,6 +1163,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 push(&["--since", &since]);
             }
         }
+        "dump_issue" => push(&["dump", "issue", &args.need("dir")?, &args.need("signature")?]),
+        "dump_report" => push(&["dump", "report", &args.need("file")?, "--output", &args.need("output")?]),
+        "dump_redact" => push(&["dump", "redact", &args.need("file")?, &args.need("output")?]),
+        "blocked" => push(&["blocked", &args.need("program")?, "--json"]),
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             if let Some(frame) = args.text("frame") {
@@ -2032,6 +2043,8 @@ same.",
             ("filter", "string", "The tests whose ids contain this."),
             ("glob", "string", "The tests whose ids match this pattern."),
             ("exact", "string", "The test with this id."),
+            ("affected", "string", "Only the tests that reach what changed since this commit."),
+            ("lock_order", "boolean", "Fail a test that takes locks in orders that can deadlock."),
             ("list", "boolean", "List the tests instead of running them."),
             ("coverage", "boolean", "Also say which lines, functions and ways of branches of the project's code ran."),
             LIBRARY,
@@ -2173,6 +2186,45 @@ are 3 bugs are 3 lines.",
             ("dir", "string!", "The directory of the dumps."),
             ("since", "string", "Only the failures first seen after this commit, in the repository here."),
         ],
+    },
+    Tool {
+        name: "test_bisect",
+        description: "The first commit after `good` where a test fails, in a worktree of its own, with the tests as they \
+are here, so one written today finds when a bug came. A commit that does not compile says nothing.",
+        kind: Kind::Runs,
+        params: &[
+            ("path", "string", "The project directory; the server's directory by default."),
+            ("good", "string!", "A commit where the test passes."),
+            ("filter", "string", "The tests whose ids contain this."),
+            ("exact", "string", "The test with this id."),
+        ],
+    },
+    Tool {
+        name: "blocked",
+        description: "What the tasks of a running program wait for, and who holds them up.",
+        kind: Kind::Reads,
+        params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "dump_issue",
+        description: "A failure of a directory of dumps as an issue to file, in Markdown.",
+        kind: Kind::Reads,
+        params: &[
+            ("dir", "string!", "The directory of the dumps."),
+            ("signature", "string!", "The failure, or the start of its signature, as `dump_group` gives it."),
+        ],
+    },
+    Tool {
+        name: "dump_report",
+        description: "All a dump says as one page of HTML, to read or attach.",
+        kind: Kind::Edits,
+        params: &[("file", "string!", "The dump."), ("output", "string!", "Where to write the page.")],
+    },
+    Tool {
+        name: "dump_redact",
+        description: "A dump to share, with where each task was and nothing the program held.",
+        kind: Kind::Edits,
+        params: &[("file", "string!", "The dump."), ("output", "string!", "Where to write the redacted dump.")],
     },
     Tool {
         name: "dump_test",

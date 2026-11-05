@@ -57,7 +57,11 @@ project, running, debugging and testing it.
   in a running program, in a panel, without stopping it; *Show Failures From
   Dumps* marks in the code where the dumps of a directory fell, and the locks
   they found taken in orders that can deadlock; *Debug a Dump* opens a core of the
-  system too;
+  system too, and *Read a Core of the System* one whose program is elsewhere;
+  *Write a Test From a Dump* a test that fails as the dump did, *Find the Commit That
+  Broke a Test* when it came, *Write a Failure as an Issue* and *Redact a Dump* what to
+  share; *Run the Tests a Change Reaches*; *Run the Tests Looking at the Order of
+  Locks*; *Show What a Running Program Waits For*;
   *Compare Two Dumps* and *What Keeps Growing Over Dumps*, what changed between
   dumps of a program and what grows over them;
   *Compare Two Recordings*, where a run that passed and one that failed part

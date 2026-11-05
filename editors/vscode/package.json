@@ -409,6 +409,46 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.testFromDump",
+        "title": "Write a Test From a Dump",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.failureIssue",
+        "title": "Write a Failure as an Issue",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.redactDump",
+        "title": "Redact a Dump",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.readCore",
+        "title": "Read a Core of the System",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.blocked",
+        "title": "Show What a Running Program Waits For",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.affectedTests",
+        "title": "Run the Tests a Change Reaches",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.lockOrderTests",
+        "title": "Run the Tests Looking at the Order of Locks",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.bisectTest",
+        "title": "Find the Commit That Broke a Test",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.compareDumps",
         "title": "Compare Two Dumps",
         "category": "Tondo"
@@ -539,7 +579,7 @@
       },
       {
         "command": "tondo.showProfile",
-        "title": "Show a Profile…",
+        "title": "Show a Profile\u2026",
         "category": "Tondo"
       },
       {
@@ -698,6 +738,10 @@
         {
           "command": "tondo.clearProfile",
           "when": "tondo.profiled"
+        },
+        {
+          "command": "tondo.bisectTest",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -764,6 +808,11 @@
           "command": "tondo.profileTest",
           "when": "controllerId == tondo && testId =~ /^(?!doc:)/",
           "group": "1_run"
+        },
+        {
+          "command": "tondo.bisectTest",
+          "when": "controllerId == tondo",
+          "group": "tondo@9"
         }
       ],
       "testing/item/gutter": [

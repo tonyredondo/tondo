@@ -560,6 +560,18 @@ export function registerTesting(
   const profile = controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false, RUNS_HERE);
   // The profile's run, beside each test's Run and Debug, and in their
   // menus, where VS Code offers only the default profiles.
+  const wholeRun = async (args: string[], title: string) => {
+    const dir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!dir) {
+      return;
+    }
+    const ran = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+      (_, token) => exec(args, dir, token),
+    );
+    const document = await vscode.workspace.openTextDocument({ content: `${ran.stdout}${ran.stderr}`, language: 'plaintext' });
+    await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  };
   const included = (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => (chosen?.length ? chosen : test ? [test] : undefined);
   context.subscriptions.push(
     vscode.commands.registerCommand('tondo.profileTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
@@ -588,6 +600,33 @@ export function registerTesting(
       const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
       await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
     }),
+    // The commit that broke a test, among those after one where it passed.
+    vscode.commands.registerCommand('tondo.bisectTest', async (test?: vscode.TestItem) => {
+      const dir = test && projectOf.get(test);
+      const good = dir && (await vscode.window.showInputBox({ prompt: 'A commit where the test passes' }));
+      if (!dir || !good) {
+        return;
+      }
+      const title = `Looking for the commit that broke ${test.label}`;
+      const ran = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+        (_, token) => exec(['test', '--bisect', good, '--exact', test.id], dir, token),
+      );
+      const content = `${ran.stdout}${ran.stderr}`;
+      const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
+      await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+    }),
+    // Tests that are not one test's run: what a change reaches, and the
+    // orders of locks of all of them.
+    vscode.commands.registerCommand('tondo.affectedTests', async () => {
+      const rev = await vscode.window.showInputBox({ prompt: 'What changed since this commit', value: 'HEAD' });
+      if (rev) {
+        await wholeRun(['test', '--affected', rev], 'Running the tests the change reaches');
+      }
+    }),
+    vscode.commands.registerCommand('tondo.lockOrderTests', () =>
+      wholeRun(['test', '--lock-order'], 'Running the tests, looking at the order of locks'),
+    ),
     // A search runs until it is stopped, from a notification.
     vscode.commands.registerCommand('tondo.fuzzTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
       const request = new vscode.TestRunRequest(included(test, chosen), undefined, fuzz);

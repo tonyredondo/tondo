@@ -495,6 +495,16 @@ fn reads_dumps_sources_and_a_running_program() {
     let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
     let text = said(&mut agent, "dump_read", json!({ "file": dump, "view": "why" }));
     assert!(text.contains("it fell"), "{text}");
+    // A failure to file, and a dump to show.
+    let signature = found["groups"][0]["signature"].as_str().unwrap();
+    let text = said(&mut agent, "dump_issue", json!({ "dir": dumps, "signature": &signature[..6] }));
+    assert!(text.contains("Seen 3 times"), "{text}");
+    let page = dir.join("report.html");
+    said(&mut agent, "dump_report", json!({ "file": dump, "output": page }));
+    assert!(std::fs::read_to_string(&page).unwrap().contains("<html"));
+    let shared = dir.join("shared.dump.json");
+    said(&mut agent, "dump_redact", json!({ "file": dump, "output": shared }));
+    assert!(shared.exists());
     // The file is here as it was built.
     let text = said(&mut agent, "source", json!({ "file": "falls.to", "from": dump }));
     assert!(text.contains("\"state\":\"same\""), "{text}");
@@ -517,6 +527,8 @@ fn reads_dumps_sources_and_a_running_program() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    let waits = said(&mut agent, "blocked", json!({ "program": pid }));
+    assert!(serde_json::from_str::<Value>(&waits).is_ok(), "{waits}");
     let _ = child.kill();
     let _ = child.wait();
     agent.stop();
@@ -529,4 +541,43 @@ fn reads_dumps_sources_and_a_running_program() {
         }
         false => assert!(text.contains("needs Linux"), "{text}"),
     }
+}
+
+#[test]
+fn tests_by_what_changed_and_by_commit() {
+    let main = "pub fn twice(n: Int): Int {\n    n * 2\n}\n\npub fn alone(n: Int): Int {\n    n\n}\n\nfn main() {}\n";
+    let dir = project(
+        "mcp-changes",
+        &[("tondo.toml", "[package]\nname = \"changes\"\nversion = \"0.1.0\"\n"), ("src/main.to", main)],
+    );
+    let git = |args: &[&str]| {
+        let run = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{run:?}");
+        String::from_utf8_lossy(&run.stdout).trim().to_string()
+    };
+    git(&["init", "--quiet"]);
+    std::fs::write(
+        dir.join("src/main_test.to"),
+        "test doubles {\n    assert(twice(2) == 4)\n}\n\ntest stays {\n    assert(alone(1) == 1)\n}\n",
+    )
+    .unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "good"]);
+    let good = git(&["rev-parse", "HEAD"]);
+    std::fs::write(dir.join("src/main.to"), main.replace("n * 2", "n * 3")).unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "broke it"]);
+    let bad = git(&["rev-parse", "HEAD"]);
+    let mut agent = Agent::start(&dir);
+    let (found, _) = agent.call("test_bisect", json!({ "good": good, "filter": "doubles" }));
+    assert_eq!(found["report"]["commit"], bad.as_str(), "{found}");
+    // What changed since the good commit reaches one of the two.
+    let (ran, text) = agent.call("test", json!({ "affected": good }));
+    assert_eq!(ran["report"]["summary"]["executed"], 1, "{ran}{text}");
+    agent.stop();
 }
