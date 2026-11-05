@@ -130,16 +130,6 @@ impl Facts {
         self.0.get(&(a, b)).copied()
     }
 
-    fn nodes(&self) -> Vec<Node> {
-        let mut nodes: Vec<Node> = Vec::new();
-        for node in self.0.keys().flat_map(|&(a, b)| [a, b]) {
-            if !nodes.contains(&node) {
-                nodes.push(node);
-            }
-        }
-        nodes
-    }
-
     /// Adds `a - b <= k` and what follows from it; false when the facts
     /// contradict each other, on a way the program never takes.
     fn add(&mut self, a: Node, b: Node, k: i128) -> bool {
@@ -152,15 +142,16 @@ impl Facts {
         if self.bound(b, a).is_some_and(|back| back + k < 0) {
             return false;
         }
-        let mut nodes = self.nodes();
-        for node in [a, b] {
-            if !nodes.contains(&node) {
-                nodes.push(node);
+        // Every `x - a` and `b - y` known gives `x - y` through the new fact.
+        let (mut into, mut from) = (vec![(a, 0)], vec![(b, 0)]);
+        for (&(x, y), &known) in &self.0 {
+            if y == a {
+                into.push((x, known));
+            }
+            if x == b {
+                from.push((y, known));
             }
         }
-        // Every `x - a` and `b - y` known gives `x - y` through the new fact.
-        let into: Vec<(Node, i128)> = nodes.iter().filter_map(|&x| Some((x, self.bound(x, a)?))).collect();
-        let from: Vec<(Node, i128)> = nodes.iter().filter_map(|&y| Some((y, self.bound(b, y)?))).collect();
         for &(x, xa) in &into {
             for &(y, by) in &from {
                 let k = xa + k + by;
