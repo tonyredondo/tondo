@@ -845,7 +845,10 @@ un ejecutable que no esté donde el core dice o para que lo lea lo demás. Da la
 y dónde estaba cada tarea, también las que esperaban y a qué, y cada hilo con código
 del programa, con las líneas de la tabla del ejecutable, que un build con `--strip`
 conserva; en un programa que guardaba eventos, también ellos y las peticiones sin
-responder. No da contadores ni memoria por sitio. Un
+responder. Da los números y las cadenas de cada marco que el optimizador dejó, de
+las tareas paradas también, con los registros que guardaron y lo que dicen las tablas
+de marcos del ejecutable; un valor de un tipo del programa necesita su código para
+mostrarse y no sale. No da contadores ni memoria por sitio. Un
 ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
 
 `tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función

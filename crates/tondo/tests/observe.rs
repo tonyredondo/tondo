@@ -4846,6 +4846,9 @@ fn reads_a_core_with_the_tasks_that_waited() {
     assert!(tasks.contains("a task to end"), "{tasks}");
     let events = tondo(&["dump", "read", core, "events", "--json"]).to_string();
     assert!(events.contains("\"spawned\""), "{events}");
+    // A number of a task that waited, through the frames of the runtime.
+    let locals = tondo(&["dump", "read", core, "locals", "2", "--json"]).to_string();
+    assert!(locals.contains("rounds") && locals.contains("\"2\""), "{locals}");
 
     // As a file, for a program that moved, for all that reads a dump.
     let moved = dir.join("elsewhere");

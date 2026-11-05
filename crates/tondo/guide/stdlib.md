@@ -728,8 +728,9 @@ A program that dies with no dump left, as one with no `TONDO_DUMP`, may leave a
 core of the system, on Linux. `tondo dump read <core> stacks` reads it as a dump,
 with the program where the core says, and `tondo dump core <core> --executable
 <file> --output <path>` writes the dump, for a program that is somewhere else: the
-signal and where every task and thread was, even in a build with `--strip`, not
-what they held. `coredumpctl dump <pid> -o <file>` takes one out of systemd.
+signal, where every task and thread was and what it waited for, even in a build
+with `--strip`, and the numbers and strings the optimizer left; not values of your
+own types. `coredumpctl dump <pid> -o <file>` takes one out of systemd.
 
 `tondo dump test <file>` turns a failure into a test: it calls the innermost function
 of the task that failed whose arguments the dump has, with those values, in the

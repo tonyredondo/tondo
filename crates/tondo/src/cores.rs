@@ -1,11 +1,13 @@
 //! A core the system wrote of a Linux program, read as a dump (toolchain
 //! 7.5): the signal that ended it, and where each of its tasks and threads
-//! was, by the trace table of the program's executable. A core is the memory
-//! of a process with no runtime left to ask, so what the program held, as
-//! values and counters, is not read.
+//! was, by the trace table of the program's executable, and the numbers and
+//! strings in its frames. A core is the memory of a process with no runtime
+//! left to ask: what only the program's code can show, and counters, are not
+//! read.
 
 use crate::roots::Roots;
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +26,13 @@ const PARKED: u8 = 2;
 /// much it wrote, and that many bytes of a ring of `EVENTS`.
 const EVENTS_MARK: &[u8; 16] = b"TONDOEVENTS1\n\0\0\0";
 const EVENTS: usize = 1 << 16;
+
+/// What starts the text of the bindings of a build without probes
+/// (`codegen::dump_table`), in a string of the runtime: its length is two
+/// words before, and what is shown of a string is at most `SHOWN` long.
+pub const BINDINGS: &str = "TONDOBINDINGS1\n";
+const STRING_HEADER: u64 = 24;
+const SHOWN: u64 = 4096;
 
 /// The longest stack a dump keeps.
 const FRAMES: usize = 256;
@@ -73,6 +82,8 @@ struct Thread {
     fp: u64,
     /// Where a call on aarch64 leaves its return address.
     link: Option<u64>,
+    /// Its registers, by their DWARF numbers.
+    registers: [Option<u64>; 32],
 }
 
 /// A file mapped into the process: its addresses, where they are in it,
@@ -112,9 +123,24 @@ fn notes(bytes: &[u8], machine: u16, found: &mut Notes) -> Option<()> {
                 if found.threads.is_empty() {
                     found.signal = u16_at(note, 12)? as u32;
                 }
+                let mut registers = [None; 32];
+                if machine == 62 {
+                    let order = [10, 12, 11, 5, 13, 14, 4, 9, 8, 7, 6, 3, 2, 1, 0];
+                    let numbers = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+                    numbers.iter().zip(order).for_each(|(&number, index)| registers[number] = register(index));
+                } else {
+                    (0..31).for_each(|number| registers[number] = register(number));
+                }
                 found.threads.push(match machine {
-                    62 => Thread { id, pc: register(16)?, sp: register(19)?, fp: register(4)?, link: None },
-                    _ => Thread { id, pc: register(32)?, sp: register(31)?, fp: register(29)?, link: register(30) },
+                    62 => Thread { id, pc: register(16)?, sp: register(19)?, fp: register(4)?, link: None, registers },
+                    _ => Thread {
+                        id,
+                        pc: register(32)?,
+                        sp: register(31)?,
+                        fp: register(29)?,
+                        link: register(30),
+                        registers,
+                    },
                 });
             }
             3 => {
@@ -199,7 +225,8 @@ impl<'a> Memory<'a> {
 
 /// The trace table of the program, as `trace` reads it in the runtime.
 struct Code<'a> {
-    functions: Vec<(u64, u32, u32)>,
+    /// Each function: its code and size, where its entry is, and its number.
+    functions: Vec<(u64, u32, u32, usize)>,
     blob: &'a [u8],
     files: usize,
 }
@@ -213,8 +240,8 @@ impl<'a> Code<'a> {
         let (blob, files) = (u64_at(&table, 32)?, u64_at(&table, 40)? as usize);
         let entries = memory.read(entries, count.min(memory.program.len()) * 16)?;
         let mut functions = Vec::with_capacity(count);
-        for entry in entries.as_chunks::<16>().0 {
-            functions.push((u64_at(entry, 0)?, u32_at(entry, 8)?, u32_at(entry, 12)?));
+        for (index, entry) in entries.as_chunks::<16>().0.iter().enumerate() {
+            functions.push((u64_at(entry, 0)?, u32_at(entry, 8)?, u32_at(entry, 12)?, index));
         }
         functions.sort();
         Some(Code { functions, blob: memory.in_program(blob.wrapping_sub(memory.bias))?, files })
@@ -223,7 +250,7 @@ impl<'a> Code<'a> {
     /// The function whose code holds the byte before `address`.
     fn function(&self, address: u64) -> Option<(u64, usize)> {
         let at = self.functions.partition_point(|f| f.0 < address).checked_sub(1)?;
-        let (code, size, meta) = self.functions[at];
+        let (code, size, meta, _) = self.functions[at];
         (address <= code.wrapping_add(size as u64)).then_some((code, meta as usize))
     }
 
@@ -313,6 +340,33 @@ impl<'a> Code<'a> {
         (found.0 > 0 && file != u32::MAX).then_some((file, found.0 as u32, record))
     }
 
+    /// The number of a function, where its code starts.
+    fn number(&self, start: u64) -> Option<usize> {
+        let at = self.functions.binary_search_by_key(&start, |f| f.0).ok()?;
+        Some(self.functions[at].3)
+    }
+
+    /// The frames code stands for, from the innermost out: each with its
+    /// inlined call, `u32::MAX` for the function's own, and its place.
+    fn scopes(&self, address: u64, exact: bool) -> Option<Vec<(u32, String)>> {
+        let (_, meta) = self.function(if exact { address.wrapping_add(1) } else { address })?;
+        let site = if exact { None } else { self.call(address) };
+        let (file, line, record) = match site {
+            Some(site) => (u32_at(self.blob, site + 12)?, u32_at(self.blob, site + 4)?, u32_at(self.blob, site + 20)?),
+            None => self.line(if exact { address } else { address - 1 })?,
+        };
+        let mut scopes = vec![(record, format!("{}:{line} in {}", self.named(file)?, self.name(meta, record)?))];
+        let mut outer = record;
+        while outer != u32::MAX {
+            let at = self.record(meta, outer)?;
+            let parent = u32_at(self.blob, at + 16)?;
+            let (file, line) = (self.named(u32_at(self.blob, at + 12)?)?, u32_at(self.blob, at + 4)?);
+            scopes.push((parent, format!("{file}:{line} in {}", self.name(meta, parent)?)));
+            outer = parent;
+        }
+        Some(scopes)
+    }
+
     /// A frame as a dump has it: at `address`, the next instruction to run
     /// when `exact` and otherwise where a call returns to.
     fn frame(&self, address: u64, exact: bool) -> Option<Value> {
@@ -338,6 +392,230 @@ impl<'a> Code<'a> {
             json!({ "function": self.name(meta, record)?, "file": self.named(file)?, "line": line, "inlined": inlined }),
         )
     }
+}
+
+/// Where a binding is over a run of code.
+#[derive(Clone, Copy)]
+enum Located {
+    Frame(i64),
+    Register(usize),
+}
+
+/// What the table of a build without probes says of a binding.
+struct Bound {
+    name: String,
+    ty: String,
+    slot: Option<i64>,
+    pointer: bool,
+    ranges: Vec<(u32, u32, Located)>,
+    scope: u32,
+    from: u32,
+}
+
+/// What it says of a function: the registers it saved, and where, and its
+/// bindings.
+#[derive(Default)]
+struct Bindings {
+    saved: Vec<(usize, i64)>,
+    bound: Vec<Bound>,
+}
+
+/// The bindings of each function, by its number, from the text a build
+/// without probes keeps.
+fn bindings(program: &[u8]) -> HashMap<usize, Bindings> {
+    let mut functions: HashMap<usize, Bindings> = HashMap::new();
+    let mark = BINDINGS.as_bytes();
+    let Some(start) = program.windows(mark.len()).position(|window| window == mark) else { return functions };
+    let length = start.checked_sub(16).and_then(|at| u64_at(program, at)).unwrap_or(0) as usize;
+    let Some(text) = program.get(start..start + length) else { return functions };
+    let (text, mut current) = (String::from_utf8_lossy(text), 0);
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let function = functions.entry(current).or_default();
+        match fields[..] {
+            ["F", index] => current = index.parse().unwrap_or(0),
+            ["C", register, at] => function.saved.extend(register.parse().ok().zip(at.parse().ok())),
+            ["B", name, ty, kind, value, _, scope, from] => {
+                let value: i64 = value.parse().unwrap_or(0);
+                function.bound.push(Bound {
+                    name: name.to_string(),
+                    ty: ty.to_string(),
+                    slot: (kind == "s").then_some(value),
+                    pointer: kind != "s" && value == 1,
+                    ranges: Vec::new(),
+                    scope: scope.parse().unwrap_or(u32::MAX),
+                    from: from.parse().unwrap_or(0),
+                });
+            }
+            ["R", start, end, kind, at] => {
+                let place = match kind {
+                    "f" => at.parse().ok().map(Located::Frame),
+                    "r" => at.parse().ok().map(Located::Register),
+                    _ => None,
+                };
+                if let (Ok(start), Ok(end), Some(place), Some(bound)) =
+                    (start.parse(), end.parse(), place, function.bound.last_mut())
+                {
+                    bound.ranges.push((start, end, place));
+                }
+            }
+            _ => {}
+        }
+    }
+    functions
+}
+
+/// What a value of a type the program did not define reads as: the rest
+/// have a form only the program's code knows.
+fn decoded(ty: &str, word: u64, memory: &Memory) -> Option<String> {
+    Some(match ty {
+        "Int" | "Int64" => (word as i64).to_string(),
+        "Int32" => (word as i32).to_string(),
+        "Int16" => (word as i16).to_string(),
+        "Int8" => (word as i8).to_string(),
+        "UInt" | "UInt64" => word.to_string(),
+        "UInt32" => (word as u32).to_string(),
+        "UInt16" => (word as u16).to_string(),
+        "UInt8" | "Byte" => (word as u8).to_string(),
+        "Bool" => (word as u8 != 0).to_string(),
+        "Float" | "Float64" => format!("{:?}", f64::from_bits(word)),
+        "Float32" => format!("{:?}", f32::from_bits(word as u32)),
+        "Char" => format!("{:?}", char::from_u32(word as u32)?),
+        "String" => {
+            let length = memory.word(word.checked_add(8)?)?;
+            let bytes = memory.read(word.checked_add(STRING_HEADER)?, length.min(SHOWN) as usize)?;
+            serde_json::to_string(&String::from_utf8_lossy(&bytes)).ok()?
+        }
+        _ => return None,
+    })
+}
+
+impl Bound {
+    /// The word of the binding in the frame at `fp`, at `offset` of its code.
+    fn word(&self, fp: u64, offset: u32, registers: &[Option<u64>; 32], memory: &Memory) -> Option<u64> {
+        if let Some(slot) = self.slot {
+            return memory.word(fp.wrapping_add_signed(slot));
+        }
+        let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
+        let word = match place {
+            Located::Frame(at) => memory.word(fp.wrapping_add_signed(16 + at))?,
+            Located::Register(number) => (*registers.get(number)?)?,
+        };
+        match self.pointer {
+            true => memory.word(word),
+            false => Some(word),
+        }
+    }
+}
+
+/// Where a stack starts: the frame and code of what stands innermost, the
+/// next instruction when `exact` and otherwise where it goes on, with the
+/// registers known there.
+struct Start {
+    fp: u64,
+    pc: Option<u64>,
+    exact: bool,
+    registers: [Option<u64>; 32],
+}
+
+/// The frame tables of the executable, which say what a frame of the
+/// runtime saved, and where.
+struct Unwinder<'a> {
+    frames: gimli::EhFrame<gimli::EndianSlice<'a, gimli::LittleEndian>>,
+    bases: gimli::BaseAddresses,
+    bias: u64,
+}
+
+impl<'a> Unwinder<'a> {
+    fn of(program: &'a [u8], bias: u64) -> Option<Unwinder<'a>> {
+        use cranelift_object::object::{Object, ObjectSection};
+        let file = cranelift_object::object::File::parse(program).ok()?;
+        let section = file.section_by_name(".eh_frame")?;
+        let frames = gimli::EhFrame::new(section.data().ok()?, gimli::LittleEndian);
+        let bases = gimli::BaseAddresses::default().set_eh_frame(section.address());
+        Some(Unwinder { frames, bases, bias })
+    }
+
+    /// The registers of the caller of a frame at `fp` of code that goes on
+    /// at `address`, where it saved them.
+    fn restored(&self, address: u64, fp: u64, registers: &mut [Option<u64>; 32], memory: &Memory) -> Option<()> {
+        use gimli::UnwindSection;
+        let mut context = gimli::UnwindContext::new();
+        let at = address.wrapping_sub(self.bias).wrapping_sub(1);
+        let row =
+            self.frames.unwind_info_for_address(&self.bases, &mut context, at, gimli::EhFrame::cie_from_offset).ok()?;
+        // Frames keep their pointer, so what is saved is relative to it.
+        let frame = fp.wrapping_add(16);
+        for (register, rule) in row.registers() {
+            if let (gimli::RegisterRule::Offset(offset), Some(slot)) = (rule, registers.get_mut(register.0 as usize)) {
+                *slot = memory.word(frame.wrapping_add_signed(*offset));
+            }
+        }
+        Some(())
+    }
+}
+
+/// What reading values takes.
+struct Reading<'a> {
+    tables: HashMap<usize, Bindings>,
+    unwinder: Option<Unwinder<'a>>,
+    callee: &'static [usize],
+}
+
+/// The numbers and strings of the frames of a task: as `dump` has them,
+/// but for what only the program's code can show.
+fn values(task: u64, start: Start, memory: &Memory, code: &Code, reading: &Reading) -> Vec<Value> {
+    let Start { mut fp, pc, exact, mut registers } = start;
+    let mut frames = Vec::new();
+    frames.extend(pc.map(|pc| (fp, pc, exact)));
+    while frames.len() < FRAMES && fp != 0 {
+        let (Some(next), Some(back)) = (memory.word(fp), memory.word(fp.wrapping_add(8))) else { break };
+        if back == 0 || next == fp {
+            break;
+        }
+        frames.push((next, back, false));
+        fp = next;
+    }
+    let (mut found, mut at) = (Vec::new(), 0);
+    for (fp, address, exact) in frames {
+        let place = code.function(if exact { address.wrapping_add(1) } else { address });
+        let Some((start, _)) = place else {
+            // A frame of the runtime says where it saved what it used.
+            let restored = reading.unwinder.as_ref().and_then(|u| u.restored(address, fp, &mut registers, memory));
+            if restored.is_none() {
+                registers = [None; 32];
+            }
+            continue;
+        };
+        let offset = (if exact { address } else { address - 1 }).wrapping_sub(start) as u32;
+        let table = code.number(start).and_then(|number| reading.tables.get(&number));
+        for (record, place) in code.scopes(address, exact).unwrap_or_default() {
+            if place.contains(" in spawn") {
+                continue;
+            }
+            let line = place.split(" in ").next().and_then(|at| at.rsplit(':').next());
+            let line: u32 = line.and_then(|line| line.parse().ok()).unwrap_or(u32::MAX);
+            for bound in table.iter().flat_map(|t| &t.bound).filter(|b| b.scope == record && b.from <= line) {
+                let word = bound.word(fp, offset, &registers, memory);
+                if let Some(value) = word.and_then(|word| decoded(&bound.ty, word, memory)) {
+                    found.push(json!({
+                        "task": task, "frame": at, "at": place, "name": bound.name, "type": bound.ty,
+                        "value": value, "parts": [],
+                    }));
+                }
+            }
+            at += 1;
+        }
+        let mut caller = [None; 32];
+        reading.callee.iter().for_each(|&register| caller[register] = registers[register]);
+        for &(register, saved) in table.iter().flat_map(|t| &t.saved) {
+            if let Some(slot) = caller.get_mut(register) {
+                *slot = memory.word(fp.wrapping_add_signed(16 + saved));
+            }
+        }
+        registers = caller;
+    }
+    found
 }
 
 /// Adds to `stack` what the chain of frame pointers compiled code and the
@@ -368,6 +646,17 @@ fn stack(thread: &Thread, memory: &Memory, code: &Code) -> Vec<u64> {
     }
     follow(thread.fp, memory, &mut stack);
     stack
+}
+
+/// A task or a thread as the dump has it.
+struct Row {
+    id: u64,
+    main: bool,
+    state: &'static str,
+    stack: Vec<u64>,
+    stopped: bool,
+    wait: Option<Value>,
+    cancelled: bool,
 }
 
 /// A task in memory: its saved stack pointer, number and state, whether it
@@ -542,7 +831,25 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         memory.kept.iter().find(|segment| holds(segment, first)).is_some_and(|segment| holds(&segment, second))
     };
     let saved = if machine == 62 { 5 * 8 } else { 10 * 8 };
-    let mut rows: Vec<(u64, bool, &str, Vec<u64>, bool, Option<Value>, bool)> = Vec::new();
+    let callee: &'static [usize] =
+        if machine == 62 { &[3, 12, 13, 14, 15] } else { &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28] };
+    let reading = Reading { tables: bindings(&bytes), unwinder: Unwinder::of(&bytes, bias), callee };
+    let of_thread = |task: u64, thread: &Thread| {
+        let start = Start { fp: thread.fp, pc: Some(thread.pc), exact: true, registers: thread.registers };
+        values(task, start, &memory, &code, &reading)
+    };
+    // What `switch` left on a task's stack: what it saved, in the order of
+    // the registers it says, and where the task goes on.
+    let switched = |sp: u64| {
+        let mut registers = [None; 32];
+        let order: &[usize] = if machine == 62 { &[15, 14, 13, 12, 3] } else { callee };
+        for (slot, &register) in order.iter().enumerate() {
+            registers[register] = memory.word(sp.wrapping_add(slot as u64 * 8));
+        }
+        (registers, memory.word(sp.wrapping_add(saved + 8)))
+    };
+    let mut bound = Vec::new();
+    let mut rows: Vec<Row> = Vec::new();
     let threads: Vec<(&Thread, Vec<u64>)> =
         found.threads.iter().map(|thread| (thread, stack(thread, &memory, &code))).collect();
     let mut placed = vec![false; threads.len()];
@@ -552,13 +859,34 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         match thread.filter(|_| task.state != PARKED) {
             Some(index) => {
                 placed[index] = true;
-                rows.push((task.id, task.main, "runs", threads[index].1.clone(), index == 0, None, task.cancelled));
+                bound.extend(of_thread(task.id, threads[index].0));
+                rows.push(Row {
+                    id: task.id,
+                    main: task.main,
+                    state: "runs",
+                    stack: threads[index].1.clone(),
+                    stopped: index == 0,
+                    wait: None,
+                    cancelled: task.cancelled,
+                });
             }
             None => {
                 let mut stack = Vec::new();
-                follow(memory.word(task.sp.wrapping_add(saved)).unwrap_or(0), &memory, &mut stack);
+                let fp = memory.word(task.sp.wrapping_add(saved)).unwrap_or(0);
+                follow(fp, &memory, &mut stack);
+                let (registers, pc) = switched(task.sp);
+                let start = Start { fp, pc, exact: false, registers };
+                bound.extend(values(task.id, start, &memory, &code, &reading));
                 let state = if task.state == PARKED { "waits" } else { "ready" };
-                rows.push((task.id, task.main, state, stack, false, task.wait(), task.cancelled));
+                rows.push(Row {
+                    id: task.id,
+                    main: task.main,
+                    state,
+                    stack,
+                    stopped: false,
+                    wait: task.wait(),
+                    cancelled: task.cancelled,
+                });
             }
         }
     }
@@ -567,16 +895,25 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     for (index, (thread, stack)) in threads.iter().enumerate() {
         let compiled = stack.iter().any(|&address| code.function(address.wrapping_add(1)).is_some());
         if !placed[index] && (index == 0 || compiled) {
-            rows.push((thread.id as u64, false, "runs", stack.clone(), index == 0, None, false));
+            bound.extend(of_thread(thread.id as u64, thread));
+            rows.push(Row {
+                id: thread.id as u64,
+                main: false,
+                state: "runs",
+                stack: stack.clone(),
+                stopped: index == 0,
+                wait: None,
+                cancelled: false,
+            });
         }
     }
-    rows.sort_by_key(|row| !row.4);
+    rows.sort_by_key(|row| !row.stopped);
 
     let mut frames = Map::new();
     let image = program.display().to_string();
     let own = mapped.map_or("", |mapped| mapped.path.as_str());
     let mut tasks = Vec::new();
-    for (id, main, state, addresses, stopped, wait, cancelled) in rows {
+    for Row { id, main, state, stack: addresses, stopped, wait, cancelled } in rows {
         for (at, &address) in addresses.iter().enumerate() {
             let frame = code.frame(address, stopped && at == 0).unwrap_or_else(|| {
                 match found.files.iter().find(|file| file.start <= address && address < file.end) {
@@ -632,7 +969,7 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     Ok(json!({
         "dump": 1,
         "reason": "fault",
-        "message": format!("{signal}{place}, from a system core, which says where tasks were and not what they held"),
+        "message": format!("{signal}{place}, from a system core, which says where tasks were and the numbers and strings they held"),
         "info": { "pid": found.threads[0].id, "program": image, "arguments": arguments, "uptime_ms": 0 },
         "time_ms": time,
         "stopped": true,
@@ -643,7 +980,7 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         "events": events,
         "sources": Roots::text_in(&bytes).unwrap_or_default(),
         "lock_order": [],
-        "values": [],
+        "values": bound,
         "frames": frames,
     }))
 }

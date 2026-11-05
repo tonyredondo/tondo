@@ -5143,9 +5143,10 @@ matters is on the stacks of tasks. Each task starts with a mark while it lives, 
 a scan of the memory finds them, without knowing how the runtime's lists are laid
 out, and even when those lists are what broke. The stack of a waiting task follows
 from what it saved; the lines come from the trace table of the executable, which
-has a mark too, as a `--strip` build has no symbols. Values would need the layout of
-every type and the code that shows it, which a core does not run, so it says where
-things were and no more, and turns into a dump for all that already reads one.
+has a mark too, as a `--strip` build has no symbols. It turns into a dump for all
+that already reads one. Numbers and strings have a form known here, so they are
+read, across the runtime's frames by the executable's frame tables; a value of a
+type of the program would need the code that shows it, which a core does not run.
 
 ## A copy of a process has one thread, and the memory of them all
 

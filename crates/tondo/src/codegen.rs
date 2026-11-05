@@ -2958,7 +2958,7 @@ impl Codegen<'_> {
     /// each it shows, and `S` a probe's file, line and function; and the
     /// glue that shows each binding, in the order of the `L` lines.
     fn dump_table(&mut self, id: DataId) {
-        let (mut text, mut glues) = (String::new(), Vec::new());
+        let (mut text, mut glues) = (crate::cores::BINDINGS.to_string(), Vec::new());
         for (index, function) in self.traced.iter().enumerate() {
             text.push_str(&format!("F\t{index}\n"));
             for (register, at) in &function.saved {
