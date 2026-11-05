@@ -721,16 +721,18 @@ struct Unwinder<'a> {
     frames: gimli::EhFrame<gimli::EndianSlice<'a, gimli::LittleEndian>>,
     bases: gimli::BaseAddresses,
     bias: u64,
+    /// The number of the frame pointer in those tables.
+    frame_register: u16,
 }
 
 impl<'a> Unwinder<'a> {
-    fn of(program: &'a [u8], bias: u64) -> Option<Unwinder<'a>> {
+    fn of(program: &'a [u8], bias: u64, frame_register: u16) -> Option<Unwinder<'a>> {
         use cranelift_object::object::{Object, ObjectSection};
         let file = cranelift_object::object::File::parse(program).ok()?;
         let section = file.section_by_name(".eh_frame")?;
         let frames = gimli::EhFrame::new(section.data().ok()?, gimli::LittleEndian);
         let bases = gimli::BaseAddresses::default().set_eh_frame(section.address());
-        Some(Unwinder { frames, bases, bias })
+        Some(Unwinder { frames, bases, bias, frame_register })
     }
 
     /// The registers of the caller of a frame at `fp` of code that goes on
@@ -741,8 +743,14 @@ impl<'a> Unwinder<'a> {
         let at = address.wrapping_sub(self.bias).wrapping_sub(1);
         let row =
             self.frames.unwind_info_for_address(&self.bases, &mut context, at, gimli::EhFrame::cie_from_offset).ok()?;
-        // Frames keep their pointer, so what is saved is relative to it.
-        let frame = fp.wrapping_add(16);
+        // Frames keep their pointer, and the table says how far it is from
+        // where what is saved counts from: on aarch64 not a fixed distance.
+        // From anything else this frame says nothing certain.
+        let gimli::CfaRule::RegisterAndOffset { register, offset } = row.cfa() else { return None };
+        if register.0 != self.frame_register {
+            return None;
+        }
+        let frame = fp.wrapping_add_signed(*offset);
         for (register, rule) in row.registers() {
             if let (gimli::RegisterRule::Offset(offset), Some(slot)) = (rule, registers.get_mut(register.0 as usize)) {
                 *slot = memory.word(frame.wrapping_add_signed(*offset));
@@ -1057,7 +1065,8 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     let callee: &'static [usize] =
         if machine == 62 { &[3, 12, 13, 14, 15] } else { &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28] };
     let (tables, shapes) = bindings(&bytes);
-    let reading = Reading { tables, shapes, unwinder: Unwinder::of(&bytes, bias), callee };
+    let frame_register = if machine == 62 { 6 } else { 29 };
+    let reading = Reading { tables, shapes, unwinder: Unwinder::of(&bytes, bias, frame_register), callee };
     let of_thread = |task: u64, thread: &Thread| {
         let start = Start { fp: thread.fp, pc: Some(thread.pc), exact: true, registers: thread.registers };
         values(task, start, &memory, &code, &reading)
