@@ -3205,6 +3205,45 @@ fn a_call_in_a_replay_changes_nothing() {
 }
 
 #[test]
+fn a_call_in_the_replay_of_a_test_changes_nothing() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-test-call");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"called\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "pub fn doubled(value: Int): Int {\n    value * 2\n}\n\nfn main() {}\n")
+        .unwrap();
+    let test = "test failing {\n    let value = 21\n    let result = doubled(value)\n    assert(result == 41, \"not it\")\n}\n";
+    std::fs::write(dir.join("src/main_test.to"), test).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let ran = Command::new(tondo_bin).args(["test", "--record", "recordings"]).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let recording = std::fs::read_dir(dir.join("recordings")).unwrap().next().unwrap().unwrap().path();
+    let mut child = Command::new(tondo_bin)
+        .arg("debug")
+        .arg("--json")
+        .arg("--replay")
+        .arg(&recording)
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let script = "break src/main_test.to:4\ncontinue\ncall doubled(value) + 1\nprint result\nquit\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let value = |name: &str| lines.iter().find(|l| l["name"] == name).map(|l| l["value"].clone());
+    assert_eq!(value("doubled(value) + 1"), Some(json!("43")), "{lines:?}");
+    assert_eq!(value("result"), Some(json!("42")), "{lines:?}");
+}
+
+#[test]
 fn a_task_that_waits_shows_what_its_registers_held() {
     // The tables of the runtime's frames are those of ELF.
     if !cfg!(target_os = "linux") {

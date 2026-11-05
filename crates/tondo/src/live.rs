@@ -180,6 +180,8 @@ pub struct Options {
     pub statically: bool,
     pub target: Option<crate::target::Target>,
     pub libraries: Vec<String>,
+    /// The build of a project's tests, which a patch analyzes the same.
+    pub tests: bool,
 }
 
 /// The object of a live build of the program at `path`, whose manifest it
@@ -533,6 +535,7 @@ fn save(
         "dir": std::env::current_dir().map_err(|e| e.to_string())?,
         "path": path,
         "static": options.statically,
+        "tests": options.tests,
         "target": options.target.map(crate::target::Target::name),
         "libraries": options.libraries,
         "capacity": build.capacity,
@@ -611,6 +614,7 @@ fn patched(pid: u32, ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, Stri
         statically: manifest["static"].as_bool().unwrap_or(false),
         target: manifest["target"].as_str().and_then(|t| crate::target::Target::parse(t).ok()),
         libraries: strings("libraries"),
+        tests: manifest["tests"] == true,
     };
     let dir = std::path::PathBuf::from(manifest["dir"].as_str().unwrap_or("."));
     let here = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -675,7 +679,7 @@ pub fn call(
 ) -> Result<String, String> {
     let file = place.split_once(" in ").and_then(|(at, _)| at.rsplit_once(':')).map(|(file, _)| file);
     let file = file.ok_or("the program runs: `pause` stops it, or a breakpoint")?;
-    let ending = format!("    let value = {expression}\n    \"{{value}}\"");
+    let ending = format!("    let tondoCalled = {expression}\n    \"{{tondoCalled}}\"");
     let (slot, names) = compiled(pid, ask, file, "tondoDebugCall", "String", expression, &ending, bindings)
         .map_err(|e| e.replace("a function runs", "a call runs"))?;
     let answer = ask(&format!("call {slot} {}", names.join(" ")))?;
@@ -798,7 +802,10 @@ fn patch(
     let strings = |key: &str| -> Vec<String> {
         manifest[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect()
     };
-    let mut analysis = crate::driver::analyze(path)?;
+    let mut analysis = match manifest["tests"] == true {
+        true => crate::driver::analyze_tests(path, false)?,
+        false => crate::driver::analyze(path)?,
+    };
     if analysis.program.is_none() {
         return Err(Refused::Diagnostics(analysis.diags.render(&analysis.sources)));
     }

@@ -121,6 +121,7 @@ fn main() -> ExitCode {
                     list: false,
                     coverage: false,
                     fuzz: false,
+                    live: false,
                 };
                 let built = build_tests(path, &build)?;
                 Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
@@ -655,7 +656,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
     let (list, coverage) = (options.list, options.counting() || options.fuzz.is_some());
     let fuzz = options.fuzz.is_some();
-    let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage, fuzz };
+    let live = options.record.is_some();
+    let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage, fuzz, live };
     if let Some(reference) = against {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
     }
@@ -833,6 +835,8 @@ struct TestBuild {
     /// For the search of `--fuzz`, which counts dependencies too and takes
     /// values from the code (10.6).
     fuzz: bool,
+    /// Recorded, so that a replay can call the program's code in a copy.
+    live: bool,
 }
 
 /// The executable of a project's tests and their tree, built unless what
@@ -840,7 +844,7 @@ struct TestBuild {
 /// compile. A list gets the tree without the executable.
 fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
     let (coverage, fuzz) = (build.coverage, build.fuzz);
-    let dir = tondo::runner::build_dir(path, build.statically, build.debug, coverage, fuzz, build.target)?;
+    let dir = tondo::runner::build_dir(path, build.statically, build.debug, coverage, fuzz, build.live, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
         return Ok(Some((executable, tree)));
@@ -872,6 +876,15 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
                 std::fs::write(dir.join("dictionary"), dictionary).map_err(|e| e.to_string())?;
             }
             object
+        }
+        false if build.live => {
+            let options = tondo::live::Options {
+                statically: build.statically,
+                target: build.target,
+                libraries: analysis.libraries.clone(),
+                tests: true,
+            };
+            tondo::live::compile(&analysis, path, &options)?
         }
         false => driver::object(&analysis, build.debug, build.target)?,
     };
@@ -1056,6 +1069,7 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
             list: false,
             coverage: false,
             fuzz: false,
+            live: false,
         };
         let Some((executable, tree)) = build_tests(&project, &build)? else { return Ok(ExitCode::FAILURE) };
         let test = test.to_string_lossy();
@@ -1967,6 +1981,7 @@ fn object(analysis: &driver::Analysis, path: &Path, options: &BuildOptions) -> R
         statically: options.statically,
         target: options.target,
         libraries: options.libraries.clone(),
+        tests: false,
     };
     tondo::live::compile(analysis, path, &live)
 }
