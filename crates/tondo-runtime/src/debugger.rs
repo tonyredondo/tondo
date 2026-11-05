@@ -1359,7 +1359,13 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
     if super::replay::threaded() {
         return Err("a copy of the replay would lose its threads of C".into());
     }
-    match unsafe { libc::fork() } {
+    // What the debugger's thread may hold is held across the fork, so that
+    // the copy, without that thread, has it free: it asks for this one by
+    // `on_task`, and may still be on its way to wait for it.
+    let locks = (state(), CLIENT.lock(), WORKED.lock(), WORK.lock());
+    let forked = unsafe { libc::fork() };
+    drop(locks);
+    match forked {
         -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
         0 => {
             kept(table);
