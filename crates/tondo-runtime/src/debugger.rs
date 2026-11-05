@@ -1505,8 +1505,20 @@ type TaskStop = (u64, Option<usize>, usize, (usize, usize));
 /// a line each on `out`.
 fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usize))>, from: usize, out: i32) {
     RENDERING.store(true, Ordering::Relaxed);
-    for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
-        unsafe { libc::signal(signal, libc::SIG_DFL) };
+    // A value that breaks this copy only skips that binding: at once, as
+    // a core takes seconds, and without a word on the program's stderr.
+    extern "C" fn broke(_: i32) {
+        unsafe { libc::_exit(1) };
+    }
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = broke as *const () as usize;
+        action.sa_flags = libc::SA_ONSTACK;
+        for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
+        libc::setrlimit(libc::RLIMIT_CORE, &libc::rlimit { rlim_cur: 0, rlim_max: 0 });
+        libc::dup2(libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY), 2);
     }
     let _quiet = super::heap::Quiet::enter();
     let mut stops: Vec<TaskStop> =
