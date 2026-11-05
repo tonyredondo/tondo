@@ -1523,6 +1523,8 @@ fn render(table: Option<&Table>, here: Option<(Option<usize>, usize, (usize, usi
     };
     let release = table.is_none().then(dump_functions);
     for (task, pc, frame, bounds) in stops {
+        // Past the frames of the Rust library, which may have no pointers.
+        let frame = if pc.is_none() { super::trace::through(frame, bounds) } else { frame };
         if let Some(table) = table {
             let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: String::new() };
             let mut stack = frames(table, &stop);
@@ -2003,6 +2005,8 @@ struct Tracked {
     /// Where each line of the program's code that runs goes: its task, its
     /// probe and its site, which another run of the program compares.
     trail: Option<std::io::BufWriter<std::fs::File>>,
+    /// What went wrong writing it, which the scan says when it ends.
+    trail_failed: Option<String>,
 }
 
 /// A line of a task: its probe, its site and the task.
@@ -2215,9 +2219,10 @@ fn tracking(table: &Table, here: Stop, tick: u64) {
     }
     if let Some(trail) = tracked.trail.as_mut() {
         let _outside = super::replay::Outside::enter();
-        let _ = trail.write_all(&task.to_le_bytes());
-        let _ = trail.write_all(&tick.to_le_bytes());
-        let _ = trail.write_all(&(site as u64).to_le_bytes());
+        let line = [task, tick, site as u64].map(u64::to_le_bytes).concat();
+        if let Err(wrong) = trail.write_all(&line) {
+            tracked.trail_failed = Some(wrong.to_string());
+        }
     }
     let before = tracked.before.replace((tick, site));
     tracked.lines.insert(task, (tick, site));
@@ -2294,7 +2299,14 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
         }
         _ => {
             FOLLOWING.store(false, Ordering::Relaxed);
-            let found = tracked.take().unwrap_or_default();
+            let mut found = tracked.take().unwrap_or_default();
+            if let Some(mut trail) = found.trail.take() {
+                let _outside = super::replay::Outside::enter();
+                std::io::Write::flush(&mut trail).map_err(|e| format!("cannot write the lines of the run: {e}"))?;
+                if let Some(wrong) = found.trail_failed.take() {
+                    return Err(format!("cannot write the lines of the run: {wrong}"));
+                }
+            }
             let received: Vec<String> = found
                 .received
                 .iter()

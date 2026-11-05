@@ -2690,6 +2690,9 @@ unsafe fn end_in_panic(mut code: u32, message: *const Str, location: *const Str)
             }
         }
         if !suppressed {
+            // Where the walk of the stack starts, before the frames of the
+            // dump, which may lose it.
+            diagnostics::faulted_at(0, trace::frame_pointer(), tasks::stack_bounds().unwrap_or((0, 0)));
             diagnostics::crash_dump("panic", &format!("{text}\n --> {location}"), trace::here_frames(), true);
         }
     }

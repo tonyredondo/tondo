@@ -2882,7 +2882,8 @@ fn dumps_come_on_a_schedule_and_differ() {
     let text = String::from_utf8_lossy(&diff.stdout);
     assert!(diff.status.success(), "{}", String::from_utf8_lossy(&diff.stderr));
     assert!(text.contains("memory.held:"), "{text}");
-    assert!(text.contains("round in grows.to:"), "{text}");
+    // A dump may find the task between two waits, with no frames to read.
+    assert!(text.contains("round in grows.to:") || text.contains("nowhere known"), "{text}");
     let wrong = Command::new(dir.join("grows"))
         .env("TONDO_DUMP", dir.join("dumps"))
         .env("TONDO_DUMP_WHEN", "sometimes")

@@ -1626,6 +1626,9 @@ fn trail_of(dir: &Path) -> Result<Trail, String> {
     done?;
     let bytes = std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
     let _ = std::fs::remove_file(&file);
+    if bytes.is_empty() {
+        return Err(format!("the replay of {} kept none of its lines in {}", dir.display(), file.display()));
+    }
     let word = |at: &[u8]| u64::from_le_bytes(at.try_into().expect("8 bytes"));
     let mut trail = Trail::new();
     for line in bytes.as_chunks::<24>().0 {

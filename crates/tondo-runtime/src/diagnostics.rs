@@ -1080,7 +1080,8 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
     out
 }
 
-/// Where a fault stopped the program: its code, its frame and its stack.
+/// Where a crash stopped the program: the code of a fault, its frame and its
+/// stack.
 static FAULTED: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
 
 pub(crate) fn faulted_at(pc: usize, fp: usize, (low, high): (usize, usize)) {
@@ -1112,7 +1113,7 @@ pub(crate) fn faulted_registers() -> [Option<usize>; 32] {
 /// here. The code of a fault, its frame and its stack.
 fn here_now() -> (Option<usize>, usize, (usize, usize)) {
     match FAULTED.each_ref().map(|slot| slot.load(Ordering::SeqCst)) {
-        [pc, fp, low, high] if pc != 0 => (Some(pc), fp, (low, high)),
+        [pc, fp, low, high] if fp != 0 => ((pc != 0).then_some(pc), fp, (low, high)),
         _ => (None, super::trace::frame_pointer(), super::tasks::stack_bounds().unwrap_or((0, 0))),
     }
 }
