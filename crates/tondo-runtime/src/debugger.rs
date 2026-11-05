@@ -11,7 +11,7 @@ use expression::{Evaluator, Expr};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 
 mod expression;
 
@@ -3241,10 +3241,15 @@ static WORK_DONE: Condvar = Condvar::new();
 
 /// Runs `work` on the held task `task`, as the debugger's thread waits:
 /// `None` when the task does not take it within a while.
-fn on_task<T: Send>(task: u64, work: impl FnOnce() -> T + Send) -> Option<T> {
-    let mut out: Option<T> = None;
-    let place = &mut out as *mut Option<T> as usize;
-    let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || unsafe { *(place as *mut Option<T>) = Some(work()) });
+fn on_task<T: Send + 'static>(task: u64, work: impl FnOnce() -> T + Send) -> Option<T> {
+    // Not on this thread's stack: a checkpoint forks in the job and goes on
+    // in the copy without this thread, whose stack the next thread there gets.
+    let out: Arc<Mutex<Option<T>>> = Arc::new(Mutex::new(None));
+    let place = out.clone();
+    let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || {
+        let done = work();
+        *place.lock().unwrap_or_else(|e| e.into_inner()) = Some(done);
+    });
     // The job borrows what this thread holds, which waits until it ran.
     let job: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(job) };
     *WORKED.lock().unwrap_or_else(|e| e.into_inner()) = false;
@@ -3263,7 +3268,7 @@ fn on_task<T: Send>(task: u64, work: impl FnOnce() -> T + Send) -> Option<T> {
         }
         drop(WORK_DONE.wait_while(worked, |done| !*done));
     }
-    out
+    out.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 fn clipped(text: &str) -> String {
