@@ -1246,13 +1246,14 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
         number += 1;
         let path = dir.join(format!("{program}-{}-{number}.dump.json", std::process::id()));
         let text = dump("schedule", &why, None, Some(std::time::Duration::from_millis(100)));
-        if std::fs::write(&path, text).is_ok() {
-            written.push_back(path);
-        }
-        while written.len() > schedule.keep.max(1) {
+        // The oldest goes first: the program may end at any moment.
+        while written.len() >= schedule.keep.max(1) {
             if let Some(oldest) = written.pop_front() {
                 let _ = std::fs::remove_file(oldest);
             }
+        }
+        if std::fs::write(&path, text).is_ok() {
+            written.push_back(path);
         }
     }
 }
