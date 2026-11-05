@@ -5109,3 +5109,57 @@ fn reads_a_core_of_macos() {
     assert!(stacks.contains("stays.to:5 in stay"), "{stacks}");
     assert!(stacks.contains("in main"), "{stacks}");
 }
+
+#[test]
+fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    use std::io::{Read, Write};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-serve");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    std::fs::write(dir.join("falls.to"), "fn main() {\n    panic(\"it <fell>\")\n}\n").unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{built:?}");
+    let fall = || {
+        let ran = Command::new(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+        assert!(!ran.status.success());
+    };
+    let mut server = Command::new(tondo_bin)
+        .args(["dump", "serve"])
+        .arg(dir.join("dumps"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut url = String::new();
+    BufReader::new(server.stdout.take().unwrap()).read_line(&mut url).unwrap();
+    let address = url.trim().trim_start_matches("http://").trim_end_matches('/').to_string();
+    let get = |path: &str| {
+        let mut stream = std::net::TcpStream::connect(&address).unwrap();
+        write!(stream, "GET {path} HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        answer
+    };
+    assert!(get("/").contains("0 failures in 0 dumps"));
+    // A dump that comes is on the page, escaped, and opens its report.
+    fall();
+    let page = get("/");
+    assert!(page.contains("1 failures in 1 dumps") && page.contains("it &lt;fell&gt;"), "{page}");
+    let link = page.split("href=\"").nth(1).unwrap().split('"').next().unwrap();
+    assert!(get(link).contains("falls.to"), "{link}");
+    // A request names failures and nothing else of this machine.
+    assert!(get("/failure/..%2f..%2fetc%2fpasswd").starts_with("HTTP/1.1 404"));
+    assert!(get("/etc/passwd").starts_with("HTTP/1.1 404"));
+    server.kill().unwrap();
+    server.wait().unwrap();
+    // And once, to a file.
+    let page = dir.join("page.html");
+    let args = ["dump", "serve", "dumps", "--output", "page.html"];
+    assert!(Command::new(tondo_bin).args(args).current_dir(&dir).status().unwrap().success());
+    assert!(std::fs::read_to_string(page).unwrap().contains("it &lt;fell&gt;"));
+}

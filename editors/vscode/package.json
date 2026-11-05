@@ -434,6 +434,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.serveDumps",
+        "title": "Show the Failures of a Directory in a Browser",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.affectedTests",
         "title": "Run the Tests a Change Reaches",
         "category": "Tondo"

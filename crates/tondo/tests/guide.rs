@@ -119,6 +119,7 @@ fn what_observes_is_in_the_tools_and_the_editor() {
         ("tondo dump report", "dump_report", "tondo.dumpReport"),
         ("tondo dump trend", "dump_trend", "tondo.dumpTrend"),
         ("tondo dump test", "dump_test", "tondo.testFromDump"),
+        ("tondo dump serve", "dump_serve", "tondo.serveDumps"),
         ("tondo dump core", "dump_core", "tondo.readCore"),
     ];
     for (usage, tool, editor) in reached {

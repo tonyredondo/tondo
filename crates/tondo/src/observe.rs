@@ -1276,6 +1276,90 @@ pub fn issue(dir: &std::path::Path, wanted: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A page of the failures of a directory of dumps, the most frequent first,
+/// each a link to `link` of its signature when there is one.
+fn failures_page(dir: &std::path::Path, live: bool) -> Result<String, String> {
+    use crate::profile::escape;
+    let groups = groups_in(dir)?;
+    let refresh = if live { "<meta http-equiv=\"refresh\" content=\"5\">" } else { "" };
+    let mut rows = String::new();
+    for group in &groups {
+        let text = |key: &str| escape(group[key].as_str().unwrap_or_default());
+        let signature = text("signature");
+        let short = |key: &str| text(key).chars().take(10).collect::<String>();
+        let name = match live {
+            true => format!("<a href=\"/failure/{signature}\">{}</a>", text("message")),
+            false => text("message"),
+        };
+        rows.push_str(&format!(
+            "<tr><td>{}</td><td>{name}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            group["count"],
+            text("at"),
+            short("first_commit"),
+            short("last_commit"),
+        ));
+    }
+    let shown = escape(&dir.display().to_string());
+    Ok(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">{refresh}<title>Failures of {shown}</title>\
+         <style>body{{font:14px system-ui;margin:2em}}table{{border-collapse:collapse}}\
+         td,th{{border-bottom:1px solid #ccc;padding:.4em .8em;text-align:left}}</style></head><body>\
+         <h1>Failures of {shown}</h1><p>{} failures in {} dumps.</p><table><tr><th>Times</th><th>Failure</th>\
+         <th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table></body></html>\n",
+        groups.len(),
+        groups.iter().filter_map(|group| group["count"].as_u64()).sum::<u64>(),
+    ))
+}
+
+/// `tondo dump serve <dir>`: the failures of a directory as a page on this
+/// machine, up to date as dumps come; or written once, with `--output`.
+pub fn serve(dir: &std::path::Path, port: u16, output: Option<&std::path::Path>) -> Result<(), String> {
+    use std::io::Read;
+    if let Some(output) = output {
+        let page = failures_page(dir, false)?;
+        return std::fs::write(output, page).map_err(|e| format!("cannot write {}: {e}", output.display()));
+    }
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("cannot listen: {e}"))?;
+    let address = listener.local_addr().map_err(|e| e.to_string())?;
+    println!("http://{address}/");
+    let _ = std::io::stdout().flush();
+    for stream in listener.incoming().flatten() {
+        let mut stream = stream;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        // All of the head: what is left unread would reset the connection.
+        let (mut request, mut part) = (Vec::new(), [0; 2048]);
+        while !request.windows(4).any(|end| end == b"\r\n\r\n") && request.len() < 1 << 16 {
+            match stream.read(&mut part) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => request.extend_from_slice(&part[..read]),
+            }
+        }
+        let request = String::from_utf8_lossy(&request);
+        let path = request.split_whitespace().nth(1).unwrap_or("/");
+        // A failure is named by its signature: no path of the machine comes
+        // from the request.
+        let page = match path.strip_prefix("/failure/") {
+            Some(wanted) => groups_in(dir).ok().and_then(|groups| {
+                let group = groups.into_iter().find(|group| group["signature"] == wanted)?;
+                let file = PathBuf::from(group["file"].as_str()?);
+                Some(report_html(&load(&file).ok()?))
+            }),
+            None if path == "/" => failures_page(dir, true).ok(),
+            None => None,
+        };
+        let (status, body) = match page {
+            Some(body) => ("200 OK", body),
+            None => ("404 Not Found", "nothing here".to_string()),
+        };
+        let head = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(body.as_bytes()));
+    }
+    Ok(())
+}
+
 /// `tondo dump report <file>`: all a dump says, as one page to read or to
 /// attach to an issue. A place is a link an editor follows.
 pub fn report(path: &std::path::Path, output: Option<&std::path::Path>) -> Result<(), String> {

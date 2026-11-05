@@ -870,6 +870,11 @@ la entrada, como lo da el kernel: con `|/usr/bin/tondo dump core - --output
 /var/dumps/%e-%p.dump.json` en `core_pattern` cada fallo deja un volcado y no un core
 de gigas.
 
+`tondo dump serve <dir> [--port <n>]` sirve en `127.0.0.1` una página con los fallos de
+un directorio, que se actualiza al llegar volcados, y el informe de cada uno; solo esta
+máquina la ve, y una petición solo nombra un fallo por su firma. Con `--output <archivo>`
+escribe la página una vez.
+
 `tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función
 más interna de la tarea que falló de la que el volcado tiene todos los argumentos, o
 la del marco `<n>`, y escribe en el archivo de tests de su módulo un test que la llama

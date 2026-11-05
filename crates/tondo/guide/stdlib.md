@@ -734,6 +734,9 @@ with `--strip`, and the values the optimizer left, your own types too, with
 `|/usr/bin/tondo dump core - --output /var/dumps/%e-%p.dump.json` leaves a dump of
 each crash instead of a core.
 
+`tondo dump serve <dir>` shows the failures of a directory as a page on this machine,
+up to date as dumps come, each opening its report.
+
 `tondo dump test <file>` turns a failure into a test: it calls the innermost function
 of the task that failed whose arguments the dump has, with those values, in the
 module's test file, and says whether it fails the same way. A build with `--debug`

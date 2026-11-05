@@ -1244,6 +1244,14 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         ["group", dir, "--since", commit] => {
             tondo::observe::group(Path::new(dir), Some(commit), json).map(|()| ExitCode::SUCCESS)
         }
+        ["serve", dir] => tondo::observe::serve(Path::new(dir), 0, None).map(|()| ExitCode::SUCCESS),
+        ["serve", dir, "--port", port] => {
+            let port = port.parse().map_err(|_| usage("--port takes a port"))?;
+            tondo::observe::serve(Path::new(dir), port, None).map(|()| ExitCode::SUCCESS)
+        }
+        ["serve", dir, "--output", output] => {
+            tondo::observe::serve(Path::new(dir), 0, Some(Path::new(output))).map(|()| ExitCode::SUCCESS)
+        }
         ["issue", dir, signature] => tondo::observe::issue(Path::new(dir), signature).map(|()| ExitCode::SUCCESS),
         ["redact", file, output] => {
             tondo::observe::redact(Path::new(file), Path::new(output)).map(|()| ExitCode::SUCCESS)

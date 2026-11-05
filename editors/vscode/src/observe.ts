@@ -105,6 +105,8 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.redactDump', redactDump),
     vscode.commands.registerCommand('tondo.readCore', readCore),
     vscode.commands.registerCommand('tondo.blocked', blocked),
+    vscode.commands.registerCommand('tondo.serveDumps', serveDumps),
+    { dispose: () => serving?.kill() },
     vscode.commands.registerCommand('tondo.logpoint', logpoint),
     vscode.commands.registerCommand('tondo.showFailures', showFailures),
     vscode.commands.registerCommand('tondo.clearFailures', () => failures.clear()),
@@ -293,6 +295,28 @@ async function readCore(): Promise<void> {
     return;
   }
   await vscode.commands.executeCommand('tondo.debugDump', vscode.Uri.file(output));
+}
+
+/** The page of failures this window serves, one at a time. */
+let serving: ReturnType<typeof spawn> | undefined;
+
+/** The failures of a directory as a page that stays up to date. */
+async function serveDumps(): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    openLabel: 'The directory of the dumps',
+  });
+  const dir = picked?.[0].fsPath;
+  if (!dir) {
+    return;
+  }
+  serving?.kill();
+  const child = spawn(tondo(), ['dump', 'serve', dir]);
+  serving = child;
+  child.stdout?.once('data', (data: Buffer) => {
+    void vscode.env.openExternal(vscode.Uri.parse(data.toString().trim()));
+  });
 }
 
 /** What the tasks of a running program wait for, beside the code. */

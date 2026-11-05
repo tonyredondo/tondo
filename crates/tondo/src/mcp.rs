@@ -1163,6 +1163,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 push(&["--since", &since]);
             }
         }
+        "dump_serve" => push(&["dump", "serve", &args.need("dir")?, "--output", &args.need("output")?]),
         "dump_issue" => push(&["dump", "issue", &args.need("dir")?, &args.need("signature")?]),
         "dump_report" => push(&["dump", "report", &args.need("file")?, "--output", &args.need("output")?]),
         "dump_redact" => push(&["dump", "redact", &args.need("file")?, &args.need("output")?]),
@@ -2204,6 +2205,13 @@ are here, so one written today finds when a bug came. A commit that does not com
         description: "What the tasks of a running program wait for, and who holds them up.",
         kind: Kind::Reads,
         params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "dump_serve",
+        description: "The failures of a directory of dumps as one page, written to a file: `tondo dump serve` keeps it \
+up to date in a browser.",
+        kind: Kind::Edits,
+        params: &[("dir", "string!", "The directory of the dumps."), ("output", "string!", "Where to write the page.")],
     },
     Tool {
         name: "dump_issue",

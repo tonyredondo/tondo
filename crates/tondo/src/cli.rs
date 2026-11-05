@@ -261,6 +261,14 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
+        usage: &["tondo dump serve <dir> [--port <n> | --output <file>]"],
+        summary: &[
+            "the failures of a directory as a page on this machine,",
+            "up to date as dumps come; --output writes it once",
+        ],
+    },
+    Command {
+        name: "dump",
         usage: &["tondo dump issue <dir> <signature>"],
         summary: &["a failure of a directory of dumps as an issue to", "file, in Markdown"],
     },

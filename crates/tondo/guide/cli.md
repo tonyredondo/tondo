@@ -111,6 +111,7 @@ tondo dump diff a.dump b.dump     what changed between two dumps of a program
 tondo dump group dumps/           the dumps by the failure they are, the most frequent first
 tondo dump group dumps/ --since v1.2   the failures new after a commit
 tondo dump issue dumps/ 8517      a failure as an issue, in Markdown
+tondo dump serve dumps/           the failures as a page here, up to date as dumps come
 tondo dump report a.dump          all of it as one page of HTML; --output a file
 tondo dump redact a.dump b.dump   a dump to share, without what the program held
 tondo dump core core.123          a core of the system as a dump; --executable, --output
