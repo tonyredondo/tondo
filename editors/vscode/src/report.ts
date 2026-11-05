@@ -1067,3 +1067,20 @@ export function recordedRun(config: Record<string, unknown>): string[] {
   const recording = String(config.recording ?? '.tondo/recording');
   return ['run', '--record', recording, '--last', String(config.last), ...hold, String(config.program), '--', ...args];
 }
+
+/** The page of `tondo dump report` for a webview: only its own script runs,
+ *  which sends each place clicked to the editor. */
+export function dumpPage(html: string, nonce: string): string {
+  const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">`;
+  const script = `<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[data-file]');
+  if (link) {
+    event.preventDefault();
+    vscode.postMessage({ file: link.dataset.file, line: Number(link.dataset.line) });
+  }
+});
+</script>`;
+  return html.replace('<head>', `<head>${policy}`).replace('</body>', `${script}</body>`);
+}

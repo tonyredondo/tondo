@@ -369,6 +369,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.dumpReport",
+        "title": "Open Dump Report",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.compareDumps",
         "title": "Compare Two Dumps",
         "category": "Tondo"

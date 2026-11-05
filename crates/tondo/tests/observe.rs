@@ -2867,6 +2867,64 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
+fn dumps_leave_by_a_command_and_group_by_their_failure() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-group");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    std::fs::create_dir_all(dir.join("away")).unwrap();
+    // The value in the message changes; the failure is the same. Another
+    // argument fails elsewhere.
+    let program = "import std.env\n\nfn first(which: String) {\n    panic(\"it fell with {which}\")\n}\n\n\
+        fn second(items: Array[Int]): Int {\n    items[items.length()]\n}\n\n\
+        fn main() {\n    let which = env.args()[0]\n    if which == \"other\" {\n        \
+        _ = second([1])\n    }\n    first(which)\n}\n";
+    std::fs::write(dir.join("falls.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    for which in ["a", "b", "other"] {
+        let ran = Command::new(dir.join("falls"))
+            .arg(which)
+            .env("TONDO_DUMP", dir.join("dumps"))
+            .env("TONDO_DUMP_COMMAND", "cp \"$TONDO_DUMP_FILE\" away/")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(!ran.status.success());
+    }
+    // Each dump left before its program did.
+    assert_eq!(std::fs::read_dir(dir.join("away")).unwrap().count(), 3);
+    let groups = tondo(&["dump", "group", dir.join("away").to_str().unwrap(), "--json"]);
+    let list = groups["groups"].as_array().unwrap();
+    let counts: Vec<u64> = list.iter().map(|g| g["count"].as_u64().unwrap()).collect();
+    assert_eq!(counts, [2, 1], "{groups}");
+    // The page says the same, with what can be followed.
+    let dump = list[0]["file"].as_str().unwrap();
+    let page = dir.join("page.html");
+    let report = Command::new(tondo_bin).args(["dump", "report", dump, "--output"]).arg(&page).output().unwrap();
+    assert!(report.status.success(), "{report:?}");
+    let html = std::fs::read_to_string(&page).unwrap();
+    assert!(html.contains("data-file=\"falls.to\" data-line=\"4\""), "{html}");
+    assert!(html.contains("signature: "), "{html}");
+    // What it is not told to run does not stop a dump, and a percentage is
+    // a limit it can read.
+    let bad = Command::new(dir.join("falls"))
+        .arg("a")
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .env("TONDO_DUMP_WHEN", "memory=95%")
+        .env("TONDO_DUMP_COMMAND", "exit 3")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&bad.stderr);
+    assert!(said.contains("TONDO_DUMP_COMMAND ended with"), "{said}");
+    assert!(!said.contains("TONDO_DUMP_WHEN"), "{said}");
+}
+
+#[test]
 fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return;

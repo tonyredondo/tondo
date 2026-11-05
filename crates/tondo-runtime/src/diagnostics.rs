@@ -1254,6 +1254,51 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
         Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
     };
+    dumped(&path);
+}
+
+/// How long `TONDO_DUMP_COMMAND` has: a program that falls waits for it, or
+/// a restart would take the dump with its container.
+const COMMAND_TIME: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `TONDO_DUMP_COMMAND`: a shell command that takes a dump just written
+/// elsewhere, with its path in `TONDO_DUMP_FILE`.
+fn dumped(path: &std::path::Path) {
+    let Some(command) = std::env::var_os("TONDO_DUMP_COMMAND") else { return };
+    let _outside = super::replay::Outside::enter();
+    let started = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .env("TONDO_DUMP_FILE", path)
+        .env_remove("TONDO_DUMP")
+        .env_remove("TONDO_DUMP_COMMAND")
+        .stdin(std::process::Stdio::null())
+        .spawn();
+    let mut child = match started {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "tondo runtime: cannot run TONDO_DUMP_COMMAND: {e}");
+            return;
+        }
+    };
+    let deadline = Instant::now() + COMMAND_TIME;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return,
+            Ok(Some(status)) => {
+                let _ = writeln!(std::io::stderr(), "tondo runtime: TONDO_DUMP_COMMAND ended with {status}");
+                return;
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ =
+                    writeln!(std::io::stderr(), "tondo runtime: TONDO_DUMP_COMMAND took too long, and it is stopped");
+                return;
+            }
+        }
+    }
 }
 
 /// `TONDO_DUMP_WHEN`: dumps by themselves in `TONDO_DUMP`: `every=5m`, or
@@ -1273,12 +1318,15 @@ impl Schedule {
     fn parse(text: &str) -> Result<Schedule, String> {
         let mut schedule = Schedule { every: None, memory: None, cpu: None, keep: 10, room: None };
         for part in text.split(',').map(str::trim) {
-            let wrong =
-                || format!("TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, cpu=90, keep=10 or size=1g");
+            let wrong = || {
+                format!(
+                    "TONDO_DUMP_WHEN: `{part}` is not every=5m, memory=512m, memory=90%, cpu=90, keep=10 or size=1g"
+                )
+            };
             let (name, value) = part.split_once('=').ok_or_else(wrong)?;
             match name {
                 "every" => schedule.every = Some(interval(value).ok_or_else(wrong)?),
-                "memory" => schedule.memory = Some(size(value).ok_or_else(wrong)?),
+                "memory" => schedule.memory = Some(memory_limit(value).ok_or_else(wrong)?),
                 "cpu" => schedule.cpu = Some(value.parse().map_err(|_| wrong())?),
                 "keep" => schedule.keep = value.parse().map_err(|_| wrong())?,
                 "size" => schedule.room = Some(size(value).ok_or_else(wrong)? as u64),
@@ -1300,6 +1348,53 @@ fn interval(text: &str) -> Option<std::time::Duration> {
         _ => return None,
     };
     Some(std::time::Duration::from_secs(count.parse::<u64>().ok()? * seconds))
+}
+
+/// `512m`, or `90%` of what the program may hold: the limit of its cgroup,
+/// past which the kernel kills it without a dump, or the machine's memory.
+fn memory_limit(text: &str) -> Option<i64> {
+    let Some(percent) = text.strip_suffix('%') else { return size(text) };
+    let percent: f64 = percent.parse().ok().filter(|p| *p > 0.0 && *p <= 100.0)?;
+    Some((available_memory() as f64 * percent / 100.0) as i64)
+}
+
+/// What the program may hold: the lowest of its cgroup's limits, from its
+/// own up to the root, or all the machine has.
+fn available_memory() -> i64 {
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) } as i64;
+    let machine = pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as i64;
+    let membership = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    cgroup_limit(&membership, std::path::Path::new("/sys/fs/cgroup")).map_or(machine, |limit| limit.min(machine))
+}
+
+/// The lowest limit of the cgroups `/proc/self/cgroup` names, under `root`.
+fn cgroup_limit(membership: &str, root: &std::path::Path) -> Option<i64> {
+    let mut lowest = None;
+    let mut look = |file: PathBuf| {
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        if let Ok(limit) = text.trim().parse::<i64>() {
+            lowest = Some(lowest.map_or(limit, |known: i64| known.min(limit)));
+        }
+    };
+    for line in membership.lines() {
+        let mut parts = line.splitn(3, ':');
+        let (_, controllers, path) = (parts.next()?, parts.next()?, parts.next()?);
+        let path = path.trim_start_matches('/');
+        // Version 2 has a line of no controllers; version 1, one for memory.
+        let (base, name) = match controllers {
+            "" => (root.to_path_buf(), "memory.max"),
+            list if list.split(',').any(|c| c == "memory") => (root.join("memory"), "memory.limit_in_bytes"),
+            _ => continue,
+        };
+        let mut dir = base.join(path);
+        loop {
+            look(dir.join(name));
+            if dir == base || !dir.pop() {
+                break;
+            }
+        }
+    }
+    lowest
 }
 
 /// `512m` or `2g`.
@@ -1347,6 +1442,7 @@ pub(crate) fn dump_on_signal() {
         let text = dump("signal", "SIGQUIT", None, Some(std::time::Duration::from_millis(100)));
         if std::fs::write(&path, compressed(&text)).is_ok() {
             let _ = writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display());
+            dumped(&path);
         }
     });
 }
@@ -1410,6 +1506,7 @@ fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
             }
         }
         if std::fs::write(&path, text).is_ok() {
+            dumped(&path);
             written.push_back((path, length));
         }
     }
@@ -1495,4 +1592,26 @@ pub(crate) fn quoted(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lowest_limit_of_a_cgroup_and_its_parents_counts() {
+        let root = std::env::temp_dir().join(format!("tondo-cgroup-{}", std::process::id()));
+        let inside = root.join("kubepods/pod1");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::write(root.join("memory.max"), "max\n").unwrap();
+        std::fs::write(root.join("kubepods/memory.max"), "1000\n").unwrap();
+        std::fs::write(inside.join("memory.max"), "5000\n").unwrap();
+        assert_eq!(cgroup_limit("0::/kubepods/pod1\n", &root), Some(1000));
+        // Without a limit anywhere, and in version 1.
+        assert_eq!(cgroup_limit("0::/\n", &root), None);
+        std::fs::create_dir_all(root.join("memory/app")).unwrap();
+        std::fs::write(root.join("memory/app/memory.limit_in_bytes"), "2000\n").unwrap();
+        assert_eq!(cgroup_limit("4:cpu:/x\n5:memory:/app\n", &root), Some(2000));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

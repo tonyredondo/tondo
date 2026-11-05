@@ -3,13 +3,14 @@
 // they change, a trace opened in Perfetto, and a dump's summary.
 
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec } from './cli';
 import { tondo } from './extension';
-import { counterRows, running, traced } from './report';
+import { counterRows, dumpPage, running, traced } from './report';
 
 /** A running program, picked: its process ID, or nothing. */
 export async function pickProcess(): Promise<string | undefined> {
@@ -98,6 +99,7 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
         await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name: 'Debug a dump', dump: file.fsPath, cwd });
       }
     }),
+    vscode.commands.registerCommand('tondo.dumpReport', dumpReport),
     vscode.commands.registerCommand('tondo.compareDumps', compareDumps),
     vscode.commands.registerCommand('tondo.dumpTrend', dumpTrend),
     { dispose: stop },
@@ -108,6 +110,37 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
 async function show(content: string): Promise<void> {
   const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
   await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+}
+
+/** A dump as one page beside the code, whose places open: here, or from the
+ *  repository they came from, as `tondo source` brings them. */
+async function dumpReport(uri?: vscode.Uri): Promise<void> {
+  const file =
+    uri?.fsPath ??
+    (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json', 'gz'] }, openLabel: 'Read this dump' }))?.[0].fsPath;
+  if (!file) {
+    return;
+  }
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file)) ?? vscode.workspace.workspaceFolders?.[0];
+  const cwd = folder?.uri.fsPath ?? path.dirname(file);
+  const ran = await exec(['dump', 'report', file], cwd);
+  if (ran.code !== 0) {
+    void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump report failed');
+    return;
+  }
+  const options = { enableScripts: true, retainContextWhenHidden: true };
+  const panel = vscode.window.createWebviewPanel('tondoDump', path.basename(file), vscode.ViewColumn.Beside, options);
+  panel.webview.html = dumpPage(ran.stdout, randomBytes(16).toString('hex'));
+  panel.webview.onDidReceiveMessage(async (asked: { file: string; line: number }) => {
+    const found = await exec(['source', asked.file, '--from', file, '--json'], cwd);
+    if (found.code !== 0) {
+      void vscode.window.showErrorMessage(found.stderr.trim() || `${asked.file} is not here`);
+      return;
+    }
+    const document = await vscode.workspace.openTextDocument((JSON.parse(found.stdout) as { path: string }).path);
+    const at = new vscode.Position(Math.max(asked.line - 1, 0), 0);
+    await vscode.window.showTextDocument(document, { selection: new vscode.Range(at, at), viewColumn: vscode.ViewColumn.One });
+  });
 }
 
 /** What changed from one dump of a program to a later one. */

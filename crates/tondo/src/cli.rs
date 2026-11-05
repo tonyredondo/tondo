@@ -246,6 +246,16 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "dump",
+        usage: &["tondo dump group <dir> [--json]"],
+        summary: &["the dumps of a directory by the failure they are,", "the most frequent first"],
+    },
+    Command {
+        name: "dump",
+        usage: &["tondo dump report <file> [--output <path>]"],
+        summary: &["all a dump says, as one page of HTML"],
+    },
+    Command {
+        name: "dump",
         usage: &["tondo dump trend <dir> [--json]"],
         summary: &["what keeps growing over the dumps of a program in a", "directory, as TONDO_DUMP_WHEN leaves them"],
     },

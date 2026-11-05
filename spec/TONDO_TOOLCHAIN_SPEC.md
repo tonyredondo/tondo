@@ -790,7 +790,9 @@ memoria por sitio, las tareas que empezaron, acabaron o se movieron, las variabl
 de los frames que están en ambos y los contadores.
 
 Con `TONDO_DUMP_WHEN` junto a `TONDO_DUMP` el programa se vuelca solo, sin parar:
-`every=5m` cada ese tiempo, `memory=512m` sobre esa memoria residente, `cpu=90`
+`every=5m` cada ese tiempo, `memory=512m` sobre esa memoria residente, o `memory=90%`
+sobre ese porcentaje de lo que el programa puede tener: el límite más bajo de su
+cgroup, pasado el cual el kernel lo mata sin volcado, o la memoria de la máquina; `cpu=90`
 sobre ese porcentaje de un núcleo, `keep=10` guarda los últimos diez y `size=1g`
 los que quepan en ese espacio, separados por comas. Lo que pasa de un umbral vuelca
 como mucho una vez por minuto. Con `TONDO_DUMP`, `kill -QUIT` pide un volcado sin
@@ -798,6 +800,17 @@ herramientas ni socket y el programa sigue, salvo que `process.signals` tome esa
 señal. Estos volcados, de un programa que sigue, van comprimidos en
 `.dump.json.gz`; el de un fallo no, porque allí corre lo menos posible. Todas las
 herramientas leen los dos.
+
+Con `TONDO_DUMP_COMMAND` en el entorno, cada volcado que se escribe se entrega a ese
+comando de `sh`, con su ruta en `TONDO_DUMP_FILE`, que lo saca de una máquina o un
+contenedor que van a desaparecer. Un programa que cae lo espera hasta 60 segundos.
+
+Cada volcado tiene una firma: el motivo, el código del pánico y las funciones donde
+estaba, sin valores ni líneas, que cambian de un fallo o un build a otro. `tondo dump
+group <dir>` agrupa por ella los volcados de un directorio, los fallos más frecuentes
+primero, y `tondo dump report <archivo>` da todo lo que dice uno como una página HTML
+sin dependencias, cuyas ubicaciones llevan `data-file` y `data-line`; el comando
+*Open Dump Report* del editor la abre y las sigue, también en lo que no esté aquí.
 
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
@@ -1646,6 +1659,10 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
+| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `file` y sus tiempos |
+| `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks` y `memory`, lo que crece |
+| `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
+| `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

@@ -5075,3 +5075,14 @@ for links to read. The hash also tells a dirty build, so nothing runs `git statu
 at each build, and sources that did not change need no new build for a new commit:
 the older commit has the same files. The editor gets a reference, not a path, so
 nothing is fetched until a file is opened.
+
+## A dump that stays in a dead container was never written
+
+Most services run where the disk goes with the process, and the kernel's OOM
+killer leaves nothing at all. So a dump can leave by a command, which a program
+that falls waits for, and a threshold can be a share of the cgroup's limit, which
+is the only warning such a death gives. A command rather than an upload built in:
+each place has its own storage and credentials, and `aws s3 cp` already knows them.
+
+Many instances fall the same way. A signature goes by the panic's code and the
+functions, not its text or lines, as those differ with each value and build.

@@ -19,6 +19,7 @@ import {
   listed,
   outcomes,
   place,
+  dumpPage,
   programOf,
   recordedRun,
   reloadShown,
@@ -609,4 +610,10 @@ test('a launch with `last` runs the program recorded, with its arguments after i
   assert.deepEqual(recordedRun({ program: '.', last: '1h', hold: '2h', recording: 'rec', args: ['a', 3] }), [
     'run', '--record', 'rec', '--last', '1h', '--hold', '2h', '.', '--', 'a', '3',
   ]);
+});
+
+test('a dump report in a webview runs its own script only, and says what is clicked', () => {
+  const page = dumpPage('<html><head><title>t</title></head><body><a data-file="a.to" data-line="3">a.to:3</a></body></html>', 'n1');
+  assert.match(page, /<head><meta http-equiv="Content-Security-Policy" content="default-src 'none'.*script-src 'nonce-n1'/);
+  assert.match(page, /<script nonce="n1">[\s\S]*postMessage\(\{ file: link\.dataset\.file[\s\S]*<\/script><\/body>/);
 });

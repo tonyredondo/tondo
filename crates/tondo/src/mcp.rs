@@ -1150,6 +1150,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
         "dump_diff" => push(&["dump", "diff", &args.need("first")?, &args.need("second")?, "--json"]),
         "dump_trend" => push(&["dump", "trend", &args.need("dir")?, "--json"]),
+        "dump_group" => push(&["dump", "group", &args.need("dir")?, "--json"]),
         "source" => {
             push(&["source", &args.need("file")?, "--from", &args.need("from")?, "--json"]);
             if let Some(line) = args.text("line") {
@@ -2113,6 +2114,13 @@ commit, which it brings the first time with the credentials of git. Gives where 
             ("from", "string!", "The dump, recording or executable that says where it came from."),
             ("line", "integer", "The line of its page at the provider."),
         ],
+    },
+    Tool {
+        name: "dump_group",
+        description: "The dumps of a directory by the failure they are, the most frequent first: 500 crashes that \
+are 3 bugs are 3 lines.",
+        kind: Kind::Reads,
+        params: &[("dir", "string!", "The directory of the dumps.")],
     },
     Tool {
         name: "dump_trend",

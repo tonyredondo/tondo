@@ -927,6 +927,196 @@ fn load(path: &std::path::Path) -> Result<Value, String> {
     Ok(dump)
 }
 
+/// The dumps in a directory, the oldest first; those that do not read are
+/// left out.
+fn dumps_in(dir: &std::path::Path) -> Result<Vec<(PathBuf, Value)>, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    let is_dump = |path: &PathBuf| {
+        let name = path.to_string_lossy();
+        name.ends_with(".dump.json") || name.ends_with(".dump.json.gz")
+    };
+    let files = entries.flatten().map(|entry| entry.path()).filter(is_dump);
+    let mut dumps: Vec<(PathBuf, Value)> = files.filter_map(|path| Some((path.clone(), load(&path).ok()?))).collect();
+    dumps.sort_by(|a, b| a.1["time_ms"].as_f64().unwrap_or(0.0).total_cmp(&b.1["time_ms"].as_f64().unwrap_or(0.0)));
+    Ok(dumps)
+}
+
+/// What says two dumps are the same failure: why the program stopped, by
+/// its code and not its message, which holds values; and the functions it
+/// was in, without their lines, which move from a build to the next.
+fn signature(dump: &Value) -> String {
+    let tasks = tasks(dump);
+    let running = tasks.iter().find(|t| t["state"] == "runs" && !tondo_frames(t).is_empty());
+    let task = running.or(tasks.first());
+    let functions = task.map_or(Vec::new(), tondo_frames);
+    let functions: Vec<&str> = functions.iter().filter_map(|f| f.split_once(" in ").map(|(_, f)| f)).take(5).collect();
+    let message = dump["message"].as_str().unwrap_or_default();
+    let code = message.split(':').next().filter(|code| code.starts_with("panic[")).unwrap_or_default();
+    let parts = [dump["reason"].as_str().unwrap_or_default(), code, &functions.join("\n")];
+    crate::driver::fingerprint(&parts.map(str::as_bytes))[..12].to_string()
+}
+
+/// `tondo dump group <dir>`: the dumps of a directory by the failure they
+/// are, the most frequent first.
+pub fn group(dir: &std::path::Path, json: bool) -> Result<(), String> {
+    let mut groups: Vec<Value> = Vec::new();
+    for (path, dump) in dumps_in(dir)? {
+        let id = signature(&dump);
+        let time = &dump["time_ms"];
+        match groups.iter_mut().find(|g| g["signature"] == id) {
+            Some(group) => {
+                group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
+                group["last_ms"] = time.clone();
+                group["file"] = json!(path);
+            }
+            None => {
+                let tasks = tasks(&dump);
+                let at = tasks.iter().find(|t| t["state"] == "runs" && t["at"].is_string()).or(tasks.first());
+                groups.push(json!({
+                    "signature": id, "count": 1, "reason": dump["reason"], "file": path,
+                    "message": dump["message"].as_str().unwrap_or_default().lines().next(),
+                    "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
+                }));
+            }
+        }
+    }
+    groups.sort_by_key(|group| std::cmp::Reverse(group["count"].as_u64()));
+    if json {
+        crate::cli::print_json("dump-group", true, json!({ "groups": groups }));
+        return Ok(());
+    }
+    if groups.is_empty() {
+        println!("{} has no dumps", dir.display());
+    }
+    for group in &groups {
+        let text = |key: &str| group[key].as_str().unwrap_or_default();
+        println!("{} x {} {}", group["count"], text("signature"), text("reason"));
+        println!("  {}", text("message"));
+        println!("  at {}", group["at"].as_str().unwrap_or("nowhere known"));
+        println!("  the last: {}", text("file"));
+    }
+    Ok(())
+}
+
+/// `tondo dump report <file>`: all a dump says, as one page to read or to
+/// attach to an issue. A place is a link an editor follows.
+pub fn report(path: &std::path::Path, output: Option<&std::path::Path>) -> Result<(), String> {
+    let html = report_html(&load(path)?);
+    match output {
+        Some(output) => std::fs::write(output, html).map_err(|e| format!("cannot write {}: {e}", output.display())),
+        None => {
+            print!("{html}");
+            Ok(())
+        }
+    }
+}
+
+fn report_html(dump: &Value) -> String {
+    use crate::profile::escape;
+    let text = |value: &Value| escape(value.as_str().unwrap_or_default());
+    // A place of the program as a link, `file:line in function` or `file:line`.
+    let place = |at: &str| -> String {
+        let spot = at.split(" in ").next().unwrap_or(at);
+        match spot.rsplit_once(':').filter(|(_, line)| line.parse::<u64>().is_ok()) {
+            Some((file, line)) => {
+                format!("<a href=\"#\" data-file=\"{}\" data-line=\"{line}\">{}</a>", escape(file), escape(at))
+            }
+            None => escape(at),
+        }
+    };
+    let tasks = tasks(dump);
+    let mut out = String::from(REPORT_HEAD);
+    let info = &dump["info"];
+    out.push_str(&format!("<h1>{}</h1>\n", escape(&program_name(info))));
+    out.push_str(&format!("<pre>{}</pre>\n", escape(summary(dump).trim_end())));
+    // What other parts of the page say, it does not say twice.
+    let mut found = why(dump);
+    found["reason"] = json!("");
+    found["events"] = json!([]);
+    found["requests"] = json!([]);
+    found["memory"] = json!([]);
+    out.push_str(&format!("<h2>What stands out</h2>\n<pre>{}</pre>\n", escape(&why_text(&found))));
+    let groups = stacks(&tasks);
+    out.push_str(&format!("<h2>Tasks ({})</h2>\n", tasks.len()));
+    for group in &groups {
+        let ids: Vec<String> = group["tasks"].as_array().into_iter().flatten().map(Value::to_string).collect();
+        let waited = group["waited_ms"].as_f64().filter(|ms| *ms > 0.0);
+        let waited = waited.map_or(String::new(), |ms| format!(", the longest for {}", duration(ms / 1000.0)));
+        let shown = ids.iter().take(20).cloned().collect::<Vec<_>>().join(", ");
+        let frames: Vec<String> =
+            group["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).map(&place).collect();
+        let state = group["state"].as_str().unwrap_or_default();
+        let who = match ids.len() {
+            1 => format!("1 task {}", escape(state)),
+            count => format!("{count} tasks {}", escape(&plural(state))),
+        };
+        out.push_str(&format!(
+            "<details open><summary>{who} <span class=\"dim\">({shown}){waited}</span></summary><ol>{}</ol></details>\n",
+            frames.iter().map(|f| format!("<li>{f}</li>")).collect::<String>()
+        ));
+    }
+    let requests = requests(dump);
+    if !requests.is_empty() {
+        out.push_str("<h2>Requests in flight</h2>\n<table><tr><th>Request</th><th>For</th><th>Task</th></tr>\n");
+        for request in &requests {
+            out.push_str(&format!(
+                "<tr><td>{} {}</td><td>{}</td><td>{}</td></tr>\n",
+                text(&request["method"]),
+                text(&request["path"]),
+                duration(request["ms"].as_f64().unwrap_or(0.0) / 1000.0),
+                request["task"]
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    let heap = heap(dump);
+    let sites = heap["sites"].as_array().map_or(&[][..], Vec::as_slice);
+    out.push_str("<h2>Live memory, sampled</h2>\n");
+    if sites.is_empty() {
+        out.push_str("<p class=\"dim\">No allocation was sampled.</p>\n");
+    } else {
+        out.push_str("<table><tr><th>Held</th><th>Kind</th><th>Made at</th></tr>\n");
+    }
+    for site in sites.iter().take(30) {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            bytes(site["bytes"].as_f64().unwrap_or(0.0)),
+            text(&site["kind"]),
+            place(site["site"].as_str().unwrap_or_default())
+        ));
+    }
+    if !sites.is_empty() {
+        out.push_str("</table>\n");
+    }
+    let events = events(dump);
+    if !events.is_empty() {
+        out.push_str(&format!("<h2>What came last</h2>\n<pre>{}</pre>\n", escape(&events_text(&events))));
+    }
+    let where_from = sources(dump);
+    if where_from["repositories"].as_array().is_some_and(|list| !list.is_empty()) {
+        out.push_str(&format!("<h2>Sources</h2>\n<pre>{}</pre>\n", escape(&sources_text(&where_from))));
+    }
+    out.push_str("</body></html>\n");
+    out
+}
+
+/// The start of a report: it follows the editor's colors in a webview, and
+/// the system's light or dark elsewhere.
+const REPORT_HEAD: &str = "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Tondo dump</title><style>\
+:root{--fg:#1f2328;--bg:#fff;--muted:#59636e;--line:#d0d7de;--link:#0969da}\
+@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--bg:#0d1117;--muted:#9198a1;--line:#3d444d;--link:#4493f8}}\
+body{font:13px/1.5 var(--vscode-font-family,system-ui,sans-serif);margin:1.5rem;max-width:72rem;\
+color:var(--vscode-foreground,var(--fg));background:var(--vscode-editor-background,var(--bg))}\
+h1{font-size:1.25rem;margin:0 0 .5rem}h2{font-size:1rem;margin:1.5rem 0 .5rem}\
+pre,ol{font:12px/1.5 var(--vscode-editor-font-family,ui-monospace,monospace)}\
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}ol{margin:.25rem 0 0;padding-left:2rem}\
+table{border-collapse:collapse;width:100%}th{text-align:left;font-weight:600}\
+td,th{padding:.2rem .6rem .2rem 0;border-bottom:1px solid var(--vscode-panel-border,var(--line));\
+vertical-align:top;overflow-wrap:anywhere}\
+details{margin:.5rem 0}summary{cursor:pointer}a{color:var(--vscode-textLink-foreground,var(--link))}\
+.dim{color:var(--vscode-descriptionForeground,var(--muted))}</style></head><body>\n";
+
 /// `tondo dump trend <dir>`: what grew over the dumps of a program that
 /// are in a directory, as the schedule of `TONDO_DUMP_WHEN` leaves them.
 pub fn trend(dir: &std::path::Path, json: bool) -> Result<(), String> {
@@ -1693,6 +1883,7 @@ fn why(dump: &Value) -> Value {
     let heap = heap(dump);
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
+    found["signature"] = json!(signature(dump));
     let events = events(dump);
     found["events"] = events[events.len().saturating_sub(10)..].to_vec().into();
     found["requests"] = requests(dump).into_iter().take(5).collect();
@@ -1989,6 +2180,7 @@ fn summary(dump: &Value) -> String {
     if let Some(built) = roots_of(dump).summary() {
         out.push_str(&format!("{built}\n"));
     }
+    out.push_str(&format!("signature: {}\n", signature(dump)));
     let found = sources(dump);
     let others = found["files"].as_array().into_iter().flatten().filter(|file| file["state"] != "same").count();
     if others > 0 {

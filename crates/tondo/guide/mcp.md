@@ -139,7 +139,8 @@ builds; `counters`, `trace`, `dump` and `dump_read` look into one by
 `dump_read` with the view `why` says what went wrong, as far as the dump can
 tell, `locals` or `print` what a frame held, of any build, and `find` where a
 text is; `dump_diff` says what changed between two dumps, and `dump_trend` what
-keeps growing over a directory of them. `source` gives a file of a build as it
+keeps growing over a directory of them, and `dump_group` which failures they
+are. `source` gives a file of a build as it
 was, from its repository when it is not at hand. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `memory` or `tasks`, and gives the functions and the program's lines that
