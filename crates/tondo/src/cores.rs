@@ -3,7 +3,7 @@
 //! was, by the trace table of the program's executable, and the values in
 //! its frames, by the shape of each type the build keeps. A core is the
 //! memory of a process with no runtime left to ask: what only the program's
-//! code can show, as a value with a view or a map, and counters, are not read.
+//! code can show, as a closure, and counters, are not read.
 
 use crate::roots::Roots;
 use serde_json::{Map, Value, json};
@@ -123,6 +123,8 @@ const EVENTS: usize = 1 << 16;
 pub const BINDINGS: &str = "TONDOBINDINGS1\n";
 const STRING_HEADER: u64 = 24;
 const ARRAY_HEADER: u64 = 32;
+/// Where a `MapObject` has its entries.
+const MAP_ENTRIES: u64 = 24;
 const SHOWN: u64 = 4096;
 
 /// The longest stack a dump keeps.
@@ -618,6 +620,22 @@ impl Bound {
     }
 }
 
+/// Where the pointer and the length of a `Vec` are: the runtime and this
+/// are built by the same compiler, so one here says.
+fn vec_words() -> Option<(usize, usize)> {
+    let mut sample: Vec<u8> = Vec::with_capacity(5);
+    sample.extend([1, 2]);
+    let words: [u64; 3] = unsafe { std::mem::transmute_copy(&sample) };
+    let pointer = words.iter().position(|&word| word == sample.as_ptr() as u64)?;
+    Some((pointer, words.iter().position(|&word| word == 2)?))
+}
+
+/// The pointer and length of the `Vec` at `at`.
+fn vec_at(memory: &Memory, at: u64) -> Option<(u64, u64)> {
+    let (pointer, length) = vec_words()?;
+    Some((memory.word(at + pointer as u64 * 8)?, memory.word(at + length as u64 * 8)?))
+}
+
 /// What is shown of an array, and how deep a value goes.
 const ELEMENTS: u64 = 32;
 const DEPTH: usize = 8;
@@ -664,6 +682,31 @@ fn shown(id: usize, value: Place, shapes: &[String], memory: &Memory, depth: usi
                 .collect();
             let more = if length > ELEMENTS { ", ..." } else { "" };
             format!("[{}{more}]", items.join(", "))
+        }
+        "m" => {
+            let key: usize = words.next()?.parse().ok()?;
+            let entry: Option<usize> = words.next().and_then(|shape| shape.parse().ok());
+            let map = value.word(memory)?;
+            let (size, offset) = (memory.word(map.checked_add(8)?)?, memory.word(map.checked_add(16)?)?);
+            let (pointer, bytes) = vec_at(memory, map.checked_add(MAP_ENTRIES)?)?;
+            let length = bytes.checked_div(size).unwrap_or(0);
+            let pairs: Vec<String> = (0..length.min(ELEMENTS))
+                .map(|index| {
+                    let at = pointer + index * size;
+                    let mut pair = shown(key, Place::At(at), shapes, memory, depth + 1);
+                    if let (Some(entry), Some(written)) = (entry, pair.as_mut()) {
+                        let value = shown(entry, Place::At(at + offset), shapes, memory, depth + 1);
+                        written.push_str(&format!(": {}", value.as_deref().unwrap_or("?")));
+                    }
+                    pair.unwrap_or_else(|| "?".to_string())
+                })
+                .collect();
+            let more = if length > ELEMENTS { ", ..." } else { "" };
+            match (entry, pairs.is_empty()) {
+                (Some(_), true) => "[:]".to_string(),
+                (Some(_), false) => format!("[{}{more}]", pairs.join(", ")),
+                (None, _) => format!("Set[{}{more}]", pairs.join(", ")),
+            }
         }
         "n" => {
             let inner: usize = words.next()?.parse().ok()?;

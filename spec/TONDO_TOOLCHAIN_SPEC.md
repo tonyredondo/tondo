@@ -872,10 +872,10 @@ del programa, con las líneas de la tabla del ejecutable, que un build con `--st
 conserva; en un programa que guardaba eventos, también ellos y las peticiones sin
 responder. Da los valores de cada marco que el optimizador dejó, de las tareas paradas
 también, con los registros que guardaron y lo que dicen las tablas de marcos del
-ejecutable: números, cadenas, registros, enums, tuplas y arrays, por la forma de cada
-tipo que el build guarda, con `<secret>` donde el programa lo pide, hasta 32 elementos
-y 8 niveles. Lo que solo el código del programa puede mostrar, como un mapa o una
-vista, sale como `?`. No da contadores ni memoria por sitio. Un
+ejecutable: números, cadenas, registros, enums, tuplas, arrays, mapas y conjuntos, por
+la forma de cada tipo que el build guarda, con `<secret>` donde el programa lo pide,
+hasta 32 elementos y 8 niveles. Lo que solo el código del programa puede mostrar, como
+una vista, sale como `?`. No da contadores ni memoria por sitio. Un
 ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
 `<core>` puede ser el pid de un proceso que `coredumpctl` tiene, o `-` para leerlo de
 la entrada, como lo da el kernel: con `|/usr/bin/tondo dump core - --output
@@ -883,8 +883,9 @@ la entrada, como lo da el kernel: con `|/usr/bin/tondo dump core - --output
 de gigas.
 
 `tondo dump serve <dir> [--port <n>]` sirve en `127.0.0.1` una página con los fallos de
-un directorio, que se actualiza al llegar volcados, y el informe de cada uno; solo esta
-máquina la ve, y una petición solo nombra un fallo por su firma. Con `--output <archivo>`
+un directorio, que se actualiza al llegar volcados, con cuántas veces cayó cada uno a lo
+largo del tiempo y un filtro de los que aparecen tras cada commit, y el informe de cada
+uno; solo esta máquina la ve, y una petición solo nombra un fallo por su firma. Con `--output <archivo>`
 escribe la página una vez.
 
 `tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función
@@ -1782,7 +1783,7 @@ campos de su resultado:
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
-| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `lock_orders`, `file`, sus tiempos y `first_commit` y `last_commit` |
+| `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `lock_orders`, `times`, `file`, sus tiempos y `first_commit` y `last_commit` |
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
 | `api --diff` | `tondo-api-diff-0.1/1` | `breaks`, `removed`, `changed` y `added`, cada uno con `name` y su texto |
 | `check --unreached` | `tondo-check-unreached-0.1/1` | `unreached`: cada uno con `name`, `file` y `line` |

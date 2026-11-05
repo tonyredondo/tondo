@@ -1216,6 +1216,7 @@ fn groups_in(dir: &std::path::Path) -> Result<Vec<Value>, String> {
             Some(group) => {
                 group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
                 group["last_ms"] = time.clone();
+                group["times"].as_array_mut().expect("a list").push(time.clone());
                 group["file"] = json!(path);
                 group["last_commit"] = commit_of(&dump);
                 let known = group["lock_orders"].as_array_mut().expect("a list");
@@ -1234,6 +1235,7 @@ fn groups_in(dir: &std::path::Path) -> Result<Vec<Value>, String> {
                     "at": at.map(|t| &t["at"]), "first_ms": time, "last_ms": time,
                     "first_commit": commit_of(&dump), "last_commit": commit_of(&dump),
                     "stack": at.map_or(Vec::new(), tondo_frames),
+                    "times": [time],
                     "lock_orders": dump["lock_order"].as_array().cloned().unwrap_or_default(),
                 }));
             }
@@ -1276,11 +1278,48 @@ pub fn issue(dir: &std::path::Path, wanted: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How many times each failure fell, over the time of all of them, as a
+/// row of bars.
+fn bars(times: &[f64], from: f64, to: f64) -> String {
+    const BARS: usize = 24;
+    let mut counts = [0u32; BARS];
+    let width = ((to - from) / BARS as f64).max(1.0);
+    for time in times {
+        counts[(((time - from) / width) as usize).min(BARS - 1)] += 1;
+    }
+    let most = counts.iter().copied().max().unwrap_or(1).max(1);
+    let rects: String = counts
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count > 0)
+        .map(|(at, count)| {
+            let height = (*count as f64 / most as f64 * 20.0).max(2.0);
+            format!("<rect x=\"{}\" y=\"{:.1}\" width=\"4\" height=\"{height:.1}\"/>", at * 5, 20.0 - height)
+        })
+        .collect();
+    format!("<svg width=\"120\" height=\"20\" fill=\"#c33\" role=\"img\">{rects}</svg>")
+}
+
 /// A page of the failures of a directory of dumps, the most frequent first,
-/// each a link to `link` of its signature when there is one.
-fn failures_page(dir: &std::path::Path, live: bool) -> Result<String, String> {
+/// each with how it went over time; those first seen after `since` when
+/// there is one, and with links when it is `live`.
+fn failures_page(dir: &std::path::Path, live: bool, since: Option<&str>) -> Result<String, String> {
     use crate::profile::escape;
-    let groups = groups_in(dir)?;
+    let mut groups = groups_in(dir)?;
+    let times = |group: &Value| -> Vec<f64> {
+        group["times"].as_array().into_iter().flatten().filter_map(Value::as_f64).collect()
+    };
+    let all: Vec<f64> = groups.iter().flat_map(times).collect();
+    let from = all.iter().copied().fold(f64::MAX, f64::min);
+    let to = all.iter().copied().fold(0.0, f64::max);
+    // The commits there are to choose from, before any is chosen.
+    let mut commits: Vec<String> =
+        groups.iter().filter_map(|group| group["first_commit"].as_str().map(str::to_string)).collect();
+    commits.sort();
+    commits.dedup();
+    if let Some(since) = since {
+        groups.retain(|group| group["first_commit"].as_str().is_some_and(|first| after(first, since)));
+    }
     let refresh = if live { "<meta http-equiv=\"refresh\" content=\"5\">" } else { "" };
     let mut rows = String::new();
     for group in &groups {
@@ -1292,20 +1331,34 @@ fn failures_page(dir: &std::path::Path, live: bool) -> Result<String, String> {
             false => text("message"),
         };
         rows.push_str(&format!(
-            "<tr><td>{}</td><td>{name}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td>{}</td><td>{}</td><td>{name}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             group["count"],
+            bars(&times(group), from, to),
             text("at"),
             short("first_commit"),
             short("last_commit"),
         ));
     }
+    let filters: String = match live && !commits.is_empty() {
+        true => {
+            let links: Vec<String> = commits
+                .iter()
+                .map(|commit| {
+                    let short: String = escape(commit).chars().take(10).collect();
+                    format!("<a href=\"/?since={}\">{short}</a>", escape(commit))
+                })
+                .collect();
+            format!("<p>New after: <a href=\"/\">any</a> {}</p>", links.join(" "))
+        }
+        false => String::new(),
+    };
     let shown = escape(&dir.display().to_string());
     Ok(format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">{refresh}<title>Failures of {shown}</title>\
          <style>body{{font:14px system-ui;margin:2em}}table{{border-collapse:collapse}}\
          td,th{{border-bottom:1px solid #ccc;padding:.4em .8em;text-align:left}}</style></head><body>\
-         <h1>Failures of {shown}</h1><p>{} failures in {} dumps.</p><table><tr><th>Times</th><th>Failure</th>\
-         <th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table></body></html>\n",
+         <h1>Failures of {shown}</h1><p>{} failures in {} dumps.</p>{filters}<table><tr><th>Times</th><th>Over time</th>\
+         <th>Failure</th><th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table></body></html>\n",
         groups.len(),
         groups.iter().filter_map(|group| group["count"].as_u64()).sum::<u64>(),
     ))
@@ -1316,7 +1369,7 @@ fn failures_page(dir: &std::path::Path, live: bool) -> Result<String, String> {
 pub fn serve(dir: &std::path::Path, port: u16, output: Option<&std::path::Path>) -> Result<(), String> {
     use std::io::Read;
     if let Some(output) = output {
-        let page = failures_page(dir, false)?;
+        let page = failures_page(dir, false, None)?;
         return std::fs::write(output, page).map_err(|e| format!("cannot write {}: {e}", output.display()));
     }
     let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("cannot listen: {e}"))?;
@@ -1344,8 +1397,12 @@ pub fn serve(dir: &std::path::Path, port: u16, output: Option<&std::path::Path>)
                 let file = PathBuf::from(group["file"].as_str()?);
                 Some(report_html(&load(&file).ok()?))
             }),
-            None if path == "/" => failures_page(dir, true).ok(),
-            None => None,
+            None if path == "/" => failures_page(dir, true, None).ok(),
+            // Only a commit: what `git` is given is not free text.
+            None => match path.strip_prefix("/?since=").filter(|c| c.chars().all(|c| c.is_ascii_hexdigit())) {
+                Some(since) => failures_page(dir, true, Some(since)).ok(),
+                None => None,
+            },
         };
         let (status, body) = match page {
             Some(body) => ("200 OK", body),

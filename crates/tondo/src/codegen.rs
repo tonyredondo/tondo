@@ -3148,8 +3148,9 @@ impl Codegen<'_> {
     /// its number among `shapes`, each a line of `s` and a scalar's type, `x`
     /// for a secret, `u` for nothing, `a` and the size and shape of an
     /// array's elements, `n` and an address's shape for what `none` is zero
-    /// of, `t` a tuple's and `r` a record's parts, and `v` the size of a tag
-    /// and each variant. A part is `offset:shape`, `*` before the shape when
+    /// of, `m` the shapes of a map's keys and values, or a set's elements, `t`
+    /// a tuple's and `r` a record's parts, and `v` the size of a tag and each
+    /// variant. A part is `offset:shape`, `*` before the shape when
     /// it is behind a pointer; `-` is what only code can show.
     fn shape(&mut self, ty: Ty, shapes: &mut Vec<String>, known: &mut HashMap<Ty, usize>) -> usize {
         if let Some(&id) = known.get(&ty) {
@@ -3182,6 +3183,11 @@ impl Codegen<'_> {
                 let inner = self.shape(element, shapes, known);
                 format!("a {} {inner}", self.layout(element).size)
             }
+            TyKind::Map(key, entry) => {
+                let (key, entry) = (self.shape(key, shapes, known), self.shape(entry, shapes, known));
+                format!("m {key} {entry}")
+            }
+            TyKind::Set(element) => format!("m {}", self.shape(element, shapes, known)),
             TyKind::Adt(adt) if matches!(self.types.adt(adt).kind, AdtKind::Record(_)) => {
                 let name = self.types.adt(adt).name.replace(' ', "");
                 let AdtKind::Record(fields) = self.types.adt(adt).kind.clone() else { unreachable!("a record") };

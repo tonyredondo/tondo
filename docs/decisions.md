@@ -5147,7 +5147,7 @@ has a mark too, as a `--strip` build has no symbols. It turns into a dump for al
 that already reads one. Values are read across the runtime's frames by the
 executable's frame tables, and shown by the shape of each type the build keeps,
 as `Show` writes them and with the same secrets, since a core does not run the
-code that shows them. What only code can show, as a map, is left out.
+code that shows them. What only code can show, as a view, is left out.
 
 ## A copy of a process has one thread, and the memory of them all
 

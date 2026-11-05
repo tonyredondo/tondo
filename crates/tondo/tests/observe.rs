@@ -4840,8 +4840,8 @@ fn reads_a_core_with_the_tasks_that_waited() {
     let program = "import std.console\n\nfn deep(rounds: Int): Int {\n    let _ = console.readLine()\n    rounds + 1\n}\n\n\
         fn middle(rounds: Int): Int {\n    let value = deep(rounds)\n    console.println(\"{value}\")\n    value\n}\n\n\
         enum Way { Fast, Slow(Int) }\n\n\
-        type Order = { id: Int, tags: Array[String], note: String?, @secret pin: Int, way: Way }\n\n\
-        fn main() {\n    let order = Order { id: 7, tags: [\"a\", \"b\"], note: some(\"hi\"), pin: 1234, way: Way.Slow(3) }\n    \
+        type Order = { id: Int, tags: Array[String], note: String?, @secret pin: Int, way: Way, stock: Map[String, Int] }\n\n\
+        fn main() {\n    let order = Order { id: 7, tags: [\"a\", \"b\"], note: some(\"hi\"), pin: 1234, way: Way.Slow(3), stock: [\"tea\": 2] }\n    \
         let other = spawn middle(2)\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
         console.println(\"{other.wait()} {order.id} {order.tags.length()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
@@ -4891,8 +4891,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     assert!(locals.contains("rounds") && locals.contains("\"2\""), "{locals}");
     // A value of the program's own type, with its secrets kept.
     let locals = tondo(&["dump", "read", core, "locals", "1", "--json"]).to_string();
-    let shown =
-        "Order { id: 7, tags: [\\\"a\\\", \\\"b\\\"], note: some(\\\"hi\\\"), pin: <secret>, way: Way.Slow(3) }";
+    let shown = "Order { id: 7, tags: [\\\"a\\\", \\\"b\\\"], note: some(\\\"hi\\\"), pin: <secret>, way: Way.Slow(3), stock: [\\\"tea\\\": 2] }";
     assert!(locals.contains(shown), "{locals}");
 
     // In the editor, as any dump.
@@ -5176,6 +5175,8 @@ fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
     assert!(page.contains("1 failures in 1 dumps") && page.contains("it &lt;fell&gt;"), "{page}");
     let link = page.split("href=\"").nth(1).unwrap().split('"').next().unwrap();
     assert!(get(link).contains("falls.to"), "{link}");
+    assert!(page.contains("<svg") && page.contains("<rect"), "{page}");
+    assert!(get("/?since=-x;rm").starts_with("HTTP/1.1 404"));
     // A request names failures and nothing else of this machine.
     assert!(get("/failure/..%2f..%2fetc%2fpasswd").starts_with("HTTP/1.1 404"));
     assert!(get("/etc/passwd").starts_with("HTTP/1.1 404"));
