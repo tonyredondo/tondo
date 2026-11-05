@@ -453,7 +453,11 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                         (l["name"].as_str().unwrap_or_default().into(), l["type"].as_str().unwrap_or_default().into())
                     })
                     .collect();
-                match crate::live::call(pid, &mut ask, &place, rest, &bindings) {
+                let called = match replaying.as_mut() {
+                    Some(replaying) => replaying.call(&mut ask, &place, rest, &bindings),
+                    None => crate::live::call(pid, &mut ask, &place, rest, &bindings),
+                };
+                match called {
                     Ok(value) => session.show(&serde_json::json!({ "name": rest, "value": value })),
                     Err(message) => session.show(&serde_json::json!({ "error": message })),
                 }
@@ -983,6 +987,31 @@ impl Replaying {
             session.answer()?;
         }
         Ok((running, session))
+    }
+
+    /// A call of the program's code in a replay: in a copy of the process
+    /// that ends with it, so that what the code changes does not change the
+    /// run, and what it says goes nowhere.
+    pub(crate) fn call(
+        &mut self,
+        ask: &mut dyn FnMut(&str) -> Result<Value, String>,
+        place: &str,
+        expression: &str,
+        bindings: &[(String, String)],
+    ) -> Result<String, String> {
+        let answer = ask("checkpoint")?;
+        let (Some(tick), Some(pid)) = (answer["checkpoint"]["tick"].as_u64(), answer["checkpoint"]["pid"].as_u64())
+        else {
+            return Err(answer["error"].as_str().unwrap_or("the replay took no copy").to_string());
+        };
+        self.adopt(tick, pid as u32);
+        // One of this moment may have been there before.
+        let kept = self.checkpoints.iter().find(|&&(at, _)| at == tick).copied();
+        let (running, mut copy) = self.start(kept, u64::MAX, true)?;
+        let mut asked = |command: &str| self::ask(&mut copy, command);
+        let called = crate::live::call(running.pid(), &mut asked, place, expression, bindings);
+        running.end();
+        called
     }
 
     /// A checkpoint where the program stopped, kept for going back.

@@ -1216,6 +1216,12 @@ sin que ella lo lea, como un reloj; y de dónde vino en la segunda lo que lee,
 hasta tres valores, siguiendo `origins` solo por los valores que en la otra
 grabación fueron distintos en esa misma línea. Dos grabaciones
 de ejecutables distintos no se comparan, porque sus líneas no se corresponden.
+En una reproducción, `call isLate(order)` y una expresión de la consola del editor
+que llama al código del programa corren en una copia del proceso que acaba con la
+llamada: lo que el código cambie no cambia la ejecución, lo que escriba no sale, y
+lo que lea del mundo no está, porque la grabación no lo tiene. Para eso `run
+--record` compila como `--live`, sin coste medible; la grabación de un test no
+admite llamadas.
 `tondo test --record <dir>` compara solo los tests que pasan y fallan en la misma
 ejecución, con `--repeat` o `--schedules`: guarda la primera vez que pasó y dice
 dónde se separa de la primera que falló.

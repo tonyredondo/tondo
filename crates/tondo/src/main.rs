@@ -2193,6 +2193,8 @@ fn record_run(
         return Err("--record goes with none of --watch, --live and --target".into());
     }
     options.debug = true;
+    // Live, so that a replay can call the program's code, in a copy.
+    options.live = true;
     let Some(executable) = cached_executable(path, &options)? else { return Ok(ExitCode::FAILURE) };
     let cannot = |e: std::io::Error| format!("cannot write the recording in {}: {e}", dir.display());
     std::fs::create_dir_all(dir).map_err(cannot)?;

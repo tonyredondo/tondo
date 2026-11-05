@@ -2856,6 +2856,51 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
 }
 
 #[test]
+fn a_call_in_a_replay_changes_nothing() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-call");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.sync\n\ntype Order = { id: Int, hours: Int }\n\n\
+        fn isLate(order: Order): Bool {\n    order.hours > 24\n}\n\n\
+        fn bump(cell: sync.Atomic[Int]): Int {\n    _ = cell.add(1)\n    cell.load()\n}\n\n\
+        fn main() {\n    let order = Order { id: 1, hours: 30 }\n    let cell = sync.Atomic(10)\n    \
+        console.println(\"{order.id}\")\n    console.println(\"end {cell.load()}\")\n}\n";
+    std::fs::write(dir.join("late.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let ran =
+        Command::new(tondo_bin).args(["run", "--record", "recording", "late.to"]).current_dir(&dir).output().unwrap();
+    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    let mut child = Command::new(tondo_bin)
+        .args(["debug", "--json", "--replay", "recording"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let line = program.lines().position(|l| l.contains("end {cell")).unwrap() + 1;
+    let script = format!(
+        "break late.to:{line}\ncontinue\ncall isLate(order)\ncall bump(cell)\ncall bump(cell)\ntick\nprint cell\nback\nquit\n"
+    );
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let value = |name: &str| lines.iter().filter(|l| l["name"] == name).map(|l| l["value"].clone()).collect::<Vec<_>>();
+    assert_eq!(value("isLate(order)"), [json!("true")], "{lines:?}");
+    // Each call starts from the run as it was.
+    assert_eq!(value("bump(cell)"), [json!("11"), json!("11")], "{lines:?}");
+    assert_eq!(value("cell"), [json!("sync.Atomic { value: 10 }")], "{lines:?}");
+    // And the run goes on: back to the line before.
+    let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
+    assert!(stops.last().unwrap()["at"].as_str().unwrap().contains(&format!("late.to:{}", line - 1)), "{lines:?}");
+}
+
+#[test]
 fn a_task_that_waits_shows_what_its_registers_held() {
     // The tables of the runtime's frames are those of ELF.
     if !cfg!(target_os = "linux") {

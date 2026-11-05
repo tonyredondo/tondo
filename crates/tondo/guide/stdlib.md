@@ -750,7 +750,9 @@ tasks | task 2 | blocked | pause | delete 1 | quit
 ```
 
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
-may call the program's code: `break app.to:12 if isLate(order)`.
+may call the program's code: `break app.to:12 if isLate(order)`. `call
+isLate(order)` calls it from a stop, and in a replay it runs in a copy of the
+process that ends with the call, so that nothing it does changes the run.
 
 `tondo run --record rec app.to` records a run, on Linux and macOS: its time, input,
 files and random numbers, and the order of its tasks; `tondo debug --replay

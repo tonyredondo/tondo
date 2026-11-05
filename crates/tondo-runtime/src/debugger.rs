@@ -1378,6 +1378,26 @@ fn checkpoint(table: &Table) -> Result<u32, String> {
     }
 }
 
+/// In a replay, a copy of the process where its task stopped, which the
+/// debugger goes back to rather than to the start. This thread holds no
+/// lock of the table meanwhile: the copy, without it, could never add a
+/// patch's.
+fn take_checkpoint() -> String {
+    let Some(stop) = state().stopped.clone().filter(|s| s.site < WAITING) else {
+        return "{\"error\":\"the program runs: `pause` stops it, or a breakpoint\"}".to_string();
+    };
+    let tick = super::replay::ticks();
+    let taken = on_task(stop.task, || match table() {
+        Some(table) => checkpoint(&table),
+        None => Err("the program is not a debug build".to_string()),
+    });
+    match taken {
+        Some(Ok(pid)) => format!("{{\"checkpoint\":{{\"pid\":{pid},\"tick\":{tick}}}}}"),
+        Some(Err(message)) => format!("{{\"error\":{}}}", quoted(&message)),
+        None => "{\"error\":\"the stopped task did not take the checkpoint\"}".into(),
+    }
+}
+
 /// In a replay, how often, in milliseconds, a program that runs keeps a
 /// checkpoint at a probe (`checkpoints <ms>`), or never; and when it last
 /// did.
@@ -3204,6 +3224,9 @@ pub(crate) fn crashed() {
 
 /// Answers a command of the debugger, or `None` for one it does not know.
 pub(crate) fn command(line: &str) -> Option<String> {
+    if line == "checkpoint" && super::replay::replaying() {
+        return Some(take_checkpoint());
+    }
     let table = table()?;
     let table = &*table;
     let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -3254,17 +3277,6 @@ pub(crate) fn command(line: &str) -> Option<String> {
             AIM.store(tick, Ordering::Relaxed);
             go_after_answer(Mode::Run);
             "{\"running\":true}".into()
-        }
-        // In a replay, a copy of the process where its task stopped, which
-        // the debugger goes back to rather than to the start.
-        "checkpoint" if super::replay::replaying() => {
-            let Some(stop) = stopped().filter(|s| s.site < WAITING) else { return Some(not_stopped()) };
-            let tick = super::replay::ticks();
-            match on_task(stop.task, || checkpoint(table)) {
-                Some(Ok(pid)) => format!("{{\"checkpoint\":{{\"pid\":{pid},\"tick\":{tick}}}}}"),
-                Some(Err(message)) => format!("{{\"error\":{}}}", quoted(&message)),
-                None => "{\"error\":\"the stopped task did not take the checkpoint\"}".into(),
-            }
         }
         "checkpoints" if super::replay::replaying() => {
             let every: u64 = rest.parse().unwrap_or(0);

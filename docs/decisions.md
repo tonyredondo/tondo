@@ -5049,3 +5049,13 @@ enough to read: tasks that start and end, panics, requests, long waits, pauses
 of the collector. They go in a list of 256 that only a program with `TONDO_DUMP`
 fills. 800,000 spawns ran in the same time with it on, within the noise of
 0.3 to 0.4 s, as each is a push under a lock nobody holds for long.
+
+## A call in a replay runs in a copy that ends with it
+
+Asking a recorded run a question should not change the answer to the next one.
+A call runs code: it moves the count of probes that `back` and `seek` go by, and
+may change what it reads. So it runs in a copy of the process, from a checkpoint
+that was there anyway, and the copy ends with it: called twice, a counter says
+the same. Recordings are live builds for this, which cost nothing that could be
+measured, and a call is then any expression, with what `tondo debug --live` has.
+What the code asks of the world is not in the recording, so it reads nothing true.

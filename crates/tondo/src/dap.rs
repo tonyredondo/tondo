@@ -1885,8 +1885,13 @@ fn handle(
                         })
                         .collect();
                     let pid = program.pid;
-                    let called =
-                        crate::live::call(pid, &mut |request| program.answer(request), &place, &path, &bindings);
+                    let mut replaying = program.replaying.take();
+                    let mut ask = |request: &str| program.answer(request);
+                    let called = match replaying.as_mut() {
+                        Some(replaying) => replaying.call(&mut ask, &place, &path, &bindings),
+                        None => crate::live::call(pid, &mut ask, &place, &path, &bindings),
+                    };
+                    program.replaying = replaying;
                     let value = called.map_err(|call| format!("{read}; as a call: {call}"))?;
                     return Ok(json!({ "result": value, "variablesReference": 0 }));
                 }
