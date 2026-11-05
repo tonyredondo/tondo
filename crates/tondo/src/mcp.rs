@@ -287,6 +287,9 @@ impl Server {
         use std::os::unix::process::CommandExt;
         let mut argv = vec!["run".to_string(), args.path().display().to_string()];
         argv.push(if args.flag("watch") { "--watch" } else { "--live" }.into());
+        if args.flag("tests") {
+            argv.push("--tests".into());
+        }
         let program_args = args.list("args");
         if !program_args.is_empty() {
             argv.push("--".into());
@@ -2482,6 +2485,11 @@ session that run_output, run_input, run_stop and reload take; its output so far,
             ("args", "strings", "The program's arguments."),
             ("stdin", "string", "What to write to its standard input first."),
             ("watch", "boolean", "Reload when its files change (`--watch`)."),
+            (
+                "tests",
+                "boolean",
+                "With `watch`, also run the tests that reach what changed; `run_output` gives what they say.",
+            ),
             ("wait", "number", "Seconds to wait for its first output; 2 by default."),
         ],
     },

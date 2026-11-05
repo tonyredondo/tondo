@@ -1578,6 +1578,9 @@ cada tipo. Un build vivo atiende siempre a las herramientas, como con
 `TONDO_DIAGNOSTICS=1`, salvo con `TONDO_DIAGNOSTICS=0`. Los demás builds no
 tienen nada de eso, ni su coste.
 
+`tondo run --watch --tests` ejecuta además, tras cada cambio, los tests que alcanzan lo
+que cambió desde el último commit, mientras el programa sigue, y dice cómo fueron.
+
 `tondo reload <pid|name>` cambia el código de un build vivo en ejecución por
 el que dicen sus archivos ahora: compila el programa de nuevo, con las
 opciones con que se compiló y desde el directorio donde se compiló, y el

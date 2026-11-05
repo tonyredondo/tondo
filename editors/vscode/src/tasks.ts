@@ -12,6 +12,13 @@ import { checked, rendered } from './report';
 
 export type Command = 'check' | 'build' | 'run' | 'test' | 'fmt' | 'watch';
 
+/** How a live run starts: `tondo.testsOnSave` has the tests that reach each
+ *  change run too. */
+function liveFlags(): string[] {
+  const tests = vscode.workspace.getConfiguration('tondo').get<boolean>('testsOnSave', false);
+  return tests ? ['--watch', '--tests'] : ['--live'];
+}
+
 interface Definition extends vscode.TaskDefinition {
   command: Command;
   target?: string;
@@ -27,7 +34,7 @@ export function tondoTask(command: Command, target: string, folder?: vscode.Work
   const program = settings('run', target);
   const args =
     command === 'watch'
-      ? ['run', target, '--live', '--', ...program.args]
+      ? ['run', target, ...liveFlags(), '--', ...program.args]
       : command === 'run'
         ? ['run', target, '--', ...program.args]
         : [command, target];

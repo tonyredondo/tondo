@@ -13,7 +13,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "run",
         usage: &[
-            "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]",
+            "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]",
             "          [--target <target>] [--diagnostic-format human|json] [-- <argument>...]",
             "tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]",
             "          [--link <library>]...",

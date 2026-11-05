@@ -62,6 +62,7 @@ tondo test --filter parse         tests whose ids contain `parse`; --glob, --exa
 tondo api --diff v1.2              what the public API lost, changed or gained since a commit
 tondo check --unreached            the code neither main nor a test reaches
 tondo test --affected main         the tests that reach what changed since a commit
+tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo test --bisect v1.2 --filter parse   the first commit where a test fails
 tondo test --watch                again, the tests a change affects, as files change
 tondo test --coverage             with the lines, functions and branches that ran

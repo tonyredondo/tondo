@@ -1892,3 +1892,56 @@ fn says_what_nothing_reaches_and_what_breaks_the_api() {
     assert_eq!(found["changed"][0]["line"], 1, "{out}");
     assert_eq!(found["added"][0]["name"], "reach.fresh", "{out}");
 }
+
+/// `run --watch --tests`: a change reloads the program and runs what it reaches.
+#[test]
+fn a_change_runs_the_tests_it_reaches() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("watch-tests");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"watched\"\nversion = \"0.1.0\"\n").unwrap();
+    let main = "import std.time\n\npub fn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    time.sleep(time.seconds(60))\n}\n";
+    std::fs::write(dir.join("src/main.to"), main).unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test doubles {\n    assert(twice(2) == 4)\n}\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "one"]);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", ".", "--watch", "--tests"])
+        .current_dir(&dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (said, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stderr)).map_while(Result::ok) {
+            let _ = said.send(line);
+        }
+    });
+    // Long enough to have started; the change breaks the test.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    std::fs::write(dir.join("src/main.to"), main.replace("n * 2", "n * 3")).unwrap();
+    let mut lines = Vec::new();
+    while let Ok(line) = heard.recv_timeout(std::time::Duration::from_secs(120)) {
+        let done = line.starts_with("tondo: tests:");
+        lines.push(line);
+        if done {
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(lines.iter().any(|l| l.starts_with("tondo: tests:")), "{lines:?}");
+}

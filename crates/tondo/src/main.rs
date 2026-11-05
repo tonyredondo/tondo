@@ -2072,6 +2072,8 @@ struct BuildOptions {
     live: bool,
     /// `run --watch`: reloads the program when its files change.
     watch: bool,
+    /// `run --watch --tests`: and runs the tests the change reaches.
+    tests: bool,
     target: Option<Target>,
     /// How diagnostics are shown.
     shown: Shown,
@@ -2093,7 +2095,7 @@ fn object(analysis: &driver::Analysis, path: &Path, options: &BuildOptions) -> R
 
 fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), String> {
     let (mut libraries, mut statically, mut debug, mut rest) = (Vec::new(), false, false, Vec::new());
-    let (mut target, mut live, mut watch) = (None, false, false);
+    let (mut target, mut live, mut watch, mut tests) = (None, false, false, false);
     let mut shown = Shown::Human;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -2118,6 +2120,8 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
             (live, debug) = (true, true);
         } else if arg == "--watch" && !watch {
             (watch, live, debug) = (true, true, true);
+        } else if arg == "--tests" && !tests {
+            tests = true;
         } else if arg == "--" {
             rest.push(arg.clone());
             rest.extend(args.by_ref().cloned());
@@ -2130,7 +2134,7 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
         }
     }
     driver::ready(target)?;
-    Ok((BuildOptions { libraries, statically, debug, live, watch, target, shown }, rest))
+    Ok((BuildOptions { libraries, statically, debug, live, watch, tests, target, shown }, rest))
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -2457,6 +2461,27 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
             }
             Err(refused) => eprintln!("tondo: {}", refused.message()),
         }
+        if options.tests {
+            reached_tests(path);
+        }
+    }
+}
+
+/// The tests that reach what changed since the last commit, while the
+/// program goes on.
+fn reached_tests(path: &Path) {
+    let tondo = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("tondo"));
+    let ran = std::process::Command::new(tondo).arg("test").arg(path).args(["--affected", "HEAD"]).output();
+    match ran {
+        Ok(ran) => {
+            let said = String::from_utf8_lossy(&ran.stdout);
+            let last = said.lines().rfind(|line| !line.trim().is_empty()).unwrap_or_default();
+            eprintln!("tondo: tests: {last}");
+            if !ran.status.success() {
+                eprint!("{said}{}", String::from_utf8_lossy(&ran.stderr));
+            }
+        }
+        Err(e) => eprintln!("tondo: cannot run the tests: {e}"),
     }
 }
 
