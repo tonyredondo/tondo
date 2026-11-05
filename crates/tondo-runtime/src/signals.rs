@@ -70,6 +70,8 @@ pub(crate) fn at_turn() {
 }
 
 extern "C" fn caught(signal: i32) {
+    // It may interrupt the program's thread: this write is not the program's.
+    let _outside = super::replay::Outside::enter();
     let byte = signal as u8;
     unsafe { libc::write(PIPE.load(Ordering::Relaxed), (&raw const byte).cast(), 1) };
 }
