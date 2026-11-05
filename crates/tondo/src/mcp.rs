@@ -2239,7 +2239,7 @@ test file, and says whether it fails as the dump did. Run it where the program's
     Tool {
         name: "dump_core",
         description: "Writes a core of the system as a dump, which `dump_read` and the other tools read: the signal, and \
-where each task and thread was, and the numbers and strings it held. Linux and macOS.",
+where each task and thread was, and the values it held. Linux and macOS.",
         kind: Kind::Edits,
         params: &[
             ("core", "string!", "The core file, decompressed."),

@@ -5144,9 +5144,10 @@ a scan of the memory finds them, without knowing how the runtime's lists are lai
 out, and even when those lists are what broke. The stack of a waiting task follows
 from what it saved; the lines come from the trace table of the executable, which
 has a mark too, as a `--strip` build has no symbols. It turns into a dump for all
-that already reads one. Numbers and strings have a form known here, so they are
-read, across the runtime's frames by the executable's frame tables; a value of a
-type of the program would need the code that shows it, which a core does not run.
+that already reads one. Values are read across the runtime's frames by the
+executable's frame tables, and shown by the shape of each type the build keeps,
+as `Show` writes them and with the same secrets, since a core does not run the
+code that shows them. What only code can show, as a map, is left out.
 
 ## A copy of a process has one thread, and the memory of them all
 

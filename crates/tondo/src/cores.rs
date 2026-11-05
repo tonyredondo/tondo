@@ -1,9 +1,9 @@
 //! A core the system wrote of a program, on Linux or macOS, read as a dump
 //! (toolchain 7.5): the signal that ended it, and where each of its tasks and threads
-//! was, by the trace table of the program's executable, and the numbers and
-//! strings in its frames. A core is the memory of a process with no runtime
-//! left to ask: what only the program's code can show, and counters, are not
-//! read.
+//! was, by the trace table of the program's executable, and the values in
+//! its frames, by the shape of each type the build keeps. A core is the
+//! memory of a process with no runtime left to ask: what only the program's
+//! code can show, as a value with a view or a map, and counters, are not read.
 
 use crate::roots::Roots;
 use serde_json::{Map, Value, json};
@@ -122,6 +122,7 @@ const EVENTS: usize = 1 << 16;
 /// words before, and what is shown of a string is at most `SHOWN` long.
 pub const BINDINGS: &str = "TONDOBINDINGS1\n";
 const STRING_HEADER: u64 = 24;
+const ARRAY_HEADER: u64 = 32;
 const SHOWN: u64 = 4096;
 
 /// The longest stack a dump keeps.
@@ -500,6 +501,7 @@ struct Bound {
     ranges: Vec<(u32, u32, Located)>,
     scope: u32,
     from: u32,
+    shape: Option<usize>,
 }
 
 /// What it says of a function: the registers it saved, and where, and its
@@ -511,21 +513,24 @@ struct Bindings {
 }
 
 /// The bindings of each function, by its number, from the text a build
-/// without probes keeps.
-fn bindings(program: &[u8]) -> HashMap<usize, Bindings> {
-    let mut functions: HashMap<usize, Bindings> = HashMap::new();
+/// without probes keeps, and how values show (`codegen::shape`).
+fn bindings(program: &[u8]) -> (HashMap<usize, Bindings>, Vec<String>) {
+    let (mut functions, mut shapes): (HashMap<usize, Bindings>, Vec<String>) = Default::default();
     let mark = BINDINGS.as_bytes();
-    let Some(start) = program.windows(mark.len()).position(|window| window == mark) else { return functions };
+    let Some(start) = program.windows(mark.len()).position(|window| window == mark) else {
+        return (functions, shapes);
+    };
     let length = start.checked_sub(16).and_then(|at| u64_at(program, at)).unwrap_or(0) as usize;
-    let Some(text) = program.get(start..start + length) else { return functions };
+    let Some(text) = program.get(start..start + length) else { return (functions, shapes) };
     let (text, mut current) = (String::from_utf8_lossy(text), 0);
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         let function = functions.entry(current).or_default();
         match fields[..] {
             ["F", index] => current = index.parse().unwrap_or(0),
+            ["Y", shape] => shapes.push(shape.to_string()),
             ["C", register, at] => function.saved.extend(register.parse().ok().zip(at.parse().ok())),
-            ["B", name, ty, kind, value, _, scope, from] => {
+            ["B", name, ty, kind, value, _, scope, from, shape] => {
                 let value: i64 = value.parse().unwrap_or(0);
                 function.bound.push(Bound {
                     name: name.to_string(),
@@ -535,6 +540,7 @@ fn bindings(program: &[u8]) -> HashMap<usize, Bindings> {
                     ranges: Vec::new(),
                     scope: scope.parse().unwrap_or(u32::MAX),
                     from: from.parse().unwrap_or(0),
+                    shape: shape.parse().ok(),
                 });
             }
             ["R", start, end, kind, at] => {
@@ -552,11 +558,10 @@ fn bindings(program: &[u8]) -> HashMap<usize, Bindings> {
             _ => {}
         }
     }
-    functions
+    (functions, shapes)
 }
 
-/// What a value of a type the program did not define reads as: the rest
-/// have a form only the program's code knows.
+/// A number or a string, from its word.
 fn decoded(ty: &str, word: u64, memory: &Memory) -> Option<String> {
     Some(match ty {
         "Int" | "Int64" => (word as i64).to_string(),
@@ -580,22 +585,124 @@ fn decoded(ty: &str, word: u64, memory: &Memory) -> Option<String> {
     })
 }
 
-impl Bound {
-    /// The word of the binding in the frame at `fp`, at `offset` of its code.
-    fn word(&self, fp: u64, offset: u32, registers: &[Option<u64>; 32], memory: &Memory) -> Option<u64> {
-        if let Some(slot) = self.slot {
-            return memory.word(fp.wrapping_add_signed(slot));
-        }
-        let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
-        let word = match place {
-            Located::Frame(at) => memory.word(fp.wrapping_add_signed(16 + at))?,
-            Located::Register(number) => (*registers.get(number)?)?,
-        };
-        match self.pointer {
-            true => memory.word(word),
-            false => Some(word),
+/// Where a value is: in a word of its own, as a register has it, or at an
+/// address.
+#[derive(Clone, Copy)]
+enum Place {
+    Word(u64),
+    At(u64),
+}
+
+impl Place {
+    fn word(self, memory: &Memory) -> Option<u64> {
+        match self {
+            Place::Word(word) => Some(word),
+            Place::At(at) => memory.word(at),
         }
     }
+}
+
+impl Bound {
+    /// Where the binding is in the frame at `fp`, at `offset` of its code.
+    fn value(&self, fp: u64, offset: u32, registers: &[Option<u64>; 32], memory: &Memory) -> Option<Place> {
+        if let Some(slot) = self.slot {
+            return Some(Place::At(fp.wrapping_add_signed(slot)));
+        }
+        let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
+        Some(match (place, self.pointer) {
+            (Located::Frame(at), false) => Place::At(fp.wrapping_add_signed(16 + at)),
+            (Located::Frame(at), true) => Place::At(memory.word(fp.wrapping_add_signed(16 + at))?),
+            (Located::Register(number), false) => Place::Word((*registers.get(number)?)?),
+            (Located::Register(number), true) => Place::At((*registers.get(number)?)?),
+        })
+    }
+}
+
+/// What is shown of an array, and how deep a value goes.
+const ELEMENTS: u64 = 32;
+const DEPTH: usize = 8;
+
+/// A part of a value, as `offset:shape`, `*` when it is behind a pointer, at
+/// `base`; `x` is a secret.
+fn part(written: &str, base: u64, shapes: &[String], memory: &Memory, depth: usize) -> String {
+    if written == "x" {
+        return "<secret>".to_string();
+    }
+    let parsed = written.split_once(':').and_then(|(offset, shape)| {
+        let (boxed, shape) = (shape.starts_with('*'), shape.trim_start_matches('*'));
+        Some((base.checked_add(offset.parse().ok()?)?, boxed, shape.parse::<usize>().ok()?))
+    });
+    let shown = parsed.and_then(|(at, boxed, shape)| {
+        let at = if boxed { memory.word(at)? } else { at };
+        shown(shape, Place::At(at), shapes, memory, depth + 1)
+    });
+    shown.unwrap_or_else(|| "?".to_string())
+}
+
+/// A value as `Show` writes it, from its shape.
+fn shown(id: usize, value: Place, shapes: &[String], memory: &Memory, depth: usize) -> Option<String> {
+    if depth > DEPTH {
+        return Some("...".to_string());
+    }
+    let mut words = shapes.get(id)?.split(' ');
+    Some(match words.next()? {
+        "s" => {
+            let ty = words.next()?;
+            decoded(ty, value.word(memory)?, memory)?
+        }
+        "x" => "<secret>".to_string(),
+        "u" => "()".to_string(),
+        "a" => {
+            let (size, element): (u64, usize) = (words.next()?.parse().ok()?, words.next()?.parse().ok()?);
+            let array = value.word(memory)?;
+            let (length, head) = (memory.word(array.checked_add(8)?)?, memory.word(array.checked_add(24)?)?);
+            let items: Vec<String> = (0..length.min(ELEMENTS))
+                .map(|index| {
+                    let at = array + ARRAY_HEADER + (head + index) * size;
+                    shown(element, Place::At(at), shapes, memory, depth + 1).unwrap_or_else(|| "?".to_string())
+                })
+                .collect();
+            let more = if length > ELEMENTS { ", ..." } else { "" };
+            format!("[{}{more}]", items.join(", "))
+        }
+        "n" => {
+            let inner: usize = words.next()?.parse().ok()?;
+            match value.word(memory)? {
+                0 => "none".to_string(),
+                word => format!("some({})", shown(inner, Place::Word(word), shapes, memory, depth + 1)?),
+            }
+        }
+        "t" => {
+            let Place::At(at) = value else { return None };
+            let parts: Vec<String> = words.map(|written| part(written, at, shapes, memory, depth)).collect();
+            format!("({})", parts.join(", "))
+        }
+        "r" => {
+            let Place::At(at) = value else { return None };
+            let name = words.next()?;
+            let fields = words.filter_map(|field| field.split_once('='));
+            let fields: Vec<String> = fields
+                .map(|(field, written)| format!("{field}: {}", part(written, at, shapes, memory, depth)))
+                .collect();
+            format!("{name} {{ {} }}", fields.join(", "))
+        }
+        "v" => {
+            let Place::At(at) = value else { return None };
+            let size: usize = words.next()?.parse().ok()?;
+            let bytes = memory.read(at, size)?;
+            let tag = bytes.iter().rev().fold(0usize, |tag, &byte| tag << 8 | byte as usize);
+            let (name, parts) = words.nth(tag)?.split_once('=')?;
+            match parts.is_empty() {
+                true => name.to_string(),
+                false => {
+                    let parts: Vec<String> =
+                        parts.split(',').map(|written| part(written, at, shapes, memory, depth)).collect();
+                    format!("{name}({})", parts.join(", "))
+                }
+            }
+        }
+        _ => return None,
+    })
 }
 
 /// Where a stack starts: the frame and code of what stands innermost, the
@@ -648,6 +755,7 @@ impl<'a> Unwinder<'a> {
 /// What reading values takes.
 struct Reading<'a> {
     tables: HashMap<usize, Bindings>,
+    shapes: Vec<String>,
     unwinder: Option<Unwinder<'a>>,
     callee: &'static [usize],
 }
@@ -686,8 +794,10 @@ fn values(task: u64, start: Start, memory: &Memory, code: &Code, reading: &Readi
             let line = place.split(" in ").next().and_then(|at| at.rsplit(':').next());
             let line: u32 = line.and_then(|line| line.parse().ok()).unwrap_or(u32::MAX);
             for bound in table.iter().flat_map(|t| &t.bound).filter(|b| b.scope == record && b.from <= line) {
-                let word = bound.word(fp, offset, &registers, memory);
-                if let Some(value) = word.and_then(|word| decoded(&bound.ty, word, memory)) {
+                let found_at = bound.value(fp, offset, &registers, memory);
+                let value =
+                    found_at.zip(bound.shape).and_then(|(at, shape)| shown(shape, at, &reading.shapes, memory, 0));
+                if let Some(value) = value {
                     found.push(json!({
                         "task": task, "frame": at, "at": place, "name": bound.name, "type": bound.ty,
                         "value": value, "parts": [],
@@ -946,7 +1056,8 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     let saved = if machine == 62 { 5 * 8 } else { 10 * 8 };
     let callee: &'static [usize] =
         if machine == 62 { &[3, 12, 13, 14, 15] } else { &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28] };
-    let reading = Reading { tables: bindings(&bytes), unwinder: Unwinder::of(&bytes, bias), callee };
+    let (tables, shapes) = bindings(&bytes);
+    let reading = Reading { tables, shapes, unwinder: Unwinder::of(&bytes, bias), callee };
     let of_thread = |task: u64, thread: &Thread| {
         let start = Start { fp: thread.fp, pc: Some(thread.pc), exact: true, registers: thread.registers };
         values(task, start, &memory, &code, &reading)
@@ -1082,7 +1193,7 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     Ok(json!({
         "dump": 1,
         "reason": "fault",
-        "message": format!("{signal}{place}, from a system core, which says where tasks were and the numbers and strings they held"),
+        "message": format!("{signal}{place}, from a system core, which says where tasks were and what they held"),
         "info": { "pid": found.threads[0].id, "program": image, "arguments": arguments, "uptime_ms": 0 },
         "time_ms": time,
         "stopped": true,

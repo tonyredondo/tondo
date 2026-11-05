@@ -1918,7 +1918,7 @@ fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
                     function.saved.push((register, at));
                 }
             }
-            ["B", name, ty, kind, value, keep, scope, from] => {
+            ["B", name, ty, kind, value, keep, scope, from, _] => {
                 let (name, ty) = (name.to_string(), ty.to_string());
                 let show = glues[next];
                 next += 1;

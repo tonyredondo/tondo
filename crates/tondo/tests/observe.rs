@@ -4815,8 +4815,11 @@ fn reads_a_core_with_the_tasks_that_waited() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\n\nfn deep(rounds: Int): Int {\n    let _ = console.readLine()\n    rounds + 1\n}\n\n\
         fn middle(rounds: Int): Int {\n    let value = deep(rounds)\n    console.println(\"{value}\")\n    value\n}\n\n\
-        fn main() {\n    let other = spawn middle(2)\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
-        console.println(\"{other.wait()}\")\n}\n";
+        enum Way { Fast, Slow(Int) }\n\n\
+        type Order = { id: Int, tags: Array[String], note: String?, @secret pin: Int, way: Way }\n\n\
+        fn main() {\n    let order = Order { id: 7, tags: [\"a\", \"b\"], note: some(\"hi\"), pin: 1234, way: Way.Slow(3) }\n    \
+        let other = spawn middle(2)\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
+        console.println(\"{other.wait()} {order.id} {order.tags.length()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
     let executable = dir.join("waits");
     let build = |output: &Path, flags: &[&str]| {
@@ -4852,7 +4855,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     assert!(dump["summary"].as_str().unwrap().contains("SIGABRT (signal 6)"), "{dump}");
     let stacks = tondo(&["dump", "read", core, "stacks", "--json"]);
     let text = stacks.to_string();
-    assert!(text.contains("waits.to:18 in main"), "{text}");
+    assert!(text.contains("waits.to:23 in main"), "{text}");
     assert!(text.contains("waits.to:4 in deep") && text.contains("waits.to:9 in middle"), "{text}");
     // What it waited for, and what it did before.
     let tasks = tondo(&["dump", "read", core, "tasks", "--json"]).to_string();
@@ -4862,6 +4865,11 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // A number of a task that waited, through the frames of the runtime.
     let locals = tondo(&["dump", "read", core, "locals", "2", "--json"]).to_string();
     assert!(locals.contains("rounds") && locals.contains("\"2\""), "{locals}");
+    // A value of the program's own type, with its secrets kept.
+    let locals = tondo(&["dump", "read", core, "locals", "1", "--json"]).to_string();
+    let shown =
+        "Order { id: 7, tags: [\\\"a\\\", \\\"b\\\"], note: some(\\\"hi\\\"), pin: <secret>, way: Way.Slow(3) }";
+    assert!(locals.contains(shown), "{locals}");
 
     // In the editor, as any dump.
     let mut adapter = Adapter::start();

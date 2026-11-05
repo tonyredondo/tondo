@@ -729,8 +729,8 @@ core of the system, on Linux or macOS, where it needs `--executable`. `tondo dum
 with the program where the core says, and `tondo dump core <core> --executable
 <file> --output <path>` writes the dump, for a program that is somewhere else: the
 signal, where every task and thread was and what it waited for, even in a build
-with `--strip`, and the numbers and strings the optimizer left; not values of your
-own types. `tondo dump core <pid>` takes one out of systemd, and in `core_pattern`,
+with `--strip`, and the values the optimizer left, your own types too, with
+`@secret` kept. `tondo dump core <pid>` takes one out of systemd, and in `core_pattern`,
 `|/usr/bin/tondo dump core - --output /var/dumps/%e-%p.dump.json` leaves a dump of
 each crash instead of a core.
 

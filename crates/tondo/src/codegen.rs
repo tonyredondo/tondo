@@ -2959,6 +2959,12 @@ impl Codegen<'_> {
     /// glue that shows each binding, in the order of the `L` lines.
     fn dump_table(&mut self, id: DataId) {
         let (mut text, mut glues) = (crate::cores::BINDINGS.to_string(), Vec::new());
+        let (mut shapes, mut known) = (Vec::new(), HashMap::new());
+        let bound = self.traced.iter().filter_map(|function| self.dump_bindings.get(&function.body));
+        let shaped: Vec<Ty> = bound.flatten().map(|binding| binding.1).collect();
+        for ty in shaped {
+            self.shape(ty, &mut shapes, &mut known);
+        }
         for (index, function) in self.traced.iter().enumerate() {
             text.push_str(&format!("F\t{index}\n"));
             for (register, at) in &function.saved {
@@ -2972,10 +2978,12 @@ impl Codegen<'_> {
             let Some(bindings) = self.dump_bindings.get(&function.body) else { continue };
             for (name, ty, glue, place, keep, scope, from) in bindings {
                 glues.push(*glue);
+                let shaped = ty;
                 let ty = self.types.display(*ty);
                 let keep = keep.map_or(-1, i64::from);
                 let from = from.map_or(0, |from| self.sources.position(from.start).1);
-                let keep = format!("{keep}\t{}\t{from}", scope.map_or(-1, i64::from));
+                let shape = known[shaped];
+                let keep = format!("{keep}\t{}\t{from}\t{shape}", scope.map_or(-1, i64::from));
                 match *place {
                     DumpPlace::Slot(slot) => {
                         let Some((_, at)) = function.slots.iter().find(|(s, _)| *s == slot) else {
@@ -3001,6 +3009,9 @@ impl Codegen<'_> {
                     }
                 }
             }
+        }
+        for shape in shapes {
+            text.push_str(&format!("Y\t{shape}\n"));
         }
         let text = self.string(&text);
         let array = self.module.declare_data("tondo_dump_glue", Linkage::Local, false, false).expect("dump glue");
@@ -3130,6 +3141,109 @@ impl Codegen<'_> {
             },
             _ => "-".into(),
         };
+        id
+    }
+
+    /// How what reads a core shows a value, as `Show` does (`cores::shown`):
+    /// its number among `shapes`, each a line of `s` and a scalar's type, `x`
+    /// for a secret, `u` for nothing, `a` and the size and shape of an
+    /// array's elements, `n` and an address's shape for what `none` is zero
+    /// of, `t` a tuple's and `r` a record's parts, and `v` the size of a tag
+    /// and each variant. A part is `offset:shape`, `*` before the shape when
+    /// it is behind a pointer; `-` is what only code can show.
+    fn shape(&mut self, ty: Ty, shapes: &mut Vec<String>, known: &mut HashMap<Ty, usize>) -> usize {
+        if let Some(&id) = known.get(&ty) {
+            return id;
+        }
+        let id = shapes.len();
+        shapes.push("-".into());
+        known.insert(ty, id);
+        let part = |cg: &mut Self, slot: Slot, shapes: &mut Vec<String>, known: &mut HashMap<Ty, usize>| {
+            let inner = cg.shape(slot.ty, shapes, known);
+            format!("{}:{}{inner}", slot.offset, if slot.boxed { "*" } else { "" })
+        };
+        let repr = self.types.repr(ty);
+        let kind = self.types.kind(repr).clone();
+        let written = match kind {
+            _ if self.types.secret(ty) => "x".to_string(),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Byte | TyKind::String => {
+                format!("s {}", self.types.display(repr))
+            }
+            TyKind::Unit => "u".into(),
+            TyKind::Tuple(items) => {
+                let mut out = String::from("t");
+                for index in 0..items.len() {
+                    let slot = self.slot(ty, Proj::Field(index as u32));
+                    out.push_str(&format!(" {}", part(self, slot, shapes, known)));
+                }
+                out
+            }
+            TyKind::Array(element) | TyKind::Deque(element) => {
+                let inner = self.shape(element, shapes, known);
+                format!("a {} {inner}", self.layout(element).size)
+            }
+            TyKind::Adt(adt) if matches!(self.types.adt(adt).kind, AdtKind::Record(_)) => {
+                let name = self.types.adt(adt).name.replace(' ', "");
+                let AdtKind::Record(fields) = self.types.adt(adt).kind.clone() else { unreachable!("a record") };
+                let mut out = format!("r {name}");
+                for (index, field) in fields.iter().enumerate() {
+                    let slot = self.slot(ty, Proj::Field(index as u32));
+                    let written = if field.secret { "x".to_string() } else { part(self, slot, shapes, known) };
+                    out.push_str(&format!(" {}={written}", field.name));
+                }
+                out
+            }
+            TyKind::Option(_) if matches!(self.layout(ty).shape, Shape::Niche) => {
+                let slot = self.slot(ty, Proj::Variant(crate::types::SOME, 0));
+                format!("n {}", self.shape(slot.ty, shapes, known))
+            }
+            TyKind::Option(_) | TyKind::Result(..) | TyKind::Adt(_) => match self.layout(ty).shape {
+                Shape::Enum { tag, .. } => {
+                    let names: Vec<String> = match self.types.kind(repr).clone() {
+                        TyKind::Option(_) => vec!["none".into(), "some".into()],
+                        TyKind::Result(..) => vec!["ok".into(), "err".into()],
+                        TyKind::Adt(adt) => match self.types.adt(adt).kind.clone() {
+                            AdtKind::Enum(variants) => {
+                                let name = self.types.adt(adt).name.clone();
+                                variants.iter().map(|v| format!("{name}.{}", v.name)).collect()
+                            }
+                            _ => Vec::new(),
+                        },
+                        _ => Vec::new(),
+                    };
+                    let secret = |cg: &Self, variant: usize, index: usize| match cg.types.kind(repr) {
+                        TyKind::Adt(adt) => match &cg.types.adt(*adt).kind {
+                            AdtKind::Enum(variants) => match &variants[variant].payload {
+                                crate::types::Payload::Record(fields) => fields[index].secret,
+                                _ => false,
+                            },
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    let variants = self.types.variants(ty).unwrap_or_default();
+                    let mut out = format!("v {}", tag.bytes());
+                    for (variant, components) in variants.iter().enumerate() {
+                        let name = names.get(variant).map_or("?", String::as_str).replace(' ', "");
+                        let mut parts = Vec::new();
+                        for index in 0..components.len() {
+                            parts.push(match secret(self, variant, index) {
+                                true => "x".to_string(),
+                                false => {
+                                    let slot = self.slot(ty, Proj::Variant(variant as u32, index as u32));
+                                    part(self, slot, shapes, known)
+                                }
+                            });
+                        }
+                        out.push_str(&format!(" {name}={}", parts.join(",")));
+                    }
+                    out
+                }
+                _ => "-".into(),
+            },
+            _ => "-".into(),
+        };
+        shapes[id] = written;
         id
     }
 
