@@ -105,6 +105,9 @@ pub struct Body {
     /// The bindings of the code inlined here, for a dump: the local, the
     /// binding's name, and the inlined call it is of (`inlined`).
     pub scoped: Vec<(Local, String, u32)>,
+    /// The parameters of the code inlined here, which the call writes,
+    /// before the first line of the function they belong to.
+    pub arguments: Vec<Local>,
     pub params: Vec<Local>,
     /// Parameters passed as the address of the caller's place (a `mut self`
     /// or `var self` loan); reads and writes go through it.
@@ -531,7 +534,12 @@ pub fn written(body: &Body) -> Vec<Option<Option<Span>>> {
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
         let (mut used, mut defined) = (Vec::new(), Vec::new());
         statement_locals(statement, &mut used, &mut defined);
-        let at = if let Statement::Assign(_, _, span) = statement { Some(*span) } else { None };
+        // A record is often written a field at a time.
+        let mut at = None;
+        if let Statement::Assign(place, _, span) = statement {
+            defined.push(place.local);
+            at = Some(*span);
+        }
         for local in defined {
             let known = &mut written[local.0 as usize];
             *known = match (*known, at) {
@@ -540,6 +548,11 @@ pub fn written(body: &Body) -> Vec<Option<Option<Span>>> {
                 (Some(Some(_)), None) => Some(None),
                 (known, _) => known,
             };
+        }
+    }
+    for local in &body.arguments {
+        if written[local.0 as usize].is_some() {
+            written[local.0 as usize] = Some(None);
         }
     }
     written

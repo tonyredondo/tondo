@@ -408,6 +408,9 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
                 .filter_map(|(local, name, scope)| Some((local_of(*local)?, name.clone(), base + scope)));
             let found: Vec<_> = named.chain(scoped).collect();
             body.scoped.extend(found);
+            let given: Vec<Local> =
+                callee.params.iter().chain(&callee.arguments).filter_map(|l| local_of(*l)).collect();
+            body.arguments.extend(given);
             body.inlined.extend(callee.inlined.iter().map(|inlined| Inlined {
                 parent: Some(inlined.parent.map_or(call, |parent| base + parent)),
                 ..inlined.clone()

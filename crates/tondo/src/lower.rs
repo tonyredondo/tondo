@@ -417,6 +417,7 @@ fn lower_function(
         locals: b.locals,
         names: b.names,
         scoped: Vec::new(),
+        arguments: Vec::new(),
         params,
         loans: function.loans.clone(),
         ret: b.ret,
