@@ -24,6 +24,7 @@ mod cycles;
 mod debugger;
 mod diagnostics;
 mod env;
+mod events;
 mod files;
 mod fs;
 mod fuzz;
@@ -2669,6 +2670,9 @@ unsafe fn end_in_panic(mut code: u32, message: *const Str, location: *const Str)
     if recorder::on() {
         let task = tasks::current_id();
         recorder::record(recorder::Event::Panic { task, message: format!("{text}\n --> {location}") });
+    }
+    if events::on() {
+        events::add(events::What::Panicked(format!("{text} at {location}")));
     }
     // A debugger sees where the program's code panicked first.
     if !suppressed {

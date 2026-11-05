@@ -60,6 +60,12 @@ struct Flight {
     task: u64,
 }
 
+impl Flight {
+    fn text(&self) -> String {
+        format!("{} {}", self.method, self.path)
+    }
+}
+
 /// The requests in flight, in a program that dumps or is watched.
 static FLIGHTS: Mutex<Vec<Flight>> = Mutex::new(Vec::new());
 
@@ -74,6 +80,9 @@ impl Flown {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
             let (method, path) = (method.to_string(), path.to_string());
             let flight = Flight { id, method, path, since: Instant::now(), task: 0 };
+            if super::events::on() {
+                super::events::add(super::events::What::Request(flight.text()));
+            }
             FLIGHTS.lock().unwrap_or_else(|e| e.into_inner()).push(flight);
             Flown(id)
         })
@@ -92,7 +101,12 @@ impl Drop for Flown {
     fn drop(&mut self) {
         let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(index) = flights.iter().position(|flight| flight.id == self.0) {
-            flights.swap_remove(index);
+            let flight = flights.swap_remove(index);
+            drop(flights);
+            if super::events::on() {
+                let took = flight.since.elapsed().as_millis() as u64;
+                super::events::add(super::events::What::Answered(flight.text(), took));
+            }
         }
     }
 }
@@ -653,6 +667,9 @@ pub(crate) fn start() {
     if !super::replay::on() {
         schedule_dumps();
     }
+    if std::env::var_os("TONDO_DUMP").is_some() {
+        super::events::start();
+    }
     // `tondo debug -- program` debugs that program, not those it starts.
     if debugged {
         unsafe { std::env::remove_var("TONDO_DEBUG") };
@@ -1154,7 +1171,10 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
     }
     match values_shown() {
-        true => out.push_str(&flights_json()),
+        true => {
+            out.push_str(&flights_json());
+            let _ = write!(out, ",\"events\":{}", super::events::json(|address| frames.list(&[address])));
+        }
         false => out.push_str(",\"values_off\":true"),
     }
     let _ = write!(out, ",\"values\":[{}]", values.join(","));

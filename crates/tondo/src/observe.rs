@@ -866,6 +866,8 @@ pub enum View {
     Stacks,
     /// The requests in flight, the oldest first.
     Requests,
+    /// What the program did last.
+    Events,
     /// Where a text is: in values, stacks, contexts and the memory's sites.
     Find(String),
 }
@@ -1069,6 +1071,8 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Stacks => stacks_text(&stacks(&tasks)),
         View::Requests if json => return shown("requests", Value::Array(requests(&dump))),
         View::Requests => requests_text(&requests(&dump)),
+        View::Events if json => return shown("events", Value::Array(events(&dump))),
+        View::Events => events_text(&events(&dump)),
         View::Find(text) => {
             let found = find(&dump, &tasks, &text);
             if json {
@@ -1392,6 +1396,42 @@ fn task_text(task: &Value, whole: bool) -> String {
     out
 }
 
+/// What the program did last, the oldest first, with places in words.
+fn events(dump: &Value) -> Vec<Value> {
+    let mut list = dump["events"].as_array().cloned().unwrap_or_default();
+    for event in &mut list {
+        if let Some(at) = event["at"].as_array().and_then(|at| at.first()).and_then(|at| frame_text(dump, at)) {
+            event["at"] = json!(at);
+        }
+    }
+    list
+}
+
+fn events_text(list: &[Value]) -> String {
+    if list.is_empty() {
+        return "this dump has no events: a program keeps them with TONDO_DUMP in its environment".to_string();
+    }
+    let line = |event: &Value| {
+        let ago = duration(event["ago_ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let took = duration(event["took_ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let (task, text) = (&event["task"], event["text"].as_str().unwrap_or_default());
+        let what = match event["what"].as_str().unwrap_or_default() {
+            "spawned" => {
+                format!("task {task} spawned task {} at {}", event["other"], event["at"].as_str().unwrap_or("?"))
+            }
+            "ended" => format!("task {task} ended"),
+            "panicked" => format!("task {task} panicked: {text}"),
+            "request" => format!("came {text}"),
+            "answered" => format!("answered {text} in {took}"),
+            "waited" => format!("task {task} waited {took}"),
+            "paused" => format!("the collector stopped the program for {took}"),
+            other => other.to_string(),
+        };
+        format!("{ago:>9} ago  {what}")
+    };
+    list.iter().map(line).collect::<Vec<_>>().join("\n")
+}
+
 /// The requests in flight, the oldest first.
 fn requests(dump: &Value) -> Vec<Value> {
     let mut list = dump["requests"].as_array().cloned().unwrap_or_default();
@@ -1552,6 +1592,8 @@ fn why(dump: &Value) -> Value {
     let heap = heap(dump);
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
+    let events = events(dump);
+    found["events"] = events[events.len().saturating_sub(10)..].to_vec().into();
     found["requests"] = requests(dump).into_iter().take(5).collect();
     found["in_flight"] = json!(dump["requests"].as_array().map_or(0, Vec::len));
     found["crowded"] = stacks(&tasks).into_iter().filter(|g| g["count"].as_u64() > Some(1)).take(5).collect();
@@ -1656,6 +1698,12 @@ fn why_text(found: &Value) -> String {
         let share = if total > 0.0 { held / total * 100.0 } else { 0.0 };
         let (at, kind) = (text(&site["site"]), text(&site["kind"]));
         out.push_str(&format!("{} of the live memory ({share:.0} %) is {kind} from {at}\n", bytes(held)));
+    }
+    if !list("events").is_empty() {
+        out.push_str("what came last:\n");
+        for line in events_text(list("events")).lines() {
+            out.push_str(&format!("{line}\n"));
+        }
     }
     match out.is_empty() {
         true => "nothing stands out in this dump".to_string(),

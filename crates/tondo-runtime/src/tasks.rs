@@ -1585,6 +1585,9 @@ fn run(task: *mut Task) {
     }
     unsafe {
         let in_domain = (*task).in_domain;
+        if (*task).finished && super::events::on() {
+            super::events::add_of((*task).id, super::events::What::Ended);
+        }
         if (*task).finished {
             super::debugger::task_ended((*task).id);
             let (was_main, join) = ((*task).main, (*task).join);
@@ -1934,10 +1937,16 @@ pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize)
     if let Some(task) = unsafe { task.as_ref() } {
         // A debugger that stops long waits stops this one, as it ends.
         super::debugger::waited(task.id, since.elapsed());
+        if super::events::on() && since.elapsed().as_millis() >= LONG_WAIT {
+            super::events::add(super::events::What::Waited(since.elapsed().as_millis() as u64));
+        }
         task.blocked_kind.store(0, Ordering::Release);
     }
     fired
 }
+
+/// The milliseconds from which a dump's events keep a wait.
+const LONG_WAIT: u128 = 100;
 
 /// What `blocked_since` counts from.
 static WAITS_FROM: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -3332,6 +3341,10 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             let parent = current().as_ref().map_or(0, |parent| parent.id);
             let at = recorder::frames(spawned.frames().iter().copied());
             recorder::record(recorder::Event::Spawn { task: (*task).id, parent, code: code as usize, at });
+        }
+        if super::events::on() {
+            let at = spawned.frames().first().copied().unwrap_or(0);
+            super::events::add(super::events::What::Spawned((*task).id, at));
         }
         (*task).origin = Some(spawned);
     }

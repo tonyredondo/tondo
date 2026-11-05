@@ -98,6 +98,7 @@ tondo blocked api                 who waits for whom now
 tondo dump read api.dump why      what went wrong, as far as it can tell
 tondo dump read api.dump stacks   the tasks by the stack they share
 tondo dump read api.dump requests the HTTP and gRPC requests in flight
+tondo dump read api.dump events   what it did last, with TONDO_DUMP on
 tondo dump read api.dump find id  where a text is, in values, stacks and contexts
 tondo dump read api.dump tasks    read a dump; TONDO_DUMP=<dir> writes one at a crash
 tondo dump read api.dump locals   the bindings of a frame; `print user.name` a part

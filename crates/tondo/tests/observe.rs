@@ -3162,6 +3162,12 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert_eq!(request["path"], "/slow/77", "{requests}");
     assert_ne!(request["task"], 0, "{requests}");
     assert!(request["ms"].as_u64().unwrap() >= 400, "{requests}");
+    // What came before it, in order.
+    let events = tondo(&["dump", "read", dump.to_str().unwrap(), "events", "--json"]);
+    let what: Vec<&str> = events["events"].as_array().unwrap().iter().map(|e| e["what"].as_str().unwrap()).collect();
+    let came = what.iter().position(|w| *w == "request").unwrap_or_else(|| panic!("{events}"));
+    assert!(what[came..].contains(&"spawned"), "{events}");
+    assert!(events["events"][came]["text"].as_str().unwrap().contains("GET /slow/77"), "{events}");
     // What breaks the copy that shows the values says nothing here.
     let said = String::from_utf8_lossy(&output.stderr);
     assert!(!said.contains("memory allocation") && !said.contains("panicked"), "{said}");

@@ -221,7 +221,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "dump",
         usage: &[
-            "tondo dump read <file> [why | tasks | stacks | requests | task <id> | locals [<task> [<frame>]]",
+            "tondo dump read <file> [why | tasks | stacks | requests | events | task <id>",
+            "                       | locals [<task> [<frame>]]",
             "                       | print <path> [<task> [<frame>]] | find <text>",
             "                       | heap | objects | object <address>] [--json]",
         ],

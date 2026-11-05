@@ -834,7 +834,11 @@ objetos y los sitios de memoria, cada sitio una vez y lo más hondo que esté.
 `requests` da las peticiones HTTP y gRPC en curso, de la más antigua a la más
 nueva: su método, su ruta sin la query, cuánto llevan y qué tarea las atiende.
 Solo un programa con `TONDO_DUMP` o `TONDO_DIAGNOSTICS` las apunta, y
-`TONDO_DUMP_VALUES=off` las quita.
+`TONDO_DUMP_VALUES=off` las quita. `events` da lo último que hizo el programa,
+hasta 256: las tareas que empezó y que acabaron, los pánicos, también los que un
+`recover` paró, las peticiones, las esperas de 100 ms o más y las pausas del
+colector, cada uno con cuánto antes del volcado fue. Solo los apunta un programa
+con `TONDO_DUMP`, `TONDO_DUMP_VALUES=off` los quita, y `why` da los diez últimos.
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.
@@ -1611,7 +1615,7 @@ campos de su resultado:
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
-| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
+| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |

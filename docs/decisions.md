@@ -5037,3 +5037,12 @@ The graph goes by who can end a wait, so a task behind a lock leads to the one
 that holds it, and that one to what it waits for: the root is what to look at.
 A channel has no such edge, as anyone may send on it. The same code reads the
 debugger's `tasks`, so `blocked` is this graph live.
+
+## What came before a crash costs what happens rarely
+
+A stack says where a program fell, not how it got there. `tondo trace` keeps
+every event, too many to leave on, so a dump's events are only what is rare
+enough to read: tasks that start and end, panics, requests, long waits, pauses
+of the collector. They go in a list of 256 that only a program with `TONDO_DUMP`
+fills. 800,000 spawns ran in the same time with it on, within the noise of
+0.3 to 0.4 s, as each is a push under a lock nobody holds for long.

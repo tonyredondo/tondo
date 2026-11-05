@@ -1122,6 +1122,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 ["why"] => tondo::observe::View::Why,
                 ["stacks"] => tondo::observe::View::Stacks,
                 ["requests"] => tondo::observe::View::Requests,
+                ["events"] => tondo::observe::View::Events,
                 ["find", text] => tondo::observe::View::Find(text.to_string()),
                 ["heap"] => tondo::observe::View::Heap,
                 ["objects"] => tondo::observe::View::Objects,
@@ -1140,7 +1141,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 }
                 _ => {
                     return Err(usage(
-                        "dump read shows why, tasks, stacks, requests, task <id>, locals, print <path>, find <text>, heap, objects or object <address>",
+                        "dump read shows why, tasks, stacks, requests, events, task <id>, locals, print <path>, find <text>, heap, objects or object <address>",
                     ));
                 }
             };

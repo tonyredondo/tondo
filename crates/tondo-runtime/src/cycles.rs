@@ -401,6 +401,9 @@ fn count_and_free() -> Option<usize> {
     if super::recorder::on() {
         super::recorder::record(super::recorder::Event::Pause { took: paused as u64 * 1000 });
     }
+    if super::events::on() {
+        super::events::add(super::events::What::Paused(paused as u64));
+    }
     drop(registry);
     // Nothing reaches the garbage, so the workers may run meanwhile; no
     // other collection does. Releasing the cells' states frees the cycles,
