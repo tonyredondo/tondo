@@ -13,6 +13,43 @@ static LAST: Mutex<VecDeque<(Instant, u64, What)>> = Mutex::new(VecDeque::new())
 /// How many it keeps.
 const KEPT: usize = 256;
 
+/// The same events as lines of JSON, in memory that a core keeps as it is:
+/// the list above has no form that what reads a core could know. Written
+/// with `LAST` held; what follows the mark is how much it ever wrote.
+#[repr(C)]
+struct Text {
+    mark: [u8; 16],
+    written: u64,
+    bytes: [u8; TEXT],
+}
+
+const TEXT: usize = 1 << 16;
+struct Shared(std::cell::UnsafeCell<Text>);
+unsafe impl Sync for Shared {}
+static RECORD: Shared =
+    Shared(std::cell::UnsafeCell::new(Text { mark: *b"TONDOEVENTS1\n\0\0\0", written: 0, bytes: [0; TEXT] }));
+
+/// Adds an event to what a core keeps, with `LAST` held.
+fn record(task: u64, what: &What) {
+    use super::diagnostics::quoted;
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let detail = match what {
+        What::Spawned(other, _) => format!("\"what\":\"spawned\",\"other\":{other}"),
+        What::Ended => "\"what\":\"ended\"".to_string(),
+        What::Panicked(text) => format!("\"what\":\"panicked\",\"text\":{}", quoted(text)),
+        What::Request(text) => format!("\"what\":\"request\",\"text\":{}", quoted(text)),
+        What::Answered(text, ms) => format!("\"what\":\"answered\",\"text\":{},\"took_ms\":{ms}", quoted(text)),
+        What::Waited(ms) => format!("\"what\":\"waited\",\"took_ms\":{ms}"),
+        What::Paused(micros) => format!("\"what\":\"paused\",\"took_ms\":{}", micros / 1000),
+    };
+    let line = format!("{{\"time_ms\":{time},\"task\":{task},{detail}}}\n");
+    let text = unsafe { &mut *RECORD.0.get() };
+    for &byte in line.as_bytes() {
+        text.bytes[text.written as usize % TEXT] = byte;
+        text.written += 1;
+    }
+}
+
 pub(crate) enum What {
     /// A task started another, from the code at the address.
     Spawned(u64, usize),
@@ -49,6 +86,7 @@ pub(crate) fn add_of(task: u64, what: What) {
     if last.len() == KEPT {
         last.pop_front();
     }
+    record(task, &what);
     last.push_back((Instant::now(), task, what));
 }
 

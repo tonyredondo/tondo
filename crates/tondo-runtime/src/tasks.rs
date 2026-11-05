@@ -251,7 +251,7 @@ static PINNED_WAKE: Condvar = Condvar::new();
 #[repr(C)]
 pub(crate) struct Task {
     /// `TASK_MARK` while the task is alive: what finds it in a core, which
-    /// knows the fields up to `main` (toolchain 7.5).
+    /// knows the fields up to `blocked` (toolchain 7.5).
     mark: u64,
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
@@ -259,6 +259,14 @@ pub(crate) struct Task {
     pub(crate) id: u64,
     state: AtomicU8,
     main: bool,
+    /// Set by `cancel` (11.15): the task's waits end at once, and compiled
+    /// code unwinds after them.
+    cancelled: AtomicBool,
+    /// What it is blocked on, for a debugger and a deadlock: the object,
+    /// and whether a lock, a channel to receive from or send to, or a task
+    /// to finish (`LOCK`…), 0 when it runs.
+    blocked_kind: AtomicU8,
+    blocked: AtomicUsize,
     /// Where the set of tasks alive keeps it.
     slot: usize,
     /// None before a spawned task first runs: one started and not run yet
@@ -271,9 +279,6 @@ pub(crate) struct Task {
     join: *mut JoinObject,
     /// Its `defer` cleanups, innermost last (13.7).
     cleanups: Vec<(Cleanup, usize)>,
-    /// Set by `cancel` (11.15): the task's waits end at once, and compiled
-    /// code unwinds after them.
-    cancelled: AtomicBool,
     /// The `defer`s it runs, nested: in them a cancelled task still does
     /// what needs no wait (11.15).
     deferring: u32,
@@ -290,11 +295,6 @@ pub(crate) struct Task {
     /// The `std.sync` locks it holds, whether exclusively, and where it
     /// took them.
     pub(crate) held: Vec<(usize, bool, *const Str)>,
-    /// What it is blocked on, for a debugger and a deadlock: the object,
-    /// and whether a lock, a channel to receive from or send to, or a task
-    /// to finish (`LOCK`…), 0 when it runs.
-    blocked: AtomicUsize,
-    blocked_kind: AtomicU8,
     /// When it blocked there, in milliseconds of `WAITS_FROM`.
     blocked_since: AtomicU64,
     finished: bool,

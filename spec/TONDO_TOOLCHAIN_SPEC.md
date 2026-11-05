@@ -842,9 +842,10 @@ Un programa que muere sin volcado puede dejar un core del sistema, en Linux. `to
 dump read <core>` lo lee como un volcado, y `tondo dump core <core> [--executable
 <archivo>] [--output <ruta>]` lo escribe como uno, junto al core por omisión, para
 un ejecutable que no esté donde el core dice o para que lo lea lo demás. Da la señal
-y dónde estaba cada tarea, también las que esperaban, y cada hilo con código del
-programa, con las líneas de la tabla del ejecutable, que un build con `--strip`
-conserva; no da lo que tenían: valores, contadores ni memoria por sitio. Un
+y dónde estaba cada tarea, también las que esperaban y a qué, y cada hilo con código
+del programa, con las líneas de la tabla del ejecutable, que un build con `--strip`
+conserva; en un programa que guardaba eventos, también ellos y las peticiones sin
+responder. No da contadores ni memoria por sitio. Un
 ejecutable de otro build se rechaza, y un core comprimido dice cómo descomprimirlo.
 
 `tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función

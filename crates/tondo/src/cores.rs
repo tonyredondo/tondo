@@ -17,8 +17,13 @@ pub const MAGIC: &[u8; 16] = b"TONDOTRACE1\n\0\0\0\0";
 /// where its stack pointer, number, state and whether it is the main task
 /// are from there.
 const TASK: u64 = u64::from_le_bytes(*b"TONDOTSK");
-const TASK_FIELDS: usize = 32;
+const TASK_FIELDS: usize = 40;
 const PARKED: u8 = 2;
+
+/// What starts the events in memory, as the runtime's `events::Text`: how
+/// much it wrote, and that many bytes of a ring of `EVENTS`.
+const EVENTS_MARK: &[u8; 16] = b"TONDOEVENTS1\n\0\0\0";
+const EVENTS: usize = 1 << 16;
 
 /// The longest stack a dump keeps.
 const FRAMES: usize = 256;
@@ -365,20 +370,53 @@ fn stack(thread: &Thread, memory: &Memory, code: &Code) -> Vec<u64> {
     stack
 }
 
-/// A task in memory: its saved stack pointer, number, state, and whether
-/// it is the main task.
+/// A task in memory: its saved stack pointer, number and state, whether it
+/// is the main task or cancelled, and what it is blocked on.
 struct Task {
     sp: u64,
     id: u64,
     state: u8,
     main: bool,
+    cancelled: bool,
+    blocked: (u8, u64),
+}
+
+impl Task {
+    /// What it waits for, as a dump says it.
+    fn wait(&self) -> Option<Value> {
+        let what = match self.blocked.0 {
+            1 => "a std.sync lock",
+            2 => "a value of a channel",
+            3 => "room in a channel",
+            4 => "a task to end",
+            _ => return None,
+        };
+        Some(json!({ "for": what, "on": [], "object": format!("{:#x}", self.blocked.1), "ms": 0 }))
+    }
+}
+
+/// The events of a program that kept them, from the oldest, each a line of
+/// JSON: the ring at `at`, whose first line may be cut.
+fn events_at(memory: &Memory, at: u64) -> Vec<Value> {
+    let Some(written) = memory.word(at + 16) else { return Vec::new() };
+    let Some(ring) = memory.read(at + 24, EVENTS) else { return Vec::new() };
+    let start = written as usize % EVENTS;
+    let text: Vec<u8> = match written as usize > EVENTS {
+        true => [&ring[start..], &ring[..start]].concat(),
+        false => ring[..written as usize].to_vec(),
+    };
+    let lines = text.split(|&byte| byte == b'\n');
+    lines.filter_map(|line| serde_json::from_slice(line).ok()).collect()
 }
 
 /// The tasks alive in the memory a core kept, each found by its mark: the
-/// runtime's lists would need the layout of what holds them.
-fn tasks(memory: &Memory) -> Vec<Task> {
+/// runtime's lists would need the layout of what holds them. And where the
+/// events are.
+fn tasks(memory: &Memory) -> (Vec<Task>, Option<u64>) {
     const CHUNK: usize = 1 << 22;
     let mut found = Vec::new();
+    let mut events = None;
+    let events_mark = u64::from_le_bytes(EVENTS_MARK[..8].try_into().expect("eight bytes"));
     for segment in &memory.kept {
         let mut bytes = vec![0; CHUNK.min(segment.size as usize)];
         let mut done = 0;
@@ -387,21 +425,37 @@ fn tasks(memory: &Memory) -> Vec<Task> {
             if memory.core.read_exact_at(&mut bytes[..length], segment.offset + done).is_err() {
                 break;
             }
-            for at in (0..length.saturating_sub(7)).step_by(8) {
-                if u64_at(&bytes, at) != Some(TASK) {
+            for (index, word) in bytes[..length].as_chunks::<8>().0.iter().enumerate() {
+                let word = u64::from_le_bytes(*word);
+                if word != TASK && word != events_mark {
                     continue;
                 }
-                let Some(fields) = memory.read(segment.address + done + at as u64, TASK_FIELDS) else { continue };
+                let place = segment.address + done + index as u64 * 8;
+                if word == events_mark {
+                    if memory.read(place, 16).is_some_and(|mark| mark == EVENTS_MARK) {
+                        events = Some(place);
+                    }
+                    continue;
+                }
+                let Some(fields) = memory.read(place, TASK_FIELDS) else { continue };
                 let (sp, id) = (u64_at(&fields, 8).unwrap_or(0), u64_at(&fields, 16).unwrap_or(0));
                 if id != 0 && id < 1 << 48 {
-                    found.push(Task { sp, id, state: fields[24], main: fields[25] != 0 });
+                    let blocked = (fields[27], u64_at(&fields, 32).unwrap_or(0));
+                    found.push(Task {
+                        sp,
+                        id,
+                        state: fields[24],
+                        main: fields[25] != 0,
+                        cancelled: fields[26] != 0,
+                        blocked,
+                    });
                 }
             }
             done += length as u64;
         }
     }
     found.sort_by_key(|task| task.id);
-    found
+    (found, events)
 }
 
 fn signal_name(signal: u32) -> String {
@@ -488,22 +542,23 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         memory.kept.iter().find(|segment| holds(segment, first)).is_some_and(|segment| holds(&segment, second))
     };
     let saved = if machine == 62 { 5 * 8 } else { 10 * 8 };
-    let mut rows: Vec<(u64, bool, &str, Vec<u64>, bool)> = Vec::new();
+    let mut rows: Vec<(u64, bool, &str, Vec<u64>, bool, Option<Value>, bool)> = Vec::new();
     let threads: Vec<(&Thread, Vec<u64>)> =
         found.threads.iter().map(|thread| (thread, stack(thread, &memory, &code))).collect();
     let mut placed = vec![false; threads.len()];
-    for task in tasks(&memory) {
+    let (found_tasks, events) = tasks(&memory);
+    for task in found_tasks {
         let thread = threads.iter().position(|(thread, _)| same_stack(task.sp, thread.sp));
         match thread.filter(|_| task.state != PARKED) {
             Some(index) => {
                 placed[index] = true;
-                rows.push((task.id, task.main, "runs", threads[index].1.clone(), index == 0));
+                rows.push((task.id, task.main, "runs", threads[index].1.clone(), index == 0, None, task.cancelled));
             }
             None => {
                 let mut stack = Vec::new();
                 follow(memory.word(task.sp.wrapping_add(saved)).unwrap_or(0), &memory, &mut stack);
                 let state = if task.state == PARKED { "waits" } else { "ready" };
-                rows.push((task.id, task.main, state, stack, false));
+                rows.push((task.id, task.main, state, stack, false, task.wait(), task.cancelled));
             }
         }
     }
@@ -512,7 +567,7 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     for (index, (thread, stack)) in threads.iter().enumerate() {
         let compiled = stack.iter().any(|&address| code.function(address.wrapping_add(1)).is_some());
         if !placed[index] && (index == 0 || compiled) {
-            rows.push((thread.id as u64, false, "runs", stack.clone(), index == 0));
+            rows.push((thread.id as u64, false, "runs", stack.clone(), index == 0, None, false));
         }
     }
     rows.sort_by_key(|row| !row.4);
@@ -521,7 +576,7 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
     let image = program.display().to_string();
     let own = mapped.map_or("", |mapped| mapped.path.as_str());
     let mut tasks = Vec::new();
-    for (id, main, state, addresses, stopped) in rows {
+    for (id, main, state, addresses, stopped, wait, cancelled) in rows {
         for (at, &address) in addresses.iter().enumerate() {
             let frame = code.frame(address, stopped && at == 0).unwrap_or_else(|| {
                 match found.files.iter().find(|file| file.start <= address && address < file.end) {
@@ -534,16 +589,46 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
             frames.insert(format!("{address:x}"), frame);
         }
         let stack: Vec<String> = addresses.iter().map(|address| format!("{address:x}")).collect();
-        tasks.push(json!({
+        let mut task = json!({
             "id": id, "main": main, "state": state,
-            "cancelled": false, "stack": stack, "spawned": [], "locks": [], "contexts": [],
-        }));
+            "cancelled": cancelled, "stack": stack, "spawned": [], "locks": [], "contexts": [],
+        });
+        if let Some(wait) = wait {
+            task["wait"] = wait;
+        }
+        tasks.push(task);
     }
     let signal = signal_name(found.signal);
     let place = if found.code > 0 { format!(" at address {:#x}", found.address) } else { String::new() };
     let time = std::fs::metadata(path).and_then(|data| data.modified()).ok();
     let time = time.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |time| time.as_millis());
     let arguments: Vec<&str> = found.command.split_whitespace().skip(1).collect();
+    // A request with no answer after it was in flight.
+    let mut events = events.map_or(Vec::new(), |at| events_at(&memory, at));
+    let now = time as u64;
+    let mut flying: Vec<Value> = Vec::new();
+    for event in &mut events {
+        let at = event["time_ms"].as_u64().unwrap_or(now);
+        event["ago_ms"] = json!(now.saturating_sub(at));
+        match event["what"].as_str() {
+            Some("request") => {
+                let (method, path) = event["text"].as_str().and_then(|t| t.split_once(' ')).unwrap_or(("", ""));
+                let ms = now.saturating_sub(at);
+                flying.push(json!({ "method": method, "path": path, "task": event["task"], "ms": ms }));
+            }
+            Some("answered") => {
+                let text = event["text"].as_str().unwrap_or_default();
+                let same = |request: &Value| {
+                    format!("{} {}", request["method"].as_str().unwrap_or(""), request["path"].as_str().unwrap_or(""))
+                        == text
+                };
+                if let Some(at) = flying.iter().position(same) {
+                    flying.remove(at);
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(json!({
         "dump": 1,
         "reason": "fault",
@@ -554,8 +639,8 @@ pub fn read(path: &Path, executable: Option<&Path>) -> Result<Value, String> {
         "counters": [],
         "tasks": tasks,
         "heap": { "rate": 0, "dropped": 0, "samples": [] },
-        "requests": [],
-        "events": [],
+        "requests": flying,
+        "events": events,
         "sources": Roots::text_in(&bytes).unwrap_or_default(),
         "lock_order": [],
         "values": [],

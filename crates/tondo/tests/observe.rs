@@ -4818,7 +4818,8 @@ fn reads_a_core_with_the_tasks_that_waited() {
     };
     // Without its symbols: the table of lines stays.
     build(&executable, &["--strip"]);
-    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child =
+        Command::new(&executable).env("TONDO_DUMP", &dir).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
     let mut said = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     said.read_line(&mut line).unwrap();
@@ -4840,6 +4841,11 @@ fn reads_a_core_with_the_tasks_that_waited() {
     let text = stacks.to_string();
     assert!(text.contains("waits.to:18 in main"), "{text}");
     assert!(text.contains("waits.to:4 in deep") && text.contains("waits.to:9 in middle"), "{text}");
+    // What it waited for, and what it did before.
+    let tasks = tondo(&["dump", "read", core, "tasks", "--json"]).to_string();
+    assert!(tasks.contains("a task to end"), "{tasks}");
+    let events = tondo(&["dump", "read", core, "events", "--json"]).to_string();
+    assert!(events.contains("\"spawned\""), "{events}");
 
     // As a file, for a program that moved, for all that reads a dump.
     let moved = dir.join("elsewhere");
