@@ -1422,7 +1422,7 @@ type DebugBinding = (String, Ty, FuncId, Option<FuncId>);
 /// A binding of a build without probes, as a dump shows it: its name, its
 /// type, the glue that shows it, where it is, its place among those an
 /// explicit panic keeps, and the inlined call it is of.
-type DumpBinding = (String, Ty, FuncId, DumpPlace, Option<u32>, Option<u32>);
+type DumpBinding = (String, Ty, FuncId, DumpPlace, Option<u32>, Option<u32>, Option<Span>);
 
 /// Where a dump finds a binding: in what a value label says, in a stack
 /// slot, or behind a pointer a value label says.
@@ -2970,11 +2970,12 @@ impl Codegen<'_> {
                 text.push_str(&format!("P\t{at}\t{length}\t{file}\t{line}\n"));
             }
             let Some(bindings) = self.dump_bindings.get(&function.body) else { continue };
-            for (name, ty, glue, place, keep, scope) in bindings {
+            for (name, ty, glue, place, keep, scope, from) in bindings {
                 glues.push(*glue);
                 let ty = self.types.display(*ty);
                 let keep = keep.map_or(-1, i64::from);
-                let keep = format!("{keep}\t{}", scope.map_or(-1, i64::from));
+                let from = from.map_or(0, |from| self.sources.position(from.start).1);
+                let keep = format!("{keep}\t{}\t{from}", scope.map_or(-1, i64::from));
                 match *place {
                     DumpPlace::Slot(slot) => {
                         let Some((_, at)) = function.slots.iter().find(|(s, _)| *s == slot) else {
@@ -5027,6 +5028,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if cg.dumps() {
             fb.func.collect_debug_info();
             let mut described = Vec::new();
+            // A slot nothing writes holds nothing, as a parameter the
+            // inliner found unused: its zeros would read as a value.
+            let written = crate::mir::written(body);
             let own = body.names.iter().enumerate().filter_map(|(index, name)| Some((index, name.as_ref()?, None)));
             let inlined = body.scoped.iter().map(|(local, name, scope)| (local.0 as usize, name, Some(*scope)));
             for (index, name, scope) in own.chain(inlined) {
@@ -5040,6 +5044,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         labels.insert(var.as_u32(), index as u32);
                         DumpPlace::Pointer(index as u32)
                     }
+                    Storage::Slot(_) if written[index].is_none() => continue,
                     Storage::Slot(slot) => DumpPlace::Slot(slot.as_u32()),
                 };
                 let ty = body.locals[index];
@@ -5062,7 +5067,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     _ => None,
                 };
-                described.push((name.clone(), ty, cg.glue(Glue::Show, ty), place, keep, scope));
+                // What a slot holds before its first line is not the
+                // binding's yet.
+                let from = written[index].flatten().filter(|_| matches!(storage[index], Storage::Slot(_)));
+                described.push((name.clone(), ty, cg.glue(Glue::Show, ty), place, keep, scope, from));
             }
             cg.dump_bindings(described);
         }

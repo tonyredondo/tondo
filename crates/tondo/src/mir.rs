@@ -522,6 +522,29 @@ pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
         .collect()
 }
 
+/// What gives each local a value, if anything does: a parameter has one
+/// from the start, `Some(None)`, and otherwise the first place in the
+/// source that assigns it says from where it has.
+pub fn written(body: &Body) -> Vec<Option<Option<Span>>> {
+    let mut written = vec![None; body.locals.len()];
+    body.params.iter().for_each(|local| written[local.0 as usize] = Some(None));
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let (mut used, mut defined) = (Vec::new(), Vec::new());
+        statement_locals(statement, &mut used, &mut defined);
+        let at = if let Statement::Assign(_, _, span) = statement { Some(*span) } else { None };
+        for local in defined {
+            let known = &mut written[local.0 as usize];
+            *known = match (*known, at) {
+                (None, at) => Some(at),
+                (Some(Some(first)), Some(at)) if at.start < first.start => Some(Some(at)),
+                (Some(Some(_)), None) => Some(None),
+                (known, _) => known,
+            };
+        }
+    }
+    written
+}
+
 /// The locals each block's end finds assigned on every path to it, from
 /// `given`, as a program's parameters.
 pub fn assigned_at_end(blocks: &[BlockData], given: &[Local], locals: usize) -> Vec<Vec<bool>> {

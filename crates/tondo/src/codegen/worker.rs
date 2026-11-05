@@ -403,7 +403,9 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
             Asked::DumpBindings(described) => {
                 let described = described
                     .into_iter()
-                    .map(|(name, ty, glue, place, keep, scope)| (name, ty, real(glue, &ids), place, keep, scope))
+                    .map(|(name, ty, glue, place, keep, scope, from)| {
+                        (name, ty, real(glue, &ids), place, keep, scope, from)
+                    })
                     .collect();
                 Gen::dump_bindings(cg, described);
                 0

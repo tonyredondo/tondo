@@ -1688,7 +1688,10 @@ fn render(
                 let numbers = (fp == kept_at && numbers != 0).then_some(numbers);
                 let scopes = super::trace::scopes_at(address);
                 for (record, place) in scopes.iter().filter(|(_, place)| !place.contains(" in spawn")) {
-                    for binding in found.iter().flat_map(|f| &f.bindings).filter(|b| b.scope == *record) {
+                    let line = place.split(" in ").next().and_then(|at| at.rsplit(':').next());
+                    let line: u32 = line.and_then(|line| line.parse().ok()).unwrap_or(u32::MAX);
+                    let bound = found.iter().flat_map(|f| &f.bindings);
+                    for binding in bound.filter(|b| b.scope == *record && b.from <= line) {
                         let mut word = 0usize;
                         let kept = numbers.zip(binding.keep).and_then(|(numbers, index)| {
                             let bits = unsafe { *(numbers as *const u64) };
@@ -1735,6 +1738,9 @@ struct DumpBinding {
     keep: Option<usize>,
     /// The inlined call it is of, or `u32::MAX`.
     scope: u32,
+    /// The first line that gives a slot its value: before it, what is there
+    /// is not the binding's.
+    from: u32,
 }
 
 /// Where a value is: at an offset from the canonical frame address, or in
@@ -1912,7 +1918,7 @@ fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
                     function.saved.push((register, at));
                 }
             }
-            ["B", name, ty, kind, value, keep, scope] => {
+            ["B", name, ty, kind, value, keep, scope, from] => {
                 let (name, ty) = (name.to_string(), ty.to_string());
                 let show = glues[next];
                 next += 1;
@@ -1920,8 +1926,9 @@ fn dump_functions() -> std::collections::HashMap<usize, DumpFunction> {
                 let (slot, pointer) = if kind == "s" { (Some(value), false) } else { (None, value == 1) };
                 let keep = keep.parse().ok();
                 let scope = scope.parse().unwrap_or(u32::MAX);
+                let from = from.parse().unwrap_or(0);
                 let ranges = Vec::new();
-                function.bindings.push(DumpBinding { name, ty, show, slot, pointer, ranges, keep, scope });
+                function.bindings.push(DumpBinding { name, ty, show, slot, pointer, ranges, keep, scope, from });
             }
             ["R", start, end, kind, at] => {
                 let place = match kind {

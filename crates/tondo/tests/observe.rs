@@ -4923,3 +4923,34 @@ fn a_call_answers_at_a_checkpoint_a_replay_kept() {
     limit.join().unwrap();
     let _ = child.wait();
 }
+
+/// A dump of a build without probes shows nothing rather than what a slot
+/// happens to hold: of a parameter the inliner found unused, or of a binding
+/// its line has not reached.
+#[test]
+fn a_dump_does_not_make_values_up() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-made-up");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    let program = "import std.console\n\nenum Mode { Fast, Slow(Int) }\n\ntype Pair = { left: Int, right: Int }\n\n\
+        fn check(value: Int, mode: Mode): Int {\n    if value > 10 {\n        panic(\"no\")\n    }\n    \
+        let later = Pair { left: value + 1, right: value * 2 }\n    console.println(\"{later.left} {later.right}\")\n    \
+        later.left\n}\n\nfn main() {\n    console.println(\"{check(1, Mode.Fast)}\")\n    \
+        console.println(\"{check(20, Mode.Slow(3))}\")\n}\n";
+    std::fs::write(dir.join("up.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo_bin).args(["build", "up.to", "--output", "up"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("up")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    assert!(!ran.status.success());
+    let file = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
+    let dump: Value = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+    let values = dump["values"].as_array().unwrap();
+    let named = |name: &str| values.iter().filter(|v| v["name"] == name).count();
+    assert_eq!(named("value"), 1, "{values:?}");
+    assert_eq!(named("mode"), 0, "{values:?}");
+    assert_eq!(named("later"), 0, "{values:?}");
+}
