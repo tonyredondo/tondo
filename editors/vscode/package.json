@@ -379,6 +379,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.extractTrait",
+        "title": "Extract a Trait From Methods",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.moveToModule",
         "title": "Move to Another Module",
         "category": "Tondo"
@@ -680,6 +685,10 @@
         },
         {
           "command": "tondo.groupParameters",
+          "when": "false"
+        },
+        {
+          "command": "tondo.extractTrait",
           "when": "false"
         },
         {

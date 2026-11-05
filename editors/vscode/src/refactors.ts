@@ -43,6 +43,12 @@ export function registerRefactors(context: vscode.ExtensionContext): void {
         await applied(await vscode.commands.executeCommand<Answer>('tondo.group', uri, position, wanted));
       }
     }),
+    vscode.commands.registerCommand('tondo.extractTrait', async (uri: string, position: unknown) => {
+      const wanted = await vscode.window.showInputBox({ prompt: 'The trait and its methods, as `Shape: area, name`' });
+      if (wanted !== undefined) {
+        await applied(await vscode.commands.executeCommand<Answer>('tondo.trait', uri, position, wanted));
+      }
+    }),
     vscode.commands.registerCommand('tondo.moveToModule', async (uri: string, position: unknown) => {
       const modules = await vscode.commands.executeCommand<string[]>('tondo.modules', uri, position);
       const module = await vscode.window.showQuickPick(modules ?? [], { placeHolder: 'The module it goes to' });

@@ -1881,3 +1881,47 @@ fn says_what_can_fail_deletes_what_is_unused_and_groups_parameters() {
     assert!(text.contains("shapes.area(shapes.Size { width: 2, height: 3 }, \"m\")"), "{text}");
     editor.stop();
 }
+
+#[test]
+fn extracts_a_trait_links_names_and_answers_for_diagnostics() {
+    let main = "pub type Square = { side: Int }\n\n/// Its surface.\npub fn Square.area(self): Int {\n    \
+        self.side * self.side\n}\n\npub fn Square.name(self): String {\n    \"square\"\n}\n\n\
+        pub fn Square.twice(self): Int {\n    self.area() * 2\n}\n\nfn main() {\n    let shape = Square { side: 2 }\n    \
+        _ = shape.twice() + shape.name().length()\n}\n";
+    let dir = project(
+        "lsp-trait",
+        &[("tondo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), ("src/main.to", main)],
+    );
+    let mut editor = Editor::start_with(json!({ "pullDiagnostics": true }));
+    let uri = editor.open(&dir.join("src/main.to"));
+    let position = |word: &str| {
+        let at = main.find(word).unwrap();
+        json!({ "line": main[..at].matches('\n').count(), "character": at - main[..at].rfind('\n').map_or(0, |i| i + 1) })
+    };
+    let at = position("area(self)");
+    let params = json!({ "command": "tondo.trait", "arguments": [uri, at, "Shape: area, name"] });
+    let answer = editor.request("workspace/executeCommand", params);
+    assert!(answer["error"].is_null(), "{answer}");
+    let text = &applied(&answer["edit"], &dir)["src/main.to"];
+    assert!(text.contains("pub trait Shape {\n    fn area(self): Int\n    fn name(self): String\n}"), "{text}");
+    assert!(text.contains("impl Shape for Square {\n    fn area(self): Int {\n        self.area()\n    }"), "{text}");
+    assert!(text.contains("pub fn Square.area(self): Int") && text.contains("self.area() * 2"), "{text}");
+
+    // A local's name, all of it at once; not one another file may name.
+    let params = json!({ "textDocument": { "uri": uri }, "position": position("shape =") });
+    let linked = editor.request("textDocument/linkedEditingRange", params);
+    assert_eq!(linked["ranges"].as_array().unwrap().len(), 3, "{linked}");
+    let params = json!({ "textDocument": { "uri": uri }, "position": position("Square = {") });
+    assert_eq!(editor.request("textDocument/linkedEditingRange", params), Value::Null);
+
+    // Asked, it says what it would have told.
+    let wrong = format!("{main}\nfn broken(): Int {{\n    \"no\"\n}}\n");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": wrong }] }),
+    );
+    let report = editor.request("textDocument/diagnostic", json!({ "textDocument": { "uri": uri } }));
+    assert_eq!(report["kind"], "full");
+    assert!(report["items"].as_array().unwrap().iter().any(|d| d["severity"] == 1), "{report}");
+    editor.stop();
+}

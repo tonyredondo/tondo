@@ -499,6 +499,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
   ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
   varias (la que sigue empieza por `.`), como pistas en línea.
+- El nombre de una variable o un parámetro se edita a la vez en toda su función
+  (`textDocument/linkedEditingRange`). Un cliente que prefiere pedir los diagnósticos
+  a recibirlos lo dice con `pullDiagnostics` en `initializationOptions`, y entonces
+  `textDocument/diagnostic` los da y no se publican.
 - `tondo dap` da en hexadecimal los números de lo que muestra si el editor lo pide
   (`format.hex`).
 - Sobre una función, el editor ofrece cambiar su firma: la lista de parámetros
@@ -508,8 +512,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   la sigue (`tondo.moveTo`); y sobre una llamada a una función de una expresión,
   escribir esa expresión con sus argumentos; sobre una función, agrupar varios
   parámetros en un tipo nuevo, escrito antes de ella como `Punto: x, y`, y sus
-  llamadas pasan ese tipo (`tondo.group`); y sobre una función, tipo, enum o
-  constante que nada usa, borrarla con los comentarios de encima. Todo se
+  llamadas pasan ese tipo (`tondo.group`); sobre un método, hacer un trait de varios
+  métodos del tipo, escrito como `Forma: area, nombre`, con un `impl` que los llama,
+  ya que las llamadas sobre el tipo van a sus métodos (`tondo.trait`); y sobre una función, tipo, enum o constante que nada usa,
+  borrarla con los comentarios de encima. Todo se
   comprueba analizando el programa como quedaría: lo que no compila se rechaza
   con su error. Al pasar sobre una función, el hover dice cómo puede fallar, en
   su código o en el del proyecto que llama hasta tres niveles: dónde falla, dónde

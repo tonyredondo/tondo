@@ -172,6 +172,10 @@ struct Server {
     dirty: HashSet<PathBuf>,
     /// The files of each root that the editor shows diagnostics for.
     published: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// What the last analysis said of each file, for a client that asks.
+    latest: HashMap<PathBuf, Vec<Value>>,
+    /// The client asks for diagnostics, and is told of none.
+    pulling: bool,
     /// The dump the editor has open, whose values a hover shows.
     dump: Option<Value>,
     /// Where the standard modules are written, for definitions in them.
@@ -272,6 +276,8 @@ impl Server {
             "textDocument/completion" => Some(Ok(self.completion(params).unwrap_or(json!([])))),
             "textDocument/codeAction" => Some(Ok(self.code_actions(params).unwrap_or(json!([])))),
             "textDocument/documentHighlight" => Some(Ok(self.highlights(params).unwrap_or(json!([])))),
+            "textDocument/linkedEditingRange" => Some(Ok(self.linked_names(params).unwrap_or(Value::Null))),
+            "textDocument/diagnostic" => Some(Ok(self.pulled(params))),
             "workspace/symbol" => Some(Ok(self.workspace_symbols(params))),
             "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
@@ -341,11 +347,12 @@ impl Server {
         let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
         self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
         self.tests = params["initializationOptions"]["tests"] == true;
+        self.pulling = params["initializationOptions"]["pullDiagnostics"] == true;
         self.watches = params["capabilities"]["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"] == true;
         let folders = params["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str());
         self.folders = folders.chain(params["rootUri"].as_str()).filter_map(uri_path).collect();
         self.folders.dedup();
-        json!({
+        let mut answer = json!({
             "capabilities": {
                 "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
                 "textDocumentSync": { "openClose": true, "change": 1 },
@@ -369,7 +376,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group",
+                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
@@ -389,7 +396,13 @@ impl Server {
                 },
             },
             "serverInfo": { "name": "tondo", "version": driver::VERSION },
-        })
+        });
+        answer["capabilities"]["linkedEditingRangeProvider"] = json!(true);
+        if self.pulling {
+            let provider = json!({ "interFileDependencies": true, "workspaceDiagnostics": false });
+            answer["capabilities"]["diagnosticProvider"] = provider;
+        }
+        answer
     }
 
     fn changed(&mut self, uri: Option<&str>, text: Option<&str>) {
@@ -568,6 +581,7 @@ impl Server {
             "tondo.signature" => return Some(answer(self.change_signature(arguments))),
             "tondo.moveTo" => return Some(answer(self.move_to(arguments))),
             "tondo.group" => return Some(answer(self.group_parameters(arguments))),
+            "tondo.trait" => return Some(answer(self.extract_trait(arguments))),
             "tondo.modules" => return self.own_modules(arguments),
             "tondo.useDump" => {
                 let file = arguments[0].as_str().map(Path::new);
@@ -781,12 +795,19 @@ impl Server {
         }
         let before = self.published.remove(root).unwrap_or_default();
         for path in before.iter().filter(|path| !by_file.contains_key(*path)) {
+            self.latest.remove(path);
             let uri = self.uri(path);
-            send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                "params": { "uri": uri, "diagnostics": [] } }));
+            if !self.pulling {
+                send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                    "params": { "uri": uri, "diagnostics": [] } }));
+            }
         }
         for (path, diagnostics) in &by_file {
+            self.latest.insert(path.clone(), diagnostics.clone());
             let uri = self.uri(path);
+            if self.pulling {
+                continue;
+            }
             send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
                 "params": { "uri": uri, "diagnostics": diagnostics } }));
         }
@@ -1112,6 +1133,29 @@ impl Server {
         let (_, shape) = index.types.iter().filter(|(s, _)| s.end == end).min_by_key(|(s, _)| s.end - s.start)?;
         let member = index.shapes[*shape].members.iter().find(|m| m.name == name)?;
         crate::api::builtin_doc(member.builtin.as_ref()?, name)
+    }
+
+    /// A binding's name everywhere in its function, to edit as one: what
+    /// other files cannot name.
+    fn linked_names(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, file, _) = self.at(params)?;
+        let (_, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        if !matches!(index.defs[def].kind, DefKind::Local | DefKind::Parameter) {
+            return None;
+        }
+        let source = analyzed.analysis.sources.file(file);
+        let ranges: Vec<Value> = index.references(def).into_iter().map(|span| self.range(source, span)).collect();
+        Some(json!({ "ranges": ranges }))
+    }
+
+    /// What is wrong with a file, for a client that asks rather than hears.
+    fn pulled(&mut self, params: &Value) -> Value {
+        self.prepare(params);
+        let path = params["textDocument"]["uri"].as_str().and_then(uri_path);
+        let items = path.and_then(|path| self.latest.get(&path).cloned()).unwrap_or_default();
+        json!({ "kind": "full", "items": items })
     }
 
     fn highlights(&mut self, params: &Value) -> Option<Value> {
@@ -2665,6 +2709,10 @@ impl Server {
             let command = json!({ "title": "Group", "command": "tondo.groupParameters", "arguments": arguments });
             actions.push(json!({ "title": format!("Group parameters of `{}` into a type", declared.name), "kind": "refactor", "command": command }));
         }
+        if declared.kind == DefKind::Method {
+            let command = json!({ "title": "Extract", "command": "tondo.extractTrait", "arguments": place });
+            actions.push(json!({ "title": "Extract a trait from methods", "kind": "refactor", "command": command }));
+        }
         if matches!(declared.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Const) {
             let command = json!({ "title": "Move", "command": "tondo.moveToModule", "arguments": place });
             actions.push(json!({ "title": format!("Move `{}` to another module", declared.name), "kind": "refactor.move", "command": command }));
@@ -2694,6 +2742,61 @@ impl Server {
         let edits = vec![(Span::new(home.base + start as u32, home.base + end as u32), String::new())];
         let edit = self.checked_edit(&path, &edits).ok()?;
         Some(json!({ "title": format!("Delete `{name}`, which nothing uses"), "kind": "refactor", "edit": edit }))
+    }
+
+    /// `tondo.trait`: `Named: area, name` gives the type of the method at a
+    /// place a trait of those methods, and its `impl`.
+    fn extract_trait(&mut self, arguments: &Value) -> Result<Value, String> {
+        let usage = "write the trait and the methods, as `Shape: area, name`";
+        let uri = &arguments[0];
+        let at = json!({ "textDocument": { "uri": uri }, "position": arguments[1] });
+        self.prepare(&at).ok_or("this file is not analyzed")?;
+        let (name, wanted) = arguments[2].as_str().and_then(|text| text.split_once(':')).ok_or(usage)?;
+        let name = name.trim();
+        let wanted: Vec<&str> = wanted.split(',').map(str::trim).filter(|method| !method.is_empty()).collect();
+        if name.is_empty() || wanted.is_empty() {
+            return Err(usage.to_string());
+        }
+        let (analyzed, def, _) = self.def_at(&at).ok_or("there is no method here")?;
+        let index = analyzed.analysis.index.as_ref().ok_or("this file is not analyzed")?;
+        let declared = &index.defs[def];
+        let home = analyzed.analysis.sources.file_of(declared.name_span.start);
+        let before = &home.text[..(declared.name_span.start - home.base) as usize];
+        let ty = before.trim_end().trim_end_matches('.');
+        let ty = &ty[ty.rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |at| at + 1)..];
+        let (mut signatures, mut bodies, mut public, mut last) = (Vec::new(), Vec::new(), false, 0);
+        for method in &wanted {
+            let found = index.defs.iter().find(|d| {
+                let same_file = d.name_span.start >= home.base && d.name_span.end <= home.base + home.text.len() as u32;
+                let prefix = same_file.then(|| &home.text[..(d.name_span.start - home.base) as usize]);
+                d.kind == DefKind::Method && d.name == *method && prefix.is_some_and(|p| p.ends_with(&format!("{ty}.")))
+            });
+            let found = found.ok_or_else(|| format!("`{ty}` has no method `{method}` in this file"))?;
+            last = last.max(declaration_lines(home, found).1);
+            let start = (found.decl_span.start - home.base) as usize;
+            let text = &home.text[start..(found.decl_span.end - home.base) as usize];
+            public |= text.starts_with("pub ");
+            let text = text.trim_start_matches("pub ").replacen(&format!("fn {ty}."), "fn ", 1);
+            let header = text.find('{').map_or(text.as_str(), |open| text[..open].trim_end());
+            signatures.push(format!("    {header}\n"));
+            // A call on a type goes to its own methods (language 12.7), which
+            // stay: the implementation gives them to the trait.
+            let list = crate::refactor::list_at(&home.text, (found.name_span.end - home.base) as usize)
+                .ok_or("this method has no parameters")?;
+            let given: Vec<&str> =
+                list.items.iter().map(|&(a, b)| crate::refactor::parameter_name(&home.text[a..b])).collect();
+            let given: Vec<&str> = given.into_iter().filter(|name| *name != "self").collect();
+            bodies.push(format!("    {header} {{\n        self.{method}({})\n    }}\n", given.join(", ")));
+        }
+        let keyword = if public { "pub trait" } else { "trait" };
+        let written = format!(
+            "{keyword} {name} {{\n{}}}\n\nimpl {name} for {ty} {{\n{}}}\n\n",
+            signatures.concat(),
+            bodies.join("\n")
+        );
+        let place = home.base + last as u32;
+        let path = uri_path(uri.as_str().unwrap_or_default()).ok_or("not a file")?;
+        self.checked_edit(&path, &[(Span::new(place, place), written)])
     }
 
     /// `tondo.group`: `Point: x, y` takes those parameters of the function
