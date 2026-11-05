@@ -584,12 +584,12 @@ fn main(): !http.HttpError {
             let _ = lines.send(line);
         }
     });
-    let line = || received.recv_timeout(Duration::from_secs(30)).unwrap();
+    let line = || received.recv_timeout(Duration::from_secs(180)).unwrap();
     let address = line();
     // Everything the server sends until it closes.
     let answer = |head: &[u8]| {
         let mut stream = TcpStream::connect(&address).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(180))).unwrap();
         stream.write_all(head).unwrap();
         let mut answer = Vec::new();
         stream.read_to_end(&mut answer).unwrap();

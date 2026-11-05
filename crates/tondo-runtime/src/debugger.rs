@@ -3187,10 +3187,15 @@ pub(crate) fn command(line: &str) -> Option<String> {
             remark(table, &state);
             format!("{{\"deleted\":{id}}}")
         }
-        "continue" => {
-            go_after_answer(Mode::Run);
-            "{\"running\":true}".into()
-        }
+        // A program that runs goes on as it is: a stop that comes as this
+        // is answered is new, and nothing asked it to go on from that one.
+        "continue" => match stopped() {
+            Some(_) => {
+                go_after_answer(Mode::Run);
+                "{\"running\":true}".into()
+            }
+            None => "{\"running\":true,\"already\":true}".into(),
+        },
         // In a replay, the probes the program's thread passed (`tick`), a
         // run on to one of them (`seek <tick>`), or through to it keeping
         // where breakpoints would stop and where a task's lines start

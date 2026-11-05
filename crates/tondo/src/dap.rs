@@ -405,13 +405,14 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 Some(program) if program.replaying.is_some() && SEARCHES.contains(&command) => {
                     let seq = request["seq"].as_u64().unwrap_or(0);
                     let id = seq.to_string();
+                    // Ready for a `cancel` before the editor can send one.
+                    crate::debug::search_begins();
+                    running.store(seq, Ordering::SeqCst);
                     if progress {
                         let title = "Searching the run";
                         let body = json!({ "progressId": id, "title": title, "requestId": seq, "cancellable": true });
                         editor.event("progressStart", body);
                     }
-                    crate::debug::search_begins();
-                    running.store(seq, Ordering::SeqCst);
                     let result = handle(program, command, arguments, &mut breakpoints);
                     running.store(0, Ordering::SeqCst);
                     if progress {

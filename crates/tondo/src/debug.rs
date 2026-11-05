@@ -619,8 +619,11 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 session.show(&answer);
                 if answer["running"] == true {
                     // A stop said before this answer is one the program went
-                    // on from, as a breakpoint set on a program that runs.
-                    session.events.retain(|event| event.get("stopped").is_none());
+                    // on from, as a breakpoint set on a program that runs;
+                    // one that ran already goes on from none.
+                    if answer["already"] != true {
+                        session.events.retain(|event| event.get("stopped").is_none());
+                    }
                     session.wait_event();
                     // A replay keeps those checkpoints it kept as it ran, and
                     // one where it stops.
@@ -819,6 +822,7 @@ pub fn end_held(dir: &Path, well: bool) -> Kept {
     if whole {
         return Kept::Whole;
     }
+    let _ = std::fs::write(dir.join("held"), "");
     for file in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         if file.file_name().to_string_lossy().starts_with("calls") {
             let _ = std::fs::remove_file(file.path());
@@ -945,7 +949,14 @@ impl Replaying {
         }
         let pid = running.pid();
         // A search that cancels ends it, and the session stays where it was.
-        SEARCH.lock().unwrap().0 = Some(pid);
+        let mut search = SEARCH.lock().unwrap();
+        search.0 = Some(pid);
+        if search.1 {
+            drop(search);
+            running.end();
+            return Err(CANCELLED.to_string());
+        }
+        drop(search);
         let (writer, said) = match observe::started(&executable, pid).and_then(attach) {
             Ok(attached) => attached,
             Err(message) => {
@@ -1714,7 +1725,8 @@ pub fn compared(first: &Path, second: &Path) -> Result<Value, String> {
     read_sources_of(second);
     let (a, b) = (trail_of(first)?, trail_of(second)?);
     let Some((task, shared)) = first_parting(&a, &b) else {
-        return Ok(serde_json::json!({ "parted": false }));
+        let lines = |trail: &Trail| trail.values().map(Vec::len).sum::<usize>();
+        return Ok(serde_json::json!({ "parted": false, "lines": [lines(&a), lines(&b)] }));
     };
     // The line each goes on to, or that its task ended there.
     let next = |dir: &Path, trail: &Trail| -> Result<Value, String> {
