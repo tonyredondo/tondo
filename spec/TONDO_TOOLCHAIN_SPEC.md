@@ -513,7 +513,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   comprueba analizando el programa como quedaría: lo que no compila se rechaza
   con su error. Al pasar sobre una función, el hover dice cómo puede fallar, en
   su código o en el del proyecto que llama hasta tres niveles: dónde falla, dónde
-  propaga un fallo con `?`, y dónde hace `panic` o `unwrap`. En un programa,
+  propaga un fallo con `?`, y dónde hace `panic` o `unwrap`. Una lente sobre cada
+  función de un proyecto dice cuántos tests la alcanzan, por lo que nombran, y al
+  pulsarla los ejecuta. En un programa,
   no en una librería, un `pub` que ningún otro archivo usa, tests incluidos, es
   una pista (`H1001`) con su reparación, que solo da el editor. Con un volcado
   abierto (`tondo.useDump`), `hover` añade lo que sus frames tenían en esa variable.

@@ -1,5 +1,6 @@
 //! The Tondo compiler.
 
+pub mod affected;
 pub mod api;
 pub mod ast;
 pub mod bind;

@@ -59,6 +59,7 @@ the same code starts at once; `tondo clean` empties the cache.
 ```text
 tondo test                        every test of the project
 tondo test --filter parse         tests whose ids contain `parse`; --glob, --exact <id>
+tondo test --affected main         the tests that reach what changed since a commit
 tondo test --watch                again, the tests a change affects, as files change
 tondo test --coverage             with the lines, functions and branches that ran
 tondo test --bench                the benchmarks (testing.bench), --against main

@@ -1375,6 +1375,11 @@ El runner ofrece exactamente tres selectores:
 - `--glob pattern`: glob portable con match completo sobre la identidad visible
   de cada test o suite.
 - `--exact id`: igualdad bytewise con la identidad visible de un test o suite.
+- `--affected <rev>`: los tests que alcanzan lo que cambió desde ese commit, según Git:
+  los que nombran, directa o indirectamente, una declaración tocada, o están en las
+  líneas cambiadas. Un cambio fuera de toda declaración cuenta para todo su archivo, y
+  uno en `tondo.toml` para todos. Sigue los nombres del programa, así que lo que un valor
+  llama a través de un trait o un closure se alcanza por lo que lo nombra.
 
 Son mutuamente excluyentes. `--filter` y `--glob` aparecen como máximo una
 vez; `--exact` puede repetirse y selecciona la unión de lo que nombra, en una

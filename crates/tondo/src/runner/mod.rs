@@ -186,7 +186,7 @@ impl Tree {
             let fuzz = parts.next()? == "1";
             let id = parts.next()?.to_string();
             let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, span });
+            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, span, whole: span });
             tree.locations.push(parts.next()?.to_string());
         }
         Some(tree)

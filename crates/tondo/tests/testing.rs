@@ -1760,3 +1760,39 @@ fn the_comparison_with_go_builds() {
     let (stdout, stderr, status) = tondo(&root, &["check", "bench/compare.to"]);
     assert_eq!(status, 0, "{stdout}{stderr}");
 }
+
+/// `--affected` runs the tests that reach what changed since a commit: through
+/// what they call, in other files too.
+#[test]
+fn runs_the_tests_a_change_reaches() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("affected");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"reach\"\nversion = \"0.1.0\"\n").unwrap();
+    let main = "pub fn inner(value: Int): Int {\n    value + 1\n}\n\npub fn outer(value: Int): Int {\n    inner(value) * 2\n}\n\n\
+        pub fn alone(value: Int): Int {\n    value - 1\n}\n\nfn main() {}\n";
+    std::fs::write(dir.join("src/main.to"), main).unwrap();
+    let tests = "test viaOuter {\n    assert(outer(1) == 4)\n}\n\ntest onAlone {\n    assert(alone(1) == 0)\n}\n";
+    std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "one"]);
+    let (out, _, code) = tondo(&dir, &["test", "--affected", "HEAD"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("no test reaches"), "{out}");
+    // A change two calls away from the test.
+    std::fs::write(dir.join("src/main.to"), main.replace("value + 1", "value + 2")).unwrap();
+    let (out, err, code) = tondo(&dir, &["test", "--affected", "HEAD", "--list"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("viaOuter") && !out.contains("onAlone"), "{out}");
+}

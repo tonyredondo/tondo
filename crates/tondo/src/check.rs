@@ -1461,6 +1461,7 @@ impl<'a> Checker<'a> {
             bench: false,
             fuzz: false,
             span: Span::new(0, 0),
+            whole: Span::new(0, 0),
         };
         self.test_nodes.push(root);
         let mut nodes = Vec::new();
@@ -2581,7 +2582,8 @@ impl<'a> Checker<'a> {
             }
             let index = self.test_nodes.len() as u32;
             let suite = matches!(node, ast::TestNode::Suite(_));
-            let info = hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, fuzz: false, span: name.span };
+            let (span, whole) = (name.span, node.span());
+            let info = hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, fuzz: false, span, whole };
             self.test_nodes.push(info);
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };

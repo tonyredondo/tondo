@@ -278,6 +278,7 @@ impl Server {
             "textDocument/codeLens" => {
                 let mut lenses = self.lenses(params).and_then(|l| l.as_array().cloned()).unwrap_or_default();
                 lenses.extend(self.test_lenses(params).unwrap_or_default());
+                lenses.extend(self.tested_by(params).unwrap_or_default());
                 lenses.extend(self.reference_lenses(params).unwrap_or_default());
                 Some(Ok(Value::Array(lenses)))
             }
@@ -527,6 +528,32 @@ impl Server {
         Some(lenses.collect())
     }
 
+    /// Over each function of a project, the tests that reach it, which the
+    /// lens runs.
+    fn tested_by(&mut self, params: &Value) -> Option<Vec<Value>> {
+        self.prepare(params)?;
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let source = analyzed.analysis.sources.file(file);
+        let index = analyzed.analysis.index.as_ref()?;
+        let tests = crate::affected::reaching(index, analyzed.tests.as_ref()?);
+        let inside = |span: Span| span.start >= source.base && span.end <= source.base + source.text.len() as u32;
+        let functions = index.defs.iter().enumerate().filter(|(_, declared)| {
+            matches!(declared.kind, DefKind::Function | DefKind::Method) && inside(declared.name_span)
+        });
+        let lenses = functions.filter_map(|(def, declared)| {
+            let ids: Vec<&str> =
+                tests.iter().filter(|(_, reached)| reached.contains(&def)).map(|(node, _)| node.id.as_str()).collect();
+            let (_, range) = self.place(analyzed, declared.name_span).filter(|_| !ids.is_empty())?;
+            let title = if ids.len() == 1 { "1 test reaches this".to_string() } else { format!("{} tests reach this", ids.len()) };
+            let arguments = json!([uri, ids, false]);
+            Some(json!({ "range": range, "command": { "title": title, "command": "tondo.runTest", "arguments": arguments } }))
+        });
+        Some(lenses.collect())
+    }
+
     /// A command a lens gives: `tondo.runTest` runs a test or a suite of the
     /// file's project with `tondo test`, apart from the server, and says how
     /// it went.
@@ -550,13 +577,19 @@ impl Server {
             _ => return None,
         }
         let path = uri_path(arguments[0].as_str()?)?;
-        let id = arguments[1].as_str()?.to_string();
+        let ids: Vec<String> = match arguments[1].as_array() {
+            Some(ids) => ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect(),
+            None => vec![arguments[1].as_str()?.to_string()],
+        };
+        let id = ids.join(", ");
         let suite = arguments[2].as_bool().unwrap_or(false);
         let (root, _) = root_of(&path);
         let tondo = std::env::current_exe().ok()?;
         std::thread::spawn(move || {
-            let chosen =
-                if suite { ["--filter".to_string(), format!("{id}::")] } else { ["--exact".to_string(), id.clone()] };
+            let chosen: Vec<String> = match suite {
+                true => vec!["--filter".to_string(), format!("{id}::")],
+                false => ids.into_iter().flat_map(|id| ["--exact".to_string(), id]).collect(),
+            };
             let ran = std::process::Command::new(tondo).arg("test").args(chosen).current_dir(&root).output();
             let (kind, message) = match ran {
                 Ok(ran) if ran.status.success() => (3, format!("`{id}` passed")),

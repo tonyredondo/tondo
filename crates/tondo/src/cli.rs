@@ -129,7 +129,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "test",
         usage: &[
-            "tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>...] [--shard <i/n>] [--watch]",
+            "tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>... | --affected <rev>] [--shard <i/n>] [--watch]",
             "          [--order canonical|random] [--schedules <n>] [--seed <hex>] [--record <dir>] [--list] [--jobs <n>]",
             "          [--timeout <seconds>]",
             "          [--retry <n>] [--allow-flaky] [--lock-order] [--repeat <n>] [--codeowners auto|none|<path>]",

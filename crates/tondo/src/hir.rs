@@ -133,6 +133,8 @@ pub struct TestNodeInfo {
     /// A test whose body calls `testing.fuzz` (testing 10.6).
     pub fuzz: bool,
     pub span: Span,
+    /// All of it, with its body.
+    pub whole: Span,
 }
 
 /// What a library's header declares (toolchain 7): the functions it

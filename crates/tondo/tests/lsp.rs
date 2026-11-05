@@ -1819,7 +1819,12 @@ fn says_what_can_fail_deletes_what_is_unused_and_groups_parameters() {
     let shapes = "pub fn area(width: Int, height: Int, unit: String): String {\n    \"{width * height} {unit}\"\n}\n";
     let dir = project(
         "lsp-fail-delete-group",
-        &[("tondo.toml", tondo_toml), ("src/main.to", main), ("src/shapes/shapes.to", shapes)],
+        &[
+            ("tondo.toml", tondo_toml),
+            ("src/main.to", main),
+            ("src/main_test.to", "test viaOuter {\n    assert(outer(1) > 0)\n}\n"),
+            ("src/shapes/shapes.to", shapes),
+        ],
     );
     let mut editor = Editor::start();
     let uri = editor.open(&dir.join("src/main.to"));
@@ -1835,6 +1840,17 @@ fn says_what_can_fail_deletes_what_is_unused_and_groups_parameters() {
     let text = hover["contents"]["value"].as_str().unwrap();
     assert!(text.contains("Can fail:") && text.contains("panics in `inner` at src/main.to:6"), "{text}");
     assert_eq!(text.matches("panics").count(), 1, "{text}");
+
+    // What reaches a function, through what calls it.
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let titled = |line: u64| {
+        let lenses = lenses.as_array().unwrap().iter();
+        let found = lenses.filter(|l| l["range"]["start"]["line"] == line);
+        found.filter_map(|l| l["command"]["title"].as_str()).any(|title| title == "1 test reaches this")
+    };
+    let line = |word: &str| main[..main.find(word).unwrap()].matches('\n').count() as u64;
+    assert!(titled(line("inner(value:")) && titled(line("outer(value:")), "{lenses}");
+    assert!(!titled(line("unused()")), "{lenses}");
 
     // What nothing uses goes, with its comment; what something uses, not.
     let actions = |editor: &mut Editor, at: Value| {

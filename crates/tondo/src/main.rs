@@ -349,7 +349,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             .ok_or_else(|| usage(format!("{flag} takes a number written without sign or leading zeros")))
     };
     let (mut seed, mut random, mut seen) = (None, false, Vec::new());
-    let mut schedules = None;
+    let (mut schedules, mut affected) = (None, None);
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
@@ -365,6 +365,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--filter" | "--glob" | "--exact" if !matches!(options.selector, Selector::All) => {
                 return Err(usage("give only one of --filter, --glob and --exact".into()));
             }
+            "--affected" => affected = Some(value()?),
             "--filter" => options.selector = Selector::Filter(value()?),
             "--glob" => options.selector = Selector::Glob(Glob::parse(&value()?).map_err(usage)?),
             "--exact" => options.selector = Selector::Exact(vec![value()?]),
@@ -538,6 +539,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let given = |flag: &str| seen.iter().any(|s| s == flag);
+    if let Some(rev) = affected {
+        if !matches!(options.selector, Selector::All) {
+            return Err(usage("--affected chooses the tests: it does not go with --filter, --glob or --exact".into()));
+        }
+        let ids = tondo::affected::tests(&path, &rev)?;
+        if ids.is_empty() {
+            println!("no test reaches what changed since {rev}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        options.selector = Selector::Exact(ids);
+    }
     if seed.is_some() && !random && schedules.is_none() {
         return Err(usage("--seed goes with --order random or --schedules".into()));
     }

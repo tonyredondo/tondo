@@ -59,6 +59,8 @@ suite slow {
   `--timeout s`, `--retry n`, `--lock-order`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and
   `--test-format events` a line of JSON for each result as it comes.
+- `tondo test --affected <rev>` runs only the tests that reach what changed since a
+  commit, through what they call.
 - A test that calls `testing.bench` in its body is a benchmark (below).
 - A test that ends with tasks still running fails, with where each waits and
   where it was spawned: wait for them, cancel them, or close what they wait on.
