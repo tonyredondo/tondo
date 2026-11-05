@@ -2858,7 +2858,7 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
 /// Runs git in `dir`, which must work.
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
-        .args(["-c", "user.email=a@example.com", "-c", "user.name=a"])
+        .args(["-c", "user.email=a@example.com", "-c", "user.name=a", "-c", "commit.gpgsign=false"])
         .args(args)
         .current_dir(dir)
         .output()
