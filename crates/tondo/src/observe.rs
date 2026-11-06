@@ -1161,6 +1161,9 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
     }
     for task in dump["tasks"].as_array_mut().into_iter().flatten() {
         task["contexts"] = json!([]);
+        if let Some(fields) = task.as_object_mut() {
+            fields.remove("request");
+        }
         if task["wait"].is_object() {
             task["wait"]["for"] = json!("a value");
         }

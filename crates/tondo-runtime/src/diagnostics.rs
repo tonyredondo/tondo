@@ -1242,8 +1242,8 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
     for (index, task) in tasks.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let locks: Vec<String> = task.locks.iter().map(|l| quoted(l)).collect();
-        let serving =
-            task.request.as_ref().map_or(String::new(), |request| format!(",\"request\":{}", quoted(request)));
+        let serving = task.request.as_ref().filter(|_| values_shown());
+        let serving = serving.map_or(String::new(), |request| format!(",\"request\":{}", quoted(request)));
         let wait = task.wait.as_ref().map_or(serving.clone(), |(text, on, object, ms)| {
             let on: Vec<String> = on.iter().map(u64::to_string).collect();
             format!(
