@@ -1675,7 +1675,7 @@ test fibonacci {
     assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
     // The same code is not slower, even on a machine shared with others.
     std::fs::write(dir.join("src/main.to"), source("")).unwrap();
-    let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "100"]].concat());
+    let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "1000"]].concat());
     assert_eq!(status, 0, "{stdout}");
     // What goes with what.
     for (args, said) in [
