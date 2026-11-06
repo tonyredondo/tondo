@@ -122,7 +122,11 @@ impl Diagnostics {
     /// warnings about the standard library and about what derives and
     /// generators wrote are not the program's.
     pub fn sort(&mut self, sources: &SourceMap) {
-        self.drop_warnings(sources, |file| file.logical.starts_with('<'));
+        // A test of the standard library looks at its own.
+        let own = std::env::var_os("TONDO_STD_WARNINGS").is_some();
+        self.drop_warnings(sources, |file| {
+            file.logical.starts_with('<') && !(own && file.logical.starts_with("<std>"))
+        });
         crate::lints::allow(sources, self);
         let key = |d: &Diagnostic| {
             let location = d.span.map(|span| {

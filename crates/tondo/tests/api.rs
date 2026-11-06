@@ -266,3 +266,31 @@ fn standard_examples_compile() {
         .collect();
     assert!(missing.is_empty(), "these modules have no example at their head: {missing:?}");
 }
+
+/// The warnings of the standard library are dropped, so nobody would see them
+/// come back: it has none, but those it accepts and says why.
+#[test]
+fn the_standard_library_has_no_warnings() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std-warnings");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (modules, stderr, status) = tondo(&dir, &["api", "--list"]);
+    assert_eq!(status, 0, "{stderr}");
+    let names = modules.lines().filter_map(|line| line.split_whitespace().next());
+    let imports: String = names
+        .map(|name| name.trim_start_matches("std."))
+        .filter(|name| !matches!(*name, "prelude" | "testing"))
+        .map(|name| format!("import std.{name}\n"))
+        .collect();
+    std::fs::write(dir.join("all.to"), format!("{imports}\nfn main() {{}}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["check", "all.to", "--json"])
+        .env("TONDO_STD_WARNINGS", "1")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = found["diagnostics"].as_array().unwrap();
+    assert!(found["ok"] == true && diagnostics.len() > 10, "{found}");
+    let own: Vec<_> = diagnostics.iter().filter(|d| d["file"].as_str().unwrap().starts_with("<std>")).collect();
+    assert!(own.is_empty(), "{own:#?}");
+}

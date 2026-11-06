@@ -6,7 +6,7 @@ import std.formats as __formats
 import std.internal.context as contextNative
 import std.internal.reflect as reflectNative
 import std.internal.text as textNative
-// The operations of the numbers that fail do so with `math.MathError`.
+// tondo: allow W1001: the operations of the numbers that fail do so with `math.MathError`
 import std.math as __math
 import std.panics as __panics
 

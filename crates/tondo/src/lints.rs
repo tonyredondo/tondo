@@ -15,7 +15,11 @@ const PROFILES: [&str; 2] = ["W1009", "W1010"];
 /// the warning, and a profile nobody asked for gives none.
 pub(crate) fn allow(sources: &SourceMap, diags: &mut Diagnostics) {
     diags.list.retain(|diagnostic| diagnostic.code != Some("W1019"));
-    let foreign = |file: &SourceFile| file.dependency || file.logical.starts_with('<');
+    // The standard library says why too, for the test that looks at it.
+    let own = std::env::var_os("TONDO_STD_WARNINGS").is_some();
+    let foreign = |file: &SourceFile| {
+        file.dependency || (file.logical.starts_with('<') && !(own && file.logical.starts_with("<std>")))
+    };
     for file in sources.files().filter(|file| !foreign(file) && file.text.contains("tondo: allow")) {
         let (_, comments) = crate::lexer::lex_with_comments(file, None, &mut Diagnostics::default());
         for comment in comments {
