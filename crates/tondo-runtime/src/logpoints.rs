@@ -246,7 +246,14 @@ fn write_calls(places: &[(usize, usize)]) -> Result<Vec<Site>, String> {
     let mut sites = Vec::new();
     let mut edits = Vec::new();
     for &(address, length) in places {
-        let original = unsafe { std::slice::from_raw_parts(address as *const u8, length) }.to_vec();
+        // A place another logpoint took holds its call, not the program's code.
+        let taken = lock()
+            .iter()
+            .flat_map(|logpoint| &logpoint.sites)
+            .find(|site| site.address == address)
+            .map(|site| site.original.clone());
+        let original =
+            taken.unwrap_or_else(|| unsafe { std::slice::from_raw_parts(address as *const u8, length) }.to_vec());
         edits.push((address, encoded_call(address, length, target)?));
         sites.push(Site { address, length, original });
     }
@@ -313,15 +320,17 @@ fn remove(id: u64) {
 
 /// Puts back what logpoints wrote, with the program stopped.
 fn take_out(ids: Vec<u64>) {
-    let gone = {
-        let mut set = lock();
-        let (gone, kept) = std::mem::take(&mut *set).into_iter().partition(|logpoint| ids.contains(&logpoint.id));
-        *set = kept;
-        gone
-    };
-    let gone: Vec<Logpoint> = gone;
-    let sites = gone.iter().flat_map(|logpoint| &logpoint.sites);
-    let _ = patch(&sites.map(|site| (site.address, site.original.clone())).collect::<Vec<_>>());
+    let mut set = lock();
+    let (gone, kept): (Vec<Logpoint>, Vec<Logpoint>) =
+        std::mem::take(&mut *set).into_iter().partition(|logpoint| ids.contains(&logpoint.id));
+    *set = kept;
+    // A place another logpoint also has stays as it is.
+    let shared =
+        |site: &&Site| set.iter().flat_map(|logpoint| &logpoint.sites).any(|kept| kept.address == site.address);
+    let sites = gone.iter().flat_map(|logpoint| &logpoint.sites).filter(|site| !shared(site));
+    let edits: Vec<(usize, Vec<u8>)> = sites.map(|site| (site.address, site.original.clone())).collect();
+    drop(set);
+    let _ = patch(&edits);
 }
 
 /// Takes out the logpoints of a tool that went away.
