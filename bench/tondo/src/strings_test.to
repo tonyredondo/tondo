@@ -2,7 +2,7 @@ import std.format
 import std.testing
 
 fn joined(count: Int): String {
-    var builder = format.Builder.new()
+    var builder = format.Builder()
     for i in 0..count {
         builder.add("part")
         builder.add(i)
