@@ -469,6 +469,7 @@ impl Context<'_> {
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
+        fields.push(("warnings", Value::Array(attempt.warnings.iter().map(|w| str(w.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
         fields.push(("stderr", stream(&attempt.stderr)));
         obj(fields)
@@ -641,6 +642,7 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("failure", failure(&attempt.status, options)),
             ("skip", skip(&attempt.status)),
             ("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())),
+            ("warnings", Value::Array(attempt.warnings.iter().map(|w| str(w.clone())).collect())),
             ("stdout", stream(&attempt.stdout)),
             ("stderr", stream(&attempt.stderr)),
             ("benchmarks", Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None)).collect())),

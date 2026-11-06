@@ -78,6 +78,8 @@ export interface Outcome {
   output: string;
   /** What it logged alone, which comes only with its end. */
   logs: string;
+  /** What looks wrong without failing it, as an update tasks can lose. */
+  warnings: string[];
   /** What its benchmarks measured, under `--bench`. */
   benchmarks: Measured[];
   /** What its calls of `testing.fuzz` did (testing 15.15). */
@@ -169,6 +171,7 @@ interface Attempt {
   } | null;
   skip?: { reason?: string; source?: Source } | null;
   logs?: string[];
+  warnings?: string[];
   stdout?: Stream;
   stderr?: Stream;
   benchmarks?: Benchmark[];
@@ -270,6 +273,7 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
     stack,
     output: text(attempt?.stdout) + text(attempt?.stderr) + logs,
     logs,
+    warnings: attempt?.warnings ?? [],
     benchmarks: (attempt?.benchmarks ?? []).map((b) => ({
       name: b.name,
       median: b.ns_per_op.median,
@@ -1203,4 +1207,10 @@ export function stepRow(step: RequestStep): RequestRow {
   const at = step.at?.match(/^(.*):(\d+) in /);
   const place = at ? { file: at[1], line: Number(at[2]) } : undefined;
   return { label: `${step.ms} ms  ${said[step.what] ?? step.what}`, description: step.at ?? '', place };
+}
+
+/** Where a warning of a test says the write that loses an update is. */
+export function warningPlace(warning: string): { file: string; line: number } | undefined {
+  const at = warning.match(/ wrote it at (.*?):(\d+) in /);
+  return at ? { file: at[1], line: Number(at[2]) } : undefined;
 }

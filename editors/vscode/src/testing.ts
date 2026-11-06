@@ -11,7 +11,7 @@ import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents, RUNS_HERE } from './docs';
 import { ShowProfile } from './profiles';
-import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent } from './report';
+import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 export function registerTesting(
@@ -328,6 +328,11 @@ export function registerTesting(
           const test = item(event.outcome.id);
           if (test && event.outcome.logs) {
             testRun.appendOutput(event.outcome.logs.replace(/\r?\n/g, '\r\n'), undefined, test);
+          }
+          for (const warning of event.outcome.warnings) {
+            const place = warningPlace(warning);
+            const where = place && locate(place.file, place.line, 1);
+            testRun.appendOutput(`warning: ${warning}\r\n`, where, test);
           }
           // What its benchmarks measured.
           if (test && event.outcome.benchmarks.length > 0) {

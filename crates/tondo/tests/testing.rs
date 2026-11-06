@@ -628,6 +628,41 @@ fn project(name: &str, tests: &str) -> PathBuf {
     dir
 }
 
+/// An update tasks lose is a warning of the test that shows it, in the report
+/// of the tools and the editor, and a test that does it well has none.
+#[test]
+fn a_lost_update_warns_in_its_test() {
+    let tests = "import std.sync\n\n\
+        fn bump(cell: sync.Mutex[Int], ready: Sender[Unit], go: Receiver[Unit]) {\n    \
+        let seen = cell.get()\n    ready.send(())\n    _ = go.receive()\n    \
+        cell.update((value) { value = seen + 1 })\n}\n\n\
+        fn bumpWell(cell: sync.Mutex[Int], ready: Sender[Unit], go: Receiver[Unit]) {\n    \
+        ready.send(())\n    _ = go.receive()\n    cell.update((value) { value += 1 })\n}\n\n\
+        test loses {\n    let cell = sync.Mutex(0)\n    let (ready, wait) = channel[Unit](1)\n    \
+        let (go, gone) = channel[Unit](1)\n    let job = spawn bump(cell, ready, gone)\n    \
+        _ = wait.receive()\n    cell.set(5)\n    go.send(())\n    job.wait()\n}\n\n\
+        test keeps {\n    let cell = sync.Mutex(0)\n    let (ready, wait) = channel[Unit](1)\n    \
+        let (go, gone) = channel[Unit](1)\n    let job = spawn bumpWell(cell, ready, gone)\n    \
+        _ = wait.receive()\n    cell.set(5)\n    go.send(())\n    job.wait()\n    assert(cell.get() == 6)\n}\n";
+    let dir = project("lost-update", tests);
+    let ran =
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", ".", "--json"]).current_dir(&dir).output().unwrap();
+    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    let warnings = |name: &str| {
+        let tests = report["tests"].as_array().unwrap();
+        let test = tests.iter().find(|test| test["id"].as_str().unwrap().ends_with(name)).unwrap();
+        test["attempts"][0]["warnings"].as_array().unwrap().clone()
+    };
+    assert_eq!(warnings("keeps"), Vec::<serde_json::Value>::new());
+    let lost = warnings("loses");
+    let text = lost[0].as_str().unwrap_or_else(|| panic!("{report}"));
+    assert!(text.contains("src/main_test.to:4 in bump") && text.contains("wrote it at src/main_test.to:7"), "{text}");
+    let human = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", "."]).current_dir(&dir).output().unwrap();
+    let human = String::from_utf8_lossy(&human.stdout);
+    assert!(human.contains("warning: task "), "{human}");
+}
+
 #[test]
 fn retries_repeats_and_owners() {
     let tests = "\

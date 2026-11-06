@@ -208,6 +208,7 @@ fn worker(
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)
         .envs(run.options.lock_order.then_some(("TONDO_LOCK_ORDER", "fail")))
+        .env("TONDO_RACE", "1")
         .env("TONDO_TEST_NONCE", &nonce)
         .env("TONDO_TEST_SNAPSHOTS", stores.entries)
         .env("TONDO_TEST_FUZZ", stores.fuzzed)
@@ -623,6 +624,11 @@ impl Session<'_> {
             "log" => {
                 if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
                     entry.0.logs.push(text);
+                }
+            }
+            "race" => {
+                if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
+                    entry.0.warnings.push(text);
                 }
             }
             "tag" => {

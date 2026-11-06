@@ -180,6 +180,9 @@ impl<'a> Printer<'a> {
         self.known.insert(attempt.node, (**attempt).clone());
         while let Some(attempt) = self.expected.get(self.printed).and_then(|t| self.known.get(t)) {
             say!("test {} ... {}", self.tree.id(attempt.node), short(self.tree, &attempt.status));
+            for warning in &attempt.warnings {
+                say!("  warning: {warning}");
+            }
             // What its benchmarks measured, under `--bench`.
             if !attempt.benchmarks.is_empty() {
                 let lines = super::bench::lines(

@@ -3475,7 +3475,7 @@ cuyo caso contiene exactamente:
 
 El ID señala una suite del mismo reporte y `attempt` un índice existente de esa
 suite que contiene la causa. `tags`, `artifacts`, `snapshots`, `virtual_time`,
-`logs`, `stdout`, `stderr`, `failure` y `skip` pertenecen exclusivamente a su
+`logs`, `warnings`, `stdout`, `stderr`, `failure` y `skip` pertenecen exclusivamente a su
 intento; nunca se fusionan entre intentos. No se admiten campos de extensión sin
 cambiar el identificador de formato.
 
@@ -4065,7 +4065,7 @@ para que un editor muestre cada resultado cuando llega. Cada línea tiene
   `start` y `stdout` o `stderr`, con la forma de 15.1. Llega después de su
   `start` y antes de su `end`, en trozos que no siguen las líneas.
 - `end`, al conocerse el resultado de un intento: los campos de `start` y
-  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout`, `stderr`,
+  `status`, `duration_ms`, `failure`, `skip`, `logs`, `warnings`, `stdout`, `stderr`,
   `benchmarks` y `fuzz`, con los valores del intento en el reporte (15.3). Un test bloqueado por su
   suite tiene `end` sin `start`. Su `end` repite todo lo que el intento
   escribió.

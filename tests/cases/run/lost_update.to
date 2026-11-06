@@ -1,0 +1,37 @@
+// A cell written from what was read of it earlier: another task can change
+// it in between. Done in one `update`, or with what looks at the value, it
+// warns of nothing.
+import std.console
+import std.sync
+
+type Stats = { hits: sync.Mutex[Int] }
+
+fn bump(cell: sync.Mutex[Int], stats: Stats, count: sync.Atomic[Int]) {
+    let seen = cell.get()
+    cell.update((value) { value = seen + 1 })
+
+    let hits = stats.hits.get()
+    stats.hits.set(hits + 1)
+
+    count.store(count.load() + 1)
+
+    // What is read goes elsewhere: nothing is lost.
+    let other = sync.Mutex(0)
+    other.set(cell.get())
+    cell.update((value) { value += 1 })
+    let loaded = count.load()
+    _ = count.compareExchange(loaded, loaded + 1)
+}
+
+fn main() {
+    let cell = sync.Mutex(0)
+    let stats = Stats { hits: sync.Mutex(0) }
+    let count = sync.Atomic(0)
+    bump(cell, stats, count)
+    console.println("{cell.get()} {stats.hits.get()} {count.load()}")
+}
+
+// expect-stdout: 2 1 2
+// expect-warning: W1016 this writes a value made from one read earlier
+// expect-warning: W1016 this writes a value made from one read earlier
+// expect-warning: W1016 this writes a value made from one read earlier

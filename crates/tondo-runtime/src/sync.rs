@@ -193,6 +193,17 @@ fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
 /// in a way that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
+    let guard = unsafe { taken(object, mode, location) };
+    if guard != 0 && super::race::on() {
+        match mode {
+            SHARED => super::race::read(object as usize),
+            _ => super::race::wrote(object as usize, false),
+        }
+    }
+    guard
+}
+
+unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
     if stops() {
         return 0;
     }
@@ -483,6 +494,9 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
         if super::lockorder::on() {
             super::lockorder::forget(object as usize);
         }
+        if super::race::on() {
+            super::race::forget(object as usize);
+        }
         let o = Box::from_raw(object);
         if let Some(release) = o.release {
             release(o.value);
@@ -721,11 +735,17 @@ macro_rules! word {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_load(object: *mut SyncObject, width: u8) -> u64 {
+    if super::race::on() {
+        super::race::read(object as usize);
+    }
     word!(object, width, |a| a.load(Ordering::SeqCst))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_store(object: *mut SyncObject, width: u8, value: u64) {
+    if super::race::on() {
+        super::race::wrote(object as usize, false);
+    }
     word!(object, width, |a| {
         a.store(value as _, Ordering::SeqCst);
         0u8
@@ -734,6 +754,9 @@ pub unsafe extern "C" fn tondo_rt_atomic_store(object: *mut SyncObject, width: u
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_swap(object: *mut SyncObject, width: u8, value: u64) -> u64 {
+    if super::race::on() {
+        super::race::wrote(object as usize, false);
+    }
     word!(object, width, |a| a.swap(value as _, Ordering::SeqCst))
 }
 
@@ -745,6 +768,9 @@ pub unsafe extern "C" fn tondo_rt_atomic_exchange(
     expected: u64,
     desired: u64,
 ) -> u64 {
+    if super::race::on() {
+        super::race::wrote(object as usize, true);
+    }
     word!(
         object,
         width,
@@ -764,6 +790,9 @@ pub unsafe extern "C" fn tondo_rt_atomic_add(
     delta: u64,
     location: *const Str,
 ) -> u64 {
+    if super::race::on() {
+        super::race::wrote(object as usize, true);
+    }
     let bits = width as u32 * 8;
     let decode = |raw: u64| -> i128 {
         if signed != 0 {

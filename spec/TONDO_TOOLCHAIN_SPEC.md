@@ -1024,6 +1024,17 @@ fallar con `P0019` el test que lo cierra. Dos lectores no se esperan, y no cuent
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.
 
+El código seguro no tiene carreras de datos, pero una actualización se puede perder: una
+tarea lee una celda de `std.sync` y la escribe después, y entre medias otra tarea la
+cambió. El compilador avisa con `W1016` cuando la escritura usa lo leído, y `tondo test`
+avisa de lo que ve ocurrir: siempre mira los `Mutex`, `RwLock` y `Atomic` y, si una tarea
+lee y escribe en la misma función una celda que otra escribió entre medias, deja un aviso
+en ese test, que no falla, en `warnings` de su intento en el informe: el MCP lo da con el
+informe y el editor en la salida del test, con su línea. Solo ve lo que pasa en esa
+ejecución, y no sabe si lo escrito viene de lo leído. `add` y `compareExchange` miran el
+valor que cambian y no pierden nada. Medido en un programa que solo toma locks, cada
+operación cuesta unos 50 ns más, y fuera de los tests nada.
+
 `dump plugin <lldb|gdb>` escribe en la caché de `tondo` el comando `tondo`
 de lldb o de gdb, un script de Python, y dice cómo cargarlo: `command script
 import <archivo>` o `source <archivo>`. Con el programa parado, `tondo

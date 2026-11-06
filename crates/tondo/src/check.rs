@@ -50,10 +50,13 @@ fn check_with<'a>(
     // program that has none does without.
     let deprecated = deprecated_names(module);
     let asked = index.is_some();
-    let index = index.or_else(|| (!deprecated.is_empty()).then(crate::index::Index::default));
+    let shares =
+        module.imports.iter().any(|import| import.path.iter().map(|part| part.name.as_str()).eq(["std", "sync"]));
+    let index = index.or_else(|| (!deprecated.is_empty() || shares).then(crate::index::Index::default));
     let mut checker = Checker {
         index,
         index_exprs: Vec::new(),
+        cell_uses: Vec::new(),
         meta,
         types: Types::default(),
         diags,
@@ -144,6 +147,7 @@ fn check_with<'a>(
     checker.declare_prelude();
     let program = checker.program(module);
     checker.index_finish();
+    checker.lost_updates();
     if let Some(index) = checker.index.as_ref().filter(|_| !meta && !deprecated.is_empty()) {
         let mut warned = HashSet::new();
         for &(span, def) in &index.uses {
@@ -470,6 +474,17 @@ fn deprecated_names(module: &ast::Module) -> HashMap<Span, String> {
         found.extend(annotations.iter().filter_map(deprecation).map(|text| (name.span, text.to_string())));
     }
     found
+}
+
+/// What a function does to a cell of `std.sync`, which `lost_updates` reads:
+/// the cell as `Checker::cell` names it and the call.
+struct CellUse {
+    cell: String,
+    span: Span,
+    read: bool,
+    /// Of a read, where the binding it gave is named; of a write, where its
+    /// arguments are.
+    within: Span,
 }
 
 /// That the language's annotation `@name` does not go on `what` (27.13).
@@ -906,6 +921,8 @@ struct Checker<'a> {
     /// `sync.CompareExchange`, once `std.sync` is imported: the template
     /// and its instance with its own parameter.
     compare_exchange: Option<(TemplateId, Ty)>,
+    /// What the code does to cells of `std.sync`, in order.
+    cell_uses: Vec<CellUse>,
     /// The types of `std.fs`, once imported.
     fs: Option<FsTypes>,
     /// The module whose declaration or code is being checked (7.5).
@@ -8148,6 +8165,53 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A name for the cell an expression reads, the same wherever a function
+    /// writes it: a binding, or a field of one.
+    fn cell(cx: &FnCx, value: &hir::Expr) -> Option<String> {
+        match &value.kind {
+            hir::ExprKind::Local(local) => Some(cx.locals[local.0 as usize].span.start.to_string()),
+            hir::ExprKind::Field(of, field) => Some(format!("{}.{field}", Self::cell(cx, of)?)),
+            _ => None,
+        }
+    }
+
+    fn cell_use(&mut self, cell: String, method: &ast::Ident, args: &[ast::Arg], span: Span) {
+        let read = matches!(method.name.as_str(), "get" | "load");
+        let writes = matches!(method.name.as_str(), "set" | "store" | "swap" | "update");
+        let (first, last) = (args.first(), args.last());
+        if read || writes {
+            let within =
+                first.zip(last).map_or(Span::default(), |(a, b)| Span::new(a.value.span.start, b.value.span.end));
+            self.cell_uses.push(CellUse { cell, span, read, within });
+        }
+    }
+
+    /// W1016: a function that writes a cell from what it read of it earlier,
+    /// as another task may change it in between. Each use of the value read
+    /// is known by the index.
+    fn lost_updates(&mut self) {
+        let uses = std::mem::take(&mut self.cell_uses);
+        let Some(index) = self.index.as_ref() else { return };
+        let inside = |within: Span, span: Span| within.start <= span.start && span.end <= within.end;
+        let mut found = Vec::new();
+        for write in uses.iter().filter(|used| !used.read) {
+            let same = uses.iter().filter(|used| used.read && used.cell == write.cell);
+            let source = same.filter(|read| read.span.start < write.span.end).find(|read| {
+                inside(write.within, read.span)
+                    || index.uses.iter().any(|(span, def)| {
+                        index.defs[*def].name_span == read.within && *span != read.within && inside(write.within, *span)
+                    })
+            });
+            found.extend(source.map(|read| (write.span, read.span)));
+        }
+        for (write, read) in found {
+            let message = "this writes a value made from one read earlier, and another task may change it in between, \
+                           which would be lost: read and write it in one `update`, or an `Atomic` with `compareExchange`";
+            self.diags.warning("W1016", write, message);
+            self.diags.related(read, "read here");
+        }
+    }
+
     /// The operations of the `std.sync` values (14.4.4). Each locks the
     /// shared state for one step, after evaluating its arguments, and works
     /// on it with the operations of the value it holds.
@@ -9010,6 +9074,11 @@ impl<'a> Checker<'a> {
                 match &pattern.kind {
                     ast::PatternKind::Wildcard => Some(hir::Stmt::Expr(value)),
                     ast::PatternKind::Binding(name) => {
+                        if let Some(read) =
+                            self.cell_uses.last_mut().filter(|used| used.read && used.span == value.span)
+                        {
+                            read.within = name.span;
+                        }
                         let local = self.declare(cx, name, ty, *mutable);
                         Some(hir::Stmt::Let(local, value))
                     }
@@ -13198,7 +13267,13 @@ impl<'a> Checker<'a> {
                 return self.clock_method(cx, value, method, args, span);
             }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
-                return self.sync_method(cx, value, handle, state, method, args, span);
+                let cell = Self::cell(cx, &value)
+                    .filter(|_| matches!(handle, Handle::Mutex | Handle::RwLock | Handle::Atomic));
+                let checked = self.sync_method(cx, value, handle, state, method, args, span);
+                if let Some(cell) = cell {
+                    self.cell_use(cell, method, args, span);
+                }
+                return checked;
             }
             return self.handle_method(cx, value, handle, state, method, args, span);
         }

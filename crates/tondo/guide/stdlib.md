@@ -769,6 +769,11 @@ A program with `TONDO_DUMP`, in the debugger or with `TONDO_LOCK_ORDER=1` notes
 the order its tasks take locks in, and says when two are taken in both, a deadlock
 that did not happen yet; `tondo test --lock-order` fails the test that does it.
 
+Safe code has no data races, but an update can be lost: `let seen = cell.get()`,
+then `cell.set(seen + 1)`, while another task writes in between. The compiler warns
+of it (`W1016`), and `tondo test` warns of what it sees happen, in the test that did
+it: read and write in one `update`, or with `compareExchange`.
+
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for
 its values: dumps, the debugger and its parts. The program itself is not
 touched: `Display`, JSON and `==` see the value. On a type it goes with the

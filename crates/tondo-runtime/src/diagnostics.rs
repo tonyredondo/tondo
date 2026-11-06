@@ -742,6 +742,9 @@ pub(crate) fn start() {
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
     super::lockorder::start(debugged || std::env::var_os("TONDO_DUMP").is_some());
+    if on("TONDO_RACE") {
+        super::race::start();
+    }
     let live = super::live::on() && std::env::var_os("TONDO_DIAGNOSTICS").is_none_or(|value| value != "0");
     // `cpu`: a profile of processor time, which counting the memory would
     // change.

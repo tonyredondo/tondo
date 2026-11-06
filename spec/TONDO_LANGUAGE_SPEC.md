@@ -8831,6 +8831,7 @@ oculten un diagnóstico independiente.
 | `W1013` | `serial-spawn-in-loop` | `spawn` cuyo `Join` nadie consume dentro de un bucle: cada iteración espera a su tarea. |
 | `W1014` | `unused-negation` | Sentencia que es un valor negativo que nada usa, como una resta partida antes de su `-`. |
 | `W1015` | `deprecated` | Uso de una declaración marcada `@deprecated`, con lo que dice usar en su lugar. |
+| `W1016` | `lost-update` | Una celda de `std.sync` escrita con un valor hecho de lo que se leyó de ella antes: otra tarea puede cambiarla entre medias. |
 
 #### Pánicos del lenguaje
 

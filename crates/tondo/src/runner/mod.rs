@@ -273,6 +273,8 @@ pub struct Attempt {
     /// The suite or test a retry round runs again.
     pub unit: Option<u32>,
     pub logs: Vec<String>,
+    /// What looks wrong without failing it, as an update tasks can lose.
+    pub warnings: Vec<String>,
     pub tags: Vec<(String, String)>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -395,6 +397,7 @@ impl Attempt {
             iteration: context.iteration,
             unit: context.unit,
             logs: Vec::new(),
+            warnings: Vec::new(),
             tags: Vec::new(),
             stdout: Vec::new(),
             stderr: Vec::new(),

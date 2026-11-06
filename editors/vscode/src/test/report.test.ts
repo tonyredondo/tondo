@@ -25,6 +25,7 @@ import {
   logpointArgs,
   requestRow,
   stepRow,
+  warningPlace,
   programOf,
   recordedRun,
   reloadShown,
@@ -663,4 +664,10 @@ test('a request and its steps as rows of the view', () => {
   assert.equal(stepRow(steps[1]).label, '1 ms  task 3 starts task 4');
   assert.deepEqual(stepRow(steps[2]).place, { file: 'src/a.to', line: 5 });
   assert.equal(stepRow(steps[0]).place, undefined);
+});
+
+test('the write a warning of a test points at', () => {
+  const warning = 'task 3 read a value at src/a.to:6 in bump and wrote it at src/a.to:7 in bump, and task 2 had written it';
+  assert.deepEqual(warningPlace(warning), { file: 'src/a.to', line: 7 });
+  assert.equal(warningPlace('other'), undefined);
 });
