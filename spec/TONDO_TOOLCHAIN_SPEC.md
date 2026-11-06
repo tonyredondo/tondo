@@ -1038,8 +1038,9 @@ comando lo dice. Las variables son las que el código optimizado conserva en esa
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
 interbloqueo que aún no ocurrió: lo dice por stderr y `why` lo repite, con dónde se
-tomó cada uno, aunque las tareas nunca coincidan. `tondo test --lock-order` hace
-fallar con `P0019` el test que lo cierra. Dos lectores no se esperan, y no cuentan.
+tomó cada uno, aunque las tareas nunca coincidan. `tondo test` lo mira siempre y lo da
+como aviso del test que lo cierra, y `tondo test --lock-order` hace fallar ese test con
+`P0019`. Dos lectores no se esperan, y no cuentan.
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.

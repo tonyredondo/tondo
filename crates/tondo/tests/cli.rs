@@ -618,3 +618,20 @@ fn codes_of_a_test_run() {
     let said = said_by(&dir, &["test", "--update-snapshots"]);
     assert!(["P2001", "P2002", "P2005", "P2008"].iter().all(|code| said.contains(code)), "{said}");
 }
+
+/// Locks taken in opposite orders warn in any test, and fail with `--lock-order`.
+#[test]
+fn a_test_says_of_locks_in_opposite_orders() {
+    let manifest: &[u8] = b"[package]\nname = \"app\"\n";
+    let tests: &[u8] = b"import std.sync\n\ntest crossed {\n    let first = sync.Mutex(0)\n    \
+        let second = sync.Mutex(0)\n    first.update((a) {\n        second.update((b) { b += 1 })\n    })\n    \
+        second.update((b) {\n        first.update((a) { a += 1 })\n    })\n}\n";
+    let dir = project_at(
+        "lock-orders",
+        &[("tondo.toml", manifest), ("src/main.to", b"fn main() {}\n"), ("src/main_test.to", tests)],
+    );
+    let said = said_by(&dir, &["test"]);
+    assert!(said.contains("crossed ... ok") && said.contains("orders that can deadlock"), "{said}");
+    let said = said_by(&dir, &["test", "--lock-order"]);
+    assert!(said.contains("crossed ... FAILED") && said.contains("P0019"), "{said}");
+}

@@ -81,8 +81,14 @@ pub(crate) fn taking(
     }
     let text = found?;
     use std::io::Write;
+    let fails = MODE.load(Ordering::Relaxed) == FAILS;
+    // Under `tondo test`, a warning of the test that closes the cycle.
+    if !fails && super::testing::ACTIVE.load(Ordering::Relaxed) {
+        super::testing::report("race", text.as_bytes());
+        return None;
+    }
     let _ = writeln!(std::io::stderr(), "tondo runtime: {text}");
-    (MODE.load(Ordering::Relaxed) == FAILS).then_some(text)
+    fails.then_some(text)
 }
 
 /// The edges from `from` to `to`, each in words.
