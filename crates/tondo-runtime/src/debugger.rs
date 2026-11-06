@@ -2833,10 +2833,17 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     // Out of Tondo code while it waits, so collections and dumps go on.
     let paused = super::tasks::pause_here();
     let resumed = state.resumed;
+    let mut aside = false;
     // A frozen task stays while the others go on. What the debugger's thread
     // asks is looked at before each wait, with `state`, which it holds to ask:
     // the next request may come while the last one ends.
     while state.resumed == resumed || frozen(&state) {
+        // The others go on: another worker takes this one's place, as in a
+        // call of C. Only then, since every task a stop holds would ask for one.
+        if state.resumed != resumed && !aside {
+            super::tasks::tondo_rt_foreign_enter();
+            aside = true;
+        }
         // Work the debugger's thread asks of this task, as showing a value
         // through a view.
         let work = WORK.lock().unwrap_or_else(|e| e.into_inner()).take_if(|(t, _)| *t == task);
@@ -2880,7 +2887,9 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     }
     state.held.retain(|held| held.task != task);
     drop(state);
-    if paused {
+    if aside {
+        super::tasks::tondo_rt_foreign_leave();
+    } else if paused {
         super::tasks::enter_tondo();
     }
 }
