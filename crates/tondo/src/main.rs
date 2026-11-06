@@ -1324,10 +1324,18 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         ["redact", file, output] => {
             tondo::observe::redact(Path::new(file), Path::new(output)).map(|()| ExitCode::SUCCESS)
         }
-        ["test", file] => tondo::observe::dump_test(Path::new(file), None, json).map(|()| ExitCode::SUCCESS),
-        ["test", file, "--frame", frame] => {
-            let frame = frame.parse().map_err(|_| usage("--frame takes a frame's number"))?;
-            tondo::observe::dump_test(Path::new(file), Some(frame), json).map(|()| ExitCode::SUCCESS)
+        ["test", file, rest @ ..] => {
+            let (mut frame, mut project) = (None, None);
+            for pair in rest.chunks(2) {
+                match pair {
+                    ["--frame", number] => {
+                        frame = Some(number.parse().map_err(|_| usage("--frame takes a frame's number"))?)
+                    }
+                    ["--project", dir] => project = Some(Path::new(*dir)),
+                    _ => return Err(usage("dump test takes --frame <n> and --project <dir>")),
+                }
+            }
+            tondo::observe::dump_test(Path::new(file), frame, project, json).map(|()| ExitCode::SUCCESS)
         }
         ["core", core, rest @ ..] => {
             let (mut executable, mut output) = (None, None);

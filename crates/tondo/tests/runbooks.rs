@@ -91,11 +91,6 @@ fn step(agent: &mut Agent, dir: &Path, topic: &str, call: &str, expected: &[&str
     let mut seen = if tool == "run_output" { known.started.clone() } else { String::new() };
     loop {
         let result = agent.call(tool, arguments.clone());
-        // A program compiling does not answer yet.
-        if result["isError"] == true && result.to_string().contains("answers") && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(200));
-            continue;
-        }
         assert_ne!(result["isError"], true, "{topic}: {call}: {result}");
         let structured = &result["structuredContent"];
         if matches!(tool, "run_start" | "debug_start") {

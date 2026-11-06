@@ -643,6 +643,20 @@ fn reaches_what_the_command_line_does() {
     assert_eq!(data["exit_code"], 0, "{data}");
     let (data, _) = client.call("dump_plugin", json!({ "debugger": "gdb" }));
     assert!(data["report"]["load"].as_str().unwrap_or_default().starts_with("source"), "{data}");
+    // A test from a dump, for a project that is not the server's directory.
+    let shop = dir.join("shop");
+    std::fs::create_dir_all(shop.join("src")).unwrap();
+    std::fs::create_dir_all(shop.join("dumps")).unwrap();
+    std::fs::write(shop.join("tondo.toml"), "[package]\nname = \"shop\"\n").unwrap();
+    let code = "import std.console\n\ntype Order = { lines: Array[Int] }\n\nfn total(order: Order): Int {\n    \
+        var sum = 0\n    for at in 0..order.lines.length() + 1 {\n        sum += order.lines[at]\n    }\n    sum\n}\n\n\
+        fn main() {\n    console.println(\"{total(Order { lines: [10, 20] })}\")\n}\n";
+    std::fs::write(shop.join("src/main.to"), code).unwrap();
+    client.call("build", json!({ "path": shop, "output": shop.join("shop") }));
+    Command::new(shop.join("shop")).current_dir(&shop).env("TONDO_DUMP", "dumps").output().unwrap();
+    let dump = std::fs::read_dir(shop.join("dumps")).unwrap().flatten().next().unwrap().path();
+    let (data, _) = client.call("dump_test", json!({ "file": dump, "project": shop }));
+    assert_eq!(data["report"]["reproduces"], true, "{data}");
     let output = dir.join("no-links");
     let arguments = json!({ "path": dir.join("graphed.to"), "output": output, "no_source_links": true });
     client.call("build", arguments);

@@ -800,7 +800,12 @@ fn compiled(
     text.push_str(&format!("{ending}\n}}\n"));
     ask("stay")?;
     let open = std::collections::HashMap::from([(path, text)]);
-    crate::driver::with_open(open, name, || patched(pid, ask)).map_err(told)?;
+    let done = crate::driver::with_open(open, name, || patched(pid, ask)).map_err(told)?;
+    // It compiles the files as they are, so what was saved goes in with it.
+    let saved: Vec<&str> = done.changed.iter().map(String::as_str).filter(|changed| *changed != name).collect();
+    if !saved.is_empty() {
+        eprintln!("tondo: this also took in what was saved: {} changed", saved.join(", "));
+    }
     let (_, manifest) = manifest_of(pid, ask)?;
     let slots = manifest["slots"].as_object().into_iter().flatten();
     let slot = slots.into_iter().find(|(identity, _)| osr::shown(identity) == name).and_then(|(_, s)| s.as_u64());

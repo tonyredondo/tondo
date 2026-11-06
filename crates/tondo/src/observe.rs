@@ -1099,8 +1099,17 @@ fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String
 
 /// `tondo dump test <file> [--frame <n>]`: writes the test of a failure in a
 /// dump, next to the function, and says whether it fails as the dump did.
-pub fn dump_test(path: &std::path::Path, frame: Option<u64>, json: bool) -> Result<(), String> {
+pub fn dump_test(
+    path: &std::path::Path,
+    frame: Option<u64>,
+    project: Option<&std::path::Path>,
+    json: bool,
+) -> Result<(), String> {
     let dump = load(path)?;
+    // Its files are named from the project.
+    if let Some(dir) = project {
+        std::env::set_current_dir(dir).map_err(|e| format!("cannot enter {}: {e}", dir.display()))?;
+    }
     let found = reproduction(&dump, frame)?;
     if !project_of(&found.file).join("tondo.toml").exists() {
         let message = "a test lives in a project, and this file has none: `tondo init` makes one of its directory";

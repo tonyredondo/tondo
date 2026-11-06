@@ -345,6 +345,15 @@ impl Server {
             let stdin = child.stdin.as_mut().expect("piped");
             let _ = stdin.write_all(text.as_bytes()).and_then(|()| stdin.flush());
         }
+        // It builds first: its process does not answer the tools until it runs.
+        let building = std::time::Instant::now() + Duration::from_secs(120);
+        while !args.flag("watch")
+            && !crate::observe::serves(child.id())
+            && matches!(child.try_wait(), Ok(None))
+            && std::time::Instant::now() < building
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         self.started += 1;
         let id = format!("run-{}", self.started);
         let mut run = Run { child, stdout, stderr, read: (0, 0), watch: args.flag("watch"), status: None };
@@ -1320,9 +1329,8 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
-            if let Some(frame) = args.text("frame") {
-                push(&["--frame", &frame]);
-            }
+            option(&mut argv, "--frame", "frame");
+            option(&mut argv, "--project", "project");
         }
         "dump_core" => {
             push(&["dump", "core", &args.need("core")?, "--json"]);
@@ -2504,6 +2512,7 @@ test file, and says whether it fails as the dump did. Run it where the program's
         params: &[
             ("file", "string!", "The dump."),
             ("frame", "integer", "The frame to call, as `dump_read` numbers them; by default the innermost it can."),
+            ("project", "string", "The project of the program, when the server's directory is not it."),
         ],
     },
     Tool {

@@ -32,7 +32,7 @@ run_output {"session": "<session>", "wait": 10}
 
 `eval` asks the program, without stopping it: what a function gives, as its
 files say now. It is the fastest way to try a change. It takes in what is
-saved, so the program runs that code from then on.
+saved, so the program runs that code from then on, and says so.
 
 ```mcp
 eval {"program": "<pid>", "expression": "price(4)"}
