@@ -1,0 +1,27 @@
+// What a call gives warns when nothing uses it and the call does nothing else;
+// a call with an effect abandons its result in silence.
+
+import std.console
+
+fn doubled(number: Int): Int {
+    number * 2
+}
+
+fn loud(number: Int): Int {
+    console.println("{number}")
+    number
+}
+
+fn main() {
+    let list = [1, 2, 3]
+    list.contains(2)
+    doubled(4)
+    loud(5)
+    var more = [1]
+    _ = more.pop()
+    console.println("{more.length()}")
+}
+
+// expect-stdout: 5
+// expect-stdout: 0
+// expect-warning: W1018 nothing uses what this call gives

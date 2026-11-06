@@ -19,3 +19,4 @@ fn main() {
 // expect-error: E1102 expected `UInt8`, found `Int`, which may not fit: convert it with `UInt8(n * 2)?`
 // expect-error: E1102 expected `Int`, found `Float`, which may not fit: convert it with `Int(f)?`
 // expect-error: E1102 expected `Float`, found `Int`: convert it with `Float(n)`
+// expect-warning: W1018 nothing uses what this call gives

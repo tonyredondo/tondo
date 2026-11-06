@@ -23,3 +23,4 @@ fn main() {
 
 // expect-error: E1102 expected `String`, found `Int`
 // expect-error: E1303 a value of type `Int ! Problem` is not used
+// expect-warning: W1018 nothing uses what this call gives

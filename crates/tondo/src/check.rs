@@ -71,6 +71,7 @@ fn check_with<'a>(
         traits: Vec::new(),
         trait_names: HashMap::new(),
         try_body: false,
+        dropped_calls: Vec::new(),
         impls: Vec::new(),
         impl_heads: HashMap::new(),
         heads_indexed: 0,
@@ -894,6 +895,8 @@ struct Checker<'a> {
     trait_names: HashMap<String, TraitId>,
     /// The next closure is the body of a `try` block.
     try_body: bool,
+    /// Calls whose result nothing uses, of functions not all known yet.
+    dropped_calls: Vec<(FnId, Span)>,
     impls: Vec<ImplDef>,
     /// The `impl`s of each trait by the head of the type they are for, a
     /// type parameter's as `None`, so that asking whether a type has a
@@ -1394,6 +1397,11 @@ impl<'a> Checker<'a> {
         self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty()) + u32::from(testing);
         let mut functions: Vec<hir::Function> =
             bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
+        for (id, span) in std::mem::take(&mut self.dropped_calls) {
+            if self.only_computes(&bodies, id, &mut HashSet::new()) {
+                self.result_unused(span);
+            }
+        }
 
         let explicit_main = match self.names.get("main") {
             Some(ModuleName::Fn(id)) => Some(*id),
@@ -6780,7 +6788,13 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Try(inner) => &inner.kind,
             kind => kind,
         };
-        if value.ty != Ty::STRING || !matches!(call, ast::ExprKind::Call { .. }) {
+        if !matches!(call, ast::ExprKind::Call { .. }) {
+            return;
+        }
+        if value.ty != Ty::STRING {
+            if plain && !self.must_use(value.ty) {
+                self.dropped_result(call, value);
+            }
             return;
         }
         let message = "nothing uses the `String` of this call, and making it has a cost: write it with \
@@ -6794,6 +6808,93 @@ impl<'a> Checker<'a> {
         }
         self.diags.fix("write it with `console.println`", false, edits);
         self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
+    }
+
+    /// W1018 of a result that is not a text, when the call has no other effect:
+    /// a method of the language that only reads, or a function of the program
+    /// that only computes, which is known once all are declared.
+    fn dropped_result(&mut self, call: &ast::ExprKind, value: &hir::Expr) {
+        match (&value.kind, call) {
+            (hir::ExprKind::Call(Callee::Fn(id), ..), _) => self.dropped_calls.push((*id, value.span)),
+            (hir::ExprKind::Call(Callee::Std(_), _, args), ast::ExprKind::Call { callee, .. }) => {
+                if let (ast::ExprKind::Field(_, method), Some(receiver)) = (&callee.kind, args.first())
+                    && self.only_reads(receiver.ty, &method.name)
+                {
+                    self.result_unused(value.span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn result_unused(&mut self, span: Span) {
+        let message =
+            "nothing uses what this call gives, and it does nothing else: use it, or discard it with `_ = ...`";
+        self.diags.warning("W1018", span, message);
+        self.diags.fix("discard it with `_ = ...`", false, vec![(Span::new(span.start, span.start), "_ = ".into())]);
+    }
+
+    /// Whether a method of a collection or a text leaves its receiver as it is.
+    fn only_reads(&self, ty: Ty, name: &str) -> bool {
+        let owner = match self.types.kind(ty) {
+            TyKind::String => "String",
+            TyKind::Array(_) => "Array",
+            TyKind::Deque(_) => "Deque",
+            TyKind::Map(..) => "Map",
+            TyKind::Set(_) => "Set",
+            _ => return false,
+        };
+        crate::api::builtin_doc(owner, name).is_some_and(|(declaration, _)| declaration.contains("(self"))
+    }
+
+    /// Whether a function of the program only computes: what it does is
+    /// arithmetic, values and calls of others that do. Anything else counts as
+    /// an effect, a panic included, so that this only says what it knows.
+    fn only_computes(&self, bodies: &[&ast::FnDecl], id: FnId, seen: &mut HashSet<u32>) -> bool {
+        if !seen.insert(id.0) {
+            return true;
+        }
+        let Some(f) = bodies.get(id.0 as usize) else { return false };
+        let plain = f.params.iter().all(|param| matches!(param.mode, ast::Mode::Value | ast::Mode::Ref));
+        plain && f.foreign.is_none() && f.body.as_ref().is_some_and(|body| self.block_computes(bodies, body, seen))
+    }
+
+    fn block_computes(&self, bodies: &[&ast::FnDecl], block: &ast::Block, seen: &mut HashSet<u32>) -> bool {
+        let stmts = block.stmts.iter().all(|stmt| match &stmt.kind {
+            ast::StmtKind::Let { value: Some(value), .. } | ast::StmtKind::Return(Some(value)) => {
+                self.computes(bodies, value, seen)
+            }
+            ast::StmtKind::Expr(value) => self.computes(bodies, value, seen),
+            _ => false,
+        });
+        stmts && block.tail.iter().all(|tail| self.computes(bodies, tail, seen))
+    }
+
+    fn computes(&self, bodies: &[&ast::FnDecl], value: &ast::Expr, seen: &mut HashSet<u32>) -> bool {
+        use ast::ExprKind as E;
+        match &value.kind {
+            E::Int { .. } | E::Float { .. } | E::BigInt(_) | E::Bool(_) | E::Char(_) | E::Unit | E::Path(_) => true,
+            E::Str(segments) => segments.iter().all(|segment| match segment {
+                ast::StrSegment::Text(_) => true,
+                ast::StrSegment::Expr(part, _) => self.computes(bodies, part, seen),
+            }),
+            E::Field(base, _) | E::TupleSlot(base, _) | E::Unary(_, base) => self.computes(bodies, base, seen),
+            E::Binary(_, left, right) => self.computes(bodies, left, seen) && self.computes(bodies, right, seen),
+            E::Tuple(parts) | E::Array(parts) => parts.iter().all(|part| self.computes(bodies, part, seen)),
+            E::Block(block) => self.block_computes(bodies, block, seen),
+            E::If { condition, then, otherwise } => {
+                self.computes(bodies, condition, seen)
+                    && self.block_computes(bodies, then, seen)
+                    && otherwise.iter().all(|part| self.computes(bodies, part, seen))
+            }
+            E::Call { callee, args } => {
+                let E::Path(path) = &callee.kind else { return false };
+                let [name] = path.as_slice() else { return false };
+                let Some(&ModuleName::Fn(id)) = self.names.get(&name.name) else { return false };
+                args.iter().all(|arg| self.computes(bodies, &arg.value, seen)) && self.only_computes(bodies, id, seen)
+            }
+            _ => false,
+        }
     }
 
     /// Whether the file of `at` imports the module `path`.

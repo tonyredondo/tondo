@@ -3771,9 +3771,11 @@ _ = computeValue()
 
 Tondo 0.1 no tiene una marca adicional tipo `must_use`; una futura librería o
 perfil de lint puede reconocer APIs concretas sin cambiar la validez del
-descarte. Un `String` hecho por una llamada y abandonado sigue siendo válido,
-pero avisa (`W1018`): costó hacerlo y nadie lo lee, y a menudo se quería
-escribir, como el de `cli.markup`.
+descarte. Abandonar el resultado de una llamada que no hace nada más sigue
+siendo válido, pero avisa (`W1018`): un `String` hecho, que costó hacer y a menudo
+se quería escribir, como el de `cli.markup`, lo que da un método del lenguaje que
+solo lee, y lo que da una función del programa que solo calcula. Esto se deduce del
+código, sin anotaciones, y lo que no se sabe cuenta como un efecto.
 
 `_ = value` abandona el valor como al salir de su scope: un `Join` espera a su
 tarea y un recurso ejecuta su acción de salida (8.10).
@@ -8860,7 +8862,7 @@ oculten un diagnóstico independiente.
 | `W1015` | `deprecated` | Uso de una declaración marcada `@deprecated`, con lo que dice usar en su lugar. |
 | `W1017` | `lock-in-defer` | Un lock de `std.sync` tomado en un `defer`: en una tarea cancelada, si otra lo tiene, ese `defer` termina ahí. |
 | `W1016` | `lost-update` | Una celda de `std.sync` escrita con un valor hecho de lo que se leyó de ella antes: otra tarea puede cambiarla entre medias. |
-| `W1018` | `unused-string` | Una llamada escrita como sentencia, o como valor de un bloque `Unit`, cuyo `String` nada usa. `_ = ...` lo descarta. |
+| `W1018` | `unused-result` | Una llamada escrita como sentencia, o como valor de un bloque `Unit`, cuyo resultado nada usa y que no hace nada más: un `String` que hizo, un método del lenguaje que solo lee, o una función del programa que solo calcula. `_ = ...` lo descarta. |
 
 #### Pánicos del lenguaje
 
@@ -9188,7 +9190,7 @@ con condiciones cerradas:
 - Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
 - `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
 - Sentencia que es un valor negativo que nada usa (`W1014`).
-- Llamada cuyo `String` nada usa (`W1018`).
+- Llamada cuyo resultado nada usa y sin otro efecto (`W1018`).
 
 Son errores obligatorios, entre otros:
 

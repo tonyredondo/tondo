@@ -17,3 +17,4 @@ fn main() {
 
 // expect-error: E1303 a value of type `Int ! Problem` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
 // expect-error: E1303 a value of type `Int?` is not used
+// expect-warning: W1018 nothing uses what this call gives

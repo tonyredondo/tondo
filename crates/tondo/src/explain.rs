@@ -264,10 +264,10 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ),
     (
         "W1018",
-        "unused-string",
-        "A call whose `String` nothing uses: making it cost memory and time for nothing, and a function that gives a \
-         text, as `cli.markup`, writes nothing by itself. Write it with `console.println(...)`, or discard it with \
-         `_ = ...`.",
+        "unused-result",
+        "A call whose result nothing uses, and that does nothing else: a `String` it made, a method of the language \
+         that only reads, or a function that only computes. A function that gives a text, as `cli.markup`, writes \
+         nothing by itself. Use it, write it with `console.println(...)`, or discard it with `_ = ...`.",
     ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),

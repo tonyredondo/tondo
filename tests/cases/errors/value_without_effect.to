@@ -17,3 +17,4 @@ fn main() {
 }
 
 // expect-error: E1306 this value does nothing
+// expect-warning: W1018 nothing uses what this call gives
