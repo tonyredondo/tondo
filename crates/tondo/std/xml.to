@@ -950,25 +950,27 @@ impl serialization.Sink for Writer {
         self.scalar(codecNative.base64Encode(value, false))
     }
 
-    fn record(self, name: String, notes: Array[serialization.Note]) {
+    fn beginRecord(self, record: serialization.Record) {
         self.state.update(
             (writing) {
                 if writing.open.isEmpty() {
-                    writing.name = renamed(notes, name)
+                    writing.name = renamed(record.notes, record.name)
                 }
             },
         )
+        self.beginMap(record.count)
     }
 
-    fn field(self, notes: Array[serialization.Note]) {
+    fn field(self, field: serialization.Field) {
         self.state.update(
             (writing) {
-                writing.notes = notes
+                writing.notes = field.notes
             },
         )
+        self.key(field.name)
     }
 
-    fn beginList(self, count: Int) {
+    fn beginList(self, _count: Int) {
         self.state.update((writing) { writing.begin(true) })
     }
 

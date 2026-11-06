@@ -771,7 +771,7 @@ impl Generator<'_> {
         let s = self.alias;
         let written: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
         let optional = |f: &ast::FieldDecl| optional(&f.ty);
-        let mut out = format!("{indent}out.record({name:?}, {})\n", self.notes(uses));
+        let mut out = String::new();
         // A `none` asks the format whether it leaves the member out; a
         // value asks nothing.
         let count = if written.iter().any(|f| optional(f)) {
@@ -787,14 +787,18 @@ impl Generator<'_> {
         } else {
             written.len().to_string()
         };
-        out.push_str(&format!("{indent}out.beginMap({count})\n"));
+        let notes = self.notes(uses);
+        out.push_str(&format!(
+            "{indent}out.beginRecord({s}.Record {{ name: {name:?}, count: {count}, notes: {notes} }})\n"
+        ));
         for field in written {
             let value = format!("{prefix}{}", field.name.name);
-            let mut write = format!("out.key({:?})\n{indent}{s}.Encode.encode({value}, out)", wire(field));
-            let notes = self.notes(&field.uses);
-            if notes != "[]" {
-                write = format!("out.field({notes})\n{indent}{write}");
-            }
+            let (key, notes) = (wire(field), self.notes(&field.uses));
+            let write = match notes.as_str() {
+                "[]" => format!("out.key({key:?})"),
+                _ => format!("out.field({s}.Field {{ name: {key:?}, notes: {notes} }})"),
+            };
+            let write = format!("{write}\n{indent}{s}.Encode.encode({value}, out)");
             if optional(field) {
                 out.push_str(&format!(
                     "{indent}if not __skip_{} {{\n{indent}    {}\n{indent}}}\n",

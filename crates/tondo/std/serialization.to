@@ -476,6 +476,20 @@ pub trait Source {
 // Writing
 // ---------------------------------------------------------------------------
 
+/// A record about to be written: the name of its type, or of its variant,
+/// how many members it has, and the notes of the type.
+pub type Record = {
+    name: String
+    count: Int
+    notes: Array[Note]
+}
+
+/// A field about to be written: its key and its notes.
+pub type Field = {
+    name: String
+    notes: Array[Note]
+}
+
 /// A document written value by value: the writer of a format. A value it
 /// cannot hold is an error that the format reports when it finishes.
 ///
@@ -520,13 +534,16 @@ pub trait Sink {
         self.text(text)
     }
 
-    /// Before the map of a record: the name of its type, or of its
-    /// variant, and the notes of the type, for a format that names its
-    /// values, as XML its elements.
-    fn record(self, name: String, notes: Array[Note]) {}
+    /// The map of a record follows, for a format that names its values, as
+    /// XML its elements.
+    fn beginRecord(self, record: Record) {
+        self.beginMap(record.count)
+    }
 
-    /// Before the key of a field with notes: the notes.
-    fn field(self, notes: Array[Note]) {}
+    /// The key of a field with notes.
+    fn field(self, field: Field) {
+        self.key(field.name)
+    }
 
     /// Before a value: a tag of its own, as YAML's `!reference`, for a
     /// format that has them.

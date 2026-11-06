@@ -3078,6 +3078,9 @@ pub trait Source {
     fn mismatch(self, first: Event, expected: String): Error
 }
 
+pub type Record = { name: String, count: Int, notes: Array[Note] }
+pub type Field = { name: String, notes: Array[Note] }
+
 pub trait Sink {
     fn null(self)
     fn bool(self, value: Bool)
@@ -3094,8 +3097,8 @@ pub trait Sink {
     fn endMap(self)
     // con implementación por defecto:
     fn omitsNone(self): Bool
-    fn record(self, name: String, notes: Array[Note])
-    fn field(self, notes: Array[Note])
+    fn beginRecord(self, record: Record)   // por defecto, `beginMap`
+    fn field(self, field: Field)           // por defecto, `key`
     fn tag(self, name: String)             // antes de un valor; nada
 }
 
@@ -3170,13 +3173,13 @@ pub trait Decode {
   emite.
 - Las anotaciones de un formato, como `@xml.Attribute`, llegan a él como
   notas: `@xml.Name("item")` es `Note { format: "xml", name: "Name", value:
-  "item" }`. Antes del mapa de cada record, el código del compilador llama a
-  `Sink.record` con el nombre del tipo, o de la variante, y sus notas; antes
-  de la clave de un campo con notas, a `Sink.field`; y antes de leer los
-  campos de un record, si alguno tiene notas, a `Source.fields` con las de
-  cada uno, en el orden de `names`. Por defecto no hacen nada, y cada
-  formato lee solo las suyas, así que una anotación de XML no cambia el
-  JSON del tipo.
+  "item" }`. Para el mapa de cada record, el código del compilador llama a
+  `Sink.beginRecord` con el nombre del tipo, o de la variante, sus miembros y
+  sus notas; para la clave de un campo con notas, a `Sink.field`; y antes de
+  leer los campos de un record, si alguno tiene notas, a `Source.fields` con
+  las de cada uno, en el orden de `names`. Por defecto escriben el mapa y la
+  clave, y `Source.fields` no hace nada, y cada formato lee solo las suyas,
+  así que una anotación de XML no cambia el JSON del tipo.
 - Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
   columna, y se muestra como `mensaje at camino (line l, column c)`, sin la
   posición cuando no la hay, como al escribir. `ErrorKind` se muestra con su
