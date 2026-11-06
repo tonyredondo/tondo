@@ -34,6 +34,10 @@ struct Site {
 static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
+/// One change of the code at a time, from stopping the program to letting it
+/// go: logpoints go from several threads as their tools leave, and one would
+/// close a page to writing while another writes.
+static WRITING: Mutex<()> = Mutex::new(());
 
 /// The logpoints whose held task may go on, and what wakes it.
 static GOING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
@@ -102,11 +106,13 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
         });
     }
     let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
+    let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
         return error("the program did not stop for the logpoint: try again");
     }
     let written = places.iter().map(|&(address, length)| write_call(address, length)).collect::<Result<Vec<_>, _>>();
     super::tasks::resume_world();
+    drop(writing);
     let sites = match written {
         Ok(sites) => sites,
         Err(message) => return error(&message),
@@ -182,6 +188,7 @@ fn remove(id: u64) {
         set.iter().position(|logpoint| logpoint.id == id).map(|at| set.swap_remove(at))
     };
     let Some(logpoint) = found else { return };
+    let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     while !super::tasks::stop_world(std::time::Duration::from_secs(2)) {}
     for site in &logpoint.sites {
         let _ = patch(site.address, &site.original);
