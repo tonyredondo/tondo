@@ -481,13 +481,26 @@ fn a_server_says_why_it_cannot_listen() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("taken-port");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    // On every address: macOS lets a server listen on all beside one on a single one.
+    let taken = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
     let port = taken.local_addr().unwrap().port();
     let program = format!(
         "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", "server.to"]).current_dir(&dir).output().unwrap();
+    let mut server = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "server.to"])
+        .current_dir(&dir)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A server that did listen would never end.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while server.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = server.kill();
+    let ran = server.wait_with_output().unwrap();
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(said.contains("cannot listen"), "{said}");
 }

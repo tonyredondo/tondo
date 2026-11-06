@@ -1669,7 +1669,7 @@ test fibonacci {
     std::fs::write(dir.join("src/main.to"), source("")).unwrap();
     git(&["init", "-q"]);
     git(&["add", "."]);
-    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fast"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "fast"]);
     std::fs::write(dir.join("src/main.to"), source(" + 0 * (fib(n - 1) + fib(n - 2))")).unwrap();
     let against = [&bench[..], &["--against", "HEAD", "--max-regression", "5"]].concat();
     let (stdout, stderr, status) = tondo(&dir, &against);
