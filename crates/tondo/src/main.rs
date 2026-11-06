@@ -1050,17 +1050,35 @@ fn values_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo eval <pid|name> <expression> [--json]";
-    let json = args.iter().any(|a| a == "--json");
-    let mut words = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
-    let (Some(name), Some(expression), None) = (words.next(), words.next(), words.next()) else {
-        return Err(USAGE.to_string());
-    };
-    let value = tondo::live::eval(name, expression)?;
-    match json {
-        true => print_json("eval", true, serde_json::json!({ "value": value })),
-        false => println!("{value}"),
+    const USAGE: &str = "usage: tondo eval <pid|name> <expression> [--every <seconds>] [--json]";
+    let (mut given, mut every, mut json) = (Vec::new(), None, false);
+    let mut rest = args.iter().filter_map(|a| a.to_str());
+    while let Some(arg) = rest.next() {
+        match arg {
+            "--json" => json = true,
+            "--every" => {
+                let seconds = rest.next().and_then(|n| n.parse().ok());
+                let each = seconds.and_then(|n| std::time::Duration::try_from_secs_f64(n).ok());
+                every = Some(each.filter(|each| !each.is_zero()).ok_or(USAGE)?);
+            }
+            other => given.push(other),
+        }
     }
+    let [name, expression] = given[..] else { return Err(USAGE.to_string()) };
+    // Once, a failure is the command's; each so often, a line of what it gave.
+    if every.is_none() {
+        let value = tondo::live::eval(name, expression)?;
+        match json {
+            true => print_json("eval", true, serde_json::json!({ "value": value })),
+            false => println!("{value}"),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    tondo::live::eval_each(name, expression, every, &mut |said| {
+        let text = said.unwrap_or_else(|error| format!("error: {error}"));
+        println!("{text}");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    })?;
     Ok(ExitCode::SUCCESS)
 }
 

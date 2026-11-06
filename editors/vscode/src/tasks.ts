@@ -12,13 +12,6 @@ import { checked, rendered } from './report';
 
 export type Command = 'check' | 'build' | 'run' | 'test' | 'fmt' | 'watch';
 
-/** How a live run starts: `tondo.testsOnSave` has the tests that reach each
- *  change run too. */
-function liveFlags(): string[] {
-  const tests = vscode.workspace.getConfiguration('tondo').get<boolean>('testsOnSave', false);
-  return tests ? ['--watch', '--tests'] : ['--live'];
-}
-
 interface Definition extends vscode.TaskDefinition {
   command: Command;
   target?: string;
@@ -34,11 +27,19 @@ export function tondoTask(command: Command, target: string, folder?: vscode.Work
   const program = settings('run', target);
   const args =
     command === 'watch'
-      ? ['run', target, ...liveFlags(), '--', ...program.args]
+      ? ['run', target, '--live', '--', ...program.args]
       : command === 'run'
         ? ['run', target, '--', ...program.args]
         : [command, target];
-  const env = command === 'run' || command === 'watch' ? program.env : command === 'test' ? settings('test', target).env : {};
+  // A live run reloads on save, so a panic waits there for the fix.
+  const env =
+    command === 'watch'
+      ? { ...program.env, TONDO_LIVE_HOLD: '1' }
+      : command === 'run'
+        ? program.env
+        : command === 'test'
+          ? settings('test', target).env
+          : {};
   const definition: Definition = { type: 'tondo', command, target };
   const name = `${command === 'watch' ? 'run live' : command} ${path.basename(target)}`;
   const execution =

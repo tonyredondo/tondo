@@ -64,6 +64,7 @@ tondo check --unreached            the code neither main nor a test reaches
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build
+tondo eval app "queue()" --every 1 and again each second, compiled once
 tondo values app app.to            what each line left, with nothing stopped
 tondo test --bisect v1.2 --filter parse   the first commit where a test fails
 tondo test --watch                again, the tests a change affects, as files change

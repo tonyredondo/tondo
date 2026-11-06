@@ -14,7 +14,8 @@ import { ShowProfile } from './profiles';
 import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
-/** The updates tasks lost in the last run, in the Problems panel. */
+/** What the last run found, in the Problems panel: the tests that failed and
+ *  the updates tasks lost. */
 const lostUpdates = vscode.languages.createDiagnosticCollection('tondo-test');
 
 export function registerTesting(
@@ -265,6 +266,12 @@ export function registerTesting(
         ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
         : new vscode.TestMessage(text);
       message.location = locate(outcome.file, outcome.line, outcome.column);
+      if (message.location && outcome.verdict === 'failed') {
+        const { uri, range } = message.location;
+        const failed = new vscode.Diagnostic(range, `${test.label}: ${text}`, vscode.DiagnosticSeverity.Error);
+        failed.source = 'tondo test';
+        lostUpdates.set(uri, [...(lostUpdates.get(uri) ?? []), failed]);
+      }
       // A snapshot that differs offers to be written as it is now.
       if (outcome.code === 'P2007') {
         message.contextValue = 'tondo.snapshot';
@@ -638,6 +645,9 @@ export function registerTesting(
         await wholeRun(['test', '--affected', rev], 'Running the tests the change reaches');
       }
     }),
+    vscode.commands.registerCommand('tondo.testsReached', () =>
+      wholeRun(['test', '--affected', 'HEAD'], 'Running the tests the change reaches'),
+    ),
     vscode.commands.registerCommand('tondo.lockOrderTests', () =>
       wholeRun(['test', '--lock-order'], 'Running the tests, looking at the order of locks'),
     ),

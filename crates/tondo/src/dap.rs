@@ -1481,6 +1481,8 @@ fn handle(
         }
         // The tasks: where each is, and what each waits for and on whom.
         "tasks" => program.ask("tasks"),
+        // Which process it is, for what the editor asks it apart.
+        "pid" => Ok(json!({ "pid": program.pid })),
         // The editor's view of what each request did.
         "requests" => program.ask("requests").map(|found| pictured(observe::timelines(found))),
         // What each line of a file left, for the editor to show beside it.

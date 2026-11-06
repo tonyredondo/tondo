@@ -4,9 +4,11 @@
 // applied, applied with frames that keep the old code, needing the
 // program started again, or not applied because the files do not compile.
 
+import { ChildProcess, spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { exec } from './cli';
+import { tondo } from './extension';
 import * as path from 'node:path';
 import { HeldPanic, Reload, Shown, heldPlace, lineValues, liveHover, reloadShown, reloaded } from './report';
 
@@ -41,6 +43,83 @@ async function linesLeft(live: Live, file: string): Promise<Looked> {
   }
   const ran = await exec(['values', String(live.pid), file, '--for', '0', '--json'], os.tmpdir());
   return JSON.parse(ran.stdout) as Looked;
+}
+
+/** The lines a frame has not left yet: it goes on with the old code there. */
+const oldCode = vscode.window.createTextEditorDecorationType({
+  isWholeLine: true,
+  overviewRulerColor: new vscode.ThemeColor('editorWarning.foreground'),
+  overviewRulerLane: vscode.OverviewRulerLane.Left,
+  backgroundColor: new vscode.ThemeColor('diffEditor.removedLineBackground'),
+});
+let stayLines: NonNullable<Reload['stay_lines']> = [];
+
+function showStays(): void {
+  for (const editor of vscode.window.visibleTextEditors) {
+    const here = stayLines.filter(({ file }) => editor.document.uri.fsPath.endsWith(file));
+    const options = here.flatMap(({ lines, why }) =>
+      lines
+        .filter((line) => line <= editor.document.lineCount)
+        .map((line) => ({
+          range: new vscode.Range(line - 1, 0, line - 1, 0),
+          hoverMessage: `A frame stays on the old code here: ${why}`,
+        })),
+    );
+    editor.setDecorations(oldCode, options);
+  }
+}
+
+/** Expressions that say what they give as the program runs, nothing stopped,
+ *  each by a `tondo eval` that goes on. */
+type Watched = { expression: string; value: string; process?: ChildProcess };
+const watched: Watched[] = [];
+const watchesChanged = new vscode.EventEmitter<void>();
+const liveWatches: vscode.TreeDataProvider<Watched> = {
+  onDidChangeTreeData: watchesChanged.event,
+  getChildren: () => watched,
+  getTreeItem: ({ expression, value }) => {
+    const item = new vscode.TreeItem(expression);
+    item.description = value;
+    item.contextValue = 'tondoLiveWatch';
+    return item;
+  },
+};
+
+async function pidOf(live: Live): Promise<number> {
+  return 'session' in live ? ((await live.session.customRequest('pid')) as { pid: number }).pid : live.pid;
+}
+
+async function watchOne(one: Watched): Promise<void> {
+  one.process?.kill();
+  one.process = undefined;
+  if (!current) {
+    return;
+  }
+  const child = spawn(tondo(), ['eval', String(await pidOf(current)), one.expression, '--every', '1']);
+  one.process = child;
+  const show = (data: Buffer) => {
+    const lines = data.toString().trim().split('\n');
+    one.value = lines[lines.length - 1];
+    watchesChanged.fire();
+  };
+  child.stdout.on('data', show);
+  child.stderr.on('data', show);
+}
+
+async function addWatch(): Promise<void> {
+  const expression = await vscode.window.showInputBox({ prompt: 'An expression to follow, as total(order())' });
+  if (expression) {
+    const one: Watched = { expression, value: '…' };
+    watched.push(one);
+    watchesChanged.fire();
+    await watchOne(one);
+  }
+}
+
+function removeWatch(one: Watched): void {
+  one.process?.kill();
+  watched.splice(watched.indexOf(one), 1);
+  watchesChanged.fire();
 }
 
 /** What the lines of the file in view left, the last time it was asked. */
@@ -104,6 +183,11 @@ export function registerLive(context: vscode.ExtensionContext, channel: vscode.L
     beside,
     { dispose: () => clearInterval(looking) },
     panics,
+    oldCode,
+    vscode.window.registerTreeDataProvider('tondoLiveWatches', liveWatches),
+    vscode.commands.registerCommand('tondo.addLiveWatch', addWatch),
+    vscode.commands.registerCommand('tondo.removeLiveWatch', removeWatch),
+    vscode.window.onDidChangeVisibleTextEditors(showStays),
     vscode.commands.registerCommand('tondo.openHeldPanic', openHeld),
     vscode.languages.registerHoverProvider('tondo', {
       provideHover: (document, position) => {
@@ -160,6 +244,7 @@ export function registerLive(context: vscode.ExtensionContext, channel: vscode.L
 
 function begin(live: Live): void {
   current = live;
+  watched.forEach((one) => void watchOne(one));
   pending = false;
   void vscode.commands.executeCommand('setContext', 'tondo.live', true);
   show();
@@ -168,6 +253,10 @@ function begin(live: Live): void {
 function end(): void {
   current = undefined;
   last = undefined;
+  watched.forEach((one) => one.process?.kill());
+  stayLines = [];
+  showStays();
+  showHeld([], '.');
   void vscode.commands.executeCommand('setContext', 'tondo.live', false);
   item.hide();
 }
@@ -207,7 +296,14 @@ async function reloadNow(asked: boolean): Promise<void> {
   show();
   let shown: NonNullable<typeof last>;
   try {
-    shown = reloadShown(await reload(live));
+    const reloaded = await reload(live);
+    shown = reloadShown(reloaded);
+    stayLines = reloaded.stay_lines ?? [];
+    showStays();
+    // What the change reaches, in the Testing view and in Problems.
+    if (shown.state !== 'same' && vscode.workspace.getConfiguration('tondo').get<boolean>('testsOnSave', false)) {
+      void vscode.commands.executeCommand('tondo.testsReached');
+    }
   } catch (error) {
     shown = { state: 'failed', text: 'the reload failed', details: [(error as Error).message] };
   }

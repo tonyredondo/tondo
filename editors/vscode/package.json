@@ -555,6 +555,23 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.addLiveWatch",
+        "title": "Follow an Expression",
+        "category": "Tondo",
+        "icon": "$(add)"
+      },
+      {
+        "command": "tondo.removeLiveWatch",
+        "title": "Stop Following",
+        "category": "Tondo",
+        "icon": "$(close)"
+      },
+      {
+        "command": "tondo.testsReached",
+        "title": "Test What the Change Reaches",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.openHeldPanic",
         "title": "Go to the Panic That Waits",
         "category": "Tondo"
@@ -807,6 +824,11 @@
       ],
       "view/title": [
         {
+          "command": "tondo.addLiveWatch",
+          "when": "view == tondoLiveWatches",
+          "group": "navigation@0"
+        },
+        {
           "command": "tondo.refreshRequests",
           "when": "view == tondoRequests",
           "group": "navigation@0"
@@ -833,6 +855,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "tondo.removeLiveWatch",
+          "when": "viewItem == tondoLiveWatch",
+          "group": "inline"
+        },
         {
           "command": "tondo.requestTimeline",
           "when": "viewItem == tondoRequest",
@@ -972,6 +999,11 @@
     ],
     "views": {
       "debug": [
+        {
+          "id": "tondoLiveWatches",
+          "name": "Tondo Live Watches",
+          "when": "tondo.live"
+        },
         {
           "id": "tondoRequests",
           "name": "Tondo Requests",

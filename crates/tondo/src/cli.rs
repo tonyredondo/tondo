@@ -238,7 +238,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "eval",
-        usage: &["tondo eval <pid|name> <expression> [--json]"],
+        usage: &["tondo eval <pid|name> <expression> [--every <seconds>] [--json]"],
         summary: &["what an expression gives in a running live build,", "with its functions and types as they are now"],
     },
     Command {

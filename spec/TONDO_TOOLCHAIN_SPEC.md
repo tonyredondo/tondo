@@ -1797,13 +1797,18 @@ corre, sin parar nada, compilada con el código que dicen sus archivos ahora, ta
 cambió, en el archivo de su `main`: lee funciones, tipos y constantes, no los bindings de
 ningún frame, salvo con una tarea retenida por un panic, que se compila en su archivo y lee
 además los bindings de su frame, para entender qué falló. La ejecuta una tarea propia. Si hace panic, `eval` lo dice y termina con
-estado de error, y el programa sigue. El MCP la da con `eval` y el editor con *Evaluate in a
-Running Program*.
+estado de error, y el programa sigue. Con `--every <segundos>` repite la expresión, compilada
+una sola vez, y escribe cada valor. El MCP la da con `eval`, y el editor con *Evaluate in a
+Running Program* y en la vista *Tondo Live Watches*, con expresiones que siguen al programa
+mientras corre.
 
 El editor depura un build vivo por omisión, con F5 y con *Debug*, salvo con
 `tondo.debugLive` en falso, y una configuración de `launch` que dice `"live"` manda; un
 programa, no un volcado, una grabación ni un test. Lo que una sesión que no es viva rechaza
-por eso ofrece *Restart Live*, que la arranca de nuevo viva.
+por eso ofrece *Restart Live*, que la arranca de nuevo viva. `reload` da en `stay_lines`
+dónde quedan frames en el código viejo, por archivo y línea, que el editor marca. Con
+`tondo.testsOnSave`, tras cada recarga corre los tests que alcanzan el cambio, en su vista de
+tests, y los fallos salen en el panel de problemas.
 
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos,
 también los que embebe, lo cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
@@ -1902,7 +1907,7 @@ campos de su resultado:
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
-| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `again`, `retried` y `converted`; si no puede, `ok` falso, `message` y `restart` |
+| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `stay_lines`, `again`, `retried` y `converted`; si no puede, `ok` falso, `message` y `restart` |
 | `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |

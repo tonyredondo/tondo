@@ -13,6 +13,8 @@ pub(super) struct Moves {
     pub bytes: Vec<u8>,
     pub count: usize,
     pub stays: Vec<String>,
+    /// The same by file and line, for an editor to mark.
+    pub stay_lines: Vec<Value>,
     /// The entries the code lacks for frames to move to it, which another
     /// compilation adds; and the bindings the entries it has run again.
     pub wanted: super::CatchUps,
@@ -45,6 +47,7 @@ pub(super) fn moves(
 ) -> Moves {
     let mut entries = Vec::new();
     let mut stays = Vec::new();
+    let mut stay_lines = Vec::new();
     let mut wanted = super::CatchUps::new();
     let mut again = Vec::new();
     // Frames move to the same function, or to the one a function whose
@@ -229,6 +232,7 @@ pub(super) fn moves(
         for (reason, mut lines) in reasons {
             lines.sort();
             lines.dedup();
+            stay_lines.push(serde_json::json!({ "file": file, "lines": lines, "why": reason }));
             let plural = if lines.len() == 1 { "line" } else { "lines" };
             stays.push(format!(
                 "a frame of `{name}` stays on the old code at {plural} {} of {file}: {reason}",
@@ -282,7 +286,7 @@ pub(super) fn moves(
             bytes.extend([from, to].into_iter().flat_map(u32::to_le_bytes));
         }
     }
-    Moves { bytes, count, stays, wanted, again }
+    Moves { bytes, count, stays, stay_lines, wanted, again }
 }
 
 /// The bindings a frame at `old` passed that must run again to move to

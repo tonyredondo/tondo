@@ -589,6 +589,8 @@ pub struct Reloaded {
     pub again: Vec<String>,
     /// How many tasks a panic held start their statements again.
     pub retried: u64,
+    /// Where frames stay on the old code, by file and line.
+    pub stay_lines: Vec<serde_json::Value>,
 }
 
 /// Why a reload did not happen: the program does not compile, or the
@@ -715,6 +717,19 @@ pub fn call(
 /// they are now; with a task a panic holds, those of its file and the
 /// bindings of its frame.
 pub fn eval(name: &str, expression: &str) -> Result<String, String> {
+    let mut value = None;
+    eval_each(name, expression, None, &mut |said| value = Some(said))?;
+    value.expect("a value")
+}
+
+/// What an expression gives, again and again each so often while `told` is
+/// given values: compiled once, so that looking adds nothing to the program.
+pub fn eval_each(
+    name: &str,
+    expression: &str,
+    every: Option<std::time::Duration>,
+    told: &mut dyn FnMut(Result<String, String>),
+) -> Result<(), String> {
     let mut program = crate::observe::connect(name)?;
     let pid = program.pid;
     let mut ask = |request: &str| program.ask(request);
@@ -739,10 +754,16 @@ pub fn eval(name: &str, expression: &str) -> Result<String, String> {
     let (slot, names) = compiled(pid, &mut ask, &file, "tondoEval", "String", expression, &ending, &bindings)
         .map_err(|e| e.replace("a function runs", "an expression runs"))?;
     let _ = program.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs(60)));
-    let answer = program.ask(&format!("eval {slot} {}", names.join(" ")))?;
-    match answer["called"].as_str() {
-        Some(value) => Ok(value.to_string()),
-        None => Err(answer["error"].as_str().unwrap_or("the expression failed").to_string()),
+    loop {
+        let answer = program.ask(&format!("eval {slot} {}", names.join(" ")))?;
+        told(match answer["called"].as_str() {
+            Some(value) => Ok(value.to_string()),
+            None => Err(answer["error"].as_str().unwrap_or("the expression failed").to_string()),
+        });
+        match every {
+            Some(every) => std::thread::sleep(every),
+            None => return Ok(()),
+        }
     }
 }
 
@@ -1120,7 +1141,16 @@ fn patch(
     notes.sort();
     notes.dedup();
     let retried = answer["retried"].as_u64().unwrap_or(0);
-    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes, again: moves.again, retried })
+    Ok(Reloaded {
+        changed,
+        added,
+        moves: moves.count,
+        stays: moves.stays,
+        notes,
+        again: moves.again,
+        retried,
+        stay_lines: moves.stay_lines,
+    })
 }
 
 /// Each version of each function's points the manifest knows, by identity,
@@ -1287,6 +1317,7 @@ impl Reloaded {
             "converted": self.notes,
             "again": self.again,
             "retried": self.retried,
+            "stay_lines": self.stay_lines,
         })
     }
 

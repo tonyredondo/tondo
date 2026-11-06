@@ -792,6 +792,20 @@ fn the_lines_of_a_running_program_say_what_they_left() {
         binding["value"].as_str().unwrap().parse::<i64>().unwrap()
     };
     assert_eq!(value("doubled"), value("round") * 2, "{found}");
+    // The last line of a function has no next: what it started with.
+    assert!(found["values"]["10"].is_array(), "{found}");
+    // An expression that goes on says so each time, compiled once.
+    let mut each = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["eval", &server.pid(), "1 + 1", "--every", "0.05"])
+        .current_dir(&dir)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(each.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next().unwrap().unwrap(), "2");
+    assert_eq!(lines.next().unwrap().unwrap(), "2");
+    let _ = each.kill();
+    let _ = each.wait();
     server.stop();
 }
 

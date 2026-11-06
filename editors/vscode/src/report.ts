@@ -671,6 +671,8 @@ export interface Reload {
   converted?: string[];
   /** What frames passed and runs again as they move, or keeps its value. */
   again?: string[];
+  /** Where frames stay on the old code, to mark. */
+  stay_lines?: { file: string; lines: number[]; why: string }[];
   message?: string;
   restart?: boolean;
 }
