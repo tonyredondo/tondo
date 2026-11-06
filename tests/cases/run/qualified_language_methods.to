@@ -1,0 +1,25 @@
+// The methods of the language's types, with the receiver written first (11.5).
+import std.console
+
+fn main() {
+    let first = [1, 2]
+    let second = [3]
+    let text = "Hola"
+    var values = [3]
+    var ages = Map.new[String, Int]()
+    let parsed: Int ! String = ok(1)
+
+    console.println("{Array.concat(first, second)} {Array.repeat(second, 2)} {Array.length(first)}")
+    console.println("{Array.isEmpty(first)} {String.length(text)} {String.toUpper(text)}")
+    console.println("{Option.isSome(some(1))} {Result.isOk(parsed)} {Int.abs(-3)}")
+    Array.push(var values, 4)
+    console.println("{Array.pop(var values)} {values}")
+    _ = Map.insert(var ages, "leo", 3)
+    console.println("{Map.length(ages)} {Map.remove(var ages, "leo")} {Map.length(ages)}")
+}
+
+// expect-stdout: [1, 2, 3] [3, 3] 2
+// expect-stdout: false 4 HOLA
+// expect-stdout: true true 3
+// expect-stdout: some(4) [3]
+// expect-stdout: 1 some(3) 0

@@ -1,0 +1,17 @@
+fn main() {
+    let first = [1, 2]
+    var values = [3]
+    _ = Array.concat(ref first, first)
+    _ = Array.concat("a", "b")
+    Array.push(values, 4)
+    Array.push(mut values, 4)
+    _ = Array.length()
+    Array.push(var first, 1)
+}
+
+// expect-error: E1407 the receiver `self` is already a shared loan: remove `ref`
+// expect-error: E1102 expected `Array[T]`, found `String`
+// expect-error: E1407 `push` changes its receiver: write `var values`
+// expect-error: E1407 `push` changes its receiver: write `var values`
+// expect-error: E1102 expected 1 argument, found 0
+// expect-error: E1411 `push` changes `first`, which is not declared with `var`: declare it as `var first`

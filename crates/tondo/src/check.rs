@@ -1027,6 +1027,9 @@ struct Checker<'a> {
     const_uses: HashSet<Span>,
 }
 
+/// The methods of the collections that change their extent: they take `var self`.
+const MUTATIONS: [&str; 8] = ["push", "pushFront", "pop", "popFront", "insert", "removeAt", "remove", "clear"];
+
 /// A constant: its declaration, and its value once evaluated.
 struct ConstEntry<'a> {
     decl: &'a ast::ConstDecl,
@@ -13452,6 +13455,54 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let value = self.expr(cx, receiver, None);
+        self.method_of(cx, value, method, args, expected, span)
+    }
+
+    /// `Array.concat(a, b)`: a method the language gives, with its receiver
+    /// written first and the loan of one that changes it in sight (11.5).
+    #[allow(clippy::too_many_arguments)]
+    fn language_call(
+        &mut self,
+        cx: &mut FnCx,
+        owner: Ty,
+        receiver: &ast::Arg,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let changes = MUTATIONS.contains(&method.name.as_str());
+        let value = self.expr(cx, &receiver.value, None);
+        if self.owner_key(value.ty) != owner && !self.types.has_error(value.ty) {
+            let message = format!("expected {}, found {}", self.display(owner), self.display(value.ty));
+            self.diags.error("E1102", value.span, message);
+            return Self::error_expr(span);
+        }
+        match (changes, receiver.mode) {
+            (true, ast::Mode::Var) | (false, ast::Mode::Value) => {}
+            (true, _) => {
+                let text = self.sources.file_of(value.span.start).slice(value.span);
+                let message = format!("`{}` changes its receiver: write `var {text}`", method.name);
+                self.diags.error("E1407", receiver.span, message);
+            }
+            (false, mode) => {
+                let message = format!("the receiver `self` is already a shared loan: remove `{}`", mode.keyword());
+                self.diags.error("E1407", receiver.span, message);
+            }
+        }
+        self.method_of(cx, value, method, args, expected, span)
+    }
+
+    /// `method` called on a value already checked.
+    fn method_of(
+        &mut self,
+        cx: &mut FnCx,
+        value: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
         let ty = value.ty;
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
@@ -13582,10 +13633,8 @@ impl<'a> Checker<'a> {
             }
             return self.no_method(ty, method, span);
         }
-        if matches!(
-            method.name.as_str(),
-            "push" | "pushFront" | "pop" | "popFront" | "insert" | "removeAt" | "remove" | "clear"
-        ) && matches!(self.types.kind(ty), TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_))
+        if MUTATIONS.contains(&method.name.as_str())
+            && matches!(self.types.kind(ty), TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_))
         {
             return self.mutation_call(cx, value, method, args, span);
         }
@@ -15643,6 +15692,24 @@ impl<'a> Checker<'a> {
         {
             self.index_refer(&segments[0], crate::index::Key::Trait(trait_id.0));
             return self.trait_call(cx, trait_id, &segments[1], Vec::new(), args, expected, span);
+        }
+        // A method of a type of the language, with its receiver written first (11.5).
+        if let [type_name, operation] = names.as_slice()
+            && !self.names.contains_key(*type_name)
+            && let Some(owner) = self.intrinsic_owner(type_name)
+            && self.number_kind(owner).is_none()
+        {
+            if let Some(&id) = self.methods.get(&(owner, operation.to_string()))
+                && self.signatures[id.0 as usize].receiver.is_some()
+            {
+                let signature = self.signatures[id.0 as usize].clone();
+                let target = CallTarget::new(Callee::Fn(id), signature, expected);
+                return self.call_signature(cx, target, None, args, span);
+            }
+            if crate::api::builtin_methods(type_name).contains(operation) {
+                let [first, rest @ ..] = args else { return self.arity_error(span, 1, 0) };
+                return self.language_call(cx, owner, first, &segments[1], rest, expected, span);
+            }
         }
         // `Type.operation(...)`: an associated operation, or a method with
         // its receiver written first (11.5). Operations and variants never
