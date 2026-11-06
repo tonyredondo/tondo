@@ -212,6 +212,16 @@ pub(crate) const PRELUDE_TYPES: [&str; 49] = [
     "Contexts",
 ];
 
+/// The types of the prelude a program can name its own: what a domain calls
+/// `Key` or `Command` wins in its module. The rest is the language's vocabulary.
+pub(crate) const OWN_NAMES: [&str; 10] =
+    ["Range", "Group", "Command", "Pipeline", "Key", "Join", "Sender", "Receiver", "ByteOrder", "Contexts"];
+
+/// Whether a type of a program cannot take this name.
+pub(crate) fn reserved_type(name: &str) -> bool {
+    PRELUDE_TYPES.contains(&name) && !OWN_NAMES.contains(&name)
+}
+
 enum TypeName {
     Nominal(Ty),
     Alias(usize),

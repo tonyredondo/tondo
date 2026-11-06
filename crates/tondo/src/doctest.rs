@@ -372,7 +372,7 @@ fn stub(decl: &str, public: bool) -> Option<String> {
             None => (rest, None),
         };
         let name = head.split('[').next().unwrap_or(head);
-        if crate::check::PRELUDE_TYPES.contains(&name) {
+        if crate::check::reserved_type(name) {
             return None;
         }
         // Its field is hidden only where the type is seen: `priv` in a type

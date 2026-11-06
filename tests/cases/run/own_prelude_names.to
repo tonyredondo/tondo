@@ -1,0 +1,37 @@
+// What a domain calls `Key` or `Command` is the program's: the prelude's stay
+// with the standard library, which goes on seeing them.
+
+import std.console
+import std.json
+import std.reflect
+
+type Key = { id: Int }
+
+enum Command {
+    Start
+    Stop
+}
+
+fn describe(key: Key, command: Command): String {
+    match command {
+        Command.Start => "start {key.id}"
+        Command.Stop => "stop {key.id}"
+    }
+}
+
+fn main() {
+    let key = Key { id: 7 }
+    console.println(describe(key, Command.Start))
+    console.println(json.encode(key))
+    console.println("{reflect.typeOf(key)}")
+    var sum = 0
+    for number in 0..3 {
+        sum += number
+    }
+    console.println("{sum}")
+}
+
+// expect-stdout: start 7
+// expect-stdout: {"id":7}
+// expect-stdout: Key
+// expect-stdout: 3

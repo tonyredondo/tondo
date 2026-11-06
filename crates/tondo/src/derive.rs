@@ -194,7 +194,7 @@ pub(crate) fn derive_display(modules: &mut [ModuleSource], sources: &mut SourceM
                 let repeated = named.len() != e.variants.len();
                 if !plain
                     || repeated
-                    || crate::check::PRELUDE_TYPES.contains(&e.name.name.as_str())
+                    || crate::check::reserved_type(&e.name.name)
                     || e.variants.is_empty()
                     || !e.generics.is_empty()
                     || shown.contains(e.name.name.as_str())
@@ -234,8 +234,8 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     // C structs cross to C, not to other formats or reflection.
                     ast::Item::Type(t) if t.foreign => continue,
                     // A prelude name is an error of its own (E1005).
-                    ast::Item::Type(t) if crate::check::PRELUDE_TYPES.contains(&t.name.name.as_str()) => continue,
-                    ast::Item::Enum(e) if crate::check::PRELUDE_TYPES.contains(&e.name.name.as_str()) => continue,
+                    ast::Item::Type(t) if crate::check::reserved_type(&t.name.name) => continue,
+                    ast::Item::Enum(e) if crate::check::reserved_type(&e.name.name) => continue,
                     ast::Item::Type(t) => (&t.name.name, &t.generics),
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
                     _ => continue,

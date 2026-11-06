@@ -550,10 +550,18 @@ struct Linker<'a> {
     diags: &'a mut Diagnostics,
 }
 
+/// What sets apart a type of the root module that takes a prelude's name.
+pub(crate) const OWN_PREFIX: &str = "root.";
+
 impl Linker<'_> {
     fn renamed(&self, module: usize, name: &str) -> String {
         match &self.prefixes[module] {
             Some(prefix) => format!("{prefix}.{name}"),
+            // The root's names keep their spelling, but for those that would
+            // be the prelude's, which the rest of the program goes on seeing.
+            None if crate::check::OWN_NAMES.contains(&name) && self.decls[module].types.contains_key(name) => {
+                format!("{OWN_PREFIX}{name}")
+            }
             None => name.to_string(),
         }
     }

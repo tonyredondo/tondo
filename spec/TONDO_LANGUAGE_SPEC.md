@@ -8678,7 +8678,7 @@ oculten un diagnóstico independiente.
 | `E1002` | `duplicate-name` | Dos declaraciones ocupan el mismo namespace y scope. |
 | `E1003` | `shadowing` | Una declaración ocultaría un binding todavía visible. |
 | `E1004` | `ambiguous-name` | Más de un símbolo visible es candidato y falta calificación. |
-| `E1005` | `reserved-name` | Se declara un nombre contextual o intrínseco reservado. |
+| `E1005` | `reserved-name` | Se declara un nombre contextual o intrínseco reservado. Un tipo del prelude que es también un nombre corriente de un dominio, `Range`, `Group`, `Command`, `Pipeline`, `Key`, `Join`, `Sender`, `Receiver`, `ByteOrder` o `Contexts`, no lo está: un módulo puede declarar el suyo, que en él gana al del prelude. |
 | `E1006` | `import-cycle` | El grafo de imports contiene un ciclo. |
 | `E1007` | `invalid-import-position` | Un import aparece después de otra declaración o statement. |
 | `E1008` | `invalid-module-path` | El path no identifica un módulo disponible del target. |

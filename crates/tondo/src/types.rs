@@ -1866,7 +1866,12 @@ impl Types {
                         self.display_fn(&info.params, info.result, info.variadic, &info.modes, info.is_unsafe);
                     format!("closure {signature}")
                 }
-                _ => self.adt(*id).name.clone(),
+                // A type of the root module with a prelude's name is its own,
+                // under a prefix nobody wrote.
+                _ => {
+                    let name = &self.adt(*id).name;
+                    name.strip_prefix(crate::modules::OWN_PREFIX).unwrap_or(name).to_string()
+                }
             },
             TyKind::Option(inner) => match self.kind(*inner) {
                 TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => format!("({})?", self.display(*inner)),
