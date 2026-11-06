@@ -712,7 +712,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen_unix(
 /// A server that could not start, and why.
 fn failed(message: String) -> *mut NativeObject {
     native::new(Server {
-        failure: Mutex::new(Some(("connect", message))),
+        failure: Mutex::new(Some(("listen", message))),
         address: String::new(),
         requests: None,
         life: None,

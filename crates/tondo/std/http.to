@@ -50,6 +50,8 @@ pub enum HttpError {
     InvalidUrl(String)
     /// The name did not resolve, the server refused, or TLS failed.
     Connect(String)
+    /// The server cannot take the address, as one that is in use.
+    Listen(String)
     /// The request took longer than its timeout.
     Timeout
     /// The server answered with a status of 400 or more: the response, to
@@ -67,6 +69,7 @@ impl Display for HttpError {
         match self {
             HttpError.InvalidUrl(why) => "invalid URL: {why}"
             HttpError.Connect(why) => "cannot connect: {why}"
+            HttpError.Listen(why) => "cannot listen: {why}"
             HttpError.Timeout => "the request timed out"
             HttpError.Status(response) =>
                 "{response.verb} {response.finalUrl} answered {response.code} {response.phrase}"
@@ -1157,6 +1160,8 @@ fn failed(sent: httpNative.Native): !HttpError {
         fail HttpError.Timeout
     } else if kind == "connect" {
         fail HttpError.Connect(why)
+    } else if kind == "listen" {
+        fail HttpError.Listen(why)
     } else if kind == "body" {
         fail HttpError.Body(why)
     }

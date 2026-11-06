@@ -4709,6 +4709,7 @@ La superficie es:
 pub enum HttpError {
     InvalidUrl(String)
     Connect(String)
+    Listen(String)
     Timeout
     Status(Response)
     Body(String)
