@@ -77,6 +77,9 @@ run {"path": "worker.to", "timeout": 30}
 => 1
 ```
 
+A program no tool can reach, without `TONDO_DIAGNOSTICS`, still answers
+`kill -QUIT`: it writes where each task is and ends.
+
 With `beat` still running this ends with `main`, so the run ends too. For a test
 that hangs, `test` takes `flags` with `--timeout <seconds>`; `lock_order` finds
 locks taken in opposite orders, which only sometimes hang.

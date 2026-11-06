@@ -665,7 +665,7 @@ fn write_lines<I: Iterator<Item = usize>>(out: &mut dyn Write, title: &str, addr
 }
 
 /// Writes a stack under `title`, and where its task was started.
-fn write_stack<I: Iterator<Item = usize>>(
+pub(crate) fn write_stack<I: Iterator<Item = usize>>(
     out: &mut dyn Write,
     title: &str,
     addresses: impl Fn() -> I,

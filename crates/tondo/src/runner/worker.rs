@@ -209,6 +209,8 @@ fn worker(
         .env("TONDO_TEST_PLAN", &plan)
         .envs(run.options.lock_order.then_some(("TONDO_LOCK_ORDER", "fail")))
         .env("TONDO_RACE", "1")
+        // What a test that does not end was doing, unless it measures.
+        .envs((run.bench.is_none() && stores.profiles.is_none()).then_some(("TONDO_DIAGNOSTICS", "1")))
         .env("TONDO_TEST_NONCE", &nonce)
         .env("TONDO_TEST_SNAPSHOTS", stores.entries)
         .env("TONDO_TEST_FUZZ", stores.fuzzed)
@@ -327,7 +329,7 @@ fn worker(
         panic_data: None,
     };
     let mut open = 2;
-    let mut timed_out = false;
+    let mut timed_out = None;
     while open > 0 {
         let deadline = session.running.last().and_then(|(_, _, started)| *started).map(|s| s + timeout);
         let wait = deadline.map_or(Duration::from_secs(3600), |d| d.saturating_duration_since(Instant::now()));
@@ -336,7 +338,7 @@ fn worker(
             Ok(Event::Stderr(bytes)) => session.stderr(&bytes),
             Ok(Event::Closed) => open -= 1,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out = true;
+                timed_out.get_or_insert_with(|| crate::observe::where_tasks_are(child.id()));
                 kill(&mut child);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -372,10 +374,9 @@ fn worker(
             outcome.duration += Instant::now() - started;
         }
         if outcome.status == Status::Passed {
-            outcome.status = if timed_out {
-                Status::Timeout
-            } else {
-                Status::Crashed(crate::observe::ended(status, "the test process"))
+            outcome.status = match timed_out {
+                Some(at) => Status::Timeout(at),
+                None => Status::Crashed(crate::observe::ended(status, "the test process")),
             };
         }
         outcome.teardown = reached;

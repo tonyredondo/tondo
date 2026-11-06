@@ -840,7 +840,8 @@ peticiones en curso; `request=5s` cuando una petición lleva ese tiempo, una vez
 una; `cpu=90`
 sobre ese porcentaje de un núcleo, `keep=10` guarda los últimos diez y `size=1g`
 los que quepan en ese espacio, separados por comas. Lo que pasa de un umbral vuelca
-como mucho una vez por minuto. Con `TONDO_DUMP`, `kill -QUIT` pide un volcado sin
+como mucho una vez por minuto. Sin `TONDO_DUMP`, `kill -QUIT` escribe en stderr dónde está cada tarea y el programa
+termina por esa señal: un programa que parece parado lo dice sin haber preparado nada. Con `TONDO_DUMP`, `kill -QUIT` pide un volcado sin
 herramientas ni socket y el programa sigue, salvo que `process.signals` tome esa
 señal. Estos volcados, de un programa que sigue, van comprimidos en
 `.dump.json.gz`; el de un fallo no, porque allí corre lo menos posible. Todas las

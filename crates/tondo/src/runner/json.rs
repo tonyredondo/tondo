@@ -589,7 +589,7 @@ pub(super) fn status_name(status: &Status) -> &'static str {
         Status::Skipped(_) => "skipped",
         Status::Error { .. } => "failed-error",
         Status::Panic(..) => "failed-panic",
-        Status::Timeout | Status::Limit { timeout: true, .. } => "timeout",
+        Status::Timeout(_) | Status::Limit { timeout: true, .. } => "timeout",
         Status::Limit { timeout: false, .. } => "resource-limit",
         Status::Crashed(_) => "crashed",
         Status::Blocked(_, false) => "blocked-setup",
@@ -709,7 +709,9 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
             data = given.as_ref().map_or(Value::Null, converted);
             ("panic", code, None, message, location.map(str::to_string))
         }
-        Status::Timeout => ("timeout", None, None, format!("timed out after {}s", options.timeout.as_secs_f64()), None),
+        Status::Timeout(at) => {
+            ("timeout", None, None, format!("timed out after {}s{at}", options.timeout.as_secs_f64()), None)
+        }
         Status::Crashed(how) => ("crashed", None, None, how.clone(), None),
         Status::Limit { timeout, message } => {
             (if *timeout { "timeout" } else { "resource-limit" }, None, None, message.clone(), None)

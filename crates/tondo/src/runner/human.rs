@@ -238,7 +238,7 @@ fn short(tree: &Tree, status: &Status) -> String {
         Status::Skipped(reason) => format!("skipped: {}", reason.lines().next().unwrap_or_default()),
         Status::Blocked(suite, true) => format!("skipped: its suite {} skipped", tree.id(*suite)),
         Status::Blocked(suite, false) => format!("BLOCKED: its suite {} failed", tree.id(*suite)),
-        Status::Timeout | Status::Limit { timeout: true, .. } => "TIMEOUT".into(),
+        Status::Timeout(_) | Status::Limit { timeout: true, .. } => "TIMEOUT".into(),
         Status::Limit { timeout: false, .. } => "RESOURCE LIMIT".into(),
         Status::Crashed(_) => "CRASHED".into(),
         Status::Error { .. } | Status::Panic(..) => "FAILED".into(),
@@ -254,7 +254,7 @@ pub(super) fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> Strin
             format!("error: {message}\n --> {location}")
         }
         Status::Panic(text, _) => text.clone(),
-        Status::Timeout => format!("timed out after {}s", timeout.as_secs_f64()),
+        Status::Timeout(at) => format!("timed out after {}s{at}", timeout.as_secs_f64()),
         Status::Crashed(how) | Status::Limit { message: how, .. } => how.clone(),
         Status::Skipped(reason) => format!("skipped: {reason}"),
         Status::Blocked(..) => short(tree, &attempt.status),

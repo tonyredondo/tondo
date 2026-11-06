@@ -1569,6 +1569,27 @@ fn compressed(text: &str) -> Vec<u8> {
     written.and_then(|()| encoder.finish()).unwrap_or_default()
 }
 
+/// `kill -QUIT` without `TONDO_DUMP`: where each task is, for whoever asks a
+/// program that seems stuck, with nothing set up beforehand.
+pub(crate) fn tasks_to_stderr() {
+    super::flush_stdout();
+    let tasks = super::cycles::without_collections(|| {
+        let stopped = super::tasks::stop_world(std::time::Duration::from_millis(200));
+        let tasks = super::tasks::snapshot(None);
+        if stopped {
+            super::tasks::resume_world();
+        }
+        tasks
+    });
+    let mut report = String::from("SIGQUIT: where the tasks are");
+    for task in tasks {
+        let main = if task.main { " (main)" } else { "" };
+        let title = format!("task {}{main} {}", task.id, task.state);
+        super::trace::write_stack(&mut report, &title, || task.stack.iter().copied(), None);
+    }
+    let _ = writeln!(std::io::stderr(), "{report}");
+}
+
 /// `kill -QUIT`, with `TONDO_DUMP`: a dump of the program, which goes on.
 pub(crate) fn dump_on_signal() {
     static NUMBER: AtomicU64 = AtomicU64::new(0);

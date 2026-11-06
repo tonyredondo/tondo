@@ -236,7 +236,8 @@ pub enum Status {
     /// The panic's report, as the runtime prints it, with any suppressed
     /// while unwinding after it; and its data, as JSON, when it has any.
     Panic(String, Option<String>),
-    Timeout,
+    /// Past `--timeout`, with where its tasks were when it was ended.
+    Timeout(String),
     Crashed(String),
     /// Under `--fuzz`, an input that ran past `--fuzz-timeout` or held more
     /// than `--fuzz-memory` (testing 10.6): which, and what it did.
@@ -254,7 +255,7 @@ impl Status {
     fn failed(&self) -> bool {
         matches!(
             self,
-            Status::Error { .. } | Status::Panic(..) | Status::Timeout | Status::Crashed(_) | Status::Limit { .. }
+            Status::Error { .. } | Status::Panic(..) | Status::Timeout(_) | Status::Crashed(_) | Status::Limit { .. }
         )
     }
 }

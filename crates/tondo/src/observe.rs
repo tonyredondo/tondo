@@ -2852,6 +2852,30 @@ pub(crate) fn logged(hit: &Value, text: Option<&str>) -> String {
 }
 
 /// `tondo blocked <pid|name>`: who waits for whom in a running program.
+/// Whether a program serves the tools yet.
+pub(crate) fn serves(pid: u32) -> bool {
+    directory().join(pid.to_string()).exists()
+}
+
+/// Where the tasks of a running program are, as lines to add to what says it
+/// took too long; nothing when it does not answer.
+pub(crate) fn where_tasks_are(pid: u32) -> String {
+    let answered = connect(&pid.to_string()).and_then(|mut program| {
+        let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_secs(3)));
+        program.ask("dump")
+    });
+    let Some(mut dump) = answered.ok().filter(|dump| dump.get("dump").is_some()) else { return String::new() };
+    name_frames(&mut dump);
+    let mut out = String::new();
+    for group in stacks(&tasks(&dump)) {
+        out.push_str(&format!("\n{} task(s) {}:", group["count"], group["state"].as_str().unwrap_or_default()));
+        for frame in group["stack"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            out.push_str(&format!("\n    {frame}"));
+        }
+    }
+    out
+}
+
 pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
     let mut program = connect(name)?;
     let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_secs(60)));

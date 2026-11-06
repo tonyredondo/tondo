@@ -171,7 +171,7 @@ fn signature(status: &Status) -> Option<String> {
         }
         Status::Error { error_type, location, .. } => format!("error {error_type} {location:?}"),
         Status::Limit { timeout, .. } => format!("limit {timeout}"),
-        Status::Timeout => "timeout".into(),
+        Status::Timeout(_) => "timeout".into(),
         Status::Crashed(_) => "crashed".into(),
         _ => return None,
     })

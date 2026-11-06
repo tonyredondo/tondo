@@ -5632,3 +5632,25 @@ fn a_damaged_dump_does_not_end_the_viewer() {
         }
     }
 }
+
+/// With nothing set up, `kill -QUIT` says where the tasks are, and ends it.
+#[test]
+fn sigquit_says_where_the_tasks_are() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sigquit");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program =
+        "import std.time\n\nfn stuck() {\n    time.sleep(time.seconds(60))\n}\n\nfn main() {\n    stuck()\n}\n";
+    std::fs::write(dir.join("quit.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "quit.to", "--output", "quit"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let child = Command::new(dir.join("quit")).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    Command::new("kill").args(["-QUIT", &child.id().to_string()]).status().unwrap();
+    let ended = child.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&ended.stderr);
+    assert!(said.contains("SIGQUIT") && said.contains("stuck  quit.to:4"), "{said}");
+    assert_eq!(std::os::unix::process::ExitStatusExt::signal(&ended.status), Some(3), "{said}");
+}

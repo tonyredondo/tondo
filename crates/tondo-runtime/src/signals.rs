@@ -106,9 +106,17 @@ pub(crate) fn start() {
                 }
                 let signal = byte as i32;
                 // `kill -QUIT` asks a program that dumps for one, and it
-                // goes on.
+                // goes on; another says where its tasks are, and ends.
                 if signal == libc::SIGQUIT && !routed(signal) {
-                    super::diagnostics::dump_on_signal();
+                    if std::env::var_os("TONDO_DUMP").is_some() {
+                        super::diagnostics::dump_on_signal();
+                        continue;
+                    }
+                    super::diagnostics::tasks_to_stderr();
+                    unsafe {
+                        libc::signal(libc::SIGQUIT, libc::SIG_DFL);
+                        libc::raise(libc::SIGQUIT);
+                    }
                     continue;
                 }
                 // A recorded run takes it at the worker's next turn; a
@@ -126,7 +134,7 @@ pub(crate) fn start() {
         if watching.is_ok() {
             catch(libc::SIGINT);
             catch(libc::SIGTERM);
-            if std::env::var_os("TONDO_DUMP").is_some() && !super::replay::on() {
+            if !super::replay::on() {
                 catch(libc::SIGQUIT);
             }
         }
