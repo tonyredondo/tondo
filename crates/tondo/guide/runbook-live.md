@@ -54,12 +54,25 @@ eval {"program": "<pid>", "expression": "price(4)"}
 => "value":"40"
 ```
 
+`eval` takes in what is saved too, and says so: a change can be tried in one step.
+
+```edit app.to
+-    units * 10
++    units * 20
+```
+
+```mcp
+eval {"program": "<pid>", "expression": "price(4)"}
+=> this also took in what was saved: price changed
+=> "value":"80"
+```
+
 ## A panic in a live program
 
 It does not end the program: the task waits there for a fix, with all it held.
 
 ```edit app.to
--    units * 10
+-    units * 20
 +    units / (units - units)
 ```
 

@@ -17,9 +17,12 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
 
 /// The report without the time the run took.
 fn untimed(report: &str) -> String {
+    // Where a task that spins was is only known if it stops in time.
+    let lines = report.lines().filter(|line| !line.contains(" task(s) ") && !line.starts_with("    src/"));
+    let report = lines.collect::<Vec<_>>().join("\n") + "\n";
     match report.rsplit_once("; ") {
         Some((head, time)) if time.trim_end().ends_with('s') => format!("{head}\n"),
-        _ => report.to_string(),
+        _ => report,
     }
 }
 

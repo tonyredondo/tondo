@@ -710,7 +710,9 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
             ("panic", code, None, message, location.map(str::to_string))
         }
         Status::Timeout(at) => {
-            ("timeout", None, None, format!("timed out after {}s{at}", options.timeout.as_secs_f64()), None)
+            // Where its tasks were goes beside what a report's reader matches.
+            data = if at.is_empty() { Value::Null } else { str(at.trim()) };
+            ("timeout", None, None, format!("timed out after {}s", options.timeout.as_secs_f64()), None)
         }
         Status::Crashed(how) => ("crashed", None, None, how.clone(), None),
         Status::Limit { timeout, message } => {

@@ -13,6 +13,8 @@ struct Agent {
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     next: u64,
+    /// What it started, which a runbook that fails does not stop.
+    sessions: Vec<(&'static str, String)>,
 }
 
 impl Agent {
@@ -26,7 +28,7 @@ impl Agent {
             .unwrap();
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
-        Agent { child, input, output, next: 0 }
+        Agent { child, input, output, next: 0, sessions: Vec::new() }
     }
 
     fn call(&mut self, tool: &str, arguments: Value) -> Value {
@@ -38,12 +40,20 @@ impl Agent {
         self.input.flush().unwrap();
         let mut line = String::new();
         self.output.read_line(&mut line).unwrap();
-        serde_json::from_str::<Value>(&line).unwrap()["result"].clone()
+        let result = serde_json::from_str::<Value>(&line).unwrap()["result"].clone();
+        let stop = if tool == "debug_start" { "debug_stop" } else { "run_stop" };
+        if let (true, Some(session)) = (tool.ends_with("_start"), result["structuredContent"]["session"].as_str()) {
+            self.sessions.push((stop, session.to_string()));
+        }
+        result
     }
 }
 
 impl Drop for Agent {
     fn drop(&mut self) {
+        for (stop, session) in std::mem::take(&mut self.sessions) {
+            self.call(stop, json!({ "session": session }));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -160,9 +170,6 @@ fn replay(topic: &str, text: &str) {
             }
             _ => {}
         }
-    }
-    if !known.session.is_empty() {
-        agent.call("run_stop", json!({ "session": known.session }));
     }
 }
 
