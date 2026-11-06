@@ -590,7 +590,7 @@ impl Mono<'_> {
         let mk = |kind: ExprKind, ty: Ty| Expr { kind, ty, span };
         let mut locals: Vec<Local> = Vec::new();
         let mut local = |name: &str, ty: Ty| {
-            locals.push(Local { name: name.into(), ty, span });
+            locals.push(Local { name: name.into(), ty, mutable: false, span });
             LocalId(locals.len() as u32 - 1)
         };
         let shown = self.types.display(union);

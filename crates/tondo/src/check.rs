@@ -7185,7 +7185,7 @@ impl<'a> Checker<'a> {
             params: vec![LocalId(0)],
             loans: vec![true],
             fallible: false,
-            locals: vec![hir::Local { name: format!("<{name}>"), ty: env_ty, span }],
+            locals: vec![hir::Local { name: format!("<{name}>"), ty: env_ty, mutable: false, span }],
             result,
             body,
             moves: HashSet::new(),
@@ -8856,7 +8856,7 @@ impl<'a> Checker<'a> {
 
     /// A local that no name refers to, such as the value of `for _ in ...`.
     fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
-        cx.locals.push(hir::Local { name: "_".into(), ty, span: Span::default() });
+        cx.locals.push(hir::Local { name: "_".into(), ty, mutable: false, span: Span::default() });
         cx.mutable.push(false);
         cx.params.push(None);
         LocalId(cx.locals.len() as u32 - 1)
@@ -8902,7 +8902,7 @@ impl<'a> Checker<'a> {
         if let Some(def) = self.index_define(key, kind, name, name.span, Some(ty)) {
             cx.local_defs.insert(id.0, def);
         }
-        cx.locals.push(hir::Local { name: name.name.clone(), ty, span: name.span });
+        cx.locals.push(hir::Local { name: name.name.clone(), ty, mutable, span: name.span });
         cx.mutable.push(mutable);
         cx.params.push(None);
         if !discard {

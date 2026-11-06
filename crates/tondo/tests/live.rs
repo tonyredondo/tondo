@@ -617,6 +617,68 @@ fn running_frames_move_to_the_new_code() {
     server.stop();
 }
 
+const PASSED: &str = r#"import std.console
+
+type Mode = { fast: Bool }
+
+fn main() {
+    let word = "six"
+    var speed = 1
+    var mode = Mode { fast: true }
+    let held = ["kept"]
+    let add = (n: Int) { n + 1 }
+    for {
+        match console.readLine() {
+            some(line) => {
+                console.println("{line} {word} {speed} {mode.fast} {held.length()} {add(1)}")
+            }
+            none => break
+        }
+    }
+}
+"#;
+
+/// What a frame in a loop that never ends already passed takes effect too,
+/// whatever the loop waits for: a binding that is new or written anew runs
+/// again, and the loop goes on with it.
+#[test]
+fn a_loop_takes_the_bindings_it_passed() {
+    let dir = dir("live_passed");
+    let file = dir.join("loop.to");
+    std::fs::write(&file, PASSED).unwrap();
+    let mut server = Running::start(&dir, &["run", "loop.to", "--live"]);
+    assert_eq!(server.answer("a"), "a six 1 true 1 2");
+    // A line above the loop, written anew.
+    edit(&file, "let word = \"six\"", "let word = \"seven\"");
+    edit(&file, "var speed = 1", "var speed = 100");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`word` at line 6 runs again"), "{said}");
+    assert!(said.contains("`speed` at line 7 keeps its value: it is a `var`"), "{said}");
+    assert_eq!(server.answer("b"), "b seven 1 true 1 2");
+    // A binding that is new, and one that reads what the frame has.
+    edit(&file, "    var mode =", "    let limit = 7\n    let more = limit + speed\n    var mode =");
+    edit(&file, "{add(1)}\")", "{add(1)} {more}\")");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("c"), "c seven 1 true 1 2 8");
+    // A closure with another capture, and a binding of another type.
+    edit(&file, "let add = (n: Int) { n + 1 }", "let add = (n: Int) { n + limit }");
+    edit(&file, "var mode = Mode { fast: true }", "var mode = \"quick\"");
+    edit(&file, "{mode.fast}", "{mode}");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("d"), "d seven 1 quick 1 8 8");
+    // A binding that goes, and a `defer` the frame never registered.
+    edit(&file, "    let held = [\"kept\"]\n", "    defer console.println(\"bye\")\n");
+    edit(&file, " {held.length()}", "");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && !said.contains("stays on"), "{said}");
+    assert_eq!(server.answer("e"), "e seven 1 quick 8 8");
+    drop(server.input);
+    assert_eq!(server.lines.recv_timeout(Duration::from_secs(60)).unwrap(), "bye");
+    let _ = server.child.wait();
+}
+
 const CLOSURE: &str = r#"import std.console
 
 let serve = () {

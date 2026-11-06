@@ -669,6 +669,8 @@ export interface Reload {
   moves?: number;
   stays?: string[];
   converted?: string[];
+  /** What frames passed and runs again as they move, or keeps its value. */
+  again?: string[];
   message?: string;
   restart?: boolean;
 }
@@ -712,6 +714,7 @@ export function reloadShown(reload: Reload): Shown {
     ...(added.length ? [`Added: ${added.join(', ')}.`] : []),
     ...(reload.moves ? ['Frames on the old code move to the new at their next statement.'] : []),
     ...(reload.converted ?? []),
+    ...(reload.again ?? []),
     ...(reload.stays ?? []),
   ];
   if (details.length === 0) {

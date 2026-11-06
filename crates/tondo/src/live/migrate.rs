@@ -566,7 +566,7 @@ struct Body {
 
 impl Body {
     fn local(&mut self, name: &str, ty: Ty) -> LocalId {
-        self.locals.push(Local { name: format!("<{name}>"), ty, span: Span::default() });
+        self.locals.push(Local { name: format!("<{name}>"), ty, mutable: false, span: Span::default() });
         LocalId(self.locals.len() as u32 - 1)
     }
 }

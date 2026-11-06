@@ -671,3 +671,8 @@ test('the write a warning of a test points at', () => {
   assert.deepEqual(warningPlace(warning), { file: 'src/a.to', line: 7 });
   assert.equal(warningPlace('other'), undefined);
 });
+
+test('a reload says what ran again', () => {
+  const shown = reloadShown({ changed: ['main'], moves: 2, again: ['`limit` at line 4 runs again'] });
+  assert.ok(shown.details.includes('`limit` at line 4 runs again'));
+});

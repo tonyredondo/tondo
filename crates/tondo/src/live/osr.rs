@@ -13,6 +13,10 @@ pub(super) struct Moves {
     pub bytes: Vec<u8>,
     pub count: usize,
     pub stays: Vec<String>,
+    /// The entries the code lacks for frames to move to it, which another
+    /// compilation adds; and the bindings the entries it has run again.
+    pub wanted: super::CatchUps,
+    pub again: Vec<String>,
 }
 
 /// An identity without what changes when only the shapes of the types its
@@ -37,9 +41,12 @@ pub(super) fn moves(
     slots: &HashMap<String, u32>,
     migrations: &Migrations,
     renamed: &HashMap<String, String>,
+    made: &super::CatchUps,
 ) -> Moves {
     let mut entries = Vec::new();
     let mut stays = Vec::new();
+    let mut wanted = super::CatchUps::new();
+    let mut again = Vec::new();
     // Frames move to the same function, or to the one a function whose
     // signature reaches a type of another shape is now, of the same name
     // and signature, with their parameters converted.
@@ -91,6 +98,8 @@ pub(super) fn moves(
         let (Some(after), Some(&slot)) = (new.get(target), slots.get(target)) else {
             continue;
         };
+        let now = olds.first().and_then(|now| now.as_object());
+        let current = now.is_some_and(|now| now.values().any(|code| std::ptr::eq(code, before)));
         let lines = line_map(&hashes(before), &hashes(after));
         let (from, to) = (list(before, "points"), list(after, "points"));
         // Each point by its line, what it is and its place among those of
@@ -108,11 +117,13 @@ pub(super) fn moves(
         };
         let (old_places, new_places) = (place(from), place(to));
         let at: HashMap<&(u64, String, usize), usize> = new_places.iter().enumerate().map(|(i, p)| (p, i)).collect();
+        // A line changed in place may hold another kind of statement.
+        let first = |line: u64| new_places.iter().position(|(on, kind, _)| *on == line && kind != "entry");
         let pairs: Vec<Option<usize>> = old_places
             .iter()
             .map(|(line, kind, ordinal)| {
                 let line = *lines.get(&(*line as usize))? as u64;
-                at.get(&(line, kind.clone(), *ordinal)).copied()
+                at.get(&(line, kind.clone(), *ordinal)).copied().or_else(|| first(line).filter(|_| *ordinal == 0))
             })
             .collect();
         // The statements of the old code by those of the new, which name
@@ -127,11 +138,78 @@ pub(super) fn moves(
             }
         }
         let mut reasons: Vec<(String, Vec<u64>)> = Vec::new();
+        let (old_lines, new_lines) = (hashes(before), hashes(after));
+        // A line the new text has as the old had it.
+        let kept =
+            |line: u64| lines.iter().any(|(&old, &new)| new as u64 == line && old_lines.get(old) == new_lines.get(new));
+        let body =
+            (after["body"][0].as_str().unwrap_or_default().to_string(), after["body"][1].as_u64().unwrap_or(0) as u32);
         for (index, point) in from.iter().enumerate() {
             let (Some(site), Some(pair)) = (point["site"].as_i64(), pairs[index]) else { continue };
-            let target = &to[pair];
-            match copies(point, target, &paths, migrations) {
+            // The entry of the point, when the code has one.
+            let number = |at: usize| to[at]["point"].as_u64().unwrap_or(0) as u32;
+            // The statements to run, with those their entry needs too.
+            let of_entry = |runs: &[u32]| {
+                let same =
+                    |list: &Vec<Value>| list.iter().map(Value::as_u64).eq(runs.iter().map(|&at| Some(at as u64)));
+                to.iter().find(|other| {
+                    other["entry_of"].as_u64() == Some(number(pair) as u64)
+                        && other["runs"].as_array().is_some_and(same)
+                })
+            };
+            let mut lets = passed_lets(point, &to[pair], pair, to, &paths, migrations, &kept);
+            let mut entry;
+            let runs = loop {
+                let runs: Vec<u32> = lets.iter().map(|&at| number(at)).collect();
+                entry = of_entry(&runs);
+                let Some(found) = entry else { break runs };
+                let more = passed_lets(point, found, pair, to, &paths, migrations, &kept);
+                if more.iter().all(|at| lets.contains(at)) {
+                    break runs;
+                }
+                lets.extend(more);
+                lets.sort();
+                lets.dedup();
+            };
+            let target = entry.unwrap_or(&to[pair]);
+            let running = Entering {
+                bindings: lets.iter().filter_map(|&at| to[at]["binds"].as_str()).collect(),
+                defers: lets.iter().filter(|&&at| to[at]["kind"] == "defer").count() as u64,
+                leaves: true,
+            };
+            let made_it = made.get(&body).and_then(|entries| entries.get(&number(pair)));
+            if !runs.is_empty() && !made_it.is_some_and(|each| each.contains(&runs)) {
+                wanted.entry(body.clone()).or_default().entry(number(pair)).or_default().insert(runs.clone());
+            }
+            // A frame in a loop of another kind starts the new one.
+            let around = around_loop(&to[pair], to, &kept);
+            let copied = copies(point, target, &paths, migrations, &running);
+            let (target, copied) = match (copied, around) {
+                (Err(why), Some(around)) if why == NEW_AROUND => {
+                    (around, copies(point, around, &paths, migrations, &running))
+                }
+                (copied, _) => (target, copied),
+            };
+            match copied {
                 Ok((copies, conversions)) => {
+                    let line = |at: usize| after["top"].as_u64().unwrap_or(0) + to[at]["line"].as_u64().unwrap_or(0);
+                    // Frames of older versions are rare: what is told is of
+                    // the code that runs now.
+                    if current {
+                        let named = lets.iter().filter_map(|&at| Some((to[at]["binds"].as_str()?, at)));
+                        again.extend(named.map(|(name, at)| format!("`{name}` at line {} runs again", line(at))));
+                        // What a frame keeps though its line says otherwise.
+                        let written = (0..pair)
+                            .filter(|&at| to[at]["changes"] == true && !kept(to[at]["line"].as_u64().unwrap_or(0)));
+                        let held = written
+                            .filter(|at| !lets.contains(at))
+                            .filter_map(|at| Some((to[at]["binds"].as_str()?, at)));
+                        again.extend(
+                            held.map(|(name, at)| {
+                                format!("`{name}` at line {} keeps its value: it is a `var`", line(at))
+                            }),
+                        );
+                    }
                     let word = |key: &str| target[key].as_u64().unwrap_or(0) as u32;
                     entries.push((site, slot, word("point"), word("size"), copies, conversions, passed.clone()));
                     // `passed` is what the frame's call of the new code takes.
@@ -159,6 +237,8 @@ pub(super) fn moves(
     }
     stays.sort();
     stays.dedup();
+    again.sort();
+    again.dedup();
     redirects.sort();
     redirects.dedup();
     let count = entries.len();
@@ -201,7 +281,108 @@ pub(super) fn moves(
             bytes.extend([from, to].into_iter().flat_map(u32::to_le_bytes));
         }
     }
-    Moves { bytes, count, stays }
+    Moves { bytes, count, stays, wanted, again }
+}
+
+/// The bindings a frame at `old` passed that must run again to move to
+/// `target`, the point `pair` or its entry, by their places in `to`: what the
+/// new code needs there that the old does not have, and those written anew,
+/// so that a change to a line above a loop that never ends takes effect. A
+/// binding of the loop the frame is in comes again by itself.
+fn passed_lets(
+    old: &Value,
+    target: &Value,
+    pair: usize,
+    to: &[Value],
+    paths: &HashMap<&str, &str>,
+    migrations: &Migrations,
+    kept: &impl Fn(u64) -> bool,
+) -> Vec<usize> {
+    let depth = |point: &Value| point["loops"].as_u64().unwrap_or(0);
+    let passed = |at: &usize| depth(&to[*at]) == 0 || depth(&to[*at]) < depth(&to[pair]);
+    let declared = |name: &str| (0..pair).rev().filter(passed).find(|&at| to[at]["binds"].as_str() == Some(name));
+    let given = given_state(old, paths);
+    let line = |at: usize| to[at]["line"].as_u64().unwrap_or(0);
+    // The `defer`s written since, which the old code never registered.
+    let added = target["defers"].as_u64().unwrap_or(0).saturating_sub(old["defers"].as_u64().unwrap_or(0)) as usize;
+    let defers: Vec<usize> =
+        (0..pair).filter(passed).filter(|&at| to[at]["kind"] == "defer" && !kept(line(at))).collect();
+    let mut lets = if defers.len() == added { defers } else { Vec::new() };
+    for item in list(target, "state").iter().chain(list(&to[pair], "state")) {
+        let key = item["key"].as_str().unwrap_or_default();
+        if key.starts_with('#') {
+            continue;
+        }
+        let Some(at) = declared(bound_name(key)) else { continue };
+        // A value of a type that does not convert says why, and stays.
+        let usable = given.iter().find(|(k, _)| k == key).is_some_and(|(_, from)| {
+            let (before, after) =
+                (from["type"].as_str().unwrap_or_default(), item["type"].as_str().unwrap_or_default());
+            before == after
+                || migrations.conversions.contains_key(&(before.to_string(), after.to_string()))
+                || migrations.refused.contains_key(before)
+        });
+        // A value goes on, converted if it must, and a `var` is the state of
+        // the frame; a `let` above a loop, written anew, is what the code
+        // says now, unless others share what it holds.
+        let same = given.iter().any(|(k, from)| k == key && from["type"] == item["type"]);
+        let shared = crate::types::Handle::CONVERTED
+            .iter()
+            .any(|handle| item["type"].as_str().is_some_and(|ty| ty.starts_with(handle.name())));
+        let written = !kept(line(at)) && to[at]["changes"] == false && depth(&to[at]) < depth(&to[pair]);
+        if !usable || (written && same && !shared) {
+            lets.push(at);
+        }
+    }
+    lets.sort();
+    lets.dedup();
+    lets
+}
+
+/// Why a frame does not move into a statement it was not in.
+const NEW_AROUND: &str = "the statement around it is new";
+
+/// The nearest loop around a point written anew: a frame in the old one
+/// starts it.
+fn around_loop<'a>(point: &Value, to: &'a [Value], kept: &impl Fn(u64) -> bool) -> Option<&'a Value> {
+    let path = point["path"].as_str()?;
+    let inside = |other: &&Value| {
+        other["kind"] == "for"
+            && !kept(other["line"].as_u64().unwrap_or(0))
+            && other["path"].as_str().is_some_and(|around| path.starts_with(around) && path.len() > around.len())
+    };
+    to.iter().filter(inside).max_by_key(|other| other["path"].as_str().map_or(0, str::len))
+}
+
+/// What a frame takes with it to the new code: the bindings that run again,
+/// which take the place of its own, the `defer`s that do, and whether what it
+/// holds and the new code does not may stay unreleased.
+struct Entering<'a> {
+    bindings: Vec<&'a str>,
+    defers: u64,
+    leaves: bool,
+}
+
+fn bound_name(key: &str) -> &str {
+    key.rsplit_once('/').map_or(key, |(name, _)| name)
+}
+
+/// The old state by the names of the new code.
+fn given_state<'a>(old: &'a Value, paths: &HashMap<&str, &str>) -> Vec<(String, &'a Value)> {
+    list(old, "state")
+        .iter()
+        .filter_map(|item| {
+            let key = item["key"].as_str()?;
+            let key = match key.strip_prefix('#') {
+                Some(made) => {
+                    let (path, ordinal) = made.rsplit_once('/')?;
+                    format!("#{}/{ordinal}", paths.get(path)?)
+                }
+                None => key.to_string(),
+            };
+            Some((key, item))
+        })
+        .collect()
 }
 
 /// A parameter a frame passes to a function of another identity: its
@@ -434,26 +615,13 @@ fn copies(
     new: &Value,
     paths: &HashMap<&str, &str>,
     migrations: &Migrations,
+    running: &Entering,
 ) -> Result<(Vec<(u32, u32, u32)>, Vec<(u32, u32, u32, String)>), String> {
-    if old["defers"] != new["defers"] {
+    if old["defers"].as_u64().unwrap_or(0) + running.defers != new["defers"].as_u64().unwrap_or(0) {
         return Err("the `defer`s registered there changed".into());
     }
-    // The old state by the names of the new code.
-    let mut given: Vec<(String, &Value)> = list(old, "state")
-        .iter()
-        .filter_map(|item| {
-            let key = item["key"].as_str()?;
-            let key = match key.strip_prefix('#') {
-                Some(made) => {
-                    let (path, ordinal) = made.rsplit_once('/')?;
-                    format!("#{}/{ordinal}", paths.get(path)?)
-                }
-                None => key.to_string(),
-            };
-            Some((key, item))
-        })
-        .collect();
-    let named = |key: &str| key.rsplit_once('/').map_or(key, |(name, _)| name).to_string();
+    let mut given = given_state(old, paths);
+    let named = |key: &str| bound_name(key).to_string();
     // A value borrowed there keeps the frame where it is, whatever else
     // changed: the lock it is inside, or what it borrows.
     let lent = list(new, "state").iter().chain(given.iter().map(|(_, item)| *item));
@@ -466,12 +634,15 @@ fn copies(
     }
     let mut copies = Vec::new();
     let mut conversions = Vec::new();
-    for item in list(new, "state") {
+    // What runs again takes the place of what the old code has.
+    let runs = |key: &str| running.bindings.contains(&bound_name(key));
+    given.retain(|(key, _)| !runs(key));
+    for item in list(new, "state").iter().filter(|item| !runs(item["key"].as_str().unwrap_or_default())) {
         let key = item["key"].as_str().unwrap_or_default();
         let made = key.starts_with('#');
         let Some(index) = given.iter().position(|(k, _)| k == key) else {
             return Err(match made {
-                true => "the statement around it is new".into(),
+                true => NEW_AROUND.into(),
                 false => format!("`{}` is new there", named(key)),
             });
         };
@@ -498,9 +669,9 @@ fn copies(
             }
         }
     }
-    // What the old code owns there and the new does not would never be
-    // released.
-    if let Some((key, _)) = given.iter().find(|(_, item)| item["owned"].as_bool() == Some(true)) {
+    // What the old code owns there and the new does not is never released:
+    // a frame goes on without it, and a `goto` does not leave it behind.
+    if let Some((key, _)) = given.iter().find(|(_, item)| !running.leaves && item["owned"].as_bool() == Some(true)) {
         return Err(match key.starts_with('#') {
             true => "a value the old code holds there would not be released".into(),
             false => format!("`{}` would not be released", named(key)),
@@ -536,7 +707,8 @@ pub(super) fn goto(entry: &Value, slot: u32, from: u64, to: u64) -> Result<Vec<u
     let there = at(to, false).ok_or(format!("no statement of this function starts at line {to}"))?;
     let paths: HashMap<&str, &str> =
         points.iter().filter_map(|p| p["path"].as_str()).map(|p| (p, p)).chain([("", "")]).collect();
-    let (copies, _) = copies(here, there, &paths, &Migrations::default()).map_err(|why| {
+    let staying = Entering { bindings: Vec::new(), defers: 0, leaves: false };
+    let (copies, _) = copies(here, there, &paths, &Migrations::default(), &staying).map_err(|why| {
         let why = why.replace("is new there", &format!("holds no value at line {from} yet"));
         format!("the frame does not go to line {to}: {why}")
     })?;

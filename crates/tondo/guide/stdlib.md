@@ -885,8 +885,11 @@ program's state, and says which functions changed. `tondo run app.to
 --watch` does it whenever a file is saved. Calls that start afterwards run
 the new code, closures made before included, and a call already running
 moves to it at its next statement, with its values: a loop in `main` goes on
-with the new body. Where the new code needs a binding the old one does not
-have there, the call stays on the old code until it reaches another
+with the new body. A loop that never ends takes the change too: what the new
+code needs and the call already passed runs as it moves, a new `let`, `var` or
+`defer`, or one of another type, and so does a `let` written anew above the
+loop; a `var` keeps its value, and reload says what ran again. Where a call
+cannot move yet, as inside a `lock`, it stays on the old code until another
 statement, and reload says which lines and why. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
 move, their parameters included, and what goes back to their callers, a

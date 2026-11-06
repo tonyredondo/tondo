@@ -1644,11 +1644,23 @@ línea una vez emparejadas las líneas de la función que no cambian, o la que
 ocupa el lugar de una línea cambiada, con los valores que tiene. Cada binding
 se reconoce por su nombre, y los valores que hace el compilador, como el
 iterador de un `for`, por la sentencia que los hace. El frame no pasa, y
-sigue con el código viejo hasta otra sentencia, donde el código nuevo
-necesita un binding que el viejo no tiene ahí o que tiene otro tipo, donde un
-binding presta un valor, como dentro de un `lock`, donde el viejo tiene un
-valor que el nuevo no soltaría, o donde los `defer` registrados no son los
-mismos; `reload` dice en qué líneas y por qué. Una función cuya firma alcanza
+sigue con el código viejo hasta otra sentencia, donde un
+binding presta un valor, como dentro de un `lock`, o donde el código nuevo
+necesita algo que no puede ejecutar, como un binding de un patrón o un `defer` que ya no está; `reload` dice en qué líneas y por qué.
+
+Un frame no se queda atrás por lo que ya pasó, aunque sea un bucle que no acaba. Lo
+que el código nuevo necesita en su sentencia y el viejo no tiene —un `let` o un `var`
+nuevos, o uno de otro tipo que no se convierte— se ejecuta al pasar, en el orden del
+código y con lo que el frame tiene, y con ello lo que eso necesite; un `defer` nuevo se
+registra igual. También se ejecuta un `let` escrito de nuevo por encima de un bucle en el
+que está el frame, si su tipo no cambió y no guarda un valor con identidad, para que el
+cambio se vea. Un `var` es el estado del frame: conserva su valor, y `reload` lo dice.
+Lo declarado dentro del bucle en que está el frame no se ejecuta aparte: llegará a ello
+en la siguiente vuelta. `reload` dice qué se ejecuta otra vez. Lo que el frame tiene y el
+código nuevo ya no usa no se suelta. Un frame en un bucle escrito de otra forma, que el
+código nuevo no puede continuar, empieza ese bucle en su siguiente sentencia.
+
+Una función cuya firma alcanza
 un tipo que cambió de forma es otra identidad, y un frame suyo pasa a la
 nueva, del mismo nombre y firma, con sus parámetros convertidos como los
 demás valores. Lo que vuelve al código viejo vuelve convertido a la forma
@@ -1834,7 +1846,7 @@ campos de su resultado:
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
-| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
+| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `again` y `converted`; si no puede, `ok` falso, `message` y `restart` |
 | `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |

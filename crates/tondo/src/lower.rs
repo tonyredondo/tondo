@@ -34,7 +34,7 @@ use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub fn lower(program: &hir::Program, live: bool, debug: bool) -> Vec<Body> {
+pub fn lower(program: &hir::Program, live: bool, debug: bool, catch_ups: Option<&crate::live::CatchUps>) -> Vec<Body> {
     // The fields of each context whose initial values are computed, a bit
     // each (11.16).
     let computed: Vec<u64> = program
@@ -49,7 +49,8 @@ pub fn lower(program: &hir::Program, live: bool, debug: bool) -> Vec<Body> {
         crate::parallel::map(&indices, 1, |&i| {
             let f = &program.functions[i];
             let functions = debug.then_some(&program.functions[..]);
-            lower_function(&program.types, f, functions, waits, restart(i, f), recovering, &computed)
+            let entries = catch_ups.and_then(|plan| plan.get(&(f.name.clone(), f.span.start)));
+            lower_function(&program.types, f, functions, waits, restart(i, f), recovering, &computed, entries)
         })
     };
     let plain = lower_all(None, false);
@@ -273,6 +274,9 @@ struct Again {
 }
 
 struct Builder<'a> {
+    /// The entries a patch asks for, and what the bindings they run give.
+    entries: Option<&'a crate::live::Entries>,
+    lets: HashMap<u32, hir::Stmt>,
     types: &'a Types,
     function: &'a hir::Function,
     /// In a debug build, the program's functions, for where an error
@@ -317,6 +321,8 @@ struct Builder<'a> {
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
     made_by: HashMap<Vec<u32>, u32>,
+    /// Inside what a `defer` runs on the way out of a scope.
+    deferring: u32,
     /// The temporary a `match` arm's bindings take their values from,
     /// rather than copy them: the arm has no guard, so the match uses
     /// nothing of it after them.
@@ -332,6 +338,7 @@ struct Builder<'a> {
     unwinds: HashMap<Vec<u64>, BlockId>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_function(
     types: &Types,
     function: &hir::Function,
@@ -340,10 +347,13 @@ fn lower_function(
     restart: Option<hir::FnId>,
     recovering: bool,
     computed: &[u64],
+    entries: Option<&crate::live::Entries>,
 ) -> Body {
     let mut b = Builder {
         types,
         function,
+        entries,
+        lets: HashMap::new(),
         functions,
         computed,
         locals: Vec::new(),
@@ -368,6 +378,7 @@ fn lower_function(
         path: Vec::new(),
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
+        deferring: 0,
         moving: None,
         recovering,
         recovers: Vec::new(),
@@ -476,9 +487,12 @@ impl Builder<'_> {
     fn new_local(&mut self, ty: Ty) -> Local {
         self.locals.push(ty);
         self.names.push(None);
+        // What a `defer` runs on the way out is not counted: a statement's
+        // values keep their places when a `defer` is written above it.
         let made = self.made_by.entry(self.path.clone()).or_insert(0);
-        self.origins.push(Origin::Made(self.path.clone(), *made));
-        *made += 1;
+        let ordinal = if self.deferring > 0 { u32::MAX } else { *made };
+        self.origins.push(Origin::Made(self.path.clone(), ordinal));
+        *made += u32::from(self.deferring == 0);
         Local(self.locals.len() as u32 - 1)
     }
 
@@ -1057,10 +1071,12 @@ impl Builder<'_> {
                 // Unregister it first, so a panic in the cleanup cannot run it again.
                 self.push(Statement::DeferPop);
                 self.cleaning += 1;
+                self.deferring += 1;
                 self.in_frame(|b| {
                     b.expr(&call);
                 });
                 self.std_call(hir::StdFn::DeferEnd, Span::default());
+                self.deferring -= 1;
                 self.cleaning -= 1;
             }
         }
@@ -1210,13 +1226,28 @@ impl Builder<'_> {
         self.switch_to(moving);
         finish(self, Rvalue::CallOsr(function, arguments, Operand::local(state)));
         let defers = self.scopes.iter().flatten().filter(|exit| matches!(exit, Exit::Defer(_))).count() as u32;
-        self.points.push(Point { path: self.path.clone(), span, continues: next, state: Vec::new(), kind, defers });
+        let loops = self.loops.len() as u32;
+        let (binds, entry_of, runs, path) = (None, None, Vec::new(), self.path.clone());
+        self.points.push(Point {
+            path,
+            span,
+            continues: next,
+            state: Vec::new(),
+            kind,
+            defers,
+            binds,
+            changes: false,
+            loops,
+            entry_of,
+            runs,
+        });
         self.switch_to(next);
     }
 
     /// The first block of a live build's function: a frame that comes from
     /// the old code loads the state of its point and goes on from there.
     fn osr_entry(&mut self, osr: Local, start: BlockId) {
+        self.catch_up_entries();
         let first = std::mem::take(&mut self.blocks[0]);
         debug_assert!(first.0.is_empty());
         self.switch_to(BlockId(0));
@@ -1242,6 +1273,44 @@ impl Builder<'_> {
             self.switch_to(other);
         }
         self.terminate(Terminator::Goto(start));
+    }
+
+    /// The entries a patch asks for: each runs bindings and `defer`s a frame
+    /// already passed, which the new code needs or wrote anew, and goes on at
+    /// its point. Their values are released where their scopes end.
+    fn catch_up_entries(&mut self) {
+        let entries = self.entries.into_iter().flatten();
+        for (&target, lets) in entries.flat_map(|(target, each)| each.iter().map(move |lets| (target, lets))) {
+            let Some(point) = self.points.get(target as usize).cloned() else { continue };
+            let entry = self.new_block();
+            self.switch_to(entry);
+            self.cleaning += 1;
+            self.scopes.push(Vec::new());
+            for at in lets {
+                match self.lets.get(at).cloned() {
+                    Some(hir::Stmt::Let(id, value)) => self.in_frame(|b| {
+                        let value = b.expr(&value);
+                        let local = b.bind(id);
+                        b.store(Place::local(local), value, Span::default());
+                    }),
+                    Some(hir::Stmt::Defer { local, closure, call }) => self.in_frame(|b| {
+                        let value = b.expr(&closure);
+                        let local = b.bind(local);
+                        b.store(Place::local(local), value, closure.span);
+                        let hir::ExprKind::Call(hir::Callee::Fn(body), _, _) = &call.kind else {
+                            unreachable!("monomorphization calls a deferred closure directly")
+                        };
+                        b.push(Statement::DeferPush(*body, Place::local(local)));
+                    }),
+                    _ => {}
+                }
+            }
+            self.scopes.pop();
+            self.cleaning -= 1;
+            self.terminate(Terminator::Goto(point.continues));
+            let runs = lets.clone();
+            self.points.push(Point { continues: entry, kind: "entry", entry_of: Some(target), runs, ..point });
+        }
     }
 
     /// Whether a call may wait (see `waiting`).
@@ -1595,7 +1664,16 @@ impl Builder<'_> {
     }
 
     fn stmt(&mut self, stmt: &hir::Stmt) {
+        let point = self.points.len() as u32;
         self.restart_point(stmt_span(stmt), stmt_kind(stmt));
+        if let (hir::Stmt::Let(id, _), Some(made)) = (stmt, self.points.get_mut(point as usize)) {
+            let declared = &self.function.locals[id.0 as usize];
+            made.binds = Some(declared.name.clone());
+            made.changes = declared.mutable;
+        }
+        if self.entries.is_some_and(|entries| entries.values().flatten().flatten().any(|&at| at == point)) {
+            self.lets.insert(point, stmt.clone());
+        }
         // A loop starts again at its head, each time it checks.
         if !matches!(stmt, hir::Stmt::Loop { .. } | hir::Stmt::ForEach { .. } | hir::Stmt::ForRange { .. }) {
             self.start(stmt_span(stmt));

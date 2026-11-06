@@ -178,6 +178,16 @@ pub struct Point {
     /// and how many `defer`s are registered there.
     pub kind: &'static str,
     pub defers: u32,
+    /// The binding the statement declares, whether it is a `var`, and how
+    /// many loops the statement is in.
+    pub binds: Option<String>,
+    pub changes: bool,
+    pub loops: u32,
+    /// An entry a patch adds to the point it names, which runs the
+    /// statements of the points in `runs`, that a frame from the old code
+    /// passed, and goes on there.
+    pub entry_of: Option<u32>,
+    pub runs: Vec<u32>,
 }
 
 /// Where a local comes from: a binding's name, a parameter, or the

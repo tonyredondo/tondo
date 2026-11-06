@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// What codegen needs of a live build, and what it tells of it.
+#[derive(Clone)]
 pub struct Build {
     /// The build's identity, which its program reports.
     pub id: String,
@@ -49,7 +50,16 @@ pub struct Build {
     /// place, by their places there.
     pub migrations: Vec<crate::hir::FnId>,
     pub objects: Vec<usize>,
+    /// For a patch: the entries its functions need, which a compilation
+    /// finds out and the next one writes.
+    pub catch_ups: CatchUps,
 }
+
+/// The entries of each point: the statements each runs, by their points. A
+/// version of the code that passed other bindings needs another.
+pub type Entries = std::collections::BTreeMap<u32, std::collections::BTreeSet<Vec<u32>>>;
+/// The entries of each function, by its name and where it starts.
+pub type CatchUps = HashMap<(String, u32), Entries>;
 
 /// The types renamed, new names by old: of the types the old program had
 /// and the new has not, each of those the new has and the old had not of the
@@ -131,6 +141,7 @@ pub(crate) fn line_hash(line: &str) -> u64 {
 
 /// What a patch builds on: the types whose identity the running program
 /// holds, and the number of its debugger's sites.
+#[derive(Clone)]
 pub struct Base {
     pub data: Vec<String>,
     pub sites: u32,
@@ -155,9 +166,14 @@ impl Build {
             structures: serde_json::Map::new(),
             migrations: Vec::new(),
             objects: Vec::new(),
+            catch_ups: CatchUps::new(),
         }
     }
 }
+
+/// How many compilations a patch takes at most: a binding that runs again may
+/// need another that the frame passed.
+const ENTRY_PASSES: usize = 4;
 
 /// A new build's identity: when and where it was made.
 fn build_id() -> String {
@@ -569,6 +585,8 @@ pub struct Reloaded {
     pub stays: Vec<String>,
     /// What converting values of types of another shape does to them.
     pub notes: Vec<String>,
+    /// The bindings frames passed that run again as they move.
+    pub again: Vec<String>,
 }
 
 /// Why a reload did not happen: the program does not compile, or the
@@ -856,6 +874,7 @@ fn patch(
         structures: serde_json::Map::new(),
         migrations: Vec::new(),
         objects: Vec::new(),
+        catch_ups: CatchUps::new(),
     };
     // The values of the old types frames hold convert as the frames move,
     // with the parameters of those that move to a function of another
@@ -905,7 +924,6 @@ fn patch(
         migrations.backs.insert(keys, build.migrations.len());
         build.migrations.push(function);
     }
-    let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
     use crate::link::patch::External;
     let resolve = |name: &str| -> Result<External, String> {
         let at = |list: &[String], table: u32| {
@@ -921,19 +939,39 @@ fn patch(
             format!("the change calls `{name}`, which the running program does not link: start it again")
         })
     };
-    let mut patch = crate::link::patch::link(&object, &resolve, "tondo_patch").map_err(Refused::Restart)?;
-    // The functions whose code changes, which the patch sets, and how
-    // their frames move to it.
-    let set: Vec<String> = build
-        .code
-        .iter()
-        .filter(|(identity, hash)| known.get(*identity) != Some(hash))
-        .map(|(i, _)| i.clone())
-        .collect();
-    let points = serde_json::Value::Object(build.points.clone());
     let olds: Vec<&serde_json::Value> =
         std::iter::once(&manifest["points"]).chain(manifest["older"].as_array().into_iter().flatten()).collect();
-    let moves = osr::moves(&olds, &points, &set, &build.slots, &migrations, &renamed);
+    // The moves say which bindings the frames that passed them need to run
+    // again, for which the code needs entries: another compilation adds them.
+    let prepared = build.clone();
+    let mut passes = 0;
+    let (mut patch, set, moves) = loop {
+        let object =
+            crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
+        let patch = crate::link::patch::link(&object, &resolve, "tondo_patch").map_err(Refused::Restart)?;
+        // The functions whose code changes, which the patch sets, and how
+        // their frames move to it.
+        let set: Vec<String> = build
+            .code
+            .iter()
+            .filter(|(identity, hash)| known.get(*identity) != Some(hash))
+            .map(|(i, _)| i.clone())
+            .collect();
+        let points = serde_json::Value::Object(build.points.clone());
+        let moves = osr::moves(&olds, &points, &set, &build.slots, &migrations, &renamed, &build.catch_ups);
+        passes += 1;
+        if moves.wanted.is_empty() || passes == ENTRY_PASSES {
+            break (patch, set, moves);
+        }
+        let mut wanted = std::mem::take(&mut build.catch_ups);
+        for (function, entries) in moves.wanted {
+            for (point, lets) in entries {
+                wanted.entry(function.clone()).or_default().entry(point).or_default().extend(lets);
+            }
+        }
+        build = prepared.clone();
+        build.catch_ups = wanted;
+    };
     patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
@@ -1041,7 +1079,7 @@ fn patch(
     notes.extend(renamed.iter().map(|(old, new)| format!("`{old}` is `{new}` now")));
     notes.sort();
     notes.dedup();
-    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })
+    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes, again: moves.again })
 }
 
 /// Each version of each function's points the manifest knows, by identity,
@@ -1188,7 +1226,7 @@ impl Reloaded {
         if self.moves > 0 {
             summary.push_str("; frames move to the new code at their next statement");
         }
-        for line in self.notes.iter().chain(&self.stays) {
+        for line in self.notes.iter().chain(&self.again).chain(&self.stays) {
             summary.push('\n');
             summary.push_str(line);
         }
@@ -1203,6 +1241,7 @@ impl Reloaded {
             "moves": self.moves,
             "stays": self.stays,
             "converted": self.notes,
+            "again": self.again,
         })
     }
 
