@@ -1,0 +1,8 @@
+// A collection takes its types after `new`.
+
+fn main() {
+    let list = Array[Int]()
+    _ = list
+}
+
+// expect-error: E1104 an empty `Array` is `Array.new[T]()`

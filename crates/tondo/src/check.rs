@@ -13042,7 +13042,13 @@ impl<'a> Checker<'a> {
             || self.type_named(first).is_some()
         {
             let path = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
-            let message = format!("`{path}` takes no type arguments: call it as `{path}(...)`");
+            let message = match first {
+                "Array" | "Set" | "Deque" => {
+                    format!("an empty `{first}` is `{first}.new[T]()`, or `[]` where its type is known")
+                }
+                "Map" => "an empty `Map` is `Map.new[K, V]()`, or `[:]` where its type is known".to_string(),
+                _ => format!("`{path}` takes no type arguments: call it as `{path}(...)`"),
+            };
             self.diags.error("E1104", span, message);
         } else {
             self.unknown_name(cx, first, segments[0].span);
