@@ -2490,9 +2490,9 @@ pub(crate) fn console_append(bytes: &[u8], newline: bool) {
     let terminal = *out.terminal.get_or_insert_with(|| std::io::IsTerminal::is_terminal(&std::io::stdout()));
     let line = newline || bytes.contains(&b'\n');
     // A test's output must survive a crash, so a test build delivers it at
-    // once; a debug build's comes at every line, as to a terminal, for the
-    // tool that reads it.
-    let lines = terminal || debugger::built();
+    // once; a debug or live build's comes at every line, as to a terminal, for
+    // the tool that reads it.
+    let lines = terminal || debugger::built() || live::on();
     if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (lines && line) || testing::ACTIVE.load(Ordering::Relaxed) {
         out.deliver();
     }
