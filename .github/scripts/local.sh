@@ -85,7 +85,8 @@ editor() {
   (cd editors/vscode && npm ci && npm run compile) || return 1
   printf 'FROM node:22-trixie-slim\nRUN apt-get update -qq && apt-get install -y -qq xvfb xauth libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2 libxss1 libxkbfile1 libsecret-1-0 ca-certificates git > /dev/null\n' |
     docker build -q -t tondo-editor - > /dev/null || return 1
-  docker run --rm -u "$me" -e HOME=/tmp -e TONDO_BIN="$PWD/target/debug/tondo" -v "$PWD:$PWD" -w "$PWD/editors/vscode" \
+  # With an init: xvfb-run waits for a signal it does not get as process 1.
+  docker run --rm --init -u "$me" -e HOME=/tmp -e TONDO_BIN="$PWD/target/debug/tondo" -v "$PWD:$PWD" -w "$PWD/editors/vscode" \
     tondo-editor xvfb-run -a node out/integration/run.js
 }
 
