@@ -804,7 +804,9 @@ fn load(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result
             let text = String::from_utf8_lossy(error.as_bytes()).into_owned();
             let file = sources.add(path, text);
             let base = sources.file(file).base;
-            diags.error("E0001", Span::new(base + offset, base + offset + 1), "invalid UTF-8 in source file");
+            // The byte is a replacement character in the text that is shown.
+            let end = base + offset + char::REPLACEMENT_CHARACTER.len_utf8() as u32;
+            diags.error("E0001", Span::new(base + offset, end), "invalid UTF-8 in source file");
             return Ok(None);
         }
     };

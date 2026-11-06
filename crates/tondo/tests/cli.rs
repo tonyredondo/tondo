@@ -558,3 +558,62 @@ fn the_debug_adapter_says_what_it_takes() {
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(!ran.status.success() && said.contains("dap takes --link <library> and --static"), "{said}");
 }
+
+fn project_at(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (file, text) in files {
+        let path = dir.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+fn said_by(dir: &Path, args: &[&str]) -> String {
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    format!("{}{}", String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr))
+}
+
+/// The codes no program of the cases can show: a file's bytes, a project.
+#[test]
+fn codes_of_files_and_projects() {
+    let dir = project_at("code-bytes", &[("bad.to", b"fn main() {}\n\xff\n")]);
+    assert!(said_by(&dir, &["check", "bad.to"]).contains("E0001"));
+    let manifest: &[u8] = b"[package]\nname = \"app\"\n";
+    let dir = project_at(
+        "code-script",
+        &[
+            ("tondo.toml", manifest),
+            ("src/main.to", b"import app.other\n\nother.go()\n"),
+            ("src/other/o.to", b"import app\n\npub fn go() {}\n"),
+        ],
+    );
+    assert!(said_by(&dir, &["check"]).contains("E1801"));
+    let dir = project_at(
+        "code-systems",
+        &[
+            ("tondo.toml", manifest),
+            ("src/main.to", b"fn main() {\n    _ = at()\n}\n"),
+            ("src/at_linux.to", b"fn at(): Int {\n    1\n}\n"),
+            ("src/at_macos.to", b"fn at(): String {\n    \"a\"\n}\n"),
+        ],
+    );
+    assert!(said_by(&dir, &["check"]).contains("E1808"));
+}
+
+/// The panics of the test library, which only a test run gives.
+#[test]
+fn codes_of_a_test_run() {
+    let manifest: &[u8] = b"[package]\nname = \"app\"\n";
+    let tests: &[u8] = b"import std.testing\nimport std.time\n\n\
+        test backwards {\n    testing.withVirtualTime((clock) {\n        clock.advance(time.seconds(-1))\n    })?\n}\n\n\
+        test tagged {\n    testing.tags([\"a\": \"1\"])\n    testing.tags([\"a\": \"2\"])\n}\n\n\
+        test snapped {\n    testing.snapshot(\"same\", 1)\n    testing.snapshot(\"same\", 1)\n}\n";
+    let dir = project_at(
+        "code-tests",
+        &[("tondo.toml", manifest), ("src/main.to", b"fn main() {}\n"), ("src/main_test.to", tests)],
+    );
+    let said = said_by(&dir, &["test", "--update-snapshots"]);
+    assert!(said.contains("P2002") && said.contains("P2005") && said.contains("P2008"), "{said}");
+}

@@ -95,6 +95,46 @@ fn the_repository_has_the_skill() {
 
 /// What looks at programs reaches an agent and an editor too: what the
 /// terminal gets, both do, or the line here says how.
+/// Every code the specification gives is in `tondo explain` and in a test. Those
+/// that nothing emits yet are named here, so that the specification and the
+/// compiler do not part in silence.
+#[test]
+fn every_code_is_explained_and_tested() {
+    const NOT_EMITTED: [&str; 4] = ["P0019", "P2001", "W1009", "W1010"];
+    // Only a closure the checker sees as consumed reaches it, and no program
+    // written for this got there.
+    const NOT_REACHED: [&str; 1] = ["E1407"];
+    let specs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec");
+    let mut codes = Vec::new();
+    for spec in std::fs::read_dir(specs).unwrap().flatten() {
+        for line in std::fs::read_to_string(spec.path()).unwrap().lines() {
+            let code = line.strip_prefix("| `").and_then(|rest| rest.split_once("` |")).map(|(code, _)| code);
+            let is_code = |code: &&str| code.len() == 5 && code[1..].bytes().all(|byte| byte.is_ascii_digit());
+            codes.extend(code.filter(is_code).filter(|code| code.starts_with(['E', 'W', 'P'])).map(String::from));
+        }
+    }
+    assert!(codes.len() > 100);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut tested = String::new();
+    let mut dirs = vec![root.join("tests"), root.join("crates/tondo/tests"), root.join("crates/tondo/guide")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            match entry.path().is_dir() {
+                true => dirs.push(entry.path()),
+                false => tested.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default()),
+            }
+        }
+    }
+    let explained = include_str!("../src/explain.rs");
+    for code in codes.iter().filter(|code| !NOT_EMITTED.contains(&code.as_str())) {
+        assert!(explained.contains(&format!("\"{code}\"")), "`tondo explain` does not know {code}");
+        assert!(
+            tested.contains(code.as_str()) || NOT_REACHED.contains(&code.as_str()),
+            "no test says {code}: add a case"
+        );
+    }
+}
+
 /// Every command of the toolchain, its tool and how the editor has it, and
 /// every option, in the tools: what is added to the command line without
 /// them fails here. `tondo.runCommand` runs the options the editor has no
