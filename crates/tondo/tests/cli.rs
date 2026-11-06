@@ -693,3 +693,35 @@ fn check_lists_what_it_silences() {
     assert_eq!(offered["applicability"], "requires-decision", "{said}");
     assert_eq!(offered["edits"][0]["replacement"], "// tondo: allow W1004: \n", "{said}");
 }
+
+/// A long call of C holds its worker, and nothing else: a task it made ready
+/// and a timer go on, on one core too, where no other worker is waiting.
+#[test]
+fn a_long_call_of_c_holds_up_no_other_task() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("long-call");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.ffi\nimport std.time\n\n\
+        extern fn usleep(micros: ffi.CUInt): ffi.CInt\n\n\
+        fn wakes(input: Receiver[Int], start: time.Instant) {\n    _ = input.receive()\n    \
+        console.println(\"{start.elapsed().milliseconds()}\")\n}\n\n\
+        fn naps(start: time.Instant) {\n    time.sleep(time.milliseconds(10))\n    \
+        console.println(\"{start.elapsed().milliseconds()}\")\n}\n\n\
+        fn main() {\n    for _ in 0..6 {\n        let (out, input) = channel[Int](1)\n        \
+        let start = time.now()\n        let woken = spawn wakes(input, start)\n        \
+        let napped = spawn naps(start)\n        time.sleep(time.milliseconds(2))\n        \
+        out.send(1)\n        unsafe {\n            _ = usleep(700000u32)\n        }\n        \
+        woken.wait()\n        napped.wait()\n    }\n}\n";
+    std::fs::write(dir.join("calls.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo).args(["build", "calls.to", "--output", "calls"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let alone = cfg!(target_os = "linux").then(|| Command::new("taskset").args(["-c", "0", "./calls"]).current_dir(&dir).output());
+    for ran in [alone.and_then(Result::ok), Some(Command::new(dir.join("calls")).output().unwrap())].into_iter().flatten() {
+        let said = String::from_utf8_lossy(&ran.stdout);
+        assert_eq!(said.lines().count(), 12, "{said}");
+        for line in said.lines() {
+            assert!(line.parse::<u64>().unwrap() < 500, "a task waited for the call: {said}");
+        }
+    }
+}

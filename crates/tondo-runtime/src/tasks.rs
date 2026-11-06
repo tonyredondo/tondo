@@ -1423,9 +1423,11 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     }
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
-    let (mut woken, mut waited) = (false, false);
+    // One that starts to take another's place was woken for that.
+    let starts = std::mem::take(&mut queue().waking);
+    let (mut woken, mut waited) = (starts, false);
     // This worker looks for tasks for `SEEKING`.
-    let mut seeker = false;
+    let mut seeker = starts;
     loop {
         // The task made runnable by the one that ran here, but now and then
         // the queue first, so that two tasks that wake each other do not
@@ -2359,17 +2361,28 @@ fn monitor() {
                 continue;
             }
             busy = true;
-            if last.insert(key, calls) == Some(calls) && !state.replaced.load(Ordering::SeqCst) {
+            if last.insert(key, calls) == Some(calls) {
                 let mut queue = queue();
-                if (!queue.runnable.is_empty() || !waiting_next().is_empty() || !waiting_local().is_empty())
-                    && queue.idle == 0
-                {
-                    state.replaced.store(true, Ordering::SeqCst);
-                    queue.workers += 1;
-                    super::diagnostics::WORKERS_REPLACED.add(1);
-                    drop(queue);
-                    start_worker();
+                let due = queue.timers.peek().is_some_and(|timer| timer.at <= Instant::now());
+                if !due && queue.runnable.is_empty() && waiting_next().is_empty() && waiting_local().is_empty() {
+                    continue;
                 }
+                // What waits for this worker has another: one that sleeps,
+                // told to look, as often as it takes, or a new one, once.
+                if queue.idle > 0 {
+                    drop(queue);
+                    wake_idle();
+                    continue;
+                }
+                if state.replaced.load(Ordering::SeqCst) {
+                    continue;
+                }
+                state.replaced.store(true, Ordering::SeqCst);
+                queue.workers += 1;
+                queue.waking = !SEEKING.swap(true, Ordering::SeqCst);
+                super::diagnostics::WORKERS_REPLACED.add(1);
+                drop(queue);
+                start_worker();
             }
         }
         if !busy {
