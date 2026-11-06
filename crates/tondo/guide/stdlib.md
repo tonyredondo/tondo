@@ -892,7 +892,11 @@ code needs and the call already passed runs as it moves, a new `let`, `var` or
 `defer`, or one of another type, and so does a `let` written anew above the
 loop; a `var` keeps its value, and reload says what ran again. Where a call
 cannot move yet, as inside a `lock`, it stays on the old code until another
-statement, and reload says which lines and why. A type may gain or lose
+statement, and reload says which lines and why. Under `--watch` a panic does not end the
+program: the task waits, and when a fix is saved the function that panicked starts
+again from its caller's statement, with all the caller has. `tondo eval <pid|name>
+"total(order())"` says what an expression gives in the running program, on the code
+as it is now, and stops nothing. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
 move, their parameters included, and what goes back to their callers, a
 result or a value lent, converts back, field by field, a new field starting

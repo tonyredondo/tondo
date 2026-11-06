@@ -7,6 +7,7 @@
 
 use super::{Str, str_bytes};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// The image's tables, as the compiler lays them out (`codegen::live_tables`).
 #[repr(C)]
@@ -42,6 +43,93 @@ pub unsafe extern "C" fn tondo_rt_live(info: *const Info) {
 /// Whether the program is a live build.
 pub(crate) fn on() -> bool {
     !INFO.load(Ordering::Acquire).is_null()
+}
+
+/// Whether a panic waits for the code to change (`tondo run --watch`, and a
+/// tool's sessions) instead of ending the program.
+pub(crate) fn holds_panics() -> bool {
+    static HOLDS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    on() && *HOLDS.get_or_init(|| std::env::var_os("TONDO_LIVE_HOLD").is_some_and(|value| value == "1"))
+}
+
+/// The tasks a panic holds until a patch.
+static PANICKED: Mutex<Vec<Arc<super::tasks::Wait>>> = Mutex::new(Vec::new());
+
+/// Waits for a patch: true when one came, false when the task is cancelled.
+/// The program is not stuck meanwhile: the patch comes from outside.
+pub(crate) fn wait_for_patch() -> bool {
+    let wait = super::tasks::Wait::new();
+    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).push(wait.clone());
+    super::tasks::HOST_WORK.fetch_add(1, Ordering::SeqCst);
+    let fired = wait.block();
+    super::tasks::HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).retain(|held| !Arc::ptr_eq(held, &wait));
+    fired == 0
+}
+
+/// The next patch only adds what a tool runs: a panic goes on waiting.
+static STAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `stay`: what the next patch is for.
+pub(crate) fn stay() -> String {
+    STAYING.store(true, Ordering::SeqCst);
+    "{\"staying\":true}".to_string()
+}
+
+/// A patch went in: the tasks a panic holds start their statements again.
+fn let_held_go() -> usize {
+    if STAYING.swap(false, Ordering::SeqCst) {
+        return 0;
+    }
+    let held = std::mem::take(&mut *PANICKED.lock().unwrap_or_else(|e| e.into_inner()));
+    let going = held.iter().filter(|wait| wait.claim(0));
+    going.map(|wait| super::tasks::notify(wait.task)).count()
+}
+
+/// `eval <slot>`: what the function of a patch gives, run by a task of its
+/// own on a thread of its own, which answers the tool by itself: the program
+/// goes on, and the expression may wait.
+pub(crate) fn eval(rest: &str, client: &std::os::unix::net::UnixStream) -> String {
+    use super::diagnostics::quoted;
+    let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
+    let code = rest.trim().parse().ok().and_then(slot_code).filter(|&code| code != 0);
+    let Some(code) = code else { return error("the program is not a live build") };
+    let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
+    struct Call {
+        code: u64,
+        said: Result<String, String>,
+    }
+    extern "C" fn inner(frame: *mut u8) {
+        let call = unsafe { &mut *(frame as *mut Call) };
+        super::panics::tondo_rt_recover_enter();
+        let code: extern "C" fn(u64, u64) -> *mut super::Str = unsafe { std::mem::transmute(call.code as usize) };
+        let made = code(0, 0);
+        let panicked = super::panics::taken();
+        super::panics::tondo_rt_recover_leave();
+        call.said = match (panicked, made.is_null()) {
+            (Some(panic), _) => Err(panic),
+            (None, true) => Err("the expression gave nothing".to_string()),
+            (None, false) => {
+                let text = String::from_utf8_lossy(unsafe { super::str_bytes(made) }).into_owned();
+                unsafe { super::tondo_rt_str_release(made) };
+                Ok(text)
+            }
+        };
+    }
+    let started = super::tasks::try_spawn_thread(None, move || {
+        use std::io::Write;
+        let mut call = Call { code, said: Err(String::new()) };
+        unsafe { super::tasks::tondo_rt_callback(inner, (&raw mut call).cast(), None) };
+        let answer = match &call.said {
+            Ok(text) => format!("{{\"called\":{}}}\n", quoted(text)),
+            Err(message) => format!("{{\"error\":{}}}\n", quoted(message)),
+        };
+        let _ = client.write_all(answer.as_bytes());
+    });
+    match started {
+        Ok(_) => String::new(),
+        Err(_) => error("the program has no thread for it"),
+    }
 }
 
 /// What `tondo reload` asks first: the build, and what its patches took.
@@ -282,7 +370,10 @@ fn apply(path: &str) -> Result<String, String> {
     *MOVES.write().unwrap_or_else(|e| e.into_inner()) = moves;
     PENDING.store(moving > 0, Ordering::Release);
     let patches = PATCHES.fetch_add(1, Ordering::AcqRel) + 1;
-    Ok(format!("{{\"patched\":true,\"functions\":{slots},\"patches\":{patches},\"moves\":{moving}}}"))
+    let retried = let_held_go();
+    Ok(format!(
+        "{{\"patched\":true,\"functions\":{slots},\"patches\":{patches},\"moves\":{moving},\"retried\":{retried}}}"
+    ))
 }
 
 /// What a patch converts in place in values with identity that hold a type

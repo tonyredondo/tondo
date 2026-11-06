@@ -110,6 +110,7 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     breaking,
     { dispose: () => serving?.kill() },
     vscode.commands.registerCommand('tondo.logpoint', logpoint),
+    vscode.commands.registerCommand('tondo.eval', evaluate),
     vscode.commands.registerCommand('tondo.showFailures', showFailures),
     vscode.commands.registerCommand('tondo.clearFailures', () => failures.clear()),
     failures,
@@ -297,6 +298,18 @@ async function readCore(): Promise<void> {
     return;
   }
   await vscode.commands.executeCommand('tondo.debugDump', vscode.Uri.file(output));
+}
+
+/** What an expression gives in a running live build, nothing stopped. */
+async function evaluate(): Promise<void> {
+  const pid = await pickProcess();
+  const expression = pid && (await vscode.window.showInputBox({ prompt: 'An expression, as total(Order { id: 1 })' }));
+  if (!pid || !expression) {
+    return;
+  }
+  const ran = await exec(['eval', pid, expression], vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '.');
+  logpoints.show(true);
+  logpoints.appendLine(`${expression} = ${(ran.code === 0 ? ran.stdout : ran.stderr).trim()}`);
 }
 
 /** The public declarations that changed since a commit. */

@@ -545,6 +545,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.eval",
+        "title": "Evaluate in a Running Program",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.refreshRequests",
         "title": "Refresh Requests",
         "category": "Tondo",

@@ -690,6 +690,76 @@ fn a_loop_takes_the_bindings_it_passed() {
     let _ = server.child.wait();
 }
 
+const PANICS: &str = r#"import std.console
+
+fn share(total: Int, by: Int): Int {
+    total / by
+}
+
+fn main() {
+    var seen = 0
+    for {
+        match console.readLine() {
+            some(line) => {
+                seen += 1
+                let by = Int.parse(line).unwrapOr(1)
+                console.println("{seen} {share(100, by)}")
+            }
+            none => break
+        }
+    }
+}
+"#;
+
+/// Under `--watch` a panic waits for a fix, and the function starts again with
+/// all its caller has: the program does not lose its state.
+#[test]
+fn a_panic_waits_for_a_fix() {
+    let dir = dir("live_panic");
+    let file = dir.join("panics.to");
+    std::fs::write(&file, PANICS).unwrap();
+    let mut server = Running::start(&dir, &["run", "panics.to", "--watch"]);
+    assert_eq!(server.answer("5"), "1 20");
+    assert_eq!(server.answer("4"), "2 25");
+    writeln!(server.input, "0").unwrap();
+    server.input.flush().unwrap();
+    let waits = (0..200)
+        .find_map(|_| server.errors.recv_timeout(Duration::from_secs(1)).ok().filter(|l| l.contains("waits here")));
+    assert!(waits.is_some(), "the task did not wait");
+    // The fix is above the line that panicked.
+    edit(&file, "    total / by\n", "    if by == 0 {\n        return 0\n    }\n    total / by\n");
+    assert_eq!(server.lines.recv_timeout(Duration::from_secs(60)).unwrap(), "3 0");
+    assert_eq!(server.answer("2"), "4 50");
+    server.stop();
+}
+
+/// An expression in a running program: on the code as it is, with nothing
+/// stopped; a panic there is the expression's.
+#[test]
+fn an_expression_runs_in_a_running_program() {
+    let dir = dir("live_eval");
+    let file = dir.join("panics.to");
+    std::fs::write(&file, PANICS).unwrap();
+    let mut server = Running::start(&dir, &["run", "panics.to", "--live"]);
+    assert_eq!(server.answer("5"), "1 20");
+    let eval = |expression: &str| {
+        let args = ["eval", &server.pid(), expression];
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap()
+    };
+    let told = eval("share(100, 4) + 1");
+    assert_eq!(String::from_utf8_lossy(&told.stdout), "26\n", "{}", String::from_utf8_lossy(&told.stderr));
+    let told = eval("share(1, 0)");
+    assert!(!told.status.success() && String::from_utf8_lossy(&told.stderr).contains("P0003"), "{told:?}");
+    let told = eval("nothing(1)");
+    assert!(String::from_utf8_lossy(&told.stderr).contains("unknown name `nothing`"), "{told:?}");
+    // A change, tried at once.
+    edit(&file, "    total / by\n", "    total / by + 1000\n");
+    let told = eval("share(100, 4)");
+    assert_eq!(String::from_utf8_lossy(&told.stdout), "1025\n", "{told:?}");
+    assert_eq!(server.answer("4"), "2 1025");
+    server.stop();
+}
+
 const CLOSURE: &str = r#"import std.console
 
 let serve = () {

@@ -98,6 +98,7 @@ fn main() -> ExitCode {
         "counters" => counters_command(&args[1..]),
         "blocked" => blocked_command(&args[1..]),
         "requests" => requests_command(&args[1..]),
+        "eval" => eval_command(&args[1..]),
         "logpoint" => logpoint_command(&args[1..]),
         "source" => source_command(&args[1..]),
         "relay" => match args.get(1).and_then(|a| a.to_str()) {
@@ -1029,6 +1030,21 @@ fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut names = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
     let (Some(name), None) = (names.next(), names.next()) else { return Err(USAGE.to_string()) };
     tondo::observe::blocked_in(name, json).map(|()| ExitCode::SUCCESS)
+}
+
+fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
+    const USAGE: &str = "usage: tondo eval <pid|name> <expression> [--json]";
+    let json = args.iter().any(|a| a == "--json");
+    let mut words = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
+    let (Some(name), Some(expression), None) = (words.next(), words.next(), words.next()) else {
+        return Err(USAGE.to_string());
+    };
+    let value = tondo::live::eval(name, expression)?;
+    match json {
+        true => print_json("eval", true, serde_json::json!({ "value": value })),
+        false => println!("{value}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn requests_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -2440,6 +2456,8 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
             }
             None => std::process::Command::new(&executable),
         };
+        // A panic waits for a fix: this is what saves it.
+        command.env("TONDO_LIVE_HOLD", "1");
         command.args(program_args).spawn().map(Some).map_err(|e| format!("cannot start {}: {e}", executable.display()))
     };
     let mut child = start()?;

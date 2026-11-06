@@ -60,6 +60,7 @@ pub fn lower(program: &hir::Program, live: bool, debug: bool, catch_ups: Option<
         matches!(s, Statement::Assign(_, r, _)
             if matches!(**r, Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnter | hir::StdFn::WithinEnter), _)))
     });
+    let recovering = recovering || live;
     if !waits.contains(&true) && !recovering {
         return plain;
     }
@@ -139,6 +140,7 @@ fn may_panic(statement: &Statement) -> bool {
                             | hir::StdFn::RecoverLeave
                             | hir::StdFn::RecoverCatch
                             | hir::StdFn::UnwindHold
+                            | hir::StdFn::PanicHeld
                             | hir::StdFn::UnwindResume
                             | hir::StdFn::DeferEnd
                             | hir::StdFn::CancelReturn
@@ -323,6 +325,8 @@ struct Builder<'a> {
     made_by: HashMap<Vec<u32>, u32>,
     /// Inside what a `defer` runs on the way out of a scope.
     deferring: u32,
+    /// The ways of a held panic, made once for each state of the statement.
+    held_panics: HashMap<(BlockId, BlockId, usize, usize), BlockId>,
     /// The temporary a `match` arm's bindings take their values from,
     /// rather than copy them: the arm has no guard, so the match uses
     /// nothing of it after them.
@@ -379,6 +383,7 @@ fn lower_function(
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
         deferring: 0,
+        held_panics: HashMap::new(),
         moving: None,
         recovering,
         recovers: Vec::new(),
@@ -570,12 +575,57 @@ impl Builder<'_> {
     /// way to the nearest `recover` (15.9).
     fn unwind_check(&mut self) {
         let unwind = self.unwind_target();
+        let unwind = self.held_panic(unwind);
         let asked = self.new_local(Ty::BOOL);
         let check = Statement::Assign(Place::local(asked), Box::new(Rvalue::Unwinding), Span::default());
         self.blocks[self.current.0 as usize].0.push(check);
         let next = self.new_block();
         self.terminate(Terminator::Branch(Operand::local(asked), unwind, next));
         self.switch_to(next);
+    }
+
+    /// In a live build, the way of a panic through this statement: it may
+    /// wait for the code to change, and then the statement starts again, with
+    /// all the frame has, on the new code; or go on by `unwind`.
+    fn held_panic(&mut self, unwind: BlockId) -> BlockId {
+        let Some(again) = self.again.filter(|again| self.restart.is_some() && !again.moved) else { return unwind };
+        let key = (unwind, again.block, self.frames[again.frames].len(), self.scopes.len());
+        if let Some(&block) = self.held_panics.get(&key) {
+            return block;
+        }
+        let current = self.current;
+        let block = self.new_block();
+        self.switch_to(block);
+        self.cleaning += 1;
+        let held = self.new_local(Ty::BOOL);
+        let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::PanicHeld), Vec::new());
+        self.blocks[self.current.0 as usize].0.push(Statement::Assign(
+            Place::local(held),
+            Box::new(call),
+            Span::default(),
+        ));
+        let back = self.new_block();
+        self.terminate(Terminator::Branch(Operand::local(held), back, unwind));
+        self.switch_to(back);
+        self.start_again(again);
+        self.cleaning -= 1;
+        self.held_panics.insert(key, block);
+        self.switch_to(current);
+        block
+    }
+
+    /// What the statement made since it started goes, and it starts again.
+    fn start_again(&mut self, again: Again) {
+        let mut temps: Vec<Local> = self.frames[again.frames][again.temps..].to_vec();
+        temps.extend(self.frames[again.frames + 1..].iter().flatten());
+        for local in temps.into_iter().rev() {
+            self.push(Statement::Release(Place::local(local)));
+        }
+        let exits: Vec<Exit> = self.scopes[again.scopes..].iter().rev().flat_map(|s| s.iter().rev().cloned()).collect();
+        for exit in exits {
+            self.exit_action(exit);
+        }
+        self.terminate(Terminator::Goto(again.block));
     }
 
     /// The way a panic unwinds from here: the panic waits while what the
@@ -1168,17 +1218,8 @@ impl Builder<'_> {
         self.terminate(Terminator::Branch(restart, back, next));
         self.switch_to(back);
         self.cleaning += 1;
-        let mut temps: Vec<Local> = self.frames[again.frames][again.temps..].to_vec();
-        temps.extend(self.frames[again.frames + 1..].iter().flatten());
-        for local in temps.into_iter().rev() {
-            self.push(Statement::Release(Place::local(local)));
-        }
-        let exits: Vec<Exit> = self.scopes[again.scopes..].iter().rev().flat_map(|s| s.iter().rev().cloned()).collect();
-        for exit in exits {
-            self.exit_action(exit);
-        }
+        self.start_again(again);
         self.cleaning -= 1;
-        self.terminate(Terminator::Goto(again.block));
         self.switch_to(next);
     }
 

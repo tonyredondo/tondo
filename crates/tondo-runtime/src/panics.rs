@@ -304,7 +304,9 @@ fn task<'a>() -> Option<&'a mut Task> {
 /// one of the language's, but a deadlock and those of the test runner, in
 /// a task running a `recover` or belonging to one.
 fn recoverable(code: u32) -> bool {
-    code != 13 && code < 2000 && task().is_some_and(|task| !task.recovers.is_empty() || belongs(task))
+    code != 13
+        && code < 2000
+        && task().is_some_and(|task| crate::live::holds_panics() || !task.recovers.is_empty() || belongs(task))
 }
 
 fn belongs(task: &Task) -> bool {
@@ -424,6 +426,66 @@ pub(crate) unsafe fn record(code: u32, message: *const Str, location: *const Str
     task.unwinding = Some(Box::new(record));
     crate::tasks::attend(true);
     true
+}
+
+/// Asked where a statement of a live build unwinds from a panic that no
+/// `recover` stops, under `tondo run --watch`: the task waits at the program's
+/// innermost frame, the program going on, until the code changes. Then that
+/// function starts again: the statement of its caller that called it, with all
+/// the caller has, on the new code; or, without a caller, its own statement.
+/// A panic of the standard library waits at the program's call.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_panic_held() -> u8 {
+    let Some(task) = task() else { return 0 };
+    let stops = !task.recovers.is_empty() || belongs(task) || !task.paused.is_empty();
+    if !crate::live::holds_panics() || stops || task.unwinding.is_none() {
+        return 0;
+    }
+    let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
+    let callers = crate::trace::walk(crate::trace::frame_pointer(), bounds);
+    let mut places = callers.filter_map(|address| Some(crate::trace::scopes_at(address).first()?.1.clone()));
+    if places.next().is_none_or(|place| place.starts_with("<std>/")) {
+        return 0;
+    }
+    if !std::mem::take(&mut task.retrying) {
+        if let Some(record) = &task.unwinding {
+            record.print(false, false);
+        }
+        eprintln!("tondo: task {} waits here: save a fix, and this function starts again", task.id);
+        if !crate::live::wait_for_patch() {
+            return 0;
+        }
+        // Its caller's statement calls it again.
+        if places.any(|place| !place.starts_with("<std>/")) {
+            task.retrying = true;
+            return 0;
+        }
+    }
+    task.unwinding = None;
+    crate::tasks::attend(false);
+    1
+}
+
+/// A task that ends in a panic a held statement did not keep: the program
+/// ends, as it would have where the panic was.
+pub(crate) fn unheld(task: &mut crate::tasks::Task) {
+    if crate::live::holds_panics()
+        && task.recovers.is_empty()
+        && !belongs(task)
+        && let Some(record) = task.unwinding.take()
+    {
+        record.print(false, false);
+        crate::tasks::end_all(crate::PANIC_EXIT_CODE)
+    }
+}
+
+/// What the running task panicked with, if it did, which ends that panic:
+/// an expression a tool evaluates.
+pub(crate) fn taken() -> Option<String> {
+    let task = task()?;
+    let record = task.unwinding.take()?;
+    crate::tasks::attend(false);
+    Some(record.panic.headline())
 }
 
 /// A panic that a task ended with goes on in the task that waits for it:

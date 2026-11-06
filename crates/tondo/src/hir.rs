@@ -967,6 +967,9 @@ pub enum StdFn {
     /// The cleanups of a frame a panic unwinds start and end (15.9).
     UnwindHold,
     UnwindResume,
+    /// In a live build, whether a panic waits for the code to change and its
+    /// statement starts again (toolchain 7.10).
+    PanicHeld,
     /// A `defer` ran; a function a cancellation unwinds returns (11.15).
     DeferEnd,
     CancelReturn,

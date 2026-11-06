@@ -351,6 +351,9 @@ pub(crate) struct Task {
     /// The request it works for, by its number in a timeline, as the task
     /// that started it; 0 for none.
     flight: u64,
+    /// A panic that held it goes up to the frame that calls the function
+    /// again.
+    pub(crate) retrying: bool,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -2325,6 +2328,7 @@ extern "C" fn trampoline() -> ! {
         } else if (*task).main {
             let main: unsafe extern "C" fn() -> i32 = std::mem::transmute(code);
             MAIN_STATUS.store(main() as usize, Ordering::SeqCst);
+            super::panics::unheld(&mut *task);
             end_detached();
         } else {
             let captures = body.add(super::FN_HEADER);
@@ -2353,6 +2357,7 @@ extern "C" fn trampoline() -> ! {
                 }
             }
             super::tondo_rt_fn_release(body as *mut super::FnObject);
+            super::panics::unheld(&mut *task);
             // A panic it ended with goes to its `recover`, or to whoever
             // waits for it.
             if let Some(panic) = (*task).unwinding.take() {
@@ -2679,6 +2684,7 @@ fn new_task(
         blocked_kind: AtomicU8::new(0),
         blocked_since: AtomicU64::new(0),
         flight: 0,
+        retrying: false,
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
@@ -3212,7 +3218,7 @@ fn exploring() -> Option<&'static AtomicU64> {
 /// comes before its own and a lost update does not depend on chance.
 pub(crate) fn may_lose_update() {
     let Some(seed) = exploring() else { return };
-    if seeded(seed) % 2 == 0 {
+    if seeded(seed).is_multiple_of(2) {
         if let Some(task) = unsafe { current().as_mut() } {
             task.priority = 1;
         }

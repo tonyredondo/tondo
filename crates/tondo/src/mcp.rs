@@ -298,6 +298,7 @@ impl Server {
         let mut child = Command::new(tondo()?)
             .args(&argv)
             .env("TONDO_PANIC_FORMAT", "json")
+            .env("TONDO_LIVE_HOLD", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1232,6 +1233,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_redact" => push(&["dump", "redact", &args.need("file")?, &args.need("output")?]),
         "blocked" => push(&["blocked", &args.need("program")?, "--json"]),
         "requests" => push(&["requests", &args.need("program")?, "--json"]),
+        "eval" => push(&["eval", &args.need("program")?, &args.need("expression")?, "--json"]),
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             if let Some(frame) = args.text("frame") {
@@ -2298,6 +2300,17 @@ are here, so one written today finds when a bug came. A commit that does not com
         description: "What the tasks of a running program wait for, and who holds them up.",
         kind: Kind::Reads,
         params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "eval",
+        description: "What an expression gives in a running live build, without stopping it: the program's functions, \
+types and constants as its files say now, as in `total(Order { id: 1 })`. Tries a change at once, with no rebuild. A \
+panic there comes back as an error and the program goes on.",
+        kind: Kind::Runs,
+        params: &[
+            ("program", "string!", "The running live program: its process ID or name."),
+            ("expression", "string!", "The expression."),
+        ],
     },
     Tool {
         name: "requests",

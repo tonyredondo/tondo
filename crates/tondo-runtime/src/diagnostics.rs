@@ -903,10 +903,12 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             "live" => super::live::describe(),
             "barrier" => super::live::hold(),
+            "stay" => super::live::stay(),
             "release" => super::live::let_go(),
             _ if line.starts_with("again ") => super::live::again(&line["again ".len()..]),
             _ if line.starts_with("patch ") => super::live::patch(&line["patch ".len()..]),
             _ if line.starts_with("go ") => super::logpoints::go(&line["go ".len()..]),
+            _ if line.starts_with("eval ") => super::live::eval(&line["eval ".len()..], client),
             _ if line.starts_with("logpoint ") => super::logpoints::set(&line["logpoint ".len()..], client),
             "counters" => counters(),
             "memory" => {

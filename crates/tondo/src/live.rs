@@ -587,6 +587,8 @@ pub struct Reloaded {
     pub notes: Vec<String>,
     /// The bindings frames passed that run again as they move.
     pub again: Vec<String>,
+    /// How many tasks a panic held start their statements again.
+    pub retried: u64,
 }
 
 /// Why a reload did not happen: the program does not compile, or the
@@ -707,6 +709,29 @@ pub fn call(
     }
 }
 
+/// `tondo eval <pid|name> <expression>`: what an expression gives in a
+/// running live build, without stopping it: the program's functions and
+/// types are at hand, as those of the file of its `main`, and its files as
+/// they are now.
+pub fn eval(name: &str, expression: &str) -> Result<String, String> {
+    let mut program = crate::observe::connect(name)?;
+    let pid = program.pid;
+    let mut ask = |request: &str| program.ask(request);
+    let (_, manifest) = manifest_of(pid, &mut ask).map_err(|e| format!("{e}: `eval` is for a live build"))?;
+    let points = manifest["points"].as_object().into_iter().flatten();
+    let main = points.into_iter().find(|(identity, _)| osr::shown(identity) == "main");
+    let file = main.and_then(|(_, entry)| entry["file"].as_str()).ok_or("the program has no `main`")?.to_string();
+    let ending = format!("    let tondoCalled = {expression}\n    \"{{tondoCalled}}\"");
+    let (slot, _) = compiled(pid, &mut ask, &file, "tondoEval", "String", expression, &ending, &[])
+        .map_err(|e| e.replace("a function runs", "an expression runs"))?;
+    let _ = program.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs(60)));
+    let answer = program.ask(&format!("eval {slot}"))?;
+    match answer["called"].as_str() {
+        Some(value) => Ok(value.to_string()),
+        None => Err(answer["error"].as_str().unwrap_or("the expression failed").to_string()),
+    }
+}
+
 /// A function a live patch adds to the program's `file`, in memory: named
 /// `name`, it reads the bindings of `bindings` that `expression` names from
 /// the addresses its argument holds, and ends with `ending`, its result of
@@ -736,6 +761,7 @@ fn compiled(
         ));
     }
     text.push_str(&format!("{ending}\n}}\n"));
+    ask("stay")?;
     let open = std::collections::HashMap::from([(path, text)]);
     crate::driver::with_open(open, name, || patched(pid, ask)).map_err(told)?;
     let (_, manifest) = manifest_of(pid, ask)?;
@@ -1079,7 +1105,8 @@ fn patch(
     notes.extend(renamed.iter().map(|(old, new)| format!("`{old}` is `{new}` now")));
     notes.sort();
     notes.dedup();
-    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes, again: moves.again })
+    let retried = answer["retried"].as_u64().unwrap_or(0);
+    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes, again: moves.again, retried })
 }
 
 /// Each version of each function's points the manifest knows, by identity,
@@ -1226,6 +1253,9 @@ impl Reloaded {
         if self.moves > 0 {
             summary.push_str("; frames move to the new code at their next statement");
         }
+        if self.retried > 0 {
+            summary.push_str(&format!("\n{} that panicked starts its statement again", self.retried));
+        }
         for line in self.notes.iter().chain(&self.again).chain(&self.stays) {
             summary.push('\n');
             summary.push_str(line);
@@ -1242,6 +1272,7 @@ impl Reloaded {
             "stays": self.stays,
             "converted": self.notes,
             "again": self.again,
+            "retried": self.retried,
         })
     }
 

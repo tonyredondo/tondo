@@ -1763,6 +1763,22 @@ frame donde paró la tarea. La respuesta de `reload` tiene los campos de
 `message` y `restart`, que dice si el cambio pide arrancar el programa de
 nuevo; el editor muestra así qué fue de cada cambio.
 
+Con `tondo run --watch`, y en una sesión `run_start` del MCP, un panic que ningún
+`recover` para no termina el programa: su tarea espera en el frame más interno del
+programa, tras decir el panic, y las demás siguen. Con el siguiente cambio esa función
+empieza de nuevo: se repite la sentencia de su llamador que la llamó, con todo lo que él
+tiene, en el código nuevo, y sin llamador, como en `main`, su propia sentencia. Lo que esas
+sentencias ya hicieron no se deshace. Si la sentencia entregó un binding, se repite la de
+más arriba, y sin ninguna el programa termina como siempre. `reload` dice cuántas tareas
+vuelven así. Un `tondo run --live` sin más termina con el panic, como cualquier build.
+
+`tondo eval <pid|nombre> <expresión>` da el valor de una expresión en un build vivo que
+corre, sin parar nada, compilada con el código que dicen sus archivos ahora, también lo que
+cambió, en el archivo de su `main`: lee funciones, tipos y constantes, no los bindings de
+ningún frame. La ejecuta una tarea propia. Si hace panic, `eval` lo dice y termina con
+estado de error, y el programa sigue. El MCP la da con `eval` y el editor con *Evaluate in a
+Running Program*.
+
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos,
 también los que embebe, lo cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
@@ -1854,11 +1870,12 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
+| `eval` | `tondo-eval-0.1/1` | `value`, el texto de lo que dio |
 | `requests` | `tondo-requests-0.1/1` | `requests`, en curso, y `served`, respondidas, cada una con `method`, `path`, `ms`, `task` y `steps`: `ms`, `task`, `what`, `at` y lo propio de cada paso |
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
-| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `again` y `converted`; si no puede, `ok` falso, `message` y `restart` |
+| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `again`, `retried` y `converted`; si no puede, `ok` falso, `message` y `restart` |
 | `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |

@@ -269,6 +269,7 @@ enum Rt {
     RecoverLeave,
     RecoverCatch,
     UnwindHold,
+    PanicHeld,
     UnwindResume,
     UnwindReturn,
     DeferEnd,
@@ -568,6 +569,7 @@ impl Rt {
             Rt::WithinLeave => ("tondo_rt_within_leave", &[], &[]),
             Rt::WithinCatch => ("tondo_rt_within_catch", &[], &[I8]),
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
+            Rt::PanicHeld => ("tondo_rt_panic_held", &[], &[I8]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
             Rt::DeferEnd => ("tondo_rt_defer_end", &[], &[]),
@@ -7020,6 +7022,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Cancelled if self.e.cg.live() => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
             // After a statement whose panics jumped to the unwinding
             // themselves, nothing to ask.
+            Rvalue::Unwinding if self.e.cg.live() && !self.quiet_check => {
+                Val::Scalar(self.e.call_rt(Rt::Unwinding, &[]).unwrap())
+            }
             Rvalue::Unwinding if self.quiet_check => Val::Scalar(self.e.fb.ins().iconst(types::I8, 0)),
             Rvalue::Unwinding => {
                 let id = self.e.cg.attention();
@@ -9042,6 +9047,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::WithinLeave) => self.e.call_rt(Rt::WithinLeave, &[]),
             Callee::Std(StdFn::WithinCatch) => self.e.call_rt(Rt::WithinCatch, &[]),
             Callee::Std(StdFn::UnwindHold) => self.e.call_rt(Rt::UnwindHold, &[]),
+            Callee::Std(StdFn::PanicHeld) => self.e.call_rt(Rt::PanicHeld, &[]),
             // A function that returns from here goes to its caller's way,
             // through its frame's return address (15.9).
             Callee::Std(StdFn::UnwindResume) if self.returns => self.e.call_rt(Rt::UnwindReturn, &[]),
