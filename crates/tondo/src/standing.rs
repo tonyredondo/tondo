@@ -61,7 +61,7 @@ pub(crate) fn connect(name: &str, via: Option<&str>) -> Result<Program, String> 
         out: there,
         said,
         points: HashMap::new(),
-        _watching: Point { writer, text: None },
+        _watching: Point { writer, text: None, deleted: false },
         held: None,
         seen: None,
         selected: (0, 0),
@@ -86,6 +86,8 @@ enum Said {
 struct Point {
     writer: UnixStream,
     text: Option<String>,
+    /// Deleted while it holds a task: it goes when the task does.
+    deleted: bool,
 }
 
 impl Drop for Point {
@@ -155,13 +157,18 @@ impl Standing {
             if self.held == Some(id) {
                 self.held = None;
                 self.untold = None;
+                self.points.retain(|point, kept| *point != id || !kept.deleted);
                 let told = format!("the task went on: a breakpoint holds it for {HOLD} seconds at most");
                 self.tell(&json!({ "logged": told }));
             }
             return;
         }
         let Some(id) = value["hit"].as_u64() else { return };
-        let Some(point) = self.points.get(&id) else { return };
+        let Some(point) = self.points.get_mut(&id) else { return };
+        if point.deleted && value["step"] != true {
+            let _ = writeln!(point.writer, "go {id}");
+            return;
+        }
         if let Some(text) = &point.text {
             let logged = observe::logged(&value, Some(text));
             self.tell(&json!({ "logged": logged }));
@@ -215,6 +222,7 @@ impl Standing {
                     && let Some(point) = self.points.get_mut(&id)
                 {
                     let _ = writeln!(point.writer, "go {id}");
+                    self.points.retain(|point, kept| *point != id || !kept.deleted);
                 }
                 Ok(json!({ "running": true }))
             }
@@ -274,16 +282,19 @@ impl Standing {
                 }
             }
         });
-        self.points.insert(id, Point { writer, text });
+        self.points.insert(id, Point { writer, text, deleted: false });
         let line = line.parse::<u64>().unwrap_or(0);
         Ok(json!({ "breakpoint": { "id": id, "at": place, "line": line } }))
     }
 
     fn delete(&mut self, rest: &str) -> Result<Value, String> {
         let id = rest.parse::<u64>().map_err(|_| "delete takes a breakpoint's number")?;
-        self.points.remove(&id).ok_or(format!("no breakpoint {id}"))?;
+        // A task that stands stays until it is told to go on: changing the
+        // breakpoints of a file deletes them all.
         if self.held == Some(id) {
-            self.held = None;
+            self.points.get_mut(&id).ok_or(format!("no breakpoint {id}"))?.deleted = true;
+        } else {
+            self.points.remove(&id).ok_or(format!("no breakpoint {id}"))?;
         }
         Ok(json!({ "deleted": id }))
     }

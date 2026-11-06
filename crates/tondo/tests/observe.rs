@@ -3379,6 +3379,9 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     assert!(logged["output"].as_str().unwrap().starts_with("order "), "{logged}");
 
     // The third time a line is reached, by a count kept where it is reached.
+    // The task that stands stays, whatever happens to its breakpoint.
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    std::thread::sleep(std::time::Duration::from_millis(100));
     let breakpoints = json!([{ "line": 7, "hitCondition": "3" }]);
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": breakpoints }));
     let frame = stack["stackFrames"][0]["id"].clone();
