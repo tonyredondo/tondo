@@ -972,9 +972,9 @@ fn wait_pinned(task: *mut Task) {
         queue.pinned.push(task);
         check(queue);
     }
-    // A recorded run has no other worker to run what it waits for: a thread
-    // stands in for it meanwhile.
-    let standing_in = super::replay::on().then(|| stand_in(state));
+    // One worker has no other to run what it waits for: a thread stands in
+    // for it meanwhile.
+    let standing_in = exploring().is_some().then(|| stand_in(state));
     // Waiting, the thread runs no Tondo code that a collection could meet.
     leave_tondo();
     // The wait's own reading of the clock is not the program's.
