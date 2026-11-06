@@ -3225,7 +3225,16 @@ fn a_request_is_followed_through_its_tasks() {
     adapter.ask("launch", json!({ "program": source, "cwd": dir }));
     adapter.ask("configurationDone", json!({}));
     get();
-    let found = adapter.ask("requests", json!({}));
+    // The answer leaves before the request is done with, and on one core the
+    // question may come in between.
+    let mut found = adapter.ask("requests", json!({}));
+    for _ in 0..500 {
+        if found["served"][0]["path"] == "/slow" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        found = adapter.ask("requests", json!({}));
+    }
     assert_eq!(found["served"][0]["path"], "/slow", "{found}");
     assert!(found["served"][0]["picture"].as_str().unwrap().starts_with("<svg"), "{found}");
     assert!(found["served"][0]["steps"].as_array().unwrap().len() >= 3, "{found}");
