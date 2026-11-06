@@ -3214,7 +3214,7 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     let mut child = Command::new(dir.join("orders"))
         .env("TONDO_DIAGNOSTICS", "1")
         .stdout(std::fs::File::create(&printed).unwrap())
-        .stderr(Stdio::null())
+        .stderr(std::fs::File::create(dir.join("errors")).unwrap())
         .spawn()
         .unwrap();
     let pid = child.id();
@@ -3299,7 +3299,9 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     // a picture of it.
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
     adapter.ask("continue", json!({ "threadId": thread }));
-    adapter.ask("pause", json!({ "threadId": thread }));
+    let paused = adapter.respond("pause", json!({ "threadId": thread }));
+    let said = std::fs::read_to_string(dir.join("errors")).unwrap();
+    assert_eq!(paused["success"], true, "{paused} {:?}: {said}", child.try_wait());
     let stopped = adapter.until("stopped");
     assert_eq!(stopped["reason"], "pause", "{stopped}");
     let threads = adapter.ask("threads", json!({}));
