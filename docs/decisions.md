@@ -5208,3 +5208,16 @@ the patch runs the bindings it lacks and a `let` written anew above its loop, an
 on where it was. A `var` is state and keeps its value. What runs twice, and what is left
 unreleased, are the price, which production would not pay and a developer does.
 
+## A panic in development is a question
+
+Under `--watch` a panic asks for a fix instead of ending the program: what the program
+holds is the reason to keep it, and the fix is the next thing that happens. The function
+starts again from its caller's statement, because a fix is often above the line that
+panicked, and the caller keeps all it has. `tondo run --live` alone still ends: nobody may
+be there to answer, and a script must not wait forever.
+
+## What a line left is read from the next
+
+A binding has its new value after its line, so a line's values are those the next line
+of its frame finds. Looking costs only while a tool asks, and stops by itself.
+

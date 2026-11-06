@@ -455,6 +455,12 @@ fn live_sessions_reload() {
     assert_eq!(reloaded["changed"], json!(["answer"]));
     let (heard, _) = agent.call("run_input", json!({ "session": session, "text": "b\n", "wait": 180 }));
     assert_eq!(heard["stdout"], "v2 b\n", "{heard}");
+    // What the running program gives and holds, stopping nothing.
+    let pid = heard["pid"].to_string();
+    let (evaluated, _) = agent.call("eval", json!({ "program": pid, "expression": "1 + 2" }));
+    assert_eq!(evaluated["report"]["value"], "3", "{evaluated}");
+    let (lines, _) = agent.call("values", json!({ "program": pid, "file": "server.to", "seconds": 0 }));
+    assert!(lines["report"]["values"].is_object(), "{lines}");
     let (stopped, _) = agent.call("run_stop", json!({ "session": session }));
     assert_eq!(stopped["running"], false);
     agent.stop();

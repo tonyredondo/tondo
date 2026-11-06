@@ -760,6 +760,29 @@ fn an_expression_runs_in_a_running_program() {
     server.stop();
 }
 
+/// What each line left, while the program runs and nothing stops.
+#[test]
+fn the_lines_of_a_running_program_say_what_they_left() {
+    let dir = dir("live_values");
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    var round = 0\n    for round < 100000 {\n        \
+        round += 1\n        let doubled = round * 2\n        console.println(\"{doubled}\")\n        \
+        time.sleep(time.milliseconds(5))\n    }\n}\n";
+    std::fs::write(dir.join("counts.to"), program).unwrap();
+    let server = Running::start(&dir, &["run", "counts.to", "--live"]);
+    assert!(server.lines.recv_timeout(Duration::from_secs(60)).is_ok());
+    let args = ["values", &server.pid(), "counts.to", "--json"];
+    let told = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&told.stdout).unwrap();
+    let line = &found["values"]["8"];
+    let value = |name: &str| {
+        let bindings = line.as_array().unwrap_or_else(|| panic!("{found}"));
+        let binding = bindings.iter().find(|b| b["name"] == name).unwrap_or_else(|| panic!("{found}"));
+        binding["value"].as_str().unwrap().parse::<i64>().unwrap()
+    };
+    assert_eq!(value("doubled"), value("round") * 2, "{found}");
+    server.stop();
+}
+
 const CLOSURE: &str = r#"import std.console
 
 let serve = () {

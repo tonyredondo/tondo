@@ -1234,6 +1234,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "blocked" => push(&["blocked", &args.need("program")?, "--json"]),
         "requests" => push(&["requests", &args.need("program")?, "--json"]),
         "eval" => push(&["eval", &args.need("program")?, &args.need("expression")?, "--json"]),
+        "values" => {
+            push(&["values", &args.need("program")?, &args.need("file")?, "--json"]);
+            if let Some(seconds) = args.text("seconds") {
+                push(&["--for", &seconds]);
+            }
+        }
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             if let Some(frame) = args.text("frame") {
@@ -2300,6 +2306,17 @@ are here, so one written today finds when a bug came. A commit that does not com
         description: "What the tasks of a running program wait for, and who holds them up.",
         kind: Kind::Reads,
         params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "values",
+        description: "What each line of a file left in a running live build, by line, with nothing stopped: its \
+bindings as the next line found them, the last time it ran. Shows what a change does as it runs.",
+        kind: Kind::Reads,
+        params: &[
+            ("program", "string!", "The running live program: its process ID or name."),
+            ("file", "string!", "The file, as the program names it, as `app.to`."),
+            ("seconds", "number", "For how long to look; 1 by default."),
+        ],
     },
     Tool {
         name: "eval",

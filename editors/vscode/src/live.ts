@@ -7,7 +7,7 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { exec } from './cli';
-import { Reload, Shown, reloadShown, reloaded } from './report';
+import { Reload, Shown, lineValues, reloadShown, reloaded } from './report';
 
 /** A live build: a debug session of `tondo dap`, or the program of a Run
  *  Live task, `tondo run --live`, which becomes it. */
@@ -24,8 +24,53 @@ let busy = false;
 /** A change came while a reload ran, or with reloads on save off. */
 let pending = false;
 
+/** What the lines of the file in view left, beside them, while a live build
+ *  runs and nothing stops. */
+const beside = vscode.window.createTextEditorDecorationType({
+  after: { margin: '0 0 0 2em', color: new vscode.ThemeColor('editorCodeLens.foreground') },
+});
+let showing = true;
+
+type LineBindings = Record<string, { name: string; value: string }[]>;
+
+async function linesLeft(live: Live, file: string): Promise<LineBindings> {
+  if ('session' in live) {
+    return ((await live.session.customRequest('values', { file })) as { values: LineBindings }).values;
+  }
+  const ran = await exec(['values', String(live.pid), file, '--for', '0', '--json'], os.tmpdir());
+  return (JSON.parse(ran.stdout) as { values: LineBindings }).values;
+}
+
+async function showValues(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  const on = showing && vscode.workspace.getConfiguration('tondo').get<boolean>('liveValues', true);
+  if (!current || !on || editor?.document.languageId !== 'tondo') {
+    editor?.setDecorations(beside, []);
+    return;
+  }
+  const lines = await linesLeft(current, editor.document.uri.fsPath).catch(() => ({}) as LineBindings);
+  const options = Object.entries(lines).flatMap(([line, bindings]) => {
+    const at = Number(line) - 1;
+    const text = at < editor.document.lineCount ? lineValues(bindings, editor.document.lineAt(at).text) : '';
+    const range = at < editor.document.lineCount ? editor.document.lineAt(at).range : undefined;
+    return text && range
+      ? [{ range: new vscode.Range(range.end, range.end), renderOptions: { after: { contentText: text } } }]
+      : [];
+  });
+  editor.setDecorations(beside, options);
+}
+
 export function registerLive(context: vscode.ExtensionContext, channel: vscode.LogOutputChannel): void {
   output = channel;
+  const looking = setInterval(() => void showValues(), 1000);
+  context.subscriptions.push(
+    beside,
+    { dispose: () => clearInterval(looking) },
+    vscode.commands.registerCommand('tondo.liveValues', () => {
+      showing = !showing;
+      void showValues();
+    }),
+  );
   item = vscode.window.createStatusBarItem('tondo.live', vscode.StatusBarAlignment.Left, -1);
   item.name = 'Tondo Live';
   // Files an agent or another tool changes, too.

@@ -99,6 +99,7 @@ fn main() -> ExitCode {
         "blocked" => blocked_command(&args[1..]),
         "requests" => requests_command(&args[1..]),
         "eval" => eval_command(&args[1..]),
+        "values" => values_command(&args[1..]),
         "logpoint" => logpoint_command(&args[1..]),
         "source" => source_command(&args[1..]),
         "relay" => match args.get(1).and_then(|a| a.to_str()) {
@@ -1030,6 +1031,22 @@ fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut names = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
     let (Some(name), None) = (names.next(), names.next()) else { return Err(USAGE.to_string()) };
     tondo::observe::blocked_in(name, json).map(|()| ExitCode::SUCCESS)
+}
+
+fn values_command(args: &[OsString]) -> Result<ExitCode, String> {
+    const USAGE: &str = "usage: tondo values <pid|name> <file> [--for <seconds>] [--json]";
+    let (mut given, mut seconds, mut json) = (Vec::new(), 1, false);
+    let mut rest = args.iter().filter_map(|a| a.to_str());
+    while let Some(arg) = rest.next() {
+        match arg {
+            "--json" => json = true,
+            "--for" => seconds = rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
+            other if !other.starts_with("--") => given.push(other),
+            _ => return Err(USAGE.to_string()),
+        }
+    }
+    let [name, file] = given[..] else { return Err(USAGE.to_string()) };
+    tondo::observe::values_in(name, file, seconds, json).map(|()| ExitCode::SUCCESS)
 }
 
 fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {

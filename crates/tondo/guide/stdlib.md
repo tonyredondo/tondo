@@ -896,7 +896,8 @@ statement, and reload says which lines and why. Under `--watch` a panic does not
 program: the task waits, and when a fix is saved the function that panicked starts
 again from its caller's statement, with all the caller has. `tondo eval <pid|name>
 "total(order())"` says what an expression gives in the running program, on the code
-as it is now, and stops nothing. A type may gain or lose
+as it is now, and `tondo values <pid|name> app.to` what each line left the last time
+it ran; an editor shows that beside the lines. Neither stops anything. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
 move, their parameters included, and what goes back to their callers, a
 result or a value lent, converts back, field by field, a new field starting

@@ -8,6 +8,7 @@
 
 use super::{Builder, Str, str_bytes};
 use expression::{Evaluator, Expr};
+use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
@@ -102,6 +103,96 @@ static TABLE: OnceLock<RwLock<Table>> = OnceLock::new();
 fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
     TABLE.get().map(|table| table.read().unwrap_or_else(|e| e.into_inner()))
 }
+/// What each line of a file left in its frame, while a tool looks: the
+/// bindings as the next line of that frame found them.
+struct LineValues {
+    file: String,
+    /// When the tool stops looking if it does not ask again: one that went
+    /// away leaves the program as it was.
+    until: std::time::Instant,
+    lines: HashMap<u32, Vec<(String, String)>>,
+    /// The line each frame was at, and when each line was shown last.
+    at: HashMap<(u64, usize), u32>,
+    shown: HashMap<u32, std::time::Instant>,
+}
+
+static LINE_VALUES: Mutex<Option<LineValues>> = Mutex::new(None);
+static VALUES_ON: AtomicBool = AtomicBool::new(false);
+/// A line in a loop shows at most this often.
+const VALUES_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+const VALUES_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `values <file>`: starts or goes on looking at a file of a build with
+/// probes, and says what its lines left so far.
+pub(crate) fn line_values_asked(file: &str) -> String {
+    if !has_probes() {
+        return "{\"error\":\"the values of lines need a build with probes: run it with --live\"}".to_string();
+    }
+    let mut looking = LINE_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    let until = std::time::Instant::now() + VALUES_FOR;
+    let values = looking.get_or_insert_with(|| LineValues {
+        file: file.to_string(),
+        until,
+        lines: HashMap::new(),
+        at: HashMap::new(),
+        shown: HashMap::new(),
+    });
+    if values.file != file {
+        values.file = file.to_string();
+        values.lines.clear();
+        values.at.clear();
+    }
+    values.until = until;
+    VALUES_ON.store(true, Ordering::Relaxed);
+    let lines = values.lines.iter().map(|(line, bindings)| {
+        let bindings =
+            bindings.iter().map(|(name, value)| format!("{{\"name\":{},\"value\":{}}}", quoted(name), quoted(value)));
+        format!("\"{line}\":[{}]", bindings.collect::<Vec<_>>().join(","))
+    });
+    format!("{{\"values\":{{{}}}}}", lines.collect::<Vec<_>>().join(","))
+}
+
+/// At a probe, while a tool looks: what the line this frame was at left.
+fn line_values(site: usize, frame: usize, addresses: usize, alive: usize) {
+    if SHOWING.get() {
+        return;
+    }
+    let Some(table) = table() else { return };
+    let Some(here) = table.sites.get(site) else { return };
+    let task = super::tasks::current_id();
+    let now = std::time::Instant::now();
+    let due = {
+        let mut looking = LINE_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(values) = looking.as_mut() else { return };
+        if now > values.until {
+            VALUES_ON.store(false, Ordering::Relaxed);
+            *looking = None;
+            return;
+        }
+        if here.file != values.file && !values.file.ends_with(&format!("/{}", here.file)) {
+            return;
+        }
+        let was = values.at.insert((task, frame), here.line);
+        was.filter(|line| values.shown.get(line).is_none_or(|at| now.duration_since(*at) >= VALUES_EVERY))
+    };
+    let Some(line) = due else { return };
+    if let Some((addressed, living)) = table.offsets.get(here.function)
+        && addressed.load(Ordering::Relaxed) == UNKNOWN
+    {
+        addressed.store(addresses as isize - frame as isize, Ordering::Relaxed);
+        living.store(alive as isize - frame as isize, Ordering::Relaxed);
+    }
+    let stop = Stop { task, site, frame, bounds: (0, 0), addresses, alive, why: String::new() };
+    let frames = frames(&table, &stop);
+    let bindings = visible(&table, &frames, 0).into_iter();
+    let found = bindings.map(|(binding, address, _)| (binding.name.clone(), clipped(&show(binding.show, address))));
+    let found: Vec<(String, String)> = found.collect();
+    if let Some(values) = LINE_VALUES.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        values.lines.insert(line, found);
+        values.shown.insert(line, now);
+    }
+}
+
 /// Whether a breakpoint of a request stops this task.
 fn in_request(request: &Option<String>, task: u64) -> bool {
     request.as_ref().is_none_or(|text| super::tasks::request_of(task).is_some_and(|it| it.contains(text.as_str())))
@@ -1126,6 +1217,10 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         if let Some(stop) = copied(site as usize, frame, addresses as usize, alive as usize) {
             hold(state(), stop, Some(CHECKPOINT.into()));
         }
+    }
+    if VALUES_ON.load(Ordering::Relaxed) {
+        let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
+        line_values(site as usize, frame, addresses as usize, alive as usize);
     }
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);

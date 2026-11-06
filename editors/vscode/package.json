@@ -119,6 +119,11 @@
           "scope": "resource",
           "markdownDescription": "Arguments added to `tondo test --bench` by the *Benchmark* profile of the Testing view, as `[\"--against\", \"main\", \"--max-regression\", \"5\"]` or `[\"--bench-time\", \"5\"]`."
         },
+        "tondo.liveValues": {
+          "type": "boolean",
+          "default": true,
+          "description": "While a live build runs, show beside each line of the file in view what it left."
+        },
         "tondo.testsOnSave": {
           "type": "boolean",
           "default": false,
@@ -542,6 +547,11 @@
       {
         "command": "tondo.dump",
         "title": "Dump a Running Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.liveValues",
+        "title": "Show or Hide the Values of Live Lines",
         "category": "Tondo"
       },
       {

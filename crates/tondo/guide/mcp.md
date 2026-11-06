@@ -65,7 +65,7 @@ one out, and `update` fetches them again.
 session; `watch` reloads it as its files change. `run_output` gives what it
 printed since the last time, `run_input` writes to its input (`close` ends
 it), `run_stop` ends it, `eval` says what an expression gives in it, on the code as it
-is now, and `reload` changes its code while it runs,
+is now, `values` what each line of a file left, and `reload` changes its code while it runs,
 keeping its state: a session's, or a `tondo run --live` program's by
 process ID or name. A change it cannot make in place says to start again. In a session a
 panic does not end the program: `run_output` shows it, the task waits, and the next `reload`

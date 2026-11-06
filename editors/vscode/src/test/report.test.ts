@@ -23,6 +23,7 @@ import {
   apiMarks,
   failureMarks,
   logpointArgs,
+  lineValues,
   requestRow,
   stepRow,
   warningPlace,
@@ -675,4 +676,10 @@ test('the write a warning of a test points at', () => {
 test('a reload says what ran again', () => {
   const shown = reloadShown({ changed: ['main'], moves: 2, again: ['`limit` at line 4 runs again'] });
   assert.ok(shown.details.includes('`limit` at line 4 runs again'));
+});
+
+test('what a line left is what it names', () => {
+  const bindings = [{ name: 'total', value: '12' }, { name: 'other', value: '1' }];
+  assert.equal(lineValues(bindings, 'let total = price * 2'), 'total = 12');
+  assert.equal(lineValues(bindings, 'console.println("x")'), '');
 });

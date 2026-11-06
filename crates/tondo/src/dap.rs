@@ -1472,6 +1472,8 @@ fn handle(
         "tasks" => program.ask("tasks"),
         // The editor's view of what each request did.
         "requests" => program.ask("requests").map(observe::timelines),
+        // What each line of a file left, for the editor to show beside it.
+        "values" => program.ask(&format!("values {}", arguments["file"].as_str().unwrap_or_default())),
         // What each line of the call the frame shows changed the last time
         // it ran, as the history has it, for the editor to show beside it.
         "effects" => {

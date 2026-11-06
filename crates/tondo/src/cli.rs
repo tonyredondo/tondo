@@ -232,6 +232,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["join standard input and output to a running", "program, for `debug --via \"ssh host\"`"],
     },
     Command {
+        name: "values",
+        usage: &["tondo values <pid|name> <file> [--for <seconds>] [--json]"],
+        summary: &["what each line of a file left in a running live build,", "with nothing stopped"],
+    },
+    Command {
         name: "eval",
         usage: &["tondo eval <pid|name> <expression> [--json]"],
         summary: &["what an expression gives in a running live build,", "with its functions and types as they are now"],

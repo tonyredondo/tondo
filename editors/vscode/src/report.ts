@@ -1217,3 +1217,11 @@ export function warningPlace(warning: string): { file: string; line: number } | 
   const at = warning.match(/ wrote it at (.*?):(\d+) in /);
   return at ? { file: at[1], line: Number(at[2]) } : undefined;
 }
+
+/** What a line left, as the editor shows it after the line: the bindings the
+ *  line names. */
+export function lineValues(bindings: { name: string; value: string }[], text: string): string {
+  const named = bindings.filter(({ name }) => new RegExp(`\\b${name}\\b`).test(text));
+  const shown = named.map(({ name, value }) => `${name} = ${value}`).join('  ');
+  return shown.length > 100 ? `${shown.slice(0, 100)}…` : shown;
+}

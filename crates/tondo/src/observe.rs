@@ -2345,6 +2345,38 @@ fn timelines_text(found: &Value) -> String {
     out.trim_end().to_string()
 }
 
+/// `tondo values <pid|name> <file>`: what each line of a file left in its
+/// frame in a running live build, looking for `seconds`, nothing stopped.
+pub fn values_in(name: &str, file: &str, seconds: u64, as_json: bool) -> Result<(), String> {
+    let mut program = connect(name)?;
+    let asked = format!("values {file}");
+    let first = program.ask(&asked)?;
+    if let Some(error) = first["error"].as_str() {
+        return Err(error.to_string());
+    }
+    std::thread::sleep(Duration::from_secs(seconds));
+    let found = program.ask(&asked)?;
+    if as_json {
+        crate::cli::print_json("values", true, json!({ "values": found["values"] }));
+        return Ok(());
+    }
+    let mut lines: Vec<(u64, &Value)> = found["values"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(line, bindings)| Some((line.parse().ok()?, bindings)))
+        .collect();
+    lines.sort_by_key(|(line, _)| *line);
+    for (line, bindings) in lines {
+        let shown = |b: &Value| {
+            format!("{} = {}", b["name"].as_str().unwrap_or_default(), b["value"].as_str().unwrap_or_default())
+        };
+        let shown: Vec<String> = bindings.as_array().into_iter().flatten().map(shown).collect();
+        println!("{line}: {}", shown.join(", "));
+    }
+    Ok(())
+}
+
 /// `tondo requests <pid|name>`: the requests of a running program, in flight
 /// and answered last, each with what its tasks did.
 pub fn requests_in(name: &str, as_json: bool) -> Result<(), String> {

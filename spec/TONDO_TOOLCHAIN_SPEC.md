@@ -1774,6 +1774,14 @@ sentencias ya hicieron no se deshace. Si la sentencia entregó un binding, se re
 más arriba, y sin ninguna el programa termina como siempre. `reload` dice cuántas tareas
 vuelven así. Un `tondo run --live` sin más termina con el panic, como cualquier build.
 
+`tondo values <pid|nombre> <archivo> [--for <segundos>]` dice, sin parar nada, lo que cada
+línea de un archivo dejó en su frame la última vez que corrió: sus bindings como los
+encontró la siguiente línea de ese frame, en un build con sondas. Solo mira mientras una
+herramienta pregunta, cinco segundos cada vez, y cada línea como mucho diez veces por
+segundo; la última de una función no tiene siguiente línea y no sale. El MCP lo da con
+`values`, y el editor lo escribe tras cada línea del archivo a la vista, de los bindings
+que esa línea nombra, mientras corre un build vivo, salvo con `tondo.liveValues` en falso.
+
 `tondo eval <pid|nombre> <expresión>` da el valor de una expresión en un build vivo que
 corre, sin parar nada, compilada con el código que dicen sus archivos ahora, también lo que
 cambió, en el archivo de su `main`: lee funciones, tipos y constantes, no los bindings de
@@ -1872,6 +1880,7 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
+| `values` | `tondo-values-0.1/1` | `values`: por línea, cada binding con `name` y `value` |
 | `eval` | `tondo-eval-0.1/1` | `value`, el texto de lo que dio |
 | `requests` | `tondo-requests-0.1/1` | `requests`, en curso, y `served`, respondidas, cada una con `method`, `path`, `ms`, `task` y `steps`: `ms`, `task`, `what`, `at` y lo propio de cada paso |
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
