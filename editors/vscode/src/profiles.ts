@@ -78,7 +78,8 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
       const { program, cwd } = await programFor(file);
       const profile = path.join(os.tmpdir(), `tondo-profile-${process.pid}-${Date.now()}.pprof`);
       const run = settings('run', file);
-      const execution = new vscode.ProcessExecution(tondo(), ['profile', '--output', profile, '--', program, ...run.args], { cwd, env: run.env });
+      const kind = vscode.workspace.getConfiguration('tondo').get<string>('profile.kind', 'cpu');
+      const execution = new vscode.ProcessExecution(tondo(), ['profile', `--${kind}`, '--output', profile, '--', program, ...run.args], { cwd, env: run.env });
       const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
       const task = new vscode.Task({ type: 'tondo', command: 'profile' }, folder ?? vscode.TaskScope.Workspace, `profile ${path.basename(program)}`, 'tondo', execution);
       task.presentationOptions = { focus: true, panel: vscode.TaskPanelKind.Dedicated, clear: true };

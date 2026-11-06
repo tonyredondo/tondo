@@ -56,6 +56,18 @@ export function settings(kind: 'run' | 'test', at?: string): { args: string[]; e
   return { args: config.get<string[]>(`${kind}.args`, []), env: config.get<Record<string, string>>(`${kind}.env`, {}) };
 }
 
+/** The options a program is built with, from `tondo.build.flags`. */
+export function buildFlags(at?: string): string[] {
+  const config = vscode.workspace.getConfiguration('tondo', at ? vscode.Uri.file(at) : undefined);
+  return config.get<string[]>('build.flags', []);
+}
+
+/** How running programs are reached, from `tondo.via`, as `ssh host`. */
+export function via(): string[] {
+  const command = vscode.workspace.getConfiguration('tondo').get<string>('via', '');
+  return command ? ['--via', command] : [];
+}
+
 /** Where a file or directory is: its project, and its module. */
 export async function placeOf(file: string): Promise<Place> {
   const ran = await exec(['graph', file, '--packages', '--json'], path.dirname(file));

@@ -6,7 +6,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isProject } from './binary';
-import { exec, settings } from './cli';
+import { buildFlags, exec, settings } from './cli';
 import { tondo } from './extension';
 import { checked, rendered } from './report';
 
@@ -27,9 +27,9 @@ export function tondoTask(command: Command, target: string, folder?: vscode.Work
   const program = settings('run', target);
   const args =
     command === 'watch'
-      ? ['run', target, '--live', '--', ...program.args]
+      ? ['run', target, ...buildFlags(target), '--live', '--', ...program.args]
       : command === 'run'
-        ? ['run', target, '--', ...program.args]
+        ? ['run', target, ...buildFlags(target), '--', ...program.args]
         : [command, target];
   // A live run reloads on save, so a panic waits there for the fix.
   const env =
@@ -71,7 +71,8 @@ function diagnosed(command: 'check' | 'build', target: string, cwd: string): vsc
     const say = (text: string) => write.fire(text.replace(/\n/g, '\r\n') + '\r\n');
     const run = async () => {
       say(`tondo ${command} ${target}`);
-      const ran = await exec([command, target, '--json'], cwd, cancel.token);
+      const flags = command === 'build' ? buildFlags(target) : [];
+      const ran = await exec([command, target, ...flags, '--json'], cwd, cancel.token);
       let report;
       try {
         report = checked(ran.stdout);

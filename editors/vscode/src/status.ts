@@ -73,6 +73,10 @@ async function menu(): Promise<void> {
     { label: '$(flame) Show a Profile', command: 'tondo.showProfile' },
     { label: '$(refresh) Restart the Language Server', command: 'tondo.restartLanguageServer' },
     { label: '$(output) Show the Output', command: 'tondo.showOutput' },
+    { label: '$(terminal) Run a tondo Command', command: 'tondo.runCommand' },
+    { label: '$(mortar-board) Read the Guide', command: 'tondo.guide' },
+    { label: '$(search) Search the API', command: 'tondo.searchApi' },
+    { label: '$(package) Add a Dependency', command: 'tondo.addDependency' },
     { label: '$(book) Get Started', command: 'tondo.walkthrough' },
   ];
   const chosen = await vscode.window.showQuickPick(choices, { placeHolder: 'Tondo' });

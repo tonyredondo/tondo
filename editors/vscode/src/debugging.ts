@@ -6,7 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { exec, programFor, settings } from './cli';
+import { exec, programFor, settings, via } from './cli';
 import { tondo } from './extension';
 import { Compared, Diff, Origin, Flight, RequestRow, Requests, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, needsLive, requestRow, stepRow, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
@@ -14,7 +14,7 @@ import { tondoTask } from './tasks';
 export function registerDebugging(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory('tondo', {
-      createDebugAdapterDescriptor: () => new vscode.DebugAdapterExecutable(tondo(), ['dap']),
+      createDebugAdapterDescriptor: () => new vscode.DebugAdapterExecutable(tondo(), ['dap', ...via()]),
     }),
     vscode.debug.registerDebugConfigurationProvider('tondo', {
       resolveDebugConfiguration: async (folder, config) => {

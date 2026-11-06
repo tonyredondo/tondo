@@ -8,13 +8,13 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { exec } from './cli';
+import { exec, via } from './cli';
 import { tondo } from './extension';
 import { ApiChange, Failure, apiMarks, counterRows, dumpPage, failureMarks, logpointArgs, running, traced } from './report';
 
 /** A running program, picked: its process ID, or nothing. */
 export async function pickProcess(): Promise<string | undefined> {
-  const ran = await exec(['ps', '--json'], os.tmpdir());
+  const ran = await exec(['ps', ...via(), '--json'], os.tmpdir());
   const programs = running(ran.stdout);
   if (programs.length === 0) {
     void vscode.window.showInformationMessage(
@@ -66,7 +66,7 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
         return;
       }
       stop();
-      const child = spawn(tondo(), ['counters', pid, '--json']);
+      const child = spawn(tondo(), ['counters', pid, ...via(), '--json']);
       watching = child;
       void vscode.commands.executeCommand('setContext', 'tondo.counting', true);
       let pending = '';
@@ -465,7 +465,7 @@ async function trace(): Promise<void> {
   const output = path.join(os.tmpdir(), `tondo-trace-${pid}-${Date.now()}.json`);
   const ran = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Tracing process ${pid} for ${seconds} s` },
-    () => exec(['trace', pid, '--duration', seconds, '--output', output, '--json'], os.tmpdir()),
+    () => exec(['trace', pid, ...via(), '--duration', seconds, '--output', output, '--json'], os.tmpdir()),
   );
   let files;
   try {
@@ -518,7 +518,7 @@ async function dump(): Promise<void> {
     return;
   }
   const file = path.join(os.tmpdir(), `tondo-${pid}-${Date.now()}.dump.json`);
-  const ran = await exec(['dump', pid, '--output', file, '--json'], os.tmpdir());
+  const ran = await exec(['dump', pid, ...via(), '--output', file, '--json'], os.tmpdir());
   let summary: string;
   try {
     const dumped = JSON.parse(ran.stdout) as { format?: string; summary?: string };

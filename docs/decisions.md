@@ -5254,3 +5254,11 @@ Rows that are arrays go to `cli.table` rather than to a function of their own: o
 to find, and `columns` means what it reads as, the headers, when there are no fields to
 name. Strings that are all numbers go to the right like numbers, since a program that
 already has text has no other way to say it.
+
+## The command line is in the tools and the editor
+
+What the toolchain does has one place to be added, the command line, and a test holds the
+tools and the editor to it, by command and, for the tools, by option. An agent gets a
+parameter for each option, since a schema is how it finds them. The editor does not get a
+control for each of its hundred: commands for what people do, settings for what they
+set once, and *Run a tondo Command* for the rest, which is honest about being a terminal.

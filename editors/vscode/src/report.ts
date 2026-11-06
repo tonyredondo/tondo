@@ -1257,3 +1257,26 @@ export function liveHover(lines: Record<string, { name: string; value: string }[
 export function needsLive(message: { type?: string; success?: boolean; message?: string }): boolean {
   return message.type === 'response' && message.success === false && /\blive build\b/.test(message.message ?? '');
 }
+
+/** What `tondo api --search` found, to pick from. */
+export function apiMatches(text: string): { label: string; description: string; detail: string }[] {
+  const found = JSON.parse(text) as { matches: { name: string; module: string; doc?: string }[] };
+  return found.matches.map(({ name, module, doc }) => ({ label: name, description: module, detail: doc ?? '' }));
+}
+
+/** What `tondo check --unreached` found, to mark on their lines. */
+export function unreachedMarks(text: string): { file: string; line: number; text: string }[] {
+  const found = JSON.parse(text) as { unreached: { file: string; line: number; name: string }[] };
+  return found.unreached.map(({ file, line, name }) => ({ file, line, text: `nothing reaches \`${name}\`` }));
+}
+
+/** `tondo add`, from where a dependency comes. */
+export function dependencyArgs(alias: string, kind: string, where: string, project: string): string[] {
+  return ['add', alias, `--${kind}`, where, '--project', project];
+}
+
+/** A command line as a shell splits it: by spaces, but for what quotes hold. */
+export function splitArgs(text: string): string[] {
+  const words = text.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  return words.map((word) => word.replace(/^(["'])(.*)\1$/, '$2'));
+}

@@ -1621,6 +1621,13 @@ cómo conseguirlo, y lo demás se hace igual. Ejecutarlo de nuevo lo actualiza
 todo. Dice si el directorio de `tondo` no está en `PATH` y, sin ningún
 agente, cómo dar la skill y el servidor a otro.
 
+
+Todo comando de la línea de comandos está en las herramientas de `tondo mcp`, y sus opciones
+en los parámetros de estas, salvo los que sirven o unen a los demás: `lsp`, `mcp`, `dap`,
+`relay`, `completions` y `help`. El editor los tiene como comandos, y las opciones sin sitio
+propio en sus ajustes o en *Run a tondo Command*, que ejecuta cualquier línea. Una prueba
+falla si un comando u opción nuevos no llegan.
+
 ### 7.10 Builds vivos
 
 `--live`, en `run`, `build` y `debug`, compila un build vivo: uno de
@@ -1798,7 +1805,7 @@ cambió, en el archivo de su `main`: lee funciones, tipos y constantes, no los b
 ningún frame, salvo con una tarea retenida por un panic, que se compila en su archivo y lee
 además los bindings de su frame, para entender qué falló. La ejecuta una tarea propia. Si hace panic, `eval` lo dice y termina con
 estado de error, y el programa sigue. Con `--every <segundos>` repite la expresión, compilada
-una sola vez, y escribe cada valor. El MCP la da con `eval`, y el editor con *Evaluate in a
+una sola vez, y escribe cada valor, hasta `--count <n>` veces si se da. El MCP la da con `eval`, y el editor con *Evaluate in a
 Running Program* y en la vista *Tondo Live Watches*, con expresiones que siguen al programa
 mientras corre.
 

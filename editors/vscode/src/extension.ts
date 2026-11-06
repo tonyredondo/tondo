@@ -9,6 +9,7 @@ import { registerDebugging } from './debugging';
 import { registerLive } from './live';
 import { registerModules } from './modules';
 import { registerObserving } from './observe';
+import { registerProject } from './project';
 import { registerRefactors } from './refactors';
 import { registerProfiles } from './profiles';
 import { registerStatus } from './status';
@@ -59,6 +60,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerLive(context, output);
   registerModules(context);
   registerObserving(context, output);
+  registerProject(context);
   void vscode.commands.executeCommand('setContext', 'tondo.active', true);
   registerTasks(context);
   // The tools of `tondo mcp`, for VS Code's agents.

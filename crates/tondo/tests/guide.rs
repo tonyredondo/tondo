@@ -93,6 +93,89 @@ fn the_repository_has_the_skill() {
 
 /// What looks at programs reaches an agent and an editor too: what the
 /// terminal gets, both do, or the line here says how.
+/// Every command of the toolchain, its tool and how the editor has it, and
+/// every option, in the tools: what is added to the command line without
+/// them fails here. `tondo.runCommand` runs the options the editor has no
+/// place of its own for.
+#[test]
+fn the_command_line_is_in_the_tools_and_the_editor() {
+    const MCP: &str = include_str!("../src/mcp.rs");
+    const EDITOR: &str = include_str!("../../../editors/vscode/package.json");
+    // What serves or joins the others, with no use from inside them.
+    const NONE: &str = "none";
+    let reached = [
+        ("run", "run", "tondo.run"),
+        ("build", "build", "tondo.buildLibrary"),
+        ("check", "check", "tondo.unreached"),
+        ("fix", "fix", "tondo.runCommand"),
+        ("expand", "expand", "tondo.expand"),
+        ("fmt", "format", "tondo.compact"),
+        ("api", "api", "tondo.showApi"),
+        ("graph", "graph", "tondo.exportGraph"),
+        ("guide", "guide", "tondo.guide"),
+        ("explain", "explain", "tondo.runCommand"),
+        ("update", "update", "tondo.updateDependencies"),
+        ("new", "new_project", "tondo.newProject"),
+        ("init", "new_project", "tondo.initProject"),
+        ("add", "add_dependency", "tondo.addDependency"),
+        ("remove", "remove_dependency", "tondo.removeDependency"),
+        ("clean", "clean", "tondo.clean"),
+        ("test", "test", "tondo.affectedTests"),
+        ("doc-test", "doc_test", "tondo.runCommand"),
+        ("setup", "setup", "tondo.runCommand"),
+        ("ps", "ps", "tondo.pickProcess"),
+        ("source", "source", "tondo.runCommand"),
+        ("logpoint", "logpoint", "tondo.logpoint"),
+        ("blocked", "blocked", "tondo.blocked"),
+        ("requests", "requests", "tondo.refreshRequests"),
+        ("counters", "counters", "tondo.watchCounters"),
+        ("debug", "debug_start", "tondo.debugLive"),
+        ("values", "values", "tondo.liveValues"),
+        ("eval", "eval", "tondo.eval"),
+        ("reload", "reload", "tondo.reload"),
+        ("dump", "dump", "tondo.dump"),
+        ("trace", "trace", "tondo.trace"),
+        ("profile", "profile", "tondo.profile"),
+        ("target", "target_pack", "tondo.targetPack"),
+        ("bind", "bind", "tondo.bind"),
+        ("version", "version", "tondo.runCommand"),
+        ("lsp", NONE, NONE),
+        ("mcp", NONE, NONE),
+        ("dap", NONE, NONE),
+        ("relay", NONE, NONE),
+        ("completions", NONE, NONE),
+        ("help", NONE, NONE),
+    ];
+    for command in tondo::cli::COMMANDS {
+        let Some((_, tool, editor)) = reached.iter().find(|(name, ..)| *name == command.name) else {
+            panic!("`tondo {}` is in neither the tools nor the editor: add it to both, and here", command.name);
+        };
+        assert!(*tool == NONE || MCP.contains(&format!("name: \"{tool}\"")), "`{}` has no tool `{tool}`", command.name);
+        assert!(
+            *editor == NONE || EDITOR.contains(&format!("\"command\": \"{editor}\"")),
+            "`{}`: no `{editor}`",
+            command.name
+        );
+    }
+    assert!(EDITOR.contains("\"command\": \"tondo.runCommand\""), "the options the editor has no place for");
+    // Options, by the name of the parameter of the tools; those of `tondo
+    // test` go in `flags`, and the tools always speak data.
+    let spoken = ["--json", "--diagnostic-format", "--test-format", "--help"];
+    let tools = [("--compare", "debug_compare"), ("--port", "dump_serve")];
+    for command in tondo::cli::COMMANDS.iter().filter(|command| !matches!(command.name, "lsp" | "mcp" | "completions"))
+    {
+        for flag in command.usage.iter().flat_map(|usage| usage.split(|c: char| !(c.is_alphanumeric() || c == '-'))) {
+            let Some(name) = flag.strip_prefix("--").filter(|_| !spoken.contains(&flag)) else { continue };
+            let parameter = format!("\"{}\"", name.replace('-', "_"));
+            let known = MCP.contains(&format!("\"{flag}\""))
+                || MCP.contains(&parameter)
+                || command.name == "test"
+                || tools.iter().any(|(option, tool)| *option == flag && MCP.contains(&format!("name: \"{tool}\"")));
+            assert!(known, "`tondo {} {flag}` has no parameter in the tools", command.name);
+        }
+    }
+}
+
 #[test]
 fn what_observes_is_in_the_tools_and_the_editor() {
     const CLI: &str = include_str!("../src/cli.rs");

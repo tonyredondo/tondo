@@ -6,6 +6,10 @@ import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   NEEDED,
+  apiMatches,
+  dependencyArgs,
+  splitArgs,
+  unreachedMarks,
   benchLine,
   checked,
   counterRows,
@@ -699,4 +703,21 @@ test('what a session refused for not being live', () => {
   assert.equal(needsLive({ type: 'response', success: false, message: refused }), true);
   assert.equal(needsLive({ type: 'response', success: false, message: 'no method `push`' }), false);
   assert.equal(needsLive({ type: 'response', success: true, message: refused }), false);
+});
+
+test('reads what the API search found and what nothing reaches', () => {
+  const found = JSON.stringify({ matches: [{ name: 'table', module: 'std.cli', doc: 'A table.' }, { name: 'x', module: 'y' }] });
+  assert.deepEqual(apiMatches(found), [
+    { label: 'table', description: 'std.cli', detail: 'A table.' },
+    { label: 'x', description: 'y', detail: '' },
+  ]);
+  const unreached = JSON.stringify({ unreached: [{ file: 'src/main.to', line: 11, name: 'nobody' }] });
+  assert.deepEqual(unreachedMarks(unreached), [{ file: 'src/main.to', line: 11, text: 'nothing reaches `nobody`' }]);
+});
+
+test('writes command lines', () => {
+  assert.deepEqual(dependencyArgs('net', 'git', 'https://x/y', '/p'), ['add', 'net', '--git', 'https://x/y', '--project', '/p']);
+  assert.deepEqual(splitArgs('test --filter "a b"  --jobs 4'), ['test', '--filter', 'a b', '--jobs', '4']);
+  assert.deepEqual(splitArgs("run 'x y'"), ['run', 'x y']);
+  assert.deepEqual(splitArgs('   '), []);
 });

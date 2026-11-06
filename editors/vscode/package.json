@@ -133,6 +133,30 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "While *Run Live* runs, each change also runs the tests that reach it, as `tondo run --watch --tests`."
+        },
+        "tondo.build.flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Options of `tondo run` and `tondo build` for the programs run and built from the editor, as `[\"--target\", \"aarch64-linux\", \"--static\"]`; also `--link`, `--strip` and `--no-source-links`."
+        },
+        "tondo.via": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The command that reaches programs on another machine or in a container, as `ssh host` or `docker exec -i box`: *Pick a Process*, counters, traces, dumps and the debugger go through it."
+        },
+        "tondo.profile.kind": {
+          "type": "string",
+          "enum": [
+            "cpu",
+            "memory",
+            "tasks"
+          ],
+          "default": "cpu",
+          "markdownDescription": "What *Profile* measures: processor time, memory, or where tasks wait."
         }
       }
     },
@@ -659,6 +683,96 @@
       {
         "command": "tondo.clearProfile",
         "title": "Clear the Profile",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.guide",
+        "title": "Read the Guide",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.showApi",
+        "title": "Show the API of a Module",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.showPrivateApi",
+        "title": "Show the API of a Module, with Its Private Declarations",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.searchApi",
+        "title": "Search the API",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.expand",
+        "title": "Show What Each derive Expanded To",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.compact",
+        "title": "Show the File in Compact Form",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.unreached",
+        "title": "Mark What Nothing Reaches",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.exportGraph",
+        "title": "Export the Module Graph",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.addDependency",
+        "title": "Add a Dependency",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.removeDependency",
+        "title": "Remove a Dependency",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.updateDependencies",
+        "title": "Update the Dependencies",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.clean",
+        "title": "Clean the Caches",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.initProject",
+        "title": "Make a Project of This Folder",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.buildLibrary",
+        "title": "Build a Library for C",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.bind",
+        "title": "Generate Bindings for C Headers",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.targetPack",
+        "title": "Write the Target Pack of This Machine",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.dumpPlugin",
+        "title": "Write the Plugin for lldb or gdb",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.runCommand",
+        "title": "Run a tondo Command",
         "category": "Tondo"
       }
     ],
