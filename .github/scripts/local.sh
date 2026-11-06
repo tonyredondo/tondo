@@ -91,7 +91,7 @@ editor() {
 }
 
 sweep() {
-  TONDO_SWEEP=1 cargo test -p tondo --test lsp --test observe -- the_server_outlives a_damaged_dump
+  TONDO_SWEEP=1 cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
 }
 
 # The tests that race, under emulation, again and again, on few cores.

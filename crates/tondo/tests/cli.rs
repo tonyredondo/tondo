@@ -458,3 +458,95 @@ fn an_internal_module_stays_in_its_package() {
     let listed = String::from_utf8_lossy(&tondo(&["api", "--list", "--project", "."]).stdout).to_string();
     assert!(listed.contains("units") && !listed.contains("internal"), "{listed}");
 }
+
+/// A test past its time says where its tasks were.
+#[test]
+fn a_test_that_times_out_says_where_it_was() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("test-timeout");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let code = "import std.time\n\nfn slow() {\n    time.sleep(time.seconds(60))\n}\n\nfn main() {}\n";
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test hangs {\n    slow()\n}\n").unwrap();
+    let ran =
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", "--timeout", "2"]).current_dir(&dir).output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert!(said.contains("timed out after 2s") && said.contains("main.to:4 in slow"), "{said}");
+}
+
+/// A port in use is not a failure to connect.
+#[test]
+fn a_server_says_why_it_cannot_listen() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("taken-port");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let program = format!(
+        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    app.listen({port})?\n}}\n"
+    );
+    std::fs::write(dir.join("server.to"), program).unwrap();
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", "server.to"]).current_dir(&dir).output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(said.contains("cannot listen"), "{said}");
+}
+
+/// A program with nothing left to do lets out what it wrote, even to a pipe.
+#[test]
+fn output_goes_out_when_a_program_has_nothing_to_do() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("idle-output");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    console.println(\"waiting\")\n    \
+        time.sleep(time.seconds(30))\n}\n";
+    std::fs::write(dir.join("idle.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo).args(["build", "idle.to", "--output", "idle"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut child = Command::new(dir.join("idle")).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    let read = std::io::BufRead::read_line(&mut std::io::BufReader::new(child.stdout.take().unwrap()), &mut line);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!((read.unwrap(), line.as_str()), (8, "waiting\n"));
+}
+
+/// Programs broken at random, as an edit leaves them, get diagnostics. The
+/// Nightly's, for the time it takes.
+#[test]
+fn the_compiler_outlives_broken_programs() {
+    if std::env::var_os("TONDO_SWEEP").is_none() {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("broken-programs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run");
+    let mut files: Vec<_> = std::fs::read_dir(cases).unwrap().flatten().map(|entry| entry.path()).collect();
+    files.retain(|path| path.extension().is_some_and(|extension| extension == "to"));
+    files.sort();
+    let mut seed = 7u64;
+    let mut next = move |limit: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % limit.max(1)
+    };
+    for round in 0..3000 {
+        let text = std::fs::read_to_string(&files[next(files.len())]).unwrap();
+        let mut words: Vec<&str> = text.split_inclusive(|c: char| !c.is_alphanumeric()).collect();
+        for _ in 0..1 + next(3) {
+            let (at, other) = (next(words.len()), next(words.len()));
+            match next(3) {
+                0 => drop(words.remove(at.min(words.len() - 1))),
+                1 => words[at] = words[other],
+                _ => words.insert(at, words[other]),
+            }
+        }
+        let file = dir.join("broken.to");
+        std::fs::write(&file, words.concat()).unwrap();
+        let ran =
+            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["check", "broken.to"]).current_dir(&dir).output().unwrap();
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert!(!said.contains("is a bug of tondo"), "round {round}: {said}\n{}", words.concat());
+    }
+}

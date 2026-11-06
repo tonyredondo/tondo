@@ -60,7 +60,8 @@ jobs:
           if-no-files-found: ignore
 
   # The editor's server on every case, whole and cut as writing leaves it,
-  # and the viewer of dumps on dumps with any field damaged.
+  # the viewer of dumps on dumps with any field damaged, and the compiler on
+  # programs broken at random.
   sweep:
     runs-on: ubuntu-latest
     steps:
@@ -68,7 +69,7 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p tondo --test lsp --test observe -- the_server_outlives a_damaged_dump
+      - run: cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
         env:
           TONDO_SWEEP: 1
 
