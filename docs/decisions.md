@@ -5262,3 +5262,13 @@ tools and the editor to it, by command and, for the tools, by option. An agent g
 parameter for each option, since a schema is how it finds them. The editor does not get a
 control for each of its hundred: commands for what people do, settings for what they
 set once, and *Run a tondo Command* for the rest, which is honest about being a terminal.
+
+## Runbooks run
+
+The tools are many and a model finds them by need, not by name: what it lacks is what to
+do in each situation. Runbooks say so, as topics of the guide, so that they are also
+resources; but a client picks resources, and a model that has not heard of them does not
+ask. So the server's instructions name them, and a result says in `next` where it leads,
+at the moment it is useful. Their steps are data a test replays, since a runbook that no
+longer works is worse than none: the first run of it found a message that blamed the wrong
+thing and two steps that were wrong.

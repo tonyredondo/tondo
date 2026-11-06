@@ -105,7 +105,8 @@ tondo guide <topic>                one topic of this guide
 
 `tondo guide cli` goes through every command; `tondo <command> --help`
 explains one, and with `--json` a command writes its result as one JSON
-object.
+object. When something goes wrong, `tondo guide runbooks` says what to do step
+by step: a crash, a dump, a hang, a change to a running program.
 
 Every error has a code and says how to fix it, often with the exact code to
 write; `tondo check --json` gives the same as data with spans, and many

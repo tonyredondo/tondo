@@ -28,7 +28,8 @@ fn examples_compile() {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();
-            std::fs::write(case.join("main.to"), &code).unwrap();
+            // A runbook's server takes its port when it runs.
+            std::fs::write(case.join("main.to"), code.replace("<port>", "8080")).unwrap();
             jobs.push((format!("{topic} example {index} ({info})"), info, case, code));
         }
     }
@@ -46,7 +47,7 @@ fn examples_compile() {
                             .output()
                             .unwrap();
                         let stderr = String::from_utf8_lossy(&output.stderr);
-                        let expected = info.strip_prefix("tondo error ").map(str::trim);
+                        let expected = info.strip_prefix("tondo error ").and_then(|rest| rest.split(' ').next());
                         let ok = match expected {
                             None => output.status.success(),
                             Some(code) => !output.status.success() && stderr.contains(&format!("error[{code}]")),

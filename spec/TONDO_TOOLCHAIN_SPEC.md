@@ -1630,6 +1630,13 @@ en los parámetros de estas, salvo los que sirven o unen a los demás: `lsp`, `m
 propio en sus ajustes o en *Run a tondo Command*, que ejecuta cualquier línea. Una prueba
 falla si un comando u opción nuevos no llegan.
 
+`tondo guide runbooks` da qué hacer, paso a paso, cuando algo va mal: un crash o un volcado,
+un fallo que guardar en un test, un cuelgue, un cambio a un programa en marcha. Cada runbook
+es un tema de la guía, y por tanto un recurso `tondo://guide/...`, y las instrucciones del
+servidor los nombran. Un resultado que lleva a otro paso lo dice en `next`. Cada paso de un
+runbook se ejecuta en las pruebas contra estas herramientas, y lo que dice que da es lo que
+da.
+
 ### 7.10 Builds vivos
 
 `--live`, en `run`, `build` y `debug`, compila un build vivo: uno de

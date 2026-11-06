@@ -22,6 +22,19 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("cli", include_str!("../guide/cli.md")),
     ("mcp", include_str!("../guide/mcp.md")),
     ("pitfalls", include_str!("../guide/pitfalls.md")),
+    ("runbooks", include_str!("../guide/runbooks.md")),
+    ("runbook-crash", include_str!("../guide/runbook-crash.md")),
+    ("runbook-regression", include_str!("../guide/runbook-regression.md")),
+    ("runbook-hang", include_str!("../guide/runbook-hang.md")),
+    ("runbook-live", include_str!("../guide/runbook-live.md")),
+    ("runbook-compile", include_str!("../guide/runbook-compile.md")),
+    ("runbook-flaky", include_str!("../guide/runbook-flaky.md")),
+    ("runbook-debug", include_str!("../guide/runbook-debug.md")),
+    ("runbook-slow-request", include_str!("../guide/runbook-slow-request.md")),
+    ("runbook-performance", include_str!("../guide/runbook-performance.md")),
+    ("runbook-memory", include_str!("../guide/runbook-memory.md")),
+    ("runbook-production", include_str!("../guide/runbook-production.md")),
+    ("runbook-fuzz", include_str!("../guide/runbook-fuzz.md")),
 ];
 
 pub fn topic(name: &str) -> Option<&'static str> {

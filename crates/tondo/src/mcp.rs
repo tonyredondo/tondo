@@ -36,7 +36,9 @@ std.http.Client or String, gives its methods and an example that compiles. After
 `run` and `test` build and run it, and a failure comes with its code, data and stack as `panic`; \
 `debug_start` debugs a build. A program that keeps running is a \
 `run_start` session, whose code `reload` changes after an edit without starting it again. Paths are relative to \
-the server's directory; lines and columns count from 1, columns in characters.";
+the server's directory; lines and columns count from 1, columns in characters. When something goes wrong, the \
+`guide` topic `runbooks` gives what to do step by step: a crash or a dump, a failure to keep out with a test, a \
+hang, a change to a running program. A result that leads somewhere says so in `next`.";
 
 /// The names of the tools, as `tools/list` gives them.
 pub fn tool_names() -> impl Iterator<Item = &'static str> {
@@ -158,11 +160,22 @@ impl Server {
         let empty = json!({});
         let args = Args(params.get("arguments").filter(|a| a.is_object()).unwrap_or(&empty));
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tool(name, &args)));
-        let reply = match outcome {
+        let mut reply = match outcome {
             Ok(Ok(reply)) => reply,
             Ok(Err(message)) => Reply::error(message),
             Err(_) => Reply::error(format!("tondo failed inside `{name}`; its error output says where")),
         };
+        if let Some(next) = next_step(name, &reply) {
+            // A text that is data stays so.
+            reply.text = match serde_json::from_str::<Value>(&reply.text) {
+                Ok(Value::Object(mut data)) => {
+                    data.insert("next".to_string(), json!(next));
+                    format!("{}\n", Value::Object(data))
+                }
+                _ => format!("{}next: {next}\n", reply.text),
+            };
+            reply.structured["next"] = json!(next);
+        }
         Ok(json!({
             "content": [{ "type": "text", "text": reply.text }],
             "structuredContent": reply.structured,
@@ -486,6 +499,33 @@ struct Reply {
     text: String,
     structured: Value,
     error: bool,
+}
+
+/// Where a result leads, for a model that does not know the tools yet: the
+/// tool that goes on from it, and the runbook that goes through it.
+fn next_step(name: &str, reply: &Reply) -> Option<&'static str> {
+    let said = |text: &str| reply.text.contains(text);
+    match name {
+        _ if reply.error => None,
+        "run" | "test" | "run_start" | "run_output" if said("panic[P0013]") => {
+            Some("every task waited for another: the stack above says where; `guide` topic `runbook-hang`")
+        }
+        "run_start" | "run_output" if said("waits here: save a fix") => {
+            Some("the task waits: `values` shows what it held, and `reload` after a fix goes on; topic `runbook-live`")
+        }
+        "run" | "test" if said("panic[") => {
+            Some("`explain` says what the code means; a dump shows the values: `guide` topic `runbook-crash`")
+        }
+        "dump_read" | "dump_group" if !said("\"groups\":[]") => {
+            Some("`dump_test` makes a test of this failure, to fix it against; `guide` topic `runbook-regression`")
+        }
+        "dump_test" if said("\"reproduces\":true") => Some("`test` shows it failing: fix the code, then `test` again"),
+        "dump_test" => Some("the values alone do not bring it back: `frame` tries a function further up the stack"),
+        "blocked" if said("\"waits\":[{") => {
+            Some("`dump` keeps this, and `dump_read` with `stacks` groups the tasks; `guide` topic `runbook-hang`")
+        }
+        _ => None,
+    }
 }
 
 impl Reply {
@@ -1977,7 +2017,7 @@ names and documentation; `list` names the modules.",
 Read it before writing Tondo.",
         kind: Kind::Reads,
         params: &[
-            ("topic", "string", "The topic, such as syntax, types, errors, tasks, testing or pitfalls."),
+            ("topic", "string", "The topic, such as syntax, types, errors, tasks, testing, pitfalls or runbooks."),
             ("list", "boolean", "Name the topics."),
             ("skill", "boolean", "The overview as an agent skill (SKILL.md)."),
         ],
