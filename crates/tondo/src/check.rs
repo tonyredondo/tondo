@@ -8194,6 +8194,50 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The edits that make the `sync.Mutex(0)` a binding `name` holds an
+    /// `Atomic`, when the function that declares it above `at` only counts with
+    /// it: `update` that adds, `get` and `set`.
+    fn as_counter(&self, name: &str, at: Span) -> Option<Vec<(Span, String)>> {
+        let before = self.sources.up_to_function_start(at.start);
+        let start = at.start - before.len() as u32;
+        let declared = before.find(&format!("let {name} = sync.Mutex("))?;
+        let whole = Span::new(start, at.start + self.sources.to_function_end(at.start).len() as u32);
+        let text = self.sources.slice(whole);
+        let mut edits = Vec::new();
+        let open = declared + format!("let {name} = ").len();
+        edits.push((
+            Span::new(start + open as u32, start + open as u32 + "sync.Mutex".len() as u32),
+            "sync.Atomic".to_string(),
+        ));
+        for used in self.named_in(name, whole) {
+            let local = (used.start - start) as usize;
+            let after = &text[local + name.len()..];
+            if local == declared + "let ".len() {
+                continue;
+            }
+            let call_end = |length: usize| Span::new(used.end, used.end + length as u32);
+            if after.starts_with(".get()") {
+                edits.push((call_end(".get()".len()), ".load()".to_string()));
+            } else if after.starts_with(".set(") {
+                edits.push((call_end(".set".len()), ".store".to_string()));
+            } else {
+                // `.update((n) { n += 2 })`.
+                let rest = after.strip_prefix(".update((")?;
+                let (parameter, rest) = rest.split_once(") { ")?;
+                let (amount, _) = rest.strip_prefix(parameter)?.strip_prefix(" += ")?.split_once(" })")?;
+                let length = ".update((".len()
+                    + parameter.len()
+                    + ") { ".len()
+                    + parameter.len()
+                    + " += ".len()
+                    + amount.len()
+                    + " })".len();
+                edits.push((call_end(length), format!(".add({amount})")));
+            }
+        }
+        Some(edits)
+    }
+
     /// Where a name is written in a span, as a whole word.
     fn named_in(&self, name: &str, within: Span) -> Vec<Span> {
         let text = self.sources.slice(within);
@@ -13348,6 +13392,10 @@ impl<'a> Checker<'a> {
                 let message = "in a cancelled task this `defer` ends here if another task holds the lock, and what it \
                                does is lost: use an `Atomic`, or send to a channel with room, which need no wait";
                 self.diags.warning("W1017", span, message);
+                let receiver = Span::new(span.start, method.span.start.saturating_sub(1));
+                if let Some(edits) = self.as_counter(self.sources.slice(receiver), span) {
+                    self.diags.fix("make it a counter: an `Atomic`, which needs no lock", false, edits);
+                }
             }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 let cell = Self::cell(cx, &value)

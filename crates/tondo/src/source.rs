@@ -142,6 +142,18 @@ impl SourceMap {
         self.file_of(span.start).slice(span)
     }
 
+    /// The text before an offset, from the line the declaration it is in
+    /// starts at: the last that does not start with a space or a closing brace.
+    pub fn up_to_function_start(&self, offset: u32) -> &str {
+        let file = self.file_of(offset);
+        let text = &file.text[..(offset - file.base) as usize];
+        let mut starts = text
+            .match_indices('\n')
+            .map(|(at, _)| at + 1)
+            .filter(|&at| text[at..].chars().next().is_some_and(|c| !c.is_whitespace() && c != '}'));
+        &text[starts.next_back().unwrap_or(0)..]
+    }
+
     /// The text from an offset to where the declaration it is in ends: the
     /// next line that starts with a closing brace.
     pub fn to_function_end(&self, offset: u32) -> &str {

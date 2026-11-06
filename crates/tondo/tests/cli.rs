@@ -384,3 +384,23 @@ fn a_lost_update_has_a_repair() {
     assert_eq!(edits(1)[0]["replacement"], "cell.update((value) { value = value * 2 })", "{found}");
     assert!(edits(2).is_empty(), "{found}");
 }
+
+/// A lock in a `defer` warns, and a counter has its repair.
+#[test]
+fn a_lock_in_a_defer_has_a_repair() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lock-in-defer");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.sync\n\nfn main() {\n    let count = sync.Mutex(0)\n    count.set(1)\n    defer {\n        \
+        count.update((n) { n += 2 })\n    }\n    console.println(\"{count.get()}\")\n}\n";
+    std::fs::write(dir.join("fix.to"), program).unwrap();
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["check", "fix.to", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    let edits = found["diagnostics"][0]["fixes"][0]["edits"].as_array().cloned().unwrap_or_default();
+    let written: Vec<&str> = edits.iter().map(|edit| edit["replacement"].as_str().unwrap()).collect();
+    assert_eq!(written, ["sync.Atomic", ".store", ".add(2)", ".load()"], "{found}");
+}
