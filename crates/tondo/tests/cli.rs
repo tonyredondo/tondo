@@ -387,6 +387,26 @@ fn a_lost_update_has_a_repair() {
 
 /// A lock in a `defer` warns, and a counter has its repair.
 #[test]
+fn an_unused_string_has_a_repair() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("unused-string");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.cli\n\nfn main() {\n    cli.markup(\"[red]no[/]\")\n}\n";
+    std::fs::write(dir.join("fix.to"), program).unwrap();
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["check", "fix.to", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    let fix = &found["diagnostics"][0]["fixes"][0];
+    assert_eq!(fix["title"], "write it with `console.println`", "{found}");
+    let edits = fix["edits"].as_array().cloned().unwrap_or_default();
+    let written: Vec<&str> = edits.iter().map(|edit| edit["replacement"].as_str().unwrap()).collect();
+    assert_eq!(written, ["console.println(", ")", "import std.console\n"], "{found}");
+}
+
+#[test]
 fn a_lock_in_a_defer_has_a_repair() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lock-in-defer");
     let _ = std::fs::remove_dir_all(&dir);

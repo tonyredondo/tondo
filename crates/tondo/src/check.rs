@@ -6730,6 +6730,29 @@ impl<'a> Checker<'a> {
         owners
     }
 
+    /// W1018: a call whose `String` nothing uses, which was made for nothing,
+    /// or was meant to be written (11.9).
+    fn dropped_string(&mut self, written: &ast::Expr, value: &hir::Expr) {
+        let call = match &written.kind {
+            ast::ExprKind::Try(inner) => &inner.kind,
+            kind => kind,
+        };
+        if value.ty != Ty::STRING || !matches!(call, ast::ExprKind::Call { .. }) {
+            return;
+        }
+        let message = "nothing uses the `String` of this call, and making it has a cost: write it with \
+            `console.println(...)`, or discard it with `_ = ...`";
+        self.diags.warning("W1018", value.span, message);
+        let (start, end) = (Span::new(value.span.start, value.span.start), Span::new(value.span.end, value.span.end));
+        let console = self.imported_as(value.span, "std.console");
+        let mut edits = vec![(start, format!("{console}.println(")), (end, ")".to_string())];
+        if !self.imported(value.span, "std.console") {
+            edits.push((self.import_place(value.span, "std.console"), "import std.console\n".to_string()));
+        }
+        self.diags.fix("write it with `console.println`", false, edits);
+        self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
+    }
+
     /// Whether the file of `at` imports the module `path`.
     fn imported(&self, at: Span, path: &str) -> bool {
         let file = self.sources.file_of(at.start);
@@ -9086,6 +9109,9 @@ impl<'a> Checker<'a> {
                 self.diags.warning("W1006", t.span, "unreachable expression");
             }
             let value = self.expr(cx, t, expected);
+            if expected == Some(Ty::UNIT) {
+                self.dropped_string(t, &value);
+            }
             Box::new(match expected {
                 Some(expected) if body => self.returned(cx, value, expected),
                 Some(expected) => self.coerce(value, expected),
@@ -9252,7 +9278,9 @@ impl<'a> Checker<'a> {
                     ast::ExprKind::Block(_) | ast::ExprKind::If { .. } | ast::ExprKind::Match { .. }
                 )
                 .then_some(Ty::UNIT);
-                let value = self.expr(cx, value, expected);
+                let written = value;
+                let value = self.expr(cx, written, expected);
+                self.dropped_string(written, &value);
                 // Only a result or an option must be used: it may be a
                 // failure or an absence the program has to see (11.9).
                 if self.must_use(value.ty) {

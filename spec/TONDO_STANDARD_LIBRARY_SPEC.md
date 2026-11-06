@@ -5973,8 +5973,9 @@ pub fn secret(question: String): String
 
 - `isTerminal` dice si la salida de `console` es una terminal, y `width` da su
   ancho, 80 si no lo es.
-- `markup` escribe un texto con estilos: `[estilo]texto[/]` aplica el estilo a
-  ese bloque y vuelve al de antes, y los bloques se anidan. Un estilo combina un
+- `markup` devuelve un texto con estilos, que no escribe por sí misma:
+  `[estilo]texto[/]` aplica el estilo a ese bloque y vuelve al de antes, y los
+  bloques se anidan. Un estilo combina un
   color (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `black`,
   `gray`, o `#rrggbb`), `on` y un color de fondo, y `bold`, `dim`, `italic`,
   `underline` o `strikethrough`; `[[` y `]]` escriben corchetes. Con un string

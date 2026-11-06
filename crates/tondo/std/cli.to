@@ -944,9 +944,10 @@ fn painting(): Bool {
     isTerminal() and __env.get("NO_COLOR").isNone() and __env.get("TERM") != some("dumb")
 }
 
-/// A text with styles: `[bold red]error[/]` writes `error` in bold red, and
-/// what follows as it was; blocks nest, and `[[` and `]]` write brackets.
-/// With an interpolated string, its values are written as they are.
+/// A text with styles, to print: `[bold red]error[/]` gives `error` in bold
+/// red, and what follows as it was; blocks nest, and `[[` and `]]` give
+/// brackets. With an interpolated string, its values stay as they are. It
+/// writes nothing itself: `console.println(cli.markup("[red]no[/]"))`.
 pub fn markup(text: String): String {
     let paint = painting()
     let chars: Array[Char] = text.chars().collect()

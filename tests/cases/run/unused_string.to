@@ -1,0 +1,33 @@
+// A `String` a call makes and nothing uses warns, as a statement and as the
+// value of a block that gives nothing; `_ =` says it is meant.
+
+import std.cli
+import std.console
+
+fn shout(text: String): String {
+    text.toUpper()
+}
+
+fn read(text: String): String ! Int {
+    text
+}
+
+fn loaded(): Unit ! Int {
+    read("a")?
+    _ = read("b")?
+}
+
+fn main() {
+    cli.markup("[red]no[/]")
+    shout("a")
+    if cli.isTerminal() {
+        shout("b")
+    }
+    _ = shout("c")
+    let kept = shout("d")
+    console.println(kept)
+    _ = loaded()
+}
+
+// expect-stdout: D
+// expect-warning: W1018 nothing uses the `String` of this call

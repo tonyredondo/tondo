@@ -252,6 +252,13 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A lock taken in a `defer`: in a cancelled task a `defer` does what needs no wait, so if another task holds \
          the lock it ends there and what it does is lost. Use an `Atomic`, or send to a channel with room.",
     ),
+    (
+        "W1018",
+        "unused-string",
+        "A call whose `String` nothing uses: making it cost memory and time for nothing, and a function that gives a \
+         text, as `cli.markup`, writes nothing by itself. Write it with `console.println(...)`, or discard it with \
+         `_ = ...`.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

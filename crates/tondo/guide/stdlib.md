@@ -307,9 +307,11 @@ fn main() {
 - An `Array[String]` field with `@cli.Rest` gets what the command does not
   read, as written, to pass to another program: what follows `--`, options
   it does not declare and extra arguments.
-- `cli.markup("[bold red]x[/]")` styles a block and returns to the style
-  before; interpolated values are text, and a wrong style is a compile
-  error. No codes off a terminal or with `NO_COLOR`.
+- `cli.markup("[bold red]x[/]")` gives a text that styles a block and
+  returns to the style before; it writes nothing, so print it:
+  `console.println(cli.markup("[red]no[/]"))`. Interpolated values are text,
+  and a wrong style is a compile error. No codes off a terminal or with
+  `NO_COLOR`.
 - `cli.table(records)`, `cli.progress("Building", total: n)`,
   `cli.ask`, `cli.confirm`, `cli.choose`, `cli.secret`,
   `cli.completions[Site](cli.Shell.Bash)`.

@@ -5233,3 +5233,11 @@ that needed.
 `dump redact` keeps the fields it names and drops the rest. Dropping what was known let a
 new field out: a field added to dumps stays private until someone says otherwise.
 
+## A `String` nobody reads warns
+
+`cli.markup` gives a text, and a program that called it as a statement printed nothing
+and heard nothing. A value may be abandoned (11.9), so this is a warning, `W1018`, and
+only for what a call makes: a `String` costs memory to make, and one nobody reads was
+nearly always meant to be written. Marking functions `must_use` would ask for annotations
+the type already gives. The cases and the benchmarks had no such call, so nothing that
+was right has to change.

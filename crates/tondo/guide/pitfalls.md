@@ -299,3 +299,7 @@ pub type Key = { id: String }
 
 fn main() {}
 ```
+
+A function that gives a text writes nothing: `cli.markup("[red]no[/]")` alone
+shows nothing, and `W1018` says so. Print what it gives, with
+`console.println(cli.markup("[red]no[/]"))`, or discard it with `_ = ...`.
