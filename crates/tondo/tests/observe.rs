@@ -3378,6 +3378,17 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     let logged = adapter.until("output");
     assert!(logged["output"].as_str().unwrap().starts_with("order "), "{logged}");
 
+    // The third time a line is reached, by a count kept where it is reached.
+    let breakpoints = json!([{ "line": 7, "hitCondition": "3" }]);
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": breakpoints }));
+    let frame = stack["stackFrames"][0]["id"].clone();
+    let before = adapter.ask("evaluate", json!({ "expression": "order.id", "frameId": frame, "context": "watch" }));
+    let before: u64 = before["result"].as_str().unwrap().parse().unwrap();
+    adapter.ask("continue", json!({ "threadId": thread }));
+    let stopped = adapter.until("stopped");
+    let frame = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }))["stackFrames"][0]["id"].clone();
+    let after = adapter.ask("evaluate", json!({ "expression": "order.id", "frameId": frame, "context": "watch" }));
+    assert_eq!(after["result"].as_str().unwrap().parse::<u64>().unwrap(), before + 3, "{after}");
     // Without its breakpoints the program runs as it did, and `pause` shows
     // a picture of it.
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));

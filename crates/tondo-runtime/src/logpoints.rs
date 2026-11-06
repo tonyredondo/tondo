@@ -28,6 +28,9 @@ struct Logpoint {
     /// A step of a task a logpoint holds: that logpoint, the task, and the
     /// frame it left: only that frame or those that called it count.
     step: Option<(u64, u64, usize)>,
+    /// Which times count, and how many went by.
+    hits: Option<super::debugger::Hits>,
+    count: u64,
 }
 
 /// Where a logpoint holds its task: its number, how long, the task, its frame,
@@ -96,7 +99,19 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
     // Into a call is deeper than the frame it left.
     let step = Some((held.id, held.task, if into { 0 } else { held.fp }));
     let (dump, stop) = (Some("-".to_string()), Some(held.seconds));
-    lock().push(Logpoint { id: next, sites, left: 1, client, condition: None, dump, stop, request: None, step });
+    lock().push(Logpoint {
+        id: next,
+        sites,
+        left: 1,
+        client,
+        condition: None,
+        dump,
+        stop,
+        request: None,
+        step,
+        hits: None,
+        count: 0,
+    });
     go(&held.id.to_string());
     String::new()
 }
@@ -145,7 +160,7 @@ fn held(id: u64, seconds: u64) {
     }
 }
 
-/// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>[\t<request>]]]]`: tells
+/// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>[\t<request>[\t<hits>]]]]]`: tells
 /// the tool its number and how many places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
@@ -155,6 +170,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     let mut given = || fields.next().filter(|field| !field.is_empty()).map(str::to_string);
     let (condition, dump, stop) = (given(), given(), given().and_then(|seconds| seconds.parse().ok()));
     let serving = given();
+    let hits = match given().map(|hits| super::debugger::Hits::parse(&hits)).transpose() {
+        Ok(hits) => hits,
+        Err(message) => return error(&message),
+    };
     if let Some(Err(message)) = condition.as_deref().map(super::debugger::valid_expression) {
         return error(&format!("the condition: {message}"));
     }
@@ -201,7 +220,19 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop, request: serving, step: None });
+    lock().push(Logpoint {
+        id,
+        sites,
+        left: max,
+        client,
+        condition,
+        dump,
+        stop,
+        request: serving,
+        step: None,
+        hits,
+        count: 0,
+    });
     String::new()
 }
 
@@ -348,6 +379,10 @@ extern "C" fn hit(saved: *const usize) {
     let last = {
         let mut set = lock();
         let Some(logpoint) = set.iter_mut().find(|logpoint| logpoint.id == id && logpoint.left > 0) else { return };
+        logpoint.count += 1;
+        if logpoint.hits.as_ref().is_some_and(|hits| !hits.reached(logpoint.count)) {
+            return;
+        }
         logpoint.left -= 1;
         logpoint.left == 0
     };

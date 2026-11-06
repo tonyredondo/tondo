@@ -247,9 +247,7 @@ impl Standing {
     /// `break <file>:<line> [if <condition>] [log <message>]`.
     fn set(&mut self, rest: &str) -> Result<Value, String> {
         let (rest, text) = rest.split_once(" log ").map_or((rest, None), |(rest, text)| (rest, Some(text.to_string())));
-        if rest.contains(" hits ") {
-            return Err("a breakpoint of a build without probes counts with `if`, not `hits`".into());
-        }
+        let (rest, hits) = rest.split_once(" hits ").unwrap_or((rest, ""));
         let (place, condition) = rest.split_once(" if ").unwrap_or((rest, ""));
         let (place, request) = place.split_once(" request ").unwrap_or((place, ""));
         let Some((_, line)) = place.rsplit_once(':').filter(|(file, _)| !file.contains(' ')) else {
@@ -260,7 +258,7 @@ impl Standing {
             Some(_) => "\t".to_string(),
             None => format!("-\t{HOLD}"),
         };
-        let answer = program.ask(&format!("logpoint {ALWAYS} {place}\t{condition}\t{stops}\t{request}"))?;
+        let answer = program.ask(&format!("logpoint {ALWAYS} {place}\t{condition}\t{stops}\t{request}\t{hits}"))?;
         if let Some(error) = answer["error"].as_str() {
             return Err(error.to_string());
         }

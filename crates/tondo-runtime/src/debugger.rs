@@ -207,8 +207,11 @@ fn line_values(site: usize, frame: usize, addresses: usize, alive: usize) {
         if here.file != values.file && !values.file.ends_with(&format!("/{}", here.file)) {
             return;
         }
+        // A line says what the next found; until then, what it started with,
+        // which is all the last line of a function ever has.
         let was = values.at.insert((task, frame), here.line);
-        was.filter(|line| values.shown.get(line).is_none_or(|at| now.duration_since(*at) >= VALUES_EVERY))
+        let line = was.or((!values.lines.contains_key(&here.line)).then_some(here.line));
+        line.filter(|line| values.shown.get(line).is_none_or(|at| now.duration_since(*at) >= VALUES_EVERY))
     };
     let Some(line) = due else { return };
     if let Some((addressed, living)) = table.offsets.get(here.function)
@@ -1072,13 +1075,13 @@ fn compiled_holds(table: &Table, frames: &[Frame], code: u64, names: &[String]) 
 
 /// When a breakpoint stops by its count of hits: at the `n`th, from it on,
 /// past it, or at every `n`th.
-struct Hits {
+pub(crate) struct Hits {
     op: &'static str,
     n: u64,
 }
 
 impl Hits {
-    fn parse(text: &str) -> Result<Hits, String> {
+    pub(crate) fn parse(text: &str) -> Result<Hits, String> {
         let text = text.trim();
         for op in [">=", ">", "==", "%"] {
             if let Some(n) = text.strip_prefix(op).and_then(|n| n.trim().parse().ok()) {
@@ -1091,7 +1094,7 @@ impl Hits {
         }
     }
 
-    fn reached(&self, count: u64) -> bool {
+    pub(crate) fn reached(&self, count: u64) -> bool {
         match self.op {
             ">=" => count >= self.n,
             ">" => count > self.n,

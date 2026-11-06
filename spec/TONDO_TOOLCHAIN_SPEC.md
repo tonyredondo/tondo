@@ -1024,8 +1024,9 @@ parada retiene la tarea 300 segundos como mucho, una sola a la vez, y se suelta 
 y solo ella, para en la siguiente línea de su función o de las que la llamaron, solo de
 esas, o de cualquiera del programa, que es entrar en sus llamadas, no en las de la librería
 estándar. Todo esto se escribe al pedirlo, en las llamadas que el programa ya deja
-previstas: el código compilado es el mismo y un programa que nadie depura no paga nada. `pause` no detiene nada: da una foto del programa,
-que sigue. No hay `hits`, ni evaluar llamadas ni cambiar valores: hacen falta sondas, y el
+previstas: el código compilado es el mismo y un programa que nadie depura no paga nada.
+`hits` cuenta donde se llega, igual que una condición, sin parar la tarea. `pause` no detiene nada: da una foto del programa,
+que sigue. No hay evaluar llamadas ni cambiar valores: hacen falta sondas, y el
 comando lo dice. Las variables son las que el código optimizado conserva en esa línea.
 
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
