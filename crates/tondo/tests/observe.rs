@@ -4188,7 +4188,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         .current_dir(&debugged)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(std::fs::File::create(debugged.join("errors")).unwrap())
         .spawn()
         .unwrap();
     let mut commands = debugger.stdin.take().unwrap();
@@ -4197,7 +4197,12 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::net::TcpStream::connect(("127.0.0.1", debug_port)).ok()
     });
-    let mut connected = connected.unwrap();
+    let Some(mut connected) = connected else {
+        let _ = debugger.kill();
+        let mut said = String::new();
+        let _ = std::io::Read::read_to_string(&mut debugger.stdout.take().unwrap(), &mut said);
+        panic!("nothing listens on {debug_port}: {said}{}", std::fs::read_to_string(debugged.join("errors")).unwrap());
+    };
     std::io::Write::write_all(&mut connected, b"GET /one HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
     let mut said = BufReader::new(debugger.stdout.take().unwrap());
     let mut stop = String::new();
