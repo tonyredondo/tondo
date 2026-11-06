@@ -357,3 +357,30 @@ fn builds_the_files_of_its_system() {
     );
     assert!(err.contains(&refused), "{err}");
 }
+
+/// A write made from an earlier read has a repair: one `update`, unless what
+/// was read goes on being used.
+#[test]
+fn a_lost_update_has_a_repair() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lost-update-fix");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.sync\n\nfn main() {\n    let cell = sync.Mutex(0)\n    \
+        let seen = cell.get()\n    cell.update((n) { n = seen + 1 })\n    cell.set(cell.get() * 2)\n    \
+        let kept = cell.get()\n    cell.set(kept + 1)\n    console.println(\"{kept}\")\n}\n";
+    std::fs::write(dir.join("fix.to"), program).unwrap();
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["check", "fix.to", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    let list = found["diagnostics"].as_array().unwrap();
+    let edits = |at: usize| list[at]["fixes"][0]["edits"].as_array().cloned().unwrap_or_default();
+    assert_eq!(list.len(), 3, "{found}");
+    let replaced: Vec<&str> =
+        list[0]["fixes"][0]["edits"].as_array().unwrap().iter().map(|e| e["replacement"].as_str().unwrap()).collect();
+    assert_eq!(replaced, ["n", ""], "{found}");
+    assert_eq!(edits(1)[0]["replacement"], "cell.update((value) { value = value * 2 })", "{found}");
+    assert!(edits(2).is_empty(), "{found}");
+}

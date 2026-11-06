@@ -485,6 +485,11 @@ struct CellUse {
     /// Of a read, where the binding it gave is named; of a write, where its
     /// arguments are.
     within: Span,
+    /// The statement of a read that gives a binding; the name of a write's
+    /// method; and the parameter of the closure an `update` takes.
+    statement: Span,
+    method: String,
+    parameter: Option<String>,
 }
 
 /// That the language's annotation `@name` does not go on `what` (27.13).
@@ -8182,7 +8187,12 @@ impl<'a> Checker<'a> {
         if read || writes {
             let within =
                 first.zip(last).map_or(Span::default(), |(a, b)| Span::new(a.value.span.start, b.value.span.end));
-            self.cell_uses.push(CellUse { cell, span, read, within });
+            let parameter = match first.map(|arg| &arg.value.kind) {
+                Some(ast::ExprKind::Closure(closure)) => closure.params.first().map(|param| param.name.name.clone()),
+                _ => None,
+            };
+            let (method, statement) = (method.name.clone(), Span::default());
+            self.cell_uses.push(CellUse { cell, span, read, within, statement, method, parameter });
         }
     }
 
@@ -8196,20 +8206,72 @@ impl<'a> Checker<'a> {
         let mut found = Vec::new();
         for write in uses.iter().filter(|used| !used.read) {
             let same = uses.iter().filter(|used| used.read && used.cell == write.cell);
+            let named = |read: &CellUse| -> Vec<Span> {
+                let uses = index.uses.iter().filter(|(_, def)| index.defs[*def].name_span == read.within);
+                uses.map(|(span, _)| *span).filter(|span| *span != read.within).collect()
+            };
             let source = same.filter(|read| read.span.start < write.span.end).find(|read| {
-                inside(write.within, read.span)
-                    || index.uses.iter().any(|(span, def)| {
-                        index.defs[*def].name_span == read.within && *span != read.within && inside(write.within, *span)
-                    })
+                inside(write.within, read.span) || named(read).iter().any(|span| inside(write.within, *span))
             });
-            found.extend(source.map(|read| (write.span, read.span)));
+            found.extend(source.map(|read| {
+                let places = if inside(write.within, read.span) { vec![read.span] } else { named(read) };
+                (write, read, places)
+            }));
         }
-        for (write, read) in found {
+        let mut told = Vec::new();
+        for (write, read, places) in found {
+            let fix = self.one_update(write, read, &places);
+            told.push((write.span, read.span, fix));
+        }
+        for (write, read, fix) in told {
             let message = "this writes a value made from one read earlier, and another task may change it in between, \
                            which would be lost: read and write it in one `update`, or an `Atomic` with `compareExchange`";
             self.diags.warning("W1016", write, message);
             self.diags.related(read, "read here");
+            if let Some(edits) = fix {
+                self.diags.fix("read and write it in one `update`", false, edits);
+            }
         }
+    }
+
+    /// The edits that make a read and a write of a `Mutex` or a `RwLock` one
+    /// `update`: what the value read names becomes the value there. Not when
+    /// the value read goes on being used after the write.
+    fn one_update(&self, write: &CellUse, read: &CellUse, places: &[Span]) -> Option<Vec<(Span, String)>> {
+        let inside = |span: &Span| write.within.start <= span.start && span.end <= write.within.end;
+        if !places.iter().all(inside) || !matches!(write.method.as_str(), "set" | "update") {
+            return None;
+        }
+        let text = |span: Span| self.sources.slice(span).to_string();
+        let name = write.parameter.clone().unwrap_or("value".to_string());
+        let mut edits = Vec::new();
+        if write.method == "update" {
+            edits.extend(places.iter().map(|&span| (span, name.clone())));
+        } else {
+            // The argument with the value read in place, and the cell's name.
+            let (mut made, mut from) = (String::new(), write.within.start);
+            for span in places {
+                made.push_str(&text(Span::new(from, span.start)));
+                made.push_str(&name);
+                from = span.end;
+            }
+            made.push_str(&text(Span::new(from, write.within.end)));
+            let cell = text(write.span);
+            let cell = cell.strip_suffix(&format!("{})", text(write.within)))?.strip_suffix(".set(")?;
+            edits.push((write.span, format!("{cell}.update(({name}) {{ {name} = {made} }})")));
+        }
+        // The binding goes, with its line.
+        if read.statement != Span::default() {
+            let (mut start, mut end) = (read.statement.start, read.statement.end);
+            while start > 0 && matches!(text(Span::new(start - 1, start)).as_str(), " " | "\t") {
+                start -= 1;
+            }
+            while matches!(text(Span::new(end, end + 1)).as_str(), " " | "\t" | "\r") {
+                end += 1;
+            }
+            edits.push((Span::new(start, end + 1), String::new()));
+        }
+        Some(edits)
     }
 
     /// The operations of the `std.sync` values (14.4.4). Each locks the
@@ -9078,6 +9140,7 @@ impl<'a> Checker<'a> {
                             self.cell_uses.last_mut().filter(|used| used.read && used.span == value.span)
                         {
                             read.within = name.span;
+                            read.statement = stmt.span;
                         }
                         let local = self.declare(cx, name, ty, *mutable);
                         Some(hir::Stmt::Let(local, value))

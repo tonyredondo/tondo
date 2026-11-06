@@ -14,6 +14,9 @@ import { ShowProfile } from './profiles';
 import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
+/** The updates tasks lost in the last run, in the Problems panel. */
+const lostUpdates = vscode.languages.createDiagnosticCollection('tondo-test');
+
 export function registerTesting(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
@@ -333,6 +336,11 @@ export function registerTesting(
             const place = warningPlace(warning);
             const where = place && locate(place.file, place.line, 1);
             testRun.appendOutput(`warning: ${warning}\r\n`, where, test);
+            if (where) {
+              const found = new vscode.Diagnostic(where.range, warning, vscode.DiagnosticSeverity.Warning);
+              found.source = 'tondo test';
+              lostUpdates.set(where.uri, [...(lostUpdates.get(where.uri) ?? []), found]);
+            }
           }
           // What its benchmarks measured.
           if (test && event.outcome.benchmarks.length > 0) {
@@ -406,6 +414,7 @@ export function registerTesting(
       await Promise.all([...chosen(request)].map(([dir, items]) => watch(request, dir, items, token)));
       return;
     }
+    lostUpdates.clear();
     const testRun = controller.createTestRun(request);
     const benchmarking = request.profile?.label === 'Benchmark';
     const profiling = request.profile?.label === 'Profile';
