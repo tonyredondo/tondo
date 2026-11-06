@@ -260,10 +260,9 @@ pub fn decode[T: serialization.Decode](
     let count = yamlnative.documents(input.native)
     if count != 1 {
         // A failure to parse comes first.
-        _ = serialization.Source.next(input)?
+        _ = input.next()?
         let held = if count == 0 { "no document" } else { "{count} documents" }
-        fail serialization.Source.failure(
-            input,
+        fail input.failure(
             serialization.ErrorKind.Syntax,
             "the text holds {held}; `decodeAll` reads every one",
         )
@@ -279,7 +278,7 @@ pub fn decodeAll[T: serialization.Decode](
     let input = reader(text, unknownFields)
     var values: Array[T] = []
     if yamlnative.documents(input.native) == 0 {
-        _ = serialization.Source.next(input)?
+        _ = input.next()?
         return values
     }
     for {
@@ -323,7 +322,7 @@ fn reader(text: String, unknownFields: UnknownFields): Reader {
 
 /// The value of the document the reader is at.
 fn document[T: serialization.Decode](input: Reader): T ! YamlError {
-    let first = serialization.Source.value(input)?
+    let first = input.value()?
     serialization.Decode.decode[T](input, first)?
 }
 
@@ -467,7 +466,7 @@ impl serialization.Encode for Value {
             Value.Array(items) => {
                 out.beginList(items.length())
                 for item in items {
-                    serialization.Encode.encode(item, out)
+                    item.encode(out)
                 }
                 out.endList()
             }
@@ -475,13 +474,13 @@ impl serialization.Encode for Value {
                 out.beginMap(members.length())
                 for (key, member) in members {
                     out.key(key)
-                    serialization.Encode.encode(member, out)
+                    member.encode(out)
                 }
                 out.endMap()
             }
             Value.Tagged(tag, value) => {
                 out.tag(tag)
-                serialization.Encode.encode(value, out)
+                value.encode(out)
             }
         }
     }

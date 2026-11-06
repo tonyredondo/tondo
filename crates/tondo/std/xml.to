@@ -216,7 +216,7 @@ pub fn decode[T: serialization.Decode](text: String): T ! XmlError {
         ended: none
     }
     let input = Reader { state: __sync.Mutex(reading) }
-    let decoded = match serialization.Source.value(input) {
+    let decoded = match input.value() {
         ok(first) => serialization.Decode.decode[T](input, first)
         err(error) => err(error)
     }
@@ -642,18 +642,18 @@ impl serialization.Source for Reader {
             _ => false
         }
         if not opened {
-            fail serialization.Source.mismatch(self, first, "an element for `{name}`")
+            fail self.mismatch(first, "an element for `{name}`")
         }
     }
 
     fn beginList(self, first: serialization.Event, name: String): !serialization.Error {
         if not self.state.update((reading) { reading.list(first) }) {
-            fail serialization.Source.mismatch(self, first, "elements for `{name}`")
+            fail self.mismatch(first, "elements for `{name}`")
         }
     }
 
     fn nextField(self, names: Array[String]): Int? ! serialization.Error {
-        let key = match serialization.Source.nextKey(self)? {
+        let key = match self.nextKey()? {
             some(key) => key
             none => return none
         }
@@ -663,7 +663,7 @@ impl serialization.Source for Reader {
                 return some(index)
             }
         }
-        serialization.Source.unknownField(self, key, serialization.Source.value(self)?)?
+        self.unknownField(key, self.value()?)?
         some(names.length())
     }
 }

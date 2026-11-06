@@ -216,7 +216,7 @@ pub fn decode[T: serialization.Decode](
         native: packnative.parse(input)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
-    let first = serialization.Source.value(reader)?
+    let first = reader.value()?
     serialization.Decode.decode[T](reader, first)?
 }
 
@@ -481,7 +481,7 @@ impl serialization.Encode for Value {
             Value.Nil => out.null()
             Value.Bool(value) => out.bool(value)
             Value.Int(value) => out.int(value)
-            Value.UInt(value) => serialization.Encode.encode(value, out)
+            Value.UInt(value) => value.encode(out)
             Value.Float(value) => out.float(value)
             Value.Text(text) => out.text(text)
             Value.Bytes(bytes) => out.bytes(bytes)
@@ -489,7 +489,7 @@ impl serialization.Encode for Value {
             Value.Array(items) => {
                 out.beginList(items.length())
                 for item in items {
-                    serialization.Encode.encode(item, out)
+                    item.encode(out)
                 }
                 out.endList()
             }
@@ -497,7 +497,7 @@ impl serialization.Encode for Value {
                 out.beginMap(members.length())
                 for (key, member) in members {
                     out.key(key)
-                    serialization.Encode.encode(member, out)
+                    member.encode(out)
                 }
                 out.endMap()
             }

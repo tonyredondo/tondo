@@ -199,8 +199,8 @@ pub fn Pool.shutdown(self) {
 }
 
 // A job holds its place in the pool, and then a worker, until it ends.
-fn run[T](workers: __sync.Semaphore, admitted: __sync.Permit, job: fn(): T): T {
-    let worker = workers.acquire()
+fn run[T](workers: __sync.Semaphore, _admitted: __sync.Permit, job: fn(): T): T {
+    let _worker = workers.acquire()
     job()
 }
 

@@ -352,7 +352,7 @@ pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): Strin
 /// Earlier first, as the instants they name, whatever their zones.
 impl Ordered for ZonedDateTime {
     fn compare(self, other: ZonedDateTime): Int {
-        Ordered.compare(self.utc(), other.utc())
+        self.utc().compare(other.utc())
     }
 }
 

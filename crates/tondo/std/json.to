@@ -1017,7 +1017,7 @@ impl serialization.Encode for Raw {
             return
         }
         match parse(self.json) {
-            ok(value) => serialization.Encode.encode(value, out)
+            ok(value) => value.encode(out)
             err(_) => out.null()
         }
     }
@@ -1044,7 +1044,7 @@ impl serialization.Encode for Value {
             Value.Array(items) => {
                 out.beginList(items.length())
                 for item in items {
-                    serialization.Encode.encode(item, out)
+                    item.encode(out)
                 }
                 out.endList()
             }
@@ -1052,7 +1052,7 @@ impl serialization.Encode for Value {
                 out.beginMap(members.length())
                 for (key, member) in members {
                     out.key(key)
-                    serialization.Encode.encode(member, out)
+                    member.encode(out)
                 }
                 out.endMap()
             }

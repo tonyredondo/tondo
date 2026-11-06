@@ -184,7 +184,7 @@ impl Display for ErrorKind {
 ///     title: String
 /// }
 ///
-/// serialization.Encode.encode(Item { id: 1, title: "Tea" }, Notes { lines: [] })
+/// Item { id: 1, title: "Tea" }.encode(Notes { lines: [] })
 /// ```
 pub type Note = {
     format: String

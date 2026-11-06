@@ -267,7 +267,7 @@ pub fn decode[T: serialization.Decode](
         native: tomlnative.parse(text)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
-    let first = serialization.Source.value(input)?
+    let first = input.value()?
     serialization.Decode.decode[T](input, first)?
 }
 
@@ -443,7 +443,7 @@ impl serialization.Encode for Value {
             Value.Array(items) => {
                 out.beginList(items.length())
                 for item in items {
-                    serialization.Encode.encode(item, out)
+                    item.encode(out)
                 }
                 out.endList()
             }
@@ -451,7 +451,7 @@ impl serialization.Encode for Value {
                 out.beginMap(members.length())
                 for (key, member) in members {
                     out.key(key)
-                    serialization.Encode.encode(member, out)
+                    member.encode(out)
                 }
                 out.endMap()
             }

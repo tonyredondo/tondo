@@ -1095,7 +1095,7 @@ fn Row.opened(
 ): !__serialization.Error {
     let parsed = match __json.parse(text) {
         ok(value) => value
-        err(_) => fail __serialization.Source.mismatch(self, first, expected)
+        err(_) => fail self.mismatch(first, expected)
     }
     var events: Array[__serialization.Event] = []
     jsonEvents(parsed, var events)
@@ -1516,7 +1516,7 @@ type Column = {
 
 /// At most this many statements are kept per connection; others are
 /// prepared each time.
-const KEPT_STATEMENTS: Int = 512
+const KeptStatements: Int = 512
 
 fn connectPostgres(url: String): Connection ! SqlError {
     let settings = settingsOf(url, 5432)?
@@ -1786,7 +1786,7 @@ fn affectedBy(tag: String): Int {
 /// Prepares a statement and asks for its parameters' types and columns.
 fn Postgres.prepare(self, text: String): Prepared ! SqlError {
     let count = self.prepared.length()
-    let name = if count < KEPT_STATEMENTS { "tondo_{count + 1}" } else { "" }
+    let name = if count < KeptStatements { "tondo_{count + 1}" } else { "" }
     var out = framed('P', cstring(name).concat(cstring(text)).concat(bigEndianBytes(0, 2)))
     out.extend(framed('D', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(name))))
     out.extend(framed('S', []))
@@ -2001,7 +2001,7 @@ fn elementOid(oid: Int): Int? {
 }
 
 /// The microseconds from the Unix epoch to PostgreSQL's, 2000-01-01.
-const POSTGRES_EPOCH: Int = 946684800000000
+const PostgresEpoch: Int = 946684800000000
 
 /// A value of a column of type `oid`: in binary for the types
 /// `binaryOid` names, as text for the others, and `NUMERIC` as digits.
@@ -2083,7 +2083,7 @@ fn timestampOf(micros: Int): Value {
     if micros == Int.min {
         return Value.Text("-infinity")
     }
-    Value.DateTime(__time.utc(__time.microseconds(micros + POSTGRES_EPOCH)))
+    Value.DateTime(__time.utc(__time.microseconds(micros + PostgresEpoch)))
 }
 
 /// An `ErrorResponse` as a `SqlError`, by its SQLSTATE.
@@ -2171,7 +2171,7 @@ type Field = {
 /// protocol 4.1, transactions, statements by several, results of several,
 /// plugins of authentication with long answers, and results that end with
 /// an OK packet.
-const MYSQL_CAPABILITIES: Int = 0x1 |
+const MysqlCapabilities: Int = 0x1 |
     0x4 |
     0x200 |
     0x2000 |
@@ -2183,16 +2183,16 @@ const MYSQL_CAPABILITIES: Int = 0x1 |
     0x200000 |
     0x1000000
 
-const MYSQL_CONNECT_WITH_DB: Int = 0x8
+const MysqlConnectWithDb: Int = 0x8
 
-const MYSQL_SSL: Int = 0x800
+const MysqlSsl: Int = 0x800
 
-const MYSQL_DEPRECATE_EOF: Int = 0x1000000
+const MysqlDeprecateEof: Int = 0x1000000
 
-const MYSQL_MORE_RESULTS: Int = 0x8
+const MysqlMoreResults: Int = 0x8
 
 /// utf8mb4_general_ci, which MySQL and MariaDB both know.
-const MYSQL_CHARSET: Int = 45
+const MysqlCharset: Int = 45
 
 fn connectMySql(url: String): Connection ! SqlError {
     let settings = settingsOf(url, 3306)?
@@ -2227,15 +2227,15 @@ fn connectMySql(url: String): Connection ! SqlError {
         at += rest
         plugin = cstringAt(greeting, var at)
     }
-    var asked = MYSQL_CAPABILITIES & capabilities
+    var asked = MysqlCapabilities & capabilities
     if not settings.database.isEmpty() {
-        asked = asked | MYSQL_CONNECT_WITH_DB
+        asked = asked | MysqlConnectWithDb
     }
-    var session = first with { okEnds: asked & MYSQL_DEPRECATE_EOF != 0 }
+    var session = first with { okEnds: asked & MysqlDeprecateEof != 0 }
     var secure = false
     if tlsWanted(settings) {
-        if capabilities & MYSQL_SSL != 0 {
-            asked = asked | MYSQL_SSL
+        if capabilities & MysqlSsl != 0 {
+            asked = asked | MysqlSsl
             session.send(mysqlHeader(asked))?
             let sequence = session.sequence.get()
             session = session with {
@@ -2280,7 +2280,7 @@ fn connectMySql(url: String): Connection ! SqlError {
 fn mysqlHeader(capabilities: Int): Array[Byte] {
     var out = littleEndianBytes(capabilities, 4)
     out.extend(littleEndianBytes(16777215, 4))
-    out.push(Byte(UInt8.wrapping(MYSQL_CHARSET)))
+    out.push(Byte(UInt8.wrapping(MysqlCharset)))
     out.extend([Byte(0u8)].repeat(23))
     out
 }
@@ -2457,7 +2457,7 @@ fn MySql.prepare(self, text: String): Kept ! SqlError {
             }
         }
     }
-    if self.kept.length() < KEPT_STATEMENTS {
+    if self.kept.length() < KeptStatements {
         _ = self.kept.insert(text, kept)
     }
     kept
@@ -2513,7 +2513,7 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
             let status = unsigned(first, at, 2)
             let reads = binary == some(Operation.Query)
             return (
-                status & MYSQL_MORE_RESULTS != 0,
+                status & MysqlMoreResults != 0,
                 Outcome {
                     columns: []
                     rows: []
@@ -2548,7 +2548,7 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
             }
             let status = unsigned(packet, end, 2)
             return (
-                status & MYSQL_MORE_RESULTS != 0,
+                status & MysqlMoreResults != 0,
                 Outcome {
                     columns: fields.map((field) { field.name })
                     rows

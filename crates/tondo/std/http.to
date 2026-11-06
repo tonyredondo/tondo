@@ -1567,7 +1567,7 @@ impl __serialization.Encode for UploadedFile {
         out.key("contentType")
         out.text(self.contentType)
         out.key("bytes")
-        __serialization.Encode.encode(__serialization.Bytes(self.bytes), out)
+        __serialization.Bytes(self.bytes).encode(out)
         out.endMap()
     }
 }

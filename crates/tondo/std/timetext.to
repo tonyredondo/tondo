@@ -43,6 +43,7 @@ fn ofIsoWeek(year: Int, week: Int, day: Int): Int {
     fourth - weekday(fourth) + (week - 1) * 7 + day
 }
 
+/// The days of a month of a year.
 pub fn daysIn(year: Int, month: Int): Int {
     let leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
     if month == 2 {

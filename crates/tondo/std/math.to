@@ -836,7 +836,7 @@ impl Display for Decimal {
 impl Ordered for Decimal {
     fn compare(self, other: Decimal): Int {
         let (a, b) = aligned(self, other)
-        Ordered.compare(a, b)
+        a.compare(b)
     }
 }
 

@@ -1294,7 +1294,7 @@ impl serialization.Encode for Any {
         out.key("typeUrl")
         out.text(self.typeUrl)
         out.key("value")
-        serialization.Encode.encode(serialization.Bytes(self.value), out)
+        serialization.Bytes(self.value).encode(out)
         out.endMap()
     }
 }
@@ -1327,7 +1327,7 @@ impl serialization.Encode for FieldMask {
     fn encode[S: serialization.Sink](self, out: S) {
         out.beginMap(1)
         out.key("paths")
-        serialization.Encode.encode(self.paths, out)
+        self.paths.encode(out)
         out.endMap()
     }
 }
@@ -1355,7 +1355,7 @@ impl serialization.Decode for FieldMask {
 /// leaves out.
 impl serialization.Encode for UnknownFields {
     fn encode[S: serialization.Sink](self, out: S) {
-        serialization.Encode.encode(serialization.Bytes(self.bytes), out)
+        serialization.Bytes(self.bytes).encode(out)
     }
 }
 

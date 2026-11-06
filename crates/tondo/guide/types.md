@@ -219,7 +219,7 @@ fn total[S: Shape](shapes: Array[S]): Float {
 
 fn main() {
     let square = Square { side: 2.0 }
-    console.println(Shape.describe(square))     // on a concrete value: Trait.method
+    console.println(square.describe())          // and on a value, when one trait gives it
     console.println("{square} {total([square, square])} {largest([3, 9, 4])}")
     let boxed = Box { value: "x" }
     console.println(boxed.value)
