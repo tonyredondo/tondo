@@ -608,6 +608,7 @@ fn codes_of_a_test_run() {
     let manifest: &[u8] = b"[package]\nname = \"app\"\n";
     let tests: &[u8] = b"import std.testing\nimport std.time\n\n\
         test backwards {\n    testing.withVirtualTime((clock) {\n        clock.advance(time.seconds(-1))\n    })?\n}\n\n\
+        test leaves {\n    defer {\n        testing.skip(\"late\")\n    }\n}\n\n\
         test tagged {\n    testing.tags([\"a\": \"1\"])\n    testing.tags([\"a\": \"2\"])\n}\n\n\
         test snapped {\n    testing.snapshot(\"same\", 1)\n    testing.snapshot(\"same\", 1)\n}\n";
     let dir = project_at(
@@ -615,5 +616,5 @@ fn codes_of_a_test_run() {
         &[("tondo.toml", manifest), ("src/main.to", b"fn main() {}\n"), ("src/main_test.to", tests)],
     );
     let said = said_by(&dir, &["test", "--update-snapshots"]);
-    assert!(said.contains("P2002") && said.contains("P2005") && said.contains("P2008"), "{said}");
+    assert!(["P2001", "P2002", "P2005", "P2008"].iter().all(|code| said.contains(code)), "{said}");
 }

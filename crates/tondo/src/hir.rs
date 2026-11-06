@@ -117,6 +117,8 @@ pub struct ContextFns {
 /// The code of the panic that `testing.skip` ends a test or suite with,
 /// which the runner reports as a skip.
 pub const SKIP: u32 = 2000;
+/// `testing.skip` in a `defer`: `P2001`.
+pub const SKIP_IN_CLEANUP: u32 = 2001;
 /// `testing.failNow`, a failed assertion (`P0007`) that no `recover` stops.
 pub const FAIL_NOW: u32 = 2012;
 

@@ -15837,7 +15837,12 @@ impl<'a> Checker<'a> {
                         };
                         let message = self.expr(cx, &arg.value, Some(Ty::STRING));
                         let message = Box::new(self.coerce(message, Ty::STRING));
-                        let code = if *member == "failNow" { hir::FAIL_NOW } else { hir::SKIP };
+                        // Cleanup runs to its end: a `skip` there is a panic (testing 7.4).
+                        let code = match (*member, cx.deferred) {
+                            ("failNow", _) => hir::FAIL_NOW,
+                            (_, true) => hir::SKIP_IN_CLEANUP,
+                            _ => hir::SKIP,
+                        };
                         return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
                     }
                     "withVirtualTime" => return self.with_virtual_time(cx, args, span),
