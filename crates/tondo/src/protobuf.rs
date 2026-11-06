@@ -1021,7 +1021,7 @@ fn json_read(kind: &Kind, value: &str, path: &str) -> String {
         Kind::Scalar(scalar) => format!("input.{}({value}, {path:?})?", json_method(scalar)),
         Kind::Timestamp => format!("input.timestamp({value}, {path:?})?"),
         Kind::Duration => format!("input.duration({value}, {path:?})?"),
-        Kind::Json(_) => format!("input.jsonValue({value}, {path:?})?"),
+        Kind::Json(_) => value.to_string(),
         Kind::Message(ty, _) => format!("input.message[{ty}]({value}, {path:?})?"),
         Kind::Enum(ty) => format!("input.enumValue[{ty}]({value}, {path:?})?"),
         Kind::OneOf(..) => unreachable!("a oneof is read by its variants"),

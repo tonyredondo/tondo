@@ -67,7 +67,8 @@ fn main(): !protobuf.ProtobufError {
     let lenient =
         "{{\"small_int\": 3, \"big_int\": 7, \"mood\": 1, \"blob\": \"AP8-Pw\", \"inner\": null}}"
     console.println(protobuf.toJson(protobuf.fromJson[every.Every](lenient)?)?)
-    for wrong in ["{{\"nope\": 1}}", "{{\"smallInt\": \"x\"}}", "{{\"took\": \"3\"}}", "[1]"] {
+    let nested = "{{\"inner\": {{\"displayName\": 1}}}}"
+    for wrong in ["{{\"nope\": 1}}", "{{\"smallInt\": \"x\"}}", "{{\"took\": \"3\"}}", "[1]", nested] {
         match protobuf.fromJson[every.Every](wrong) {
             ok(_) => console.println("read")
             err(error) => console.println("{error}")
@@ -88,4 +89,5 @@ fn main(): !protobuf.ProtobufError {
 // expect-stdout: expected an integer at $.smallInt
 // expect-stdout: expected seconds, as `1.5s` at $.took
 // expect-stdout: expected an object at $
+// expect-stdout: expected a text at $.inner.displayName
 // expect-stdout: {"flag":true}

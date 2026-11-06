@@ -2122,7 +2122,17 @@ pub fn JsonReader.enumValue[T: Enum](self, value: __json.Value, path: String): T
 
 /// A message, as its own `readJson` reads it.
 pub fn JsonReader.message[T: Message](self, value: __json.Value, path: String): T ! ProtobufError {
-    Message.readJson[T](self, value)?
+    match Message.readJson[T](self, value) {
+        ok(message) => message
+        err(error) => fail serialization.Error {
+            kind: error.kind
+            message: error.message
+            path: "{path}{error.path.removePrefix("$")}"
+            line: error.line
+            column: error.column
+            violations: error.violations
+        }
+    }
 }
 
 /// A `google.protobuf.Timestamp`, in RFC 3339.
@@ -2173,11 +2183,6 @@ pub fn JsonReader.duration(self, value: __json.Value, path: String): __time.Dura
     }
     let total = seconds * 1_000_000_000 + nanoseconds
     __time.nanoseconds(if negative { -total } else { total })
-}
-
-/// A `google.protobuf.Value`, `Struct` or `ListValue`: the JSON it holds.
-pub fn JsonReader.jsonValue(self, value: __json.Value, path: String): __json.Value ! ProtobufError {
-    value
 }
 
 // ---------------------------------------------------------------------------
