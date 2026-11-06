@@ -1915,6 +1915,21 @@ pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value, crat
     Ok((summary, tasks(&dump), heap(&dump), roots_of(&dump)))
 }
 
+/// The tasks of a dump that came over a connection.
+pub(crate) fn seen_tasks(mut dump: Value) -> Vec<Value> {
+    name_frames(&mut dump);
+    tasks(&dump)
+}
+
+/// What a dump holds of the frame at `index` of a task's stack: of its frames
+/// with the same place, the one in the same order.
+pub(crate) fn frame_of_task(task: &Value, index: usize) -> Option<&Value> {
+    let stack = task["stack"].as_array()?;
+    let place = stack.get(index)?;
+    let before = stack[..index].iter().filter(|line| *line == place).count();
+    task["frames"].as_array()?.iter().filter(|frame| frame["at"] == *place).nth(before)
+}
+
 /// Names each frame the program did not, from the symbols of its files.
 fn name_frames(dump: &mut Value) {
     let program = dump["info"]["program"].as_str().unwrap_or_default().to_string();
@@ -2452,7 +2467,7 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
 
 /// A hit of a logpoint as a line: the text with its parts in place, or
 /// every binding.
-fn logged(hit: &Value, text: Option<&str>) -> String {
+pub(crate) fn logged(hit: &Value, text: Option<&str>) -> String {
     let values = hit["values"].as_array().map_or(&[][..], Vec::as_slice);
     let frame = json!({ "bindings": values });
     let at = values.first().and_then(|value| value["at"].as_str()).unwrap_or_default();

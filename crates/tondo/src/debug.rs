@@ -331,8 +331,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             }
             (observe::started(&executable, child.id())?, Some(child))
         }
-        Debugged::Running(name) => (observe::connect(&name)?, None),
-        Debugged::Remote(via, name) => (observe::via(&via, &name)?, None),
+        Debugged::Running(name) => (crate::standing::connect(&name, None)?, None),
+        Debugged::Remote(via, name) => (crate::standing::connect(&name, Some(&via))?, None),
     };
     let pid = program.pid;
     let (writer, said) = attach(program)?;

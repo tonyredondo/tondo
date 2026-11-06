@@ -107,7 +107,6 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.blocked', blocked),
     vscode.commands.registerCommand('tondo.serveDumps', serveDumps),
     vscode.commands.registerCommand('tondo.apiDiff', apiDiff),
-    vscode.commands.registerCommand('tondo.stopTask', stopTask),
     breaking,
     { dispose: () => serving?.kill() },
     vscode.commands.registerCommand('tondo.logpoint', logpoint),
@@ -298,37 +297,6 @@ async function readCore(): Promise<void> {
     return;
   }
   await vscode.commands.executeCommand('tondo.debugDump', vscode.Uri.file(output));
-}
-
-/** A breakpoint of the task that reaches this line of a running program,
- *  in a build without probes: the others go on, and it goes on from here or
- *  when its time ends. */
-async function stopTask(): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
-  if (editor?.document.languageId !== 'tondo') {
-    void vscode.window.showInformationMessage('Put the cursor on the line of a Tondo file.');
-    return;
-  }
-  const pid = await pickProcess();
-  const condition = pid && (await vscode.window.showInputBox({ prompt: 'Only when this holds; empty, the first time' }));
-  if (!pid || condition === undefined) {
-    return;
-  }
-  const file = vscode.workspace.asRelativePath(editor.document.uri, false);
-  const place = `${file}:${editor.selection.active.line + 1}`;
-  const only = condition ? ['--if', condition] : [];
-  const args = ['logpoint', pid, place, ...only, '--stop', '300'];
-  const child = spawn(tondo(), args, { cwd: path.dirname(editor.document.uri.fsPath) });
-  logpoints.show(true);
-  logpoints.appendLine(`waiting for a task at ${place}`);
-  child.stderr.on('data', (data: Buffer) => logpoints.appendLine(data.toString().trimEnd()));
-  child.stdout.on('data', (data: Buffer) => {
-    const text = data.toString();
-    logpoints.appendLine(text.trimEnd());
-    if (text.includes('stands here')) {
-      void vscode.window.showInformationMessage(`A task stands at ${place}.`, 'Go On').then(() => child.stdin.write('\n'));
-    }
-  });
 }
 
 /** The public declarations that changed since a commit. */

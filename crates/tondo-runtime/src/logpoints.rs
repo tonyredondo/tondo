@@ -81,7 +81,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     };
     let Ok(line) = line.parse::<u32>() else { return error("logpoint takes a limit and file:line") };
     let sites = super::debugger::latent_sites();
-    let same_file = |site: &&(usize, usize, String, u32)| site.2 == file || site.2.ends_with(&format!("/{file}"));
+    // A tool names a file from where it is, an editor by its whole path.
+    let same_file = |site: &&(usize, usize, String, u32)| {
+        site.2 == file || site.2.ends_with(&format!("/{file}")) || file.ends_with(&format!("/{}", site.2))
+    };
     let of_file: Vec<&(usize, usize, String, u32)> = sites.iter().filter(same_file).collect();
     let places: Vec<(usize, usize)> =
         of_file.iter().filter(|site| site.3 == line).map(|site| (site.0, site.1)).collect();
@@ -236,11 +239,17 @@ extern "C" fn hit(saved: *const usize) {
         logpoint.left == 0
     };
     let task = super::tasks::current_id();
-    let dumped = dump.filter(|path| {
+    // In a file, or with `-` in the hit itself, for a tool that reads it
+    // from another machine.
+    let dumped = dump.map_or(String::new(), |path| {
         let here = std::iter::once(address).chain(super::trace::walk(fp, bounds)).collect();
-        super::diagnostics::dump_here(path, here)
+        let text = super::diagnostics::dump_here(here, (site, fp, bounds), &registers, &floats);
+        match path.as_str() {
+            "-" => format!(",\"whole\":{text}"),
+            _ if std::fs::write(&path, text).is_ok() => format!(",\"dump\":{}", super::diagnostics::quoted(&path)),
+            _ => String::new(),
+        }
     });
-    let dumped = dumped.map_or(String::new(), |path| format!(",\"dump\":{}", super::diagnostics::quoted(&path)));
     // Where a task that stops is, which is what a debugger shows first.
     let stack = stop.map_or(String::new(), |seconds| {
         let here = std::iter::once(address).chain(super::trace::walk(fp, bounds));
@@ -252,6 +261,7 @@ extern "C" fn hit(saved: *const usize) {
         forget(id);
     } else if let Some(seconds) = stop {
         held(id, seconds);
+        let _ = client.write_all(format!("{{\"went\":{id}}}\n").as_bytes());
     }
     if last {
         let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());

@@ -529,6 +529,22 @@ fn reads_dumps_sources_and_a_running_program() {
     }
     let waits = said(&mut agent, "blocked", json!({ "program": pid }));
     assert!(serde_json::from_str::<Value>(&waits).is_ok(), "{waits}");
+    // A breakpoint in that build, which has no probes: its task stops.
+    if cfg!(target_os = "linux") {
+        let (started, _) = agent.call("debug_start", json!({ "target": pid }));
+        let session = started["session"].clone();
+        let debug =
+            |agent: &mut Agent, command: &str| agent.call("debug", json!({ "session": session, "command": command })).0;
+        let set = debug(&mut agent, "break runs.to:5");
+        assert!(set["said"][0]["breakpoint"].is_object(), "{set}");
+        let stopped = debug(&mut agent, "continue");
+        assert_eq!(stopped["said"][1]["stopped"]["why"], "breakpoint", "{stopped}");
+        let locals = debug(&mut agent, "locals");
+        assert_eq!(locals["said"][0]["locals"][0]["name"], "round", "{locals}");
+        let refused = debug(&mut agent, "step");
+        assert!(refused["said"][0]["error"].as_str().unwrap().contains("needs a build with probes"), "{refused}");
+        agent.call("debug_stop", json!({ "session": session }));
+    }
     let _ = child.kill();
     let _ = child.wait();
     agent.stop();

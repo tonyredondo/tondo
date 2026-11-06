@@ -3094,6 +3094,135 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
     adapter.stop();
 }
 
+/// A breakpoint from the editor in a Release build that runs: its task stops
+/// with its variables, and the rest of the program goes on.
+#[test]
+fn a_breakpoint_stops_one_task_of_a_release_build() {
+    // Only Linux lets a program change its code.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("release-breakpoint");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\n\
+        type Order = { id: Int, total: Float, tags: Array[String] }\n\n\
+        fn charge(order: Order): Float {\n    let paid = order.total + 1.0\n    paid\n}\n\n\
+        fn ticks() {\n    for true {\n        console.println(\"tick\")\n        \
+        let _ = console.flush()\n        time.sleep(time.milliseconds(2))\n    }\n}\n\n\
+        fn main() {\n    spawn detached ticks()\n    var round = 0\n    var sum = 0.0\n    for round < 1000000 {\n        \
+        let order = Order { id: round, total: 10.0, tags: [\"a\", \"b\"] }\n        \
+        sum = sum + charge(order)\n        round += 1\n        time.sleep(time.milliseconds(2))\n    }\n}\n";
+    let source = dir.join("orders.to");
+    std::fs::write(&source, program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "orders.to", "--output", "orders"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let printed = dir.join("printed");
+    let mut child = Command::new(dir.join("orders"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(std::fs::File::create(&printed).unwrap())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    // It serves the tools a moment after it starts.
+    for _ in 0..500 {
+        let asked = Command::new(tondo_bin).args(["blocked", &pid.to_string()]).output().unwrap();
+        if asked.status.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("attach", json!({ "processId": pid, "cwd": dir }));
+    let path = source.to_str().unwrap();
+    let set = adapter.ask(
+        "setBreakpoints",
+        json!({ "source": { "path": path }, "breakpoints": [
+            { "line": 7, "condition": "order.id % 5 == 2" }, { "line": 4 }, { "line": 8, "logMessage": "order {order.id}" },
+        ] }),
+    );
+    assert_eq!(set["breakpoints"][0]["verified"], true, "{set}");
+    assert_eq!(set["breakpoints"][1]["verified"], false, "{set}");
+    assert!(set["breakpoints"][1]["message"].as_str().unwrap().contains("the nearest line"), "{set}");
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    assert_eq!((stopped["reason"].as_str(), &stopped["allThreadsStopped"]), (Some("breakpoint"), &json!(false)));
+    let thread = stopped["threadId"].clone();
+
+    let stack = adapter.ask("stackTrace", json!({ "threadId": thread }));
+    let top = &stack["stackFrames"][0];
+    assert_eq!((top["name"].as_str(), top["line"].as_u64()), (Some("charge"), Some(7)), "{stack}");
+    assert_eq!(stack["stackFrames"][1]["line"], 25, "{stack}");
+    assert!(top["source"]["path"].as_str().unwrap().ends_with("orders.to"), "{stack}");
+    let frame = top["id"].clone();
+    let scopes = adapter.ask("scopes", json!({ "frameId": frame }));
+    let locals = scopes["scopes"][0]["variablesReference"].clone();
+    let variables = adapter.ask("variables", json!({ "variablesReference": locals }));
+    let order = &variables["variables"][0];
+    assert_eq!((order["name"].as_str(), order["type"].as_str()), (Some("order"), Some("Order")), "{variables}");
+    let parts = adapter.ask("variables", json!({ "variablesReference": order["variablesReference"] }));
+    let id = parts["variables"][0]["value"].as_str().unwrap().parse::<u64>().unwrap();
+    assert_eq!((parts["variables"][0]["name"].as_str(), id % 5), (Some("id"), 2), "{parts}");
+    let tags = &parts["variables"][2];
+    assert_eq!(tags["indexedVariables"], 2, "{parts}");
+    let items =
+        adapter.ask("variables", json!({ "variablesReference": tags["variablesReference"], "start": 1, "count": 1 }));
+    assert_eq!(items["variables"][0]["value"], "\"b\"", "{items}");
+    let total = adapter.ask("evaluate", json!({ "expression": "order.total", "frameId": frame, "context": "watch" }));
+    assert_eq!(total["result"], "10.0", "{total}");
+    // The caller's frame, with what it holds in registers.
+    let caller = stack["stackFrames"][1]["id"].clone();
+    let round = adapter.ask("evaluate", json!({ "expression": "round", "frameId": caller, "context": "watch" }));
+    assert_eq!(round["result"], id.to_string(), "{round}");
+
+    // The rest of the program goes on.
+    let length = || std::fs::metadata(&printed).unwrap().len();
+    let before = length();
+    let mut went_on = false;
+    for _ in 0..500 {
+        went_on = length() > before;
+        if went_on {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(went_on, "the other task stopped too");
+    // A build without probes does not step, and says what it does do.
+    let message = adapter.refused("next", json!({ "threadId": thread }));
+    assert!(message.contains("needs a build with probes"), "{message}");
+
+    // On to the next time the condition holds, past the logpoint's output.
+    adapter.ask("continue", json!({ "threadId": thread }));
+    let stopped = adapter.until("stopped");
+    let stack = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let next = adapter.ask("evaluate", json!({ "expression": "order.id", "frameId": stack["stackFrames"][0]["id"] }));
+    assert_eq!(next["result"], (id + 5).to_string(), "{next}");
+    let logged = adapter.until("output");
+    assert!(logged["output"].as_str().unwrap().starts_with("order "), "{logged}");
+
+    // Without its breakpoints the program runs as it did, and `pause` shows
+    // a picture of it.
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    adapter.ask("continue", json!({ "threadId": thread }));
+    adapter.ask("pause", json!({ "threadId": thread }));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "pause", "{stopped}");
+    let threads = adapter.ask("threads", json!({}));
+    assert!(threads["threads"].as_array().unwrap().len() >= 2, "{threads}");
+
+    adapter.ask("disconnect", json!({}));
+    let before = length();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(child.try_wait().unwrap().is_none(), "the program ended with the session");
+    assert!(length() > before);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 #[test]
 fn a_logpoint_reads_a_running_release_build() {
     // Only Linux lets a program change its code.

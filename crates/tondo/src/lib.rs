@@ -66,6 +66,7 @@ pub mod roots;
 pub mod runner;
 pub mod setup;
 pub mod source;
+mod standing;
 pub mod stdlib;
 pub mod target;
 #[path = "../../tondo-runtime/src/template_syntax.rs"]

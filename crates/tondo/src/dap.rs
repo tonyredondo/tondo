@@ -571,14 +571,9 @@ impl Dumped {
         OPENED + opened.len() as u64 - 1
     }
 
-    /// What the dump holds of the frame at `index` of a task's stack: of its
-    /// frames with the same place, the one in the same order.
+    /// What the dump holds of the frame at `index` of a task's stack.
     fn frame(&self, thread: u64, index: u64) -> Option<&Value> {
-        let task = self.tasks.iter().find(|t| t["id"] == thread)?;
-        let stack = task["stack"].as_array()?;
-        let place = stack.get(index as usize)?;
-        let before = stack[..index as usize].iter().filter(|line| *line == place).count();
-        task["frames"].as_array()?.iter().filter(|frame| frame["at"] == *place).nth(before)
+        observe::frame_of_task(self.tasks.iter().find(|t| t["id"] == thread)?, index as usize)
     }
 
     fn answer(&self, command: &str, arguments: &Value) -> Result<Value, String> {
@@ -740,7 +735,8 @@ impl Pumped {
                     _ if why.starts_with("watch ") => "data breakpoint",
                     _ => "breakpoint",
                 };
-                let mut body = json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true });
+                let mut body =
+                    json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": stop["alone"] != true });
                 if reason == "exception" || reason == "data breakpoint" {
                     body["text"] = json!(why);
                     body["description"] = json!(why);
@@ -985,10 +981,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         };
         // On another machine, or in a container, by the command that
         // reaches it, as `ssh host`.
-        match arguments["via"].as_str() {
-            Some(via) => (observe::via(via, &name)?, None, None),
-            None => (observe::connect(&name)?, None, None),
-        }
+        (crate::standing::connect(&name, arguments["via"].as_str())?, None, None)
     };
     let pid = program.pid;
     let observe::Program { mut writer, reader, .. } = program;

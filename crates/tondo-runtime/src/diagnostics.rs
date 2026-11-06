@@ -819,6 +819,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             "debug" => super::debugger::attach(client),
             "info" => info(),
+            "sources" => format!("{{\"sources\":{}}}", quoted(&roots())),
             "live" => super::live::describe(),
             "barrier" => super::live::hold(),
             "release" => super::live::let_go(),
@@ -1057,11 +1058,12 @@ fn info() -> String {
     let program = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     let arguments: Vec<String> = super::env::arguments().iter().skip(1).map(|a| quoted(&a.to_string_lossy())).collect();
     format!(
-        "{{\"pid\":{},\"program\":{},\"arguments\":[{}],\"uptime_ms\":{}}}",
+        "{{\"pid\":{},\"program\":{},\"arguments\":[{}],\"uptime_ms\":{},\"probes\":{}}}",
         std::process::id(),
         quoted(&program),
         arguments.join(","),
-        uptime_ms()
+        uptime_ms(),
+        super::debugger::has_probes()
     )
 }
 
@@ -1271,14 +1273,25 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
     dumped(&path);
 }
 
-/// A dump at a logpoint, of the program as it stands where this thread is.
-pub(crate) fn dump_here(path: &str, here: Vec<usize>) -> bool {
+/// A dump at a logpoint, of the program as it stands where this thread is:
+/// at the site `at`, its frame and its stack, with every register known.
+pub(crate) fn dump_here(
+    here: Vec<usize>,
+    at: (usize, usize, (usize, usize)),
+    registers: &[usize; 32],
+    floats: &[usize; 32],
+) -> String {
     let paused = super::tasks::pause_here();
+    let (pc, fp, bounds) = at;
+    faulted_at(pc, fp, bounds);
+    super::debugger::site_registers(registers, floats, true);
     let text = dump("logpoint", "a logpoint was reached", Some(here), Some(std::time::Duration::from_millis(100)));
+    super::debugger::site_registers(registers, floats, false);
+    faulted_at(0, 0, (0, 0));
     if paused {
         super::tasks::enter_tondo();
     }
-    std::fs::write(path, text).is_ok()
+    text
 }
 
 /// How long `TONDO_DUMP_COMMAND` has: a program that falls waits for it, or

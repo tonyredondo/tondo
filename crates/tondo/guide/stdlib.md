@@ -796,6 +796,13 @@ tasks | task 2 | blocked | cancel 2 | pause | delete 1 | quit
 break on spawn | send | receive | lock | request | recover | wait 100
 ```
 
+A Release build that runs with `TONDO_DIAGNOSTICS=1`, on Linux, is debugged too:
+`tondo debug <pid|name>`, `attach` in an editor, or `debug_start`. A breakpoint
+stops only the task that reaches it, for 300 seconds at most, and the rest of the
+program goes on; the stack, `locals`, `print` and `children` show it as it was
+there, `continue` lets it go, and `pause` gives a picture of the program. It does
+not step: those need probes, and it says so.
+
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
 may call the program's code: `break app.to:12 if isLate(order)`. `call
 isLate(order)` calls it from a stop, and in a replay it runs in a copy of the

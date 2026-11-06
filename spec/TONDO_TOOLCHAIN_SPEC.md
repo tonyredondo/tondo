@@ -990,6 +990,17 @@ que se pulse Enter, pase el tiempo o se vaya la herramienta, y el resto del prog
 sigue, lo que deja mirarlo con `dump`, `blocked` o `counters`. El tiempo es obligatorio:
 un servicio no se queda parado porque alguien se fue.
 
+`tondo debug <pid|nombre>`, el `attach` del editor y `debug_start` del MCP también valen
+con un programa sin sondas, con `TONDO_DIAGNOSTICS=1` y en Linux: un breakpoint es entonces
+un logpoint con `--stop` que trae un volcado de todo el programa tal como estaba allí, y lo
+que se pregunta al depurador se lee de ese volcado, así que el editor muestra el punto rojo
+normal con su pila, sus variables y sus partes, con condición o como logpoint. Solo se para
+esa tarea, y el resto sigue: el evento `stopped` lleva `allThreadsStopped: false`. Una
+parada retiene la tarea 300 segundos como mucho, una sola a la vez, y se suelta con
+`continue` o al irse la herramienta. `pause` no detiene nada: da una foto del programa, que
+sigue. No hay pasos, ni `hits`, ni evaluar llamadas ni cambiar valores: hacen falta sondas,
+y el comando lo dice. Las variables son las que el código optimizado conserva en esa línea.
+
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
 interbloqueo que aún no ocurrió: lo dice por stderr y `why` lo repite, con dónde se

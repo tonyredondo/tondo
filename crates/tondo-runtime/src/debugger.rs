@@ -102,6 +102,11 @@ static TABLE: OnceLock<RwLock<Table>> = OnceLock::new();
 fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
     TABLE.get().map(|table| table.read().unwrap_or_else(|e| e.into_inner()))
 }
+/// Whether this build has probes, for a debugger to attach to.
+pub(crate) fn has_probes() -> bool {
+    TABLE.get().is_some()
+}
+
 /// A debugger is attached: probes look at what it asked for.
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 /// Every task stops at its next probe: one stopped, or the debugger asked.
@@ -1478,14 +1483,18 @@ pub(crate) fn frame_values(
     floats: &[usize; 32],
     condition: Option<String>,
 ) -> Vec<String> {
-    super::diagnostics::fault_registers(registers, true);
-    FLOATS.iter().zip(floats).for_each(|(slot, &value)| slot.store(value, Ordering::Relaxed));
     *CONDITION.lock().unwrap_or_else(|e| e.into_inner()) = condition;
-    LOGGING.store(true, Ordering::Relaxed);
+    site_registers(registers, floats, true);
     let found = rendered(Some((Some(pc), fp, bounds)), true);
-    LOGGING.store(false, Ordering::Relaxed);
-    super::diagnostics::fault_registers(registers, false);
+    site_registers(registers, floats, false);
     found
+}
+
+/// While a logpoint shows what its site holds, the registers there are known.
+pub(crate) fn site_registers(registers: &[usize; 32], floats: &[usize; 32], known: bool) {
+    super::diagnostics::fault_registers(registers, known);
+    FLOATS.iter().zip(floats).for_each(|(slot, &value)| slot.store(value, Ordering::Relaxed));
+    LOGGING.store(known, Ordering::Relaxed);
 }
 
 /// Whether an expression reads.

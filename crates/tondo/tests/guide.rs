@@ -138,7 +138,7 @@ fn what_observes_is_in_the_tools_and_the_editor() {
     // What other commands take for this, with the tool's name of it.
     for (flag, tool, editor) in [
         ("api --diff", "\"api_diff\"", "tondo.apiDiff"),
-        ("--stop <seconds>", "\"stop\"", "tondo.stopTask"),
+        ("--stop <seconds>", "\"stop\"", "tondo.pickProcess"),
         ("--affected", "\"affected\"", "tondo.affectedTests"),
         ("--bisect", "\"test_bisect\"", "tondo.bisectTest"),
         ("--lock-order", "\"lock_order\"", "tondo.lockOrderTests"),

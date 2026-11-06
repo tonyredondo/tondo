@@ -130,6 +130,7 @@ tondo dump trend dumps/           what keeps growing over dumps: a leak, by its 
 tondo debug app.to -- arg         break, step, locals, print, stack, tasks
 tondo debug --test <id>           one test, as `tondo test --list` names it
 tondo debug --live app.to         and `reload` the code where it stopped
+tondo debug api                   a running Release build: breakpoints stop one task
 tondo debug --via "ssh host" app  a program on another machine, where `tondo relay app` joins it;
                                   ps, counters, trace, profile, dump and reload take --via too
 tondo dap                         the same for an editor, with the Debug Adapter Protocol
