@@ -2015,3 +2015,18 @@ fn writes_constants_and_branches_and_marks_what_is_deprecated() {
     assert!(text.contains("const NewConstant = 60\n\npub fn fresh") && text.contains("n * NewConstant"), "{text}");
     editor.stop();
 }
+
+/// A hover says where a function can wait, through what it calls: where a
+/// cancelled task stops, and where a `defer` of one ends.
+#[test]
+fn a_hover_says_where_a_function_can_wait() {
+    let main = "fn inner(take: Receiver[Int]): Int {\n    take.receive().unwrapOr(0)\n}\n\n\
+        fn outer(take: Receiver[Int]): Int {\n    inner(take)\n}\n\nfn main() {}\n";
+    let dir = project("hover-waits", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let at = json!({ "line": 5, "character": 6 });
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": at }));
+    let text = hover["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("Can wait:") && text.contains("waits for a value at src/main.to:2"), "{text}");
+}

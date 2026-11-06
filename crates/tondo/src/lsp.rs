@@ -932,12 +932,52 @@ impl Server {
             let more = if ways.len() > 8 { format!("\n- and {} more", ways.len() - 8) } else { String::new() };
             found["contents"]["value"] = json!(format!("{text}\n\nCan fail:\n{}{more}", lines.join("\n")));
         }
+        if let Some(ways) = self.waits_at(params).filter(|ways| !ways.is_empty())
+            && let Some(text) = found["contents"]["value"].as_str()
+        {
+            let lines: Vec<String> = ways.iter().take(8).map(|way| format!("- {way}")).collect();
+            let more = if ways.len() > 8 { format!("\n- and {} more", ways.len() - 8) } else { String::new() };
+            found["contents"]["value"] = json!(format!("{text}\n\nCan wait:\n{}{more}", lines.join("\n")));
+        }
         Some(found)
+    }
+
+    /// Where the function a request points at can wait, in its own code or
+    /// in what it calls: where a cancelled task stops, and where a `defer`
+    /// of one ends.
+    fn waits_at(&self, params: &Value) -> Option<Vec<String>> {
+        self.ways_at(params, false, |first, second| match (first, second) {
+            (Tok::Dot, Tok::Ident(name)) => match name.as_str() {
+                "receive" => Some("waits for a value"),
+                "send" => Some("waits for room in a channel"),
+                "wait" => Some("waits for a task"),
+                "sleep" => Some("waits for time"),
+                "update" | "updateWhen" => Some("waits for a lock"),
+                "acquire" => Some("waits for a permit"),
+                _ => None,
+            },
+            _ => None,
+        })
     }
 
     /// How the function a request points at can fail, in its own code or in
     /// what it calls of the project's: where it fails, propagates or panics.
     fn failures_at(&self, params: &Value) -> Option<Vec<String>> {
+        self.ways_at(params, true, |first, second| match (first, second) {
+            (Tok::Ident(name), Tok::LParen) if name == "panic" => Some("panics"),
+            (Tok::Dot, Tok::Ident(name)) if name == "unwrap" => Some("panics on `none`"),
+            _ => None,
+        })
+    }
+
+    /// What the function a request points at does, in its own code or in
+    /// what it calls: its exits, if asked, and the pairs of tokens `word` names.
+    fn ways_at(
+        &self,
+        params: &Value,
+        exits: bool,
+        word: fn(&Tok, &Tok) -> Option<&'static str>,
+    ) -> Option<Vec<String>> {
         let (analyzed, def, _) = self.def_at(params)?;
         let index = analyzed.analysis.index.as_ref()?;
         if !matches!(index.defs[def].kind, DefKind::Function | DefKind::Method) {
@@ -960,7 +1000,8 @@ impl Server {
                 let (_, line, _) = sources.position(at);
                 ways.push(format!("{what}{via} at {}:{line}", file.logical));
             };
-            for &(_, exit) in index.exits.iter().filter(|(name, _)| *name == declared.name_span) {
+            let own = index.exits.iter().filter(|(name, _)| exits && *name == declared.name_span);
+            for &(_, exit) in own {
                 let text = &file.text[(exit.start - file.base) as usize..(exit.end - file.base) as usize];
                 if text.starts_with("fail") {
                     way("fails", exit.start);
@@ -970,10 +1011,8 @@ impl Server {
             }
             let tokens = crate::lexer::lex(file, Some(span), &mut crate::diag::Diagnostics::default());
             for pair in tokens.windows(2) {
-                match (&pair[0].tok, &pair[1].tok) {
-                    (Tok::Ident(name), Tok::LParen) if name == "panic" => way("panics", pair[0].span.start),
-                    (Tok::Dot, Tok::Ident(name)) if name == "unwrap" => way("panics on `none`", pair[1].span.start),
-                    _ => {}
+                if let Some(what) = word(&pair[0].tok, &pair[1].tok) {
+                    way(what, pair[1].span.start);
                 }
             }
             for &(used, target) in
