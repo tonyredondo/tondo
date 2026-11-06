@@ -5263,6 +5263,13 @@ parameter for each option, since a schema is how it finds them. The editor does 
 control for each of its hundred: commands for what people do, settings for what they
 set once, and *Run a tondo Command* for the rest, which is honest about being a terminal.
 
+## The extension is tested in VS Code
+
+What the extension does through VS Code's API can only be seen there: a command that is
+not registered, a task it cannot run. `@vscode/test-electron` runs a real VS Code with the
+extension and a suite inside it, with the questions of each command answered by the suite.
+Playwright can come later, for what the API does not show, as the values beside the lines.
+
 ## Runbooks run
 
 The tools are many and a model finds them by need, not by name: what it lacks is what to
@@ -5273,9 +5280,12 @@ at the moment it is useful. Their steps are data a test replays, since a runbook
 longer works is worse than none: the first run of it found a message that blamed the wrong
 thing and two steps that were wrong.
 
-## The extension is tested in VS Code
+## What is published asks for glibc 2.34
 
-What the extension does through VS Code's API can only be seen there: a command that is
-not registered, a task it cannot run. `@vscode/test-electron` runs a real VS Code with the
-extension and a suite inside it, with the questions of each command answered by the suite.
-Playwright can come later, for what the API does not show, as the values beside the lines.
+A build asks for the glibc of the machine that made it, and so do the programs `tondo`
+compiles, through the runtime: built on a recent system, neither ran on Debian 12. So the
+builds for glibc are made on Ubuntu 22.04, which leaves 2.34, the version where threads
+joined libc. No system on 2.31 has free support left; RHEL 8 and its kin, on 2.28, are
+below what any newer floor would reach, and take the build for musl, as `install.sh` does
+by itself. A job runs what is published on those systems, since a floor that moves is only
+seen by who cannot start it.

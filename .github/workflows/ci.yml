@@ -14,9 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # A build asks for the glibc of where it is built, and so does what
+          # it compiles: an old system, for what is published to run on most.
+          - os: ubuntu-22.04
             target: x86_64-linux-gnu
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             target: aarch64-linux-gnu
           - os: macos-latest
             target: aarch64-macos
@@ -198,6 +200,27 @@ jobs:
           name: tondo-${{ matrix.target }}
           path: dist/tondo-${{ matrix.target }}.tar.gz
           if-no-files-found: error
+
+  # What is published, on the oldest systems it says it runs on.
+  floor:
+    needs: [test, musl]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tondo-${{ matrix.arch }}-linux-*
+          path: built
+          merge-multiple: true
+      - run: .github/scripts/floor.sh ${{ matrix.arch }} built
 
   # The VS Code extension: its tests, then the .vsix as an artifact.
   vscode:

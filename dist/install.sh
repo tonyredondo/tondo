@@ -36,7 +36,22 @@ elif command -v gh >/dev/null; then
     *) fail "tondo is not built for $(uname -s) on $(uname -m)" ;;
     esac
     case $target in
-    *-linux) if ldd --version 2>&1 | grep -qi musl; then target=$target-musl; else target=$target-gnu; fi ;;
+    # The builds for glibc need 2.34; those for musl run anywhere.
+    *-linux)
+        libc=$(ldd --version 2>&1 | head -1)
+        case $libc in
+        *[Mm][Uu][Ss][Ll]*) target=$target-musl ;;
+        *)
+            version=${libc##* }
+            if [ "$(printf '%s\n2.34\n' "$version" | sort -V | head -1)" = 2.34 ]; then
+                target=$target-gnu
+            else
+                say "glibc $version is older than 2.34: taking the build for musl"
+                target=$target-musl
+            fi
+            ;;
+        esac
+        ;;
     esac
     run=$(gh run list -R tonyredondo/tondo -b main -s success -w CI -L 1 --json databaseId -q '.[0].databaseId') ||
         fail "gh cannot list the builds of tondo: sign in with \`gh auth login\` and run this again"

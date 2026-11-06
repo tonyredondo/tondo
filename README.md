@@ -46,7 +46,7 @@ up. Every CI run leaves the extension's `.vsix` as an artifact.
 ## Using it
 
 Every CI run leaves a ready `tondo` for each platform as an artifact,
-`tondo-<target>` (x86-64 and arm64 Linux with glibc and musl, macOS on Apple
+`tondo-<target>` (x86-64 and arm64 Linux with glibc 2.34 or later and musl, which runs on older systems too, macOS on Apple
 silicon and Intel): `bin/tondo` is the whole toolchain, and it links
 executables itself, with no C toolchain (`dist/README.md`).
 
