@@ -16,7 +16,7 @@ pub enum Color {
     Blue
 }
 
-pub fn Item.new(name: String, price: Int): Item {
+pub fn Item(name: String, price: Int): Item {
     Item { name, price }
 }
 

@@ -3,7 +3,7 @@ import shop.models
 import shop.models.pricing as prices
 
 fn main() {
-    let pen = models.Item.new("pen", 3)
+    let pen = models.Item("pen", 3)
     console.println(models.describe(pen))
     let items = [pen, models.Item { name: "ink", price: 5 }]
     console.println("{prices.total(items)} {label(models.Color.Red)}")

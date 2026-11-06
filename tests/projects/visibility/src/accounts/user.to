@@ -13,7 +13,7 @@ pub type Settings = {
 
 type Hidden = { value: Int }
 
-pub fn User.new(name: String): User {
+pub fn User(name: String): User {
     User { name, secret: "s" }
 }
 

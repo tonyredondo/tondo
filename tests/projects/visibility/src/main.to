@@ -12,7 +12,7 @@ fn accounts.Plain.doubled(self): Int {
 }
 
 fn main() {
-    let user = accounts.User.new("ada")
+    let user = accounts.User("ada")
     console.println(user.secret)
     let copy = accounts.User { name: "x", secret: "y" }
     let refused = accounts.User { name: "x" }
