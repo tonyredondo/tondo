@@ -13061,6 +13061,7 @@ impl<'a> Checker<'a> {
         if let [trait_name, _] = names.as_slice()
             && let Some(&trait_id) = self.trait_names.get(*trait_name)
             && !self.names.contains_key(*trait_name)
+            && !self.type_params.iter().any(|(name, _)| name == trait_name)
         {
             let explicit: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             self.index_refer(&segments[0], crate::index::Key::Trait(trait_id.0));
@@ -15365,6 +15366,7 @@ impl<'a> Checker<'a> {
         if let [trait_name, _] = names.as_slice()
             && let Some(&trait_id) = self.trait_names.get(*trait_name)
             && !self.names.contains_key(*trait_name)
+            && !self.type_params.iter().any(|(name, _)| name == trait_name)
         {
             self.index_refer(&segments[0], crate::index::Key::Trait(trait_id.0));
             return self.trait_call(cx, trait_id, &segments[1], Vec::new(), args, expected, span);

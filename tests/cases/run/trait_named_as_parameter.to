@@ -1,0 +1,21 @@
+// A trait's name does not reach a type parameter called the same in another
+// module, as the `T` of the standard library's serialization.
+
+import std.console
+import std.json
+
+trait T {
+    fn shown(self): String
+}
+
+trait Sink {
+    fn taken(self): Int
+}
+
+type Point = { x: Int }
+
+fn main() {
+    console.println(json.encode(Point { x: 3 }))
+}
+
+// expect-stdout: {"x":3}
