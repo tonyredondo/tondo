@@ -1935,7 +1935,8 @@ fn a_change_runs_the_tests_it_reaches() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"watched\"\nversion = \"0.1.0\"\n").unwrap();
-    let main = "import std.time\n\npub fn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    time.sleep(time.seconds(60))\n}\n";
+    let main = "import std.console\nimport std.time\n\npub fn twice(n: Int): Int {\n    n * 2\n}\n\n\
+        fn main() {\n    console.println(\"ready\")\n    let _ = console.flush()\n    time.sleep(time.seconds(60))\n}\n";
     std::fs::write(dir.join("src/main.to"), main).unwrap();
     std::fs::write(dir.join("src/main_test.to"), "test doubles {\n    assert(twice(2) == 4)\n}\n").unwrap();
     let git = |args: &[&str]| {
@@ -1954,7 +1955,7 @@ fn a_change_runs_the_tests_it_reaches() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", ".", "--watch", "--tests"])
         .current_dir(&dir)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
@@ -1965,8 +1966,10 @@ fn a_change_runs_the_tests_it_reaches() {
             let _ = said.send(line);
         }
     });
-    // Long enough to have started; the change breaks the test.
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // Once it runs, the change breaks the test.
+    let mut ready = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(child.stdout.take().unwrap()), &mut ready).unwrap();
+    assert_eq!(ready, "ready\n");
     std::fs::write(dir.join("src/main.to"), main.replace("n * 2", "n * 3")).unwrap();
     let mut lines = Vec::new();
     while let Ok(line) = heard.recv_timeout(std::time::Duration::from_secs(120)) {
