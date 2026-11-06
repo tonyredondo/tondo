@@ -145,19 +145,22 @@ pub(crate) fn go(id: &str) -> String {
     String::new()
 }
 
-/// Holds this task at logpoint `id` until the tool says or the time ends, as
-/// a call of C does: out of Tondo code, so that collections and dumps go on,
-/// and with another worker in its place, so that the other tasks go on too
-/// when this was the only one.
+/// Holds this task at logpoint `id` until the tool says or the time ends: out
+/// of Tondo code, so that collections and dumps go on, and with another worker
+/// in its place, so that the other tasks go on when this was the only one.
 fn held(id: u64, seconds: u64) {
-    super::tasks::tondo_rt_foreign_enter();
+    let paused = super::tasks::pause_here();
+    super::tasks::step_aside();
     let going = GOING.lock().unwrap_or_else(|e| e.into_inner());
     let time = std::time::Duration::from_secs(seconds);
     let (mut going, _) =
         GO.wait_timeout_while(going, time, |going| !going.contains(&id)).unwrap_or_else(|e| e.into_inner());
     going.retain(|&other| other != id);
     drop(going);
-    super::tasks::tondo_rt_foreign_leave();
+    super::tasks::step_back();
+    if paused {
+        super::tasks::enter_tondo();
+    }
 }
 
 /// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>[\t<request>[\t<hits>]]]]]`: tells

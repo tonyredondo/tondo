@@ -2305,6 +2305,25 @@ pub extern "C" fn tondo_rt_foreign_leave() {
     }
 }
 
+/// A task waits on its worker for long, held by a tool: another worker runs
+/// the others, as for a long call of C, until `step_back`. One worker,
+/// exploring orders, starts no other.
+pub(crate) fn step_aside() {
+    if exploring().is_none() {
+        queue().workers += 1;
+        start_worker();
+    }
+}
+
+/// The task goes on: one worker retires.
+pub(crate) fn step_back() {
+    if exploring().is_none() {
+        let mut queue = queue();
+        queue.surplus += 1;
+        wake_one(queue);
+    }
+}
+
 /// Watches the workers in C: one still in the same call after a period
 /// blocks its tasks, so when tasks wait to run and no worker is idle,
 /// another worker starts in its place (as Go's runtime does). Sleeps while

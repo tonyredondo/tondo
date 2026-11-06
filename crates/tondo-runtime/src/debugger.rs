@@ -2838,10 +2838,10 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     // asks is looked at before each wait, with `state`, which it holds to ask:
     // the next request may come while the last one ends.
     while state.resumed == resumed || frozen(&state) {
-        // The others go on: another worker takes this one's place, as in a
-        // call of C. Only then, since every task a stop holds would ask for one.
+        // The others go on: another worker takes this one's place. Only then,
+        // since every task a stop holds would ask for one.
         if state.resumed != resumed && !aside {
-            super::tasks::tondo_rt_foreign_enter();
+            super::tasks::step_aside();
             aside = true;
         }
         // Work the debugger's thread asks of this task, as showing a value
@@ -2888,8 +2888,9 @@ fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: Stop, why: O
     state.held.retain(|held| held.task != task);
     drop(state);
     if aside {
-        super::tasks::tondo_rt_foreign_leave();
-    } else if paused {
+        super::tasks::step_back();
+    }
+    if paused {
         super::tasks::enter_tondo();
     }
 }
