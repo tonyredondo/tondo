@@ -1684,11 +1684,28 @@ fn request_kind(path: &str) -> String {
     path.split('/').map(|part| if number(part) { "*" } else { part }).collect::<Vec<_>>().join("/")
 }
 
-/// How far a series goes up, and whether it does so most of the time:
-/// samples of the memory go up and down a little as they come.
+/// A series without the fall at its end: a program that ends lets go of what
+/// it holds, which says nothing of how it got there.
+fn settled(series: &[f64]) -> &[f64] {
+    let mut end = series.len();
+    while end > 1 && series[end - 1] < series[end - 2] {
+        end -= 1;
+    }
+    &series[..end]
+}
+
+/// How far a series went up.
+fn grew(series: &[f64]) -> f64 {
+    let series = settled(series);
+    series[series.len() - 1] - series[0]
+}
+
+/// Whether a series goes up most of the time: samples of the memory go up and
+/// down a little as they come.
 fn rising(series: &[f64]) -> bool {
+    let series = settled(series);
     let steps = series.windows(2).filter(|pair| pair[1] >= pair[0]).count();
-    series[series.len() - 1] > series[0] && steps * 5 >= (series.len() - 1) * 4
+    grew(series) > 0.0 && steps * 5 >= (series.len() - 1) * 4
 }
 
 fn trends(dumps: &[Value]) -> Value {
@@ -1709,14 +1726,11 @@ fn trends(dumps: &[Value]) -> Value {
         }
     }
     let mut growing: Vec<(String, Vec<f64>)> = sites.into_iter().filter(|(_, series)| rising(series)).collect();
-    growing.sort_by(|a, b| {
-        let grew = |series: &[f64]| series[series.len() - 1] - series[0];
-        grew(&b.1).total_cmp(&grew(&a.1))
-    });
+    growing.sort_by(|a, b| grew(&b.1).total_cmp(&grew(&a.1)));
     let memory: Vec<Value> = growing
         .iter()
         .map(|(place, series)| {
-            let grew = series[series.len() - 1] - series[0];
+            let grew = grew(series);
             json!({ "place": place, "bytes": grew, "per_minute": per_minute(grew), "series": series })
         })
         .collect();
@@ -1726,7 +1740,7 @@ fn trends(dumps: &[Value]) -> Value {
     };
     let level = |name: &str| {
         let series: Vec<f64> = dumps.iter().map(|dump| counter(dump, name).unwrap_or(0.0)).collect();
-        let grew = series[series.len() - 1] - series[0];
+        let grew = grew(&series);
         json!({ "first": series[0], "last": series[series.len() - 1], "per_minute": per_minute(grew), "rising": rising(&series) })
     };
     let tasks: Vec<f64> = dumps.iter().map(|dump| dump["tasks"].as_array().map_or(0.0, |t| t.len() as f64)).collect();
@@ -1763,14 +1777,11 @@ fn trends(dumps: &[Value]) -> Value {
             json!({ "request": route, "first_ms": series[0], "last_ms": series[series.len() - 1], "series": series })
         })
         .collect();
-    let grew = |route: &Value| route["last_ms"].as_f64().unwrap_or(0.0) - route["first_ms"].as_f64().unwrap_or(0.0);
-    slowing.sort_by(|a, b| grew(b).total_cmp(&grew(a)));
+    let slower = |route: &Value| route["last_ms"].as_f64().unwrap_or(0.0) - route["first_ms"].as_f64().unwrap_or(0.0);
+    slowing.sort_by(|a, b| slower(b).total_cmp(&slower(a)));
     let mut piling: Vec<(String, Vec<f64>)> =
         places.into_iter().filter(|(place, series)| !place.is_empty() && rising(series)).collect();
-    piling.sort_by(|a, b| {
-        let grew = |series: &[f64]| series[series.len() - 1] - series[0];
-        grew(&b.1).total_cmp(&grew(&a.1))
-    });
+    piling.sort_by(|a, b| grew(&b.1).total_cmp(&grew(&a.1)));
     let piling: Vec<Value> = piling
         .iter()
         .map(|(place, series)| json!({ "place": place, "first": series[0] as u64, "last": series[series.len() - 1] as u64 }))
@@ -3448,6 +3459,14 @@ mod tests {
         }
         assert!(!super::alive(child.id()));
         child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_fall_at_the_end_is_a_program_letting_go() {
+        assert!(super::rising(&[1.0, 2.0, 3.0, 4.0, 0.5]));
+        assert_eq!(super::grew(&[1.0, 2.0, 3.0, 4.0, 2.0, 0.5]), 3.0);
+        assert!(!super::rising(&[4.0, 3.0, 2.0, 1.0]));
+        assert!(!super::rising(&[5.0, 5.0, 5.0, 5.0]));
     }
 
     /// A function of an executable for macOS is found by its offset from
