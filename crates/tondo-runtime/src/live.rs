@@ -204,6 +204,11 @@ pub(crate) fn patch(request: &str) -> String {
     let guarded: Vec<&str> = parts.collect();
     let error = |message: &str| format!("{{\"error\":{}}}", super::diagnostics::quoted(message));
     let answer = |result: Result<String, String>| result.unwrap_or_else(|e| error(&e));
+    // From here the barrier waits for the patch, however long it takes.
+    HELD.fetch_add(1, Ordering::AcqRel);
+    if EXPIRED.swap(false, Ordering::SeqCst) {
+        return error("the tasks went on before the patch came: reload again");
+    }
     if guarded.is_empty() {
         return answer(apply(path));
     }
@@ -594,12 +599,14 @@ pub(crate) fn park() {
 /// `barrier`: every task stops at its next statement, unless it waits or
 /// is in C; the answer is where each is.
 pub(crate) fn hold() -> String {
+    EXPIRED.store(false, Ordering::SeqCst);
     BARRIER.store(true, Ordering::Release);
     // Should the tool that asked go, the program goes on after a while.
     let held = HELD.fetch_add(1, Ordering::AcqRel) + 1;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(30));
         if HELD.load(Ordering::Acquire) == held && barrier() {
+            EXPIRED.store(true, Ordering::SeqCst);
             let_go();
         }
     });
@@ -609,6 +616,9 @@ pub(crate) fn hold() -> String {
 
 /// The barriers held so far, which tells a barrier's own from a later one.
 static HELD: AtomicU64 = AtomicU64::new(0);
+/// The tool took so long that the barrier let go by itself: a patch that
+/// counted on it would convert values under running tasks.
+static EXPIRED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `again <id>...`: the waits of these tasks end, and the statements they
 /// wait in start again, where they stop.
