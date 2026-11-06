@@ -24,3 +24,4 @@ fn main() {
 
 // expect-stdout: true
 // expect-no-replay: a recorded run has one worker, and its 256 calls take 512 s one after the other
+// expect-no-schedule: one worker runs the tasks, and its 256 calls take too long one at a time

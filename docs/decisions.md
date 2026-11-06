@@ -5357,3 +5357,13 @@ they hold, as `Array[Int]()`; other ways to build keep their names, as `sql.open
 `PrivateKey.fromPem(text)`. `Type.new` is an error with its repair on the language's types
 and the standard library's, with no transition, since nobody has programs to migrate; on a
 type of a program it is a method like any other.
+
+## What slowness and orders find, and what emulation added
+
+Emulation left the check before publishing: CI runs both architectures natively, so what it
+adds is slowness, at over an hour a pass. It stays in the Nightly. `stress` takes its place
+locally, on four cores, on one and on a quarter of one, and one core found at once what no
+runner had: a held or frozen task kept its worker, so with one worker the program stopped.
+`--schedules` left out what needs no wait: nothing changed the order at a `spawn`, at a lock
+let go or at a write of an `Atomic`, so 100 seeds gave one order. Those are points too now, and
+the cases run in the order of a seed, since what a case says of its output holds in any.

@@ -72,6 +72,12 @@ jobs:
       - run: cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
         env:
           TONDO_SWEEP: 1
+      # What a case says of its output holds in any order of its tasks
+      # (testing 8.10), and each night tries others.
+      - run: |
+          for seed in 1 2 3; do
+            TONDO_CASES_SCHEDULE="$GITHUB_RUN_NUMBER$seed" cargo test -p tondo --test cases cases
+          done
 
   # What the test job of CI leaves out on macOS for Intel.
   intel:

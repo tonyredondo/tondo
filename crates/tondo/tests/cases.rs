@@ -16,6 +16,8 @@
 //! - `// expect-env: <NAME>=<value>` — the executable runs with it set;
 //! - `// expect-no-replay: <why>` — with `TONDO_CASES_REPLAY`, it is not
 //!   recorded, for the reason given.
+//! - `// expect-no-schedule: <why>` — with `TONDO_CASES_SCHEDULE`, its tasks
+//!   run as ever, for the reason given.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once. With
@@ -23,7 +25,9 @@
 //! with `TONDO_CASES_DEBUG`, debug builds (`--debug`); with
 //! `TONDO_CASES_LIVE`, live builds (`--live`). With `TONDO_CASES_REPLAY`,
 //! debug builds whose runs are recorded, each checked as ever and then
-//! replayed, which must write the same and end the same.
+//! replayed, which must write the same and end the same. With
+//! `TONDO_CASES_SCHEDULE`, a seed, the tasks of each case run in the order it
+//! gives (testing 8.10): what a case says of its output holds in any order.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -43,6 +47,7 @@ struct Expect {
     platforms: Vec<String>,
     env: Vec<(String, String)>,
     no_replay: bool,
+    no_schedule: bool,
 }
 
 fn expectations(source: &str) -> Expect {
@@ -61,6 +66,7 @@ fn expectations(source: &str) -> Expect {
             "warning" => expect.warnings.push(value.trim().into()),
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
             "no-replay" => expect.no_replay = true,
+            "no-schedule" => expect.no_schedule = true,
             "env" => {
                 let (name, value) = value.split_once('=').expect("`NAME=value`");
                 expect.env.push((name.trim().into(), value.trim().into()));
@@ -162,6 +168,9 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         }
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
+        if let Some(seed) = std::env::var_os("TONDO_CASES_SCHEDULE").filter(|_| !expect.no_schedule) {
+            command.env("TONDO_RT_SCHEDULE", seed).env("TONDO_RACE", "1");
+        }
         // It serves the tools, so that one that hangs can say why.
         if std::env::var_os("TONDO_CASES_REPLAY").is_none() {
             command.env("TONDO_DIAGNOSTICS", "1");
