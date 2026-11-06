@@ -10,7 +10,8 @@
 # ${TONDO_CI_DIR:-~/.cache/tondo-ci}, with containers and ports of its own.
 #
 # `stress` runs the tests that race on what a runner has (STRESS_ROUNDS), in a
-# container with no init, which collects no orphans. `emuloop` runs them under
+# container with no init, which collects no orphans, every other round on one
+# core: slowness finds what emulation finds, in minutes. `emuloop` runs them under
 # emulation (EMU_ROUNDS), on EMU_CPUS cores: all of them, and EMU_INIT= with no
 # init, is what brings races out. `sweep` runs the tools over every case, as the
 # Nightly does, and `editor` the extension in a real VS Code, in a container, so
@@ -123,14 +124,15 @@ EOF
 stress() {
   rounds=${STRESS_ROUNDS:-8}
   image tondo-ci-amd64 linux/amd64
-  cargo test -p tondo --test observe --test mcp --test live --no-run 2>&1 | grep -o 'target/debug/deps/[a-z]*-[0-9a-f]*' > target/stress
+  cargo test -p tondo --test observe --test mcp --test live --test runbooks --no-run 2>&1 | grep -o 'target/debug/deps/[a-z]*-[0-9a-f]*' > target/stress
   status=0
   for round in $(seq "$rounds"); do
+    cpus=$((round % 2 * 3 + 1))
     while read -r test; do
-      docker run --rm --cpus=4 --memory=16g -u "$me" -e HOME=/tmp -e TMPDIR=/tmp -v "$PWD:$PWD" -w "$PWD/crates/tondo" tondo-ci-amd64 \
-        timeout 900 "$PWD/$test" > "$out/stress-now.txt" 2>&1
+      docker run --rm --cpus="$cpus" --memory=16g -u "$me" -e HOME=/tmp -e TMPDIR=/tmp -v "$PWD:$PWD" -w "$PWD/crates/tondo" tondo-ci-amd64 \
+        timeout $((3600 / cpus)) "$PWD/$test" > "$out/stress-now.txt" 2>&1
       code=$?
-      echo "round $round $(basename "$test"): $code $(grep -E '^test result' "$out/stress-now.txt" | tail -1 | cut -c1-60)"
+      echo "round $round, $cpus cores, $(basename "$test"): $code $(grep -E '^test result' "$out/stress-now.txt" | tail -1 | cut -c1-60)"
       if [ $code != 0 ]; then
         status=1
         cp "$out/stress-now.txt" "$out/stress-failed-$round-$(basename "$test").txt"
