@@ -1009,7 +1009,9 @@ método y ruta contienen el texto; en el editor, una condición que empieza por 
 `why` dice de cada petición en curso qué la retiene, siguiendo la espera de su tarea por las
 tareas que pueden acabarla, `dump diff` cuántas había en curso en cada volcado y cuánto
 tardaron de media las de cada clase, y `dump serve` dónde esperan las peticiones de un
-directorio: el tiempo sumado por línea y por lo que esperaban.
+directorio: el tiempo sumado por línea y por lo que esperaban, con la línea de tiempo de las
+más lentas en un dibujo, una fila por tarea y sus esperas, que el editor abre con *Show the
+Timeline* en cada petición de su vista.
 
 `tondo debug <pid|nombre>`, el `attach` del editor y `debug_start` del MCP también valen
 con un programa sin sondas, con `TONDO_DIAGNOSTICS=1` y en Linux: un breakpoint es entonces
@@ -1018,9 +1020,11 @@ que se pregunta al depurador se lee de ese volcado, así que el editor muestra e
 normal con su pila, sus variables y sus partes, con condición o como logpoint. Solo se para
 esa tarea, y el resto sigue: el evento `stopped` lleva `allThreadsStopped: false`. Una
 parada retiene la tarea 300 segundos como mucho, una sola a la vez, y se suelta con
-`continue` o al irse la herramienta. `next` y `finish` siguen paso a paso: la tarea, y solo
-ella, para en la siguiente línea de su función o de las que la llamaron, o solo de esas; no
-se entra en llamadas, y `step` es `next`. `pause` no detiene nada: da una foto del programa,
+`continue` o al irse la herramienta. `next`, `finish` y `step` siguen paso a paso: la tarea,
+y solo ella, para en la siguiente línea de su función o de las que la llamaron, solo de
+esas, o de cualquiera del programa, que es entrar en sus llamadas, no en las de la librería
+estándar. Todo esto se escribe al pedirlo, en las llamadas que el programa ya deja
+previstas: el código compilado es el mismo y un programa que nadie depura no paga nada. `pause` no detiene nada: da una foto del programa,
 que sigue. No hay `hits`, ni evaluar llamadas ni cambiar valores: hacen falta sondas, y el
 comando lo dice. Las variables son las que el código optimizado conserva en esa línea.
 
@@ -1772,7 +1776,10 @@ empieza de nuevo: se repite la sentencia de su llamador que la llamó, con todo 
 tiene, en el código nuevo, y sin llamador, como en `main`, su propia sentencia. Lo que esas
 sentencias ya hicieron no se deshace. Si la sentencia entregó un binding, se repite la de
 más arriba, y sin ninguna el programa termina como siempre. `reload` dice cuántas tareas
-vuelven así. Un `tondo run --live` sin más termina con el panic, como cualquier build.
+vuelven así. Bajo el depurador, también `tondo debug --live` y el `launch` con `"live"` del
+editor, la tarea para antes en el panic: se mira, se guarda el arreglo y al seguir empieza
+de nuevo. `values` dice qué tareas esperan, y el editor lo muestra en el indicador de Live,
+que lleva a la línea, y en el panel de problemas mientras esperan. Un `tondo run --live` sin más termina con el panic, como cualquier build.
 
 `tondo values <pid|nombre> <archivo> [--for <segundos>]` dice, sin parar nada, lo que cada
 línea de un archivo dejó en su frame la última vez que corrió: sus bindings como los
@@ -1780,12 +1787,14 @@ encontró la siguiente línea de ese frame, en un build con sondas. Solo mira mi
 herramienta pregunta, cinco segundos cada vez, y cada línea como mucho diez veces por
 segundo; la última de una función no tiene siguiente línea y no sale. El MCP lo da con
 `values`, y el editor lo escribe tras cada línea del archivo a la vista, de los bindings
-que esa línea nombra, mientras corre un build vivo, salvo con `tondo.liveValues` en falso.
+que esa línea nombra, mientras corre un build vivo, salvo con `tondo.liveValues` en falso, y
+al pasar el ratón por un nombre dice el último valor que tuvo.
 
 `tondo eval <pid|nombre> <expresión>` da el valor de una expresión en un build vivo que
 corre, sin parar nada, compilada con el código que dicen sus archivos ahora, también lo que
 cambió, en el archivo de su `main`: lee funciones, tipos y constantes, no los bindings de
-ningún frame. La ejecuta una tarea propia. Si hace panic, `eval` lo dice y termina con
+ningún frame, salvo con una tarea retenida por un panic, que se compila en su archivo y lee
+además los bindings de su frame, para entender qué falló. La ejecuta una tarea propia. Si hace panic, `eval` lo dice y termina con
 estado de error, y el programa sigue. El MCP la da con `eval` y el editor con *Evaluate in a
 Running Program*.
 

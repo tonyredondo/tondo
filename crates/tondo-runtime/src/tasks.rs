@@ -354,6 +354,18 @@ pub(crate) struct Task {
     /// A panic that held it goes up to the frame that calls the function
     /// again.
     pub(crate) retrying: bool,
+    /// Where its live frames were last, while panics wait for a fix: each
+    /// frame with its site and the addresses of its bindings.
+    probes: Vec<Probe>,
+}
+
+/// A frame at a probe: its pointer, its site, and where its bindings are.
+#[derive(Clone, Copy)]
+pub(crate) struct Probe {
+    pub frame: usize,
+    pub site: usize,
+    pub addresses: usize,
+    pub alive: usize,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -502,6 +514,25 @@ pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<&'static Origin> {
 pub(crate) fn request_of(id: u64) -> Option<String> {
     let task = unsafe { by_id(id)?.as_ref()? };
     super::diagnostics::flight_text(task.flight)
+}
+
+/// A frame of the running task is at a probe: those below it returned.
+pub(crate) fn note_probe(probe: Probe) {
+    if let Some(task) = unsafe { current().as_mut() } {
+        while task.probes.last().is_some_and(|last| last.frame < probe.frame) {
+            task.probes.pop();
+        }
+        match task.probes.last_mut().filter(|last| last.frame == probe.frame) {
+            Some(last) => *last = probe,
+            None => task.probes.push(probe),
+        }
+    }
+}
+
+/// Where a frame of the running task was last.
+pub(crate) fn probe_of(frame: usize) -> Option<Probe> {
+    let task = unsafe { current().as_ref()? };
+    task.probes.iter().rev().find(|probe| probe.frame == frame).copied()
 }
 
 /// The running task works for a request, from now on.
@@ -2686,6 +2717,7 @@ fn new_task(
         blocked_since: AtomicU64::new(0),
         flight: 0,
         retrying: false,
+        probes: Vec::new(),
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),

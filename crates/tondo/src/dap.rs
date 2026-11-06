@@ -582,7 +582,7 @@ impl Dumped {
         let task = |id: &Value| self.tasks.iter().find(|t| t["id"] == *id);
         match command {
             "setBreakpoints" => Ok(json!({ "breakpoints": [] })),
-            "requests" => Ok(self.requests.clone()),
+            "requests" => Ok(pictured(self.requests.clone())),
             "source" => Ok(source_text(&self.roots, &self.sources.borrow(), arguments)),
             "setExceptionBreakpoints" | "configurationDone" => Ok(json!({})),
             "threads" => {
@@ -970,6 +970,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .args(&arguments)
             .current_dir(&root)
             .env("TONDO_DEBUG", "1")
+            .env("TONDO_LIVE_HOLD", "1")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1200,6 +1201,16 @@ fn options(wanted: &Value) -> String {
     let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
     let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));
     format!("{condition}{hits}{log}")
+}
+
+/// The requests with the picture of each timeline, for the editor to show.
+fn pictured(mut found: Value) -> Value {
+    for list in ["requests", "served"] {
+        for request in found[list].as_array_mut().into_iter().flatten() {
+            request["picture"] = json!(observe::timeline_picture(request));
+        }
+    }
+    found
 }
 
 /// A breakpoint's answer once its condition is compiled, in a live build,
@@ -1471,7 +1482,7 @@ fn handle(
         // The tasks: where each is, and what each waits for and on whom.
         "tasks" => program.ask("tasks"),
         // The editor's view of what each request did.
-        "requests" => program.ask("requests").map(observe::timelines),
+        "requests" => program.ask("requests").map(|found| pictured(observe::timelines(found))),
         // What each line of a file left, for the editor to show beside it.
         "values" => program.ask(&format!("values {}", arguments["file"].as_str().unwrap_or_default())),
         // What each line of the call the frame shows changed the last time

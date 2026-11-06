@@ -904,6 +904,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             "live" => super::live::describe(),
             "barrier" => super::live::hold(),
             "stay" => super::live::stay(),
+            "held" => format!("{{\"held\":{}}}", super::live::held_json()),
             "release" => super::live::let_go(),
             _ if line.starts_with("again ") => super::live::again(&line["again ".len()..]),
             _ if line.starts_with("patch ") => super::live::patch(&line["patch ".len()..]),

@@ -24,6 +24,8 @@ import {
   failureMarks,
   logpointArgs,
   lineValues,
+  heldPlace,
+  liveHover,
   requestRow,
   stepRow,
   warningPlace,
@@ -682,4 +684,11 @@ test('what a line left is what it names', () => {
   const bindings = [{ name: 'total', value: '12' }, { name: 'other', value: '1' }];
   assert.equal(lineValues(bindings, 'let total = price * 2'), 'total = 12');
   assert.equal(lineValues(bindings, 'console.println("x")'), '');
+});
+
+test('where a held panic is, and a live value on hover', () => {
+  assert.deepEqual(heldPlace({ task: 1, at: 'src/a.to:5 in share', message: 'm' }), { file: 'src/a.to', line: 5 });
+  const lines = { '3': [{ name: 'n', value: '1' }], '9': [{ name: 'n', value: '2' }] };
+  assert.equal(liveHover(lines, 'n', 8), 'n = 2');
+  assert.equal(liveHover(lines, 'other', 8), undefined);
 });

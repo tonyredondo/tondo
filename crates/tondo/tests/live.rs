@@ -726,6 +726,18 @@ fn a_panic_waits_for_a_fix() {
     let waits = (0..200)
         .find_map(|_| server.errors.recv_timeout(Duration::from_secs(1)).ok().filter(|l| l.contains("waits here")));
     assert!(waits.is_some(), "the task did not wait");
+    // What it was doing can be asked before fixing it. `tondo run --watch`
+    // runs the program as a child.
+    let program = Command::new("pgrep").args(["-P", &server.pid()]).output().unwrap();
+    let program = String::from_utf8_lossy(&program.stdout).trim().to_string();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let asked = |args: &[&str]| Command::new(tondo).args(args).current_dir(&dir).output().unwrap();
+    let told = asked(&["eval", &program, "total + by"]);
+    assert_eq!(String::from_utf8_lossy(&told.stdout), "100\n", "{told:?}");
+    let told = asked(&["values", &program, "panics.to", "--for", "0", "--json"]);
+    let found: serde_json::Value = serde_json::from_slice(&told.stdout).unwrap();
+    assert_eq!(found["held"][0]["at"], "panics.to:4 in share", "{found}");
+    assert!(found["held"][0]["message"].as_str().unwrap().contains("P0003"), "{found}");
     // The fix is above the line that panicked.
     edit(&file, "    total / by\n", "    if by == 0 {\n        return 0\n    }\n    total / by\n");
     assert_eq!(server.lines.recv_timeout(Duration::from_secs(60)).unwrap(), "3 0");

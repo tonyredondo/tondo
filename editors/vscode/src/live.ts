@@ -7,7 +7,8 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { exec } from './cli';
-import { Reload, Shown, lineValues, reloadShown, reloaded } from './report';
+import * as path from 'node:path';
+import { HeldPanic, Reload, Shown, heldPlace, lineValues, liveHover, reloadShown, reloaded } from './report';
 
 /** A live build: a debug session of `tondo dap`, or the program of a Run
  *  Live task, `tondo run --live`, which becomes it. */
@@ -32,13 +33,46 @@ const beside = vscode.window.createTextEditorDecorationType({
 let showing = true;
 
 type LineBindings = Record<string, { name: string; value: string }[]>;
+type Looked = { values: LineBindings; held?: HeldPanic[] };
 
-async function linesLeft(live: Live, file: string): Promise<LineBindings> {
+async function linesLeft(live: Live, file: string): Promise<Looked> {
   if ('session' in live) {
-    return ((await live.session.customRequest('values', { file })) as { values: LineBindings }).values;
+    return (await live.session.customRequest('values', { file })) as Looked;
   }
   const ran = await exec(['values', String(live.pid), file, '--for', '0', '--json'], os.tmpdir());
-  return (JSON.parse(ran.stdout) as { values: LineBindings }).values;
+  return JSON.parse(ran.stdout) as Looked;
+}
+
+/** What the lines of the file in view left, the last time it was asked. */
+let lastLines: { file: string; lines: LineBindings } | undefined;
+/** The panics that wait for a fix, in Problems and in the Live item. */
+const panics = vscode.languages.createDiagnosticCollection('tondo-live');
+let held: HeldPanic[] = [];
+
+function showHeld(found: HeldPanic[], root: string): void {
+  held = found;
+  panics.clear();
+  for (const panic of found) {
+    const place = heldPlace(panic);
+    if (place) {
+      const uri = vscode.Uri.file(path.resolve(root, place.file));
+      const line = new vscode.Range(place.line - 1, 0, place.line - 1, 1000);
+      const problem = new vscode.Diagnostic(line, `${panic.message}: save a fix, and it starts again`);
+      panics.set(uri, [...(panics.get(uri) ?? []), problem]);
+    }
+  }
+  show();
+}
+
+/** Opens the line a panic waits at. */
+async function openHeld(): Promise<void> {
+  const place = held[0] && heldPlace(held[0]);
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '.';
+  if (place) {
+    const line = place.line - 1;
+    const uri = vscode.Uri.file(path.resolve(root, place.file));
+    await vscode.window.showTextDocument(uri, { selection: new vscode.Range(line, 0, line, 0) });
+  }
 }
 
 async function showValues(): Promise<void> {
@@ -48,7 +82,10 @@ async function showValues(): Promise<void> {
     editor?.setDecorations(beside, []);
     return;
   }
-  const lines = await linesLeft(current, editor.document.uri.fsPath).catch(() => ({}) as LineBindings);
+  const looked = await linesLeft(current, editor.document.uri.fsPath).catch(() => ({ values: {} }) as Looked);
+  const lines = looked.values;
+  lastLines = { file: editor.document.uri.fsPath, lines };
+  showHeld(looked.held ?? [], vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath ?? '.');
   const options = Object.entries(lines).flatMap(([line, bindings]) => {
     const at = Number(line) - 1;
     const text = at < editor.document.lineCount ? lineValues(bindings, editor.document.lineAt(at).text) : '';
@@ -66,6 +103,18 @@ export function registerLive(context: vscode.ExtensionContext, channel: vscode.L
   context.subscriptions.push(
     beside,
     { dispose: () => clearInterval(looking) },
+    panics,
+    vscode.commands.registerCommand('tondo.openHeldPanic', openHeld),
+    vscode.languages.registerHoverProvider('tondo', {
+      provideHover: (document, position) => {
+        const word = document.getWordRangeAtPosition(position);
+        if (!word || !current || lastLines?.file !== document.uri.fsPath) {
+          return undefined;
+        }
+        const shown = liveHover(lastLines.lines, document.getText(word), position.line + 1);
+        return shown ? new vscode.Hover(`Live: \`${shown}\``) : undefined;
+      },
+    }),
     vscode.commands.registerCommand('tondo.liveValues', () => {
       showing = !showing;
       void showValues();
@@ -271,6 +320,14 @@ function show(): void {
   let text: string;
   item.backgroundColor = undefined;
   item.command = 'tondo.showOutput';
+  if (held.length > 0) {
+    item.text = `$(error) Live: a panic waits for a fix`;
+    item.tooltip = held[0].message;
+    item.command = 'tondo.openHeldPanic';
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    item.show();
+    return;
+  }
   if (busy) {
     text = '$(sync~spin) Live: applying…';
   } else if (last) {

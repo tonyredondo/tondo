@@ -441,18 +441,22 @@ pub extern "C" fn tondo_rt_panic_held() -> u8 {
     if !crate::live::holds_panics() || stops || task.unwinding.is_none() {
         return 0;
     }
+    let fp = crate::trace::frame_pointer();
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
-    let callers = crate::trace::walk(crate::trace::frame_pointer(), bounds);
+    let callers = crate::trace::walk(fp, bounds);
     let mut places = callers.filter_map(|address| Some(crate::trace::scopes_at(address).first()?.1.clone()));
-    if places.next().is_none_or(|place| place.starts_with("<std>/")) {
-        return 0;
-    }
+    let Some(place) = places.next().filter(|place| !place.starts_with("<std>/")) else { return 0 };
     if !std::mem::take(&mut task.retrying) {
-        if let Some(record) = &task.unwinding {
+        let text = task.unwinding.as_ref().map_or(String::new(), |record| {
             record.print(false, false);
-        }
+            record.panic.headline()
+        });
         eprintln!("tondo: task {} waits here: save a fix, and this function starts again", task.id);
-        if !crate::live::wait_for_patch() {
+        // A debugger stops here first, and a fix may come while it does.
+        let patches = crate::live::patches();
+        crate::debugger::panicked(&text);
+        let frame = crate::tasks::probe_of(unsafe { *(fp as *const usize) });
+        if patches == crate::live::patches() && !crate::live::wait_for_patch(task.id, place, text, frame) {
             return 0;
         }
         // Its caller's statement calls it again.

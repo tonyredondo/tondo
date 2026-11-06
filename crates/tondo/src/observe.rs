@@ -1371,6 +1371,23 @@ fn failures_page(dir: &std::path::Path, live: bool, since: Option<&str>) -> Resu
             )
         })
         .collect();
+    // The slowest requests, as pictures.
+    let dumps = dumps_in(dir).unwrap_or_default();
+    let mut slowest: Vec<Value> = dumps.iter().flat_map(|(_, dump)| placed_requests(dump, "served")).collect();
+    slowest.sort_by_key(|request| std::cmp::Reverse(request["ms"].as_u64()));
+    let pictures: String = slowest
+        .iter()
+        .take(5)
+        .map(|request| {
+            let (method, path) =
+                (request["method"].as_str().unwrap_or_default(), request["path"].as_str().unwrap_or_default());
+            format!("<h3>{} {}</h3>{}", escape(method), escape(path), timeline_picture(request))
+        })
+        .collect();
+    let pictures = match pictures.is_empty() {
+        true => String::new(),
+        false => format!("<h2>The slowest requests</h2>{pictures}"),
+    };
     let waits = match waits.is_empty() {
         true => String::new(),
         false => format!(
@@ -1382,7 +1399,7 @@ fn failures_page(dir: &std::path::Path, live: bool, since: Option<&str>) -> Resu
          <style>body{{font:14px system-ui;margin:2em}}table{{border-collapse:collapse}}\
          td,th{{border-bottom:1px solid #ccc;padding:.4em .8em;text-align:left}}</style></head><body>\
          <h1>Failures of {shown}</h1><p>{} failures in {} dumps.</p>{filters}<table><tr><th>Times</th><th>Over time</th>\
-         <th>Failure</th><th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table>{waits}</body></html>\n",
+         <th>Failure</th><th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table>{waits}{pictures}</body></html>\n",
         groups.len(),
         groups.iter().filter_map(|group| group["count"].as_u64()).sum::<u64>(),
     ))
@@ -2305,6 +2322,57 @@ fn request_waits(request: &Value, tasks: &[Value]) -> Option<String> {
     Some(format!("task {} at {at}{waiting}", task["id"]))
 }
 
+/// A request's timeline as a picture: a row for each task, from its first
+/// step to its last, and a block for each wait, with what it waited for.
+pub(crate) fn timeline_picture(request: &Value) -> String {
+    use crate::profile::escape;
+    let steps = request["steps"].as_array().map_or(&[][..], Vec::as_slice);
+    let total = request["ms"].as_f64().unwrap_or(0.0).max(1.0);
+    let mut tasks: Vec<u64> = steps.iter().filter_map(|step| step["task"].as_u64()).collect();
+    tasks.sort();
+    tasks.dedup();
+    let (left, width, row) = (70.0, 620.0, 26.0);
+    let x = |ms: f64| left + ms / total * width;
+    let mut out = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" font-family=\"system-ui\" font-size=\"12\">",
+        left + width + 10.0,
+        row * tasks.len() as f64 + 24.0
+    );
+    for (index, task) in tasks.iter().enumerate() {
+        let y = row * index as f64 + 4.0;
+        let own: Vec<&Value> = steps.iter().filter(|step| step["task"].as_u64() == Some(*task)).collect();
+        let ms = |step: &Value| step["ms"].as_f64().unwrap_or(0.0);
+        let took = |step: &Value| step["took_ms"].as_f64().unwrap_or(0.0);
+        let from = own.iter().map(|step| ms(step) - took(step)).fold(total, f64::min).max(0.0);
+        let to = own.iter().map(|step| ms(step)).fold(0.0, f64::max);
+        out.push_str(&format!("<text x=\"0\" y=\"{}\" fill=\"currentColor\">task {task}</text>", y + 13.0));
+        out.push_str(&format!(
+            "<rect x=\"{:.1}\" y=\"{y}\" width=\"{:.1}\" height=\"18\" fill=\"#4c8bf5\"/>",
+            x(from),
+            ((to - from) / total * width).max(2.0)
+        ));
+        for wait in own.iter().filter(|step| step["what"] == "waited") {
+            let at = wait["at"].as_str().unwrap_or_default();
+            let what = wait["on"].as_str().unwrap_or_default();
+            out.push_str(&format!(
+                "<rect x=\"{:.1}\" y=\"{y}\" width=\"{:.1}\" height=\"18\" fill=\"#e8a33d\"><title>{} ms for {}, at {}</title></rect>",
+                x(ms(wait) - took(wait)),
+                (took(wait) / total * width).max(2.0),
+                took(wait),
+                escape(what),
+                escape(at)
+            ));
+        }
+    }
+    let y = row * tasks.len() as f64 + 16.0;
+    out.push_str(&format!("<text x=\"{left}\" y=\"{y}\" fill=\"currentColor\">0</text>"));
+    out.push_str(&format!(
+        "<text x=\"{}\" y=\"{y}\" text-anchor=\"end\" fill=\"currentColor\">{total} ms</text></svg>",
+        left + width
+    ));
+    out
+}
+
 /// A request's timeline, a line each.
 fn timeline_text(request: &Value) -> String {
     let mut out = String::new();
@@ -2360,8 +2428,12 @@ pub fn values_in(name: &str, file: &str, seconds: u64, as_json: bool) -> Result<
     std::thread::sleep(Duration::from_secs(seconds));
     let found = program.ask(&asked)?;
     if as_json {
-        crate::cli::print_json("values", true, json!({ "values": found["values"] }));
+        crate::cli::print_json("values", true, json!({ "values": found["values"], "held": found["held"] }));
         return Ok(());
+    }
+    for held in found["held"].as_array().into_iter().flatten() {
+        let (at, message) = (held["at"].as_str().unwrap_or_default(), held["message"].as_str().unwrap_or_default());
+        println!("task {} waits at {at}: {message}", held["task"]);
     }
     let mut lines: Vec<(u64, &Value)> = found["values"]
         .as_object()

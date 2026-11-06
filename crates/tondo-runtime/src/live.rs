@@ -52,19 +52,56 @@ pub(crate) fn holds_panics() -> bool {
     on() && *HOLDS.get_or_init(|| std::env::var_os("TONDO_LIVE_HOLD").is_some_and(|value| value == "1"))
 }
 
-/// The tasks a panic holds until a patch.
-static PANICKED: Mutex<Vec<Arc<super::tasks::Wait>>> = Mutex::new(Vec::new());
+/// A task a panic holds until a patch: what wakes it, where it is, what the
+/// panic said, and its frame.
+struct HeldPanic {
+    wait: Arc<super::tasks::Wait>,
+    task: u64,
+    at: String,
+    message: String,
+    frame: Option<super::tasks::Probe>,
+}
+
+static PANICKED: Mutex<Vec<HeldPanic>> = Mutex::new(Vec::new());
+
+/// How many patches went in.
+pub(crate) fn patches() -> u64 {
+    PATCHES.load(Ordering::Acquire)
+}
 
 /// Waits for a patch: true when one came, false when the task is cancelled.
 /// The program is not stuck meanwhile: the patch comes from outside.
-pub(crate) fn wait_for_patch() -> bool {
+pub(crate) fn wait_for_patch(task: u64, at: String, message: String, frame: Option<super::tasks::Probe>) -> bool {
     let wait = super::tasks::Wait::new();
-    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).push(wait.clone());
+    let held = HeldPanic { wait: wait.clone(), task, at, message, frame };
+    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).push(held);
     super::tasks::HOST_WORK.fetch_add(1, Ordering::SeqCst);
     let fired = wait.block();
     super::tasks::HOST_WORK.fetch_sub(1, Ordering::SeqCst);
-    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).retain(|held| !Arc::ptr_eq(held, &wait));
+    PANICKED.lock().unwrap_or_else(|e| e.into_inner()).retain(|held| !Arc::ptr_eq(&held.wait, &wait));
     fired == 0
+}
+
+/// The tasks a panic holds, as JSON, with the bindings of their frames.
+pub(crate) fn held_json() -> String {
+    use super::diagnostics::quoted;
+    let held = PANICKED.lock().unwrap_or_else(|e| e.into_inner());
+    let shown = held.iter().map(|held| {
+        let locals = held.frame.map_or(String::new(), |frame| super::debugger::frame_bindings(held.task, frame));
+        let (at, message) = (quoted(&held.at), quoted(&held.message));
+        format!("{{\"task\":{},\"at\":{at},\"message\":{message},\"locals\":[{locals}]}}", held.task)
+    });
+    format!("[{}]", shown.collect::<Vec<_>>().join(","))
+}
+
+/// A patch went in: the tasks a panic holds start their statements again.
+fn let_held_go() -> usize {
+    if STAYING.swap(false, Ordering::SeqCst) {
+        return 0;
+    }
+    let held = std::mem::take(&mut *PANICKED.lock().unwrap_or_else(|e| e.into_inner()));
+    let going = held.iter().filter(|held| held.wait.claim(0));
+    going.map(|held| super::tasks::notify(held.wait.task)).count()
 }
 
 /// The next patch only adds what a tool runs: a panic goes on waiting.
@@ -76,34 +113,40 @@ pub(crate) fn stay() -> String {
     "{\"staying\":true}".to_string()
 }
 
-/// A patch went in: the tasks a panic holds start their statements again.
-fn let_held_go() -> usize {
-    if STAYING.swap(false, Ordering::SeqCst) {
-        return 0;
-    }
-    let held = std::mem::take(&mut *PANICKED.lock().unwrap_or_else(|e| e.into_inner()));
-    let going = held.iter().filter(|wait| wait.claim(0));
-    going.map(|wait| super::tasks::notify(wait.task)).count()
-}
-
 /// `eval <slot>`: what the function of a patch gives, run by a task of its
 /// own on a thread of its own, which answers the tool by itself: the program
 /// goes on, and the expression may wait.
 pub(crate) fn eval(rest: &str, client: &std::os::unix::net::UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
-    let code = rest.trim().parse().ok().and_then(slot_code).filter(|&code| code != 0);
+    let mut words = rest.split_whitespace();
+    let code = words.next().and_then(|slot| slot.parse().ok()).and_then(slot_code).filter(|&code| code != 0);
     let Some(code) = code else { return error("the program is not a live build") };
+    // The bindings it reads, of the frame of a task a panic holds.
+    let names: Vec<&str> = words.collect();
+    let addresses = match names.is_empty() {
+        true => Vec::new(),
+        false => {
+            let held = PANICKED.lock().unwrap_or_else(|e| e.into_inner());
+            let frame = held.first().and_then(|held| Some((held.task, held.frame?)));
+            let Some((task, frame)) = frame else { return error("no task a panic holds has those bindings") };
+            match super::debugger::binding_addresses(task, frame, &names) {
+                Ok(addresses) => addresses,
+                Err(message) => return error(&message),
+            }
+        }
+    };
     let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
     struct Call {
         code: u64,
+        addresses: Vec<u64>,
         said: Result<String, String>,
     }
     extern "C" fn inner(frame: *mut u8) {
         let call = unsafe { &mut *(frame as *mut Call) };
         super::panics::tondo_rt_recover_enter();
         let code: extern "C" fn(u64, u64) -> *mut super::Str = unsafe { std::mem::transmute(call.code as usize) };
-        let made = code(0, 0);
+        let made = code(call.addresses.as_ptr() as u64, 0);
         let panicked = super::panics::taken();
         super::panics::tondo_rt_recover_leave();
         call.said = match (panicked, made.is_null()) {
@@ -118,7 +161,7 @@ pub(crate) fn eval(rest: &str, client: &std::os::unix::net::UnixStream) -> Strin
     }
     let started = super::tasks::try_spawn_thread(None, move || {
         use std::io::Write;
-        let mut call = Call { code, said: Err(String::new()) };
+        let mut call = Call { code, addresses, said: Err(String::new()) };
         unsafe { super::tasks::tondo_rt_callback(inner, (&raw mut call).cast(), None) };
         let answer = match &call.said {
             Ok(text) => format!("{{\"called\":{}}}\n", quoted(text)),

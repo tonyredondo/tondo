@@ -550,6 +550,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.openHeldPanic",
+        "title": "Go to the Panic That Waits",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.liveValues",
         "title": "Show or Hide the Values of Live Lines",
         "category": "Tondo"
@@ -558,6 +563,12 @@
         "command": "tondo.eval",
         "title": "Evaluate in a Running Program",
         "category": "Tondo"
+      },
+      {
+        "command": "tondo.requestTimeline",
+        "title": "Show the Timeline",
+        "category": "Tondo",
+        "icon": "$(graph)"
       },
       {
         "command": "tondo.refreshRequests",
@@ -817,6 +828,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "tondo.requestTimeline",
+          "when": "viewItem == tondoRequest",
+          "group": "inline"
+        },
         {
           "command": "tondo.moduleGraph",
           "when": "view == tondoModules && viewItem == project",

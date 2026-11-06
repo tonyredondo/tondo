@@ -2310,7 +2310,8 @@ are here, so one written today finds when a bug came. A commit that does not com
     Tool {
         name: "values",
         description: "What each line of a file left in a running live build, by line, with nothing stopped: its \
-bindings as the next line found them, the last time it ran. Shows what a change does as it runs.",
+bindings as the next line found them, the last time it ran, and `held`: the tasks a panic holds. Shows what a change does \
+as it runs.",
         kind: Kind::Reads,
         params: &[
             ("program", "string!", "The running live program: its process ID or name."),
@@ -2321,8 +2322,8 @@ bindings as the next line found them, the last time it ran. Shows what a change 
     Tool {
         name: "eval",
         description: "What an expression gives in a running live build, without stopping it: the program's functions, \
-types and constants as its files say now, as in `total(Order { id: 1 })`. Tries a change at once, with no rebuild. A \
-panic there comes back as an error and the program goes on.",
+types and constants as its files say now, as in `total(Order { id: 1 })`; with a task a panic holds, the bindings of its \
+frame too. Tries a change at once, with no rebuild. A panic there comes back as an error and the program goes on.",
         kind: Kind::Runs,
         params: &[
             ("program", "string!", "The running live program: its process ID or name."),
@@ -2432,7 +2433,7 @@ the memory by where it was made, and its tasks.",
         name: "debug_start",
         description: "Debug a program: a .to file or a project (built with --debug), a debug executable, or a running \
 build's process ID or name. In a running Release build, with TONDO_DIAGNOSTICS=1, `break` and `continue` stop one task \
-with its values while the program goes on; `next` and `finish` step, without entering calls. A program it starts waits before main for breakpoints. Gives the session that \
+with its values while the program goes on; `next`, `step` and `finish` go on line by line. A program it starts waits before main for breakpoints. Gives the session that \
 `debug` takes; a session lasts until `debug_stop`, or the program ends.",
         kind: Kind::Runs,
         params: &[

@@ -283,6 +283,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             std::fs::write(&plan, node.to_string()).map_err(|e| format!("cannot write {}: {e}", plan.display()))?;
             let mut child = std::process::Command::new(&executable)
                 .env("TONDO_DEBUG", "1")
+                .env("TONDO_LIVE_HOLD", "1")
                 .env("TONDO_TEST_PLAN", &plan)
                 .envs(environment)
                 .envs(schedule.map(|seed| ("TONDO_RT_SCHEDULE", format!("{seed:x}"))))
@@ -302,6 +303,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             let child = std::process::Command::new(&executable)
                 .args(&arguments)
                 .env("TONDO_DEBUG", "1")
+                .env("TONDO_LIVE_HOLD", "1")
                 .stdin(std::process::Stdio::null())
                 .process_group(0)
                 .spawn()

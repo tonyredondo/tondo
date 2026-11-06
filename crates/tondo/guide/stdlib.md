@@ -813,7 +813,7 @@ A Release build that runs with `TONDO_DIAGNOSTICS=1`, on Linux, is debugged too:
 `tondo debug <pid|name>`, `attach` in an editor, or `debug_start`. A breakpoint
 stops only the task that reaches it, for 300 seconds at most, and the rest of the
 program goes on; the stack, `locals`, `print` and `children` show it as it was
-there, `next` and `finish` go on line by line without entering calls, `continue`
+there, `next`, `step` and `finish` go on line by line, `continue`
 lets it go, and `pause` gives a picture of the program. What needs probes says so.
 
 In a live build, `tondo debug app.to --live`, a condition is compiled, and
@@ -896,7 +896,7 @@ statement, and reload says which lines and why. Under `--watch` a panic does not
 program: the task waits, and when a fix is saved the function that panicked starts
 again from its caller's statement, with all the caller has. `tondo eval <pid|name>
 "total(order())"` says what an expression gives in the running program, on the code
-as it is now, and `tondo values <pid|name> app.to` what each line left the last time
+as it is now, with the bindings of a task a panic holds, and `tondo values <pid|name> app.to` what each line left the last time
 it ran; an editor shows that beside the lines. Neither stops anything. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
 move, their parameters included, and what goes back to their callers, a

@@ -1170,6 +1170,8 @@ export interface RequestStep {
 export interface Flight {
   id: number;
   flying?: boolean;
+  /** The timeline as a picture, in SVG. */
+  picture?: string;
   method: string;
   path: string;
   ms: number;
@@ -1224,4 +1226,27 @@ export function lineValues(bindings: { name: string; value: string }[], text: st
   const named = bindings.filter(({ name }) => new RegExp(`\\b${name}\\b`).test(text));
   const shown = named.map(({ name, value }) => `${name} = ${value}`).join('  ');
   return shown.length > 100 ? `${shown.slice(0, 100)}…` : shown;
+}
+
+/** A task a panic holds in a live build, until a change is saved. */
+export interface HeldPanic {
+  task: number;
+  at: string;
+  message: string;
+}
+
+/** Where a held panic is, from `file:line in function`. */
+export function heldPlace(held: HeldPanic): { file: string; line: number } | undefined {
+  const at = held.at.match(/^(.*):(\d+) in /);
+  return at ? { file: at[1], line: Number(at[2]) } : undefined;
+}
+
+/** What a hover says of a name, from what the lines of its file left: the
+ *  nearest line above that shows it, or any. */
+export function liveHover(lines: Record<string, { name: string; value: string }[]>, name: string, line: number): string | undefined {
+  const shown = Object.entries(lines)
+    .filter(([, bindings]) => bindings.some((binding) => binding.name === name))
+    .sort(([a], [b]) => Math.abs(Number(a) - line) - Math.abs(Number(b) - line));
+  const nearest = shown[0]?.[1].find((binding) => binding.name === name);
+  return nearest && `${name} = ${nearest.value}`;
 }

@@ -149,7 +149,42 @@ pub(crate) fn line_values_asked(file: &str) -> String {
             bindings.iter().map(|(name, value)| format!("{{\"name\":{},\"value\":{}}}", quoted(name), quoted(value)));
         format!("\"{line}\":[{}]", bindings.collect::<Vec<_>>().join(","))
     });
-    format!("{{\"values\":{{{}}}}}", lines.collect::<Vec<_>>().join(","))
+    let lines = lines.collect::<Vec<_>>().join(",");
+    drop(looking);
+    format!("{{\"values\":{{{lines}}},\"held\":{}}}", super::live::held_json())
+}
+
+/// A frame a panic holds, for what reads its bindings.
+fn held_frames(table: &Table, task: u64, probe: super::tasks::Probe) -> Vec<Frame> {
+    let super::tasks::Probe { frame, site, addresses, alive } = probe;
+    if let Some((addressed, living)) = table.sites.get(site).and_then(|s| table.offsets.get(s.function))
+        && addressed.load(Ordering::Relaxed) == UNKNOWN
+    {
+        addressed.store(addresses as isize - frame as isize, Ordering::Relaxed);
+        living.store(alive as isize - frame as isize, Ordering::Relaxed);
+    }
+    frames(table, &Stop { task, site, frame, bounds: (0, 0), addresses, alive, why: String::new() })
+}
+
+/// The bindings of a frame a panic holds, as JSON, each with its type.
+pub(crate) fn frame_bindings(task: u64, probe: super::tasks::Probe) -> String {
+    let Some(table) = table() else { return String::new() };
+    let frames = held_frames(&table, task, probe);
+    let bindings = visible(&table, &frames, 0).into_iter();
+    let shown = bindings.map(|(binding, address, _)| {
+        let value = clipped(&show(binding.show, address));
+        format!("{{\"name\":{},\"type\":{},\"value\":{}}}", quoted(&binding.name), quoted(&binding.ty), quoted(&value))
+    });
+    shown.collect::<Vec<_>>().join(",")
+}
+
+/// Where the bindings named are in a frame a panic holds.
+pub(crate) fn binding_addresses(task: u64, probe: super::tasks::Probe, names: &[&str]) -> Result<Vec<u64>, String> {
+    let table = table().ok_or("the program has no probes")?;
+    let frames = held_frames(&table, task, probe);
+    let bound = visible(&table, &frames, 0);
+    let find = |name: &&str| bound.iter().find(|(b, ..)| b.name == *name).map(|(_, address, _)| *address as u64);
+    names.iter().map(|name| find(name).ok_or(format!("no binding `{name}` in that frame"))).collect()
 }
 
 /// At a probe, while a tool looks: what the line this frame was at left.
@@ -1221,6 +1256,11 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if VALUES_ON.load(Ordering::Relaxed) {
         let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
         line_values(site as usize, frame, addresses as usize, alive as usize);
+    }
+    if super::live::holds_panics() {
+        let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
+        let (site, addresses, alive) = (site as usize, addresses as usize, alive as usize);
+        super::tasks::note_probe(super::tasks::Probe { frame, site, addresses, alive });
     }
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);

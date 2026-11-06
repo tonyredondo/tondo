@@ -712,20 +712,34 @@ pub fn call(
 /// `tondo eval <pid|name> <expression>`: what an expression gives in a
 /// running live build, without stopping it: the program's functions and
 /// types are at hand, as those of the file of its `main`, and its files as
-/// they are now.
+/// they are now; with a task a panic holds, those of its file and the
+/// bindings of its frame.
 pub fn eval(name: &str, expression: &str) -> Result<String, String> {
     let mut program = crate::observe::connect(name)?;
     let pid = program.pid;
     let mut ask = |request: &str| program.ask(request);
     let (_, manifest) = manifest_of(pid, &mut ask).map_err(|e| format!("{e}: `eval` is for a live build"))?;
-    let points = manifest["points"].as_object().into_iter().flatten();
-    let main = points.into_iter().find(|(identity, _)| osr::shown(identity) == "main");
-    let file = main.and_then(|(_, entry)| entry["file"].as_str()).ok_or("the program has no `main`")?.to_string();
+    // With a task a panic holds, in its file, with the bindings of its frame.
+    let held = ask("held")?;
+    let held = &held["held"][0];
+    let at = held["at"].as_str().and_then(|at| at.split_once(" in ")).and_then(|(at, _)| at.rsplit_once(':'));
+    let file = match at {
+        Some((file, _)) => file.to_string(),
+        None => {
+            let points = manifest["points"].as_object().into_iter().flatten();
+            let main = points.into_iter().find(|(identity, _)| osr::shown(identity) == "main");
+            main.and_then(|(_, entry)| entry["file"].as_str()).ok_or("the program has no `main`")?.to_string()
+        }
+    };
+    let locals = held["locals"].as_array().into_iter().flatten();
+    let bindings: Vec<(String, String)> = locals
+        .filter_map(|local| Some((local["name"].as_str()?.to_string(), local["type"].as_str()?.to_string())))
+        .collect();
     let ending = format!("    let tondoCalled = {expression}\n    \"{{tondoCalled}}\"");
-    let (slot, _) = compiled(pid, &mut ask, &file, "tondoEval", "String", expression, &ending, &[])
+    let (slot, names) = compiled(pid, &mut ask, &file, "tondoEval", "String", expression, &ending, &bindings)
         .map_err(|e| e.replace("a function runs", "an expression runs"))?;
     let _ = program.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs(60)));
-    let answer = program.ask(&format!("eval {slot}"))?;
+    let answer = program.ask(&format!("eval {slot} {}", names.join(" ")))?;
     match answer["called"].as_str() {
         Some(value) => Ok(value.to_string()),
         None => Err(answer["error"].as_str().unwrap_or("the expression failed").to_string()),

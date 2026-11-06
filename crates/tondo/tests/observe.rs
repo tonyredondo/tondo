@@ -3200,6 +3200,7 @@ fn a_request_is_followed_through_its_tasks() {
     assert!(served.status.success(), "{}", String::from_utf8_lossy(&served.stderr));
     let page = std::fs::read_to_string(page).unwrap();
     assert!(page.contains("Where requests wait") && page.contains("server.to:5 in fetch"), "{page}");
+    assert!(page.contains("The slowest requests") && page.contains("<svg"), "{page}");
     assert!(differ["served"].as_array().is_some(), "{differ}");
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
@@ -3217,6 +3218,7 @@ fn a_request_is_followed_through_its_tasks() {
     get();
     let found = adapter.ask("requests", json!({}));
     assert_eq!(found["served"][0]["path"], "/slow", "{found}");
+    assert!(found["served"][0]["picture"].as_str().unwrap().starts_with("<svg"), "{found}");
     assert!(found["served"][0]["steps"].as_array().unwrap().len() >= 3, "{found}");
     // A breakpoint of a request stops only in its tasks, which say what they
     // work for.
@@ -3355,6 +3357,14 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     let frame = stack["stackFrames"][0]["id"].clone();
     let sum = adapter.ask("evaluate", json!({ "expression": "round", "frameId": frame, "context": "watch" }));
     assert_eq!(sum["result"], id.to_string(), "{sum}");
+    // Into a call of the program: the next round's, from its loop.
+    let into = (0..12).find(|_| {
+        adapter.ask("stepIn", json!({ "threadId": thread }));
+        let stopped = adapter.until("stopped");
+        let stack = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+        stack["stackFrames"][0]["name"] == "charge"
+    });
+    assert!(into.is_some(), "no step went into `charge`");
     // What needs probes says so.
     let message = adapter.refused("setVariable", json!({ "variablesReference": 1, "name": "round", "value": "1" }));
     assert!(!message.is_empty());
@@ -4963,6 +4973,39 @@ for {
     turns = (turns + word().length()) % 1000
 }
 ";
+
+/// Debug Live: a panic stops, a fix is saved and reloaded, and going on starts
+/// the function again with what its caller has.
+#[test]
+fn debug_live_starts_again_what_panicked() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-live-panic");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("shares.to");
+    let program = "import std.console\n\nfn share(total: Int, by: Int): Int {\n    total / by\n}\n\n\
+        fn main() {\n    var seen = 0\n    for seen < 3 {\n        seen += 1\n        \
+        console.println(\"{seen} {share(12, 2 - seen)}\")\n    }\n}\n";
+    std::fs::write(&file, program).unwrap();
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "shares.to", "cwd": dir, "live": true }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "exception", "{stopped}");
+    let stack = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(stack["stackFrames"][0]["name"], "share", "{stack}");
+    let fixed = program.replace("    total / by\n", "    if by == 0 {\n        return 0\n    }\n    total / by\n");
+    std::fs::write(&file, fixed).unwrap();
+    let reloaded = adapter.ask("reload", json!({}));
+    assert!(reloaded["changed"].as_array().unwrap().contains(&json!("share")), "{reloaded}");
+    adapter.ask("continue", json!({ "threadId": stopped["threadId"] }));
+    let mut said = String::new();
+    while !said.contains("3 -12") {
+        said.push_str(adapter.until("output")["output"].as_str().unwrap());
+    }
+    assert!(said.contains("1 12") && said.contains("2 0"), "{said}");
+    adapter.stop();
+}
 
 /// Debug Live: the request `reload` says what changed, or why it did not,
 /// and whether the change needs the program started again.

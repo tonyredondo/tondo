@@ -50,6 +50,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     watchRequests(),
     vscode.commands.registerCommand('tondo.refreshRequests', () => requests.refresh()),
     vscode.commands.registerCommand('tondo.openRequestStep', openStep),
+    vscode.commands.registerCommand('tondo.requestTimeline', showTimeline),
     vscode.debug.onDidChangeActiveDebugSession(() => requests.refresh()),
     vscode.debug.onDidChangeActiveStackItem(() => requests.refresh()),
     vscode.commands.registerCommand('tondo.when', when),
@@ -252,6 +253,7 @@ class RequestsView implements vscode.TreeDataProvider<Flight | RequestRow> {
       opens ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
     item.description = row.description;
+    item.contextValue = 'steps' in element ? 'tondoRequest' : undefined;
     // Refreshing keeps what was open.
     item.id = 'steps' in element ? String(element.id) : undefined;
     if (row.place) {
@@ -273,6 +275,13 @@ function watchRequests(): vscode.Disposable {
     }
   }, 2000);
   return vscode.Disposable.from(view, { dispose: () => clearInterval(timer) });
+}
+
+/** A request's timeline as a picture: a row for each task, and its waits. */
+function showTimeline(request: Flight): void {
+  const title = `${request.method} ${request.path}`;
+  const panel = vscode.window.createWebviewPanel('tondoRequest', title, vscode.ViewColumn.Beside, {});
+  panel.webview.html = `<!doctype html><body style="color: var(--vscode-foreground)"><h3>${title}: ${request.ms} ms</h3>${request.picture ?? ''}</body>`;
 }
 
 /** Opens the line a step of a request took place at. */
