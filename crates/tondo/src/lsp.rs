@@ -1143,7 +1143,7 @@ impl Server {
         let text = &source.text;
         let at = (offset - source.base) as usize;
         let is_name = |c: char| c.is_alphanumeric() || c == '_';
-        let start = text[..at].rfind(|c: char| !is_name(c)).map_or(0, |i| i + 1);
+        let start = after_last(&text[..at], |c: char| !is_name(c));
         let end = text[at..].find(|c: char| !is_name(c)).map_or(text.len(), |i| at + i);
         let name = &text[start..end];
         let (header, docs) = match self.builtin(analyzed, file, start, name) {
@@ -1168,8 +1168,8 @@ impl Server {
     fn builtin(&self, analyzed: &Analyzed, file: usize, start: usize, name: &str) -> Option<(String, String)> {
         let source = analyzed.analysis.sources.file(file);
         let text = &source.text;
-        let dot = start.checked_sub(1).filter(|&d| text[d..].starts_with('.'))?;
-        let receiver_start = text[..dot].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let dot = text[..start].ends_with('.').then(|| start - 1)?;
+        let receiver_start = after_last(&text[..dot], |c: char| !(c.is_alphanumeric() || c == '_'));
         let receiver = &text[receiver_start..dot];
         // A standard module the file imports.
         let imported = text.lines().filter_map(|line| line.strip_prefix("import ")).find_map(|rest| {
@@ -1242,7 +1242,7 @@ impl Server {
         let source = analyzed.analysis.sources.file(file);
         let at = (offset - source.base) as usize;
         let text = &source.text;
-        let word_start = text[..at].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let word_start = after_last(&text[..at], |c: char| !(c.is_alphanumeric() || c == '_'));
         let word_end = text[at..].find(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(text.len(), |i| at + i);
         let word = &text[word_start..word_end];
         let question = text[at..].starts_with('?') || text[..at].ends_with('?');
@@ -1378,7 +1378,7 @@ impl Server {
         }
         let open = open?;
         let is_name = |c: char| c.is_alphanumeric() || c == '_';
-        let name_start = text[..open].rfind(|c: char| !is_name(c)).map_or(0, |i| i + 1);
+        let name_start = after_last(&text[..open], |c: char| !is_name(c));
         let name = &text[name_start..open];
         if name.is_empty() {
             return None;
@@ -1713,7 +1713,7 @@ impl Server {
         if let Some(written) = text[line..cursor].strip_prefix("import ") {
             return Some(json!({ "isIncomplete": false, "items": importable(latest, &source.module, written) }));
         }
-        let start = text[..cursor].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let start = after_last(&text[..cursor], |c: char| !(c.is_alphanumeric() || c == '_'));
         // After `@`, the program's annotations; in their arguments, their fields.
         if text[..start].ends_with('@') {
             return Some(json!({ "isIncomplete": false, "items": self.annotation_names(latest, offset) }));
@@ -1759,8 +1759,7 @@ impl Server {
         let end = start - 1;
         // A module the file imports, a type, or a type of a module: what it
         // declares. Otherwise a value, whose members follow.
-        let chain_start =
-            text[..end].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let chain_start = after_last(&text[..end], |c: char| !(c.is_alphanumeric() || c == '_' || c == '.'));
         let parts: Vec<&str> = text[chain_start..end].split('.').collect();
         let imports = imports(&text);
         let here = source.module.clone();
@@ -1965,7 +1964,7 @@ impl Server {
             return None;
         }
         let head = text[..open].trim_end();
-        let named = head.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let named = after_last(head, |c: char| !(c.is_alphanumeric() || c == '_' || c == '.'));
         let name = head[named..].rsplit('.').next()?;
         if !name.starts_with(|c: char| c.is_uppercase()) {
             return None;
@@ -2062,7 +2061,8 @@ impl Server {
         if args.contains(')') || !written.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return None;
         }
-        let path = &line[line[..open].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))? + 1..open];
+        let from = after_last(&line[..open], |c: char| !(c.is_alphanumeric() || c == '_' || c == '.'));
+        let path = &line[Some(from).filter(|&from| from > 0)?..open];
         if !line[..open - path.len()].ends_with('@') {
             return None;
         }
@@ -2730,8 +2730,7 @@ impl Server {
         let name = declared.name.clone();
         let start = (span.start - here.base) as usize;
         // With what names it: `module.f(...)` goes whole.
-        let qualified =
-            here.text[..start].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let qualified = after_last(&here.text[..start], |c: char| !(c.is_alphanumeric() || c == '_' || c == '.'));
         let whole = Span::new(here.base + qualified as u32, here.base + call.close as u32 + 1);
         let edits = vec![(whole, format!("({body})"))];
         let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
@@ -2901,7 +2900,7 @@ impl Server {
         let home = sources.file_of(declared.name_span.start);
         let start = (declared.name_span.start - home.base) as usize;
         let dot = home.text[..start].rfind('.').ok_or("this is not a method of a type")?;
-        let ty_at = home.text[..dot].rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |at| at + 1);
+        let ty_at = after_last(&home.text[..dot], |c: char| !c.is_alphanumeric() && c != '_');
         let ty = &home.text[ty_at..dot];
         let list = list_at(&home.text, start + declared.name.len()).ok_or("no parameters here")?;
         let &(first_start, first_end) = list.items.first().ok_or("it has no `self`")?;
@@ -3029,7 +3028,7 @@ impl Server {
         let home = analyzed.analysis.sources.file_of(declared.name_span.start);
         let before = &home.text[..(declared.name_span.start - home.base) as usize];
         let ty = before.trim_end().trim_end_matches('.');
-        let ty = &ty[ty.rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |at| at + 1)..];
+        let ty = &ty[after_last(ty, |c: char| !c.is_alphanumeric() && c != '_')..];
         let (mut signatures, mut bodies, mut public, mut last) = (Vec::new(), Vec::new(), false, 0);
         for method in &wanted {
             let found = index.defs.iter().find(|d| {
@@ -3669,7 +3668,7 @@ fn embed_path(text: &str, cursor: usize) -> Option<(String, String)> {
     let before = &text[line..cursor];
     let open = before.rfind('"')?;
     let call = before[..open].strip_suffix('(')?;
-    let start = call.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |at| at + 1);
+    let start = after_last(call, |c: char| !(c.is_alphanumeric() || c == '_' || c == '.'));
     let (alias, kind) = call[start..].rsplit_once('.')?;
     crate::embed::Kind::of(kind)?;
     if imports(text).get(alias).map(String::as_str) != Some("std.embed") {
@@ -3704,6 +3703,12 @@ fn embed_entries(source: &Path, typed: &str) -> Vec<Value> {
             json!({ "label": label, "kind": if dir { 19 } else { 17 } })
         })
         .collect()
+}
+
+/// Where `text` goes on after the last character that `stops`, which may
+/// take more than a byte; its start when none does.
+pub(crate) fn after_last(text: &str, stops: impl Fn(char) -> bool) -> usize {
+    text.char_indices().rev().find(|&(_, c)| stops(c)).map_or(0, |(at, c)| at + c.len_utf8())
 }
 
 /// The names a file imports modules under: `json` for `import std.json`,
@@ -3840,7 +3845,9 @@ fn offset(text: &str, position: &Value, units: Units) -> Option<usize> {
     let rest = &text[start..];
     let rest = &rest[..rest.find('\n').unwrap_or(rest.len())];
     if units == Units::Utf8 {
-        return Some(start + character.min(rest.len()));
+        // The start of a character, when it is asked for a place inside one.
+        let inside = (0..=character.min(rest.len())).rev().find(|&at| rest.is_char_boundary(at));
+        return Some(start + inside.unwrap_or(0));
     }
     let mut counted = 0;
     for (index, c) in rest.char_indices() {

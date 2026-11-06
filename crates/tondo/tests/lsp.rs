@@ -2030,3 +2030,80 @@ fn a_hover_says_where_a_function_can_wait() {
     let text = hover["contents"]["value"].as_str().unwrap();
     assert!(text.contains("Can wait:") && text.contains("waits for a value at src/main.to:2"), "{text}");
 }
+
+/// A name after a character of more than a byte, as in a string that is
+/// being written, does not end the server.
+#[test]
+fn completes_after_a_wide_character() {
+    let main = "fn main() {\n    let a = \"¤x.\n}\n";
+    let dir = project("wide-character", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let at = json!({ "line": 1, "character": 15 });
+    editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": at }));
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": at }));
+    assert!(hover.is_null(), "{hover}");
+}
+
+/// Every program of the cases in an editor: asked what an editor asks in
+/// places of it, and cut where writing it could have left it. The Nightly's:
+/// it takes minutes, and a server that ends loses all that is open.
+#[test]
+fn the_server_outlives_every_case() {
+    if std::env::var_os("TONDO_SWEEP").is_none() {
+        return;
+    }
+    let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases");
+    let mut files: Vec<_> = ["run", "errors"]
+        .iter()
+        .flat_map(|kind| std::fs::read_dir(cases.join(kind)).unwrap().flatten().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "to"))
+        .collect();
+    files.sort();
+    let mut seed = 1u64;
+    let mut next = move |limit: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % limit.max(1)
+    };
+    let mut editor = Editor::start();
+    for path in &files {
+        println!("{}", path.display());
+        let text = std::fs::read_to_string(path).unwrap();
+        let uri = editor.open(path);
+        let document = json!({ "uri": uri });
+        let lines: Vec<&str> = text.lines().collect();
+        for method in ["foldingRange", "codeLens", "documentLink"] {
+            println!("  {method}");
+            editor.request(&format!("textDocument/{method}"), json!({ "textDocument": document }));
+        }
+        for _ in 0..8 {
+            let line = next(lines.len());
+            let character = next(lines.get(line).map_or(0, |text| text.len()) + 1);
+            let at = json!({ "textDocument": document, "position": { "line": line, "character": character } });
+            for method in ["hover", "definition", "completion", "signatureHelp", "documentHighlight", "prepareRename"] {
+                println!("  {method} {line}:{character}");
+                editor.request(&format!("textDocument/{method}"), at.clone());
+            }
+        }
+        for version in 2..6 {
+            let mut cut = next(text.len() + 1);
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let written = format!("{}{}", &text[..cut], ["", ".", "(", "{", "\"", "x."][next(6)]);
+            let changes = json!([{ "text": written }]);
+            let changed = json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": changes });
+            editor.notify("textDocument/didChange", changed);
+            let line = written.lines().count().saturating_sub(1);
+            let character = written.lines().last().map_or(0, str::len);
+            let at = json!({ "textDocument": document, "position": { "line": line, "character": character } });
+            println!("  cut at {cut}");
+            for method in ["completion", "hover", "signatureHelp"] {
+                editor.request(&format!("textDocument/{method}"), at.clone());
+            }
+            editor.request("textDocument/documentSymbol", json!({ "textDocument": document }));
+            editor.request("textDocument/semanticTokens/full", json!({ "textDocument": document }));
+        }
+        editor.notify("textDocument/didClose", json!({ "textDocument": document }));
+    }
+}

@@ -1944,7 +1944,7 @@ fn handle(
             let text = arguments["text"].as_str().unwrap_or_default();
             let column = arguments["column"].as_u64().map_or(usize::MAX, |c| c.saturating_sub(1) as usize);
             let before: String = text.chars().take(column).collect();
-            let start = before.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+            let start = crate::lsp::after_last(&before, |c: char| !(c.is_alphanumeric() || c == '_'));
             let word = &before[start..];
             let (task, index) = match arguments["frameId"].as_u64() {
                 Some(id) => frame_of(id),
