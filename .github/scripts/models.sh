@@ -7,6 +7,7 @@ jar=$1
 cd testing/models
 for config in *.cfg; do
   case "$config" in
+    Stop*) model=Stop ;;
     Park*) model=Park ;;
     *) model=Wake ;;
   esac

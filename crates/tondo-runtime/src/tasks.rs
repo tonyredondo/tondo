@@ -1026,6 +1026,8 @@ fn stand_in(state: &AtomicU8) -> std::thread::JoinHandle<()> {
 
 /// Set while the cycle collector needs every thread out of Tondo code.
 static STOPPING: AtomicBool = AtomicBool::new(false);
+/// Set while someone has the world stopped, or is stopping it.
+static STOPPER: AtomicBool = AtomicBool::new(false);
 
 /// How many reasons there are for compiled code to call
 /// `tondo_rt_cancelled` after a call that may wait: a stop of the world, a
@@ -1141,9 +1143,16 @@ fn safe_point() {
 /// Stops every thread at its next safe point, for the cycle collector;
 /// gives up after `timeout`, when a task runs long without one.
 pub(crate) fn stop_world(timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    // One at a time: the first to end would let the world go on under another.
+    while STOPPER.swap(true, Ordering::SeqCst) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::yield_now();
+    }
     STOPPING.store(true, Ordering::SeqCst);
     attend(true);
-    let deadline = Instant::now() + timeout;
     let threads = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
     loop {
         if threads.iter().all(|runner| !runner.running.load(Ordering::SeqCst)) {
@@ -1190,8 +1199,10 @@ pub(crate) fn fork_copy() -> i32 {
 pub(crate) fn resume_world() {
     STOPPING.store(false, Ordering::SeqCst);
     attend(false);
-    let _resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     RESUMED.notify_all();
+    drop(resumed);
+    STOPPER.store(false, Ordering::SeqCst);
 }
 
 /// What it means that no task can run: nothing yet, a deadlock (`P0013`),
@@ -4830,5 +4841,34 @@ unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
             }
             _ => (case.nanos <= 0).then_some(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// The cycle collector, a dump and a logpoint each stop the world, and
+    /// the first to end must not let it go on under another
+    /// (testing/models/Stop.tla).
+    #[test]
+    fn one_stops_the_world_at_a_time() {
+        static INSIDE: AtomicUsize = AtomicUsize::new(0);
+        let stoppers: Vec<_> = (0..4)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..2000 {
+                        if super::stop_world(Duration::from_millis(50)) {
+                            assert_eq!(INSIDE.fetch_add(1, Ordering::SeqCst), 0, "two stopped the world");
+                            std::thread::yield_now();
+                            INSIDE.fetch_sub(1, Ordering::SeqCst);
+                            super::resume_world();
+                        }
+                    }
+                })
+            })
+            .collect();
+        stoppers.into_iter().for_each(|stopper| stopper.join().unwrap());
     }
 }
