@@ -806,6 +806,13 @@ fn the_lines_of_a_running_program_say_what_they_left() {
     assert_eq!(lines.next().unwrap().unwrap(), "2");
     let _ = each.kill();
     let _ = each.wait();
+    // So many times, and it ends.
+    let counted = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["eval", &server.pid(), "1 + 1", "--every", "0.01", "--count", "3"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&counted.stdout), "2\n2\n2\n");
     server.stop();
 }
 

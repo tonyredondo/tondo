@@ -1050,8 +1050,8 @@ fn values_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo eval <pid|name> <expression> [--every <seconds>] [--json]";
-    let (mut given, mut every, mut json) = (Vec::new(), None, false);
+    const USAGE: &str = "usage: tondo eval <pid|name> <expression> [--every <seconds> [--count <n>]] [--json]";
+    let (mut given, mut every, mut count, mut json) = (Vec::new(), None, None, false);
     let mut rest = args.iter().filter_map(|a| a.to_str());
     while let Some(arg) = rest.next() {
         match arg {
@@ -1061,6 +1061,7 @@ fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
                 let each = seconds.and_then(|n| std::time::Duration::try_from_secs_f64(n).ok());
                 every = Some(each.filter(|each| !each.is_zero()).ok_or(USAGE)?);
             }
+            "--count" => count = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
             other => given.push(other),
         }
     }
@@ -1074,7 +1075,7 @@ fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    tondo::live::eval_each(name, expression, every, &mut |said| {
+    tondo::live::eval_each(name, expression, every, count, &mut |said| {
         let text = said.unwrap_or_else(|error| format!("error: {error}"));
         println!("{text}");
         let _ = std::io::Write::flush(&mut std::io::stdout());

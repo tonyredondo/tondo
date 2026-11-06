@@ -630,3 +630,22 @@ fn refactors_rewrite_the_files() {
     assert!(!written.contains("unused"), "{written}");
     agent.stop();
 }
+
+#[test]
+fn reaches_what_the_command_line_does() {
+    let dir = project("command-line", &[("graphed.to", "fn main() {}\n"), ("doc.md", "# A document\n")]);
+    let mut client = Agent::start(&dir);
+    let (data, _) = client.call("version", json!({}));
+    assert_eq!(data["report"]["format"], "tondo-version-0.1/1", "{data}");
+    let (_, text) = client.call("graph", json!({ "path": dir.join("graphed.to"), "format": "dot" }));
+    assert!(text.contains("digraph"), "{text}");
+    let (data, _) = client.call("doc_test", json!({ "file": dir.join("doc.md"), "edition": "0.1" }));
+    assert_eq!(data["exit_code"], 0, "{data}");
+    let (data, _) = client.call("dump_plugin", json!({ "debugger": "gdb" }));
+    assert!(data["report"]["load"].as_str().unwrap_or_default().starts_with("source"), "{data}");
+    let output = dir.join("no-links");
+    let arguments = json!({ "path": dir.join("graphed.to"), "output": output, "no_source_links": true });
+    client.call("build", arguments);
+    assert!(output.exists());
+    client.stop();
+}

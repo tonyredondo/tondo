@@ -193,7 +193,13 @@ impl Server {
                 {
                     graph.around(&module, args.flag("reverse"))?;
                 }
-                Ok(Reply::new(graph.text(view), graph.json(view == View::Packages)))
+                let text = match args.text("format").as_deref() {
+                    None => graph.text(view),
+                    Some("dot") => graph.dot(view),
+                    Some("mermaid") => graph.mermaid(view),
+                    Some(other) => return Err(format!("no format `{other}`: dot or mermaid")),
+                };
+                Ok(Reply::new(text, graph.json(view == View::Packages)))
             }
             "definition" | "references" | "hover" | "complete" | "rename" | "refactor" | "symbols"
             | "implementations" | "calls" => language(name, args),
@@ -1089,6 +1095,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             argv.push(path);
             option(&mut argv, "--output", "output");
             switch(&mut argv, "--strip", "strip");
+            switch(&mut argv, "--no-source-links", "no_source_links");
             building(&mut argv);
         }
         "run" => {
@@ -1151,7 +1158,11 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--filter", "filter");
             option(&mut argv, "--exact", "exact");
         }
-        "doc_test" => push(&["doc-test", &args.need("file")?]),
+        "doc_test" => {
+            push(&["doc-test"]);
+            option(&mut argv, "--edition", "edition");
+            argv.push(args.need("file")?);
+        }
         "bind" => {
             push(&["bind", "--json"]);
             argv.extend(args.list("headers"));
@@ -1176,6 +1187,23 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "target_pack" => {
             push(&["target", "pack", "--json"]);
             argv.extend(args.text("dir"));
+        }
+        "clean" => {
+            push(&["clean", "--json"]);
+            switch(&mut argv, "--all", "all");
+        }
+        "setup" => {
+            push(&["setup", "--json"]);
+            option(&mut argv, "--vsix", "vsix");
+        }
+        "version" => push(&["version", "--json"]),
+        "dump_plugin" => push(&["dump", "plugin", &args.need("debugger")?, "--json"]),
+        "profile_show" => {
+            push(&["profile", "show", &args.need("file")?, "--json"]);
+            option(&mut argv, "--top", "top");
+            switch(&mut argv, "--lines", "lines");
+            option(&mut argv, "--sample", "sample");
+            option(&mut argv, "--html", "html");
         }
         "ps" => {
             push(&["ps", "--json"]);
@@ -1233,7 +1261,17 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_redact" => push(&["dump", "redact", &args.need("file")?, &args.need("output")?]),
         "blocked" => push(&["blocked", &args.need("program")?, "--json"]),
         "requests" => push(&["requests", &args.need("program")?, "--json"]),
-        "eval" => push(&["eval", &args.need("program")?, &args.need("expression")?, "--json"]),
+        "eval" => {
+            push(&["eval", &args.need("program")?, &args.need("expression")?]);
+            match args.text("every") {
+                // Repeated, a line each time, and never for ever.
+                Some(every) => {
+                    let count = args.text("count").unwrap_or("5".to_string());
+                    push(&["--every", &every, "--count", &count]);
+                }
+                None => push(&["--json"]),
+            }
+        }
         "values" => {
             push(&["values", &args.need("program")?, &args.need("file")?, "--json"]);
             if let Some(seconds) = args.text("seconds") {
@@ -1326,6 +1364,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     };
     // What the command gives as JSON is the result's data.
     let json = !matches!(name, "compact" | "api" | "guide" | "run" | "test" | "doc_test")
+        && !(name == "eval" && args.text("every").is_some())
         || (name == "test" && args.flag("list"));
     // The result of a program, of its tests or of a check is what it
     // reports, not a failure of the tool.
@@ -1953,6 +1992,7 @@ imports. Given a directory or file inside a project, its project, and the module
             ("view", "string", "modules (the default), packages, or files."),
             ("module", "string", "Only what this module imports, directly or not."),
             ("reverse", "boolean", "With `module`, only what imports it, directly or not."),
+            ("format", "string", "The text as dot or mermaid, to draw it; the data stays the same."),
         ],
     },
     Tool {
@@ -2033,6 +2073,19 @@ with `bench`, the benchmarks of `test` or of all, what they measure.",
         ],
     },
     Tool {
+        name: "profile_show",
+        description: "Read a profile that is already written, in pprof's format: the functions, and with `lines` \
+the lines, that take the most.",
+        kind: Kind::Reads,
+        params: &[
+            ("file", "string!", "The profile."),
+            ("top", "number", "How many to give: 15 by default."),
+            ("lines", "boolean", "By line, instead of by function."),
+            ("sample", "string", "Which of the profile's samples to read, as `alloc_space`."),
+            ("html", "string", "Also write it as a page here."),
+        ],
+    },
+    Tool {
         name: "explain",
         description: "What the code of an error, a warning or a panic means (E1102, W1002, P0007), with the guide's examples of it.",
         kind: Kind::Reads,
@@ -2090,6 +2143,7 @@ and the header <name>.h.",
             ("output", "string", "The executable's path, or the library's directory."),
             LIBRARY,
             STATIC,
+            ("no_source_links", "boolean", "Leave out the links to the source that dumps and debuggers follow."),
             ("strip", "boolean", "Without its symbol table (`--strip`)."),
             DEBUG,
             TARGET,
@@ -2171,7 +2225,10 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
         name: "doc_test",
         description: "Check the Tondo examples of a Markdown document.",
         kind: Kind::Runs,
-        params: &[("file", "string!", "The Markdown document.")],
+        params: &[
+            ("file", "string!", "The Markdown document."),
+            ("edition", "string", "The edition its examples are written in: 0.1, the only one yet."),
+        ],
     },
     Tool {
         name: "bind",
@@ -2203,6 +2260,21 @@ TONDO_TARGETS names the directory.",
         kind: Kind::Edits,
         params: &[("dir", "string", "The directory of packs.")],
     },
+    Tool {
+        name: "clean",
+        description: "Empty the cache of builds, which the next build fills again; with `all`, the fetched \
+dependencies too.",
+        kind: Kind::Edits,
+        params: &[("all", "boolean", "The fetched dependencies too.")],
+    },
+    Tool {
+        name: "setup",
+        description: "Set up this tondo for agents and editors again: the skill, `tondo mcp` for Claude Code and \
+Codex, and the extension of VS Code and its kin, for those installed. Says what it did, and what is missing.",
+        kind: Kind::Edits,
+        params: &[("vsix", "string", "The extension to install, instead of the latest build's.")],
+    },
+    Tool { name: "version", description: "This tondo's version, target and backend.", kind: Kind::Reads, params: &[] },
     Tool {
         name: "ps",
         description: "The running Tondo programs that can be observed: those started with TONDO_DIAGNOSTICS=1, and \
@@ -2328,6 +2400,8 @@ frame too. Tries a change at once, with no rebuild. A panic there comes back as 
         params: &[
             ("program", "string!", "The running live program: its process ID or name."),
             ("expression", "string!", "The expression."),
+            ("every", "number", "Seconds between one value and the next, to watch it change: compiled once."),
+            ("count", "number", "With `every`, how many values: 5 by default."),
         ],
     },
     Tool {
@@ -2402,6 +2476,12 @@ where each task and thread was, and the values it held. Linux and macOS.",
             ("executable", "string", "The program, when it is not where the core says."),
             ("output", "string", "Where to write the dump; by default the core's path and `.dump.json`."),
         ],
+    },
+    Tool {
+        name: "dump_plugin",
+        description: "Write the `tondo` command for lldb or gdb, which shows a stopped program as `dump_read` does.",
+        kind: Kind::Edits,
+        params: &[("debugger", "string!", "lldb or gdb.")],
     },
     Tool {
         name: "dump_trend",

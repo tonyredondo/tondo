@@ -718,7 +718,7 @@ pub fn call(
 /// bindings of its frame.
 pub fn eval(name: &str, expression: &str) -> Result<String, String> {
     let mut value = None;
-    eval_each(name, expression, None, &mut |said| value = Some(said))?;
+    eval_each(name, expression, None, Some(1), &mut |said| value = Some(said))?;
     value.expect("a value")
 }
 
@@ -728,6 +728,7 @@ pub fn eval_each(
     name: &str,
     expression: &str,
     every: Option<std::time::Duration>,
+    count: Option<u64>,
     told: &mut dyn FnMut(Result<String, String>),
 ) -> Result<(), String> {
     let mut program = crate::observe::connect(name)?;
@@ -754,17 +755,18 @@ pub fn eval_each(
     let (slot, names) = compiled(pid, &mut ask, &file, "tondoEval", "String", expression, &ending, &bindings)
         .map_err(|e| e.replace("a function runs", "an expression runs"))?;
     let _ = program.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs(60)));
-    loop {
+    for round in 1..=count.unwrap_or(u64::MAX) {
         let answer = program.ask(&format!("eval {slot} {}", names.join(" ")))?;
         told(match answer["called"].as_str() {
             Some(value) => Ok(value.to_string()),
             None => Err(answer["error"].as_str().unwrap_or("the expression failed").to_string()),
         });
         match every {
-            Some(every) => std::thread::sleep(every),
-            None => return Ok(()),
+            Some(every) if Some(round) != count => std::thread::sleep(every),
+            _ => {}
         }
     }
+    Ok(())
 }
 
 /// A function a live patch adds to the program's `file`, in memory: named
