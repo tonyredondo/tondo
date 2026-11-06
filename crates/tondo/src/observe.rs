@@ -1822,6 +1822,26 @@ fn dumps_differ(a: &Value, b: &Value) -> Value {
     memory.sort_by(|x, y| y.1.abs().total_cmp(&x.1.abs()).then(x.0.cmp(&y.0)));
     memory.dedup_by(|x, y| x.0 == y.0);
     let memory: Vec<Value> = memory.iter().map(|(place, grew)| json!({ "place": place, "bytes": grew })).collect();
+    // How long each kind of request took, in each dump.
+    let took = |dump: &Value| -> std::collections::BTreeMap<String, (f64, f64)> {
+        let mut sums = std::collections::BTreeMap::new();
+        for request in dump["served"].as_array().into_iter().flatten() {
+            let (method, path) =
+                (request["method"].as_str().unwrap_or_default(), request["path"].as_str().unwrap_or_default());
+            let sum = sums.entry(format!("{method} {path}")).or_insert((0.0, 0.0));
+            *sum = (sum.0 + request["ms"].as_f64().unwrap_or(0.0), sum.1 + 1.0);
+        }
+        sums
+    };
+    let (was_took, now_took) = (took(a), took(b));
+    let served: Vec<Value> = now_took
+        .iter()
+        .filter_map(|(name, (sum, count))| {
+            let (before, after) = was_took.get(name).map(|(s, c)| (s / c, sum / count))?;
+            (before != after).then(|| json!({ "request": name, "before_ms": before, "after_ms": after }))
+        })
+        .collect();
+    let flying = |dump: &Value| dump["requests"].as_array().map_or(0, Vec::len);
     // The tasks: those that came, those that went, those that moved.
     let (old, new) = (tasks(a), tasks(b));
     let find = |list: &[Value], id: &Value| list.iter().find(|t| t["id"] == *id).cloned();
@@ -1854,7 +1874,8 @@ fn dumps_differ(a: &Value, b: &Value) -> Value {
     let seconds = (b["time_ms"].as_f64().unwrap_or(0.0) - a["time_ms"].as_f64().unwrap_or(0.0)) / 1000.0;
     json!({
         "seconds": seconds, "memory": memory, "counters": counters, "started": started, "ended": ended,
-        "moved": moved, "bindings": bindings,
+        "moved": moved, "bindings": bindings, "served": served,
+        "in_flight": { "before": flying(a), "after": flying(b) },
     })
 }
 
@@ -1888,6 +1909,18 @@ fn diff_text(found: &Value) -> String {
     for task in list("moved") {
         let at = |key: &str| task[key].as_str().unwrap_or("nowhere known").to_string();
         out.push_str(&format!("  task {}: {} {} -> {} {}\n", task["id"], at("was"), at("from"), at("is"), at("to")));
+    }
+    let (before, after) = (&found["in_flight"]["before"], &found["in_flight"]["after"]);
+    if before != after {
+        out.push_str(&format!("requests in flight: {before} -> {after}\n"));
+    }
+    if !list("served").is_empty() {
+        out.push_str("requests, by how long they took on average:\n");
+    }
+    for request in list("served") {
+        let ms = |key: &str| duration(request[key].as_f64().unwrap_or(0.0) / 1000.0);
+        let name = request["request"].as_str().unwrap_or_default();
+        out.push_str(&format!("  {name}: {} -> {}\n", ms("before_ms"), ms("after_ms")));
     }
     if !list("bindings").is_empty() {
         out.push_str("bindings that changed:\n");
@@ -2010,7 +2043,7 @@ fn tasks(dump: &Value) -> Vec<Value> {
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
             "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
-            "frames": frames, "wait": task["wait"],
+            "frames": frames, "wait": task["wait"], "request": task["request"],
         }));
     }
     out
@@ -2212,6 +2245,21 @@ pub(crate) fn timelines(mut dump: Value) -> Value {
     json!({ "requests": requests(&dump), "served": served })
 }
 
+/// What a request is held up by in the end: following what its task waits
+/// for through the tasks that can end that wait.
+fn request_waits(request: &Value, tasks: &[Value]) -> Option<String> {
+    let find = |id: &Value| tasks.iter().find(|task| task["id"] == *id);
+    let mut task = find(&request["task"])?;
+    let mut seen = vec![task["id"].clone()];
+    while let Some(next) = task["wait"]["on"].get(0).and_then(find).filter(|next| !seen.contains(&next["id"])) {
+        seen.push(next["id"].clone());
+        task = next;
+    }
+    let at = task["at"].as_str().unwrap_or("an unknown place");
+    let waiting = task["wait"]["for"].as_str().map_or(String::new(), |what| format!(", which waits for {what}"));
+    Some(format!("task {} at {at}{waiting}", task["id"]))
+}
+
 /// A request's timeline, a line each.
 fn timeline_text(request: &Value) -> String {
     let mut out = String::new();
@@ -2273,7 +2321,8 @@ fn requests_text(list: &[Value]) -> String {
         let waited = duration(request["ms"].as_f64().unwrap_or(0.0) / 1000.0);
         let task = request["task"].as_u64().filter(|task| *task != 0);
         let answer = task.map_or(", no task has it yet".to_string(), |task| format!(", in task {task}"));
-        format!("{method} {path} for {waited}{answer}")
+        let waits = request["waits"].as_str().map_or(String::new(), |waits| format!(": it waits on {waits}"));
+        format!("{method} {path} for {waited}{answer}{waits}")
     };
     match list.is_empty() {
         true => "no request in flight".to_string(),
@@ -2426,7 +2475,13 @@ fn why(dump: &Value) -> Value {
     found["lock_order"] = dump["lock_order"].clone();
     let events = events(dump);
     found["events"] = events[events.len().saturating_sub(10)..].to_vec().into();
-    found["requests"] = requests(dump).into_iter().take(5).collect();
+    let mut oldest: Vec<Value> = requests(dump).into_iter().take(5).collect();
+    for request in &mut oldest {
+        if let Some(waits) = request_waits(request, &tasks) {
+            request["waits"] = waits.into();
+        }
+    }
+    found["requests"] = oldest.into();
     found["in_flight"] = json!(dump["requests"].as_array().map_or(0, Vec::len));
     found["crowded"] = stacks(&tasks).into_iter().filter(|g| g["count"].as_u64() > Some(1)).take(5).collect();
     found["memory"] = heap["sites"].as_array().into_iter().flatten().take(3).cloned().collect();
@@ -2473,6 +2528,8 @@ pub struct Logpoint {
     pub dump: Option<PathBuf>,
     /// For how long each time holds its task, in seconds.
     pub stop: Option<u64>,
+    /// A text of the request a task must work for to count.
+    pub request: Option<String>,
     pub max: u64,
     pub seconds: Option<u64>,
 }
@@ -2481,14 +2538,14 @@ pub struct Logpoint {
 /// running program holds each time it goes by, up to `max` times or for
 /// `seconds`, without stopping it. `{user.id}` in the text reads a part.
 pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
-    let Logpoint { name, place, text, condition, dump, stop, max, seconds } = asked;
+    let Logpoint { name, place, text, condition, dump, stop, request, max, seconds } = asked;
     let (text, max) = (text.as_deref(), *max);
     let mut program = connect(name)?;
     let here = std::env::current_dir().map_err(|e| e.to_string())?;
     let dump = dump.as_ref().map_or(String::new(), |path| here.join(path).display().to_string());
     let held = stop.map_or(String::new(), |seconds| seconds.to_string());
-    let request = format!("logpoint {max} {place}\t{}\t{dump}\t{held}", condition.as_deref().unwrap_or_default());
-    let answer = program.ask(&request)?;
+    let (condition, serving) = (condition.as_deref().unwrap_or_default(), request.as_deref().unwrap_or_default());
+    let answer = program.ask(&format!("logpoint {max} {place}\t{condition}\t{dump}\t{held}\t{serving}"))?;
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
     }

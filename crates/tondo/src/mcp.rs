@@ -1261,6 +1261,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(stop) = args.number("stop") {
                 push(&["--stop", &stop.to_string()]);
             }
+            if let Some(request) = args.text("request") {
+                push(&["--request", &request]);
+            }
             let seconds = args.text("seconds").unwrap_or_else(|| "10".to_string());
             push(&["--max", &args.text("max").unwrap_or_else(|| "20".to_string()), "--for", &seconds, "--json"]);
         }
@@ -2257,6 +2260,7 @@ without probes too, as in production: Linux, with TONDO_DIAGNOSTICS=1. It ends a
             ("place", "string!", "The line, as src/main.to:12."),
             ("text", "string", "What to say of each time, as `order {order.id}`; by default, every binding."),
             ("if", "string", "What must hold for a time to count, as `order.total > 100`."),
+            ("request", "string", "Only in a task working for a request with this text, as `/orders`."),
             ("dump", "string", "A file for a dump of the whole program as it was the time it counted."),
             (
                 "stop",
@@ -2433,7 +2437,7 @@ as `ssh host` or `docker exec -i box`, where `tondo relay` joins it to this sess
     },
     Tool {
         name: "debug",
-        description: "A command of a debugging session: break <file>:<line> [if <condition>] [log <message with \
+        description: "A command of a debugging session: break <file>:<line> [request <text>] [if <condition>] [log <message with \
 {expressions}>] (in a live build the condition is compiled, and may call the program's functions), break fn <name>, watch <expression> [if <condition>] [hits <n>] (stops after the line that \
 changes it; a std.sync cell's value, in any task), delete <id>, \
 catch panic [<code or name>...] error [<type>...] | none (stop where a panic, or an error, starts), break <place> [if <condition>] [hits <n>] capture (the stack and bindings there, without stopping), \

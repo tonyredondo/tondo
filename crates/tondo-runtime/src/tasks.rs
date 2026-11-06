@@ -495,6 +495,12 @@ pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<&'static Origin> {
     unsafe { task.as_ref()?.origin }
 }
 
+/// The request the task `id` works for, in words.
+pub(crate) fn request_of(id: u64) -> Option<String> {
+    let task = unsafe { by_id(id)?.as_ref()? };
+    super::diagnostics::flight_text(task.flight)
+}
+
 /// The running task works for a request, from now on.
 pub(crate) fn join_flight(flight: u64) {
     if let Some(task) = unsafe { current().as_mut() } {
@@ -1771,6 +1777,8 @@ pub(crate) struct Shot {
     /// Where it took each `std.sync` lock it holds.
     pub locks: Vec<String>,
     pub cancelled: bool,
+    /// The request it works for.
+    pub request: Option<String>,
     /// What it waits for, in words; the tasks that can end that wait; the
     /// object, which tasks that wait for the same one share; and for how
     /// many milliseconds.
@@ -1888,6 +1896,7 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
                 spawned: shown.origin.map(|o| o.frames().to_vec()).unwrap_or_default(),
                 locks,
                 cancelled: shown.cancelled.load(Ordering::Relaxed),
+                request: super::diagnostics::flight_text(shown.flight),
                 wait: super::debugger::waits_for(shown.id)
                     .map(|(text, on)| (text, on, shown.blocked.load(Ordering::Relaxed), blocked_for(shown.id))),
             }

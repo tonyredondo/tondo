@@ -791,6 +791,7 @@ one a line, typed or piped, `--json` for a line of JSON each:
 ```text
 break app.to:12 if count > 3    stop where line 12 starts, when count > 3
 break app.to:12 hits 5          the 5th time (or >= 5, % 5)
+break app.to:12 request /orders only in the tasks of that request
 break app.to:12 log at {i}      write it there, and go on
 continue | step | next | finish run, into calls, over them, out
 locals | print user.name        the bindings, or a part of one: items[2], map["k"]
@@ -805,7 +806,8 @@ break on spawn | send | receive | lock | request | recover | wait 100
 program, those in flight and the last 32 answered: which tasks each one went
 through, what they started and waited for, where, and how long. A task works for
 the request of the task that started it. `dump read <file> requests` shows the
-same of a dump, and in an editor the view *Tondo Requests* of the debugger.
+same of a dump, and in an editor the view *Tondo Requests* of the debugger, where
+each thread says the request it works for. `why` says what holds each one up.
 
 A Release build that runs with `TONDO_DIAGNOSTICS=1`, on Linux, is debugged too:
 `tondo debug <pid|name>`, `attach` in an editor, or `debug_start`. A breakpoint

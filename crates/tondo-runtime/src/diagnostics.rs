@@ -104,6 +104,13 @@ const SERVED: usize = 32;
 /// The requests answered last, the oldest first, and how long each took.
 static ANSWERED: Mutex<std::collections::VecDeque<(Flight, u128)>> = Mutex::new(std::collections::VecDeque::new());
 
+/// A request in flight in words, by its number in a task. A thread that
+/// stopped may hold the list, and then it does not say.
+pub(crate) fn flight_text(flight: u64) -> Option<String> {
+    let flights = FLIGHTS.try_lock().ok()?;
+    flights.iter().find(|found| found.id + 1 == flight).map(Flight::text)
+}
+
 /// Adds to the timeline of a request in flight, by its number in a task.
 pub(crate) fn step(flight: u64, task: u64, did: Did, at: Vec<usize>) {
     let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
@@ -1231,10 +1238,12 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
     for (index, task) in tasks.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let locks: Vec<String> = task.locks.iter().map(|l| quoted(l)).collect();
-        let wait = task.wait.as_ref().map_or(String::new(), |(text, on, object, ms)| {
+        let serving =
+            task.request.as_ref().map_or(String::new(), |request| format!(",\"request\":{}", quoted(request)));
+        let wait = task.wait.as_ref().map_or(serving.clone(), |(text, on, object, ms)| {
             let on: Vec<String> = on.iter().map(u64::to_string).collect();
             format!(
-                ",\"wait\":{{\"for\":{},\"on\":[{}],\"object\":\"{object:#x}\",\"ms\":{ms}}}",
+                "{serving},\"wait\":{{\"for\":{},\"on\":[{}],\"object\":\"{object:#x}\",\"ms\":{ms}}}",
                 quoted(text),
                 on.join(",")
             )

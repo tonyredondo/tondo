@@ -23,6 +23,8 @@ struct Logpoint {
     /// For how long, in seconds, each time holds its task, as a breakpoint
     /// of that task alone: the others go on.
     stop: Option<u64>,
+    /// A text of the request a task must work for to count.
+    request: Option<String>,
 }
 
 struct Site {
@@ -67,7 +69,7 @@ fn held(id: u64, seconds: u64) {
     }
 }
 
-/// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>]]]`: tells
+/// `logpoint <max> <file:line>[\t<condition>[\t<dump>[\t<seconds>[\t<request>]]]]`: tells
 /// the tool its number and how many places the line has, or gives why not.
 pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
@@ -76,6 +78,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     let request = fields.next().unwrap_or_default();
     let mut given = || fields.next().filter(|field| !field.is_empty()).map(str::to_string);
     let (condition, dump, stop) = (given(), given(), given().and_then(|seconds| seconds.parse().ok()));
+    let serving = given();
     if let Some(Err(message)) = condition.as_deref().map(super::debugger::valid_expression) {
         return error(&format!("the condition: {message}"));
     }
@@ -123,7 +126,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop });
+    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop, request: serving });
     String::new()
 }
 
@@ -226,10 +229,14 @@ extern "C" fn hit(saved: *const usize) {
             let site = logpoint.sites.iter().find(|site| site.address + site.length == address)?.address;
             let client = logpoint.client.try_clone().ok().filter(|_| logpoint.left > 0)?;
             let (condition, dump) = (logpoint.condition.clone(), logpoint.dump.clone());
-            Some((logpoint.id, site, client, condition, dump, logpoint.stop))
+            Some((logpoint.id, site, client, condition, dump, logpoint.stop, logpoint.request.clone()))
         })
     };
-    let Some((id, site, mut client, condition, dump, stop)) = found else { return };
+    let Some((id, site, mut client, condition, dump, stop, request)) = found else { return };
+    let serving = || super::tasks::request_of(super::tasks::current_id());
+    if request.is_some_and(|text| !serving().is_some_and(|it| it.contains(&text))) {
+        return;
+    }
     // Those that come while one is shown go by.
     let Ok(_shown) = HIT.try_lock() else { return };
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));

@@ -3160,12 +3160,41 @@ fn a_request_is_followed_through_its_tasks() {
     let text = String::from_utf8_lossy(&text.stdout);
     assert!(text.contains("no request in flight") && text.contains("GET /slow took"), "{text}");
     assert!(text.contains(&format!("task {answers} starts task {started}, at server.to:12")), "{text}");
+    // A logpoint of a request counts only in its tasks.
+    if cfg!(target_os = "linux") {
+        let logged = |request: &str, seconds: &str| {
+            let args =
+                ["logpoint", &pid, "server.to:5", "--request", request, "--max", "1", "--for", seconds, "--json"];
+            Command::new(tondo_bin).args(args).output().unwrap()
+        };
+        let hits = |output: std::process::Output| {
+            let found: Value = serde_json::from_slice(&output.stdout).unwrap();
+            found["hits"].as_array().unwrap().len()
+        };
+        for (request, seconds, expected) in [("/other", "3", 0), ("/slow", "30", 1)] {
+            std::thread::scope(|scope| {
+                let asked = scope.spawn(|| logged(request, seconds));
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                get();
+                assert_eq!(hits(asked.join().unwrap()), expected, "{request}");
+            });
+        }
+    }
     // A dump keeps them.
     let dump = dir.join("server.dump.json");
     let dumped = Command::new(tondo_bin).args(["dump", &pid, "--output"]).arg(&dump).output().unwrap();
     assert!(dumped.status.success(), "{}", String::from_utf8_lossy(&dumped.stderr));
     let read = Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).arg("requests").output().unwrap();
     assert!(String::from_utf8_lossy(&read.stdout).contains("GET /slow took"), "{read:?}");
+    // Two dumps say how long a request took in each.
+    get();
+    let later = dir.join("later.dump.json");
+    let dumped = Command::new(tondo_bin).args(["dump", &pid, "--output"]).arg(&later).output().unwrap();
+    assert!(dumped.status.success());
+    let differ = Command::new(tondo_bin).args(["dump", "diff"]).arg(&dump).arg(&later).arg("--json").output().unwrap();
+    let differ: Value = serde_json::from_slice(&differ.stdout).unwrap();
+    assert_eq!(differ["in_flight"]["after"], 0, "{differ}");
+    assert!(differ["served"].as_array().is_some(), "{differ}");
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
     adapter.ask("launch", json!({ "dump": dump, "cwd": dir }));
@@ -3183,6 +3212,30 @@ fn a_request_is_followed_through_its_tasks() {
     let found = adapter.ask("requests", json!({}));
     assert_eq!(found["served"][0]["path"], "/slow", "{found}");
     assert!(found["served"][0]["steps"].as_array().unwrap().len() >= 3, "{found}");
+    // A breakpoint of a request stops only in its tasks, which say what they
+    // work for.
+    let path = source.to_str().unwrap();
+    let breakpoint = |adapter: &mut Adapter, condition: &str| {
+        let breakpoints = json!([{ "line": 5, "condition": condition }]);
+        let set = adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": breakpoints }));
+        assert_eq!(set["breakpoints"][0]["verified"], true, "{set}");
+    };
+    breakpoint(&mut adapter, "request /other");
+    get();
+    breakpoint(&mut adapter, "request /slow");
+    std::thread::scope(|scope| {
+        scope.spawn(get);
+        let stopped = adapter.until("stopped");
+        let threads = adapter.ask("threads", json!({}));
+        let named = threads["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == stopped["threadId"] && t["name"].as_str().unwrap().contains("GET /slow"));
+        assert!(named, "{threads}");
+        adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+        adapter.ask("continue", json!({ "threadId": stopped["threadId"] }));
+    });
     adapter.ask("disconnect", json!({}));
 }
 

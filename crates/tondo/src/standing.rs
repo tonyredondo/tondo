@@ -243,6 +243,7 @@ impl Standing {
             return Err("a breakpoint of a build without probes counts with `if`, not `hits`".into());
         }
         let (place, condition) = rest.split_once(" if ").unwrap_or((rest, ""));
+        let (place, request) = place.split_once(" request ").unwrap_or((place, ""));
         let Some((_, line)) = place.rsplit_once(':').filter(|(file, _)| !file.contains(' ')) else {
             return Err("a build without probes stops at a line: `break <file>:<line>`".into());
         };
@@ -251,7 +252,7 @@ impl Standing {
             Some(_) => "\t".to_string(),
             None => format!("-\t{HOLD}"),
         };
-        let answer = program.ask(&format!("logpoint {ALWAYS} {place}\t{condition}\t{stops}"))?;
+        let answer = program.ask(&format!("logpoint {ALWAYS} {place}\t{condition}\t{stops}\t{request}"))?;
         if let Some(error) = answer["error"].as_str() {
             return Err(error.to_string());
         }
@@ -313,7 +314,7 @@ impl Standing {
             .flatten()
             .map(|task| {
                 let why = if task["id"].as_u64() == held { json!("breakpoint") } else { task["state"].clone() };
-                json!({ "task": task["id"], "at": task["at"], "why": why })
+                json!({ "task": task["id"], "at": task["at"], "why": why, "request": task["request"] })
             })
             .collect();
         // The one stopped first, as the debugger's tools look for it.

@@ -39,6 +39,7 @@ break <file>:<line> [if <condition>] [hits <n>|>= <n>|% <n>] [log <message with 
                                                 live build the condition is compiled, and may call functions
 break fn <name> ...                             the same where each function of that name starts: Stack.push, push
 break <place> task <id> ...                     the same for one task only
+break <place> request <text> ...                the same in the tasks of a request, as `request /orders`
 break <place> ... capture                       capture the stack and the bindings there, and go on: a running
                                                 server's state, without stopping it (hits 1: the first time only)
 break on spawn|send|receive|wait <ms>           stop a task as it starts, sends or receives on a channel, or once

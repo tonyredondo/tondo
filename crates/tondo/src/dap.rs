@@ -590,8 +590,9 @@ impl Dumped {
                     .tasks
                     .iter()
                     .map(|t| {
+                        let serves = t["request"].as_str().map_or(String::new(), |it| format!(" {it}"));
                         let name = format!(
-                            "task {} ({}) {}",
+                            "task {} ({}) {}{serves}",
                             t["id"],
                             t["runs"].as_str().unwrap_or_default(),
                             t["state"].as_str().unwrap_or_default()
@@ -1190,7 +1191,12 @@ fn part_path(path: &str, name: &str) -> String {
 /// A breakpoint's condition, count of hits and message, as `break` takes
 /// them.
 fn options(wanted: &Value) -> String {
-    let condition = wanted["condition"].as_str().map_or(String::new(), |c| format!(" if {c}"));
+    // A condition may start with the request it is for: `request /orders`,
+    // or `request /orders if total > 3`.
+    let condition = wanted["condition"].as_str().map_or(String::new(), |c| match c.strip_prefix("request ") {
+        Some(rest) => format!(" request {rest}"),
+        None => format!(" if {c}"),
+    });
     let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
     let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));
     format!("{condition}{hits}{log}")
@@ -1687,11 +1693,14 @@ fn handle(
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|t| match t["why"].as_str() {
-                    Some(why @ ("waits" | "ready")) => {
-                        json!({ "id": t["task"], "name": format!("task {} ({why})", t["task"]) })
+                .map(|t| {
+                    let serves = t["request"].as_str().map_or(String::new(), |it| format!(" {it}"));
+                    match t["why"].as_str() {
+                        Some(why @ ("waits" | "ready")) => {
+                            json!({ "id": t["task"], "name": format!("task {} ({why}){serves}", t["task"]) })
+                        }
+                        _ => json!({ "id": t["task"], "name": format!("task {}{serves}", t["task"]) }),
                     }
-                    _ => json!({ "id": t["task"], "name": format!("task {}", t["task"]) }),
                 })
                 .collect();
             if threads.is_empty() {

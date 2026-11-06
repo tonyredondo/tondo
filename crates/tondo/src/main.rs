@@ -995,9 +995,9 @@ fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]";
+    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]";
     let (mut given, mut max, mut seconds, mut json, mut condition) = (Vec::new(), None, None, false, None);
-    let (mut dump, mut stop) = (None, None);
+    let (mut dump, mut stop, mut request) = (None, None, None);
     let mut rest = args.iter().filter_map(|a| a.to_str());
     while let Some(arg) = rest.next() {
         match arg {
@@ -1007,6 +1007,7 @@ fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--if" => condition = Some(rest.next().ok_or(USAGE)?.to_string()),
             "--dump" => dump = Some(PathBuf::from(rest.next().ok_or(USAGE)?)),
             "--stop" => stop = Some(rest.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?),
+            "--request" => request = Some(rest.next().ok_or(USAGE)?.to_string()),
             other if !other.starts_with("--") => given.push(other),
             _ => return Err(USAGE.to_string()),
         }
@@ -1018,7 +1019,7 @@ fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (name, place, text) = (name.to_string(), place.to_string(), text.first().map(|text| text.to_string()));
     // A dump is of one time: each would write over the last.
     let max = max.unwrap_or(if dump.is_some() || stop.is_some() { 1 } else { 100 });
-    let asked = tondo::observe::Logpoint { name, place, text, condition, dump, stop, max, seconds };
+    let asked = tondo::observe::Logpoint { name, place, text, condition, dump, stop, request, max, seconds };
     tondo::observe::logpoint(&asked, json).map(|()| ExitCode::SUCCESS)
 }
 

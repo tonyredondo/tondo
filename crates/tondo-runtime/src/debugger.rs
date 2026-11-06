@@ -102,6 +102,16 @@ static TABLE: OnceLock<RwLock<Table>> = OnceLock::new();
 fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
     TABLE.get().map(|table| table.read().unwrap_or_else(|e| e.into_inner()))
 }
+/// Whether a breakpoint of a request stops this task.
+fn in_request(request: &Option<String>, task: u64) -> bool {
+    request.as_ref().is_none_or(|text| super::tasks::request_of(task).is_some_and(|it| it.contains(text.as_str())))
+}
+
+/// The request a task works for, as a field of an answer.
+fn request_field(task: u64) -> String {
+    super::tasks::request_of(task).map_or(String::new(), |it| format!(",\"request\":{}", quoted(&it)))
+}
+
 /// Whether this build has probes, for a debugger to attach to.
 pub(crate) fn has_probes() -> bool {
     TABLE.get().is_some()
@@ -899,8 +909,10 @@ struct Breakpoint {
     count: u64,
     hits: Option<Hits>,
     log: Option<String>,
-    /// The task it stops alone, when it names one.
+    /// The task it stops alone, when it names one, and the request it stops
+    /// in alone: a text its method and path have.
     task: Option<u64>,
+    request: Option<String>,
     /// `until`'s: it goes at the next stop, wherever that is.
     once: bool,
     /// The event it stops at, instead of a place.
@@ -1283,7 +1295,10 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
                 Some((code, names, _)) => compiled_holds(&table, stack(), *code, names).unwrap_or_else(evaluated),
                 None => evaluated(),
             };
-            let here = breakpoint.sites.contains(&site) && breakpoint.task.is_none_or(|t| t == task) && holds();
+            let here = breakpoint.sites.contains(&site)
+                && breakpoint.task.is_none_or(|t| t == task)
+                && in_request(&breakpoint.request, task)
+                && holds();
             if !here {
                 continue;
             }
@@ -2592,6 +2607,7 @@ fn scanned(
     for breakpoint in state.breakpoints.iter_mut().filter(|b| b.log.is_none() && !b.capture && b.event.is_none()) {
         let here = breakpoint.sites.contains(&site)
             && breakpoint.task.is_none_or(|t| t == task)
+            && in_request(&breakpoint.request, task)
             && breakpoint.condition.as_ref().is_none_or(|c| evaluating(table, stack(), 0, |e| e.holds(c)));
         if here {
             breakpoint.count += 1;
@@ -3562,6 +3578,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             state.breakpoints.push(Breakpoint {
                 id,
                 sites,
+                request: None,
                 condition: None,
                 count: 0,
                 hits: None,
@@ -4127,10 +4144,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
                         _ => "held".to_string(),
                     };
                     format!(
-                        "{{\"task\":{},\"at\":{},\"why\":{}}}",
+                        "{{\"task\":{},\"at\":{},\"why\":{}{}}}",
                         held.task,
                         quoted(&place_in(table, held.site)),
-                        quoted(&why)
+                        quoted(&why),
+                        request_field(held.task)
                     )
                 })
                 .collect();
@@ -4148,7 +4166,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
                         let ms = super::tasks::blocked_for(task);
                         format!(",\"for\":{},\"on\":[{}],\"ms\":{ms}", quoted(&text), on.join(","))
                     });
-                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}}}"));
+                    let serving = request_field(task);
+                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}{serving}}}"));
                 }
             }
             format!("{{\"tasks\":[{}]}}", held.into_iter().chain(waiting).collect::<Vec<_>>().join(","))
@@ -4681,6 +4700,11 @@ fn breakpoint(table: &Table, text: &str) -> String {
         Some((at, condition)) => (at.trim(), Some(condition.trim())),
         None => (text.trim(), None),
     };
+    // One request's, `request <text>`.
+    let (at, request) = match at.split_once(" request ") {
+        Some((at, request)) => (at.trim(), Some(request.trim().to_string())),
+        None => (at, None),
+    };
     // One task's, `task <id>`.
     let (at, task) = match at.split_once(" task ") {
         Some((at, task)) => match task.trim().parse::<u64>() {
@@ -4743,8 +4767,21 @@ fn breakpoint(table: &Table, text: &str) -> String {
         format!("{{\"breakpoint\":{{\"id\":{id},\"file\":{},\"line\":{}{shown}}}}}", quoted(&at.file), at.line);
     let (event, compiled) = (None, Vec::new());
     let unparsed = unparsed.and(written).map(String::from);
-    let breakpoint =
-        Breakpoint { id, sites, condition, unparsed, count: 0, hits, log, task, once: false, event, capture, compiled };
+    let breakpoint = Breakpoint {
+        id,
+        sites,
+        condition,
+        unparsed,
+        count: 0,
+        hits,
+        log,
+        task,
+        request,
+        once: false,
+        event,
+        capture,
+        compiled,
+    };
     state.breakpoints.push(breakpoint);
     remark(table, &state);
     answer
@@ -5003,8 +5040,21 @@ fn event_breakpoint(table: &Table, text: &str) -> String {
     let (sites, condition, hits, log, task) = (Vec::new(), None, None, None, None);
     let event = Some(event);
     let (capture, compiled, unparsed) = (false, Vec::new(), None);
-    let breakpoint =
-        Breakpoint { id, sites, condition, unparsed, count: 0, hits, log, task, once: false, event, capture, compiled };
+    let breakpoint = Breakpoint {
+        id,
+        sites,
+        condition,
+        unparsed,
+        count: 0,
+        hits,
+        log,
+        task,
+        request: None,
+        once: false,
+        event,
+        capture,
+        compiled,
+    };
     state.breakpoints.push(breakpoint);
     remark(table, &state);
     format!("{{\"breakpoint\":{{\"id\":{id},\"on\":{}}}}}", quoted(text.trim()))
