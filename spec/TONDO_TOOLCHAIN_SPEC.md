@@ -501,7 +501,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   escribirlo, el parámetro al que va cada argumento que no lo nombra ni es
   ya su nombre, y el tipo de cada línea de una cadena de llamadas escrita en
   varias (la que sigue empieza por `.`), como pistas en línea.
-- `tondo api --diff <commit>` dice qué perdió o cambió la API pública desde ese commit,
+- `tondo api` deja fuera los módulos `internal` de las dependencias, y `--diff` los de
+  cualquier paquete: no son API. `tondo api --diff <commit>` dice qué perdió o cambió la API
+  pública desde ese commit,
   lo que rompe a quien la usa y hace que termine con 1, y qué ganó. El editor lo marca
   en el código con *Show What Breaks the API*.
 - `tondo check --unreached` da el código propio que ni `main` ni un test alcanzan, por lo

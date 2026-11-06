@@ -424,3 +424,37 @@ fn a_lock_in_a_defer_has_a_repair() {
     let written: Vec<&str> = edits.iter().map(|edit| edit["replacement"].as_str().unwrap()).collect();
     assert_eq!(written, ["sync.Atomic", ".store", ".add(2)", ".load()"], "{found}");
 }
+
+/// A module in a directory `internal` is for its package: the others cannot
+/// import it, nor see it among what the package offers.
+#[test]
+fn an_internal_module_stays_in_its_package() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("internal-modules");
+    let _ = std::fs::remove_dir_all(&dir);
+    let units = dir.join("units");
+    let app = dir.join("app");
+    std::fs::create_dir_all(units.join("src/internal/convert")).unwrap();
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(units.join("tondo.toml"), "[package]\nname = \"units\"\n").unwrap();
+    std::fs::write(units.join("src/internal/convert/c.to"), "pub fn twice(n: Int): Int {\n    n * 2\n}\n").unwrap();
+    let four = "import units.internal.convert\n\npub fn four(): Int {\n    convert.twice(2)\n}\n";
+    std::fs::write(units.join("src/units.to"), four).unwrap();
+    std::fs::write(
+        app.join("tondo.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nunits = { path = \"../units\" }\n",
+    )
+    .unwrap();
+    let tondo =
+        |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&app).output().unwrap();
+    let outside = "import units.internal.convert\n\nfn main() {\n    _ = convert.twice(1)\n}\n";
+    std::fs::write(app.join("src/main.to"), outside).unwrap();
+    let said = tondo(&["check"]);
+    let error = String::from_utf8_lossy(&said.stderr);
+    assert!(error.contains("`units.internal.convert` is internal to the package `units`"), "{error}");
+    let through = "import std.console\nimport units\n\nfn main() {\n    console.println(\"{units.four()}\")\n}\n";
+    std::fs::write(app.join("src/main.to"), through).unwrap();
+    let ran = tondo(&["run"]);
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "4\n", "{}", String::from_utf8_lossy(&ran.stderr));
+    let listed = String::from_utf8_lossy(&tondo(&["api", "--list", "--project", "."]).stdout).to_string();
+    assert!(listed.contains("units") && !listed.contains("internal"), "{listed}");
+}

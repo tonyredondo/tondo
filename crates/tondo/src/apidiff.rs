@@ -19,7 +19,8 @@ fn public(dir: &Path) -> Result<BTreeMap<(String, String, String), Public>, Stri
     let package = packages.first().ok_or("the project has no package")?;
     let (files, _) = crate::project::sources(&package.dir, &package.name, Some(crate::driver::system()))?;
     let mut found = BTreeMap::new();
-    for file in files {
+    // What is internal is the package's own, to change at will.
+    for file in files.into_iter().filter(|file| !file.module.iter().skip(1).any(|part| part == "internal")) {
         let text =
             std::fs::read_to_string(&file.path).map_err(|e| format!("cannot read {}: {e}", file.path.display()))?;
         let module = file.module.join(".");

@@ -17,7 +17,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1005", "reserved-name", "A declaration takes a contextual or intrinsic name the language reserves."),
     ("E1006", "import-cycle", "Modules import each other in a cycle."),
     ("E1007", "invalid-import-position", "An import comes after another declaration or a statement."),
-    ("E1008", "invalid-module-path", "An import's path names no module available to the program."),
+    (
+        "E1008",
+        "invalid-module-path",
+        "An import's path names no module available to the program: one that does not exist, or one with `internal` \
+         in its path, which only the modules of its own package import.",
+    ),
     ("E1101", "missing-type-context", "A type cannot be inferred in one way only, as of an empty literal."),
     ("E1102", "type-mismatch", "A value's type is not the exact type expected there."),
     ("E1103", "invalid-conversion", "A conversion the language does not allow."),

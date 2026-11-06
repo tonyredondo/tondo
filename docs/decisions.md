@@ -5289,3 +5289,14 @@ joined libc. No system on 2.31 has free support left; RHEL 8 and its kin, on 2.2
 below what any newer floor would reach, and take the build for musl, as `install.sh` does
 by itself. A job runs what is published on those systems, since a floor that moves is only
 seen by who cannot start it.
+
+## What is internal is where it lives
+
+A package needs to share things among its modules without giving them to whoever depends
+on it, and `pub` is all or nothing. A directory `internal` says so with no annotation:
+`pub(package)` would be one more thing to write on each declaration and one more level in
+the language, and a list in the manifest one more place to keep. It is a rule of imports,
+seen on every line that imports, and the standard library is just one more package, which
+closes what let a program import `std.internal`. The owner grants this; there is no
+equivalent of `//go:linkname`, where whoever arrives takes what they want and the owner can
+no longer change it.

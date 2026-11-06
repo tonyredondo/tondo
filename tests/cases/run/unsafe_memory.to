@@ -1,5 +1,8 @@
 import std.console
-import std.internal.memory as memory
+import std.ffi
+
+extern fn malloc(size: ffi.CSize): Pointer[Byte]
+extern fn free(block: Pointer[Byte])
 
 type Point = {
     x: Int
@@ -7,8 +10,8 @@ type Point = {
 }
 
 fn main() {
-    let block = memory.allocate(64)
     unsafe {
+        let block = malloc(64u64)
         let numbers = block.cast[Int]()
         numbers.write(41)
         numbers.offset(1).write(1)
@@ -23,7 +26,7 @@ fn main() {
         let bytes = block
         bytes.write(Byte(255u8))
         console.println("{bytes.read()} {block.cast[Int]().read()}")
-        memory.release(block, 64)
+        free(block)
     }
 }
 

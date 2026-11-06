@@ -1962,7 +1962,10 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
         for (index, package) in packages.iter().enumerate() {
             let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::system()))?;
-            for file in files {
+            let visible = |file: &tondo::project::ProjectFile| {
+                index == 0 || !file.module[1..].iter().any(|part| part == "internal")
+            };
+            for file in files.into_iter().filter(visible) {
                 let name = file.module.join(".");
                 match modules.iter_mut().find(|(n, _, _)| *n == name) {
                     Some((_, paths, _)) => paths.push(file.path),

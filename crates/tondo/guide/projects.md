@@ -32,6 +32,9 @@ fn main() {
 
 - A module is a directory; `pub` makes a declaration visible to other
   modules. Imports name the package first: `app.models`.
+- A module under a directory `internal`, as `app.internal.pricing`, is its
+  package's alone: other packages cannot import it, and it can change without
+  breaking them. No annotation says so: where it lives does.
 - `import std.x` brings a standard module; there is nothing to install.
 - Modules cannot import each other in a cycle.
 - Code for one system goes in its own files, which their names mark:

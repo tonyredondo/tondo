@@ -161,7 +161,8 @@ overview as an agent skill, and `tondo://api/<module>` a standard module's
 declarations. `tondo://guide/runbooks` lists what to do when something goes
 wrong; a result that leads somewhere names the next tool in `next`.
 
-`api_diff` says what a project's public API lost or changed since a commit, and
+`api_diff` says what a project's public API lost or changed since a commit, modules
+under `internal` aside, as `api` leaves out those of a dependency, and
 `unreached` what code neither `main` nor a test reaches.
 
 `refactor` changes a signature, moves a declaration, groups parameters, extracts a

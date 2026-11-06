@@ -28,7 +28,7 @@ tondo expand [<path>]             what each `derive` wrote
 tondo api std.http                a module's declarations, docs and examples
 tondo api std.http.Client         one type, its methods and example: also String
 tondo api --search base64         declarations by name and docs, std's included
-tondo api --list                  every module: std, the project's, dependencies
+tondo api --list                  every module: std, the project's, dependencies', internal aside
 tondo guide [<topic>]             this guide; --list names the topics
 tondo graph [<path>]              modules, files and imports; --dot or --mermaid
 ```

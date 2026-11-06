@@ -103,6 +103,16 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                     diags.error("E1003", alias.span, message);
                 }
                 let package = &packages[module.package];
+                // A module with `internal` in its path is its package's alone.
+                if path[1..].contains(&"internal") && path[0] != package.name {
+                    let message = format!(
+                        "`{}` is internal to the package `{}`: only its own modules import it",
+                        path.join("."),
+                        path[0]
+                    );
+                    diags.error("E1008", import.span, message);
+                    continue;
+                }
                 let written =
                     packages.iter().position(|p| p.name == "std").and_then(|std| by_path.get(&(std, path.join("."))));
                 if let Some(&target) = written {

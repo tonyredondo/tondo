@@ -1,0 +1,8 @@
+// What the standard library keeps for itself is not for programs, as with any
+// package's `internal` modules.
+
+import std.internal.memory
+
+fn main() {}
+
+// expect-error: E1008 `std.internal.memory` is internal to the package `std`

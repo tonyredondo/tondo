@@ -929,6 +929,10 @@ Una optimización puede fusionar o eliminar trabajo solo si conserva todos los r
   estándar 14.12).
 - El path del módulo deriva de su posición dentro del paquete.
 - Un paquete contiene uno o más módulos.
+- Un módulo con `internal` en su path, tras el nombre del paquete, solo lo
+  importan los módulos de su paquete: `app.internal.pricing` es de `app`, e
+  importarlo desde otro paquete es `E1008`. Dentro, `pub` significa lo mismo.
+  La biblioteca estándar es un paquete más: `std.internal` es suya.
 - La selección de raíces, dependencias y targets pertenece al manifiesto de herramientas, no a la sintaxis del lenguaje.
 
 No existe una declaración `module` dentro de cada archivo. Esto evita repetir información que ya conoce el sistema de build.
