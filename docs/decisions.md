@@ -5178,3 +5178,33 @@ Which tests a change reaches, and what no test or `main` reaches, come from what
 code names: exact for calls, and a superset where a value is passed around, since
 naming a function is what reaches it. No run is needed, and an answer that is too
 wide costs a test that did not have to run, never one that had to and did not.
+
+## A Release build answers as a debugger would
+
+A breakpoint in a running Release build is a logpoint that stops its task and brings a
+dump. Something on the tool's side answers the debugger's protocol from that dump, so
+`tondo debug`, the tools and the editor need nothing new, and the red dot and the
+variables work as ever. It stops one task, for a bounded time, and does not step:
+stopping a service for someone who left is worse than not stopping it.
+
+## A request is followed by inheritance
+
+A task works for the request of the task that started it, and the request keeps what
+they did. Nothing is passed by hand and the program does not change. What a task does
+after the answer is left out: the timeline is that of the request, not of its tasks.
+
+## Lost updates warn, they do not fail
+
+The runtime sees a read and a later write of a cell around another task's write, not
+whether the value written comes from the one read, so a test only warns. The compiler,
+which sees that, warns too. Both are on without a flag: the cost is in the tests that
+take locks.
+
+## Live is for development
+
+Its probes stay, and its cost is not a goal: what matters is that a change shows when
+it is saved. So a frame takes what it passed instead of staying on old code: an entry of
+the patch runs the bindings it lacks and a `let` written anew above its loop, and it goes
+on where it was. A `var` is state and keeps its value. What runs twice, and what is left
+unreleased, are the price, which production would not pay and a developer does.
+
