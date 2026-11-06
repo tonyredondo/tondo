@@ -1161,7 +1161,11 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
     // Of what it says, only the code of a panic is not the program's.
     let code = dump["message"].as_str().unwrap_or_default().split(':').next().filter(|code| code.starts_with("panic["));
     dump["message"] = json!(code.unwrap_or_default());
-    dump["info"]["arguments"] = json!([]);
+    // What is not as it should be, in a damaged dump, says nothing either.
+    match dump["info"].as_object_mut() {
+        Some(info) => drop(info.insert("arguments".to_string(), json!([]))),
+        None => dump["info"] = json!({}),
+    }
     dump["values"] = json!([]);
     dump["values_off"] = json!(true);
     // What is kept is named, not what goes: a field added to dumps later
@@ -1188,10 +1192,12 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
         object.retain(|key, _| KEPT.contains(&key.as_str()));
     }
     for task in dump["tasks"].as_array_mut().into_iter().flatten() {
-        task["contexts"] = json!([]);
-        if let Some(fields) = task.as_object_mut() {
-            fields.retain(|key, _| OF_TASK.contains(&key.as_str()));
-        }
+        let Some(fields) = task.as_object_mut() else {
+            *task = json!({});
+            continue;
+        };
+        fields.retain(|key, _| OF_TASK.contains(&key.as_str()));
+        fields.insert("contexts".to_string(), json!([]));
         if task["wait"].is_object() {
             task["wait"]["for"] = json!("a value");
         }
@@ -2102,8 +2108,8 @@ fn name_frames(dump: &mut Value) {
     let original = frames.clone();
     let names = Names::new(&original, &program);
     for (address, frame) in frames.iter_mut() {
-        if frame.get("function").is_none() && frame.get("name").is_none() {
-            frame["name"] = json!(names.function(address));
+        if let Some(fields) = frame.as_object_mut().filter(|f| !f.contains_key("function") && !f.contains_key("name")) {
+            fields.insert("name".to_string(), json!(names.function(address)));
         }
     }
 }

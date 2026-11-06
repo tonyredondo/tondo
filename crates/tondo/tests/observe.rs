@@ -5554,3 +5554,68 @@ fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
     assert!(Command::new(tondo_bin).args(args).current_dir(&dir).status().unwrap().success());
     assert!(std::fs::read_to_string(page).unwrap().contains("it &lt;fell&gt;"));
 }
+
+/// A dump that came through a disk or a person: whatever a field holds, its
+/// views say what they can. The Nightly's, for the processes it starts.
+#[test]
+fn a_damaged_dump_does_not_end_the_viewer() {
+    if std::env::var_os("TONDO_SWEEP").is_none() {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("damaged-dumps");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dumps")).unwrap();
+    std::fs::write(dir.join("ends.to"), "fn main() {\n    let values = [1, 2]\n    panic(\"{values[1]}\")\n}\n")
+        .unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(compiler).args(["build", "ends.to", "--output", "ends"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    Command::new(dir.join("ends")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let first = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
+    let whole: Value = serde_json::from_slice(&std::fs::read(first).unwrap()).unwrap();
+    fn paths(value: &Value, at: String, found: &mut Vec<String>) {
+        match value {
+            Value::Object(fields) => {
+                fields.iter().for_each(|(key, value)| paths(value, format!("{at}/{key}"), found));
+            }
+            Value::Array(items) => {
+                items.iter().take(2).enumerate().for_each(|(i, value)| paths(value, format!("{at}/{i}"), found));
+            }
+            _ => {}
+        }
+        found.push(at);
+    }
+    let mut found = Vec::new();
+    paths(&whole, String::new(), &mut found);
+    found.retain(|path| !path.is_empty());
+    let damaged = dir.join("damaged.dump.json");
+    let shown = damaged.to_str().unwrap();
+    let out = dir.join("out");
+    let out = out.to_str().unwrap();
+    let views: [&[&str]; 11] = [
+        &["read", shown],
+        &["read", shown, "why"],
+        &["read", shown, "tasks"],
+        &["read", shown, "stacks"],
+        &["read", shown, "requests"],
+        &["read", shown, "locals"],
+        &["read", shown, "heap"],
+        &["read", shown, "objects"],
+        &["report", shown, "--output", out],
+        &["redact", shown, out],
+        &["test", shown],
+    ];
+    for path in &found {
+        for value in [json!(null), json!(7), json!("x"), json!([]), json!({})] {
+            let mut dump = whole.clone();
+            *dump.pointer_mut(path).unwrap() = value.clone();
+            std::fs::write(&damaged, dump.to_string()).unwrap();
+            for view in views {
+                let ran = Command::new(compiler).arg("dump").args(view).output().unwrap();
+                let said = String::from_utf8_lossy(&ran.stderr);
+                assert!(!said.contains("is a bug of tondo"), "{path} as {value}, {view:?}: {said}");
+            }
+        }
+    }
+}
