@@ -130,7 +130,7 @@ impl Display for SqlError {
 /// An error, which reflection shows as its message, so a method that fails
 /// with one is a tool of `std.mcp` or a field of `std.graphql`.
 impl __reflect.Reflect for SqlError {
-    fn reflectShow(self, inner: Bool): String {
+    fn reflectShow(self, _inner: Bool): String {
         self.message
     }
 }
@@ -355,19 +355,19 @@ impl __serialization.Sink for Capture {
         }
     }
 
-    fn beginList(self, count: Int) {
+    fn beginList(self, _count: Int) {
         self.listed.set(true)
     }
 
     fn endList(self) {}
 
-    fn beginMap(self, count: Int) {
+    fn beginMap(self, _count: Int) {
         panic(
             "a record or a map is not a parameter of SQL: interpolate its fields, or its JSON as text",
         )
     }
 
-    fn key(self, name: String) {}
+    fn key(self, _name: String) {}
 
     fn endMap(self) {}
 }
@@ -678,7 +678,7 @@ fn driverOf(url: String): Driver ! SqlError {
 /// A database, which reflection carries as it is: a root of `std.mcp` or
 /// `std.graphql` holds one.
 impl __reflect.Reflect for Database {
-    fn reflectShow(self, inner: Bool): String {
+    fn reflectShow(self, _inner: Bool): String {
         "sql.Database({self.driver.system})"
     }
 }

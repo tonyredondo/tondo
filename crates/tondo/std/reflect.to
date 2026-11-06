@@ -229,7 +229,7 @@ pub trait Reflect {
 }
 
 /// The name of the type of a value.
-fn nameOf[T: Reflect](value: T): String {
+fn nameOf[T: Reflect](_value: T): String {
     reflectNative.typeName[T]()
 }
 
@@ -615,7 +615,7 @@ impl Reflect for Int {
         primitive(PrimitiveKind.Int)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -625,7 +625,7 @@ impl Reflect for Int8 {
         primitive(PrimitiveKind.Int8)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -635,7 +635,7 @@ impl Reflect for Int16 {
         primitive(PrimitiveKind.Int16)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -645,7 +645,7 @@ impl Reflect for Int32 {
         primitive(PrimitiveKind.Int32)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -655,7 +655,7 @@ impl Reflect for UInt8 {
         primitive(PrimitiveKind.UInt8)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -665,7 +665,7 @@ impl Reflect for UInt16 {
         primitive(PrimitiveKind.UInt16)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -675,7 +675,7 @@ impl Reflect for UInt32 {
         primitive(PrimitiveKind.UInt32)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -685,7 +685,7 @@ impl Reflect for UInt {
         primitive(PrimitiveKind.UInt)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -695,7 +695,7 @@ impl Reflect for Int128 {
         primitive(PrimitiveKind.Int128)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -705,7 +705,7 @@ impl Reflect for UInt128 {
         primitive(PrimitiveKind.UInt128)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -715,7 +715,7 @@ impl Reflect for Float {
         primitive(PrimitiveKind.Float)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -725,7 +725,7 @@ impl Reflect for Float32 {
         primitive(PrimitiveKind.Float32)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -735,7 +735,7 @@ impl Reflect for Bool {
         primitive(PrimitiveKind.Bool)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -745,7 +745,7 @@ impl Reflect for Char {
         primitive(PrimitiveKind.Char)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -755,7 +755,7 @@ impl Reflect for Byte {
         primitive(PrimitiveKind.Byte)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }
@@ -765,7 +765,7 @@ impl Reflect for Unit {
         primitive(PrimitiveKind.Unit)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "()"
     }
 }
@@ -812,7 +812,7 @@ impl[T: Reflect] Reflect for Array[T] {
         some(values)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         match self.reflectElements() {
             some(values) => "[{shown(values)}]"
             none => "[]"
@@ -870,7 +870,7 @@ impl[T: Reflect] Reflect for T? {
         }
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         match self {
             some(inner) => "some({inner.reflectShow(true)})"
             none => "none"
@@ -900,7 +900,7 @@ impl[T: Reflect] Reflect for Ref[T] {
         self.value.reflectGet(name)?
     }
 
-    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
+    fn reflectSet(mut self, name: String, _value: Value): !ReflectError {
         let message =
             "the value of a `{nameOf(self)}` never changes: make another with `Ref(value)`"
         fail ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
@@ -971,7 +971,7 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
         }
     }
 
-    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
+    fn reflectSet(mut self, name: String, _value: Value): !ReflectError {
         let message =
             "a `{nameOf(self)}` changes as a whole: read it, change `{name}` and set the map"
         fail ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
@@ -985,7 +985,7 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
         some(pairs)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         var text = ""
         for (key, item) in self {
             let separator = if text == "" { "" } else { ", " }
@@ -1034,7 +1034,7 @@ impl[T: Reflect, E: Reflect] Reflect for T ! E {
         }
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         match self {
             ok(inner) => "ok({inner.reflectShow(true)})"
             err(error) => "err({error.reflectShow(true)})"
@@ -1072,7 +1072,7 @@ impl[T: Reflect] Reflect for Deque[T] {
         some(values)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         match self.reflectElements() {
             some(values) => "[{shown(values)}]"
             none => "[]"
@@ -1106,7 +1106,7 @@ impl[T: Reflect + Key] Reflect for Set[T] {
         some(values)
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         match self.reflectElements() {
             some(values) => "Set[{shown(values)}]"
             none => "Set[]"

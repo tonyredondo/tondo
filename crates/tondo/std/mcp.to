@@ -48,13 +48,13 @@ pub annotation Resource = {
 pub annotation Prompt = {}
 
 impl __reflect.Reflect for Resource {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "mcp.Resource"
     }
 }
 
 impl __reflect.Reflect for Prompt {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "mcp.Prompt"
     }
 }

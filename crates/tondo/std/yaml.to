@@ -430,7 +430,7 @@ impl serialization.Sink for Writer {
         yamlnative.writeText(self.native, yamlcodec.base64Encode(value, false))
     }
 
-    fn beginList(self, count: Int) {
+    fn beginList(self, _count: Int) {
         yamlnative.writeOpen(self.native, false)
     }
 
@@ -438,7 +438,7 @@ impl serialization.Sink for Writer {
         yamlnative.writeClose(self.native)
     }
 
-    fn beginMap(self, count: Int) {
+    fn beginMap(self, _count: Int) {
         yamlnative.writeOpen(self.native, true)
     }
 

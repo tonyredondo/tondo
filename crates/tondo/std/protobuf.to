@@ -1003,7 +1003,7 @@ pub fn nullValue(): __json.Value {
 pub type Empty = {}
 
 impl Message for Empty {
-    fn writeTo(self, out: Writer) {}
+    fn writeTo(self, _out: Writer) {}
 
     fn readFrom(input: Reader): Empty ! ProtobufError {
         for input.next()? != 0 {
@@ -1375,38 +1375,38 @@ impl serialization.Decode for UnknownFields {
 // ---------------------------------------------------------------------------
 
 impl __reflect.Reflect for Field {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Field"
     }
 }
 
 impl __reflect.Reflect for Value {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Value"
     }
 }
 
 impl __reflect.Reflect for Name {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Name"
     }
 }
 
 impl __reflect.Reflect for Unknown {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Unknown"
     }
 }
 
 /// Unknown fields show their size and travel as they are.
 impl __reflect.Reflect for UnknownFields {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.UnknownFields({self.bytes.length()} bytes)"
     }
 }
 
 impl __reflect.Reflect for Empty {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Empty {{}}"
     }
 
@@ -1416,7 +1416,7 @@ impl __reflect.Reflect for Empty {
 }
 
 impl __reflect.Reflect for Any {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.Any {{ typeUrl: \"{self.typeUrl}\", value: {self.value.length()} bytes }}"
     }
 
@@ -1437,7 +1437,7 @@ impl __reflect.Reflect for Any {
 }
 
 impl __reflect.Reflect for FieldMask {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "protobuf.FieldMask {{ paths: {__reflect.valueOf(self.paths)} }}"
     }
 

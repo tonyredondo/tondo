@@ -108,7 +108,7 @@ impl __reflect.Reflect for Html {
         some([__reflect.Field { name: "value", value: __reflect.valueOf(self.value) }])
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         self.value
     }
 }
@@ -162,7 +162,7 @@ impl Display for TemplateError {
 /// A function of a `Set` may fail with one, to stop the writing where it
 /// is called.
 impl __reflect.Reflect for TemplateError {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }

@@ -786,7 +786,7 @@ impl serialization.Sink for Writer {
         self.native.string(jsoncodec.base64Encode(value, false))
     }
 
-    fn beginList(self, count: Int) {
+    fn beginList(self, _count: Int) {
         self.native.bracket(true, false)
     }
 
@@ -794,7 +794,7 @@ impl serialization.Sink for Writer {
         self.native.bracket(false, false)
     }
 
-    fn beginMap(self, count: Int) {
+    fn beginMap(self, _count: Int) {
         self.native.bracket(true, true)
     }
 

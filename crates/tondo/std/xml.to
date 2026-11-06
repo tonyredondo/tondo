@@ -45,19 +45,19 @@ pub annotation Attribute = {}
 pub annotation Text = {}
 
 impl __reflect.Reflect for Name {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "xml.Name(\"{self.value}\")"
     }
 }
 
 impl __reflect.Reflect for Attribute {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "xml.Attribute"
     }
 }
 
 impl __reflect.Reflect for Text {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "xml.Text"
     }
 }
@@ -982,7 +982,7 @@ impl serialization.Sink for Writer {
         )
     }
 
-    fn beginMap(self, count: Int) {
+    fn beginMap(self, _count: Int) {
         self.state.update((writing) { writing.begin(false) })
     }
 

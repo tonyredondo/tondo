@@ -62,19 +62,19 @@ pub annotation Rest = {
 }
 
 impl __reflect.Reflect for Argument {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "cli.Argument"
     }
 }
 
 impl __reflect.Reflect for Option {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "cli.Option"
     }
 }
 
 impl __reflect.Reflect for Rest {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "cli.Rest"
     }
 }

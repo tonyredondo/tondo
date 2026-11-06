@@ -50,7 +50,7 @@ impl __reflect.Reflect for Shape {
         self.variant
     }
 
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "shape"
     }
 }

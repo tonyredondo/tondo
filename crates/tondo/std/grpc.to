@@ -1981,7 +1981,7 @@ impl __protobuf.Message for HealthRequest {
 }
 
 impl __reflect.Reflect for HealthRequest {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "HealthCheckRequest {{ service: \"{self.service}\" }}"
     }
 }
@@ -2069,7 +2069,7 @@ impl __protobuf.Message for HealthReply {
 }
 
 impl __reflect.Reflect for HealthReply {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "HealthCheckResponse {{ status: {self.status} }}"
     }
 }
@@ -2078,7 +2078,7 @@ impl __reflect.Reflect for HealthReply {
 type HealthListRequest = {}
 
 impl __protobuf.Message for HealthListRequest {
-    fn writeTo(self, out: __protobuf.Writer) {}
+    fn writeTo(self, _out: __protobuf.Writer) {}
 
     fn readFrom(input: __protobuf.Reader): HealthListRequest ! __protobuf.ProtobufError {
         for input.next()? != 0 {
@@ -2108,7 +2108,7 @@ impl __protobuf.Message for HealthListRequest {
 }
 
 impl __reflect.Reflect for HealthListRequest {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "HealthListRequest {{}}"
     }
 }
@@ -2179,7 +2179,7 @@ impl __protobuf.Message for HealthList {
 }
 
 impl __reflect.Reflect for HealthList {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "HealthListResponse {{ {self.statuses.length()} statuses }}"
     }
 }
@@ -2379,7 +2379,7 @@ impl __protobuf.Message for ReflectionRequest {
 }
 
 impl __reflect.Reflect for ReflectionRequest {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "ServerReflectionRequest"
     }
 }
@@ -2485,7 +2485,7 @@ impl __protobuf.Message for ReflectionResponse {
 }
 
 impl __reflect.Reflect for ReflectionResponse {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "ServerReflectionResponse"
     }
 }

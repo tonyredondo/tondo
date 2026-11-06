@@ -3662,7 +3662,7 @@ fn App.pipeline(self): fn(Request): Reply ! Problem {
                 Route {
                     method: "GET"
                     pattern: segments(path)
-                    handler: (request) {
+                    handler: (_request) {
                         Reply.bytes(document.bytes(), contentType: "application/json")
                     }
                 },

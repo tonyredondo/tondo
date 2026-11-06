@@ -407,7 +407,7 @@ impl serialization.Sink for Writer {
         tomlnative.writeDateTime(self.native, text)
     }
 
-    fn beginList(self, count: Int) {
+    fn beginList(self, _count: Int) {
         tomlnative.writeOpen(self.native, false)
     }
 
@@ -415,7 +415,7 @@ impl serialization.Sink for Writer {
         tomlnative.writeClose(self.native)
     }
 
-    fn beginMap(self, count: Int) {
+    fn beginMap(self, _count: Int) {
         tomlnative.writeOpen(self.native, true)
     }
 

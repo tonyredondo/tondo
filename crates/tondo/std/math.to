@@ -468,7 +468,7 @@ impl __serialization.Decode for BigInt {
 }
 
 impl __reflect.Reflect for BigInt {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         self.toString()
     }
 }
@@ -920,7 +920,7 @@ impl __serialization.Decode for Decimal {
 }
 
 impl __reflect.Reflect for Decimal {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }
 }

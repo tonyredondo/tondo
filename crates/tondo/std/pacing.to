@@ -131,31 +131,31 @@ pub fn retry[T: ~Copy, E: ~Copy](
 // serves holds its state in them.
 
 impl[T] __reflect.Reflect for __sync.Mutex[T] {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "Mutex"
     }
 }
 
 impl[T] __reflect.Reflect for __sync.RwLock[T] {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "RwLock"
     }
 }
 
 impl[T] __reflect.Reflect for __sync.Atomic[T] {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "Atomic"
     }
 }
 
 impl[K: Key, V] __reflect.Reflect for __sync.Map[K, V] {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "sync.Map"
     }
 }
 
 impl __reflect.Reflect for __sync.Semaphore {
-    fn reflectShow(self, nested: Bool): String {
+    fn reflectShow(self, _nested: Bool): String {
         "Semaphore"
     }
 }
