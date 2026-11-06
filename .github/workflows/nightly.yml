@@ -48,7 +48,15 @@ jobs:
       - name: Test under emulation
         run: >
           docker run --rm --platform ${{ matrix.platform }} -v "$PWD:$PWD" -w "$PWD"
-          -e OWNER="$(id -u):$(id -g)" debian:stable-slim .github/scripts/emulated.sh
+          -e OWNER="$(id -u):$(id -g)" -e TONDO_CI_DUMPS="$PWD/target/dumps"
+          debian:stable-slim .github/scripts/emulated.sh
+      # What hung said of itself, to open with `tondo dump serve`.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumps-${{ matrix.arch }}
+          path: target/dumps
+          if-no-files-found: ignore
 
   # What the test job of CI leaves out on macOS for Intel.
   intel:

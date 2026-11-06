@@ -5221,6 +5221,13 @@ be there to answer, and a script must not wait forever.
 A binding has its new value after its line, so a line's values are those the next line
 of its frame finds. Looking costs only while a tool asks, and stops by itself.
 
+## Tondo's tools diagnose Tondo
+
+What hangs in the test suite says why with `tondo dump` and `why`, in the failure of its
+case and in the summary of CI, and leaves its dump to open. A hang that took hours to
+explain with a core and a script is what a user would get too, so the tools get what
+that needed.
+
 ## What is shared is what is named
 
 `dump redact` keeps the fields it names and drops the rest. Dropping what was known let a

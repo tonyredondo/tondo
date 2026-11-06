@@ -28,11 +28,17 @@ impl Program {
 
     /// The program's answer to `request`, or why there is none.
     pub(crate) fn ask(&mut self, request: &str) -> Result<Value, String> {
-        let ended = |_| format!("the program {} ended", self.pid);
+        let (pid, word) = (self.pid, request.split(' ').next().unwrap_or(request));
+        let ended = |e: std::io::Error| match e.kind() {
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+                format!("the program {pid} did not answer `{word}` in time: it is busy or stuck")
+            }
+            _ => format!("the program {pid} ended"),
+        };
         writeln!(self.writer, "{request}").map_err(ended)?;
         let mut line = String::new();
         if self.reader.read_line(&mut line).map_err(ended)? == 0 {
-            return Err(format!("the program {} ended", self.pid));
+            return Err(format!("the program {pid} ended"));
         }
         serde_json::from_str(&line).map_err(|e| format!("the program {} answered `{}`: {e}", self.pid, line.trim()))
     }
@@ -56,7 +62,11 @@ fn running() -> Vec<Value> {
     let mut found = Vec::new();
     for entry in entries.flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        let info = Program::connect(pid).map_err(|e| e.to_string()).and_then(|mut p| p.ask("info"));
+        // One that does not answer soon must not hold the list up.
+        let info = Program::connect(pid).map_err(|e| e.to_string()).and_then(|mut p| {
+            let _ = p.reader.get_ref().set_read_timeout(Some(Duration::from_millis(500)));
+            p.ask("info")
+        });
         match info {
             Ok(info) => found.push(info),
             Err(_) if !alive(pid) => {
@@ -1214,7 +1224,9 @@ pub fn group(dir: &std::path::Path, since: Option<&str>, json: bool) -> Result<(
     for group in &groups {
         let text = |key: &str| group[key].as_str().unwrap_or_default();
         println!("{} x {} {}", group["count"], text("signature"), text("reason"));
-        println!("  {}", text("message"));
+        if !text("message").is_empty() {
+            println!("  {}", text("message"));
+        }
         println!("  at {}", group["at"].as_str().unwrap_or("nowhere known"));
         if let Some(first) = group["first_commit"].as_str() {
             let short = |commit: &str| commit[..commit.len().min(10)].to_string();

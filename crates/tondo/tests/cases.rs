@@ -162,6 +162,10 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         }
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
+        // It serves the tools, so that one that hangs can say why.
+        if std::env::var_os("TONDO_CASES_REPLAY").is_none() {
+            command.env("TONDO_DIAGNOSTICS", "1");
+        }
         command
     };
     let mut command = program();
@@ -212,6 +216,42 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// What a program that does not end says of itself, by the tools every user
+/// has: a dump, why it stands still and where its tasks are. CI keeps the dump.
+fn why_it_hangs(pid: u32) -> String {
+    let dir = std::env::var_os("TONDO_CI_DUMPS").map_or(std::env::temp_dir(), PathBuf::from);
+    let _ = std::fs::create_dir_all(&dir);
+    let dump = dir.join(format!("hung-{pid}.dump.json"));
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let dumped = Command::new(tondo).args(["dump", &pid.to_string(), "--output"]).arg(&dump).output();
+    if !dumped.is_ok_and(|output| output.status.success()) {
+        return String::new();
+    }
+    let read = |view: &str| {
+        let shown = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg(view).output();
+        shown.map_or(String::new(), |output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    format!("\n--- why\n{}\n--- tasks\n{}\n--- dump: {}", read("why"), read("tasks"), dump.display())
+}
+
+/// A program that does not end says why in the failure of its case.
+#[test]
+fn a_case_that_hangs_says_why() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("hangs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "import std.time\n\nfn main() {\n    time.sleep(time.seconds(120))\n}\n";
+    std::fs::write(dir.join("hangs.to"), source).unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(compiler).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut program = Command::new(dir.join("hangs"));
+    program.env("TONDO_DIAGNOSTICS", "1").env("TONDO_CI_DUMPS", &dir);
+    let failure = run_with_timeout(&mut program, 2).err().unwrap_or_default();
+    assert!(failure.contains("timed out") && failure.contains("hangs.to:4 in main"), "{failure}");
+}
+
 /// Runs a program, failing the case when it has not finished in time.
 fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process::Output, String> {
     use std::io::Read;
@@ -234,9 +274,10 @@ fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process:
             break status;
         }
         if std::time::Instant::now() > deadline {
+            let why = why_it_hangs(child.id());
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("timed out after {seconds}s"));
+            return Err(format!("timed out after {seconds}s{why}"));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };

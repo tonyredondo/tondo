@@ -50,6 +50,8 @@ jobs:
       - if: ${{ !matrix.light }}
         run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+        env:
+          TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
       # Linking with the system's C compiler, as `TONDO_CC` asks.
       - if: ${{ !matrix.light }}
         run: cargo test -p tondo --test cases cases
@@ -86,6 +88,16 @@ jobs:
       # On macOS, signed with the Developer ID and notarized, on pushes to
       # main: a fork's pull request has no secrets, and its build is not
       # signed.
+      # What hung says so by Tondo's own tools: the failures in the summary of
+      # the run, and the dumps to open with `tondo dump serve`.
+      - if: failure()
+        run: .github/scripts/diagnose.sh "$RUNNER_TEMP/dumps"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumps-${{ matrix.target }}
+          path: ${{ runner.temp }}/dumps
+          if-no-files-found: ignore
       - run: dist/package.sh ${{ matrix.target }}
         env:
           MACOS_CERTIFICATE: ${{ github.event_name == 'push' && secrets.MACOS_CERTIFICATE || '' }}
