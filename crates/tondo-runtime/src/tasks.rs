@@ -1527,6 +1527,14 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                 if let Some(task) = taken {
                     break (task, false);
                 }
+                // The last worker to stop: with nothing to do, what the
+                // program wrote goes out, as it may not write again.
+                if queue.idle + 1 >= queue.workers && super::stdout_waits() {
+                    drop(queue);
+                    flush_stdout();
+                    queue = self::queue();
+                    continue;
+                }
                 // With sockets to poll, an idle worker waits for their
                 // events, unless another one does, and runs what they wake
                 // on its own thread.

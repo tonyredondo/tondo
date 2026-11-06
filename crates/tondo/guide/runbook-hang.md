@@ -38,9 +38,9 @@ run_output {"session": "<session>", "wait": 10}
 ```
 
 Each line of a session comes as it is written: `run_start` gives those so far,
-and `run_output` what came after. A Release build writing to a pipe does
-not: its output comes when a buffer fills or the program ends, so one that seems
-to stop before its first line may have gone much further.
+and `run_output` what came after. A Release build writing to a pipe sends its
+output when a buffer fills or it has nothing to do: while it computes, it may
+have gone further than what shows.
 
 `blocked` says at once what the tasks wait for and where, with who can wake
 them.

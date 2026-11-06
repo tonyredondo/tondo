@@ -2495,7 +2495,17 @@ pub(crate) fn console_append(bytes: &[u8], newline: bool) {
     let lines = terminal || debugger::built() || live::on();
     if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (lines && line) || testing::ACTIVE.load(Ordering::Relaxed) {
         out.deliver();
+    } else {
+        STDOUT_WAITS.store(true, Ordering::Relaxed);
     }
+}
+
+/// Output is waiting in the buffer: a program with nothing left to do lets it go.
+static STDOUT_WAITS: AtomicBool = AtomicBool::new(false);
+
+/// Whether there is output to deliver, which says so once.
+pub(crate) fn stdout_waits() -> bool {
+    STDOUT_WAITS.swap(false, Ordering::Relaxed)
 }
 
 /// Delivers pending output before the process reports a failure itself.
