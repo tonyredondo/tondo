@@ -25,7 +25,7 @@ run() {
       # What it waits for is often a process it started.
       ps -eo pid,ppid,etimes,stat,wchan:20,args | cut -c1-200
       kill -9 $pid
-      return 1
+      return 2
     fi
     sleep 1
     waited=$((waited + 1))
@@ -34,7 +34,17 @@ run() {
 }
 status=0
 while read -r dir test; do
-  (cd "$dir" && run "$test") || status=1
+  (cd "$dir" && run "$test")
+  code=$?
+  # qemu 11 can deadlock in its own locks among threads that start processes:
+  # every thread in a futex of its data, and children no one collects. A
+  # hang of the tests hangs again; what the first one said stays in the log.
+  if [ $code = 2 ]; then
+    echo "hung once, which qemu does by itself: once more"
+    (cd "$dir" && run "$test")
+    code=$?
+  fi
+  [ $code = 0 ] || status=1
 done < target/emulated
 exit $status
 '
