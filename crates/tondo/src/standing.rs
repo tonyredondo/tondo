@@ -218,7 +218,8 @@ impl Standing {
                 }
                 Ok(json!({ "running": true }))
             }
-            "next" | "step" => self.stepped("next"),
+            "next" => self.stepped("next"),
+            "step" => self.stepped("in"),
             "finish" => self.stepped("out"),
             "pause" => self.picture(),
             "select" => self.select(rest),
@@ -289,9 +290,8 @@ impl Standing {
         Ok(json!({ "deleted": id }))
     }
 
-    /// The task that stands goes on to a line of its function or of those
-    /// that called it, or of those alone: a build without probes does not go
-    /// into calls.
+    /// The task that stands goes on: to a line of its function or of those
+    /// that called it, of those alone, or of any of the program's.
     fn stepped(&mut self, how: &str) -> Result<Value, String> {
         let id = self.held.ok_or("no task stands here: `step` goes on from a breakpoint")?;
         let point = self.points.get_mut(&id).ok_or("its breakpoint is gone")?;

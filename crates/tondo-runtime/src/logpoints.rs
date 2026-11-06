@@ -42,8 +42,10 @@ struct Holding {
 
 static HOLDING: Mutex<Option<Holding>> = Mutex::new(None);
 
-/// `step <id> next|out`: the task logpoint `id` holds goes on to the next
-/// line of its function or of those that called it, or of those alone.
+/// `step <id> next|out|in`: the task logpoint `id` holds goes on to the next
+/// line of its function or of those that called it, of those alone, or of
+/// any of the program's, which goes into its calls. What this writes it writes
+/// when asked: the code as compiled stays as it is.
 pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
     use super::diagnostics::quoted;
     let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
@@ -66,9 +68,13 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
         scopes.first().and_then(|(_, place)| place.rsplit(" in ").next().map(str::to_string))
     };
     let left = held.code.first().and_then(|&site| named(site + 1));
+    let into = how == Some("in");
     let places: Vec<(usize, usize)> = sites
         .iter()
-        .filter(|site| wanted.contains(&site.4) && (how != Some("out") || named(site.0 + 1) != left))
+        .filter(|site| match into {
+            true => !site.2.starts_with("<std>/"),
+            false => wanted.contains(&site.4) && (how != Some("out") || named(site.0 + 1) != left),
+        })
         .map(|site| (site.0, site.1))
         .collect();
     let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
@@ -79,7 +85,7 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
         return error("the program did not stop for the step: try again");
     }
     take_out(ended);
-    let written = places.iter().map(|&(address, length)| write_call(address, length)).collect::<Result<Vec<_>, _>>();
+    let written = write_calls(&places);
     super::tasks::resume_world();
     drop(writing);
     let sites = match written {
@@ -87,7 +93,8 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
         Err(message) => return error(&message),
     };
     let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let step = Some((held.id, held.task, held.fp));
+    // Into a call is deeper than the frame it left.
+    let step = Some((held.id, held.task, if into { 0 } else { held.fp }));
     let (dump, stop) = (Some("-".to_string()), Some(held.seconds));
     lock().push(Logpoint { id: next, sites, left: 1, client, condition: None, dump, stop, request: None, step });
     go(&held.id.to_string());
@@ -182,7 +189,7 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
         return error("the program did not stop for the logpoint: try again");
     }
-    let written = places.iter().map(|&(address, length)| write_call(address, length)).collect::<Result<Vec<_>, _>>();
+    let written = write_calls(&places);
     super::tasks::resume_world();
     drop(writing);
     let sites = match written {
@@ -202,13 +209,18 @@ fn lock() -> std::sync::MutexGuard<'static, Vec<Logpoint>> {
     SET.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The call of a site, which needs its code to be writable for a moment.
-fn write_call(address: usize, length: usize) -> Result<Site, String> {
-    let original = unsafe { std::slice::from_raw_parts(address as *const u8, length) }.to_vec();
+/// The calls of sites, which need the code to be writable for a moment.
+fn write_calls(places: &[(usize, usize)]) -> Result<Vec<Site>, String> {
     let target = tondo_rt_site as *const () as usize;
-    let call = encoded_call(address, length, target)?;
-    patch(address, &call)?;
-    Ok(Site { address, length, original })
+    let mut sites = Vec::new();
+    let mut edits = Vec::new();
+    for &(address, length) in places {
+        let original = unsafe { std::slice::from_raw_parts(address as *const u8, length) }.to_vec();
+        edits.push((address, encoded_call(address, length, target)?));
+        sites.push(Site { address, length, original });
+    }
+    patch(&edits)?;
+    Ok(sites)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -231,24 +243,30 @@ fn encoded_call(address: usize, length: usize, target: usize) -> Result<Vec<u8>,
 }
 
 /// Writes code, with every thread of the program stopped, on a system that
-/// lets a process do so.
-fn patch(address: usize, bytes: &[u8]) -> Result<(), String> {
+/// lets a process do so: the pages of all of it at once, as a step writes
+/// many places.
+fn patch(edits: &[(usize, Vec<u8>)]) -> Result<(), String> {
     if !cfg!(target_os = "linux") {
         return Err("a logpoint needs Linux: this system does not let a program change its code".into());
     }
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-    let start = address & !(page - 1);
-    let length = address + bytes.len() - start;
-    let protect = |flags| unsafe { libc::mprotect(start as *mut libc::c_void, length, flags) };
+    let Some(first) = edits.iter().map(|(address, _)| *address).min() else { return Ok(()) };
+    let last = edits.iter().map(|(address, bytes)| address + bytes.len()).max().unwrap_or(first);
+    let start = first & !(page - 1);
+    let protect = |flags| unsafe { libc::mprotect(start as *mut libc::c_void, last - start, flags) };
     if protect(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC) != 0 {
         return Err(format!(
             "this system does not let the program change its code: {}",
             std::io::Error::last_os_error()
         ));
     }
-    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len()) };
+    for (address, bytes) in edits {
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), *address as *mut u8, bytes.len()) };
+    }
     protect(libc::PROT_READ | libc::PROT_EXEC);
-    super::live::code_changed(address, bytes.len());
+    for (address, bytes) in edits {
+        super::live::code_changed(*address, bytes.len());
+    }
     Ok(())
 }
 
@@ -271,9 +289,8 @@ fn take_out(ids: Vec<u64>) {
         gone
     };
     let gone: Vec<Logpoint> = gone;
-    for site in gone.iter().flat_map(|logpoint| &logpoint.sites) {
-        let _ = patch(site.address, &site.original);
-    }
+    let sites = gone.iter().flat_map(|logpoint| &logpoint.sites);
+    let _ = patch(&sites.map(|site| (site.address, site.original.clone())).collect::<Vec<_>>());
 }
 
 /// Takes out the logpoints of a tool that went away.
