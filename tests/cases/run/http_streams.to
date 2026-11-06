@@ -15,7 +15,7 @@ fn count(out: io.Writer) {
 }
 
 fn main(): !(http.HttpError | net.NetError | io.IoError) {
-    var app = http.App.new()
+    var app = http.App()
     app.get(
         "/where",
         (request) {
@@ -40,14 +40,14 @@ fn main(): !(http.HttpError | net.NetError | io.IoError) {
         },
     )
     let server = app.start()?
-    let plain = http.Client.new(baseUrl: server.url())
+    let plain = http.Client(baseUrl: server.url())
     console.println(plain.get("/where?q=a%20b&x=1")?.text()?)
     console.println(plain.get("/where", headers: ["X-Forwarded-Proto": "https"])?.text()?)
     console.println(plain.get("/parts")?.text()?.trimEnd())
 
     // Hooks: the first added is the outermost, so the one added after it
     // sees the header it adds.
-    var hooked = http.Client.new(baseUrl: server.url())
+    var hooked = http.Client(baseUrl: server.url())
     hooked.use(
         (request, next) {
             var headers = request.headers
@@ -70,7 +70,7 @@ fn main(): !(http.HttpError | net.NetError | io.IoError) {
         },
     )
     // A hook that answers without sending.
-    var offline = http.Client.new(baseUrl: server.url())
+    var offline = http.Client(baseUrl: server.url())
     offline.use(
         (request, _) {
             fail http.HttpError.Connect("offline: {request.method}")
@@ -89,11 +89,11 @@ fn main(): !(http.HttpError | net.NetError | io.IoError) {
     server.stop()
 
     // Behind a trusted proxy, its headers name the host and the scheme.
-    var proxied = http.App.new()
+    var proxied = http.App()
     proxied.trustProxies(net.network("127.0.0.0/8")?)
     proxied.get("/where", (request) { http.Reply.text("{request.url()}") })
     let behind = proxied.start()?
-    let client = http.Client.new(baseUrl: behind.url())
+    let client = http.Client(baseUrl: behind.url())
     let forwarded = ["X-Forwarded-Proto": "https", "X-Forwarded-Host": "example.com, proxy.local"]
     console.println(client.get("/where?page=2", headers: forwarded)?.text()?)
     behind.stop()

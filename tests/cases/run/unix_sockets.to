@@ -60,10 +60,10 @@ fn main(): !(net.NetError | fs.FsError | http.HttpError) {
     fs.remove("{base}.file")?
 
     // HTTP over a Unix socket.
-    var app = http.App.new()
+    var app = http.App()
     app.get("/v0.4/traces", (request) { http.Reply.text("traces at {request.route()}") })
     let server = app.start(socket: "{base}.http")?
-    let agent = http.Client.new(baseUrl: server.url(), socket: "{base}.http")
+    let agent = http.Client(baseUrl: server.url(), socket: "{base}.http")
     console.println(agent.get("/v0.4/traces")?.text()?)
     server.stop()
     console.println("removed {not fs.exists("{base}.http")}")

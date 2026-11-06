@@ -275,7 +275,7 @@ impl Checker<'_> {
             }
         }
         // The methods a value has: those that take `self`, not its type's
-        // other functions, as `Builder.new`.
+        // other functions, as `Random.seeded`.
         let key = self.owner_key(ty);
         let mut methods = by_owner.methods.get(&key).cloned().unwrap_or_default();
         methods.sort();

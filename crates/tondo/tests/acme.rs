@@ -18,13 +18,13 @@ import std.time
 fn main(): !http.HttpError {
     let directory = env.get("ACME_DIRECTORY").unwrapOr("")
     let trust = env.get("ACME_TRUST").unwrapOr("")
-    var app = http.App.new()
+    var app = http.App()
     app.get("/", (_) { http.Reply.text("secure hello") })
     let tls = acme.tls(["localhost"], email: "me@example.com", directory: directory, cache: "cache", trust: some(trust))
     let server = app.start(host: "127.0.0.1", port: 5001, tls: tls)?
     // The authority's root, which signs what it issues.
-    let roots = http.Client.new(trust: some(trust)).get(directory.replace("14000/dir", "15000/roots/0"))?.text()?
-    let client = http.Client.new(trust: some(roots))
+    let roots = http.Client(trust: some(trust)).get(directory.replace("14000/dir", "15000/roots/0"))?.text()?
+    let client = http.Client(trust: some(roots))
     for _ in 0..300 {
         match client.get("https://localhost:5001/") {
             ok(reply) => {

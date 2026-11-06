@@ -13,7 +13,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     let socket = "{fs.createTemporaryDirectory()?}/app.socket"
     let (started, began) = channel[Unit](1)
     let (release, released) = channel[Unit](1)
-    var app = http.App.new()
+    var app = http.App()
     app.get(
         "/slow",
         (_) {
@@ -33,7 +33,7 @@ fn ask(socket: String, began: Receiver[Unit], release: Sender[Unit]) {
     for not fs.exists(socket) {
         time.sleep(time.milliseconds(5))
     }
-    let web = http.Client.new(baseUrl: "http://app", socket: socket)
+    let web = http.Client(baseUrl: "http://app", socket: socket)
     let slow = spawn web.get("/slow")
     _ = began.receive()
     _ = process.signal(env.processId(), process.Signal.Terminate)

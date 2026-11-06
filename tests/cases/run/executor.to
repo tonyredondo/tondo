@@ -34,7 +34,7 @@ fn pools(): !(executor.ExecutorError | executor.SubmitError) {
     let running = sync.Atomic(0)
     let peak = sync.Atomic(0)
     let pool = executor.pool(3, 20)?
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for n in 1..=12 {
         group.add(pool.submit(() { job(running, peak, n) })?)
     }

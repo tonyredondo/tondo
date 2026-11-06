@@ -71,7 +71,7 @@ fn readLock(state: sync.Mutex[Int]): Int {
 fn main() {
     let stats = sync.Mutex(Stats { hits: 0, misses: 0 })
     let counter = sync.Atomic(0)
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for _ in 0..8 {
         group.add(spawn hit(stats, counter))
     }
@@ -95,7 +95,7 @@ fn main() {
     let limit = sync.Semaphore(3)
     let active = sync.Atomic(0)
     let peak = sync.Atomic(0)
-    var fetches = Group.new[Int]()
+    var fetches = Group[Int]()
     for id in 0..12 {
         fetches.add(spawn fetch(id, limit.acquire(), active, peak))
     }
@@ -113,7 +113,7 @@ fn main() {
     }
 
     // `updateWhen` waits until the producer has pushed everything.
-    let items = sync.Mutex(Array.new[Int]())
+    let items = sync.Mutex(Array[Int]())
     spawn produce(items, 5)
     let taken = items.updateWhen(
         (list) { list.length() >= 5 },
@@ -140,7 +140,7 @@ fn main() {
 
     let barrier = sync.Barrier(3)
     let arrivals = sync.Atomic(0)
-    var parties = Group.new[Bool]()
+    var parties = Group[Bool]()
     for _ in 0..3 {
         parties.add(spawn arrive(barrier, arrivals))
     }
@@ -153,7 +153,7 @@ fn main() {
     console.println("leaders {leaders} arrivals {arrivals.load()}")
 
     let attempts = sync.Atomic(0)
-    let config = sync.Once.new[String]()
+    let config = sync.Once[String]()
     console.println("ready {config.isReady()}")
     for _ in 0..2 {
         match config.getOrInit(() { load(attempts) }) {
@@ -161,7 +161,7 @@ fn main() {
             err(error) => console.println("failed: {error}")
         }
     }
-    let name = sync.Once.new[String]()
+    let name = sync.Once[String]()
     console.println(
         "{name.getOrInit(() { "first" })} {name.getOrInit(() { "second" })} {name.isReady()}",
     )

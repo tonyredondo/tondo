@@ -15,7 +15,7 @@ type Page = {
 
 fn main(): !template.TemplateError {
     let names = ["ada", "lin"]
-    var queue = Deque.new[Int]()
+    var queue = Deque[Int]()
     queue.push(3)
     let points = [Point { x: 1, y: 2 }]
     console.println("{names.contains("ada")} {names.contains("bob")} {"lin" in names}")

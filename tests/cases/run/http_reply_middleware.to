@@ -6,7 +6,7 @@ import std.console
 import std.http
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.use(
         (request, next) {
             let reply = match next(request) {
@@ -25,7 +25,7 @@ fn main(): !http.HttpError {
     app.get(
         "/fail",
         (_) {
-            fail http.Problem.new(403, "no")
+            fail http.Problem(403, "no")
         },
     )
     app.get("/cookies", (_) { http.Reply.empty().cookie("a", "1").cookie("b", "2") })

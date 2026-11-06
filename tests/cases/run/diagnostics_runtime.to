@@ -45,7 +45,7 @@ fn main() {
     profile.startBlocking()
     profile.startContention()
     let lock = sync.Mutex(0)
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for _ in 0..4 {
         group.add(spawn hold(lock))
     }

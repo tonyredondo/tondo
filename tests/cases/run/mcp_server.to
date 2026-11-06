@@ -145,10 +145,10 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
         console.println(line)
     }
 
-    var app = http.App.new()
+    var app = http.App()
     app.post("/mcp", mcp.handler(Weather { base: 10.0 }, name: "weather", version: "2.0.0"))
     let server = app.start()?
-    let client = http.Client.new(baseUrl: server.url())
+    let client = http.Client(baseUrl: server.url())
     let call =
         r"""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":40,"b":2}}}"""
     console.println(

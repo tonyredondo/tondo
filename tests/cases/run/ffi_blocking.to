@@ -14,7 +14,7 @@ fn nap() {
 
 fn main() {
     let start = time.now()
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for _ in 0..256 {
         group.add(spawn nap())
     }

@@ -3,7 +3,7 @@ fn main() {
     values.append(3)
     let n = values.size()
     let top = values.peek()
-    var queue = Deque.new[Int]()
+    var queue = Deque[Int]()
     queue.enqueue(1)
     let next = queue.dequeue()
     queue.insert(0, 1)

@@ -4,7 +4,7 @@
 import std.http
 
 fn main() {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/foo", () { "A" })
     let path = "/foo/"
     app.route("GET", path, (_) { http.Reply.text("B") })

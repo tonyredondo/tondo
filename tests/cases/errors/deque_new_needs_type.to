@@ -1,5 +1,5 @@
 fn main() {
-    let queue = Deque.new()
+    let queue = Deque()
 }
 
-// expect-error: E1101 `Deque.new[T](...)`
+// expect-error: E1101 `Deque` needs its element type: `Deque[T]()`

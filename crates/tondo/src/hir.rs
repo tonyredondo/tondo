@@ -552,7 +552,7 @@ pub enum PlaceStep {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ArrayOp {
-    /// `Array.new[T]()` or `Deque.new[T]()`
+    /// `Array[T]()` or `Deque[T]()`
     New,
     /// `Array.withCapacity[T](capacity)`
     WithCapacity,
@@ -588,7 +588,7 @@ pub enum LockMode {
 pub enum TaskOp {
     /// `job.wait()`
     Wait,
-    /// `Group.new[T]()`
+    /// `Group[T]()`
     GroupNew,
     /// `group.add(job)`
     GroupAdd,
@@ -789,7 +789,7 @@ pub enum StrOp {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MapOp {
-    /// `Map.new[K, V]()` or `Set.new[K]()`
+    /// `Map[K, V]()` or `Set[K]()`
     New,
     /// `map[key]` and `map.get(key)`: `V?`
     Get,

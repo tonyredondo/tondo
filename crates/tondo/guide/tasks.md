@@ -18,7 +18,7 @@ fn main() {
     console.println("{job.wait()}")
 
     // A group: many tasks, results in order of adding.
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for id in 0..5 {
         group.add(spawn fetch(id))
     }
@@ -102,7 +102,7 @@ pub type Stats = { hits: Int }
 fn main() {
     let stats = sync.Mutex(Stats { hits: 0 })
     let counter = sync.Atomic(0)
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for _ in 0..4 {
         group.add(spawn record(stats, counter))
     }
@@ -136,7 +136,7 @@ import std.executor
 
 fn main(): !(executor.ExecutorError | executor.SubmitError | executor.SendError) {
     let pool = executor.pool(2, 8)?
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for n in 1..=5 {
         group.add(pool.submit(() { n * n })?)
     }

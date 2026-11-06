@@ -484,7 +484,7 @@ fn a_server_says_why_it_cannot_listen() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = taken.local_addr().unwrap().port();
     let program = format!(
-        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    app.listen({port})?\n}}\n"
+        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
     let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", "server.to"]).current_dir(&dir).output().unwrap();

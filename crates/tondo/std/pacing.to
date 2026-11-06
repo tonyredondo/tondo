@@ -99,7 +99,7 @@ pub fn retry[T: ~Copy, E: ~Copy](
     maxDelay: __time.Duration = __time.seconds(10),
     when: (fn(ref E): Bool)? = none,
 ): T ! E {
-    var random = __random.Random.new()
+    var random = __random.Random()
     var ceiling = delay.nanoseconds()
     var attempt = 1
     for {

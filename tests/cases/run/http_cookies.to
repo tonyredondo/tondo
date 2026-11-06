@@ -7,7 +7,7 @@ import std.net
 import std.time
 
 fn main(): !(http.HttpError | net.NetError) {
-    var app = http.App.new()
+    var app = http.App()
     app.get(
         "/login",
         (_) {
@@ -26,23 +26,23 @@ fn main(): !(http.HttpError | net.NetError) {
         },
     )
     let server = app.start()?
-    let browser = http.Client.new(baseUrl: server.url(), cookies: true)
+    let browser = http.Client(baseUrl: server.url(), cookies: true)
     let login = browser.get("/login")?
     console.println("{login.cookie("session")} {login.cookies()}")
     for header in login.headerValues("set-cookie") {
         console.println(header)
     }
     console.println(browser.get("/me")?.text()?)
-    let plain = http.Client.new(baseUrl: server.url())
+    let plain = http.Client(baseUrl: server.url())
     console.println(plain.get("/me", headers: ["X-Forwarded-For": "1.2.3.4"])?.text()?)
     server.stop()
 
     // Behind a trusted proxy.
-    var proxied = http.App.new()
+    var proxied = http.App()
     proxied.trustProxies(net.network("127.0.0.0/8")?)
     proxied.get("/ip", (request) { http.Reply.text(request.clientIp()) })
     let behind = proxied.start()?
-    let client = http.Client.new(baseUrl: behind.url())
+    let client = http.Client(baseUrl: behind.url())
     console.println(
         client.get("/ip", headers: ["X-Forwarded-For": "203.0.113.9, 10.0.0.2"])?.text()?,
     )

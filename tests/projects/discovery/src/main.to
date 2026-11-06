@@ -41,9 +41,9 @@ fn watched(client: checks.HealthClient, health: grpc.Health) {
 }
 
 fn main(): !(http.HttpError | grpc.Status) {
-    let health = grpc.Health.new()
+    let health = grpc.Health()
     let service = greeter.greeter(Greetings {})
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(service)
     app.grpc(health.service())
     app.grpc(grpc.reflection([service, health.service()]))

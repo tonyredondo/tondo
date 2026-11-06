@@ -54,7 +54,7 @@ fn main() {
     env.set("WORD_PATTERN", r"\w+")
     with Patterns { limit: 5 }
     console.println("limit {Patterns.limit}, computed {Counts.patterns.load()} times")
-    var group = Group.new[Bool]()
+    var group = Group[Bool]()
     for text in ["12", "a1", "7"] {
         group.add(spawn Patterns.digits.isMatch(text).unwrapOr(false))
     }

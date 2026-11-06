@@ -24,7 +24,7 @@ fn find(id: Int): User? {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/users/:id", (id: Int) { find(id) })
     app.listen(8080)?
 }

@@ -1039,7 +1039,7 @@ test passes {
 }
 
 test fails {
-    var dice = random.Random.new()
+    var dice = random.Random()
     let rolled = dice.int(0..1000000)
     assert(rolled < 0, \"rolled {rolled}\")
 }
@@ -1079,7 +1079,7 @@ fn a_test_that_passes_and_fails_says_where_its_runs_part() {
 import std.random
 
 fn roll(): Int {
-    var dice = random.Random.new()
+    var dice = random.Random()
     dice.int(0..2)
 }
 

@@ -7,7 +7,7 @@ fn main() {
     var points = [Point { x: 1, name: "a" }, Point { x: 2, name: "b" }]
     points.push(points[0])
     points.insert(0, points[1])
-    var queue = Deque.new[Point]()
+    var queue = Deque[Point]()
     queue.push(Point { x: 3, name: "c" })
     queue.pushFront(queue[0])
     var units = [(), ()]

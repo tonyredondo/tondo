@@ -8,7 +8,7 @@
 // import std.acme
 // import std.http
 //
-// var app = http.App.new()
+// var app = http.App()
 // app.get("/", (_) { http.Reply.text("hello") })
 // app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))?
 // ```
@@ -44,7 +44,7 @@ const AlpnProtocol: String = "acme-tls/1"
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // A certificate the authority does not give fails the server's start.
 /// match app.start(port: 0, tls: acme.tls(["example.com"], email: "me@example.com")) {
 ///     ok(server) => server.stop()
@@ -79,7 +79,7 @@ pub fn tls(
     if domains.isEmpty() {
         panic("acme.tls needs at least one domain")
     }
-    let certificates = __net.Certificates.new(protocols: [AlpnProtocol])
+    let certificates = __net.Certificates(protocols: [AlpnProtocol])
     let keeper = Keeper {
         domains
         email
@@ -216,7 +216,7 @@ type Session = {
 
 /// The account of the kept key, made or found.
 fn Keeper.session(self): Session ! AcmeError {
-    let client = __http.Client.new(trust: self.trust, timeout: some(__time.seconds(30)))
+    let client = __http.Client(trust: self.trust, timeout: some(__time.seconds(30)))
     let urls = answer(sent(client.get(self.directory)))?
     let path = "{self.folder}/account.key"
     let key = match __fs.readText(path) {

@@ -3832,7 +3832,7 @@ pub struct GroupObject {
     waiter: Option<(*const Wait, usize)>,
 }
 
-/// `Group.new[T]()`; `fallible` when `T` is `R ! E`, whose results start
+/// `Group[T]()`; `fallible` when `T` is `R ! E`, whose results start
 /// with their tag, `1` for `err`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {

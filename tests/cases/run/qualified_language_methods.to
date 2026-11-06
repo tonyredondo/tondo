@@ -6,7 +6,7 @@ fn main() {
     let second = [3]
     let text = "Hola"
     var values = [3]
-    var ages = Map.new[String, Int]()
+    var ages = Map[String, Int]()
     let parsed: Int ! String = ok(1)
 
     console.println("{Array.concat(first, second)} {Array.repeat(second, 2)} {Array.length(first)}")

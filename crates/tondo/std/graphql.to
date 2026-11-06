@@ -20,7 +20,7 @@
 // }
 //
 // let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }] })
-// var app = http.App.new()
+// var app = http.App()
 // app.post("/graphql", schema.handler())
 // app.get("/graphql", schema.handler())
 // app.listen(port: 8080)?

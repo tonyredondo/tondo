@@ -1966,6 +1966,12 @@ impl Parser<'_> {
                     if matches!(&expr.kind, ExprKind::Path(path)
                         if path.len() == 2 && SYNC_COLLECTIONS.contains(&path[1].name.as_str())) =>
                 {
+                    // `sync.Map[String, Int]()` builds an empty one.
+                    if let Some(args) = self.try_generic_arguments() {
+                        let span = expr.span.to(self.prev_span());
+                        expr = Expr { kind: ExprKind::Generic { base: Box::new(expr), args }, span };
+                        continue;
+                    }
                     // `sync.Map["one": 1]`: a literal of a shared collection.
                     let ExprKind::Path(path) = expr.kind else { unreachable!() };
                     let literal = self.bracket_literal()?;
@@ -1974,6 +1980,12 @@ impl Parser<'_> {
                 }
                 Tok::LBracket if matches!(&expr.kind, ExprKind::Path(path) if path.len() == 1 && path[0].name == "Set") =>
                 {
+                    // `Set[Int]()` builds an empty one.
+                    if let Some(args) = self.try_generic_arguments() {
+                        let span = expr.span.to(self.prev_span());
+                        expr = Expr { kind: ExprKind::Generic { base: Box::new(expr), args }, span };
+                        continue;
+                    }
                     // `Set[...]` in expression position is a set literal (23.24).
                     let ExprKind::Array(items) = self.bracket_literal()?.kind else {
                         return self.error("a set literal lists values: `Set[a, b]`");

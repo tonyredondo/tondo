@@ -11,7 +11,7 @@
 // // Blocking work, as a C library's, runs on a bounded pool, not on the
 // // workers that run tasks.
 // let pool = executor.pool(2, 8)?
-// var squares = Group.new[Int]()
+// var squares = Group[Int]()
 // for n in 1..=4 {
 //     squares.add(pool.submit(() { n * n })?)
 // }

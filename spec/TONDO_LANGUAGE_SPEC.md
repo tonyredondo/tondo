@@ -549,7 +549,8 @@ El compilador debe diagnosticar como warning identificadores visualmente confund
 Convenciones no semánticas:
 
 - Tipos, traits y variantes de enum: `PascalCase`.
-- Funciones, métodos, parámetros, campos y variables: `camelCase`.
+- Funciones, métodos, parámetros, campos y variables: `camelCase`. Una función
+  que se llama como un tipo de su módulo es su constructor (11.5).
 - Constantes de módulo: `PascalCase`.
 - Módulos: una palabra en minúscula cuando sea posible y `camelCase` si son compuestos.
 - Los acrónimos se tratan como palabras: `HttpClient`, `JsonValue`, `userId`, no `HTTPClient`, `JSONValue` ni `userID`.
@@ -902,7 +903,7 @@ Los elementos y entradas se evalúan primero de izquierda a derecha y la
 colección no se publica hasta quedar completamente construida. Los vacíos
 `sync.Array[]`, `sync.Set[]`, `sync.Stack[]` y `sync.Queue[]` requieren tipo
 esperado; `sync.Map[:]` identifica el map concurrente vacío. Sin tipo esperado
-se escriben `sync.Queue.new[Job]()` o `sync.Map.new[String, Int]()`
+se escriben `sync.Queue[Job]()` o `sync.Map[String, Int]()`
 (14.4.4 de la especificación de la librería estándar).
 
 ### 5.12 Orden de evaluación
@@ -3387,6 +3388,26 @@ La notación con punto de un método inherente es azúcar estático para:
 Point.distanceTo(first, second)
 ~~~
 
+Un tipo se construye llamándolo. Una función que se llama como un tipo de su
+módulo es su constructor, y comparte el nombre sin ocultar las operaciones del
+tipo; como no hay sobrecarga, cada tipo tiene uno, y otras formas de construir
+llevan su nombre, como `PrivateKey.fromPem(text)`:
+
+~~~tondo
+fn Point(x: Float = 0.0, y: Float = 0.0): Point {
+    Point { x: x, y: y }
+}
+
+let origin = Point()
+~~~
+
+Las colecciones del lenguaje se construyen vacías con lo que contienen,
+`Array[Int]()`, `Map[String, Int]()`, `Set[Int]()`, `Deque[Int]()` y
+`Group[Int]()`, y los tipos de `std.sync` igual, `sync.Mutex(0)` o
+`sync.Queue[Int]()`. `Type.new(...)` no existe en esos tipos ni en los de la
+biblioteca estándar: es `E1001`, con la corrección de quitar `.new`. Un tipo del
+programa puede declarar un método `new`, que no tiene nada especial.
+
 El receptor `self` es un préstamo inmutable limitado a la llamada; no copia ni
 mueve el propietario. `mut self` es un préstamo mutable exclusivo que conserva la
 extensión estructural del lvalue. `var self` permite además cambiar esa extensión
@@ -3877,7 +3898,7 @@ segundos. Lo mismo vale al terminar por `SIGINT` o `SIGTERM` (20.10).
 
 ~~~tondo
 fn scores(ids: Array[Int]): Array[Int] ! FetchError {
-    var group = Group.new[Int ! FetchError]()
+    var group = Group[Int ! FetchError]()
     for id in ids {
         group.add(spawn fetchScore(id))
     }
@@ -11527,7 +11548,7 @@ ofrece filesystem, red, procesos, environment, reloj, aleatoriedad, threads,
 descubrir archivos, paquetes o tipos que no estén en su request.
 
 Lo que lee el reloj o la entropía del sistema, como `Uuid.v4` o
-`Random.new`, es `E2108` donde se llama; lo determinista de esos mismos
+`Random()`, es `E2108` donde se llama; lo determinista de esos mismos
 módulos, como `Uuid.v5` o `Random.seeded`, está disponible.
 
 Un run tiene presupuestos enteros declarados de pasos, memoria administrada y

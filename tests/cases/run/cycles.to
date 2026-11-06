@@ -61,7 +61,7 @@ fn main() {
     for i in 0..500 {
         garbage(i)
     }
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for _ in 0..4 {
         group.add(spawn churn(2000))
     }

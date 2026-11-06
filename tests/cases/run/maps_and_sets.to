@@ -35,13 +35,13 @@ fn main() {
     grid[(0, 0)] = Color.Red
     grid[(1, 2)] = Color.Green
     let cell = grid[(1, 2)] == some(Color.Green)
-    var places = Map.new[Pos, String]()
+    var places = Map[Pos, String]()
     _ = places.insert(Pos { x: 1, y: 2 }, "home")
     let home = places.get(Pos { x: 1, y: 2 }) == some("home")
-    var colors = Set.new[Color]()
+    var colors = Set[Color]()
     _ = colors.insert(Color.Red)
     console.println("{cell} {home} {Color.Red in colors} {Color.Green in colors}")
-    var big = Map.new[Int, String]()
+    var big = Map[Int, String]()
     for i in 0..2000 {
         big[i] = "v{i}"
     }

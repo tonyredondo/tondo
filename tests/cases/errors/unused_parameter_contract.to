@@ -30,7 +30,7 @@ impl Shape for Tagged {
 
 // Only the type of `value` matters, and it gives the caller's `T`.
 fn sizeOf[T](value: T): Int {
-    Array.new[T]().length()
+    Array[T]().length()
 }
 
 // Nothing here reads `T`, so nothing is given.
@@ -39,7 +39,7 @@ fn ignored[T](value: T) {}
 // `other` gives `T` as well.
 fn second[T](value: T, other: T): Int {
     _ = other
-    Array.new[T]().length()
+    Array[T]().length()
 }
 
 fn greet(name: String, age: Int): String {

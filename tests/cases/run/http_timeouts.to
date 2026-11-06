@@ -20,7 +20,7 @@ fn feed(writer: io.Writer, done: Sender[String]) {
 
 fn main(): !(http.HttpError | net.NetError) {
     let (done, stopped) = channel[String](1)
-    var app = http.App.new()
+    var app = http.App()
     app.post("/upload", (request) { http.Reply.text("got {request.text()?}") })
     app.get(
         "/big",

@@ -23,7 +23,7 @@ pub type Search = {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.compress()
     app.use(
         (request, next) {
@@ -60,7 +60,7 @@ fn main(): !http.HttpError {
     )
     let limits = http.Limits.standard() with { body: 1000 }
     let server = app.start(limits: limits)?
-    let client = http.Client.new(baseUrl: server.url())
+    let client = http.Client(baseUrl: server.url())
     let shown = (outcome: http.Response ! http.HttpError) {
         match outcome {
             ok(reply) => "{reply.status()} {reply.text().unwrapOr("")}"

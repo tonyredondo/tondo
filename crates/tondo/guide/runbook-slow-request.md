@@ -12,7 +12,7 @@ fn lookup() {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/slow", () {
         lookup()
         "done"

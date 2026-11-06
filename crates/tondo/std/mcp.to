@@ -100,7 +100,7 @@ pub fn serve[T: __reflect.Reflect](
     let protocol = __console.stdout()
     __console.setOutput(__console.stderr())
     let out = __sync.Mutex(Output { writer: protocol, failure: none })
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for {
         let line = match __console.readLine() {
             some(line) => line

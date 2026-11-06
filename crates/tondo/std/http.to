@@ -6,7 +6,7 @@
 // ```tondo
 // import std.http
 //
-// var app = http.App.new()
+// var app = http.App()
 // app.get("/hello/:name", (request) { http.Reply.text("Hello, {request.param("name")}!") })
 // app.listen(port: 8080)?
 // ```
@@ -36,7 +36,7 @@ import std.zstd as __zstd
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/missing", (_) { fail http.Problem.notFound("no such page") })
 /// match app.client().get("/missing") {
 ///     ok(response) => console.println("{response.status()}")
@@ -95,7 +95,7 @@ enum Content {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/echo", (request) {
 ///     http.Reply.text("{request.header("Content-Type").unwrapOr("")}: {request.text()?}")
 /// })
@@ -160,7 +160,7 @@ enum Source {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/albums", (request) {
 ///     var parts: Array[String] = []
 ///     for upload in request.uploads() {
@@ -225,7 +225,7 @@ pub fn Part.stream(
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/", (_) { http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc") })
 /// let response = app.client().get("/")?
 /// console.println("{response.status()} {response.reason()} {response.version()}")
@@ -457,7 +457,7 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/log", (_) { http.Reply.text("one\ntwo\nthree\n") })
 /// // Each line as it arrives, without the whole body in memory.
 /// for line in app.client().get("/log")?.lines() {
@@ -516,7 +516,7 @@ impl Iterator[String ! HttpError] for Lines {
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // Server-Sent Events: each event the channel gives, until it closes.
 /// app.get("/ticks", (_) {
 ///     let (sender, receiver) = channel[http.Event](4)
@@ -602,7 +602,7 @@ impl Iterator[Event ! HttpError] for Events {
 ///
 /// type Todo = { id: Int, title: String }
 ///
-/// let web = http.Client.new(baseUrl: "https://api.example.com")
+/// let web = http.Client(baseUrl: "https://api.example.com")
 /// let todo = web.get("/todos/1")?.json[Todo]()?
 /// let made = web.post("/todos", body: some(http.Body.json(todo with { id: 0 })))?
 /// console.println("{todo.title} {made.status()}")
@@ -625,7 +625,7 @@ pub type Client = {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/me", (request) { http.Reply.text(request.header("Authorization").unwrapOr("anonymous")) })
 /// var client = app.client()
 /// // Every request of the client through this hook: logged and authorized.
@@ -655,7 +655,7 @@ pub type ClientRequest = {
 /// the URL gives only its path and `Host`. With `cookies`, it keeps the
 /// cookies responses set and sends them with the next requests, as a
 /// browser does.
-pub fn Client.new(
+pub fn Client(
     baseUrl: String = "",
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
@@ -851,7 +851,7 @@ pub fn get(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("GET", url, none, query, headers, timeout)?
+    Client().request("GET", url, none, query, headers, timeout)?
 }
 
 /// Sends a `HEAD` on a connection of its own: the headers alone.
@@ -861,7 +861,7 @@ pub fn head(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("HEAD", url, none, query, headers, timeout)?
+    Client().request("HEAD", url, none, query, headers, timeout)?
 }
 
 /// Sends a `DELETE` on a connection of its own.
@@ -871,7 +871,7 @@ pub fn delete(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("DELETE", url, none, query, headers, timeout)?
+    Client().request("DELETE", url, none, query, headers, timeout)?
 }
 
 /// Sends a `POST` with the body, on a connection of its own.
@@ -882,7 +882,7 @@ pub fn post(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("POST", url, body, query, headers, timeout)?
+    Client().request("POST", url, body, query, headers, timeout)?
 }
 
 /// Sends a `PUT` with the body, on a connection of its own.
@@ -893,7 +893,7 @@ pub fn put(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("PUT", url, body, query, headers, timeout)?
+    Client().request("PUT", url, body, query, headers, timeout)?
 }
 
 /// Sends a `PATCH` with the body, on a connection of its own.
@@ -904,7 +904,7 @@ pub fn patch(
     headers: Map[String, String] = [:],
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
-    Client.new().request("PATCH", url, body, query, headers, timeout)?
+    Client().request("PATCH", url, body, query, headers, timeout)?
 }
 
 // ---------------------------------------------------------------------------
@@ -927,7 +927,7 @@ pub fn patch(
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.websocket("/echo", echo)
 /// let server = app.start()?
 /// let socket = http.WebSocket.connect("ws://{server.address()}/echo")?
@@ -973,7 +973,7 @@ impl Display for Message {
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.websocket("/chat", chat)
 /// let server = app.start()?
 /// let socket = http.WebSocket.connect("ws://{server.address()}/chat")?
@@ -1189,7 +1189,7 @@ fn failed(sent: httpNative.Native): !HttpError {
 ///     http.Reply.json(["id": id])
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/orders/:id", order)
 /// for path in ["/orders/7", "/orders/500", "/orders/x"] {
 ///     match app.client().get(path) {
@@ -1215,7 +1215,7 @@ impl Display for Problem {
 
 /// A problem with an HTTP status and a message, which the server sends as
 /// `application/problem+json`.
-pub fn Problem.new(status: Int, message: String): Problem {
+pub fn Problem(status: Int, message: String): Problem {
     Problem { status, message, violations: [] }
 }
 
@@ -1262,7 +1262,7 @@ pub fn Problem.from[E: Display](error: E): Problem {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/users/:id", (request) {
 ///     let id = request.intParam("id")?
 ///     let fields = request.query("fields").unwrapOr("all")
@@ -1538,7 +1538,7 @@ pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
 ///
 /// pub type Avatar = { user: String, picture: http.UploadedFile }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/avatar", (request) {
 ///     let form = request.formAs[Avatar]()?
 ///     let picture = form.picture
@@ -1606,7 +1606,7 @@ impl __serialization.Decode for UploadedFile {
 fn Request.formText(self): String ! Problem {
     let kind = self.header("content-type").unwrapOr("").toLower()
     if kind.startsWith("multipart/") {
-        fail Problem.new(
+        fail Problem(
             415,
             "the body is {kind.split(";")[0]}, which is read by its parts with `request.uploads()`, not as a URL-encoded form",
         )
@@ -1894,13 +1894,13 @@ pub fn Request.limitBody(self, bytes: Int): Request {
 /// past its limit, else `400`.
 fn bodyProblem(request: httpNative.Native, what: String, failure: String): Problem {
     if httpNative.requestStalled(request) {
-        return Problem.new(
+        return Problem(
             408,
             "{what} stopped arriving for longer than this server waits, `Limits.bodyTimeout`",
         )
     }
     if httpNative.requestExceeded(request) {
-        return Problem.new(
+        return Problem(
             413,
             "{what} is larger than this server takes: raise the limit of the route with `request.limitBody(bytes)`, or the server's with `Limits.body`",
         )
@@ -1966,7 +1966,7 @@ pub fn Request.text(self): String ! Problem {
 ///
 /// type Signup = { name: String, email: String }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/signups", (request) {
 ///     let signup = request.json[Signup]()?
 ///     http.Reply.json(signup, status: 201)
@@ -2060,7 +2060,7 @@ fn formDecoded(text: String): String {
 /// import std.path
 ///
 /// let directory = fs.createTemporaryDirectory()?
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/documents", (request) {
 ///     var saved: Array[String] = []
 ///     for received in request.uploads() {
@@ -2140,7 +2140,7 @@ pub fn Upload.saveTo(self, path: String): Int ! Problem {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // The parts of a multipart body, read one at a time as they arrive.
 /// app.post("/count", (request) {
 ///     var files = 0
@@ -2215,7 +2215,7 @@ enum Payload {
 /// import std.console
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/", (_) { http.Reply.html("<h1>Home</h1>") })
 /// app.get("/old", (_) { http.Reply.redirect("/", status: 301) })
 /// app.get("/data", (_) { http.Reply.json(["ok": true]).header("Cache-Control", "no-store") })
@@ -2294,10 +2294,10 @@ pub fn Reply.stream(
 /// import std.http
 /// import std.io
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // Headers after the body, as a checksum known only once it is written.
 /// app.get("/report", (_) {
-///     let trailers = http.Trailers.new()
+///     let trailers = http.Trailers()
 ///     trailers.set("X-Checksum", "9a0364b9")
 ///     http.Reply.stream(io.reader("line 1\nline 2\n"), contentType: "text/plain", trailers: some(trailers))
 /// })
@@ -2308,7 +2308,7 @@ pub type Trailers = {
 }
 
 /// Trailers to set.
-pub fn Trailers.new(): Trailers {
+pub fn Trailers(): Trailers {
     Trailers { native: httpNative.trailers() }
 }
 
@@ -2421,7 +2421,7 @@ pub fn Reply.problem(problem: Problem): Reply {
 /// import std.http
 /// import std.time
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.post("/login", (_) {
 ///     http.Reply.redirect("/").cookie(
 ///         "session",
@@ -2544,11 +2544,11 @@ type Route = {
 ///
 /// pub type Todo = { id: Int, title: String }
 ///
-/// var api = http.App.new()
+/// var api = http.App()
 /// api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
 /// api.post("/todos", (request) { http.Reply.json(request.json[Todo]()?, status: 201) })
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.cors(["https://example.com"])
 /// app.compress()
 /// app.mount("/api", api)
@@ -2565,7 +2565,7 @@ pub type App = {
 }
 
 /// An app without routes.
-pub fn App.new(): App {
+pub fn App(): App {
     App { routes: [], layers: [], operations: [], schemas: [:], docs: none, proxies: [] }
 }
 
@@ -2636,7 +2636,7 @@ pub fn App.route(
 /// import std.log
 /// import std.time
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // Each request through it: timed, and its status logged.
 /// app.use((request, next) {
 ///     let started = time.now()
@@ -2779,8 +2779,8 @@ pub fn App.grpc[S: GrpcService](mut self, service: S) {
 /// import std.http
 ///
 /// // A service of a `.proto` file, or one of std.grpc, is served by an app.
-/// let health = grpc.Health.new()
-/// var app = http.App.new()
+/// let health = grpc.Health()
+/// var app = http.App()
 /// app.grpc(health.service())
 /// app.listen(port: 50051)?
 /// ```
@@ -2967,7 +2967,7 @@ pub fn App.uploads(mut self, prefix: String, directory: String) {
 /// import std.fs
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.uploads("/files", fs.createTemporaryDirectory()?)
 /// let client = app.client()
 /// let saved = client.put("/files/notes/today.txt", body: some(http.Body.text("buy tea")))?.json[Array[http.Saved]]()?
@@ -3256,7 +3256,7 @@ pub fn App.client(self): Client {
         err(error) => panic("`App.client` could not serve the app: {error}")
     }
     spawn detached serve(listening, self.pipeline())
-    Client.new(baseUrl: "http://app", socket: socket)
+    Client(baseUrl: "http://app", socket: socket)
 }
 
 /// What a server allows each client, so that a large or slow one cannot
@@ -3273,7 +3273,7 @@ pub fn App.client(self): Client {
 /// import std.http
 /// import std.time
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// // Videos up to 1 GB on this route; 10 MiB on the others.
 /// app.post("/videos", (request) { http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes") })
 /// let limits = http.Limits.standard() with { headTimeout: time.seconds(10) }
@@ -3306,7 +3306,7 @@ pub fn Limits.standard(): Limits {
 /// import std.http
 /// import std.time
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/health", (_) { http.Reply.text("ok") })
 /// // A server that runs while the program goes on, as a test's.
 /// let server = app.start()?
@@ -3363,7 +3363,7 @@ pub fn proxy(
     strip: String = "",
     client: Client? = none,
 ): fn(Request): Reply ! Problem {
-    let sender = client.unwrapOr(Client.new(redirects: 0))
+    let sender = client.unwrapOr(Client(redirects: 0))
     let base = target.removeSuffix("/")
     (request): Reply ! Problem {
         var path = request.path().removePrefix(strip)
@@ -3402,7 +3402,7 @@ pub fn proxy(
         let response = match answered {
             ok(response) => response
             err(HttpError.Status(response)) => response
-            err(error) => fail Problem.new(502, "the proxy's target {base} did not answer: {error}")
+            err(error) => fail Problem(502, "the proxy's target {base} did not answer: {error}")
         }
         var reply = Reply.stream(
             response.body(),
@@ -3454,7 +3454,7 @@ fn peerIp(address: String): String {
 /// ```tondo
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/", (_) { http.Reply.text("hello over HTTPS") })
 /// app.listen(port: 8443, tls: some(http.Tls.files("cert.pem", "key.pem")))?
 /// ```
@@ -3465,7 +3465,7 @@ pub alias Tls = __net.Tls
 /// ```tondo
 /// import std.http
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.get("/", (_) { http.Reply.text("TLS 1.3 only") })
 /// let tls = http.Tls.files("cert.pem", "key.pem", minimumVersion: http.TlsVersion.Tls13)
 /// app.listen(port: 8443, tls: some(tls))?

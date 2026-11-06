@@ -68,7 +68,7 @@ impl greeter.Greeter for Greetings {
 
 fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
     let (open, gate) = channel[Unit]()
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(greeter.greeter(Greetings { prefix: "hello", gate }))
     let server = app.start()?
     let client = greeter.GreeterClient.connect("http://{server.address()}")?

@@ -1,0 +1,19 @@
+// A type is built by calling it, and `new` is no name of the language's types
+// or of the standard library's. A type of the program may have one of its own.
+import std.http
+
+type Own = { value: Int }
+
+fn Own.new(value: Int): Own {
+    Own { value: value }
+}
+
+fn main() {
+    _ = Own.new(1)
+    let list = Array.new[Int]()
+    let app = http.App.new()
+    _ = (list, app)
+}
+
+// expect-error: E1001 a type is built by calling it: `Array(...)`, without `.new`
+// expect-error: E1001 a type is built by calling it: `http.App(...)`, without `.new`

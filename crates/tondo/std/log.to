@@ -19,7 +19,7 @@ import std.time as __time
 /// ```tondo
 /// import std.log
 ///
-/// let logger = log.Logger.new(level: log.Level.Debug)
+/// let logger = log.Logger(level: log.Level.Debug)
 /// if logger.isEnabled(log.Level.Debug) {
 ///     logger.debug("details", ["step": "2"])
 /// }
@@ -51,7 +51,7 @@ impl Display for Level {
 /// import std.log
 ///
 /// // One JSON object a line, for a collector of logs.
-/// let logger = log.Logger.new(format: log.Format.Json)
+/// let logger = log.Logger(format: log.Format.Json)
 /// logger.info("started", ["port": "8080"])
 /// ```
 pub enum Format {
@@ -65,7 +65,7 @@ pub enum Format {
 /// ```tondo
 /// import std.log
 ///
-/// let logger = log.Logger.new().withFields(["service": "billing"])
+/// let logger = log.Logger().withFields(["service": "billing"])
 /// logger.info("invoice sent", ["id": "42"])
 /// logger.flush()?
 /// ```
@@ -79,7 +79,7 @@ pub type Logger = {
 
 /// A logger to `output`, or to standard error without one.
 /// `timestamps: false` leaves out the time, for output that tests compare.
-pub fn Logger.new(
+pub fn Logger(
     output: __io.Writer? = none,
     level: Level = Level.Info,
     format: Format = Format.Text,
@@ -178,19 +178,19 @@ pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
 ///     log.info("working")
 /// }
 ///
-/// with log.Context { logger: some(log.Logger.new().withFields(["request": "r1"])) }
+/// with log.Context { logger: some(log.Logger().withFields(["request": "r1"])) }
 /// work()
 /// ```
 pub context Context = {
     logger: Logger? = none
 }
 
-/// The logger of `Context`, or without one a logger as `Logger.new()`,
+/// The logger of `Context`, or without one a logger as `Logger()`,
 /// which writes to standard error from `Info` on.
 pub fn current(): Logger {
     match Context.logger {
         some(logger) => logger
-        none => Logger.new()
+        none => Logger()
     }
 }
 

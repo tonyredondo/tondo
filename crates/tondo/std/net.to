@@ -562,7 +562,7 @@ pub fn Tls.from(
 /// import std.net
 ///
 /// // Certificates the server can change while it serves, as a renewal does.
-/// let certificates = net.Certificates.new()
+/// let certificates = net.Certificates()
 /// certificates.set(fs.readText("cert.pem")?, fs.readText("key.pem")?)?
 /// let listener = net.listen("0.0.0.0", 8443, tls: some(net.Tls.from(certificates)))?
 /// // Later, with a renewed certificate:
@@ -577,7 +577,7 @@ pub type Certificates = {
 /// New certificates. `protocols` are the ones a client may ask for to be
 /// shown a certificate of its own, as an ACME validation asks for
 /// `acme-tls/1`, which servers that show these offer.
-pub fn Certificates.new(protocols: Array[String] = []): Certificates {
+pub fn Certificates(protocols: Array[String] = []): Certificates {
     Certificates { name: netNative.certificates(protocols) }
 }
 

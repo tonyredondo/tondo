@@ -20,7 +20,7 @@ import std.internal.codec as codecNative
 /// import std.console
 /// import std.random
 ///
-/// // The same seed gives the same values; `Random.new()` a different seed.
+/// // The same seed gives the same values; `Random()` a different seed.
 /// var generator = random.Random.seeded(7)
 /// console.println("{generator.int(1..=100)} {generator.float()} {generator.shuffled([1, 2, 3])}")
 /// ```
@@ -35,7 +35,7 @@ pub fn Random.seeded(seed: Int): Random {
 }
 
 /// A generator seeded from the system's entropy: other values each run.
-pub fn Random.new(): Random {
+pub fn Random(): Random {
     var seed = 0
     for byte in codecNative.entropy(8) {
         seed = seed << 8 | Int(byte)

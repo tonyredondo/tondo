@@ -493,7 +493,7 @@ fn completion_and_highlighting() {
 /// and do not overlap.
 #[test]
 fn highlights_a_route_handler() {
-    let routed = "import std.http\n\nfn main(): !http.HttpError {\n    var app = http.App.new()\n    app.get(\n        \"/fail\",\n        (_) {\n            fail http.Problem.notFound(\"none\")\n        },\n    )\n    _ = app.start()?\n}\n";
+    let routed = "import std.http\n\nfn main(): !http.HttpError {\n    var app = http.App()\n    app.get(\n        \"/fail\",\n        (_) {\n            fail http.Problem.notFound(\"none\")\n        },\n    )\n    _ = app.start()?\n}\n";
     let dir = project("lsp-routes", &[("main.to", routed)]);
     let mut editor = Editor::start();
     let uri = editor.open(&dir.join("main.to"));

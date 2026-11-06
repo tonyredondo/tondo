@@ -110,7 +110,7 @@ pub annotation Unknown = {}
 /// import std.grpc
 ///
 /// // The `.proto` files a service comes from, which reflection gives tools.
-/// for file in grpc.Health.new().service().files {
+/// for file in grpc.Health().service().files {
 ///     console.println("{file.name}: {file.symbols.length()} names, {file.imports.length()} imports")
 /// }
 /// ```

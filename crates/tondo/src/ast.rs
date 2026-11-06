@@ -671,7 +671,7 @@ pub enum ExprKind {
         end: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
-    /// Explicit type arguments of a call: `Array.new[Int]`.
+    /// Explicit type arguments of a call: `Array[Int]`.
     Generic {
         base: Box<Expr>,
         args: Vec<TypeExpr>,

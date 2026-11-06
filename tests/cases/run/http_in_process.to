@@ -15,7 +15,7 @@ pub type Signup = {
 }
 
 fn main(): !http.HttpError {
-    var backend = http.App.new()
+    var backend = http.App()
     backend.get(
         "/items/:id",
         (request) {
@@ -36,7 +36,7 @@ fn main(): !http.HttpError {
     )
     let server = backend.start()?
 
-    var front = http.App.new()
+    var front = http.App()
     front.route("GET", "/api/*rest", http.proxy(server.url(), strip: "/api"))
     front.route("POST", "/api/*rest", http.proxy(server.url(), strip: "/api"))
     let client = front.client()

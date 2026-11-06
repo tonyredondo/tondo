@@ -35,7 +35,7 @@ impl greeter.Greeter for Greetings {
 }
 
 fn main(): !(http.HttpError | grpc.Status) {
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(greeter.greeter(Greetings {}).compress())
     let server = app.start()?
     let big = "abc".repeat(100000)
@@ -57,7 +57,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     let plain = greeter.GreeterClient.connect("http://{server.address()}")?
     console.println(plain.sayHello(greeter.HelloRequest { name: big })?.message)
     server.stop()
-    var other = http.App.new()
+    var other = http.App()
     other.grpc(greeter.greeter(Greetings {}))
     let second = other.start()?
     let toPlain = greeter.GreeterClient.on(

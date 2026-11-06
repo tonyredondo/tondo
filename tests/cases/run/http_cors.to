@@ -10,7 +10,7 @@ fn shown(response: http.Response, names: Array[String]): String {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.cors(["https://good.example"], exposed: ["x-total"])
     app.post("/items", (_) { http.Reply.text("made").header("x-total", "1") })
     app.get(
@@ -20,7 +20,7 @@ fn main(): !http.HttpError {
         },
     )
     let server = app.start()?
-    let web = http.Client.new()
+    let web = http.Client()
     let base = "http://{server.address()}"
     let preflight =
         web.request(

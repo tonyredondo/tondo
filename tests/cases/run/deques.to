@@ -10,7 +10,7 @@ fn describe(value: String?): String {
 }
 
 fn main() {
-    var queue = Deque.new[String]()
+    var queue = Deque[String]()
     queue.push("b")
     queue.push("c")
     queue.pushFront("a")
@@ -24,7 +24,7 @@ fn main() {
     console.println("{queue.isEmpty()} {describe(queue.popFront())} {describe(queue.pop())} {snapshot[-1]}")
 
     // A FIFO that slides through its storage many times.
-    var jobs = Deque.new[Job]()
+    var jobs = Deque[Job]()
     var done = 0
     var total = 0
     for i in 0..5000 {
@@ -42,7 +42,7 @@ fn main() {
     console.println("{done} {total} {jobs.length()} {jobs[0].name} {jobs[-1].name}")
 
     // Both ends, interleaved.
-    var numbers = Deque.new[Int]()
+    var numbers = Deque[Int]()
     for i in 0..100 {
         if i % 2 == 0 {
             numbers.pushFront(i)

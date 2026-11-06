@@ -3,7 +3,7 @@ import std.http
 pub type Item = { name: String }
 
 fn main() {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/items", (item: Item) { item.name })
     app.post("/items", (first: Item, second: Item) { first.name })
     app.get("/flags/:on", (on: Bool) { "{on}" })

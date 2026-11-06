@@ -35,12 +35,12 @@ fn main(): !(json.JsonError | time.TimeError) {
     console.println(
         "{made().get[Int](2)} {pair.0.get[String]("x")} {groups[0]} {[1, 2].map[String]((n) { "{n}" })}",
     )
-    let counts: sync.Map[String, Int] = sync.Map.new()
+    let counts: sync.Map[String, Int] = sync.Map()
     _ = counts.insert("a", 1)
-    let queue: sync.Queue[Int] = sync.Queue.new()
+    let queue: sync.Queue[Int] = sync.Queue()
     console.println("{counts.get("a")} {queue.length()}")
     let lock = sync.Mutex(7)
-    let once: sync.Once[Int] = sync.Once.new[Int]()
+    let once: sync.Once[Int] = sync.Once[Int]()
     let first = spawn lock.get()
     let second = spawn once.getOrInit(later)
     console.println("{first.wait()} {second.wait()}")

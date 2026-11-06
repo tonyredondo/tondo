@@ -1814,7 +1814,7 @@ import std.random
 import std.time
 
 fn main() {
-    var dice = random.Random.new()
+    var dice = random.Random()
     let rolled = dice.int(0..1000000)
     let name = console.readLine().unwrapOr("nobody")
     let path = "{name}.txt"
@@ -1893,7 +1893,7 @@ const ROLLED: &str = r#"import std.console
 import std.random
 
 fn main() {
-    var dice = random.Random.new()
+    var dice = random.Random()
     var total = 0
     for i in 0..6 {
         let roll = dice.int(1..7)
@@ -2033,7 +2033,7 @@ unsafe fn worker(argument: Pointer[ffi.Void]?): Pointer[ffi.Void]? {
 }
 
 fn main() {
-    let order = sync.Mutex(Array.new[Int]())
+    let order = sync.Mutex(Array[Int]())
     unsafe {
         let context = ffi.context(order)
         let first = ffi.allocate[UInt64]()
@@ -2123,7 +2123,7 @@ fn debugger_compares_two_recorded_runs() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // A clock differs in every run, and decides nothing.
-    let program = "import std.console\nimport std.random\nimport std.time\n\nfn total(): Int {\n    var dice = random.Random.new()\n    \
+    let program = "import std.console\nimport std.random\nimport std.time\n\nfn total(): Int {\n    var dice = random.Random()\n    \
                    let rate = dice.int(1..=4)\n    rate * 6\n}\n\nfn main() {\n    let began = time.utcNow()\n    let sum = total()\n    if sum > 12 {\n        \
                    panic(\"over budget\")\n    }\n    console.println(\"fine {began}\")\n}\n";
     std::fs::write(dir.join("flaky.to"), program).unwrap();
@@ -2553,7 +2553,7 @@ fn main() {
     var items = [1, 2]
     add(var items)
     let stats = sync.Mutex(Counter { hits: 0 })
-    var group = Group.new[Unit]()
+    var group = Group[Unit]()
     for _ in 0..3 {
         group.add(spawn record(stats))
     }
@@ -2898,7 +2898,7 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     let program = format!(
         "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    let secret = \"hidden{{id}}\"\n    \
          time.sleep(time.seconds(60))\n    secret\n}}\n\nfn main(): !http.HttpError {{\n    \
-         var app = http.App.new()\n    app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
+         var app = http.App()\n    app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("hangs.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
@@ -3118,7 +3118,7 @@ fn a_request_is_followed_through_its_tasks() {
     let port = free_port();
     let program = format!(
         "import std.http\nimport std.time\n\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
-         id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+         id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
          app.get(\"/slow\", () {{\n        let job = spawn fetch(1)\n        \"{{job.wait()}}\"\n    }})\n    \
          app.listen({port})?\n}}\n"
     );
@@ -3934,7 +3934,7 @@ fn a_dump_says_who_waits_for_whom() {
         fn want(lock: sync.Mutex[Int]) {\n    lock.update((value) { value = value + 1 })\n}\n\n\
         fn main() {\n    let order = \"order-77\"\n    let lock = sync.Mutex(0)\n    \
         let (sender, gate) = channel[Int]()\n    let holder = spawn hold(lock, gate)\n    \
-        time.sleep(time.milliseconds(50))\n    var group = Group.new[Unit]()\n    for _ in 0..5 {\n        \
+        time.sleep(time.milliseconds(50))\n    var group = Group[Unit]()\n    for _ in 0..5 {\n        \
         group.add(spawn want(lock))\n    }\n    time.sleep(time.milliseconds(200))\n    \
         console.println(\"ready\")\n    if order != \"\" {\n        panic(\"look now\")\n    }\n    \
         sender.close()\n    holder.wait()\n    group.wait()\n}\n";
@@ -4132,7 +4132,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let port = free_port();
     let program = format!(
         "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    time.sleep(time.seconds(60))\n    \
-         \"done {{id}}\"\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+         \"done {{id}}\"\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
          app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
@@ -4184,7 +4184,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     std::fs::create_dir_all(&debugged).unwrap();
     let debug_port = free_port();
     let program = format!(
-        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+        "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
          app.get(\"/one\", () {{ \"done\" }})\n    app.listen({debug_port})?\n}}\n"
     );
     std::fs::write(debugged.join("server.to"), program).unwrap();
@@ -4236,7 +4236,7 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\nimport std.http\n\nfn main(): !http.HttpError {\n    var app = http.App.new()\n    app.get(\n        \"/hit\",\n        (_) {\n            let s = 1\n            http.Reply.text(\"hit {s}\")\n        },\n    )\n    let reply = app.client().get(\"/hit\")?\n    console.println(\"{reply.status()}\")\n}\n";
+    let program = "import std.console\nimport std.http\n\nfn main(): !http.HttpError {\n    var app = http.App()\n    app.get(\n        \"/hit\",\n        (_) {\n            let s = 1\n            http.Reply.text(\"hit {s}\")\n        },\n    )\n    let reply = app.client().get(\"/hit\")?\n    console.println(\"{reply.status()}\")\n}\n";
     std::fs::write(dir.join("once.to"), program).unwrap();
     let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "once.to"])

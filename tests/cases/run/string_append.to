@@ -34,7 +34,7 @@ fn main() {
         long = "{long}{i % 10}"
     }
     console.println("{long.length()} {long[0:12]}")
-    var built = format.Builder.new()
+    var built = format.Builder()
     built.add("x")
     built.add(42)
     built.addLine(true)
@@ -42,7 +42,7 @@ fn main() {
     var waited = "waited "
     waited = "{waited}{time.hours(2)}"
     console.println("{waited} {time.seconds(1)}")
-    var known = format.Builder.new()
+    var known = format.Builder()
     for _ in 0..3 {
         known.add("a")
         known.add("bc")

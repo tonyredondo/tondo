@@ -9,8 +9,8 @@ import std.xml
 fn main() {
     let node = xml.Node.Text("a")
     console.println("{node}")
-    let counts = sync.Map.new()
+    let counts = sync.Map()
 }
 
 // expect-error: E1105 `xml.Node` does not implement `Display`: another module declares it, so write what to show of it, its fields or a `match` on it
-// expect-error: E1101 `sync.Map.new` needs the types it holds: `sync.Map.new[String, Int]()`, or give the binding its type
+// expect-error: E1101 `sync.Map` needs the types it holds: `sync.Map[String, Int]()`, or give the binding its type

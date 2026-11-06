@@ -32,7 +32,7 @@ impl greeter.Greeter for Named {
 }
 
 fn started(name: String): http.Server ! http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(greeter.greeter(Named { name }))
     app.start()?
 }

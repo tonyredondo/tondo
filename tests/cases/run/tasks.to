@@ -29,7 +29,7 @@ fn score(id: Int): Int ! FetchError {
 }
 
 fn total(ids: Array[Int]): Int ! FetchError {
-    var group = Group.new[Int ! FetchError]()
+    var group = Group[Int ! FetchError]()
     for id in ids {
         group.add(spawn score(id))
     }
@@ -75,7 +75,7 @@ fn main() {
     console.println("{(spawn greet("again")).wait()}")
 
     // Results come back in the order the tasks were added.
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for n in 1..=5 {
         group.add(spawn square(n))
     }
@@ -85,7 +85,7 @@ fn main() {
     show(total([1, 2, 4]))
     show(total([1, 3, 5]))
 
-    var names = Group.new[String]()
+    var names = Group[String]()
     names.add(spawn greet("a"))
     names.add(spawn greet("b"))
     var seen = 0
@@ -99,7 +99,7 @@ fn main() {
     }
     console.println("seen {seen}, empty {names.isEmpty()}")
 
-    var jobs = Array.new[Join[Int]]()
+    var jobs = Array[Join[Int]]()
     for i in 0..4 {
         jobs.push(spawn square(i))
     }

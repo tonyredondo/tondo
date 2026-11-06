@@ -374,7 +374,7 @@ const Logo: Array[Byte] = embed.bytes("logo.png")    // any file
 const Site: fs.FileSystem = embed.files("public")    // a directory, but hidden files
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.files("/", Site)          // from memory; "/" is index.html
     app.listen(port: 8080)?
 }
@@ -622,7 +622,7 @@ import std.time
 
 fn main(): !(csv.CsvError | time.TimeError) {
     let started = time.now()
-    let logger = log.Logger.new(level: log.Level.Debug)
+    let logger = log.Logger(level: log.Level.Debug)
     let date = time.parseDateTime("2026-10-22T08:00:00+02:00")?
     logger.info("starting", ["date": "{date}"])
     for record in csv.records(io.reader("name,age\nada,36\n")) {
@@ -635,7 +635,7 @@ fn main(): !(csv.CsvError | time.TimeError) {
 
 A logger put in `log.Context` is the one `log.info(...)` and the other
 functions of `std.log` write with, everywhere below: `with log.Context {
-logger: some(log.Logger.new(format: log.Format.Json)) }` at the start of
+logger: some(log.Logger(format: log.Format.Json)) }` at the start of
 `main`.
 
 ## Watching a running program

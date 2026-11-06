@@ -52,7 +52,7 @@ fn main() {
             console.println("bad")
         }
     }
-    let built = Array.new[Int]()
+    let built = Array[Int]()
     console.println("{built} {built.length()}")
 }
 

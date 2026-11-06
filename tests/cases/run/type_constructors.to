@@ -1,0 +1,40 @@
+// A type is built by calling it: a function named as the type, or a collection
+// of the language with what it holds.
+import std.console
+import std.sync
+
+type Box[T] = { value: T }
+
+fn Box[T](value: T): Box[T] {
+    Box[T] { value: value }
+}
+
+fn Box[T].shown(self): String {
+    "boxed"
+}
+
+type Plain = { count: Int }
+
+fn Plain(count: Int = 1): Plain {
+    Plain { count: count }
+}
+
+fn Plain.twice(count: Int): Plain {
+    Plain(count * 2)
+}
+
+fn main() {
+    var list = Array[Int]()
+    list.push(1)
+    var names = Set[String]()
+    _ = names.insert("a")
+    let ages = Map[String, Int]()
+    let waiting = Deque[Int]()
+    let shared = sync.Queue[Int]()
+    shared.push(1)
+    console.println("{Plain().count} {Plain(2).count} {Plain.twice(2).count} {Box(3).value} {Box[Int](4).shown()}")
+    console.println("{list.length()} {names.length()} {ages.length()} {waiting.length()} {shared.length()}")
+}
+
+// expect-stdout: 1 2 4 3 boxed
+// expect-stdout: 1 1 0 0 1

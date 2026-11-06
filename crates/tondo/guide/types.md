@@ -38,8 +38,9 @@ pub type UserId = Int
 /// An alias: another name for the same type.
 alias Pair = (Int, String)
 
-/// A static function and a method, declared outside the type.
-fn User.new(name: String): User {
+/// A type is built by calling it: this function, named as the type. Other
+/// functions and methods are declared outside it too.
+fn User(name: String): User {
     User { name, age: 0, password: "" }
 }
 
@@ -53,7 +54,7 @@ fn User.birthday(mut self) {
 }
 
 fn main() {
-    var ada = User.new("Ada")
+    var ada = User("Ada")
     ada.birthday()
     let older = ada with { age: 40 }            // a copy with changes
     let id = UserId(7)

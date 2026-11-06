@@ -2131,7 +2131,7 @@ impl Server {
     }
 
     /// What a type gives by its name: its functions that take no `self`,
-    /// as `Builder.new`, and an enum's variants. The type is of `module`,
+    /// as `Random.seeded`, and an enum's variants. The type is of `module`,
     /// or with none, one the compiler gives, as `String`.
     fn type_members(&self, analyzed: &Analyzed, module: Option<&str>, name: &str, call: bool) -> Option<Vec<Value>> {
         let standard = match module {

@@ -5345,3 +5345,15 @@ to give a reason, because the authors Tondo is made for silence what they could 
 warns when it silences nothing, so that none outlives its reason; and what it silences stays
 in `silenced`, to be reviewed. A program with errors may not have reached the warning, and a
 profile nobody asked for gives none, so neither counts as silencing nothing.
+
+## A type is built by calling it
+
+`.new`, `Type(...)` and module functions built things side by side, and W1004 found out when
+`RateLimiter`, the one of the `sync` family written in Tondo, did not fit. One rule could
+go either way: everything `.new`, or nothing. Calling the type is shorter, needs no word, is
+what `UserId(5)` and `Int(x)` already were, and what an author coming from most languages
+writes. A function named as a type of its module is its constructor; collections take what
+they hold, as `Array[Int]()`; other ways to build keep their names, as `sql.open(url)` and
+`PrivateKey.fromPem(text)`. `Type.new` is an error with its repair on the language's types
+and the standard library's, with no transition, since nobody has programs to migrate; on a
+type of a program it is a method like any other.

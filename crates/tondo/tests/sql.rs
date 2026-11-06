@@ -113,7 +113,7 @@ fn main(): !sql.SqlError {
     }
     console.println("{crashed.isErr()} {count(db)?} {db.queryOne[String]("SELECT name FROM users WHERE id = {1}")?}")
 
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for index in 0..20 {
         group.add(spawn plus(db, index))
     }

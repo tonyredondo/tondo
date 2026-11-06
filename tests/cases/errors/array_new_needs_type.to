@@ -1,5 +1,5 @@
 fn main() {
-    let values = Array.new()
+    let values = Array()
 }
 
 // expect-error: E1101

@@ -4,7 +4,7 @@
 copies it (the storage is shared until a copy changes). A function changes
 the caller's collection only through a `var` parameter or `var self`.
 An empty one takes its type from where it goes, as `[]`, `[:]` and `Set[]`, or
-says it: `Array.new[Int]()`, `Map.new[String, Int]()`.
+says it: `Array[Int]()`, `Map[String, Int]()`.
 
 ```tondo
 import std.console
@@ -27,7 +27,7 @@ fn main() {
     seen.insert(3)
     console.println("{seen.contains(2)} {seen}")
 
-    var queue = Deque.new[String]()
+    var queue = Deque[String]()
     queue.push("b")
     queue.pushFront("a")
     console.println("{queue.popFront()} {queue}")

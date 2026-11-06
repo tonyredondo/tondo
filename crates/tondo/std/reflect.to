@@ -1082,7 +1082,7 @@ impl[T: Reflect] Reflect for Deque[T] {
     fn reflectFrom(value: Value): Deque[T] ! ReflectError {
         match value.sequence() {
             some(values) => {
-                var items = Deque.new[T]()
+                var items = Deque[T]()
                 for item in values {
                     items.push(item.to()?)
                 }

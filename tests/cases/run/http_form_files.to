@@ -13,7 +13,7 @@ type Profile = {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.post(
         "/profile",
         (request) {

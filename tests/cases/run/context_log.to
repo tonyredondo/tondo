@@ -25,7 +25,7 @@ fn handle(id: String, user: String?) {
 }
 
 fn main() {
-    with log.Context { logger: some(log.Logger.new(timestamps: false)) }
+    with log.Context { logger: some(log.Logger(timestamps: false)) }
     log.info("starting")
     handle("r-42", some("ada"))
 }

@@ -581,7 +581,7 @@ fn store(name: &str) -> Option<Arc<Certificates>> {
     lock(&STORES).get(index).cloned()
 }
 
-/// `net.Certificates.new(protocols)`: a new store, and its name.
+/// `net.Certificates(protocols)`: a new store, and its name.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_tls_certificates(protocols: *mut ArrayHeader) -> *mut Str {
     let offered = strings(protocols).into_iter().map(String::into_bytes).collect();
@@ -624,7 +624,7 @@ pub unsafe extern "C" fn tondo_rt_tls_certificates_set(
     if !store.offered.contains(&protocol) {
         let protocol = String::from_utf8_lossy(&protocol);
         let why = format!(
-            "these certificates offer no `{protocol}`: make them with `Certificates.new(protocols: [\"{protocol}\"])`"
+            "these certificates offer no `{protocol}`: make them with `Certificates(protocols: [\"{protocol}\"])`"
         );
         return str_new(why.as_bytes());
     }

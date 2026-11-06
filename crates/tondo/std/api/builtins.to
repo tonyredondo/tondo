@@ -199,7 +199,7 @@ pub fn Join.cancel(self)
 pub fn Join.detach(self)
 
 /// An empty group of tasks whose results are `T` (language 11.12).
-pub fn Group.new[T](): Group[T]
+pub fn Group[T](): Group[T]
 
 /// Adds a task to the group.
 pub fn Group.add(var self, job: Join[T])

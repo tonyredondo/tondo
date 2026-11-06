@@ -6,17 +6,17 @@ import std.log
 
 fn main() {
     let buffer = io.Buffer()
-    let logger = log.Logger.new(buffer.writer(), level: log.Level.Debug, timestamps: false)
+    let logger = log.Logger(buffer.writer(), level: log.Level.Debug, timestamps: false)
     logger.trace("hidden")
     logger.debug("starting", ["port": "8080"])
     let request = logger.withFields(["request": "42"])
     request.info("signed in", ["user": "ada", "note": "two words", "empty": ""])
     request.error("failed")
-    let json = log.Logger.new(buffer.writer(), format: log.Format.Json, timestamps: false)
+    let json = log.Logger(buffer.writer(), format: log.Format.Json, timestamps: false)
     json.warn("disk \"low\"", ["free": "3%"])
     console.print(buffer.text().unwrapOr(""))
     console.println("{logger.isEnabled(log.Level.Trace)} {logger.isEnabled(log.Level.Error)}")
-    log.Logger.new(timestamps: false).info("to stderr", ["k": "v"])
+    log.Logger(timestamps: false).info("to stderr", ["k": "v"])
 }
 
 // expect-stdout: DEBUG starting port=8080

@@ -11,8 +11,8 @@
 //
 // // A service of a `.proto` file is served the same way:
 // // `app.grpc(users.userService(value))`.
-// let health = grpc.Health.new()
-// var app = http.App.new()
+// let health = grpc.Health()
+// var app = http.App()
 // app.grpc(health.service())
 // app.grpc(grpc.reflection([health.service()]))
 // app.listen(port: 50051)?
@@ -58,7 +58,7 @@ import std.time as __time
 ///     HelloReply { message: "Hello, {request.name}!" }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
@@ -222,7 +222,7 @@ impl Display for Code {
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
@@ -345,7 +345,7 @@ fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
 ///     HelloReply { message: "Hello, {request.name}, through {call.method}" }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
@@ -419,7 +419,7 @@ pub fn setTrailer(name: String, value: String) {
 ///     name: "demo.Greeter"
 ///     methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }]
 /// }
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(greeter.onCall((call, next) {
 ///     console.println("serving {call.method}")
 ///     next()?
@@ -465,7 +465,7 @@ pub type Service = {
 ///
 /// // With no side effects, Connect clients may call it with a `GET`, which caches.
 /// let method = grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? }, noSideEffects: true }
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [method] })
 /// let server = app.start()?
 /// console.println(grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
@@ -500,7 +500,7 @@ pub type Method = {
 /// }
 ///
 /// let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] }
-/// var app = http.App.new()
+/// var app = http.App()
 /// // Each message of each call, as the service receives or sends it.
 /// app.grpc(greeter.onMessage((call, direction, message) {
 ///     let arrow = match direction {
@@ -541,8 +541,8 @@ impl Display for Direction {
 /// import std.log
 ///
 /// let failed = diagnostics.counter("health.failed")
-/// let health = grpc.Health.new()
-/// var app = http.App.new()
+/// let health = grpc.Health()
+/// var app = http.App()
 /// // Every call of the service: logged, and its failures counted.
 /// app.grpc(health.service().onCall((call, next) {
 ///     match next() {
@@ -623,7 +623,7 @@ impl __http.GrpcService for Service {
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Chat", handler: chat }] })
 /// let server = app.start()?
 /// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Greeter/Chat")
@@ -720,8 +720,8 @@ fn serve(
     compressing: Bool,
 ): __http.Reply ! __http.Problem {
     let (output, reader) = __io.pipe()
-    let headers = __http.Trailers.new()
-    let trailers = __http.Trailers.new()
+    let headers = __http.Trailers()
+    let trailers = __http.Trailers()
     let ready = grpcNative.signal()
     var metadata = request.headers()
     let contentType = metadata.get("content-type").unwrapOr("")
@@ -1246,7 +1246,7 @@ enum Source {
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: (call) { grpc.serverStream(call, countdown)? } }] })
 /// let server = app.start()?
 /// let replies = grpc.connect(server.url())?.serverStream[HelloRequest, HelloReply]("/demo.Launch/Countdown", HelloRequest { name: "lift-off" })
@@ -1347,7 +1347,7 @@ pub enum Balancing {
 ///     HelloReply { message: "Hello, {request.name}!" }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
 /// let server = app.start()?
 /// // A channel keeps its connection for every call; its interceptors see each.
@@ -1641,7 +1641,7 @@ pub fn Channel.serverStream[
 ///     HelloReply { message: "Hello, {names.join(" and ")}!" }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: (call) { grpc.clientStream(call, greetAll)? } }] })
 /// let server = app.start()?
 /// let upload = grpc.connect(server.url())?.clientStream[HelloRequest, HelloReply]("/demo.Greeter/GreetAll")
@@ -1705,7 +1705,7 @@ pub fn Upload[
 ///     }
 /// }
 ///
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: (call) { grpc.bidiStream(call, echo)? } }] })
 /// let server = app.start()?
 /// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Echo/Echo")
@@ -1788,9 +1788,9 @@ fn pairs(list: Array[String]): Map[String, String] {
 /// import std.http
 /// import std.time
 ///
-/// let health = grpc.Health.new()
+/// let health = grpc.Health()
 /// health.set("demo.Greeter", grpc.ServingStatus.Serving)
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(health.service())
 /// let server = app.start(port: 50051)?
 /// // While it drains for a stop, load balancers stop sending it calls.
@@ -1829,9 +1829,9 @@ impl Display for ServingStatus {
 ///
 /// // The standard health service, which load balancers and Kubernetes ask;
 /// // the empty name is the whole server.
-/// let health = grpc.Health.new()
+/// let health = grpc.Health()
 /// health.set("", grpc.ServingStatus.Serving)
-/// var app = http.App.new()
+/// var app = http.App()
 /// app.grpc(health.service())
 /// app.grpc(grpc.reflection([health.service()]))
 /// app.listen(port: 50051)?
@@ -1841,7 +1841,7 @@ pub type Health = {
 }
 
 /// Health whose server serves, and no service yet.
-pub fn Health.new(): Health {
+pub fn Health(): Health {
     var statuses: Map[String, ServingStatus] = [:]
     statuses[""] = ServingStatus.Serving
     Health { statuses: __sync.Mutex(statuses) }

@@ -13,7 +13,7 @@
 //
 // let hits = sync.Mutex(0)
 // let counter = sync.Atomic(0)
-// var group = Group.new[Unit]()
+// var group = Group[Unit]()
 // for _ in 0..4 {
 //     group.add(spawn record(hits, counter))
 // }
@@ -81,7 +81,7 @@ pub fn Semaphore.tryAcquire(self): Permit?
 pub fn Permit.release(self)
 
 /// A value initialised once; failures leave it empty for the next try.
-pub fn Once.new[T](): Once[T]
+pub fn Once[T](): Once[T]
 
 /// The value, made by `init` the first time; other tasks wait meanwhile,
 /// and when `init` fails or is cancelled, the next call tries again.
@@ -150,7 +150,7 @@ pub enum CompareExchange[T] {
 }
 
 // Shared collections, built with literals (`sync.Map["one": 1]`), empty
-// with `sync.Queue.new[Job]()`, or from a value collection
+// with `sync.Queue[Job]()`, or from a value collection
 // (`sync.Array(values)`). `for value in shared` walks a snapshot.
 
 /// Fixed length.
@@ -164,7 +164,7 @@ pub enum CompareExchange[T] {
 /// }
 ///
 /// let slots = sync.Array([0, 0, 0, 0])
-/// var group = Group.new[Unit]()
+/// var group = Group[Unit]()
 /// for index in 0..4 {
 ///     group.add(spawn count(slots, index))
 /// }
@@ -174,7 +174,7 @@ pub enum CompareExchange[T] {
 pub type Array[T]
 
 /// A map that tasks share, read without locks: `sync.Map["a": 1]`,
-/// `sync.Map.new[K, V]()` or `sync.Map(entries)`.
+/// `sync.Map[K, V]()` or `sync.Map(entries)`.
 ///
 /// ```tondo
 /// import std.console
@@ -191,8 +191,8 @@ pub type Array[T]
 ///     }
 /// }
 ///
-/// let seen = sync.Map.new[String, Int]()
-/// var group = Group.new[Unit]()
+/// let seen = sync.Map[String, Int]()
+/// var group = Group[Unit]()
 /// for page in ["/", "/docs", "/"] {
 ///     group.add(spawn visit(seen, page))
 /// }
@@ -202,7 +202,7 @@ pub type Array[T]
 pub type Map[K: Key, V]
 
 /// A set that tasks share, read without locks: `sync.Set["a"]`,
-/// `sync.Set.new[K]()` or `sync.Set(keys)`.
+/// `sync.Set[K]()` or `sync.Set(keys)`.
 ///
 /// ```tondo
 /// import std.console
@@ -212,8 +212,8 @@ pub type Map[K: Key, V]
 ///     taken.insert(name)
 /// }
 ///
-/// let taken = sync.Set.new[String]()
-/// var group = Group.new[Bool]()
+/// let taken = sync.Set[String]()
+/// var group = Group[Bool]()
 /// for name in ["ada", "bo", "ada"] {
 ///     group.add(spawn claim(taken, name))
 /// }
@@ -228,7 +228,7 @@ pub type Set[K: Key]
 /// import std.console
 /// import std.sync
 ///
-/// let undo = sync.Stack.new[String]()
+/// let undo = sync.Stack[String]()
 /// undo.push("type a")
 /// undo.push("type b")
 /// console.println("{undo.pop()} then {undo.get(-1)}; left {undo.snapshot()}")
@@ -250,12 +250,12 @@ pub type Stack[T]
 ///     }
 /// }
 ///
-/// let jobs = sync.Queue.new[Int]()
+/// let jobs = sync.Queue[Int]()
 /// for job in 1..=10 {
 ///     jobs.push(job)
 /// }
 /// let done = sync.Atomic(0)
-/// var group = Group.new[Unit]()
+/// var group = Group[Unit]()
 /// for _ in 0..3 {
 ///     group.add(spawn work(jobs, done))
 /// }

@@ -795,7 +795,10 @@ impl Linker<'_> {
         // A C function keeps its names.
         let (conventions, visible) = (self.conventions, self.visible.len());
         self.conventions &= f.foreign.is_none();
-        self.convention(&f.name, Case::Camel);
+        // One named as a type of its module builds it (11.5).
+        if f.owner.is_some() || !self.decls[self.module].types.contains_key(&f.name.name) {
+            self.convention(&f.name, Case::Camel);
+        }
         match &mut f.owner {
             Some(owner) => {
                 let mut path = vec![owner.clone()];

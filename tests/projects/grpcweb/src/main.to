@@ -80,10 +80,10 @@ fn shown(body: Array[Byte]): String {
 }
 
 fn main(): !(http.HttpError | grpc.Status) {
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(greeter.greeter(Greetings {}))
     let server = app.start()?
-    let web = http.Client.new()
+    let web = http.Client()
     let base = "http://{server.address()}/demo.v1.Greeter"
     let binary = "application/grpc-web+proto"
     let hello =

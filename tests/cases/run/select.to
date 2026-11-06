@@ -67,7 +67,7 @@ fn main() {
     }
 
     // Waiting stops the task, not the thread: these sleeps overlap.
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for i in 0..100 {
         group.add(spawn nap(i))
     }

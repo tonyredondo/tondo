@@ -1326,7 +1326,7 @@ impl<'a> Checker<'a> {
             let unrepeatable = match qualified {
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v4" => Some("`Uuid.v4`"),
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v7" => Some("`Uuid.v7`"),
-                (m, Some(o), n) if m == "std.random" && o == "Random" && n == "new" => Some("`Random.new`"),
+                (m, None, n) if m == "std.random" && n == "Random" => Some("`Random()`"),
                 (m, None, n) if m == "std.random" && n == "entropy" => Some("`random.entropy`"),
                 _ => None,
             };
@@ -8094,7 +8094,7 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::WeakNew, vec![reference]), ty, span)
     }
 
-    /// `sync.Map.new[K, V]()` and the other empty shared collections of
+    /// `sync.Map[K, V]()` and the other empty shared collections of
     /// `std.sync`, of these types.
     fn sync_empty(&mut self, kind: &ast::Ident, types: Vec<Ty>, args: &[ast::Arg], span: Span) -> hir::Expr {
         if !args.is_empty() {
@@ -8119,7 +8119,7 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::SyncNew, vec![empty]), ty, span)
     }
 
-    /// `sync.Map.new()` without type arguments: those of the type it is
+    /// `sync.Map()` without type arguments: those of the type it is
     /// given to.
     fn sync_empty_expected(
         &mut self,
@@ -8138,7 +8138,7 @@ impl<'a> Checker<'a> {
             _ => {
                 let example = if kind.name == "Map" { "[String, Int]" } else { "[Int]" };
                 let message = format!(
-                    "`sync.{0}.new` needs the types it holds: `sync.{0}.new{example}()`, or give the binding its type",
+                    "`sync.{0}` needs the types it holds: `sync.{0}{example}()`, or give the binding its type",
                     kind.name
                 );
                 self.diags.error("E1101", span, message);
@@ -8197,7 +8197,7 @@ impl<'a> Checker<'a> {
                 return Self::error_expr(span);
             }
             ("Once", _) => {
-                self.diags.error("E1102", span, "`sync.Once` starts empty: `sync.Once.new[T]()`");
+                self.diags.error("E1102", span, "`sync.Once` starts empty: `sync.Once[T]()`");
                 return Self::error_expr(span);
             }
             ("Array" | "Stack" | "Queue" | "Map" | "Set", _) => {
@@ -13202,13 +13202,7 @@ impl<'a> Checker<'a> {
             || self.type_named(first).is_some()
         {
             let path = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
-            let message = match first {
-                "Array" | "Set" | "Deque" => {
-                    format!("an empty `{first}` is `{first}.new[T]()`, or `[]` where its type is known")
-                }
-                "Map" => "an empty `Map` is `Map.new[K, V]()`, or `[:]` where its type is known".to_string(),
-                _ => format!("`{path}` takes no type arguments: call it as `{path}(...)`"),
-            };
+            let message = format!("`{path}` takes no type arguments: call it as `{path}(...)`");
             self.diags.error("E1104", span, message);
         } else {
             self.unknown_name(cx, first, segments[0].span);
@@ -13216,7 +13210,7 @@ impl<'a> Checker<'a> {
         Self::error_expr(span)
     }
 
-    /// `Array.new[T]()` and `Array.withCapacity[T](capacity)`.
+    /// `Array[T]()` and `Array.withCapacity[T](capacity)`.
     fn generic_call(
         &mut self,
         cx: &mut FnCx,
@@ -13393,16 +13387,20 @@ impl<'a> Checker<'a> {
                 if *op == "unbox" { (hir::ReflectOp::Unbox, ty) } else { (hir::ReflectOp::Is, Ty::BOOL) };
             return Self::mk(hir::ExprKind::Reflect(op, ty, vec![value]), result, span);
         }
-        if let [module, _, "new"] = names.as_slice()
+        if let Some(retired) = self.retired_new(cx, segments, span) {
+            return retired;
+        }
+        if let [module, _] = names.as_slice()
+            && args.is_empty()
             && self.lookup(cx, module).is_none()
             && let Some(ModuleName::Module(StdModule::Sync)) = self.names.get(*module)
         {
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             return self.sync_empty(&segments[1], types, args, span);
         }
-        if let ["Group", "new"] = names.as_slice() {
+        if let ["Group"] = names.as_slice() {
             let [result] = type_args else {
-                self.diags.error("E1104", span, "`Group.new` takes one type argument, the tasks' result");
+                self.diags.error("E1104", span, "`Group` takes one type argument, the tasks' result");
                 return Self::error_expr(span);
             };
             if !args.is_empty() {
@@ -13412,7 +13410,7 @@ impl<'a> Checker<'a> {
             let ty = self.types.handle(Handle::Group, result);
             return Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupNew, Vec::new()), ty, span);
         }
-        if let ["Map" | "Set", "new"] = names.as_slice() {
+        if let ["Map" | "Set"] = names.as_slice() {
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             let ty = match (names[0], types.as_slice()) {
                 ("Map", [key, value]) => {
@@ -13434,7 +13432,7 @@ impl<'a> Checker<'a> {
             return Self::mk(hir::ExprKind::MapOp(hir::MapOp::New, Vec::new()), ty, span);
         }
         let (op, params) = match names.as_slice() {
-            ["Array" | "Deque", "new"] => (hir::ArrayOp::New, Vec::new()),
+            ["Array" | "Deque"] => (hir::ArrayOp::New, Vec::new()),
             ["Array", "withCapacity"] => (hir::ArrayOp::WithCapacity, vec![Ty::INT]),
             _ => return self.not_generic(cx, segments, span),
         };
@@ -14121,6 +14119,36 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `App()`, which is `App()`: a type is built by calling it (11.5). A
+    /// type of the program may have a `new` of its own.
+    fn retired_new(&mut self, cx: &FnCx, segments: &[ast::Ident], span: Span) -> Option<hir::Expr> {
+        let [prefix @ .., owner, last] = segments else { return None };
+        if last.name != "new" || self.lookup(cx, &segments[0].name).is_some() {
+            return None;
+        }
+        let ty = match prefix {
+            [] => self.type_named(&owner.name),
+            [module] => self.module_type(&module.name, &owner.name),
+            _ => None,
+        };
+        if let Some(ty) = ty {
+            let key = self.owner_key(ty);
+            if self.methods.contains_key(&(key, "new".to_string())) {
+                return None;
+            }
+        }
+        let qualified = !prefix.is_empty() || owner.name.contains('.');
+        if !qualified && !matches!(owner.name.as_str(), "Array" | "Deque" | "Group" | "Map" | "Set") {
+            return None;
+        }
+        let name = Self::path_text(&segments[..segments.len() - 1]);
+        let message = format!("a type is built by calling it: `{name}(...)`, without `.new`");
+        self.diags.error("E1001", last.span, message);
+        let dot = Span::new(owner.span.end, last.span.end);
+        self.diags.fix(format!("write `{name}(...)`"), true, vec![(dot, String::new())]);
+        Some(Self::error_expr(span))
+    }
+
     /// `value.method(args)` for method `index` of a trait with `Self` set to
     /// the receiver's type.
     #[allow(clippy::too_many_arguments)]
@@ -14524,10 +14552,10 @@ impl<'a> Checker<'a> {
             (TyKind::Deque(_), "dequeue" | "shift") => "use `popFront()`",
             (TyKind::Deque(_), "unshift" | "prepend") => "use `pushFront(value)`",
             (TyKind::Array(_), "dequeue" | "shift" | "popFront") => {
-                "use `removeAt(0)`, or a `Deque` for a queue: `Deque.new[T]()` has `popFront()`"
+                "use `removeAt(0)`, or a `Deque` for a queue: `Deque[T]()` has `popFront()`"
             }
             (TyKind::Array(_), "unshift" | "prepend" | "pushFront") => {
-                "use `insert(0, value)`, or a `Deque` for a queue: `Deque.new[T]()` has `pushFront(value)`"
+                "use `insert(0, value)`, or a `Deque` for a queue: `Deque[T]()` has `pushFront(value)`"
             }
             (TyKind::Array(_), "remove") => "use `removeAt(index)`",
             (TyKind::Array(_), "indexOf" | "includes") => "use `value in array`",
@@ -15240,7 +15268,7 @@ impl<'a> Checker<'a> {
         }
         // The constants of the intrinsic numeric types: `Int.max`, `Float.pi`.
         if let [type_name, constant] = segments
-            && !self.names.contains_key(&type_name.name)
+            && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_)))
             && let Some(ty) = self.intrinsic_owner(&type_name.name)
             && let Some(kind) = self.intrinsic_constant(ty, &constant.name)
         {
@@ -15290,7 +15318,7 @@ impl<'a> Checker<'a> {
         }
         // `Type.operation` as a value: an associated operation (11.7).
         if let [type_name, operation] = segments
-            && !self.names.contains_key(&type_name.name)
+            && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_)))
             && let Some(owner) = self.type_named(&type_name.name)
             && let Some(&id) = self.methods.get(&(owner, operation.name.clone()))
         {
@@ -15686,9 +15714,21 @@ impl<'a> Checker<'a> {
             }
             _ => {}
         }
-        if let ["Array", "new" | "withCapacity"] | ["Deque" | "Group", "new"] = names.as_slice() {
-            let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);
+        if let Some(retired) = self.retired_new(cx, segments, span) {
+            return retired;
+        }
+        if let ["Array", "withCapacity"] = names.as_slice() {
+            let message = "`Array.withCapacity` needs its element type: `Array.withCapacity[T](...)`";
             self.diags.error("E1101", span, message);
+            return Self::error_expr(span);
+        }
+        if let [kind @ ("Array" | "Deque" | "Group")] = names.as_slice() {
+            self.diags.error("E1101", span, format!("`{kind}` needs its element type: `{kind}[T]()`"));
+            return Self::error_expr(span);
+        }
+        if let [kind @ ("Map" | "Set")] = names.as_slice() {
+            let types = if *kind == "Map" { "K, V" } else { "T" };
+            self.diags.error("E1101", span, format!("`{kind}` needs what it holds: `{kind}[{types}]()`"));
             return Self::error_expr(span);
         }
         if let ["Ref"] = names.as_slice()
@@ -15737,7 +15777,7 @@ impl<'a> Checker<'a> {
         // its receiver written first (11.5). Operations and variants never
         // share a name.
         if let [type_name, operation] = names.as_slice()
-            && !self.names.contains_key(*type_name)
+            && matches!(self.names.get(*type_name), None | Some(ModuleName::Fn(_)))
             && let Some(owner) = self.type_named(type_name)
         {
             let integer = self.bound_by(owner, self.integer);
@@ -16174,10 +16214,10 @@ impl<'a> Checker<'a> {
                 let target = CallTarget::new(Callee::Std(StdFn::Io(function)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
-            ([_, member], Some(ModuleName::Module(StdModule::Sync))) => self.sync_new(cx, member, args, expected, span),
-            ([_, _, "new"], Some(ModuleName::Module(StdModule::Sync))) => {
+            ([_, member], Some(ModuleName::Module(StdModule::Sync))) if args.is_empty() => {
                 self.sync_empty_expected(&segments[1], args, expected, span)
             }
+            ([_, member], Some(ModuleName::Module(StdModule::Sync))) => self.sync_new(cx, member, args, expected, span),
             ([_, member], Some(ModuleName::Module(StdModule::Fs))) => {
                 let fs = self.fs.expect("declared with the module");
                 let failing = |this: &mut Self, ty: Ty| this.types.intern(TyKind::Result(ty, fs.error));

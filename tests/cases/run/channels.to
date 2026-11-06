@@ -78,7 +78,7 @@ fn main() {
     // Receivers are shared: each value reaches one consumer.
     let (work, jobs) = channel[Int](8)
     let (results, totals) = channel[Int]()
-    var consumers = Group.new[Unit]()
+    var consumers = Group[Unit]()
     for _ in 0..4 {
         consumers.add(spawn consume(jobs, results.copy()))
     }

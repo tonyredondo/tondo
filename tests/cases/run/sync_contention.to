@@ -70,8 +70,8 @@ fn stacker(stack: sync.Stack[Int], count: Int): Int {
 }
 
 fn main() {
-    let map = sync.Map.new[String, Int]()
-    var group = Group.new[Unit]()
+    let map = sync.Map[String, Int]()
+    var group = Group[Unit]()
     for id in 0..8 {
         group.add(spawn mapWorker(map, id, 3000))
     }
@@ -81,10 +81,10 @@ fn main() {
     _ = group.wait()
     console.println("map {map.length()} total {orZero(map.get("total"))}")
 
-    let queue = sync.Queue.new[String]()
+    let queue = sync.Queue[String]()
     let taken = sync.Atomic(0)
-    var producers = Group.new[Unit]()
-    var consumers = Group.new[Int]()
+    var producers = Group[Unit]()
+    var consumers = Group[Int]()
     for id in 0..4 {
         producers.add(spawn producer(queue, id, 20000))
         consumers.add(spawn consumer(queue, taken, 80000))
@@ -96,8 +96,8 @@ fn main() {
     }
     console.println("queue consumed {consumed} left {queue.length()}")
 
-    let stack = sync.Stack.new[Int]()
-    var stackers = Group.new[Int]()
+    let stack = sync.Stack[Int]()
+    var stackers = Group[Int]()
     for _ in 0..8 {
         stackers.add(spawn stacker(stack, 20000))
     }

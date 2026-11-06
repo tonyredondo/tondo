@@ -562,7 +562,7 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   sin `self`, ni los campos `priv` o las funciones no públicas de otro
   módulo; tras `modulo.`, que el archivo importa, sus declaraciones públicas,
   las de un módulo estándar como las muestra `tondo api`; tras `Tipo.` o
-  `modulo.Tipo.`, sus funciones sin `self`, como `Builder.new`, y las
+  `modulo.Tipo.`, sus funciones sin `self`, como `Random.seeded`, y las
   variantes de un enum; y si no, las variables y parámetros de la función
   hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
   no importa todavía, con el `import` que los trae, y las palabras clave,

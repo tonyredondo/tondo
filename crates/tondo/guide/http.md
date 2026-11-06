@@ -17,7 +17,7 @@ fn main(): !http.HttpError {
     let repo: Repo = http.get("https://api.example.com/repos/1")?.json()?
 
     // A client keeps connections, a base URL and headers.
-    let api = http.Client.new(
+    let api = http.Client(
         baseUrl: "https://api.example.com",
         headers: ["Authorization": "Bearer token"],
         timeout: time.seconds(30),
@@ -64,7 +64,7 @@ pub type NewUser = { name: String }
 pub type User = { id: Int, name: String }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
 
     // Typed handlers: route segments, query parameters and the JSON body
     // come from the parameters; the result becomes the reply.
@@ -161,7 +161,7 @@ fn find(id: Int): User? {
   of the disk; a folder answers with its `index.html` (`tondo guide stdlib`).
 - `request.cookie("session")` reads a cookie and
   `reply.cookie("session", token, maxAge: time.hours(1))` sets one, `HttpOnly`
-  and `SameSite=Lax` unless told otherwise; `http.Client.new(cookies: true)`
+  and `SameSite=Lax` unless told otherwise; `http.Client(cookies: true)`
   keeps the cookies it gets, as a browser does.
 - `request.clientIp()` is the client's address. Behind a load balancer,
   `app.trustProxies(net.network("10.0.0.0/8")?)` names its network, so the
@@ -176,14 +176,14 @@ fn find(id: Int): User? {
   `/hello/:name`, which middleware sees before `next`: name metrics and
   traces by it, not by the path, which grows with every parameter.
 - `app.listen(socket: path)` serves on a Unix socket, and
-  `http.Client.new(baseUrl: "http://agent", socket: path)` sends through one.
+  `http.Client(baseUrl: "http://agent", socket: path)` sends through one.
 - Ctrl-C or `docker stop` cancel the program: `listen` stops accepting, the
   requests in flight run their `defer`s, and it ends with 130 or 143.
 - TLS: `app.listen(port: 443, tls: http.Tls.files("cert.pem", "key.pem"))`,
   or `http.Tls.pem(certificate, key)` with the PEM text of an environment
   variable. `clients: "ca.pem"` requires a certificate of each client, which
   `request.clientCertificate()` gives; a client shows its own with
-  `http.Client.new(identity: http.Tls.files("me.pem", "me.key"))`.
+  `http.Client(identity: http.Tls.files("me.pem", "me.key"))`.
 - Certificates of Let's Encrypt, obtained and renewed by the server itself:
   `app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))`
   with `import std.acme`; only port 443 has to be reachable. They are kept in
@@ -219,7 +219,7 @@ fn main(): !http.HttpError {
         err(error) => panic("{error}")
     }
     let schema = graphql.schema(Library { db })
-    var app = http.App.new()
+    var app = http.App()
     app.post("/graphql", schema.handler())
     app.get("/graphql", schema.handler())       // GraphiQL in a browser
     app.listen(port: 8080)?
@@ -276,7 +276,7 @@ impl users.UserService for Users {
 }
 
 fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(users.userService(Users { names: [7: "Ada"] }))   // beside other routes
     let server = app.start()?
     let client = users.UserServiceClient.connect("http://{server.address()}")?
@@ -333,7 +333,7 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
   `App.use` and `Client.use` are for HTTP; and without any, `tondo
   counters` shows `grpc.client.calls`, `grpc.server.calls`, how many run
   and how many failed.
-- `let health = grpc.Health.new()`, `app.grpc(health.service())` and
+- `let health = grpc.Health()`, `app.grpc(health.service())` and
   `health.set("users.v1.UserService", grpc.ServingStatus.NotServing)` answer
   `grpc.health.v1`; `app.grpc(grpc.reflection([service, health.service()]))`
   lets grpcurl list, describe and call them without the `.proto` files.

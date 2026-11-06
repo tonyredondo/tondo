@@ -71,7 +71,7 @@ fn started(client: greeter.GreeterClient, log: sync.Atomic[Int]) {
 fn main(): !(http.HttpError | grpc.Status) {
     let (open, gate) = channel[Unit]()
     let log = sync.Atomic(0)
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(greeter.greeter(Greetings { gate, log }))
     let server = app.start()?
     let client = greeter.GreeterClient.connect("http://{server.address()}")?

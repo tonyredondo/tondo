@@ -22,7 +22,7 @@ import std.internal.text as textNative
 /// import std.console
 /// import std.format
 ///
-/// var text = format.Builder.new()
+/// var text = format.Builder()
 /// for n in 1..=3 {
 ///     text.addLine("line {n}")
 /// }
@@ -33,7 +33,7 @@ pub type Builder = {
 }
 
 /// An empty builder.
-pub fn Builder.new(): Builder {
+pub fn Builder(): Builder {
     Builder { built: "" }
 }
 

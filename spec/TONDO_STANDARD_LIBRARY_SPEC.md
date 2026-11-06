@@ -818,7 +818,7 @@ pub fn Join.wait(self): T
 pub fn Join.wait(self, timeout: time.Duration): T?
 pub fn Join.cancel(self)
 
-pub fn Group.new[T](): Group[T]
+pub fn Group[T](): Group[T]
 pub fn Group.add(var self, job: Join[T])
 pub fn Group.wait(self): Array[T]        // Array[R] ! E cuando T es R ! E
 pub fn Group.next(var self): T?
@@ -1404,7 +1404,7 @@ operación y nunca es implícita por terminal.
 
 ~~~tondo pseudocode
 pub type Builder
-pub fn Builder.new(): Builder
+pub fn Builder(): Builder
 pub fn Builder.add[T: Display](mut self, value: T)
 pub fn Builder.addLine[T: Display](mut self, value: T)   // y un \n
 pub fn Builder.isEmpty(self): Bool
@@ -2383,7 +2383,7 @@ pub fn sync.Semaphore.acquire(self): sync.Permit
 pub fn sync.Semaphore.tryAcquire(self): sync.Permit?
 pub fn sync.Permit.release(self)
 
-pub fn sync.Once.new[T](): sync.Once[T]
+pub fn sync.Once[T](): sync.Once[T]
 pub fn sync.Once.getOrInit(self, init: fn(): T): T        // T ! E con init: fn(): T ! E
 pub fn sync.Once.get(self): T?
 pub fn sync.Once.isReady(self): Bool
@@ -2513,9 +2513,9 @@ pub fn sync.Queue.snapshot(self): Deque[T]
 ~~~
 
 Se construyen con los literales calificados de 5.11 de la especificación del
-lenguaje (`sync.Map["one": 1]`), vacías con `sync.Queue.new[Job]()` o
-`sync.Map.new[String, Int]()`, sin tipos si los da a donde va
-(`let jobs: sync.Queue[Job] = sync.Queue.new()`), o a partir de una colección de valor con
+lenguaje (`sync.Map["one": 1]`), vacías con `sync.Queue[Job]()` o
+`sync.Map[String, Int]()`, sin tipos si los da a donde va
+(`let jobs: sync.Queue[Job] = sync.Queue()`), o a partir de una colección de valor con
 `sync.Array(values)`, `sync.Map(entries)`, `sync.Set(keys)`, `sync.Stack(values)`
 o `sync.Queue(values)`. Las operaciones usan los nombres de las colecciones de
 valor (10.2.3): `sync.Array` tiene longitud fija y no cambia de tamaño;
@@ -2686,7 +2686,7 @@ pub fn Tls.pem(certificate: String, privateKey: String, clients: String? = none,
 pub fn Tls.from(certificates: Certificates, clients: String? = none,
     minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
 pub type Certificates
-pub fn Certificates.new(protocols: Array[String] = []): Certificates
+pub fn Certificates(protocols: Array[String] = []): Certificates
 pub fn Certificates.set(self, certificate: String, privateKey: String): Unit ! NetError
 pub fn Certificates.setForProtocol(self, protocol: String, name: String, certificate: String,
     privateKey: String): Unit ! NetError
@@ -4401,7 +4401,7 @@ pasarlo, y un logger también se crea y se pasa como cualquier valor.
 ~~~tondo
 import std.log
 
-let logger = log.Logger.new(level: log.Level.Debug)
+let logger = log.Logger(level: log.Level.Debug)
 logger.info("server started", ["port": "8080"])
 let request = logger.withFields(["request": "{id}"])
 request.warn("slow query", ["table": "users", "took": "{elapsed}"])
@@ -4413,7 +4413,7 @@ código de debajo solo escribe:
 
 ~~~tondo pseudocode
 fn main() {
-    with log.Context { logger: some(log.Logger.new(format: log.Format.Json)) }
+    with log.Context { logger: some(log.Logger(format: log.Format.Json)) }
     app.listen(port: 8080)
 }
 
@@ -4435,7 +4435,7 @@ pub enum Level { Trace, Debug, Info, Warn, Error }
 pub enum Format { Text, Json }
 pub type Logger
 
-pub fn Logger.new(output: io.Writer? = none, level: Level = Level.Info,
+pub fn Logger(output: io.Writer? = none, level: Level = Level.Info,
     format: Format = Format.Text, timestamps: Bool = true): Logger
 pub fn Logger.withFields(self, fields: Map[String, String]): Logger
 pub fn Logger.isEnabled(self, level: Level): Bool
@@ -4463,7 +4463,7 @@ pub fn error(message: String, fields: Map[String, String] = [:])
   su nivel o superiores; `isEnabled` evita construir campos costosos.
 - `withFields` da el mismo logger con más campos en cada evento; los campos de
   la llamada se añaden detrás y ganan en una clave repetida.
-- `current` es `Context.logger`, o sin él un logger como `Logger.new()`, que
+- `current` es `Context.logger`, o sin él un logger como `Logger()`, que
   escribe en la salida de error desde `Info`; `trace`, `debug`, `info`, `warn`
   y `error` del módulo escriben con `current()`.
 - Cada evento, de cualquier logger, lleva también los campos `@log` de los
@@ -4602,7 +4602,7 @@ estado global:
 ~~~tondo pseudocode
 pub type Random
 pub fn Random.seeded(seed: Int): Random
-pub fn Random.new(): Random
+pub fn Random(): Random
 pub fn Random.int[T: Integer](mut self, range: Range[T]): T
 pub fn Random.float(mut self): Float
 pub fn Random.bool(mut self): Bool
@@ -4613,7 +4613,7 @@ pub fn entropy(count: Int): Array[Byte]
 ~~~
 
 - El generador es SplitMix64: la misma semilla da los mismos valores en
-  cualquier máquina. `Random.new()` toma la semilla de la entropía del sistema.
+  cualquier máquina. `Random()` toma la semilla de la entropía del sistema.
 - `int` da cada valor del rango con la misma probabilidad, sin sesgo, en
   cualquier entero: `dice.int(1..=6)`, o `ids.int(1u64..=UInt64.max)` para
   un id de 64 bits. Un rango vacío es un pánico. `float` da un valor de `[0, 1)` con 53 bits; `shuffled` es
@@ -4621,7 +4621,7 @@ pub fn entropy(count: Int): Array[Byte]
 - El generador no sirve para secretos: claves, tokens y nonces usan
   `random.entropy(count)`, que lee la entropía del sistema.
 - Un provider o generador (27.7 del lenguaje) puede usar `Random.seeded`, pero
-  no `Random.new` ni `entropy`: llamarlos es `E2108`.
+  no `Random()` ni `entropy`: llamarlos es `E2108`.
 
 ### 14.23 `std.csv`
 
@@ -4635,7 +4635,7 @@ for record in csv.records(input) {
     total += Int.parse(sale.getOr("amount", "0"))?
 }
 
-let out = csv.Writer.new(fs.open("report.csv", fs.OpenMode.Write)?.writer())
+let out = csv.Writer(fs.open("report.csv", fs.OpenMode.Write)?.writer())
 out.write(["region", "total"])?
 ~~~
 
@@ -4657,7 +4657,7 @@ pub fn rows(input: io.Reader, separator: Char = ','): Rows
 pub fn records(input: io.Reader, separator: Char = ','): Records
 pub fn parse(text: String, separator: Char = ','): Array[Array[String]] ! CsvError
 pub fn parseRecords(text: String, separator: Char = ','): Array[Map[String, String]] ! CsvError
-pub fn Writer.new(output: io.Writer, separator: Char = ','): Writer
+pub fn Writer(output: io.Writer, separator: Char = ','): Writer
 pub fn Writer.write(self, fields: Array[String]): Unit ! io.IoError
 pub fn format(rows: Array[Array[String]], separator: Char = ','): String
 pub fn formatRecords(records: Array[Map[String, String]], separator: Char = ','): String
@@ -4690,7 +4690,7 @@ import std.http
 
 let user: User = http.get("https://api.example.com/users/42")?.json()?
 
-let github = http.Client.new(
+let github = http.Client(
     baseUrl: "https://api.github.com",
     headers: ["Authorization": "Bearer {token}"],
     timeout: time.seconds(30),
@@ -4720,7 +4720,7 @@ pub enum HttpError {
 }
 
 pub type Client
-pub fn Client.new(baseUrl: String = "", headers: Map[String, String] = [:],
+pub fn Client(baseUrl: String = "", headers: Map[String, String] = [:],
     timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
     redirects: Int = 10, trust: String? = none, socket: String? = none, cookies: Bool = false,
     identity: Tls? = none): Client
@@ -4794,7 +4794,7 @@ pub fn WebSocket.close(self): Unit ! HttpError
   `query` se añade a la URL codificado como en `encoding.urlEncode`. Con
   `socket`, cada petición va por ese socket Unix (14.4.6) en vez de por la red,
   y la URL solo da el path y la cabecera `Host`:
-  `http.Client.new(baseUrl: "http://agent", socket: "/var/run/datadog/apm.socket")`.
+  `http.Client(baseUrl: "http://agent", socket: "/var/run/datadog/apm.socket")`.
 - `Client.use` añade un hook que rodea cada petición del cliente, como el
   middleware de un servidor rodea sus rutas: recibe la petición, con su
   método, su URL final, con la base y la query, sus cabeceras, las del cliente
@@ -4806,7 +4806,7 @@ pub fn WebSocket.close(self): Unit ! HttpError
   propagar su contexto y anotar cada llamada:
 
   ```tondo
-  var client = http.Client.new(baseUrl: "https://api.example.com")
+  var client = http.Client(baseUrl: "https://api.example.com")
   client.use((request, next) {
       let started = time.now()
       var headers = request.headers
@@ -4877,7 +4877,7 @@ Cada petición se atiende en una tarea, así que un handler puede esperar sin
 bloquear a los demás.
 
 ~~~tondo
-var app = http.App.new()
+var app = http.App()
 app.get("/users/:id", (request) {
     let id = request.intParam("id")?            // 400 si no es un entero
     match users.find(id) {
@@ -4904,7 +4904,7 @@ La superficie es:
 ~~~tondo pseudocode
 pub type Problem = { status: Int, message: String, violations: Array[serialization.Violation] }
 pub fn Problem.invalid(violations: Array[serialization.Violation]): Problem   // 422
-pub fn Problem.new(status: Int, message: String): Problem
+pub fn Problem(status: Int, message: String): Problem
 pub fn Problem.badRequest(message: String): Problem
 pub fn Problem.unauthorized(message: String = "authentication is required"): Problem
 pub fn Problem.forbidden(message: String = "this is not allowed"): Problem
@@ -4959,7 +4959,7 @@ pub fn Reply.bytes(bytes: Array[Byte], contentType: String = "application/octet-
 pub fn Reply.stream(input: io.Reader, contentType: String = "application/octet-stream", status: Int = 200,
     trailers: Trailers? = none): Reply
 pub type Trailers
-pub fn Trailers.new(): Trailers
+pub fn Trailers(): Trailers
 pub fn Trailers.set(self, name: String, value: String)
 pub fn Trailers.all(self): Map[String, String]
 pub fn Reply.file(path: String, download: String? = none): Reply
@@ -4981,7 +4981,7 @@ pub fn Reply.headers(self): Map[String, String]
 pub fn Reply.body(self): Array[Byte]?
 
 pub type App
-pub fn App.new(): App
+pub fn App(): App
 pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem)   // y post, put, patch, delete
 pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "")
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
@@ -5421,7 +5421,7 @@ const Logo: Array[Byte] = embed.bytes("static/logo.png")
 const Site: fs.FileSystem = embed.files("static")
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/banner", (request) { http.Reply.text(Banner) })
     app.files("/", Site)
     app.listen(port: 8080)?
@@ -6027,7 +6027,7 @@ pub fn Weather.forecast(self, input: ForecastInput): Forecast ! WeatherError { .
 @mcp.Resource(uri: "weather://guide", mime: "text/markdown")
 pub fn Weather.guide(self): String { ... }
 
-mcp.serve(Weather { client: http.Client.new() })?
+mcp.serve(Weather { client: http.Client() })?
 ~~~
 
 ~~~tondo pseudocode
@@ -6557,7 +6557,7 @@ import std.acme
 import std.http
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/", (_) { http.Reply.text("hello") })
     app.listen(port: 443, tls: acme.tls(["example.com", "www.example.com"], email: "me@example.com"))?
 }
@@ -6617,7 +6617,7 @@ pub fn Library.matching(self, text: String): Array[Book] {
 
 fn main(): !http.HttpError {
     let schema = graphql.schema(Library { books: [Book { id: 1, title: "Dune" }] })
-    var app = http.App.new()
+    var app = http.App()
     app.post("/graphql", schema.handler())
     app.get("/graphql", schema.handler())
     app.listen(port: 8080)?
@@ -6710,7 +6710,7 @@ impl users.UserService for Users {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(users.userService(Users { names: [7: "Ada"] }))
     app.listen(port: 50051)?
 }
@@ -6766,7 +6766,7 @@ pub fn Channel.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Ch
 
 pub enum ServingStatus { Unknown, Serving, NotServing, ServiceUnknown }
 pub type Health
-pub fn Health.new(): Health
+pub fn Health(): Health
 pub fn Health.set(self, service: String, status: ServingStatus)
 pub fn Health.service(self): Service
 pub fn reflection(services: Array[Service]): Service

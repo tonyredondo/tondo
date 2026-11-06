@@ -4,7 +4,7 @@
 import std.http
 
 fn main() {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/files/:name.:ext", () { "x" })
     app.get("/a/*rest/b", () { "y" })
     app.get("/v1/items:batch", () { "a colon inside a segment is text" })

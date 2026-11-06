@@ -209,7 +209,7 @@ pub fn parseRecords(input: String, separator: Char = ','): Array[Map[String, Str
 /// import std.fs
 ///
 /// let file = fs.open("people.csv", fs.OpenMode.Write)?
-/// let out = csv.Writer.new(file.writer())
+/// let out = csv.Writer(file.writer())
 /// out.write(["name", "age"])?
 /// out.write(["Ada", "36"])?
 /// ```
@@ -219,7 +219,7 @@ pub type Writer = {
 }
 
 /// A writer of CSV records to the stream, with `separator` between fields.
-pub fn Writer.new(output: __io.Writer, separator: Char = ','): Writer {
+pub fn Writer(output: __io.Writer, separator: Char = ','): Writer {
     Writer { output, separator }
 }
 

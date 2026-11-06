@@ -1534,7 +1534,7 @@ fn connectPostgres(url: String): Connection ! SqlError {
     }
     let session = Postgres {
         wire: Wire.of(stream)
-        prepared: __sync.Map.new[String, Prepared]()
+        prepared: __sync.Map[String, Prepared]()
         idle: __sync.Mutex(true)
     }
     match session.start(settings) {
@@ -2200,7 +2200,7 @@ fn connectMySql(url: String): Connection ! SqlError {
     let first = MySql {
         wire: Wire.of(plain)
         sequence: __sync.Mutex(0)
-        kept: __sync.Map.new[String, Kept]()
+        kept: __sync.Map[String, Kept]()
         okEnds: false
     }
     let greeting = first.packet()?

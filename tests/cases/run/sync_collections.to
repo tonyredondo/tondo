@@ -28,7 +28,7 @@ fn main() {
     let undo = sync.Stack["a", "b", "c"]
     let jobs = sync.Queue["first", "second"]
     let empty: sync.Map[String, Int] = sync.Map[:]
-    let made = sync.Queue.new[Int]()
+    let made = sync.Queue[Int]()
     let fixed = sync.Array([0, 0, 0])
     console.println(
         "{slots.snapshot()} {cache.length()} {visited.contains("home")} {undo.length()} {jobs.length()}",
@@ -89,8 +89,8 @@ fn main() {
     }
 
     // Each update is linearizable.
-    let visits = sync.Map.new[String, Int]()
-    var group = Group.new[Unit]()
+    let visits = sync.Map[String, Int]()
+    var group = Group[Unit]()
     for _ in 0..4 {
         group.add(spawn record(visits, "home"))
     }

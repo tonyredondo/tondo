@@ -17,7 +17,7 @@ fn main(): !http.HttpError {
     let (started, began) = channel[Unit](1)
     let (release, released) = channel[Unit](1)
     let (_events, quiet) = channel[http.Event](1)
-    var app = http.App.new()
+    var app = http.App()
     app.get("/", (_) { http.Reply.text("here") })
     app.get(
         "/slow",
@@ -29,7 +29,7 @@ fn main(): !http.HttpError {
     )
     app.get("/endless", (_) { http.Reply.events(quiet) })
     let server = app.start()?
-    let web = http.Client.new()
+    let web = http.Client()
     let base = "http://{server.address()}"
     console.println(web.get("{base}/")?.text()?)
     let slow = spawn web.get("{base}/slow")

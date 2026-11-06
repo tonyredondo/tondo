@@ -106,7 +106,7 @@ fn main(): !(http.HttpError | grpc.Status) {
                 }
             },
         )
-    var app = http.App.new()
+    var app = http.App()
     app.grpc(service)
     let server = app.start()?
 

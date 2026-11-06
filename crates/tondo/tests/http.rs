@@ -170,7 +170,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     }
     console.println("{http.get("{base}/sjis")?.text()}")
 
-    let client = http.Client.new(baseUrl: base, headers: ["X-Test": "client"])
+    let client = http.Client(baseUrl: base, headers: ["X-Test": "client"])
     let ada: Person = client.get("/json")?.json()?
     console.println("{ada.name} {ada.age}")
     console.println(client.post("/echo", body: http.Body.json(ada))?.text()?)
@@ -211,7 +211,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     console.println("{fs.metadata("big.bin")?.size}")
 
     // Tasks wait for their requests without holding a worker.
-    var group = Group.new[Int]()
+    var group = Group[Int]()
     for index in 0..64 {
         group.add(spawn status(client, index))
     }
@@ -377,7 +377,7 @@ pub type NewUser = { name: String, email: String }
 pub type User = { id: Int, name: String, email: String }
 
 fn main(): !(http.HttpError | fs.FsError) {
-    var app = http.App.new()
+    var app = http.App()
     app.use((request, next) {
         let reply = next(request)?
         reply.header("x-served-by", "tondo").header("x-route", request.route().unwrapOr("-"))
@@ -415,7 +415,7 @@ fn main(): !(http.HttpError | fs.FsError) {
             socket.sendText("echo: {message?}")?
         }
     })
-    var admin = http.App.new()
+    var admin = http.App()
     admin.use((request, next) {
         match request.header("authorization") {
             some(_) => next(request)?
@@ -430,7 +430,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     app.files("/site", Site)
 
     let server = app.start()?
-    let client = http.Client.new(baseUrl: server.url())
+    let client = http.Client(baseUrl: server.url())
     console.println(server.url())
 
     let ada = client.get("/users/42")?
@@ -546,7 +546,7 @@ import std.http
 import std.time
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/slow", (_) {
         defer {
             console.eprintln("cancelled")
@@ -628,14 +628,14 @@ import std.console
 import std.http
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/", (request) { http.Reply.text("secure {request.version()}") })
     let server = app.start(tls: http.Tls.files("server.pem", "server.key"))?
-    let client = http.Client.new(trust: "authority.pem")
+    let client = http.Client(trust: "authority.pem")
     let response = client.get(server.url())?
     console.println("{server.url().startsWith("https://")} {response.version()} {response.text()?}")
     console.println("{"{http.get(server.url())}".startsWith("err(cannot connect")}")
-    console.println("{"{http.Client.new(trust: "missing.pem").get(server.url())}".startsWith("err(cannot connect: the trusted certificates `missing.pem`")}")
+    console.println("{"{http.Client(trust: "missing.pem").get(server.url())}".startsWith("err(cannot connect: the trusted certificates `missing.pem`")}")
     server.stop()
 }
 "#;
@@ -666,7 +666,7 @@ import std.fs
 import std.http
 
 fn main(): !(http.HttpError | fs.FsError) {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/", (request) {
         match request.clientCertificate() {
             some(certificate) => http.Reply.text("hello {certificate.subject}")
@@ -682,10 +682,10 @@ fn main(): !(http.HttpError | fs.FsError) {
     )
     let server = app.start(tls: tls)?
     let identity = http.Tls.files("client.pem", "client.key")
-    let client = http.Client.new(trust: authority, identity: identity)
+    let client = http.Client(trust: authority, identity: identity)
     console.println(client.get(server.url())?.text()?)
     // Without a certificate, the handshake fails.
-    console.println("{http.Client.new(trust: authority).get(server.url()).isErr()}")
+    console.println("{http.Client(trust: authority).get(server.url()).isErr()}")
     server.stop()
 }
 "#;
@@ -732,7 +732,7 @@ fn listUsers(page: Int?, search: String): Array[User] {
 }
 
 fn main(): !http.HttpError {
-    var app = http.App.new()
+    var app = http.App()
     app.get("/users/:id", (id: Int) { find(id) })
     app.get("/users", listUsers)
     app.post("/users", (input: NewUser, request: http.Request) {
@@ -748,7 +748,7 @@ fn main(): !http.HttpError {
     app.get("/raw", (request) { http.Reply.text("raw {request.path()}") })
     app.openApi(title: "Users", version: "2.0")
     let server = app.start()?
-    let client = http.Client.new(baseUrl: server.url())
+    let client = http.Client(baseUrl: server.url())
     console.println(server.url())
     console.println(client.get("/users/3")?.text()?)
     console.println("{client.get("/users/7")}")
