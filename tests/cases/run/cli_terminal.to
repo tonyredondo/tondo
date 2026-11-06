@@ -32,6 +32,15 @@ fn main() {
     ]
     console.print(cli.table(users))
     console.print(cli.table(users, columns: ["age", "name"]))
+    console.print(
+        cli.table([["Ada", "36"], ["Grace", "120", "x"], ["Ñu"]], columns: ["Name", "Age"]),
+    )
+    console.print(cli.table([[1, 20], [300, 4]]))
+    console.print(
+        cli.table([[cli.markup("[bold]up[/]"), "no"], ["down", "3"]], columns: ["State", "Año"]),
+    )
+    let nothing: Array[Array[String]] = []
+    console.println("<{cli.table(nothing)}>")
     let bar = cli.progress("Building", total: 3)
     bar.advance()
     bar.advance(by: 2)
@@ -64,6 +73,24 @@ fn main() {
 // expect-stdout: │  36 │ Ada   │
 // expect-stdout: │ 120 │ Grace │
 // expect-stdout: └─────┴───────┘
+// expect-stdout: ┌───────┬─────┬───┐
+// expect-stdout: │ Name  │ Age │   │
+// expect-stdout: ├───────┼─────┼───┤
+// expect-stdout: │ Ada   │  36 │   │
+// expect-stdout: │ Grace │ 120 │ x │
+// expect-stdout: │ Ñu    │     │   │
+// expect-stdout: └───────┴─────┴───┘
+// expect-stdout: ┌─────┬────┐
+// expect-stdout: │   1 │ 20 │
+// expect-stdout: │ 300 │  4 │
+// expect-stdout: └─────┴────┘
+// expect-stdout: ┌───────┬─────┐
+// expect-stdout: │ State │ Año │
+// expect-stdout: ├───────┼─────┤
+// expect-stdout: │ up    │ no  │
+// expect-stdout: │ down  │ 3   │
+// expect-stdout: └───────┴─────┘
+// expect-stdout: <>
 // expect-stdout: Building: 3/3
 // expect-stdout: Waiting: 1
 // expect-stdout: Name: <Ada>

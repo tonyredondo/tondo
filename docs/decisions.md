@@ -5247,3 +5247,10 @@ only for what a call makes: a `String` costs memory to make, and one nobody read
 nearly always meant to be written. Marking functions `must_use` would ask for annotations
 the type already gives. The cases and the benchmarks had no such call, so nothing that
 was right has to change.
+
+## A table of arrays is the same table
+
+Rows that are arrays go to `cli.table` rather than to a function of their own: one name
+to find, and `columns` means what it reads as, the headers, when there are no fields to
+name. Strings that are all numbers go to the right like numbers, since a program that
+already has text has no other way to say it.

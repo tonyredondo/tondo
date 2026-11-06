@@ -312,7 +312,12 @@ fn main() {
   `console.println(cli.markup("[red]no[/]"))`. Interpolated values are text,
   and a wrong style is a compile error. No codes off a terminal or with
   `NO_COLOR`.
-- `cli.table(records)`, `cli.progress("Building", total: n)`,
+- `cli.table(rows, columns: ["Name", "Age"])` gives a table to print of
+  arrays, as `[["Ada", "36"], ["Grace", "120"]]`, with `columns` as headers
+  and no type to declare; of records, `cli.table(users)` makes a column of
+  each field, and `columns` picks and orders them. Columns of numbers go to
+  the right, and a cell can come from `cli.markup`.
+- `cli.progress("Building", total: n)`,
   `cli.ask`, `cli.confirm`, `cli.choose`, `cli.secret`,
   `cli.completions[Site](cli.Shell.Bash)`.
 

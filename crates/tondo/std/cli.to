@@ -162,7 +162,24 @@ pub fn parse[T: __reflect.Reflect](): T {
     }
 }
 
-/// The arguments, without the program's name, read as a `T`.
+/// The arguments, without the program's name, read as a `T`: what `parse`
+/// does, with the failure to handle, as a test or a program that goes on
+/// wants it. `--help` is a failure too, whose `help` is `true`.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Options = {
+///     /// Who to greet.
+///     name: String = "world"
+/// }
+///
+/// match cli.parseArgs[Options](["--name", "Ada"]) {
+///     ok(options) => console.println("hello {options.name}")
+///     err(error) => console.eprintln(error.message)
+/// }
+/// ```
 pub fn parseArgs[T: __reflect.Reflect](args: Array[String]): T ! CliError {
     let info = __reflect.typeInfo[T]()
     let read = valueOf(info, args, program())?
@@ -189,6 +206,19 @@ pub fn parseArgs[T: __reflect.Reflect](args: Array[String]): T ! CliError {
 }
 
 /// The help of the command `T`.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// /// Greets someone.
+/// type Options = {
+///     /// Who to greet.
+///     name: String = "world"
+/// }
+///
+/// console.print(cli.help[Options]())
+/// ```
 pub fn help[T: __reflect.Reflect](): String {
     helpOf(__reflect.typeInfo[T](), program())
 }
@@ -879,7 +909,20 @@ fn fieldsCompleted(
     found
 }
 
-/// The script that completes the program's command line in `shell`.
+/// The script that completes the program's command line in `shell`, to
+/// print for the shell to load.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Options = {
+///     /// Who to greet.
+///     name: String = "world"
+/// }
+///
+/// console.print(cli.completions[Options](cli.Shell.Bash))
+/// ```
 pub fn completions[T: __reflect.Reflect](shell: Shell): String {
     let name = program()
     let commands = completedOf(__reflect.typeInfo[T](), [], [])
@@ -923,12 +966,31 @@ pub fn completions[T: __reflect.Reflect](shell: Shell): String {
 // The terminal
 // ---------------------------------------------------------------------------
 
-/// Whether the console's output is a terminal.
+/// Whether the console's output is a terminal: `false` when it goes to a
+/// pipe or a file, where a question or a bar has nobody to see it.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// if cli.isTerminal() {
+///     console.println(cli.markup("[green]ready[/]"))
+/// } else {
+///     console.println("ready")
+/// }
+/// ```
 pub fn isTerminal(): Bool {
     textNative.terminal(0)
 }
 
 /// The columns of the terminal of the console's output, or 80 without one.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println("─".repeat(cli.width()))
+/// ```
 pub fn width(): Int {
     let found = if isTerminal() { textNative.terminalWidth() } else { 0 }
     if found > 0 { found } else { 80 }
@@ -946,8 +1008,19 @@ fn painting(): Bool {
 
 /// A text with styles, to print: `[bold red]error[/]` gives `error` in bold
 /// red, and what follows as it was; blocks nest, and `[[` and `]]` give
-/// brackets. With an interpolated string, its values stay as they are. It
-/// writes nothing itself: `console.println(cli.markup("[red]no[/]"))`.
+/// brackets. With an interpolated string, its values stay as they are. No
+/// codes off a terminal or with `NO_COLOR`.
+///
+/// It writes nothing itself: print what it gives.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let name = "Ada [admin]"
+/// console.println(cli.markup("[bold red]error:[/] no user [yellow]{name}[/]"))
+/// console.println(cli.markup("[black on #ffcc00] note [/] use [[brackets]] so"))
+/// ```
 pub fn markup(text: String): String {
     let paint = painting()
     let chars: Array[Char] = text.chars().collect()
@@ -1085,10 +1158,53 @@ fn visible(text: String): Int {
     count
 }
 
-/// A table of the records, a column a field, or those `columns` names in
-/// their order: the header the field's name, the numbers to the right.
+/// A table with a border, to print, with the numbers to the right. Its rows
+/// are arrays, written as they are, with `columns` over them as headers and
+/// no headers without it; a short row leaves the rest of its cells empty:
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let rows = [["Ada", "36"], ["Grace", "120"]]
+/// console.print(cli.table(rows, columns: ["Name", "Age"]))
+/// // ┌───────┬─────┐
+/// // │ Name  │ Age │
+/// // ├───────┼─────┤
+/// // │ Ada   │  36 │
+/// // │ Grace │ 120 │
+/// // └───────┴─────┘
+/// ```
+///
+/// Or records, a column a field, or those `columns` names in their order,
+/// with the name of the field over it:
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type User = { name: String, age: Int, email: String? }
+///
+/// let users = [User { name: "Ada", age: 36, email: none }]
+/// console.print(cli.table(users))
+/// console.print(cli.table(users, columns: ["age", "name"]))
+/// ```
+///
+/// A cell can have styles, from `markup`:
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let up = cli.markup("[green]up[/]")
+/// let down = cli.markup("[red]down[/]")
+/// console.print(cli.table([["api", up], ["db", down]], columns: ["Service", "State"]))
+/// ```
 pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []): String {
     let info = __reflect.typeInfo[T]()
+    if info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) {
+        return tableOfArrays(rows, columns)
+    }
     let fields = info.fields()
     let names = if columns.isEmpty() { fields.map((field) { field.name() }) } else { columns }
     for name in names {
@@ -1110,7 +1226,53 @@ pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []):
         }
         cells.push(line)
     }
-    var widths = names.map((name) { name.length() })
+    bordered(names, cells, right)
+}
+
+/// The table of rows that are arrays: as wide as the widest, and a column
+/// to the right when all it has are numbers, written or not as text.
+fn tableOfArrays[T: __reflect.Reflect](rows: Array[T], headers: Array[String]): String {
+    let values = rows.map((row) { __reflect.valueOf(row).elements() })
+    var wide = headers.length()
+    for line in values {
+        wide = wide.max(line.length())
+    }
+    if wide == 0 {
+        return ""
+    }
+    var names = headers
+    for _ in headers.length()..wide {
+        names.push("")
+    }
+    var cells: Array[Array[String]] = []
+    var right: Array[Bool] = names.map((_) { false })
+    var words: Array[Bool] = names.map((_) { false })
+    for line in values {
+        var written: Array[String] = []
+        for index in 0..wide {
+            let cell = if index < line.length() { cellOf(line[index]) } else { "" }
+            written.push(cell)
+            if cell.isEmpty() {
+                continue
+            }
+            let number = index < line.length() and __shapes.numeric(line[index])
+            if number or Float.parse(cell).isOk() {
+                right[index] = true
+            } else {
+                words[index] = true
+            }
+        }
+        cells.push(written)
+    }
+    for index in 0..wide {
+        right[index] = right[index] and not words[index]
+    }
+    bordered(names, cells, right)
+}
+
+/// Headers over cells, in a border; no line of headers when they are empty.
+fn bordered(names: Array[String], cells: Array[Array[String]], right: Array[Bool]): String {
+    var widths = names.map((name) { visible(name) })
     for line in cells {
         for index in 0..line.length() {
             widths[index] = widths[index].max(visible(line[index]))
@@ -1132,7 +1294,9 @@ pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []):
         "{written}\n"
     }
     var written = rule("┌", "┬", "┐")
-    written = "{written}{row(names)}{rule("├", "┼", "┤")}"
+    if names.any((name) { not name.isEmpty() }) {
+        written = "{written}{row(names)}{rule("├", "┼", "┤")}"
+    }
     for line in cells {
         written = "{written}{row(line)}"
     }
@@ -1176,6 +1340,19 @@ type Bar = {
 }
 
 /// A progress of the work `label` of `total` steps, drawn now.
+///
+/// ```tondo
+/// import std.cli
+///
+/// let bar = cli.progress("Building", total: 3)
+/// bar.advance()
+/// bar.advance(by: 2)
+/// bar.finish()
+///
+/// let spinner = cli.progress("Waiting")
+/// spinner.advance()
+/// spinner.finish()
+/// ```
 pub fn progress(label: String, total: Int? = none): Progress {
     let bar = Bar { label, total, done: 0, frame: 0, terminal: isTerminal(), finished: false }
     drawBar(bar)
@@ -1238,7 +1415,17 @@ fn drawBar(bar: Bar) {
     _ = __console.flush()
 }
 
-/// The answer to a question, or `default` when it is left empty.
+/// The answer to a question, or `default` when it is left empty or the input
+/// has ended.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let name = cli.ask("Name")
+/// let city = cli.ask("City", default: "Lima")
+/// console.println("{name} from {city}")
+/// ```
 pub fn ask(question: String, default: String = ""): String {
     let hint = if default.isEmpty() { "" } else { " [{default}]" }
     match answer("{question}{hint}: ") {
@@ -1248,7 +1435,17 @@ pub fn ask(question: String, default: String = ""): String {
 }
 
 /// `true` for `y` or `yes`, `false` for `n` or `no`, `default` when it is
-/// left empty.
+/// left empty or the input has ended; anything else asks again.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// if not cli.confirm("Start the server?") {
+///     console.println(cli.markup("[red]Server not started.[/]"))
+///     return
+/// }
+/// ```
 pub fn confirm(question: String, default: Bool = false): Bool {
     let hint = if default { "[Y/n]" } else { "[y/N]" }
     for {
@@ -1261,7 +1458,18 @@ pub fn confirm(question: String, default: Bool = false): Bool {
     }
 }
 
-/// The index of the option chosen by its number.
+/// The index in `options` of the one chosen by its number, from 1 as they
+/// are shown; anything else asks again, and the first is taken when the
+/// input has ended.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let drinks = ["tea", "coffee"]
+/// let chosen = cli.choose("Pick one", drinks)
+/// console.println("a {drinks[chosen]}")
+/// ```
 pub fn choose(question: String, options: Array[String]): Int {
     __console.println(question)
     for index in 0..options.length() {
@@ -1280,6 +1488,13 @@ pub fn choose(question: String, options: Array[String]): Int {
 }
 
 /// An answer read without showing it, when the input is a terminal.
+///
+/// ```tondo
+/// import std.cli
+///
+/// let password = cli.secret("Password")
+/// _ = password
+/// ```
 pub fn secret(question: String): String {
     let hidden = textNative.terminal(2) and textNative.terminalEcho(false)
     let text = answer("{question}: ")

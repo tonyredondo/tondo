@@ -5983,9 +5983,13 @@ pub fn secret(question: String): String
   un estilo que no existe en el literal es `E1907`. Los códigos se escriben
   solo cuando la salida es una terminal y `NO_COLOR` no está definida, o con
   `FORCE_COLOR`.
-- `table` escribe una tabla con borde, una columna por campo, o las que nombra
-  `columns` en su orden; la cabecera es el nombre del campo, y los números van a
-  la derecha.
+- `table` devuelve una tabla con borde. Con filas que son arrays, cada una es una
+  fila tal cual, `columns` son las cabeceras y sin él no hay línea de cabeceras;
+  la tabla es tan ancha como la fila más ancha, las filas cortas dejan vacío lo
+  que falta, y una columna va a la derecha si todo lo que tiene son números,
+  escritos como texto o no. Con registros, una columna por campo, o las que
+  nombra `columns` en su orden; la cabecera es el nombre del campo, y los números
+  van a la derecha. Una celda puede llevar estilos de `markup`.
 - `table`, `progress` y las preguntas escriben en la salida de `console`, y
   leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
   `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
