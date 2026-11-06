@@ -1657,9 +1657,6 @@ fn run(task: *mut Task) {
         if (*task).finished && super::events::on() {
             super::events::add_of((*task).id, super::events::What::Ended);
         }
-        if (*task).finished && (*task).flight != 0 {
-            super::diagnostics::step((*task).flight, (*task).id, super::diagnostics::Did::Ended, Vec::new());
-        }
         if (*task).finished {
             super::debugger::task_ended((*task).id);
             let (was_main, join) = ((*task).main, (*task).join);
@@ -2358,6 +2355,10 @@ extern "C" fn trampoline() -> ! {
             }
             super::tondo_rt_fn_release(body as *mut super::FnObject);
             super::panics::unheld(&mut *task);
+            // Before whoever waits for it hears: the request may end then.
+            if (*task).flight != 0 {
+                super::diagnostics::step((*task).flight, (*task).id, super::diagnostics::Did::Ended, Vec::new());
+            }
             // A panic it ended with goes to its `recover`, or to whoever
             // waits for it.
             if let Some(panic) = (*task).unwinding.take() {
