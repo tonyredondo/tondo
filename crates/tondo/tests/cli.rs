@@ -639,7 +639,7 @@ fn a_test_says_of_locks_in_opposite_orders() {
 /// What a program asks of itself beyond compiling.
 #[test]
 fn check_says_what_it_is_asked() {
-    let source: &[u8] = b"/// Says it.\npub fn told() {}\n\npub fn untold() {}\n\nfn hidden() {}\n\nfn main() {\n    \
+    let source: &[u8] = b"/// Says it.\npub fn told() {}\n\npub fn untold() {}\n\n/// Says it too.\npub fn long[\n    T,\n](value: T): T {\n    value\n}\n\nfn hidden() {}\n\nfn main() {\n    \
         var values = [1, 2]\n    for round in 0..3 {\n        let before = values\n        \
         _ = before.length() + round\n        values.push(round)\n    }\n    \
         var other = [1]\n    for round in 0..3 {\n        let kept = other\n        other.push(round)\n        \
@@ -649,7 +649,7 @@ fn check_says_what_it_is_asked() {
     assert!(!plain.contains("W1010") && !plain.contains("W1009"), "{plain}");
     let said = said_by(&dir, &["check", "lints.to", "--docs"]);
     assert!(said.contains("W1010") && said.contains("`untold` is public"), "{said}");
-    assert!(!said.contains("`told` is public") && !said.contains("hidden"), "{said}");
+    assert!(!said.contains("`told` is public") && !said.contains("`long`") && !said.contains("hidden"), "{said}");
     let said = said_by(&dir, &["check", "lints.to", "--performance"]);
     assert!(said.contains("`before` shares `values`"), "{said}");
     assert!(!said.contains("`kept` shares"), "what it reads after the write keeps it: {said}");

@@ -10,7 +10,7 @@ use crate::source::{SourceFile, SourceMap};
 pub fn run(sources: &SourceMap, diags: &mut Diagnostics, docs: bool, performance: bool) {
     for file in (0..sources.len()).map(|index| sources.file(index)) {
         // The program's, whether a project's or a file alone.
-        if file.dependency || file.name.starts_with("<std>") || file.name.ends_with("_test.to") {
+        if file.dependency || file.logical.starts_with("<std>") || file.name.ends_with("_test.to") {
             continue;
         }
         let module = crate::parser::parse_file(file, &mut Diagnostics::default());
@@ -31,9 +31,9 @@ pub fn run(sources: &SourceMap, diags: &mut Diagnostics, docs: bool, performance
 fn undocumented(file: &SourceFile, item: &Item, diags: &mut Diagnostics) {
     let Some(name) = crate::modules::public_name(item) else { return };
     let before = &file.text[..(name.span.start - file.base) as usize];
-    let mut lines = before.lines().rev();
-    // The declaration's own line, then what is above it, past its annotations.
-    let above = lines.by_ref().skip(1).find(|line| !line.trim_start().starts_with('@'));
+    // A header may take lines: what counts is above its `pub`, past its annotations.
+    let head = before.rfind("\npub ").map_or(0, |at| at + 1);
+    let above = before[..head].lines().rev().find(|line| !line.trim_start().starts_with('@'));
     if !above.is_some_and(|line| line.trim_start().starts_with("///")) {
         let message =
             format!("`{}` is public and says nothing of what it is: write a `///` comment above it", name.name);
