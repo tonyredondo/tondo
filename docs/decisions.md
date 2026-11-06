@@ -5367,3 +5367,12 @@ runner had: a held or frozen task kept its worker, so with one worker the progra
 `--schedules` left out what needs no wait: nothing changed the order at a `spawn`, at a lock
 let go or at a write of an `Atomic`, so 100 seeds gave one order. Those are points too now, and
 the cases run in the order of a seed, since what a case says of its output holds in any.
+
+## Models of the scheduler
+
+`testing/models` has the protocols that lost tasks, in TLA+: how workers find tasks and sleep,
+and how a task parks. TLC tries every order of their steps, which no test and no seed does.
+The first model found what the tests had not: a worker that retires left a task in the queue
+and woke nobody, with the last worker asleep trusting one that was leaving, and it takes three
+workers to see. A model is written by hand and knows nothing of the code, so what it proves
+is the design, and it has to change with `tasks.rs`. The Nightly runs them.
