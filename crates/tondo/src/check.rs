@@ -3499,7 +3499,7 @@ impl<'a> Checker<'a> {
     }
 
     /// A type of an imported standard module, such as `text.TextError`.
-    fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
+    fn module_type(&mut self, module: &str, name: &str) -> Option<Ty> {
         if let Some(&ModuleName::Module(hosted)) = self.names.get(module)
             && let Some(ty) = Self::companions(hosted).iter().find_map(|companion| {
                 match self.type_names.get(&format!("{companion}.{name}")) {
@@ -3513,13 +3513,13 @@ impl<'a> Checker<'a> {
         match (self.names.get(module), name) {
             (Some(ModuleName::Module(StdModule::Env)), "EnvError") => self.env_error,
             (Some(ModuleName::Module(StdModule::InternalJson)), "NativeReader") => {
-                self.types.lookup(&TyKind::Handle(Handle::JsonReader, Ty::UNIT))
+                Some(self.types.intern(TyKind::Handle(Handle::JsonReader, Ty::UNIT)))
             }
             (Some(ModuleName::Module(StdModule::InternalJson)), "NativeWriter") => {
-                self.types.lookup(&TyKind::Handle(Handle::JsonWriter, Ty::UNIT))
+                Some(self.types.intern(TyKind::Handle(Handle::JsonWriter, Ty::UNIT)))
             }
             (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
-                self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
+                Some(self.types.intern(TyKind::Handle(Handle::Regex, Ty::UNIT)))
             }
             (
                 Some(ModuleName::Module(
@@ -3539,9 +3539,9 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalContext,
                 )),
                 "Native",
-            ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
+            ) => Some(self.types.intern(TyKind::Handle(Handle::Native, Ty::UNIT))),
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
-                self.types.lookup(&TyKind::Handle(Handle::ReflectBox, Ty::UNIT))
+                Some(self.types.intern(TyKind::Handle(Handle::ReflectBox, Ty::UNIT)))
             }
             (Some(ModuleName::Module(StdModule::InternalMemory)), "CString") => Some(self.c_string),
             (Some(ModuleName::Module(StdModule::InternalMemory)), "Void") => Some(self.void),
@@ -3560,9 +3560,9 @@ impl<'a> Checker<'a> {
             }
             (Some(ModuleName::Module(StdModule::Io)), name) => match name {
                 "IoError" => Some(self.io_error),
-                "Writer" => self.types.lookup(&TyKind::Handle(Handle::Writer, Ty::UNIT)),
-                "Reader" => self.types.lookup(&TyKind::Handle(Handle::Reader, Ty::UNIT)),
-                "Buffer" => self.types.lookup(&TyKind::Handle(Handle::Buffer, Ty::UNIT)),
+                "Writer" => Some(self.types.intern(TyKind::Handle(Handle::Writer, Ty::UNIT))),
+                "Reader" => Some(self.types.intern(TyKind::Handle(Handle::Reader, Ty::UNIT))),
+                "Buffer" => Some(self.types.intern(TyKind::Handle(Handle::Buffer, Ty::UNIT))),
                 _ => None,
             },
             (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
@@ -3589,7 +3589,7 @@ impl<'a> Checker<'a> {
                     "Barrier" => Handle::Barrier,
                     _ => return None,
                 };
-                self.types.lookup(&TyKind::Handle(handle, Ty::UNIT))
+                Some(self.types.intern(TyKind::Handle(handle, Ty::UNIT)))
             }
             _ => None,
         }
