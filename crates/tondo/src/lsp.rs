@@ -227,7 +227,12 @@ impl Server {
         if method.is_empty() {
             return true;
         }
-        let result = self.answer(&method, params, id.is_some());
+        // A bug in one request ends that request: what is open stays open.
+        let asked =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.answer(&method, params, id.is_some())));
+        let result = asked.unwrap_or_else(|_| {
+            id.is_some().then(|| Err((-32603, format!("tondo failed inside `{method}`; its error output says where"))))
+        });
         if let (Some(id), Some(result)) = (id, result) {
             send(match result {
                 Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -243,6 +248,7 @@ impl Server {
     fn answer(&mut self, method: &str, params: &Value, request: bool) -> Option<Result<Value, (i64, String)>> {
         match method {
             "initialize" => Some(Ok(self.initialize(params))),
+            "tondo/panic" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => panic!("as a test asks"),
             "shutdown" => {
                 self.shut = true;
                 Some(Ok(Value::Null))

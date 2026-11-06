@@ -35,6 +35,8 @@ impl Editor {
     fn launch(options: Value, folders: Value) -> Editor {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("lsp")
+            .env("TONDO_TEST_LSP_PANIC", "1")
+            .stderr(Stdio::null())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -2106,4 +2108,18 @@ fn the_server_outlives_every_case() {
         }
         editor.notify("textDocument/didClose", json!({ "textDocument": document }));
     }
+}
+
+/// A bug in one request ends that request: what is open stays open.
+#[test]
+fn the_server_outlives_a_panic_in_a_request() {
+    let main = "fn main() {\n    let value = 1\n    _ = value\n}\n";
+    let dir = project("survives-panic", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let failed = editor.request("tondo/panic", json!({}));
+    assert_eq!(failed["code"], -32603, "{failed}");
+    let at = json!({ "line": 1, "character": 8 });
+    let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": at }));
+    assert!(hover["contents"]["value"].as_str().unwrap().contains("Int"), "{hover}");
 }

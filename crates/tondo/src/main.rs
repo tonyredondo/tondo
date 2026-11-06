@@ -21,7 +21,7 @@ fn main() -> ExitCode {
         panicked(info);
         let arguments: Vec<String> = std::env::args().skip(1).collect();
         eprintln!(
-            "tondo: this is a bug of tondo {}, not of your program: `tondo {}` ended here, and \
+            "tondo: this is a bug of tondo {}, not of your program: `tondo {}` failed here, and \
              RUST_BACKTRACE=1 shows how it got there",
             driver::VERSION,
             arguments.join(" ")
