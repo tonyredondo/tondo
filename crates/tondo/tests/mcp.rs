@@ -15,9 +15,15 @@ struct Agent {
 
 impl Agent {
     fn start(dir: &Path) -> Agent {
+        Agent::start_with(dir, &[])
+    }
+
+    /// With these variables, as a machine set up otherwise.
+    fn start_with(dir: &Path, variables: &[(&str, &Path)]) -> Agent {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("mcp")
             .current_dir(dir)
+            .envs(variables.iter().map(|(name, value)| (*name, *value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -413,6 +419,14 @@ fn setup_readies_the_agents() {
     assert!(said["messages"][0].as_str().unwrap().contains("its MCP server answers"), "{said}");
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 2, "{calls}");
+    // The tool does the same.
+    let mut agent = Agent::start_with(&dir, &[("HOME", &home), ("PATH", &path)]);
+    let (data, _) = agent.call("setup", json!({ "vsix": vsix }));
+    assert_eq!(data["report"]["ok"], true, "{data}");
+    assert_eq!(data["report"]["agents"][0]["name"], "Claude Code", "{data}");
+    agent.stop();
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+    assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 3, "{calls}");
     assert!(calls.contains(&format!("windsurf --install-extension {} --force\n", vsix.display())), "{calls}");
     let readied: Vec<(&str, bool)> = said["editors"]
         .as_array()

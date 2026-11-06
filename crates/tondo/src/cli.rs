@@ -246,7 +246,11 @@ pub const COMMANDS: &[Command] = &[
         usage: &["tondo reload <pid|name> [--via <command>] [--json]"],
         summary: &["change a running live build's code to what its", "files say now"],
     },
-    Command { name: "dap", usage: &["tondo dap"], summary: &["debug for an editor, with the Debug Adapter Protocol"] },
+    Command {
+        name: "dap",
+        usage: &["tondo dap [--link <library>]... [--static]"],
+        summary: &["debug for an editor, with the Debug Adapter Protocol"],
+    },
     Command {
         name: "dump",
         usage: &["tondo dump <pid|name> [--output <path>] [--via <command>] [--json]"],

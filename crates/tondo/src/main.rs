@@ -111,27 +111,7 @@ fn main() -> ExitCode {
         "dump" => dump_command(&args[1..]),
         "debug" => debug_command(&args[1..]),
         "target" => target_command(&args[1..]),
-        "dap" => {
-            let program = |path: &Path, live| {
-                cached_executable(path, &BuildOptions { debug: true, live, ..BuildOptions::default() })
-            };
-            let tests = |path: &Path| {
-                let build = TestBuild {
-                    library: false,
-                    debug: true,
-                    statically: false,
-                    target: None,
-                    diagnostics_json: false,
-                    list: false,
-                    coverage: false,
-                    fuzz: false,
-                    live: false,
-                };
-                let built = build_tests(path, &build)?;
-                Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
-            };
-            tondo::dap::serve(tondo::dap::Builds { program: &program, tests: &tests }).map(|()| ExitCode::SUCCESS)
-        }
+        "dap" => dap_command(&args[1..]),
         "version" | "--version" | "-V" => {
             if args.iter().skip(1).any(|a| a == "--json") {
                 let target = Target::machine().map(Target::name);
@@ -1720,6 +1700,40 @@ fn remove_command(args: &[OsString]) -> Result<ExitCode, String> {
         println!("removed `{alias}`");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo dap`: debugs for an editor, building what it is given to debug.
+fn dap_command(args: &[OsString]) -> Result<ExitCode, String> {
+    // What a program needs to be built, as `run` takes it.
+    let (mut libraries, mut statically) = (Vec::new(), false);
+    let mut given = args.iter().filter_map(|a| a.to_str());
+    while let Some(arg) = given.next() {
+        match (arg, arg == "--link") {
+            (_, true) => libraries.extend(given.next().map(String::from)),
+            ("--static", _) => statically = true,
+            _ => return Err(format!("dap takes --link <library> and --static, not `{arg}`")),
+        }
+    }
+    let program = |path: &Path, live| {
+        let (libraries, debug) = (libraries.clone(), true);
+        cached_executable(path, &BuildOptions { debug, live, libraries, statically, ..BuildOptions::default() })
+    };
+    let tests = |path: &Path| {
+        let build = TestBuild {
+            library: false,
+            debug: true,
+            statically,
+            target: None,
+            diagnostics_json: false,
+            list: false,
+            coverage: false,
+            fuzz: false,
+            live: false,
+        };
+        let built = build_tests(path, &build)?;
+        Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
+    };
+    tondo::dap::serve(tondo::dap::Builds { program: &program, tests: &tests }).map(|()| ExitCode::SUCCESS)
 }
 
 /// `tondo fix` (7.14): the compiler's safe repairs, applied.

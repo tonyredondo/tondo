@@ -40,6 +40,7 @@ import {
   reloaded,
   rendered,
   kindMark,
+  debugFlags,
   internalModule,
   layoutBadge,
   systemBadge,
@@ -732,4 +733,9 @@ test('marks what the layout of a project means', () => {
   assert.equal(layoutBadge('/w/internal'), undefined);
   assert.equal(internalModule('app.internal.pricing'), true);
   assert.equal(internalModule('internal.models'), false);
+});
+
+test("keeps of a build's options those a debug build takes", () => {
+  const flags = ['--target', 'aarch64-linux', '--link', 'z', '--strip', '--static', '--link'];
+  assert.deepEqual(debugFlags(flags), ['--link', 'z', '--static']);
 });

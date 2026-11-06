@@ -550,3 +550,11 @@ fn the_compiler_outlives_broken_programs() {
         assert!(!said.contains("is a bug of tondo"), "round {round}: {said}\n{}", words.concat());
     }
 }
+
+/// `tondo dap` takes what a program needs to be built, and only that.
+#[test]
+fn the_debug_adapter_says_what_it_takes() {
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dap", "--strip"]).output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(!ran.status.success() && said.contains("dap takes --link <library> and --static"), "{said}");
+}

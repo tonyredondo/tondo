@@ -4911,8 +4911,14 @@ impl Adapter {
     }
 
     fn with(variables: &[(&str, &std::ffi::OsStr)]) -> Adapter {
+        Adapter::taking(&[], variables)
+    }
+
+    /// With options of `tondo dap`.
+    fn taking(args: &[&str], variables: &[(&str, &std::ffi::OsStr)]) -> Adapter {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("dap")
+            .args(args)
             .envs(variables.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -5653,4 +5659,30 @@ fn sigquit_says_where_the_tasks_are() {
     let said = String::from_utf8_lossy(&ended.stderr);
     assert!(said.contains("SIGQUIT") && said.contains("stuck  quit.to:4"), "{said}");
     assert_eq!(std::os::unix::process::ExitStatusExt::signal(&ended.status), Some(3), "{said}");
+}
+
+/// What `tondo dap` is given goes into what it builds, and a static build is
+/// debugged as any other.
+#[test]
+fn the_adapter_debugs_a_static_build() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-static");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("solid.to"), "fn main() {\n    let value = 41\n    _ = value + 1\n}\n").unwrap();
+    let mut adapter = Adapter::taking(&["--static"], &[]);
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "solid.to", "cwd": dir }));
+    let path = dir.join("solid.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 3 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": 1 }));
+    let frame = trace["stackFrames"][0]["id"].clone();
+    let value = adapter.ask("evaluate", json!({ "expression": "value", "frameId": frame }));
+    assert_eq!(value["result"], "41", "{value}");
+    adapter.ask("continue", json!({ "threadId": 1 }));
+    adapter.until("terminated");
 }

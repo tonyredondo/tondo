@@ -3,6 +3,7 @@
 
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 
@@ -153,6 +154,33 @@ const tests: [string, () => Promise<void>][] = [
       assert.equal(await ended('tondo.removeDependency', ['lib']), 0);
       assert.equal(await ended('tondo.updateDependencies'), 0);
       assert.equal(await ended('tondo.clean', ['The cache of builds']), 0);
+    },
+  ],
+  [
+    'a library for C, and bindings of a header',
+    async () => {
+      const dir = path.join(folder(), 'clib');
+      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'tondo.toml'), '[package]\nname = "clib"\n');
+      const code = 'import std.ffi\n\npub extern fn add_one(value: ffi.CInt): ffi.CInt {\n    value + 1\n}\n';
+      fs.writeFileSync(path.join(dir, 'src/lib.to'), code);
+      fs.writeFileSync(path.join(dir, 'demo.h'), 'int demo(int value);\n');
+      const document = await vscode.workspace.openTextDocument(path.join(dir, 'src/lib.to'));
+      await vscode.window.showTextDocument(document);
+      assert.equal(await ended('tondo.buildLibrary'), 0);
+      assert.equal(await ended('tondo.bind', ['demo.h --output src/demo.to']), 0);
+      assert.match(fs.readFileSync(path.join(dir, 'src/demo.to'), 'utf8'), /extern fn demo/);
+    },
+  ],
+  [
+    'a folder becomes a project',
+    async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tondo-bare-'));
+      fs.writeFileSync(path.join(dir, 'one.to'), 'fn main() {}\n');
+      const document = await vscode.workspace.openTextDocument(path.join(dir, 'one.to'));
+      await vscode.window.showTextDocument(document);
+      assert.equal(await ended('tondo.initProject', ['bare']), 0);
+      assert.ok(fs.existsSync(path.join(dir, 'tondo.toml')));
     },
   ],
   [

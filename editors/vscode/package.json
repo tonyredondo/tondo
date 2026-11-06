@@ -146,7 +146,7 @@
           },
           "default": [],
           "scope": "resource",
-          "markdownDescription": "Options of `tondo run` and `tondo build` for the programs run and built from the editor, as `[\"--target\", \"aarch64-linux\", \"--static\"]`; also `--link`, `--strip` and `--no-source-links`."
+          "markdownDescription": "Options of `tondo run` and `tondo build` for the programs run and built from the editor, as `[\"--target\", \"aarch64-linux\", \"--static\"]`; also `--link`, `--strip` and `--no-source-links`. Debugging takes `--link` and `--static`."
         },
         "tondo.via": {
           "type": "string",

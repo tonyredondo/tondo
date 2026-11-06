@@ -765,6 +765,17 @@ export function systemBadge(file: string): { badge: string; tooltip: string } | 
   }
 }
 
+/** Of the options of a build, those a build to debug takes: what a program
+ *  needs to link, and not what changes what can be debugged. */
+export function debugFlags(flags: string[]): string[] {
+  return flags.flatMap((flag, at) => {
+    if (flag === '--static') {
+      return [flag];
+    }
+    return flag === '--link' && flags[at + 1] !== undefined ? [flag, flags[at + 1]] : [];
+  });
+}
+
 /** The badge of what a project's layout means: a directory `internal`, for
  *  its package alone, and a file of tests. */
 export function layoutBadge(file: string): { badge: string; tooltip: string } | undefined {
