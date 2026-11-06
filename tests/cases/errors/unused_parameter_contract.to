@@ -1,0 +1,67 @@
+// A parameter a signature promises is not the body's to use: a trait's default
+// speaks for every implementation. An implementation that ignores one is warned of.
+import std.console
+
+trait Sink {
+    fn tag(self, name: String) {}
+}
+
+type Plain = {}
+
+impl Sink for Plain {}
+
+type Tagged = { prefix: String }
+
+impl Sink for Tagged {
+    fn tag(self, name: String) {
+        console.println("{self.prefix}{name}")
+    }
+}
+
+trait Shape {
+    fn scale(self, factor: Float): Float
+}
+
+impl Shape for Tagged {
+    fn scale(self, factor: Float): Float {
+        1.0
+    }
+}
+
+// Only the type of `value` matters, and it gives the caller's `T`.
+fn sizeOf[T](value: T): Int {
+    Array.new[T]().length()
+}
+
+// Nothing here reads `T`, so nothing is given.
+fn ignored[T](value: T) {}
+
+// `other` gives `T` as well.
+fn second[T](value: T, other: T): Int {
+    _ = other
+    Array.new[T]().length()
+}
+
+fn greet(name: String, age: Int): String {
+    "hello {name}"
+}
+
+fn main() {
+    Plain {}.tag("a")
+    Tagged { prefix: "b" }.tag("c")
+    console.println("{Tagged { prefix: "" }.scale(2.0)}")
+    console.println("{sizeOf(1)}")
+    ignored(1)
+    console.println("{second(1, 2)}")
+    console.println(greet("d", 1))
+}
+
+// expect-stdout: bc
+// expect-stdout: 1.0
+// expect-stdout: 0
+// expect-stdout: 0
+// expect-stdout: hello d
+// expect-warning: W1003 the parameter `factor` is never used: write `_` instead, or `_factor` to hold its value until the function ends
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends
+// expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends
+// expect-warning: W1003 the parameter `age` is never used: write `_` instead, or `_age` to hold its value until the function ends

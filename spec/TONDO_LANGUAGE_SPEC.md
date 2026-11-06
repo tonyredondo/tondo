@@ -8847,7 +8847,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `W1001` | `unused-import` | Import sin referencias. |
 | `W1002` | `unused-binding` | Binding local no leído ni consumido. |
-| `W1003` | `unused-parameter` | Named parameter unused in an implementation body; `_` suppresses it. Bodyless signatures are exempt. |
+| `W1003` | `unused-parameter` | Named parameter unused in an implementation body; `_` suppresses it. Bodyless signatures, a trait's default bodies and a parameter that alone gives a `T` the body names are exempt. |
 | `W1004` | `naming-convention` | Nombre no sigue la convención de 5.4. |
 | `W1005` | `confusable-identifier` | Skeleton Unicode confundible en el mismo scope. |
 | `W1006` | `unreachable-code` | Statement o expresión posterior no es alcanzable. |
@@ -9179,7 +9179,7 @@ con condiciones cerradas:
 
 - Import no utilizado (`W1001`).
 - Binding local no utilizado (`W1002`).
-- Unused parameter in an implementation body, unless written as `_` (`W1003`); bodyless signatures are exempt.
+- Unused parameter in an implementation body, unless written as `_` (`W1003`); bodyless signatures are exempt, and so are a trait's default bodies, where the parameter is the contract of every implementation, and a parameter of type `T` that alone gives its caller's `T` to a body that names it.
 - Nombre que no sigue la convención canónica (`W1004`).
 - Identificadores visualmente confundibles según 5.4 (`W1005`).
 - Código estructuralmente inalcanzable tras una expresión `Never` o una

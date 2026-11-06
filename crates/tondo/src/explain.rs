@@ -229,7 +229,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ),
     ("W1001", "unused-import", "An import nothing uses."),
     ("W1002", "unused-binding", "A binding never read or moved."),
-    ("W1003", "unused-parameter", "A named parameter a body never uses; `_` before its name says it is meant."),
+    (
+        "W1003",
+        "unused-parameter",
+        "A named parameter a body never uses; `_` before its name says it is meant. A trait's default bodies are exempt, and a parameter that only gives its caller's `T`.",
+    ),
     ("W1004", "naming-convention", "A name that does not follow the convention of its kind."),
     ("W1005", "confusable-identifier", "Two names in one scope that look the same."),
     ("W1006", "unreachable-code", "A statement or expression that can never run."),

@@ -6484,6 +6484,7 @@ impl<'a> Checker<'a> {
         self.leaving = Some(f.name.span);
         let signature = self.signatures[id.0 as usize].clone();
         let scope = self.fn_scopes[id.0 as usize].clone();
+        let trait_default = scope.self_type.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Param(_)));
         // A trace names a trait's method by the type: `Cell.display`, and
         // `Box.display[Int]` once monomorphized.
         self.naming = match (&scope.implementing, scope.self_type) {
@@ -6552,6 +6553,13 @@ impl<'a> Checker<'a> {
         let body = self.block(&mut cx, written, success);
         if let Some(opaque) = opaque {
             self.record_witness(&cx, opaque, &body, f);
+        }
+        // What a signature promises is not this body's to use: a trait's default
+        // speaks for every implementation, and a parameter may only give a `T`.
+        for (param, local) in f.params.iter().zip(&params) {
+            if trait_default || self.gives_type(f, param) {
+                cx.reads.insert(*local);
+            }
         }
         self.unused(&cx, &params);
         if let Some((error, at, code)) = cx.undeclared {
@@ -9213,6 +9221,20 @@ impl<'a> Checker<'a> {
             cx.named.push(id);
         }
         id
+    }
+
+    /// Whether `param` is there only for its type: it alone gives a `T` of
+    /// the function, and the body names that `T`.
+    fn gives_type(&self, f: &ast::FnDecl, param: &ast::Param) -> bool {
+        let (Some(ty), Some(body)) = (&param.ty, &f.body) else { return false };
+        let file = self.sources.file_of(ty.span.start);
+        let name = file.slice(ty.span);
+        f.generics.iter().any(|generic| generic.name.name == name)
+            && crate::lints::names(file, body.span, name)
+            && !f.params.iter().any(|other| {
+                !std::ptr::eq(other, param)
+                    && other.ty.as_ref().is_some_and(|ty| crate::lints::names(file, ty.span, name))
+            })
     }
 
     /// Warns of the bindings and parameters a body never reads (`W1002`,

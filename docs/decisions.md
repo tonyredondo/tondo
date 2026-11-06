@@ -5320,3 +5320,19 @@ failure. A program outside tests pays nothing unless it asks. `tondo check --doc
 `--performance` are the two profiles 22.8 names. The second warns of a collection named
 again in a loop and written after, which copies it on every turn: 0.243 s against 0.002 s
 on the loop measured. It only says it where nothing reads the name after the write.
+
+## What a parameter that nothing reads means
+
+An unused parameter of a public function looked like a defect, and going through the
+standard library's 23 showed nine that were: `JsonReader.message` lost the path of a nested
+error, `jsonValue` did nothing, and the functions the compiler replaces had bodies that
+answered with an empty value. The other fourteen are contracts. A trait's default body
+speaks for every implementation, so W1003 leaves it alone, and it leaves alone a parameter
+that alone gives a `T` its body names, as `reflect.typeOf(value)`. An implementation that
+ignores a parameter is still warned of.
+
+Separate traits for what one format needs were the elegant way to shrink `Sink`, but code
+written once for every format cannot ask whether its `S` has one: that is specialization,
+which 12 excludes. A record and a field go to the format as data instead, in `beginRecord`
+and `field`, whose defaults use them to write the map and the key, and only XML overrides
+them. The other hooks stay.

@@ -113,6 +113,6 @@ fn is_named(value: &ast::Expr, name: &str) -> bool {
 }
 
 /// Whether the text of a span names a binding.
-fn names(file: &SourceFile, span: crate::source::Span, name: &str) -> bool {
+pub(crate) fn names(file: &SourceFile, span: crate::source::Span, name: &str) -> bool {
     file.slice(span).split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == name)
 }
