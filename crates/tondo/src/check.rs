@@ -13365,6 +13365,27 @@ impl<'a> Checker<'a> {
         {
             return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, expected, span);
         }
+        // A trait's method on a concrete value, when one trait gives it (12.7);
+        // those of the type itself and of the language go first.
+        if !self.is_abstract(ty) && !self.language_method(ty, &method.name) {
+            let givers = self.traits_with(ty, &method.name);
+            match givers.as_slice() {
+                [] => {}
+                [giver] => {
+                    let index = self.traits[giver.0 as usize].methods.iter().position(|m| m.name == method.name);
+                    let index = index.expect("a trait that has the method");
+                    return self.trait_dot_call(cx, *giver, Vec::new(), index, value, method, args, expected, span);
+                }
+                _ => {
+                    let name = |t: &TraitId| format!("`{}.{}(value)`", self.traits[t.0 as usize].name, method.name);
+                    let names: Vec<String> = givers.iter().map(name).collect();
+                    let message =
+                        format!("`{}` comes from more than one trait; write {}", method.name, names.join(" or "));
+                    self.diags.error("E1004", method.span, message);
+                    return Self::error_expr(span);
+                }
+            }
+        }
         // `DateTime`'s methods, written in Tondo (14.3.4): the functions of
         // `std.time`'s companions that take a `DateTime` first.
         if Some(ty) == self.datetime
@@ -14168,12 +14189,36 @@ impl<'a> Checker<'a> {
 
     /// A trait with a method named `name` that `ty` implements, if any.
     fn implemented_trait_with(&mut self, ty: Ty, name: &str) -> Option<String> {
+        let found = (0..self.traits.len() as u32).map(TraitId).filter(|t| self.traits[t.0 as usize].params.is_empty());
+        let found: Vec<TraitId> =
+            found.filter(|t| self.traits[t.0 as usize].methods.iter().any(|m| m.name == name)).collect();
+        found.into_iter().find(|&t| self.satisfies(ty, t, &[])).map(|t| self.traits[t.0 as usize].name.clone())
+    }
+
+    /// The traits without parameters that give `ty` a method `name`.
+    fn traits_with(&mut self, ty: Ty, name: &str) -> Vec<TraitId> {
         let candidates: Vec<TraitId> = (0..self.traits.len() as u32)
             .map(TraitId)
             .filter(|t| self.traits[t.0 as usize].params.is_empty())
             .filter(|t| self.traits[t.0 as usize].methods.iter().any(|m| m.name == name))
             .collect();
-        candidates.into_iter().find(|&t| self.satisfies(ty, t, &[])).map(|t| self.traits[t.0 as usize].name.clone())
+        candidates.into_iter().filter(|&t| self.satisfies(ty, t, &[])).collect()
+    }
+
+    /// Whether the language gives a type of its own a method `name`. Of the
+    /// types it has no list of, all it knows.
+    fn language_method(&self, ty: Ty, name: &str) -> bool {
+        let owner = match self.types.kind(ty) {
+            TyKind::Adt(_) | TyKind::Tuple(_) | TyKind::Bool | TyKind::Char | TyKind::Byte => return false,
+            TyKind::Int(_) | TyKind::Float(_) => return false,
+            TyKind::String => "String",
+            TyKind::Array(_) => "Array",
+            TyKind::Deque(_) => "Deque",
+            TyKind::Map(..) => "Map",
+            TyKind::Set(_) => "Set",
+            _ => return true,
+        };
+        crate::api::builtin_methods(owner).contains(&name)
     }
 
     /// The canonical spelling of a method that other languages name

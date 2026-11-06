@@ -1,0 +1,48 @@
+// A trait's method is called with a dot on a concrete value, when one trait
+// gives it; the type's own methods go first.
+
+import std.console
+
+trait Named {
+    fn name(self): String
+    fn loud(self): String
+}
+
+type User = { id: Int }
+
+fn User.loud(self): String {
+    "own {self.id}"
+}
+
+impl Named for User {
+    fn name(self): String {
+        "user {self.id}"
+    }
+
+    fn loud(self): String {
+        "trait {self.id}"
+    }
+}
+
+impl Named for Int {
+    fn name(self): String {
+        "number {self}"
+    }
+
+    fn loud(self): String {
+        "NUMBER"
+    }
+}
+
+fn main() {
+    let user = User { id: 1 }
+    console.println(user.name())
+    console.println(user.loud())
+    console.println(Named.loud(user))
+    console.println(7.name())
+}
+
+// expect-stdout: user 1
+// expect-stdout: own 1
+// expect-stdout: trait 1
+// expect-stdout: number 7

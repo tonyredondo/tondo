@@ -112,11 +112,15 @@ fn name(color: Color): String {
 fn main() {}
 ```
 
-A trait's method on a concrete value is called through the trait:
-`Shape.area(square)`; `value.area()` works on a generic `T: Shape`.
+A trait's method is called with a dot, as `square.area()`. When two traits of a
+value give the same method, the call names one: `Shape.area(square)`.
 
-```tondo error E1001
+```tondo error E1004
 trait Shape {
+    fn area(self): Int
+}
+
+trait Land {
     fn area(self): Int
 }
 
@@ -128,9 +132,15 @@ impl Shape for Square {
     }
 }
 
+impl Land for Square {
+    fn area(self): Int {
+        0
+    }
+}
+
 fn main() {
     let square = Square { side: 2 }
-    let a = square.area()
+    _ = square.area()
 }
 ```
 
@@ -291,11 +301,13 @@ fn names(db: sql.Database, min: Int): Array[String] ! sql.SqlError {
 fn main() {}
 ```
 
-A type cannot take a name of the prelude: `Copy`, `Key`, `Range`,
-`Command`, `Group`, `Display` and the rest. Name it after what it holds.
+A type can take a name of the prelude that a domain uses too, as `Key`, `Range`,
+`Command`, `Group` or `Pipeline`, and in its module it is that type. It cannot
+take the language's own vocabulary: `Int`, `String`, `Array`, `Option`, `Copy`,
+`Display`, `Failure` and the like. Name it after what it holds.
 
 ```tondo error E1005
-pub type Key = { id: String }
+pub type Copy = { id: String }
 
 fn main() {}
 ```

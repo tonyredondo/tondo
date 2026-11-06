@@ -1,0 +1,29 @@
+// Two traits that give a method name it twice: the call says which.
+
+trait First {
+    fn name(self): String
+}
+
+trait Second {
+    fn name(self): String
+}
+
+type User = { id: Int }
+
+impl First for User {
+    fn name(self): String {
+        "first"
+    }
+}
+
+impl Second for User {
+    fn name(self): String {
+        "second"
+    }
+}
+
+fn main() {
+    _ = User { id: 1 }.name()
+}
+
+// expect-error: E1004 `name` comes from more than one trait; write `First.name(value)` or `Second.name(value)`

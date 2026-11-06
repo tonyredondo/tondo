@@ -4585,7 +4585,7 @@ trait Summary {
 fn consumeDynamic(value: Summary) {} // error: un trait no es un tipo de valor
 ~~~
 
-Sobre un parámetro `T: Summary`, `value.summarize()` resuelve por el constraint. Sobre un valor concreto, la llamada explícita es `Summary.summarize(value)` o `module.Summary.summarize(value)`, salvo las dos excepciones de 11.5: dentro de `impl Summary for User`, `self.summarize()` resuelve al trait implementado, y `cursor.next()` resuelve a `Iterator` en cualquier tipo que lo implemente. Las implementaciones no participan en una búsqueda global de métodos por nombre.
+Sobre un parámetro `T: Summary`, `value.summarize()` resuelve por el constraint. Sobre un valor concreto, `value.summarize()` resuelve al método del propio tipo si lo tiene, de los que declara o del lenguaje, y si no al del único trait implementado que lo da; si son varios, es `E1004`, y se escribe `Summary.summarize(value)` o `module.Summary.summarize(value)`. Dentro de `impl Summary for User`, `self.summarize()` resuelve siempre al trait implementado, y `cursor.next()` a `Iterator` en cualquier tipo que lo implemente. Las implementaciones no participan en una búsqueda global de métodos por nombre.
 
 Una colección heterogénea de comportamientos se expresa mediante:
 
