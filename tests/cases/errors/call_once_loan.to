@@ -1,0 +1,30 @@
+// A call needs an access that the place of the callable gives: a shared loan
+// neither changes a callable nor consumes it, and a `mut` one cannot consume it.
+
+type Counter = { count: Int }
+
+fn Counter.get(self): Int {
+    self.count
+}
+
+fn shared[F: ~Copy + CallOnce[fn(): Unit]](operation: ref F) {
+    operation()
+}
+
+fn changing[F: ~Copy + CallMut[fn(): Unit]](operation: ref F) {
+    operation()
+}
+
+fn exclusive[F: ~Copy + CallOnce[fn(): Unit]](operation: mut F) {
+    operation()
+}
+
+fn main() {
+    let counter = Counter { count: 1 }
+    assert(Counter.get(ref counter) == 1)
+}
+
+// expect-error: E1407 `operation` is a shared loan, and calling it would consume it: take it by value
+// expect-error: E1407 `operation` is a shared loan, and calling it can change it: take it as `mut`
+// expect-error: E1407 `operation` is a loan, and calling it would consume it: take it by value
+// expect-error: E1407 the receiver `self` is already a shared loan: remove `ref`

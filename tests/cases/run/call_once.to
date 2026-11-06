@@ -26,11 +26,24 @@ fn give[T: ~Copy](token: Token[T]) {
     invoke(release)
 }
 
+// A closure that calls such a capture gives it away, so it runs once too.
+fn pass[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+    }
+    let outer = () {
+        release()
+    }
+    invoke(outer)
+}
+
 fn main() {
     run(Token { value: "a" })
     give(Token { value: "b" })
+    pass(Token { value: "c" })
 }
 
 // expect-stdout: running
+// expect-stdout: spent
 // expect-stdout: spent
 // expect-stdout: spent

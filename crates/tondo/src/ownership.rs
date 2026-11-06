@@ -758,12 +758,18 @@ impl Checker<'_> {
     /// A call of a closure that gives a capture away consumes the closure
     /// (`CallOnce`); the binding keeps its reference until its scope ends.
     fn call_once(&mut self, callee: &Expr, mut flow: Flow) -> Flow {
+        // A capture called this way is given away, so this closure runs once too.
+        if let ExprKind::Field(base, index) = &callee.kind
+            && self.capture_name(base, *index).is_some()
+        {
+            flow.captures.insert(*index, Moved::Surely);
+            self.gives = true;
+            return flow;
+        }
         let Some(root) = Self::root(callee) else { return flow };
         if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
-            let message = format!(
-                "`{}` is a loan, and this closure gives a capture away, so calling it would consume it; take it by value",
-                self.local(root).name
-            );
+            let message =
+                format!("`{}` is a loan, and calling it would consume it: take it by value", self.local(root).name);
             self.error("E1407", callee.span, message);
         } else {
             flow.moved.insert(root, Moved::Surely);

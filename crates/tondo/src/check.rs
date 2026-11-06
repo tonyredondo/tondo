@@ -13862,7 +13862,7 @@ impl<'a> Checker<'a> {
         if let TyKind::CFn(params, result, variadic) = self.types.kind(callee.ty).clone() {
             return self.c_value_call(cx, callee, (params, result, variadic), args, expected, span);
         }
-        let Some(Callable { params, result, variadic, mutates, modes, is_unsafe, .. }) = self.callable(callee.ty)
+        let Some(Callable { params, result, variadic, mutates, once, modes, is_unsafe }) = self.callable(callee.ty)
         else {
             let message = format!("{} cannot be called", self.display(callee.ty));
             self.diags.error("E1102", callee.span, message);
@@ -13872,6 +13872,15 @@ impl<'a> Checker<'a> {
             let message =
                 "this function value is `unsafe`: call it inside `unsafe { ... }`, once its preconditions hold";
             self.diags.error("E1701", span, message);
+        }
+        if mutates && self.shared_place(cx, &callee) && !self.types.is_copy(callee.ty) {
+            let text = self.sources.file_of(callee.span.start).slice(callee.span);
+            let message = match once {
+                true => format!("`{text}` is a shared loan, and calling it would consume it: take it by value"),
+                false => format!("`{text}` is a shared loan, and calling it can change it: take it as `mut`"),
+            };
+            self.diags.error("E1407", callee.span, message);
+            return Self::error_expr(span);
         }
         if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
             self.diags.error("E1102", arg.span, "a call through a function value takes positional arguments");
@@ -14023,6 +14032,19 @@ impl<'a> Checker<'a> {
             hir::ExprKind::Local(local) => cx.mutable[local.0 as usize] && Some(*local) != cx.env,
             hir::ExprKind::Field(base, _) | hir::ExprKind::Retype(base) | hir::ExprKind::Index(base, _) => {
                 self.var_place(cx, base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `value` is reached through a `ref` parameter.
+    fn shared_place(&self, cx: &FnCx, value: &hir::Expr) -> bool {
+        match &value.kind {
+            hir::ExprKind::Local(local) => {
+                cx.params[local.0 as usize] == Some(ast::Mode::Ref) && Some(*local) != cx.env
+            }
+            hir::ExprKind::Field(base, _) | hir::ExprKind::Retype(base) | hir::ExprKind::Index(base, _) => {
+                self.shared_place(cx, base)
             }
             _ => false,
         }
