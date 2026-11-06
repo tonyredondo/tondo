@@ -214,6 +214,16 @@ jobs:
           cache-dependency-path: editors/vscode/package-lock.json
       - run: npm ci
       - run: npm test
+      # The extension in a real VS Code, with a `tondo` of this commit.
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p tondo
+        working-directory: .
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+      - run: xvfb-run -a npm run test:editor
+        env:
+          TONDO_BIN: ${{ github.workspace }}/target/debug/tondo
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:

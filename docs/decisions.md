@@ -5272,3 +5272,10 @@ ask. So the server's instructions name them, and a result says in `next` where i
 at the moment it is useful. Their steps are data a test replays, since a runbook that no
 longer works is worse than none: the first run of it found a message that blamed the wrong
 thing and two steps that were wrong.
+
+## The extension is tested in VS Code
+
+What the extension does through VS Code's API can only be seen there: a command that is
+not registered, a task it cannot run. `@vscode/test-electron` runs a real VS Code with the
+extension and a suite inside it, with the questions of each command answered by the suite.
+Playwright can come later, for what the API does not show, as the values beside the lines.
