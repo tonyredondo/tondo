@@ -5221,3 +5221,8 @@ be there to answer, and a script must not wait forever.
 A binding has its new value after its line, so a line's values are those the next line
 of its frame finds. Looking costs only while a tool asks, and stops by itself.
 
+## What is shared is what is named
+
+`dump redact` keeps the fields it names and drops the rest. Dropping what was known let a
+new field out: a field added to dumps stays private until someone says otherwise.
+
