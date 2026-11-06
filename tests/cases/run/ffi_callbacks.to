@@ -163,4 +163,4 @@ fn main() {
 // expect-stdout: 2.5 5.0 7.5 1003 -1003
 // expect-stdout: true false 1145
 // expect-stdout: 0 0 83
-// expect-no-schedule: a thread of C calls back, and it runs outside any order of the tasks
+// expect-no-schedule: main waits inside C for a thread of C whose call needs tasks to run, and one worker cannot

@@ -2826,7 +2826,8 @@ pub unsafe extern "C" fn tondo_rt_callback(
     if !*call.done.lock().unwrap_or_else(|e| e.into_inner()) {
         start_workers();
         FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
-        if super::replay::on() {
+        // The one worker may have ended: this thread runs what it waits for.
+        if exploring().is_some() {
             queue().workers += 1;
             work_until(false, Some(&|| *call.done.lock().unwrap_or_else(|e| e.into_inner())));
             queue().workers -= 1;
@@ -3295,7 +3296,8 @@ pub(crate) fn may_switch() {
 }
 
 /// Where the task to run next is among those that can, while exploring
-/// orders (testing 8.10), by PCT: each task has a priority the seed gives
+/// orders (testing 8.10), by PCT or, with one seed in four, at random: each
+/// task has a priority the seed gives
 /// as it starts, the highest runs, and at two of its steps, which the seed
 /// chooses within a scale it chooses too, the task that would run drops
 /// below all, so that an order that needs a task to stop at a few given
@@ -3305,9 +3307,16 @@ fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
     static STEPS: AtomicU64 = AtomicU64::new(0);
     static CHANGES: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
     let changes = CHANGES.get_or_init(|| {
-        let scale = 1 << (6 + seeded(seed) % 14);
+        // From a few steps, as a short test has, to a long one's.
+        let scale = 1 << (2 + seeded(seed) % 18);
         [1 + seeded(seed) % scale, 1 + seeded(seed) % scale]
     });
+    // One seed in four chooses at random at every step instead: what comes
+    // of a change in the right step comes far more often in a short test.
+    static WALKS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *WALKS.get_or_init(|| seeded(seed).is_multiple_of(4)) {
+        return seeded(seed) as usize % runnable.len();
+    }
     let step = STEPS.fetch_add(1, Ordering::Relaxed) + 1;
     let priority = |at: usize| unsafe { (*runnable[at]).priority };
     let highest = (0..runnable.len()).max_by_key(|&at| priority(at)).unwrap_or(0);

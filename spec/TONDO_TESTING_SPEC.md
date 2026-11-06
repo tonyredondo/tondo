@@ -1723,8 +1723,9 @@ las tareas corren en otro orden:
   seed, dentro de una escala que también elige, la que iba a correr pasa a
   tener menos que todas. Así, un orden que necesita que una tarea se detenga
   en unos pocos pasos concretos aparece con una probabilidad que no baja con
-  la longitud del test. El generador también elige entre las operaciones
-  listas de un `select`;
+  la longitud del test. Una seed de cada cuatro elige en cambio al azar en
+  cada paso, lo que en un test corto da más veces los órdenes intermedios. El
+  generador también elige entre las operaciones listas de un `select`;
 - cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
   lenguaje), tras lanzar otra tarea, al soltar un lock y antes de escribir un
   `Atomic`, donde el orden entre tareas puede cambiar aunque nadie espere.
