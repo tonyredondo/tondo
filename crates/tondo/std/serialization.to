@@ -170,8 +170,8 @@ impl Display for ErrorKind {
 ///     fn key(self, _: String) {}
 ///     fn endMap(self) {}
 ///
-///     fn field(self, notes: Array[serialization.Note]) {
-///         for note in notes {
+///     fn field(self, field: serialization.Field) {
+///         for note in field.notes {
 ///             console.println("{note.format}.{note.name}({note.value})")
 ///         }
 ///     }
@@ -477,14 +477,31 @@ pub trait Source {
 // ---------------------------------------------------------------------------
 
 /// A record about to be written: the name of its type, or of its variant,
-/// how many members it has, and the notes of the type.
+/// how many members it has, and the notes of the type. `Sink.beginRecord`
+/// takes it.
+///
+/// ```tondo
+/// import std.console
+/// import std.serialization
+///
+/// let record = serialization.Record { name: "Item", count: 2, notes: [] }
+/// console.println("{record.name} has {record.count} members")
+/// ```
 pub type Record = {
     name: String
     count: Int
     notes: Array[Note]
 }
 
-/// A field about to be written: its key and its notes.
+/// A field about to be written: its key and its notes. `Sink.field` takes it.
+///
+/// ```tondo
+/// import std.console
+/// import std.serialization
+///
+/// let field = serialization.Field { name: "title", notes: [] }
+/// console.println("{field.name} has {field.notes.length()} notes")
+/// ```
 pub type Field = {
     name: String
     notes: Array[Note]
