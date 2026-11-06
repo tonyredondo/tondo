@@ -125,6 +125,24 @@ fn every_code_is_explained_and_tested() {
     }
 }
 
+/// An alias holds across the modules a program brings, so that one of the
+/// standard library names one module: a test of a program that imports both
+/// would not compile otherwise.
+#[test]
+fn an_alias_of_the_standard_library_names_one_module() {
+    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+    let mut aliases = std::collections::HashMap::new();
+    for file in std::fs::read_dir(std).unwrap().flatten().filter(|file| file.path().is_file()) {
+        for line in std::fs::read_to_string(file.path()).unwrap().lines() {
+            let Some((module, alias)) = line.strip_prefix("import ").and_then(|rest| rest.split_once(" as ")) else {
+                continue;
+            };
+            let held = aliases.entry(alias.to_string()).or_insert_with(|| module.to_string());
+            assert_eq!(held, module, "`{alias}` names two modules: {:?} has the second", file.path());
+        }
+    }
+}
+
 /// Every command of the toolchain, its tool and how the editor has it, and
 /// every option, in the tools: what is added to the command line without
 /// them fails here. `tondo.runCommand` runs the options the editor has no

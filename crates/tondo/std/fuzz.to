@@ -3,7 +3,7 @@
 // its type; first the seeds, written as JSON, and the inputs of the fuzz
 // store, then, under `tondo test --fuzz`, those it makes.
 
-import std.internal.fuzz as native
+import std.internal.fuzz as fuzzNative
 import std.json
 import std.serialization
 
@@ -13,29 +13,29 @@ fn run[T: serialization.Encode + serialization.Decode, E, F: CallMut[fn(T): !E]]
     seeds: Array[T],
     body: F,
 ): !E {
-    native.begin(name, shape)
+    fuzzNative.begin(name, shape)
     for seed in seeds {
-        native.seed(json.encode(seed))
+        fuzzNative.seed(json.encode(seed))
     }
     var each = body
-    for native.next() {
-        match json.decode[T](native.input()) {
+    for fuzzNative.next() {
+        match json.decode[T](fuzzNative.input()) {
             ok(value) => {
                 // What the input is, as `json.encode` writes it, when
                 // `tondo test` reduces one that failed.
-                if native.replaying() {
-                    native.encoded(json.encode(value))
+                if fuzzNative.replaying() {
+                    fuzzNative.encoded(json.encode(value))
                 }
                 match each(value) {
                     ok(_) => {}
                     err(error) => {
-                        native.failed()
+                        fuzzNative.failed()
                         fail error
                     }
                 }
             }
-            err(error) => native.invalid("{error}")
+            err(error) => fuzzNative.invalid("{error}")
         }
     }
-    native.end()
+    fuzzNative.end()
 }
