@@ -3207,6 +3207,19 @@ fn exploring() -> Option<&'static AtomicU64> {
     .as_ref()
 }
 
+/// After a task reads a cell of `std.sync`, while exploring orders: by the
+/// seed, it drops below the others and they run, so that a write of theirs
+/// comes before its own and a lost update does not depend on chance.
+pub(crate) fn may_lose_update() {
+    let Some(seed) = exploring() else { return };
+    if seeded(seed) % 2 == 0 {
+        if let Some(task) = unsafe { current().as_mut() } {
+            task.priority = 1;
+        }
+        give_way();
+    }
+}
+
 /// Where the task to run next is among those that can, while exploring
 /// orders (testing 8.10), by PCT: each task has a priority the seed gives
 /// as it starts, the highest runs, and at two of its steps, which the seed

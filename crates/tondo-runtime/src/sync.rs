@@ -404,6 +404,9 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
             }
         }
     }
+    if !exclusive && super::race::on() {
+        super::tasks::may_lose_update();
+    }
 }
 
 /// Inside `updateWhen`: gives the lock up until another task changes the
@@ -735,10 +738,12 @@ macro_rules! word {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_load(object: *mut SyncObject, width: u8) -> u64 {
+    let value = word!(object, width, |a| a.load(Ordering::SeqCst));
     if super::race::on() {
         super::race::read(object as usize);
+        super::tasks::may_lose_update();
     }
-    word!(object, width, |a| a.load(Ordering::SeqCst))
+    value
 }
 
 #[unsafe(no_mangle)]

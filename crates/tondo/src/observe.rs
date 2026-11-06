@@ -1354,15 +1354,57 @@ fn failures_page(dir: &std::path::Path, live: bool, since: Option<&str>) -> Resu
         false => String::new(),
     };
     let shown = escape(&dir.display().to_string());
+    let waits: String = request_time(dir)
+        .iter()
+        .take(20)
+        .map(|place| {
+            let text = |key: &str| escape(place[key].as_str().unwrap_or_default());
+            let total = duration(place["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+            format!(
+                "<tr><td>{total}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                place["times"],
+                text("on"),
+                text("at")
+            )
+        })
+        .collect();
+    let waits = match waits.is_empty() {
+        true => String::new(),
+        false => format!(
+            "<h2>Where requests wait</h2><table><tr><th>Total</th><th>Times</th><th>For</th><th>Where</th></tr>\n{waits}</table>"
+        ),
+    };
     Ok(format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">{refresh}<title>Failures of {shown}</title>\
          <style>body{{font:14px system-ui;margin:2em}}table{{border-collapse:collapse}}\
          td,th{{border-bottom:1px solid #ccc;padding:.4em .8em;text-align:left}}</style></head><body>\
          <h1>Failures of {shown}</h1><p>{} failures in {} dumps.</p>{filters}<table><tr><th>Times</th><th>Over time</th>\
-         <th>Failure</th><th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table></body></html>\n",
+         <th>Failure</th><th>Where</th><th>First seen</th><th>Last seen</th></tr>\n{rows}</table>{waits}</body></html>\n",
         groups.len(),
         groups.iter().filter_map(|group| group["count"].as_u64()).sum::<u64>(),
     ))
+}
+
+/// Where the requests of a directory's dumps spent their time: what their
+/// tasks waited for, by the line that waited, the longest first.
+fn request_time(dir: &std::path::Path) -> Vec<Value> {
+    let mut places: std::collections::HashMap<(String, String), (u64, u64)> = Default::default();
+    for (_, dump) in dumps_in(dir).unwrap_or_default() {
+        let requests = placed_requests(&dump, "requests").into_iter().chain(placed_requests(&dump, "served"));
+        let steps: Vec<Value> = requests.flat_map(|r| r["steps"].as_array().cloned().unwrap_or_default()).collect();
+        for step in steps.iter().filter(|step| step["what"] == "waited") {
+            let at = step["at"].as_str().unwrap_or("an unknown place").to_string();
+            let on = step["on"].as_str().unwrap_or_default().to_string();
+            let place = places.entry((at, on)).or_default();
+            *place = (place.0 + step["took_ms"].as_u64().unwrap_or(0), place.1 + 1);
+        }
+    }
+    let mut list: Vec<Value> = places
+        .into_iter()
+        .map(|((at, on), (ms, times))| json!({ "at": at, "on": on, "ms": ms, "times": times }))
+        .collect();
+    list.sort_by_key(|place| (std::cmp::Reverse(place["ms"].as_u64()), place["at"].to_string()));
+    list
 }
 
 /// `tondo dump serve <dir>`: the failures of a directory as a page on this

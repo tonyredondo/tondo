@@ -3194,6 +3194,12 @@ fn a_request_is_followed_through_its_tasks() {
     let differ = Command::new(tondo_bin).args(["dump", "diff"]).arg(&dump).arg(&later).arg("--json").output().unwrap();
     let differ: Value = serde_json::from_slice(&differ.stdout).unwrap();
     assert_eq!(differ["in_flight"]["after"], 0, "{differ}");
+    // A page of the directory says where requests wait.
+    let page = dir.join("page.html");
+    let served = Command::new(tondo_bin).args(["dump", "serve"]).arg(&dir).arg("--output").arg(&page).output().unwrap();
+    assert!(served.status.success(), "{}", String::from_utf8_lossy(&served.stderr));
+    let page = std::fs::read_to_string(page).unwrap();
+    assert!(page.contains("Where requests wait") && page.contains("server.to:5 in fetch"), "{page}");
     assert!(differ["served"].as_array().is_some(), "{differ}");
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));

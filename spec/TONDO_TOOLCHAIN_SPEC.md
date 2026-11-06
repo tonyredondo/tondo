@@ -1007,8 +1007,9 @@ petición `requests`, propia de Tondo. Cada tarea dice la petición para la que 
 <texto>`, y `--request <texto>` en `logpoint`, valen solo en las tareas de una petición cuyo
 método y ruta contienen el texto; en el editor, una condición que empieza por `request`.
 `why` dice de cada petición en curso qué la retiene, siguiendo la espera de su tarea por las
-tareas que pueden acabarla, y `dump diff` cuántas había en curso en cada volcado y cuánto
-tardaron de media las de cada clase.
+tareas que pueden acabarla, `dump diff` cuántas había en curso en cada volcado y cuánto
+tardaron de media las de cada clase, y `dump serve` dónde esperan las peticiones de un
+directorio: el tiempo sumado por línea y por lo que esperaban.
 
 `tondo debug <pid|nombre>`, el `attach` del editor y `debug_start` del MCP también valen
 con un programa sin sondas, con `TONDO_DIAGNOSTICS=1` y en Linux: un breakpoint es entonces
@@ -1037,7 +1038,9 @@ que lo hace un solo `update` en un `Mutex` o un `RwLock` si lo leído no se usa 
 `tondo test` avisa de lo que ve ocurrir: siempre mira los `Mutex`, `RwLock` y `Atomic` y, si una tarea
 lee y escribe en la misma función una celda que otra escribió entre medias, deja un aviso
 en ese test, que no falla, en `warnings` de su intento en el informe: el MCP lo da con el
-informe y el editor en la salida del test y en el panel de problemas, con su línea. Solo ve lo que pasa en esa
+informe y el editor en la salida del test y en el panel de problemas, con su línea. Con
+`--schedules` el orden lo provoca: tras leer una celda, la tarea puede ceder ante las demás,
+según la semilla. Solo ve lo que pasa en esa
 ejecución, y no sabe si lo escrito viene de lo leído. `add` y `compareExchange` miran el
 valor que cambian y no pierden nada. Medido en un programa que solo toma locks, cada
 operación cuesta unos 50 ns más, y fuera de los tests nada.

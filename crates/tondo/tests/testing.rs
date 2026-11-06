@@ -663,6 +663,21 @@ fn a_lost_update_warns_in_its_test() {
     assert!(human.contains("warning: task "), "{human}");
 }
 
+/// Exploring orders brings the write of another task between a read and a
+/// write, which a plain run on one core seldom shows.
+#[test]
+fn exploring_orders_finds_a_lost_update() {
+    let tests = "import std.sync\n\nfn bump(cell: sync.Mutex[Int]) {\n    let seen = cell.get()\n    \
+        cell.update((value) { value = seen + 1 })\n}\n\n\
+        test loses {\n    let cell = sync.Mutex(0)\n    let one = spawn bump(cell)\n    \
+        let two = spawn bump(cell)\n    one.wait()\n    two.wait()\n}\n";
+    let dir = project("lost-update-orders", tests);
+    let args = ["test", ".", "--schedules", "20", "--seed", "1"];
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert!(ran.status.success() && said.contains("warning: task "), "{said}");
+}
+
 #[test]
 fn retries_repeats_and_owners() {
     let tests = "\
