@@ -4082,6 +4082,23 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     let trend = tondo(&["dump", "trend", dir.join("piled").to_str().unwrap(), "--json"]);
     let place = trend["tasks"]["piling"][0]["place"].as_str().unwrap_or_else(|| panic!("{trend}"));
     assert!(place.contains("piles.to:5 in forgotten"), "{trend}");
+    // A kind of request that takes longer from dump to dump, whichever its
+    // numbers; the one that does not stays out.
+    std::fs::create_dir_all(dir.join("slow")).unwrap();
+    for (index, ms) in [10, 40, 90].into_iter().enumerate() {
+        let dump = serde_json::json!({
+            "dump": 1, "time_ms": 1000 * (index + 1), "info": { "pid": 1 }, "tasks": [], "counters": [],
+            "served": [
+                { "method": "GET", "path": format!("/users/{index}?full=1"), "ms": ms },
+                { "method": "GET", "path": "/health", "ms": 1 },
+            ],
+        });
+        std::fs::write(dir.join(format!("slow/{index}.dump.json")), dump.to_string()).unwrap();
+    }
+    let trend = tondo(&["dump", "trend", dir.join("slow").to_str().unwrap(), "--json"]);
+    assert_eq!(trend["slowing"].as_array().map(Vec::len), Some(1), "{trend}");
+    assert_eq!(trend["slowing"][0]["request"], "GET /users/*", "{trend}");
+    assert_eq!(trend["slowing"][0]["last_ms"], 90.0, "{trend}");
     // Fewer dumps than `keep` fit in the room they are given.
     let ran = Command::new(dir.join("leaks"))
         .env("TONDO_DUMP", dir.join("small"))

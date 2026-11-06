@@ -1011,7 +1011,8 @@ tareas que pueden acabarla, `dump diff` cuántas había en curso en cada volcado
 tardaron de media las de cada clase, y `dump serve` dónde esperan las peticiones de un
 directorio: el tiempo sumado por línea y por lo que esperaban, con la línea de tiempo de las
 más lentas en un dibujo, una fila por tarea y sus esperas, que el editor abre con *Show the
-Timeline* en cada petición de su vista.
+Timeline* en cada petición de su vista. `dump trend` dice además qué clases de petición, por
+método y ruta sin sus números, se van haciendo más lentas entre los volcados de un directorio.
 
 `tondo debug <pid|nombre>`, el `attach` del editor y `debug_start` del MCP también valen
 con un programa sin sondas, con `TONDO_DIAGNOSTICS=1` y en Linux: un breakpoint es entonces

@@ -1642,6 +1642,14 @@ pub fn trend(dir: &std::path::Path, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// A path without what changes from one request of a kind to another: its
+/// query and its numbers, as `/users/7?full=1` is `/users/*`.
+fn request_kind(path: &str) -> String {
+    let path = path.split('?').next().unwrap_or_default();
+    let number = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    path.split('/').map(|part| if number(part) { "*" } else { part }).collect::<Vec<_>>().join("/")
+}
+
 /// How far a series goes up, and whether it does so most of the time:
 /// samples of the memory go up and down a little as they come.
 fn rising(series: &[f64]) -> bool {
@@ -1700,6 +1708,29 @@ fn trends(dumps: &[Value]) -> Value {
                 group["count"].as_f64().unwrap_or(0.0);
         }
     }
+    // What each kind of request took on average, in the dumps that saw it.
+    let mut routes: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for dump in dumps {
+        let mut sums: std::collections::BTreeMap<String, (f64, f64)> = Default::default();
+        for request in dump["served"].as_array().into_iter().flatten() {
+            let (method, path) =
+                (request["method"].as_str().unwrap_or_default(), request["path"].as_str().unwrap_or_default());
+            let sum = sums.entry(format!("{method} {}", request_kind(path))).or_default();
+            *sum = (sum.0 + request["ms"].as_f64().unwrap_or(0.0), sum.1 + 1.0);
+        }
+        for (route, (sum, count)) in sums {
+            routes.entry(route).or_default().push(sum / count);
+        }
+    }
+    let mut slowing: Vec<Value> = routes
+        .into_iter()
+        .filter(|(_, series)| series.len() > 1 && rising(series))
+        .map(|(route, series)| {
+            json!({ "request": route, "first_ms": series[0], "last_ms": series[series.len() - 1], "series": series })
+        })
+        .collect();
+    let grew = |route: &Value| route["last_ms"].as_f64().unwrap_or(0.0) - route["first_ms"].as_f64().unwrap_or(0.0);
+    slowing.sort_by(|a, b| grew(b).total_cmp(&grew(a)));
     let mut piling: Vec<(String, Vec<f64>)> =
         places.into_iter().filter(|(place, series)| !place.is_empty() && rising(series)).collect();
     piling.sort_by(|a, b| {
@@ -1713,7 +1744,7 @@ fn trends(dumps: &[Value]) -> Value {
     let task_count = |count: f64| count as u64;
     json!({
         "program": program_name(&last["info"]), "pid": last["info"]["pid"], "dumps": dumps.len(), "seconds": seconds,
-        "held": level("memory.held"), "resident": level("os.resident"), "memory": memory,
+        "held": level("memory.held"), "resident": level("os.resident"), "memory": memory, "slowing": slowing,
         "tasks": {
             "first": task_count(tasks[0]), "last": task_count(tasks[tasks.len() - 1]), "rising": rising(&tasks),
             "piling": piling,
@@ -1742,6 +1773,11 @@ fn trend_text(found: &Value) -> String {
     let tasks = &found["tasks"];
     let goes = if tasks["rising"] == true { ", and rising" } else { "" };
     out.push_str(&format!("tasks: {} to {}{goes}\n", tasks["first"], tasks["last"]));
+    for route in found["slowing"].as_array().into_iter().flatten().take(10) {
+        let ms = |key: &str| duration(route[key].as_f64().unwrap_or(0.0) / 1000.0);
+        let name = route["request"].as_str().unwrap_or_default();
+        out.push_str(&format!("{name} grows slower: {} -> {}\n", ms("first_ms"), ms("last_ms")));
+    }
     for place in tasks["piling"].as_array().into_iter().flatten().take(10) {
         let at = place["place"].as_str().unwrap_or_default();
         out.push_str(&format!("  {} to {} {at}\n", place["first"], place["last"]));
