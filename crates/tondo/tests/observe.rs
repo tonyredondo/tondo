@@ -30,6 +30,19 @@ fn tondo(args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// A port for a server a test starts, out of the range the system gives: one
+/// it gave and took back can go to another test before the server binds it.
+fn free_port() -> u16 {
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    loop {
+        let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let port = 20000 + (std::process::id() % 1000) as u16 * 10 + next;
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+}
+
 fn listed(pid: u32) -> bool {
     tondo(&["ps", "--json"])["programs"].as_array().unwrap().iter().any(|p| p["pid"] == pid)
 }
@@ -2881,9 +2894,7 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-stall");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("dumps")).unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
+    let port = free_port();
     let program = format!(
         "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    let secret = \"hidden{{id}}\"\n    \
          time.sleep(time.seconds(60))\n    secret\n}}\n\nfn main(): !http.HttpError {{\n    \
@@ -3104,9 +3115,7 @@ fn a_request_is_followed_through_its_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("followed-request");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
+    let port = free_port();
     let program = format!(
         "import std.http\nimport std.time\n\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
          id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
@@ -4120,9 +4129,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-requests");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("dumps")).unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
+    let port = free_port();
     let program = format!(
         "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    time.sleep(time.seconds(60))\n    \
          \"done {{id}}\"\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
@@ -4175,9 +4182,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     // A breakpoint on requests stops the task that takes one.
     let debugged = dir.join("debugged");
     std::fs::create_dir_all(&debugged).unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let debug_port = listener.local_addr().unwrap().port();
-    drop(listener);
+    let debug_port = free_port();
     let program = format!(
         "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
          app.get(\"/one\", () {{ \"done\" }})\n    app.listen({debug_port})?\n}}\n"
