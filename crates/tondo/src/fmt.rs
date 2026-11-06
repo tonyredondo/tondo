@@ -1185,6 +1185,7 @@ impl Formatter<'_> {
             }
             ExprKind::Unsafe(block) => concat(vec![text("unsafe "), self.value_block(block)]),
             ExprKind::Recover(block) => concat(vec![text("recover "), self.value_block(block)]),
+            ExprKind::TryBlock(block) => concat(vec![text("try "), self.value_block(block)]),
             ExprKind::Within(limit, block) => {
                 concat(vec![text("within "), self.expr(limit), text(" "), self.value_block(block)])
             }

@@ -70,6 +70,7 @@ fn check_with<'a>(
         implementing: None,
         traits: Vec::new(),
         trait_names: HashMap::new(),
+        try_body: false,
         impls: Vec::new(),
         impl_heads: HashMap::new(),
         heads_indexed: 0,
@@ -891,6 +892,8 @@ struct Checker<'a> {
     implementing: Option<(TraitId, Vec<Ty>)>,
     traits: Vec<TraitDef>,
     trait_names: HashMap<String, TraitId>,
+    /// The next closure is the body of a `try` block.
+    try_body: bool,
     impls: Vec<ImplDef>,
     /// The `impl`s of each trait by the head of the type they are for, a
     /// type parameter's as `None`, so that asking whether a type has a
@@ -1118,6 +1121,8 @@ struct FnCx {
     mutates: bool,
     /// A closure without a declared result infers it from its body.
     infer_result: bool,
+    /// The body of a `try` block, which ends with its value (15.2).
+    try_body: bool,
     /// For each local: how it was passed if it is a parameter (16.3), or
     /// how it borrows if it is a `ref`, `mut` or `var` binding (14.3).
     params: Vec<Option<ast::Mode>>,
@@ -6448,6 +6453,7 @@ impl<'a> Checker<'a> {
             captures: Vec::new(),
             mutates: false,
             infer_result: false,
+            try_body: false,
             params: Vec::new(),
             deferred: false,
             body: false,
@@ -7071,6 +7077,7 @@ impl<'a> Checker<'a> {
         }
         inner.test_member = test;
         inner.deferred = deferred;
+        inner.try_body = std::mem::take(&mut self.try_body);
         inner.template = std::mem::take(&mut self.templating);
         inner.unsafe_region = is_unsafe;
         inner.unsafe_body = is_unsafe;
@@ -9346,6 +9353,12 @@ impl<'a> Checker<'a> {
                 None
             }
             ast::StmtKind::Defer(deferred) => self.defer(cx, deferred, stmt.span),
+            ast::StmtKind::Return(_) if cx.try_body => {
+                let message = "a `try` block ends with its value, and `return` would only leave the block: \
+                    end it, or take `?` out of the block";
+                self.diags.error("E1410", stmt.span, message);
+                None
+            }
             ast::StmtKind::Return(_) if cx.setup => {
                 let message = "the setup of a suite cannot `return`, or its tests would never run; use `fail` or `testing.skip(reason)`";
                 self.diags.error("E1205", stmt.span, message);
@@ -10992,6 +11005,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
+            ast::ExprKind::TryBlock(block) => self.try_block(cx, block, expected, span),
             ast::ExprKind::Within(limit, block) => self.within(cx, limit, block, span),
             // The text of `template.html` or `template.text`, which the call
             // compiles (standard library 14.31).
@@ -12707,6 +12721,26 @@ impl<'a> Checker<'a> {
 
     /// `value?` propagates `none` or an error out of the enclosing function
     /// and otherwise yields the payload (15.2).
+    /// `try { ... }` (15.2): a closure called there, whose `?` ends the block
+    /// and not the function. What it gives comes from where it goes.
+    fn try_block(&mut self, cx: &mut FnCx, block: &ast::Block, expected: Option<Ty>, span: Span) -> hir::Expr {
+        let gives = expected.filter(|&ty| matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Result(..)));
+        let Some(gives) = gives else {
+            let message = "a `try` block gives an option or a result: say which, as `let city: String? = try { ... }`";
+            self.diags.error("E1301", span, message);
+            return Self::error_expr(span);
+        };
+        let function = self.types.intern(TyKind::Fn(Vec::new(), gives, false, Vec::new(), false));
+        let closure = ast::Closure { is_unsafe: false, params: Vec::new(), result: None, body: block.clone() };
+        self.try_body = true;
+        let value = self.closure(cx, &closure, Some(function), span);
+        let local = self.hidden_local(cx, value.ty);
+        let read = Self::mk(hir::ExprKind::Local(local), value.ty, span);
+        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), Vec::new()), gives, span);
+        let stmts = vec![hir::Stmt::Let(local, value)];
+        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(call)), ty: gives }), gives, span)
+    }
+
     fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, expected: Option<Ty>, span: Span) -> hir::Expr {
         if cx.deferred {
             self.diags.error("E1410", span, "a defer block cannot propagate an error; handle it inside the block");

@@ -162,7 +162,7 @@ const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
 pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
     let nth = |offset: usize| &tokens[(at + offset).min(tokens.len() - 1)].tok;
     match nth(0) {
-        Tok::Ident(word) if word == "recover" => nth(1) == &Tok::LBrace,
+        Tok::Ident(word) if word == "recover" || word == "try" => nth(1) == &Tok::LBrace,
         Tok::Ident(word) if word == "context" || word == "annotation" => {
             matches!(nth(1), Tok::Ident(_)) && nth(2) == &Tok::Eq
         }
@@ -2251,6 +2251,10 @@ impl Parser<'_> {
                 ExprKind::None
             }
             // `recover` is a word of the language only before a block (15.9).
+            Tok::Ident(name) if name == "try" && self.nth(1) == &Tok::LBrace => {
+                self.bump();
+                ExprKind::TryBlock(self.block()?)
+            }
             Tok::Ident(name) if name == "recover" && self.nth(1) == &Tok::LBrace => {
                 self.bump();
                 ExprKind::Recover(self.block()?)

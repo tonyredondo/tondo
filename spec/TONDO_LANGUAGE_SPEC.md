@@ -5611,6 +5611,23 @@ No puede utilizarse para:
 - Propagar desde una función infallible.
 - Salir de un callback exterior distinto del cierre que contiene el `?`.
 
+Un bloque `try { ... }` da a `?` un destino local: la propagación acaba el bloque y
+no la función, y el bloque vale lo que su última expresión o lo que `?` propagó.
+
+~~~tondo
+type Address = { city: String? }
+type User = { address: Address? }
+
+fn cityOf(user: User): String {
+    let city: String? = try { user.address?.city? }
+    city.unwrapOr("nowhere")
+}
+~~~
+
+Lo que da, una option o un resultado, viene del contexto: sin él es `E1301`, que dice
+cómo escribirlo. `return` no cabe en el bloque (`E1410`), que acaba con su valor.
+`try` no es una keyword: solo lo es seguida de `{`.
+
 ### 15.3 Widening de uniones de error
 
 Si una operación produce `T ! E1` y la función devuelve

@@ -116,6 +116,21 @@ fn main() {
 }
 ```
 
+`?` leaves the function. In a `try` block it only ends the block, so a chain of
+options needs no function of its own:
+
+```tondo
+type Address = { city: String? }
+type User = { address: Address? }
+
+fn cityOf(user: User): String {
+    let city: String? = try { user.address?.city? }
+    city.unwrapOr("nowhere")
+}
+
+fn main() {}
+```
+
 ## Panics
 
 Overflow, an index out of range, division by zero, `assert(false)` and

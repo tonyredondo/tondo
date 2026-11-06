@@ -1,0 +1,14 @@
+// A `try` block says what it gives, and ends with its value.
+
+fn main() {
+    let value = try { 1 }
+    _ = value
+    let other: Int? = try {
+        return
+        1
+    }
+    _ = other
+}
+
+// expect-error: E1301 a `try` block gives an option or a result
+// expect-error: E1410 a `try` block ends with its value

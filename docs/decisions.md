@@ -5300,3 +5300,13 @@ seen on every line that imports, and the standard library is just one more packa
 closes what let a program import `std.internal`. The owner grants this; there is no
 equivalent of `//go:linkname`, where whoever arrives takes what they want and the owner can
 no longer change it.
+
+## What a review of the language changed
+
+Writing the runbooks showed what gets in the way, and each change here came from a program
+that failed. A trait's method takes a dot on a concrete value: the rule asked for what no
+other language does. A root module can take `Key` or `Command`, as other modules already
+could. A value with no call is an error where nothing uses it, and a call keeps abandoning
+what it gives, since without `;` a block's end is a statement. `try { ... }` gives `?` a
+local end, with its type from where it goes, as a block that guessed it would make the
+type of `first?` decide what the block is.

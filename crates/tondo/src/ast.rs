@@ -581,6 +581,8 @@ pub enum ExprKind {
     Unsafe(Block),
     /// `recover { ... }` (15.9).
     Recover(Block),
+    /// `try { ... }`: where `?` goes to the end of the block (15.2).
+    TryBlock(Block),
     /// `within limit { ... }` (11.17).
     Within(Box<Expr>, Block),
     /// The code of a template compiled with the program (standard library
