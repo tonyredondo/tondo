@@ -1191,6 +1191,7 @@ pub(crate) fn fork_copy() -> i32 {
         if STOPPING.swap(false, Ordering::SeqCst) {
             attend(false);
         }
+        STOPPER.store(false, Ordering::SeqCst);
         super::cycles::forked();
     }
     pid
