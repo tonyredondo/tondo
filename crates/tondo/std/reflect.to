@@ -1422,7 +1422,9 @@ pub fn TypeDescription.of(kind: TypeKind): TypeDescription {
 /// for a type asks for; its values come from the annotations themselves
 /// (language 27.13).
 pub fn annotationsOf[T](place: Int, index: Int, part: Int, method: String): Array[Value] {
-    []
+    panic(
+        "the compiler writes each call of `annotationsOf`: {place} {index} {part} `{method}` has none",
+    )
 }
 
 /// The annotation of type `A` among some.

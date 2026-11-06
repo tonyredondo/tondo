@@ -16,13 +16,13 @@ import std.fs as __fs
 /// The text of a UTF-8 file of the package, read when the program compiles,
 /// at a path relative to the file that writes it: `embed.text("page.html")`.
 pub fn text(path: String): String {
-    ""
+    panic("`embed.text(\"{path}\")` is read when the program compiles: call it by name")
 }
 
 /// The bytes of a file of the package, read when the program compiles, at a
 /// path relative to the file that writes it: `embed.bytes("logo.png")`.
 pub fn bytes(path: String): Array[Byte] {
-    []
+    panic("`embed.bytes(\"{path}\")` is read when the program compiles: call it by name")
 }
 
 /// The files under a directory of the package, read when the program
@@ -31,5 +31,5 @@ pub fn bytes(path: String): Array[Byte] {
 /// `App.files` serves and `template.Set.addFiles` loads:
 /// `const Site: fs.FileSystem = embed.files("static")`.
 pub fn files(path: String): __fs.FileSystem {
-    __fs.memory()
+    panic("`embed.files(\"{path}\")` is read when the program compiles: call it by name")
 }
