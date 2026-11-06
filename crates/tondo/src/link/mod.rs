@@ -202,6 +202,11 @@ pub fn link(
     Ok(())
 }
 
+/// The dynamic loader this `tondo` would ask for on its own machine.
+pub(crate) fn host_interpreter() -> &'static str {
+    interpreter(if cfg!(target_arch = "aarch64") { elf::Arch::Aarch64 } else { elf::Arch::X86_64 })
+}
+
 /// The dynamic loader of the system's C library.
 fn interpreter(arch: elf::Arch) -> &'static str {
     match (cfg!(target_env = "musl"), arch) {

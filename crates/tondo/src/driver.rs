@@ -1137,12 +1137,18 @@ pub struct Linking {
 
 /// Links an object file with the embedded runtime and the native
 /// libraries (`-lname` or files) into an executable.
+/// Whether this is a `tondo` for musl on a system without it, as an old one
+/// with glibc takes: what it builds then carries its C library.
+fn no_system_libc() -> bool {
+    cfg!(target_env = "musl") && !Path::new(crate::link::host_interpreter()).exists()
+}
+
 /// The runtime's functions in the archive a build links, as a live build
 /// lists them for its patches; read once for each runtime.
 pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec<String>, String> {
     let (archive, kind) = match target.filter(|t| !t.native()) {
         Some(target) => (target.pack(RUNTIME_IDENTITY.trim())?.remove(0), target.name()),
-        None if statically || target.is_some() => (carried(STATIC[0].0, STATIC[0].1)?, "static"),
+        None if statically || target.is_some() || no_system_libc() => (carried(STATIC[0].0, STATIC[0].1)?, "static"),
         None => (carried("libtondo_runtime", RUNTIME)?, "dynamic"),
     };
     let listed = cache_dir().join("live").join(format!("runtime-{RUNTIME_HASH}-{kind}.txt"));
@@ -1186,7 +1192,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         };
         return crate::link::link(object, &archives, &[], libraries, output, product);
     }
-    if linking.statically || linking.target.is_some() {
+    if linking.statically || linking.target.is_some() || no_system_libc() {
         if STATIC[2].1.is_empty() {
             let why = if cfg!(target_os = "linux") {
                 "this tondo was built without Rust's musl target, which a static executable needs"

@@ -307,7 +307,9 @@ tondo version [--json]
   variable `TONDO_CC`, enlaza el compilador de C que nombra.
 - `--static` da en Linux un ejecutable estático, con musl, que no carga
   librerías compartidas: las de `[native] libraries` y `--link` son
-  estáticas, `"static:z"` o un archivo `.a`. En macOS es error.
+  estáticas, `"static:z"` o un archivo `.a`. En macOS es error. Un `tondo` para
+  musl en un sistema sin musl, como uno con una glibc antigua, construye así
+  siempre.
 - `--strip` deja fuera del ejecutable la tabla de símbolos. Las trazas de
   Tondo no la usan; los depuradores y profilers externos, sí.
 - `--debug` compila un build de depuración para `tondo debug` (sección 7.6),
