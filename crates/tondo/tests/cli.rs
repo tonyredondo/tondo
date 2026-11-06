@@ -714,10 +714,14 @@ fn a_long_call_of_c_holds_up_no_other_task() {
         woken.wait()\n        napped.wait()\n    }\n}\n";
     std::fs::write(dir.join("calls.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo).args(["build", "calls.to", "--output", "calls"]).current_dir(&dir).output().unwrap();
+    let built =
+        Command::new(tondo).args(["build", "calls.to", "--output", "calls"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let alone = cfg!(target_os = "linux").then(|| Command::new("taskset").args(["-c", "0", "./calls"]).current_dir(&dir).output());
-    for ran in [alone.and_then(Result::ok), Some(Command::new(dir.join("calls")).output().unwrap())].into_iter().flatten() {
+    let alone = cfg!(target_os = "linux")
+        .then(|| Command::new("taskset").args(["-c", "0", "./calls"]).current_dir(&dir).output());
+    for ran in
+        [alone.and_then(Result::ok), Some(Command::new(dir.join("calls")).output().unwrap())].into_iter().flatten()
+    {
         let said = String::from_utf8_lossy(&ran.stdout);
         assert_eq!(said.lines().count(), 12, "{said}");
         for line in said.lines() {

@@ -5376,3 +5376,9 @@ The first model found what the tests had not: a worker that retires left a task 
 and woke nobody, with the last worker asleep trusting one that was leaving, and it takes three
 workers to see. A model is written by hand and knows nothing of the code, so what it proves
 is the design, and it has to change with `tasks.rs`. The Nightly runs them.
+
+Modelling the rest found more, some by the model and some by reading closely enough to write
+it: the stops of the world were not exclusive, so a logpoint could let the threads go in the
+middle of a collection; a task in the next of a worker in C, and any timer on one core, waited
+for the call to return; and a connection accepted as a server stopped waited out the grace.
+Channels, joins, locks and parking held, which is worth knowing too.
