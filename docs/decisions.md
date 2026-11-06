@@ -5310,3 +5310,13 @@ could. A value with no call is an error where nothing uses it, and a call keeps 
 what it gives, since without `;` a block's end is a statement. `try { ... }` gives `?` a
 local end, with its type from where it goes, as a block that guessed it would make the
 type of `first?` decide what the block is.
+
+## What a test warns of, and what a check is asked
+
+Locks in opposite orders cost a test almost nothing, about 36 ns for each lock taken
+inside another, so `tondo test` looks at them always, as it does at lost updates: a
+warning, since an order that can deadlock may never do so, and `--lock-order` makes it a
+failure. A program outside tests pays nothing unless it asks. `tondo check --docs` and
+`--performance` are the two profiles 22.8 names. The second warns of a collection named
+again in a loop and written after, which copies it on every turn: 0.243 s against 0.002 s
+on the loop measured. It only says it where nothing reads the name after the write.

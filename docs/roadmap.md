@@ -94,6 +94,3 @@ code (2026-10-24):
 
 - **Tools:** `tondo doc-test` gives no `formatted_sha256` for an example the
   formatter cannot print on its own, a signature, a type or a pattern.
-- **Codes nothing emits yet:** `W1009`, `W1010`, `P0019` and `P2001`. A test
-  of `tests/guide.rs` names them, and `E1407`, which no program written for it
-  reached.

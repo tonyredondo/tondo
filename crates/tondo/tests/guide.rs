@@ -93,17 +93,10 @@ fn the_repository_has_the_skill() {
     }
 }
 
-/// What looks at programs reaches an agent and an editor too: what the
-/// terminal gets, both do, or the line here says how.
-/// Every code the specification gives is in `tondo explain` and in a test. Those
-/// that nothing emits yet are named here, so that the specification and the
-/// compiler do not part in silence.
+/// Every code the specification gives is in `tondo explain` and in a test, so
+/// that the specification and the compiler do not part in silence.
 #[test]
 fn every_code_is_explained_and_tested() {
-    const NOT_EMITTED: [&str; 4] = ["P0019", "P2001", "W1009", "W1010"];
-    // Only a closure the checker sees as consumed reaches it, and no program
-    // written for this got there.
-    const NOT_REACHED: [&str; 1] = ["E1407"];
     let specs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec");
     let mut codes = Vec::new();
     for spec in std::fs::read_dir(specs).unwrap().flatten() {
@@ -126,12 +119,9 @@ fn every_code_is_explained_and_tested() {
         }
     }
     let explained = include_str!("../src/explain.rs");
-    for code in codes.iter().filter(|code| !NOT_EMITTED.contains(&code.as_str())) {
+    for code in &codes {
         assert!(explained.contains(&format!("\"{code}\"")), "`tondo explain` does not know {code}");
-        assert!(
-            tested.contains(code.as_str()) || NOT_REACHED.contains(&code.as_str()),
-            "no test says {code}: add a case"
-        );
+        assert!(tested.contains(code.as_str()), "no test says {code}: add a case");
     }
 }
 
