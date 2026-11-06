@@ -92,7 +92,8 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Tools:** the register `testing/doc-test-runtime-links.json`, which ties
-  each fragment and script of a normative document to a test that runs it
-  (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the
+- **Tools:** `tondo doc-test` gives no `formatted_sha256` for an example the
   formatter cannot print on its own, a signature, a type or a pattern.
+- **Codes nothing emits yet:** `W1009`, `W1010`, `P0019` and `P2001`. A test
+  of `tests/guide.rs` names them, and `E1407`, which no program written for it
+  reached.

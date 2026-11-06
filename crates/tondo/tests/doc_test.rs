@@ -134,3 +134,40 @@ fn the_specifications_examples_hold() {
         assert_eq!(status, 0, "{name}:\n{stderr}");
     }
 }
+
+/// Every fragment and script of the specifications is in the register, once,
+/// with a case that runs what it shows or the reason it only declares (21.6).
+#[test]
+fn the_register_ties_every_fragment_to_a_case() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = std::fs::read_to_string(root.join("testing/doc-test-runtime-links.json")).unwrap();
+    let register: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    let key = |entry: &serde_json::Value| format!("{} {}", entry["file"], entry["source_sha256"]);
+    let mut left: Vec<String> = register.iter().map(key).collect();
+    for name in
+        ["TONDO_LANGUAGE_SPEC.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "TONDO_TESTING_SPEC.md", "TONDO_TOOLCHAIN_SPEC.md"]
+    {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["doc-test", &format!("spec/{name}")])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let fences: Vec<serde_json::Value> = serde_json::from_slice(&ran.stdout).unwrap();
+        for fence in fences.iter().filter(|fence| matches!(fence["category"].as_str(), Some("fragment" | "script"))) {
+            let found = left.iter().position(|entry| *entry == key(fence));
+            let at = found.unwrap_or_else(|| panic!("{} is not in testing/doc-test-runtime-links.json: {fence}", name));
+            left.remove(at);
+        }
+    }
+    assert!(left.is_empty(), "the register names fragments that are gone: {left:?}");
+    for entry in &register {
+        let cases = entry["cases"].as_array().map_or(&[][..], Vec::as_slice);
+        match entry["kind"].as_str() {
+            Some("runtime") => {
+                assert!(!cases.is_empty(), "{entry}");
+                cases.iter().for_each(|case| assert!(root.join(case.as_str().unwrap()).exists(), "{case}"));
+            }
+            _ => assert!(entry["reason"].is_string(), "{entry}"),
+        }
+    }
+}

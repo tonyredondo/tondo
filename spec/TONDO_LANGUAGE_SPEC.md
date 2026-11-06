@@ -8438,9 +8438,9 @@ sintáctica y nunca constituye evidencia de comportamiento runtime. Todo fence
 vez en el registro `testing/doc-test-runtime-links.json`: se clasifica como
 `runtime` y enlaza al menos un caso público, ejecutable y estable de conformidad
 o de `tondo test`, o como `static-only` con una razón explícita cuando solo
-declara formas que no ejecuta. El gate compara el triple `(file, fence_byte,
-source_sha256)` con la salida del mismo runner documental y comprueba los IDs
-contra el inventario público. Este registro aporta trazabilidad, no un segundo
+declara formas que no ejecuta. El gate compara el par `(file, source_sha256)` con
+la salida del mismo runner documental, que no cambia al editar otra parte del
+documento, y comprueba que existen los casos enlazados. Este registro aporta trazabilidad, no un segundo
 harness: `doc-test` nunca ejecuta el ejemplo ni interpreta su comportamiento.
 
 Todo bloque salvo `pseudocode` que alcance un CST sintácticamente válido registra

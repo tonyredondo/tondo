@@ -1,0 +1,170 @@
+[
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "33e8a8d7bfcf5f27b41448efd78ba0b967e81f9d5f13040973d722b6239b264e",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/sql_sqlite.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "0b5cae518470935fc75ba5d7d7dced284e6a2034b53f43f64fc35ae9ec914e73",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/defer.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "ecb8505f771f65dc7c639c60b3cf44eeeee00d69b7b4c90a4e8cc0b4dc352967",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/script.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "5ec9b2e36290cd6c537f367ae5aed160095d3dfc775392be884db66ff1e85a51",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/json.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "a64bff32b2c09a0a292a02b87b08695473a5342a8eadb5e09248339adb79b9b5",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/fs.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "ac3735220d648c44d5496ec3104a038496a5a5d522a23870863b6d6c4f83d488",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/option_result.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "ce3e1a12fe79a4f0148485ef6a0870662474cf8db0553f7e3d0eacc941d99ab0",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/option_result.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "401f224239eb34100bd5c69f58adfcd838262402fde54b767cd17fef83cc0587",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/loans.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "4fc7a09c2711fbf622f24b66588c1fbf7e567b316e22be7f8b77dde21265f7b0",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/maps_and_sets.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "494c2f724d1a857966d46811502c87f96e116208349160ad5830d7f4200251e5",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/maps_and_sets.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "576aed9e1af7d5c6bc23961f37119f99eb667c8a7995d86417b3ff8221c251ba",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/maps_and_sets.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "8c30cc0fbd831334cb95a3adae3da20adc6ec7e0567e7a006fd4ef45f8f0556d",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/enum_display.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "faa3e2d86e78c0cfc542b17f7638070ef72e2b5d8fb8c2b3177a62296c025836",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/deques.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "2d038f7d9b61e2b233ddbcf2d901603acf22e2ae7554d0a01346d20920e29b72",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/main_returns_error.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "b4fe3c16b39681d99cfe84dabb47e9da797459e2948842c34e282e3bec8660e6",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/arguments.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "2a6a66cbb61553ebd109df6ad3d159512b58a72bccb39641bde8c399e2018916",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/multiple_assignment.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "1c3cb988282224c68f8e4952f8a6e359cf131c3b1d1b7508053cbf069617cf32",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/http_in_process.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "b13b5e548b8e1b73fddfdbbcf997926d1ab45480dd33865bbe108b1b44aad55e",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/ref.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "45d6e9191f925daeb392f42db7a687bf055719a34fdb894f253f7b7111fc1d11",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/unsafe_memory.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "96c0825b9eae96fe1f6027001c366a85baab2d1c621b318721a50dad44ef35e3",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/process.to"
+    ]
+  },
+  {
+    "file": "spec/TONDO_LANGUAGE_SPEC.md",
+    "source_sha256": "a43a2d793d634ebdab86a88cf1dd6c41ff66faf07db4c50189c168a91c5377dd",
+    "kind": "runtime",
+    "cases": [
+      "tests/cases/run/process.to"
+    ]
+  }
+]
