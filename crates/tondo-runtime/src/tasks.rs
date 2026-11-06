@@ -1459,6 +1459,11 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                         queue.runnable.extend(next.tasks().0.drain(..));
                         next.count.store(0, Ordering::Relaxed);
                     }
+                    // What it leaves is another's, which may sleep trusting a
+                    // worker that looks and leaves too (testing/models/Wake.tla).
+                    if !queue.runnable.is_empty() {
+                        wake_one(queue);
+                    }
                     return 0;
                 }
                 // The signals of a recorded run come at the worker's turns,
