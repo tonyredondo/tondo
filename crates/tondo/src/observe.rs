@@ -1102,6 +1102,10 @@ fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String
 pub fn dump_test(path: &std::path::Path, frame: Option<u64>, json: bool) -> Result<(), String> {
     let dump = load(path)?;
     let found = reproduction(&dump, frame)?;
+    if !project_of(&found.file).join("tondo.toml").exists() {
+        let message = "a test lives in a project, and this file has none: `tondo init` makes one of its directory";
+        return Err(format!("{message}\nthe test would be:\n{}", found.text));
+    }
     let before = std::fs::read_to_string(&found.file).ok();
     let gap = match before.as_deref() {
         None | Some("") => "",
@@ -1126,7 +1130,10 @@ pub fn dump_test(path: &std::path::Path, frame: Option<u64>, json: bool) -> Resu
         .map_err(|e| e.to_string())?;
         let said = String::from_utf8_lossy(&ran.stderr);
         let said = said.lines().find(|line| line.starts_with("error")).unwrap_or("it does not compile");
-        return Err(format!("a value does not write back as code: {said}\nthe test was:\n{}", found.text));
+        return Err(format!(
+            "the test does not compile, in it or in the project: {said}\nthe test was:\n{}",
+            found.text
+        ));
     }
     let reproduces = !ran.status.success();
     let shown = found.file.display();
