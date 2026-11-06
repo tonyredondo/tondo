@@ -605,9 +605,13 @@ pub(crate) fn hold() -> String {
     let held = HELD.fetch_add(1, Ordering::AcqRel) + 1;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(30));
-        if HELD.load(Ordering::Acquire) == held && barrier() {
-            EXPIRED.store(true, Ordering::SeqCst);
+        // Said first: a patch that comes now either stops this or sees it.
+        EXPIRED.store(true, Ordering::SeqCst);
+        let ours = HELD.compare_exchange(held, held + 1, Ordering::AcqRel, Ordering::Acquire).is_ok();
+        if ours && barrier() {
             let_go();
+        } else {
+            EXPIRED.store(false, Ordering::SeqCst);
         }
     });
     settle(&[]);
