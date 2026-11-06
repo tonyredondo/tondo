@@ -404,8 +404,11 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
             }
         }
     }
-    if !exclusive && super::race::on() {
-        super::tasks::may_lose_update();
+    if super::race::on() {
+        match exclusive {
+            true => super::tasks::may_switch(),
+            false => super::tasks::may_lose_update(),
+        }
     }
 }
 
@@ -749,6 +752,7 @@ pub unsafe extern "C" fn tondo_rt_atomic_load(object: *mut SyncObject, width: u8
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_store(object: *mut SyncObject, width: u8, value: u64) {
     if super::race::on() {
+        super::tasks::may_switch();
         super::race::wrote(object as usize, false);
     }
     word!(object, width, |a| {
@@ -760,6 +764,7 @@ pub unsafe extern "C" fn tondo_rt_atomic_store(object: *mut SyncObject, width: u
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_atomic_swap(object: *mut SyncObject, width: u8, value: u64) -> u64 {
     if super::race::on() {
+        super::tasks::may_switch();
         super::race::wrote(object as usize, false);
     }
     word!(object, width, |a| a.swap(value as _, Ordering::SeqCst))
@@ -774,6 +779,7 @@ pub unsafe extern "C" fn tondo_rt_atomic_exchange(
     desired: u64,
 ) -> u64 {
     if super::race::on() {
+        super::tasks::may_switch();
         super::race::wrote(object as usize, true);
     }
     word!(
@@ -796,6 +802,7 @@ pub unsafe extern "C" fn tondo_rt_atomic_add(
     location: *const Str,
 ) -> u64 {
     if super::race::on() {
+        super::tasks::may_switch();
         super::race::wrote(object as usize, true);
     }
     let bits = width as u32 * 8;

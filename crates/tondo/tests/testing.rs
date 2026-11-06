@@ -2001,3 +2001,31 @@ fn a_change_runs_the_tests_it_reaches() {
     let _ = child.wait();
     assert!(lines.iter().any(|l| l.starts_with("tondo: tests:")), "{lines:?}");
 }
+
+/// A task may run before the next line of who spawned it, and between two
+/// locks taken with nobody waiting: no order needs a wait to happen.
+#[test]
+fn explores_the_orders_no_wait_makes() {
+    let tests = "import std.console
+import std.sync
+
+fn child(log: sync.Mutex[Array[String]]) {
+    log.update((items) { items.push(\"c\") })
+}
+
+test orders {
+    let log = sync.Mutex(Array[String]())
+    let job = spawn child(log)
+    log.update((items) { items.push(\"p1\") })
+    log.update((items) { items.push(\"p2\") })
+    job.wait()
+    log.update((items) { console.println(\"{items}\") })
+}
+";
+    let dir = project("orders-without-waits", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--schedules", "300", "--seed", "1", "--show-output"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    for order in ["[c, p1, p2]", "[p1, c, p2]", "[p1, p2, c]"] {
+        assert!(stdout.contains(order), "{order} never came: {stdout}");
+    }
+}

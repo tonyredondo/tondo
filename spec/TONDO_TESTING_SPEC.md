@@ -1726,7 +1726,8 @@ las tareas corren en otro orden:
   la longitud del test. El generador también elige entre las operaciones
   listas de un `select`;
 - cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
-  lenguaje), donde el orden entre tareas puede cambiar.
+  lenguaje), tras lanzar otra tarea, al soltar un lock y antes de escribir un
+  `Atomic`, donde el orden entre tareas puede cambiar aunque nadie espere.
 
 La iteración `1` usa la seed de la invocación y cada iteración `i > 1` una seed
 derivada (`pct-single-worker-v1`: SplitMix64 de `seed + i·0x9e3779b97f4a7c15`).

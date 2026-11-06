@@ -3267,6 +3267,14 @@ pub(crate) fn may_lose_update() {
     }
 }
 
+/// Where the order of two tasks can change without a wait, while exploring
+/// orders: a lock let go, a write of an `Atomic`, a task spawned.
+pub(crate) fn may_switch() {
+    if exploring().is_some() {
+        give_way();
+    }
+}
+
 /// Where the task to run next is among those that can, while exploring
 /// orders (testing 8.10), by PCT: each task has a priority the seed gives
 /// as it starts, the highest runs, and at two of its steps, which the seed
@@ -3549,6 +3557,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         (*task).origin = Some(spawned);
     }
     enqueue(task);
+    may_switch();
     join
 }
 
