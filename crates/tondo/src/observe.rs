@@ -1154,14 +1154,6 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
     dump["info"]["arguments"] = json!([]);
     dump["values"] = json!([]);
     dump["values_off"] = json!(true);
-    if let Some(object) = dump.as_object_mut() {
-        object.retain(|key, _| KEPT.contains(&key.as_str()));
-    }
-    for task in dump["tasks"].as_array_mut().into_iter().flatten() {
-        task["contexts"] = json!([]);
-        if let Some(fields) = task.as_object_mut() {
-            fields.retain(|key, _| OF_TASK.contains(&key.as_str()));
-        }
     // What is kept is named, not what goes: a field added to dumps later
     // stays out until someone says it can be shared.
     const KEPT: [&str; 15] = [
@@ -1182,6 +1174,14 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
         "objects",
     ];
     const OF_TASK: [&str; 9] = ["id", "main", "state", "cancelled", "stack", "spawned", "locks", "contexts", "wait"];
+    if let Some(object) = dump.as_object_mut() {
+        object.retain(|key, _| KEPT.contains(&key.as_str()));
+    }
+    for task in dump["tasks"].as_array_mut().into_iter().flatten() {
+        task["contexts"] = json!([]);
+        if let Some(fields) = task.as_object_mut() {
+            fields.retain(|key, _| OF_TASK.contains(&key.as_str()));
+        }
         if task["wait"].is_object() {
             task["wait"]["for"] = json!("a value");
         }
