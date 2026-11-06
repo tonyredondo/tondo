@@ -472,9 +472,12 @@ let result = source
 El valor de un bloque es su última expresión. No se necesita un marcador especial
 para distinguirla: una expresión situada inmediatamente antes de la llave de
 cierre, ignorando `NL`, es siempre el valor del bloque. Su tipo se comprueba
-después contra el contexto; no se reclasifica como sentencia para hacer que el
-programa compile. Para evaluar y descartar deliberadamente un valor se escribe
-`_ = expression`.
+después contra el contexto. Un bloque del que nadie espera valor, como el cuerpo
+de una función sin resultado, abandona el suyo con las reglas de una sentencia
+(11.9), porque sin `;` nada los distingue: `cache.insert(key, value)` puede
+acabar una función. Un valor sin ninguna llamada, sin embargo, no hace nada y es
+`E1306`, tanto ahí como en una sentencia. Para evaluar y descartar deliberadamente
+un valor se escribe `_ = expression`.
 
 ### 5.3 Comentarios
 
@@ -8722,6 +8725,7 @@ oculten un diagnóstico independiente.
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
 | `E1303` | `discarded-result` | Un `Result` u `Option` se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
+| `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
 | `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
 
 #### Ownership, préstamos y cleanup
@@ -9174,6 +9178,7 @@ Son errores obligatorios, entre otros:
 - Rama `match` cubierta por anteriores (`E1203`).
 - `match` no exhaustivo (`E1204`).
 - `Result` u `Option` descartado como sentencia (`E1303`).
+- Valor sin ninguna llamada como sentencia (`E1306`).
 - Declaración que produciría shadowing (`E1003`).
 - Cabeceras de `impl` que se solapan (`E1111`) o un ciclo de obligaciones que no
   supera la terminación por cambio de tamaño (`E1112`).

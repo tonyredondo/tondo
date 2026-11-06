@@ -1,0 +1,19 @@
+// A value with no call does nothing, as a statement or at the end of a block
+// with no value. A call abandons what it gives.
+
+fn given(): Int {
+    1
+}
+
+fn ends() {
+    "text"
+}
+
+fn main() {
+    ends()
+    let number = 2
+    number + 1
+    given()
+}
+
+// expect-error: E1306 this value does nothing

@@ -6730,9 +6730,36 @@ impl<'a> Checker<'a> {
         owners
     }
 
-    /// W1018: a call whose `String` nothing uses, which was made for nothing,
-    /// or was meant to be written (11.9).
-    fn dropped_string(&mut self, written: &ast::Expr, value: &hir::Expr) {
+    /// Whether an expression only makes a value, with no call in it.
+    fn only_a_value(written: &ast::Expr) -> bool {
+        use ast::ExprKind as E;
+        match &written.kind {
+            E::Int { .. } | E::Float { .. } | E::BigInt(_) | E::Bool(_) | E::Char(_) | E::Path(_) => true,
+            E::Str(segments) => segments.iter().all(|segment| match segment {
+                ast::StrSegment::Text(_) => true,
+                ast::StrSegment::Expr(part, _) => Self::only_a_value(part),
+            }),
+            E::Field(base, _) | E::TupleSlot(base, _) => Self::only_a_value(base),
+            E::Binary(_, left, right) => Self::only_a_value(left) && Self::only_a_value(right),
+            E::Tuple(parts) | E::Array(parts) => parts.iter().all(Self::only_a_value),
+            _ => false,
+        }
+    }
+
+    /// What a statement or the end of a block with no value leaves (5.2, 11.9):
+    /// a call abandons its result, but a value with no call does nothing, and
+    /// W1018 a call whose `String` nothing uses, made for nothing or meant to
+    /// be written.
+    fn dropped_value(&mut self, written: &ast::Expr, value: &hir::Expr) {
+        let plain = !matches!(value.ty, Ty::UNIT | Ty::NEVER) && !self.types.has_error(value.ty);
+        if plain && Self::only_a_value(written) && self.types.is_copy(value.ty) {
+            let message = "this value does nothing: use it, return it from a function that declares its type, \
+                or discard it with `_ = ...`";
+            self.diags.error("E1306", value.span, message);
+            let start = Span::new(value.span.start, value.span.start);
+            self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
+            return;
+        }
         let call = match &written.kind {
             ast::ExprKind::Try(inner) => &inner.kind,
             kind => kind,
@@ -9110,7 +9137,7 @@ impl<'a> Checker<'a> {
             }
             let value = self.expr(cx, t, expected);
             if expected == Some(Ty::UNIT) {
-                self.dropped_string(t, &value);
+                self.dropped_value(t, &value);
             }
             Box::new(match expected {
                 Some(expected) if body => self.returned(cx, value, expected),
@@ -9280,7 +9307,7 @@ impl<'a> Checker<'a> {
                 .then_some(Ty::UNIT);
                 let written = value;
                 let value = self.expr(cx, written, expected);
-                self.dropped_string(written, &value);
+                self.dropped_value(written, &value);
                 // Only a result or an option must be used: it may be a
                 // failure or an absence the program has to see (11.9).
                 if self.must_use(value.ty) {
