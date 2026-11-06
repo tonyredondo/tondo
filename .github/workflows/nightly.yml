@@ -1,8 +1,9 @@
 name: Nightly
 
 # What CI leaves out of each push for its time, each night and when asked:
-# the tests under qemu's emulation, whose slowness brings out races, and
-# on macOS for Intel, clippy and the cases' other builds.
+# the tests under qemu's emulation, whose slowness brings out races, the
+# sweeps of the tools over every case, and on macOS for Intel, clippy and
+# the cases' other builds.
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -57,6 +58,19 @@ jobs:
           name: dumps-${{ matrix.arch }}
           path: target/dumps
           if-no-files-found: ignore
+
+  # The editor's server on every case, whole and cut as writing leaves it,
+  # and the viewer of dumps on dumps with any field damaged.
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p tondo --test lsp --test observe -- the_server_outlives a_damaged_dump
+        env:
+          TONDO_SWEEP: 1
 
   # What the test job of CI leaves out on macOS for Intel.
   intel:

@@ -5228,6 +5228,12 @@ case and in the summary of CI, and leaves its dump to open. A hang that took hou
 explain with a core and a script is what a user would get too, so the tools get what
 that needed.
 
+The Nightly also sweeps what no single test thinks of: the language server over every
+case, whole and cut as writing leaves it, and the viewer over dumps with each field
+damaged. The first run found a function without a body ending the compiler, which any
+programmer writes on the way to a function, and a wide character ending the server from
+three places.
+
 ## What is shared is what is named
 
 `dump redact` keeps the fields it names and drops the rest. Dropping what was known let a

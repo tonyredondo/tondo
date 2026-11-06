@@ -2,7 +2,7 @@
 # What CI and the Nightly run, on this machine, in containers, on the last
 # commit of this repository, so that a failure shows before a push:
 #
-#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress]
+#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress] [sweep]
 #
 # Each stage prints its status and leaves its output in <out>/<stage>.txt.
 # `musl`, `emulated` and `emuloop` have targets of their own, so they can run
@@ -12,7 +12,8 @@
 # `stress` runs the tests that race on what a runner has (STRESS_ROUNDS), in a
 # container with no init, which collects no orphans. `emuloop` runs them under
 # emulation (EMU_ROUNDS), on EMU_CPUS cores: all of them, and EMU_INIT= with no
-# init, is what brings races out. macOS is not here.
+# init, is what brings races out. `sweep` runs the tools over every case, as the
+# Nightly does. macOS is not here.
 R=$(git rev-parse --show-toplevel) || exit 1
 S=${TONDO_CI_DIR:-$HOME/.cache/tondo-ci}; C=$S/clone
 out=$(realpath -m "$1"); shift; mkdir -p "$out" "$S/tmp" "$S/emu-target" "$S/alpine-target"
@@ -76,6 +77,10 @@ emulated() {
   image tondo-emu linux/arm64
   docker run --rm --platform linux/arm64 -v "$PWD:$PWD" -v "$S/emu-target:$S/emu-target" -v "$S/tmp:$S/tmp" -w "$PWD" \
     -e OWNER="$me" -e TMPDIR="$S/tmp" tondo-emu .github/scripts/emulated.sh
+}
+
+sweep() {
+  TONDO_SWEEP=1 cargo test -p tondo --test lsp --test observe -- the_server_outlives a_damaged_dump
 }
 
 # The tests that race, under emulation, again and again, on few cores.
