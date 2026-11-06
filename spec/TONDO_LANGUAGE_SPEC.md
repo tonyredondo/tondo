@@ -9219,8 +9219,8 @@ Son errores obligatorios, entre otros:
   (`E1605`).
 - Intento de importar un archivo que contiene sentencias de script (`E1801`).
 
-Dos perfiles opcionales completan el registro sin volver heurística la
-conformidad del lenguaje:
+Dos perfiles opcionales, que `tondo check --performance` y `tondo check --docs`
+activan, completan el registro sin volver heurística la conformidad del lenguaje:
 
 - `performance` puede emitir `W1009` solo cuando adjunta una prueba semántica de
   que el mismo owner realiza un detach en una arista de retorno de loop y una

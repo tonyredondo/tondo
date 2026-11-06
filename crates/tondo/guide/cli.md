@@ -61,6 +61,8 @@ tondo test                        every test of the project
 tondo test --filter parse         tests whose ids contain `parse`; --glob, --exact <id>
 tondo api --diff v1.2              what the public API lost, changed or gained since a commit
 tondo check --unreached            the code neither main nor a test reaches
+tondo check --docs                 what is public and has no /// (W1010)
+tondo check --performance          a copy a loop makes on every turn (W1009)
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build

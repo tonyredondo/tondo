@@ -186,7 +186,8 @@ impl Server {
     fn tool(&mut self, name: &str, args: &Args) -> Result<Reply, String> {
         match name {
             "check" => {
-                let analysis = analyze(args)?;
+                let mut analysis = analyze(args)?;
+                crate::lints::run(&analysis.sources, &mut analysis.diags, args.flag("docs"), args.flag("performance"));
                 let diagnostics = diagnostics(&analysis);
                 let text = report(&analysis, &diagnostics);
                 Ok(Reply::new(text, json!({ "compiles": analysis.program.is_some(), "diagnostics": diagnostics })))
@@ -1965,7 +1966,12 @@ const TOOLS: &[Tool] = &[
         description: "Check a program without building it: its diagnostics, each with an id and the fixes the compiler \
 suggests. Check after every edit.",
         kind: Kind::Reads,
-        params: &[PATH, LIBRARY],
+        params: &[
+            PATH,
+            LIBRARY,
+            ("docs", "boolean", "Also what is public and has no `///`, as a library wants (W1010)."),
+            ("performance", "boolean", "Also a copy a loop makes on every turn (W1009)."),
+        ],
     },
     Tool {
         name: "fix",

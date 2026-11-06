@@ -45,7 +45,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "check",
-        usage: &["tondo check [<project>|<file.to>] [--library] [--unreached] [--json]"],
+        usage: &["tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--json]"],
         summary: &[
             "report diagnostics only (of a library; as JSON);",
             "--unreached, the code neither main nor a test reaches",

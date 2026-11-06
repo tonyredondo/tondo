@@ -35,6 +35,7 @@ pub mod index;
 pub mod inline;
 pub mod lexer;
 pub mod link;
+pub mod lints;
 pub mod live;
 pub mod lower;
 pub mod lsp;

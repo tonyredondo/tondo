@@ -231,7 +231,8 @@ fn analyze(path: &Path, library: bool, shown: Shown) -> Result<Option<driver::An
 fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (json, library) = (args.iter().any(|a| a == "--json"), args.iter().any(|a| a == "--library"));
     let unreached = args.iter().any(|a| a == "--unreached");
-    let flags = ["--json", "--library", "--unreached"];
+    let (docs, performance) = (args.iter().any(|a| a == "--docs"), args.iter().any(|a| a == "--performance"));
+    let flags = ["--json", "--library", "--unreached", "--docs", "--performance"];
     let args: Vec<OsString> = args.iter().filter(|a| !flags.iter().any(|flag| *a == flag)).cloned().collect();
     let (path, rest) = source_argument(&args);
     if !rest.is_empty() {
@@ -240,7 +241,8 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     if unreached {
         return tondo::affected::report_unreached(&path, json).map(|()| ExitCode::SUCCESS);
     }
-    let analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
+    let mut analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
+    tondo::lints::run(&analysis.sources, &mut analysis.diags, docs, performance);
     let ok = analysis.program.is_some();
     if json {
         let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);

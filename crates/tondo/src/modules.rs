@@ -283,7 +283,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
 }
 
 /// The name of a `pub` declaration.
-fn public_name(item: &Item) -> Option<&Ident> {
+pub(crate) fn public_name(item: &Item) -> Option<&Ident> {
     match item {
         Item::Fn(f) if f.public => Some(&f.name),
         Item::Type(t) if t.public => Some(&t.name),
