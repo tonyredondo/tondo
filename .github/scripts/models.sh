@@ -7,9 +7,8 @@ jar=$1
 cd testing/models
 for config in *.cfg; do
   case "$config" in
-    Stop*) model=Stop ;;
-    Park*) model=Park ;;
-    *) model=Wake ;;
+    Wake*) model=Wake ;;
+    *) model=${config%.cfg} ;;
   esac
   echo "$model with $config"
   java -XX:+UseParallelGC -jar "$jar" -workers auto -config "$config" -metadir "$(mktemp -d)" "$model.tla"
