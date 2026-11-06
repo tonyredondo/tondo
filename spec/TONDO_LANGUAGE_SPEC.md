@@ -9272,7 +9272,9 @@ separados por espacios. Sin razón, sin códigos, o con un código que no sea de
 aviso, es `E0007`: un error no se acepta. Si su línea no da ese aviso es
 `W1019`, salvo en un programa con errores, que puede no haber llegado a él, y en
 un perfil de 22.8 que no se pidió. Lo silenciado no sale de la salida: `tondo
-check --json` y la herramienta `check` lo dan en `silenced`, para revisarlo.
+check --json` y la herramienta `check` lo dan en `silenced`, para revisarlo, y
+el editor lo muestra como pista. Cada aviso del programa ofrece escribir ese
+comentario como fix no seguro, sin razón: quien lo aplica tiene que completarla.
 
 ### 22.9 Conformidad ejecutable
 

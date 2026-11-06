@@ -382,7 +382,9 @@ fn a_lost_update_has_a_repair() {
         list[0]["fixes"][0]["edits"].as_array().unwrap().iter().map(|e| e["replacement"].as_str().unwrap()).collect();
     assert_eq!(replaced, ["n", ""], "{found}");
     assert_eq!(edits(1)[0]["replacement"], "cell.update((value) { value = value * 2 })", "{found}");
-    assert!(edits(2).is_empty(), "{found}");
+    // This one has no repair: only accepting it.
+    assert_eq!(list[2]["fixes"].as_array().unwrap().len(), 1, "{found}");
+    assert!(list[2]["fixes"][0]["title"].as_str().unwrap().starts_with("accept"), "{found}");
 }
 
 /// A lock in a `defer` warns, and a counter has its repair.
@@ -682,4 +684,12 @@ fn check_lists_what_it_silences() {
     let said = said_by(&dir, &["check", "allow.to", "--json"]);
     let found: serde_json::Value = serde_json::from_str(&said).unwrap();
     assert_eq!(found["silenced"][0]["code"], "W1004", "{said}");
+    // Any other warning offers the comment, to finish: as it is, it is an error.
+    let dir = project_at("check-offer", &[("offer.to", b"type CUInt = Int\n\nfn main() {}\n")]);
+    let said = said_by(&dir, &["check", "offer.to", "--json"]);
+    let found: serde_json::Value = serde_json::from_str(&said).unwrap();
+    let fixes = found["diagnostics"][0]["fixes"].as_array().unwrap();
+    let offered = fixes.iter().find(|fix| fix["title"] == "accept `W1004`, saying why").expect(&said);
+    assert_eq!(offered["applicability"], "requires-decision", "{said}");
+    assert_eq!(offered["edits"][0]["replacement"], "// tondo: allow W1004: \n", "{said}");
 }

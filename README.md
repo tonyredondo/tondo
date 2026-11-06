@@ -166,8 +166,7 @@ covers, with what it took, is in [`docs/roadmap.md`](docs/roadmap.md).
 | A first release | Not yet |
 
 Known limits today: logpoints and Release breakpoints work on Linux only, since
-macOS does not let a program change its code. What the specifications define and
-Tondo does not do yet is listed at the end of the roadmap.
+macOS does not let a program change its code.
 
 ## How it is built
 

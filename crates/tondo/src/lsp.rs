@@ -800,6 +800,14 @@ impl Server {
             }
             by_file.entry(path).or_default().push(published);
         }
+        // What a comment accepted stays in sight, as a hint.
+        for diagnostic in &analyzed.analysis.diags.silenced {
+            let Some((path, range)) = diagnostic.span.and_then(|span| self.place(analyzed, span)) else { continue };
+            let message = format!("accepted: {}", diagnostic.message);
+            let code = diagnostic.code.unwrap_or("E0000");
+            let hint = json!({ "range": range, "severity": 4, "code": code, "source": "tondo", "message": message });
+            by_file.entry(path).or_default().push(hint);
+        }
         // What is `pub` for nothing, which only the editor says: a library's
         // are for whoever uses it.
         for (span, message) in unused_public(analyzed) {

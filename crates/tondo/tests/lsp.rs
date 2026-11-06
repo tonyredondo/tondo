@@ -2123,3 +2123,28 @@ fn the_server_outlives_a_panic_in_a_request() {
     let hover = editor.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": at }));
     assert!(hover["contents"]["value"].as_str().unwrap().contains("Int"), "{hover}");
 }
+
+/// What a comment accepted stays in sight as a hint, and any other warning
+/// offers the comment.
+#[test]
+fn an_accepted_warning_is_a_hint() {
+    let main =
+        "// tondo: allow W1004: the name C gives it\ntype CUShort = UInt16\n\ntype CUInt = Int\n\nfn main() {}\n";
+    let dir = project("lsp-allow", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let place = json!({ "line": 3, "character": 6 });
+    let found = editor.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": { "start": place, "end": place }, "context": { "diagnostics": [] } }),
+    );
+    let titled = found.as_array().unwrap().iter().any(|a| a["title"] == "accept `W1004`, saying why");
+    assert!(titled, "{found}");
+    let (_, published) = editor.diagnostics.iter().rev().find(|(path, _)| path.ends_with("main.to")).cloned().unwrap();
+    let published = published.as_array().unwrap();
+    let hint = published.iter().find(|d| d["severity"] == 4).expect("a hint");
+    assert_eq!(hint["code"], "W1004");
+    assert!(hint["message"].as_str().unwrap().starts_with("accepted: "), "{hint}");
+    assert!(published.iter().any(|d| d["severity"] == 2 && d["code"] == "W1004"), "{published:?}");
+    editor.stop();
+}

@@ -4,7 +4,7 @@
 
 use crate::ast::{self, Block, ExprKind, Item, StmtKind};
 use crate::diag::Diagnostics;
-use crate::source::{SourceFile, SourceMap};
+use crate::source::{SourceFile, SourceMap, Span};
 
 /// The codes only a check that asks for its profile gives.
 const PROFILES: [&str; 2] = ["W1009", "W1010"];
@@ -15,6 +15,7 @@ const PROFILES: [&str; 2] = ["W1009", "W1010"];
 /// the warning, and a profile nobody asked for gives none.
 pub(crate) fn allow(sources: &SourceMap, diags: &mut Diagnostics) {
     diags.list.retain(|diagnostic| diagnostic.code != Some("W1019"));
+    offer_to_allow(sources, diags);
     // The standard library says why too, for the test that looks at it.
     let own = std::env::var_os("TONDO_STD_WARNINGS").is_some();
     let foreign = |file: &SourceFile| {
@@ -55,12 +56,33 @@ pub(crate) fn allow(sources: &SourceMap, diags: &mut Diagnostics) {
     }
     if diags.has_errors() {
         diags.list.retain(|diagnostic| diagnostic.code != Some("W1019"));
+        offer_to_allow(sources, diags);
+    }
+}
+
+/// Each warning of the program can be accepted, by a comment above it that
+/// someone has to finish: without a reason it is an error.
+fn offer_to_allow(sources: &SourceMap, diags: &mut Diagnostics) {
+    let warnings = diags.list.iter_mut().filter(|d| d.severity == crate::diag::Severity::Warning);
+    for diagnostic in warnings {
+        let (Some(code), Some(span)) = (diagnostic.code, diagnostic.span) else { continue };
+        let file = sources.file_of(span.start);
+        let title = format!("accept `{code}`, saying why");
+        if file.logical.starts_with('<') || diagnostic.fixes.iter().any(|fix| fix.title == title) {
+            continue;
+        }
+        let text = file.line_text(file.line_col(span.start).0);
+        let indent = &text[..text.len() - text.trim_start().len()];
+        let local = (span.start - file.base) as usize;
+        let start = file.base + file.text[..local].rfind('\n').map_or(0, |at| at + 1) as u32;
+        let edit = (Span::new(start, start), format!("{indent}// tondo: allow {code}: \n"));
+        diagnostic.fixes.push(crate::diag::Fix { title, safe: false, edits: vec![edit] });
     }
 }
 
 /// The line a comment speaks of: its own when it follows code, or else the
 /// next one with code.
-fn target(file: &SourceFile, comment: crate::source::Span) -> usize {
+fn target(file: &SourceFile, comment: Span) -> usize {
     let (line, column) = file.line_col(comment.start);
     if file.line_text(line).chars().take(column - 1).any(|c| !c.is_whitespace()) {
         return line;
@@ -181,6 +203,6 @@ fn is_named(value: &ast::Expr, name: &str) -> bool {
 }
 
 /// Whether the text of a span names a binding.
-pub(crate) fn names(file: &SourceFile, span: crate::source::Span, name: &str) -> bool {
+pub(crate) fn names(file: &SourceFile, span: Span, name: &str) -> bool {
     file.slice(span).split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == name)
 }
