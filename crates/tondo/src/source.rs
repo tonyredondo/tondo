@@ -141,4 +141,12 @@ impl SourceMap {
     pub fn slice(&self, span: Span) -> &str {
         self.file_of(span.start).slice(span)
     }
+
+    /// The text from an offset to where the declaration it is in ends: the
+    /// next line that starts with a closing brace.
+    pub fn to_function_end(&self, offset: u32) -> &str {
+        let file = self.file_of(offset);
+        let text = &file.text[(offset - file.base) as usize..];
+        text.find("\n}").map_or(text, |end| &text[..end])
+    }
 }

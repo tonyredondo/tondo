@@ -50,9 +50,7 @@ fn check_with<'a>(
     // program that has none does without.
     let deprecated = deprecated_names(module);
     let asked = index.is_some();
-    let shares =
-        module.imports.iter().any(|import| import.path.iter().map(|part| part.name.as_str()).eq(["std", "sync"]));
-    let index = index.or_else(|| (!deprecated.is_empty() || shares).then(crate::index::Index::default));
+    let index = index.or_else(|| (!deprecated.is_empty()).then(crate::index::Index::default));
     let mut checker = Checker {
         index,
         index_exprs: Vec::new(),
@@ -8196,27 +8194,36 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Where a name is written in a span, as a whole word.
+    fn named_in(&self, name: &str, within: Span) -> Vec<Span> {
+        let text = self.sources.slice(within);
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let found = text.match_indices(name).filter(|(at, _)| {
+            let before = text[..*at].chars().next_back();
+            let after = text[at + name.len()..].chars().next();
+            !before.is_some_and(word) && !after.is_some_and(word)
+        });
+        found.map(|(at, _)| Span::new(within.start + at as u32, within.start + (at + name.len()) as u32)).collect()
+    }
+
     /// W1016: a function that writes a cell from what it read of it earlier,
-    /// as another task may change it in between. Each use of the value read
-    /// is known by the index.
+    /// as another task may change it in between. Reading the arguments of the
+    /// write for the name of the binding is enough: what tells two bindings of
+    /// one name apart is not worth building for every program that shares a
+    /// value.
     fn lost_updates(&mut self) {
         let uses = std::mem::take(&mut self.cell_uses);
-        let Some(index) = self.index.as_ref() else { return };
         let inside = |within: Span, span: Span| within.start <= span.start && span.end <= within.end;
         let mut found = Vec::new();
         for write in uses.iter().filter(|used| !used.read) {
             let same = uses.iter().filter(|used| used.read && used.cell == write.cell);
-            let named = |read: &CellUse| -> Vec<Span> {
-                let uses = index.uses.iter().filter(|(_, def)| index.defs[*def].name_span == read.within);
-                uses.map(|(span, _)| *span).filter(|span| *span != read.within).collect()
+            let places = |read: &CellUse| match inside(write.within, read.span) {
+                true => vec![read.span],
+                false if read.within == Span::default() => Vec::new(),
+                false => self.named_in(self.sources.slice(read.within), write.within),
             };
-            let source = same.filter(|read| read.span.start < write.span.end).find(|read| {
-                inside(write.within, read.span) || named(read).iter().any(|span| inside(write.within, *span))
-            });
-            found.extend(source.map(|read| {
-                let places = if inside(write.within, read.span) { vec![read.span] } else { named(read) };
-                (write, read, places)
-            }));
+            let source = same.filter(|read| read.span.start < write.span.end).find(|read| !places(read).is_empty());
+            found.extend(source.map(|read| (write, read, places(read))));
         }
         let mut told = Vec::new();
         for (write, read, places) in found {
@@ -8238,11 +8245,18 @@ impl<'a> Checker<'a> {
     /// `update`: what the value read names becomes the value there. Not when
     /// the value read goes on being used after the write.
     fn one_update(&self, write: &CellUse, read: &CellUse, places: &[Span]) -> Option<Vec<(Span, String)>> {
-        let inside = |span: &Span| write.within.start <= span.start && span.end <= write.within.end;
-        if !places.iter().all(inside) || !matches!(write.method.as_str(), "set" | "update") {
+        if !matches!(write.method.as_str(), "set" | "update") {
             return None;
         }
         let text = |span: Span| self.sources.slice(span).to_string();
+        // Used after the write, up to where the function ends.
+        if read.statement != Span::default() {
+            let (name, rest) = (text(read.within), self.sources.to_function_end(write.span.end));
+            let word = |c: char| c.is_alphanumeric() || c == '_';
+            if rest.split(|c: char| !word(c)).any(|part| part == name) {
+                return None;
+            }
+        }
         let name = write.parameter.clone().unwrap_or("value".to_string());
         let mut edits = Vec::new();
         if write.method == "update" {
