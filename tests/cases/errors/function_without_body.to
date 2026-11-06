@@ -1,0 +1,11 @@
+// A function is not a trait's required method: without a body it says what
+// to write, and what calls it goes on being checked.
+
+fn missing(): Int
+
+fn main() {
+    let value: Int = missing()
+    _ = value
+}
+
+// expect-error: E0004 `missing` has no body: write what it does in a block after its signature, `{ }`

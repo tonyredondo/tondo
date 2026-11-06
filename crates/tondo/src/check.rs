@@ -6510,7 +6510,19 @@ impl<'a> Checker<'a> {
         cx.body = true;
         cx.unsafe_region = signature.is_unsafe;
         cx.unsafe_body = signature.is_unsafe;
-        let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), success);
+        // Only a trait's required methods end at their signature.
+        let nothing = ast::Block { stmts: Vec::new(), tail: None, span: f.span };
+        let (written, success) = match &f.body {
+            Some(written) => (written, success),
+            None => {
+                let name = &f.name.name;
+                let message =
+                    format!("`{name}` has no body: write what it does in a block after its signature, `{{ }}`");
+                self.diags.error("E0004", f.name.span, message);
+                (&nothing, None)
+            }
+        };
+        let body = self.block(&mut cx, written, success);
         if let Some(opaque) = opaque {
             self.record_witness(&cx, opaque, &body, f);
         }
