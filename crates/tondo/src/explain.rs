@@ -59,12 +59,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-result-construction",
         "`ok`, `err`, `some` or `none` without a single context or a valid payload.",
     ),
+    ("E1305", "invalid-panic-code", "The literal `code` of `panic` is not a code of the program's own."),
     (
         "E1306",
         "value-without-effect",
         "A statement, or the end of a block with no value, is a value with no call in it, which does nothing.",
     ),
-    ("E1305", "invalid-panic-code", "The literal `code` of `panic` is not a code of the program's own."),
     ("E1401", "use-after-move", "A binding is used after its value moved away."),
     ("E1402", "invalid-borrow-lifetime", "A loan escapes, outlives what it lends, or crosses a boundary it may not."),
     ("E1403", "overlapping-mutable-borrow", "Loans that cannot overlap provably do."),

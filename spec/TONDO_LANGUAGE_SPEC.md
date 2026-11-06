@@ -8744,8 +8744,8 @@ oculten un diagnóstico independiente.
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
 | `E1303` | `discarded-result` | Un `Result` u `Option` se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
-| `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
 | `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
+| `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
 
 #### Ownership, préstamos y cleanup
 
