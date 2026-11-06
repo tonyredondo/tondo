@@ -543,7 +543,9 @@ fn reads_dumps_sources_and_a_running_program() {
         assert_eq!(stopped["said"][1]["stopped"]["why"], "breakpoint", "{stopped}");
         let locals = debug(&mut agent, "locals");
         assert_eq!(locals["said"][0]["locals"][0]["name"], "round", "{locals}");
-        let refused = debug(&mut agent, "step");
+        let stepped = debug(&mut agent, "next");
+        assert_eq!(stepped["said"][1]["stopped"]["why"], "step", "{stepped}");
+        let refused = debug(&mut agent, "goto 3");
         assert!(refused["said"][0]["error"].as_str().unwrap().contains("needs a build with probes"), "{refused}");
         agent.call("debug_stop", json!({ "session": session }));
     }

@@ -1526,7 +1526,7 @@ static FLOATS: [std::sync::atomic::AtomicUsize; 32] = [const { std::sync::atomic
 
 /// Each place of the code where a logpoint can go: its address, its length,
 /// its file and its line.
-pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32)> {
+pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32, usize)> {
     let raw = DUMP_TABLE.load(Ordering::Relaxed);
     if raw.is_null() {
         return Vec::new();
@@ -1540,7 +1540,7 @@ pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32)> {
                 if let (Some(start), Ok(at), Ok(length), Ok(line)) =
                     (function, at.parse::<usize>(), length.parse(), line.parse())
                 {
-                    sites.push((start + at, length, file.to_string(), line));
+                    sites.push((start + at, length, file.to_string(), line, start));
                 }
             }
             _ => {}

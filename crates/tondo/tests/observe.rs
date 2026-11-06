@@ -3342,9 +3342,22 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(went_on, "the other task stopped too");
-    // A build without probes does not step, and says what it does do.
-    let message = adapter.refused("next", json!({ "threadId": thread }));
-    assert!(message.contains("needs a build with probes"), "{message}");
+    // Steps: to the next line, and out to the caller, with its variables.
+    adapter.ask("next", json!({ "threadId": thread }));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "step", "{stopped}");
+    let stack = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(stack["stackFrames"][0]["line"], 8, "{stack}");
+    adapter.ask("stepOut", json!({ "threadId": thread }));
+    let stopped = adapter.until("stopped");
+    let stack = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(stack["stackFrames"][0]["name"], "main", "{stack}");
+    let frame = stack["stackFrames"][0]["id"].clone();
+    let sum = adapter.ask("evaluate", json!({ "expression": "round", "frameId": frame, "context": "watch" }));
+    assert_eq!(sum["result"], id.to_string(), "{sum}");
+    // What needs probes says so.
+    let message = adapter.refused("setVariable", json!({ "variablesReference": 1, "name": "round", "value": "1" }));
+    assert!(!message.is_empty());
 
     // On to the next time the condition holds, past the logpoint's output.
     adapter.ask("continue", json!({ "threadId": thread }));

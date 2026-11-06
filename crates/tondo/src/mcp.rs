@@ -2415,7 +2415,7 @@ the memory by where it was made, and its tasks.",
         name: "debug_start",
         description: "Debug a program: a .to file or a project (built with --debug), a debug executable, or a running \
 build's process ID or name. In a running Release build, with TONDO_DIAGNOSTICS=1, `break` and `continue` stop one task \
-with its values while the program goes on, and there are no steps. A program it starts waits before main for breakpoints. Gives the session that \
+with its values while the program goes on; `next` and `finish` step, without entering calls. A program it starts waits before main for breakpoints. Gives the session that \
 `debug` takes; a session lasts until `debug_stop`, or the program ends.",
         kind: Kind::Runs,
         params: &[

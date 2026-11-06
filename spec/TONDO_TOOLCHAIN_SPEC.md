@@ -1018,9 +1018,11 @@ que se pregunta al depurador se lee de ese volcado, así que el editor muestra e
 normal con su pila, sus variables y sus partes, con condición o como logpoint. Solo se para
 esa tarea, y el resto sigue: el evento `stopped` lleva `allThreadsStopped: false`. Una
 parada retiene la tarea 300 segundos como mucho, una sola a la vez, y se suelta con
-`continue` o al irse la herramienta. `pause` no detiene nada: da una foto del programa, que
-sigue. No hay pasos, ni `hits`, ni evaluar llamadas ni cambiar valores: hacen falta sondas,
-y el comando lo dice. Las variables son las que el código optimizado conserva en esa línea.
+`continue` o al irse la herramienta. `next` y `finish` siguen paso a paso: la tarea, y solo
+ella, para en la siguiente línea de su función o de las que la llamaron, o solo de esas; no
+se entra en llamadas, y `step` es `next`. `pause` no detiene nada: da una foto del programa,
+que sigue. No hay `hits`, ni evaluar llamadas ni cambiar valores: hacen falta sondas, y el
+comando lo dice. Las variables son las que el código optimizado conserva en esa línea.
 
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un

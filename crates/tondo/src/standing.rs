@@ -146,6 +146,11 @@ impl Standing {
 
     /// A breakpoint was reached, or let its task go when its time ended.
     fn reached(&mut self, value: Value) {
+        if let Some(error) = value["error"].as_str() {
+            let told = format!("the step did not go: {error}");
+            self.tell(&json!({ "logged": told }));
+            return;
+        }
         if let Some(id) = value["went"].as_u64() {
             if self.held == Some(id) {
                 self.held = None;
@@ -174,7 +179,7 @@ impl Standing {
         self.waiting = false;
         self.seen = Some(observe::seen_tasks(hit["whole"].clone()));
         self.selected = (hit["task"].as_u64().unwrap_or(1), 0);
-        self.stopped("breakpoint");
+        self.stopped(if hit["step"] == true { "step" } else { "breakpoint" });
     }
 
     /// Tells where the selected task stands.
@@ -213,6 +218,8 @@ impl Standing {
                 }
                 Ok(json!({ "running": true }))
             }
+            "next" | "step" => self.stepped("next"),
+            "finish" => self.stepped("out"),
             "pause" => self.picture(),
             "select" => self.select(rest),
             "task" => self.select(&format!("{rest} 0")),
@@ -229,8 +236,8 @@ impl Standing {
             "files" => Ok(json!({ "files": [] })),
             "lines" => Ok(json!({ "lines": [] })),
             _ => Err(format!(
-                "`{word}` needs a build with probes: here a breakpoint shows where a task stopped, and the task \
-                 and the rest of the program go on with `continue`"
+                "`{word}` needs a build with probes: here a breakpoint shows where a task stopped, `next` and \
+                 `finish` go on line by line, and the task and the rest of the program go on with `continue`"
             )),
         };
         result.unwrap_or_else(|error| json!({ "error": error }))
@@ -280,6 +287,19 @@ impl Standing {
             self.held = None;
         }
         Ok(json!({ "deleted": id }))
+    }
+
+    /// The task that stands goes on to a line of its function or of those
+    /// that called it, or of those alone: a build without probes does not go
+    /// into calls.
+    fn stepped(&mut self, how: &str) -> Result<Value, String> {
+        let id = self.held.ok_or("no task stands here: `step` goes on from a breakpoint")?;
+        let point = self.points.get_mut(&id).ok_or("its breakpoint is gone")?;
+        writeln!(point.writer, "step {id} {how}").map_err(|e| e.to_string())?;
+        self.held = None;
+        self.seen = None;
+        self.waiting = true;
+        Ok(json!({ "running": true }))
     }
 
     /// `pause` does not stop a build without probes: what it shows is a

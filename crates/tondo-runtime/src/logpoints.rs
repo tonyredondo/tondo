@@ -25,6 +25,73 @@ struct Logpoint {
     stop: Option<u64>,
     /// A text of the request a task must work for to count.
     request: Option<String>,
+    /// A step of a task a logpoint holds: that logpoint, the task, and the
+    /// frame it left: only that frame or those that called it count.
+    step: Option<(u64, u64, usize)>,
+}
+
+/// Where a logpoint holds its task: its number, how long, the task, its frame,
+/// its stack's bounds and the code of the calls it is in, innermost first.
+struct Holding {
+    id: u64,
+    seconds: u64,
+    task: u64,
+    fp: usize,
+    code: Vec<usize>,
+}
+
+static HOLDING: Mutex<Option<Holding>> = Mutex::new(None);
+
+/// `step <id> next|out`: the task logpoint `id` holds goes on to the next
+/// line of its function or of those that called it, or of those alone.
+pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
+    use super::diagnostics::quoted;
+    let error = |message: &str| format!("{{\"error\":{}}}", quoted(message));
+    let mut words = rest.split_whitespace();
+    let (id, how) = (words.next().and_then(|id| id.parse::<u64>().ok()), words.next());
+    let held = HOLDING.lock().unwrap_or_else(|e| e.into_inner()).take_if(|held| Some(held.id) == id);
+    let Some(held) = held else { return error("no task stands at this breakpoint") };
+    let Ok(client) = client.try_clone() else { return error("the tool went away") };
+    // The functions of the code it is in, by where each starts.
+    let sites = super::debugger::latent_sites();
+    let mut starts: Vec<usize> = sites.iter().map(|site| site.4).collect();
+    starts.sort();
+    starts.dedup();
+    let function = |code: usize| starts.iter().rev().find(|&&start| start <= code).copied();
+    let wanted: Vec<usize> = held.code.iter().filter_map(|&code| function(code)).collect();
+    // Going out is to another function, which the code it was inlined in may
+    // be: what tells them apart is where each place says it is.
+    let named = |code: usize| {
+        let scopes = super::trace::scopes_at(code);
+        scopes.first().and_then(|(_, place)| place.rsplit(" in ").next().map(str::to_string))
+    };
+    let left = held.code.first().and_then(|&site| named(site + 1));
+    let places: Vec<(usize, usize)> = sites
+        .iter()
+        .filter(|site| wanted.contains(&site.4) && (how != Some("out") || named(site.0 + 1) != left))
+        .map(|site| (site.0, site.1))
+        .collect();
+    let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    // The step before ended: what it wrote goes first, or taking it out later
+    // would take this one's out too.
+    let ended = lock().iter().filter(|logpoint| logpoint.step.is_some() && logpoint.left == 0).map(|l| l.id).collect();
+    if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
+        return error("the program did not stop for the step: try again");
+    }
+    take_out(ended);
+    let written = places.iter().map(|&(address, length)| write_call(address, length)).collect::<Result<Vec<_>, _>>();
+    super::tasks::resume_world();
+    drop(writing);
+    let sites = match written {
+        Ok(sites) => sites,
+        Err(message) => return error(&message),
+    };
+    let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let step = Some((held.id, held.task, held.fp));
+    let (dump, stop) = (Some("-".to_string()), Some(held.seconds));
+    lock().push(Logpoint { id: next, sites, left: 1, client, condition: None, dump, stop, request: None, step });
+    go(&held.id.to_string());
+    String::new()
 }
 
 struct Site {
@@ -34,6 +101,8 @@ struct Site {
 }
 
 static SET: Mutex<Vec<Logpoint>> = Mutex::new(Vec::new());
+/// The number of the next logpoint.
+static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 /// One hit at a time: its registers go where a fault's do.
 static HIT: Mutex<()> = Mutex::new(());
 /// One change of the code at a time, from stopping the program to letting it
@@ -89,10 +158,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     let Ok(line) = line.parse::<u32>() else { return error("logpoint takes a limit and file:line") };
     let sites = super::debugger::latent_sites();
     // A tool names a file from where it is, an editor by its whole path.
-    let same_file = |site: &&(usize, usize, String, u32)| {
+    let same_file = |site: &&(usize, usize, String, u32, usize)| {
         site.2 == file || site.2.ends_with(&format!("/{file}")) || file.ends_with(&format!("/{}", site.2))
     };
-    let of_file: Vec<&(usize, usize, String, u32)> = sites.iter().filter(same_file).collect();
+    let of_file: Vec<&(usize, usize, String, u32, usize)> = sites.iter().filter(same_file).collect();
     let places: Vec<(usize, usize)> =
         of_file.iter().filter(|site| site.3 == line).map(|site| (site.0, site.1)).collect();
     if places.is_empty() {
@@ -120,13 +189,12 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
         Ok(sites) => sites,
         Err(message) => return error(&message),
     };
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // The answer goes first: a hit counts once it is in the list, and must
     // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
     let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop, request: serving });
+    lock().push(Logpoint { id, sites, left: max, client, condition, dump, stop, request: serving, step: None });
     String::new()
 }
 
@@ -186,17 +254,26 @@ fn patch(address: usize, bytes: &[u8]) -> Result<(), String> {
 
 /// Takes out the logpoint `id`.
 fn remove(id: u64) {
-    let found = {
-        let mut set = lock();
-        set.iter().position(|logpoint| logpoint.id == id).map(|at| set.swap_remove(at))
-    };
-    let Some(logpoint) = found else { return };
     let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-    while !super::tasks::stop_world(std::time::Duration::from_secs(2)) {}
-    for site in &logpoint.sites {
+    if lock().iter().any(|logpoint| logpoint.id == id) {
+        while !super::tasks::stop_world(std::time::Duration::from_secs(2)) {}
+        take_out(vec![id]);
+        super::tasks::resume_world();
+    }
+}
+
+/// Puts back what logpoints wrote, with the program stopped.
+fn take_out(ids: Vec<u64>) {
+    let gone = {
+        let mut set = lock();
+        let (gone, kept) = std::mem::take(&mut *set).into_iter().partition(|logpoint| ids.contains(&logpoint.id));
+        *set = kept;
+        gone
+    };
+    let gone: Vec<Logpoint> = gone;
+    for site in gone.iter().flat_map(|logpoint| &logpoint.sites) {
         let _ = patch(site.address, &site.original);
     }
-    super::tasks::resume_world();
 }
 
 /// Takes out the logpoints of a tool that went away.
@@ -224,15 +301,20 @@ extern "C" fn hit(saved: *const usize) {
     let (registers, floats, address, fp) = unsafe { registers_of(saved) };
     // A site's call is its whole length before where it returns to.
     let found = {
+        // The last set first: a step goes before what was on its line.
         let set = lock();
-        set.iter().find_map(|logpoint| {
+        set.iter().rev().find_map(|logpoint| {
             let site = logpoint.sites.iter().find(|site| site.address + site.length == address)?.address;
             let client = logpoint.client.try_clone().ok().filter(|_| logpoint.left > 0)?;
+            // A step is of its task, out of what it left.
+            if logpoint.step.is_some_and(|(_, task, frame)| task != super::tasks::current_id() || fp < frame) {
+                return None;
+            }
             let (condition, dump) = (logpoint.condition.clone(), logpoint.dump.clone());
-            Some((logpoint.id, site, client, condition, dump, logpoint.stop, logpoint.request.clone()))
+            Some((logpoint.id, site, client, condition, dump, logpoint.stop, logpoint.request.clone(), logpoint.step))
         })
     };
-    let Some((id, site, mut client, condition, dump, stop, request)) = found else { return };
+    let Some((id, site, mut client, condition, dump, stop, request, step)) = found else { return };
     let serving = || super::tasks::request_of(super::tasks::current_id());
     if request.is_some_and(|text| !serving().is_some_and(|it| it.contains(&text))) {
         return;
@@ -270,12 +352,25 @@ extern "C" fn hit(saved: *const usize) {
         let places = here.flat_map(super::trace::scopes_at).map(|(_, place)| super::diagnostics::quoted(&place));
         format!(",\"stopped\":{seconds},\"stack\":[{}]", places.collect::<Vec<_>>().join(","))
     });
-    let line = format!("{{\"hit\":{id},\"task\":{task}{dumped}{stack},\"values\":[{}]}}\n", values.join(","));
+    // A step says the breakpoint it came from.
+    let (shown, stepped) = step.map_or((id, ""), |(from, ..)| (from, ",\"step\":true"));
+    let line =
+        format!("{{\"hit\":{shown},\"task\":{task}{stepped}{dumped}{stack},\"values\":[{}]}}\n", values.join(","));
     if client.write_all(line.as_bytes()).is_err() {
         forget(id);
     } else if let Some(seconds) = stop {
-        held(id, seconds);
-        let _ = client.write_all(format!("{{\"went\":{id}}}\n").as_bytes());
+        // It is not a step's to go on from: it is taken out next.
+        if last {
+            let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());
+            forget(id);
+        }
+        let code = std::iter::once(site).chain(super::trace::walk(fp, bounds)).collect();
+        let holding = Holding { id: shown, seconds, task, fp, code };
+        *HOLDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(holding);
+        held(shown, seconds);
+        HOLDING.lock().unwrap_or_else(|e| e.into_inner()).take_if(|held| held.id == shown && held.task == task);
+        let _ = client.write_all(format!("{{\"went\":{shown}}}\n").as_bytes());
+        return;
     }
     if last {
         let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());
