@@ -24,7 +24,8 @@ fn examples_compile() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guide");
     let _ = std::fs::remove_dir_all(&dir);
     let mut jobs = Vec::new();
-    for (topic, text) in tondo::guide::TOPICS {
+    let readme = ("readme", include_str!("../../../README.md"));
+    for (topic, text) in tondo::guide::TOPICS.iter().copied().chain([readme]) {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();

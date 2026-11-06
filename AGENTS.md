@@ -121,8 +121,8 @@ race with little CPU, which is where a failure otherwise shows hours later.
   `tests/cases` whose comments state its output, exit, panic or
   diagnostic; the section of the specification; the guide's topic, in
   `crates/tondo/guide`, when users meet it; an entry in
-  `docs/decisions.md` for a decision of design; and its row in the
-  README's roadmap.
+  `docs/decisions.md` for a decision of design; and its row in
+  `docs/roadmap.md`, and in the README's status when it changes it.
 - Errors say how to fix them, with the code to write when there is one.
   The toolchain does what it can by itself rather than ask for
   annotations.

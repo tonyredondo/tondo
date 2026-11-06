@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="#a78bfa" role="img" aria-labelledby="title">
+  <title id="title">Tondo</title>
+  <path d="M12 8h10v14h16v10H22v8c0 6 3 8 8 8h3v10h-4c-11 0-17-6-17-17v-9H4V22h8Z"/>
+  <path fill-rule="evenodd" d="M44 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z"/>
+</svg>
