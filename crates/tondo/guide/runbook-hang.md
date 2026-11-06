@@ -73,7 +73,7 @@ task. Send first, or from another task.
 
 ```mcp
 run_stop {"session": "<session>"}
-run {"path": "worker.to", "timeout": 30}
+run {"path": "worker.to", "timeout": 300}
 => 1
 ```
 

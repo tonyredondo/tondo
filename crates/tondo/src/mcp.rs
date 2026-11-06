@@ -350,7 +350,7 @@ impl Server {
             let _ = stdin.write_all(text.as_bytes()).and_then(|()| stdin.flush());
         }
         // It builds first: its process does not answer the tools until it runs.
-        let building = std::time::Instant::now() + Duration::from_secs(120);
+        let building = std::time::Instant::now() + Duration::from_secs(600);
         while !args.flag("watch")
             && !crate::observe::serves(child.id())
             && matches!(child.try_wait(), Ok(None))
