@@ -765,6 +765,20 @@ export function systemBadge(file: string): { badge: string; tooltip: string } | 
   }
 }
 
+/** The badge of what a project's layout means: a directory `internal`, for
+ *  its package alone, and a file of tests. */
+export function layoutBadge(file: string): { badge: string; tooltip: string } | undefined {
+  if (/\/src\/(.*\/)?internal$/.test(file)) {
+    return { badge: 'In', tooltip: 'Internal: only the modules of this package import it' };
+  }
+  return file.endsWith('_test.to') ? { badge: 'T', tooltip: 'Tests: they see what this module keeps private' } : undefined;
+}
+
+/** Whether a module is its package's alone: `internal` in its path. */
+export function internalModule(name: string): boolean {
+  return name.split('.').slice(1).includes('internal');
+}
+
 /** The system a target of `tondo version` runs: `x86_64-linux-gnu` is
  *  Linux and `aarch64-macos` macOS. */
 export function systemOfTarget(target: string): string {

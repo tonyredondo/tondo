@@ -92,6 +92,17 @@ const tests: [string, () => Promise<void>][] = [
     },
   ],
   [
+    'the extension says what the language looks like',
+    async () => {
+      const contributed = vscode.extensions.all.find((one) => one.packageJSON.name === 'tondo')!.packageJSON;
+      const root = path.resolve(__dirname, '../..');
+      const language = contributed.contributes.languages[0];
+      for (const icon of [contributed.icon, language.icon.light, language.icon.dark]) {
+        assert.ok(fs.existsSync(path.join(root, icon)), icon);
+      }
+    },
+  ],
+  [
     'the language server marks a problem',
     async () => {
       const document = await openMain();

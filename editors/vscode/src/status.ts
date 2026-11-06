@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec } from './cli';
-import { incompatible, systemBadge, systemOfTarget } from './report';
+import { incompatible, layoutBadge, systemBadge, systemOfTarget } from './report';
 
 /** How to get `tondo`, which the extension needs. */
 export const INSTALL =
@@ -18,7 +18,7 @@ export function registerStatus(context: vscode.ExtensionContext, output: vscode.
   // every system's files.
   const systems: vscode.FileDecorationProvider = {
     provideFileDecoration: (uri) => {
-      const found = systemBadge(uri.fsPath);
+      const found = systemBadge(uri.fsPath) ?? layoutBadge(uri.fsPath);
       return found ? new vscode.FileDecoration(found.badge, found.tooltip) : undefined;
     },
   };

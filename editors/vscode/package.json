@@ -9,6 +9,7 @@
     "type": "git",
     "url": "https://github.com/tonyredondo/tondo"
   },
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.101.0"
   },
@@ -39,7 +40,11 @@
           ".to"
         ],
         "firstLine": "^#!.*\\btondo\\b",
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/tondo.svg",
+          "dark": "./images/tondo-dark.svg"
+        }
       }
     ],
     "grammars": [

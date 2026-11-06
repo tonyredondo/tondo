@@ -40,6 +40,8 @@ import {
   reloaded,
   rendered,
   kindMark,
+  internalModule,
+  layoutBadge,
   systemBadge,
   systemOfTarget,
   searchLine,
@@ -720,4 +722,14 @@ test('writes command lines', () => {
   assert.deepEqual(splitArgs('test --filter "a b"  --jobs 4'), ['test', '--filter', 'a b', '--jobs', '4']);
   assert.deepEqual(splitArgs("run 'x y'"), ['run', 'x y']);
   assert.deepEqual(splitArgs('   '), []);
+});
+
+test('marks what the layout of a project means', () => {
+  assert.equal(layoutBadge('/w/app/src/internal')?.badge, 'In');
+  assert.equal(layoutBadge('/w/app/src/models/internal')?.badge, 'In');
+  assert.equal(layoutBadge('/w/app/src/main_test.to')?.badge, 'T');
+  assert.equal(layoutBadge('/w/app/src/main.to'), undefined);
+  assert.equal(layoutBadge('/w/internal'), undefined);
+  assert.equal(internalModule('app.internal.pricing'), true);
+  assert.equal(internalModule('internal.models'), false);
 });

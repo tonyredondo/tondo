@@ -4,13 +4,13 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec, placeOf } from './cli';
-import { Graphed, graphed } from './report';
+import { Graphed, graphed, internalModule } from './report';
 
 /** A node of the view: a project, a package, a module, a file, or an
  *  import, which opens the line that imports. */
 type Node =
   | { kind: 'project'; dir: string }
-  | { kind: 'package'; dir: string; package: Graphed }
+  | { kind: 'package'; dir: string; package: Graphed; own: boolean }
   | { kind: 'module'; module: Graphed['modules'][number] }
   | { kind: 'file'; file: string }
   | { kind: 'import'; module: string; file: string; line: number };
@@ -45,12 +45,13 @@ class Modules implements vscode.TreeDataProvider<Node> {
         });
       case 'package':
         return Object.assign(new vscode.TreeItem(node.package.name, collapsed), {
-          iconPath: new vscode.ThemeIcon('package'),
-          description: node.package.dir,
+          iconPath: new vscode.ThemeIcon(node.own ? 'package' : 'library'),
+          description: node.own ? node.package.dir : `dependency, ${node.package.dir}`,
         });
       case 'module':
         return Object.assign(new vscode.TreeItem(node.module.name, node.module.files.length || node.module.imports.length ? collapsed : 0), {
-          iconPath: new vscode.ThemeIcon('symbol-module'),
+          iconPath: new vscode.ThemeIcon(internalModule(node.module.name) ? 'lock' : 'symbol-module'),
+          tooltip: internalModule(node.module.name) ? 'Internal: only the modules of its package import it' : undefined,
         });
       case 'file':
         return Object.assign(new vscode.TreeItem(vscode.Uri.file(node.file)), {
@@ -76,7 +77,7 @@ class Modules implements vscode.TreeDataProvider<Node> {
     }
     switch (node.kind) {
       case 'project':
-        return (await this.graph(node.dir)).map((p) => ({ kind: 'package', dir: node.dir, package: p }));
+        return (await this.graph(node.dir)).map((p, index) => ({ kind: 'package', dir: node.dir, package: p, own: index === 0 }));
       case 'package':
         return node.package.modules.map((module) => ({ kind: 'module', module }));
       case 'module':
