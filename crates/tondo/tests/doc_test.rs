@@ -83,6 +83,20 @@ fn checks_each_kind_of_example() {
     assert_eq!(records[0]["source_sha256"], tondo::hash::sha256_hex(source.as_bytes()));
 }
 
+/// A fragment no program is made of has its form too: a type and a pattern,
+/// each as it would be written where it belongs.
+#[test]
+fn formats_a_fragment_of_syntax() {
+    let text = "~~~tondo\nfn(Int,String): Bool\n\n[first,  ..]\n~~~\n";
+    let (stdout, stderr, status) = doc_test(&document("fragments.md", text));
+    assert_eq!(status, 0, "{stderr}");
+    let records: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let production = serde_json::json!(["syntax_sequence", "type_expr_line", "pattern_line"]);
+    assert_eq!(records[0]["production"], production);
+    let formatted = "fn(Int, String): Bool\n\n[first, ..]\n";
+    assert_eq!(records[0]["formatted_sha256"], tondo::hash::sha256_hex(formatted.as_bytes()));
+}
+
 #[test]
 fn reports_failing_examples() {
     let text = "\
@@ -153,6 +167,9 @@ fn the_register_ties_every_fragment_to_a_case() {
             .output()
             .unwrap();
         let fences: Vec<serde_json::Value> = serde_json::from_slice(&ran.stdout).unwrap();
+        for fence in fences.iter().filter(|fence| fence["parse_ok"] == true) {
+            assert!(fence["formatted_sha256"].is_string(), "what parses has a form (21.6): {fence}");
+        }
         for fence in fences.iter().filter(|fence| matches!(fence["category"].as_str(), Some("fragment" | "script"))) {
             let found = left.iter().position(|entry| *entry == key(fence));
             let at = found.unwrap_or_else(|| panic!("{} is not in testing/doc-test-runtime-links.json: {fence}", name));

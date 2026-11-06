@@ -12,6 +12,33 @@ use crate::{lexer, parser};
 
 const WIDTH: usize = 100;
 
+/// A fragment of syntax that is no program, as a type or a pattern on its own
+/// line: each of its items as the formatter writes it where it belongs.
+pub fn format_syntax(file: &SourceFile) -> Option<String> {
+    let items = parser::syntax_items(file)?;
+    let mut text = String::new();
+    for (at, (production, start)) in items.iter().enumerate().skip(1) {
+        let end = items.get(at + 1).map_or(file.base + file.text.len() as u32, |(_, next)| *next);
+        let item = file.slice(Span::new(*start, end));
+        let (before, after) = match *production {
+            "type_expr_line" => ("type Fragment = ", "\n"),
+            "pattern_line" => ("match value {\n    ", " => {}\n}\n"),
+            _ => ("", "\n"),
+        };
+        let mut sources = crate::source::SourceMap::default();
+        let id = sources.add(std::path::Path::new(&file.name), format!("{before}{}{after}", item.trim_end()));
+        let written = format(sources.file(id), &mut Diagnostics::default())?;
+        let written = written.strip_prefix(before)?.strip_suffix(after)?;
+        match *production {
+            "pattern_line" => text.push_str(&written.replace("\n    ", "\n")),
+            _ => text.push_str(written),
+        }
+        // A blank line between two items stays.
+        text.push_str(if item.trim_end_matches([' ', '\t']).ends_with("\n\n") { "\n\n" } else { "\n" });
+    }
+    Some(format!("{}\n", text.trim_end()))
+}
+
 /// Formats a file, or reports its syntax errors in `diags`.
 pub fn format(file: &SourceFile, diags: &mut Diagnostics) -> Option<String> {
     let (module, parens) = parser::parse_with_parens(file, diags);

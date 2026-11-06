@@ -125,7 +125,8 @@ fn example(file: &str, fence: &Fence, fixture: Option<&str>, manifest: &Manifest
             return (record, Some(why));
         };
         record["production"] = json!(productions);
-        record["formatted_sha256"] = json!(formatted().map(|text| crate::hash::sha256_hex(text.as_bytes())));
+        let text = formatted().or_else(|| crate::fmt::format_syntax(sources.file(id)));
+        record["formatted_sha256"] = json!(text.map(|text| crate::hash::sha256_hex(text.as_bytes())));
         return (record, None);
     }
     let parse_ok = !parsed.has_errors();

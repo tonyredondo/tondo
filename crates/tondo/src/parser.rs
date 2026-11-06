@@ -53,11 +53,17 @@ pub fn parse_pattern(file: &SourceFile, span: Span, diags: &mut Diagnostics) -> 
 /// patterns after the imports they use, or a lone block; `None` when it is
 /// none of them.
 pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
+    syntax_items(file).map(|items| items.into_iter().map(|(production, _)| production).collect())
+}
+
+/// The productions of a fragment of syntax with where each starts, the first
+/// of them, which names the whole, at the start of the file.
+pub(crate) fn syntax_items(file: &SourceFile) -> Option<Vec<(&'static str, u32)>> {
     let mut diags = Diagnostics::default();
     let module = parse_file(file, &mut diags);
     let bodies = |item: &Item| !matches!(item, Item::Fn(f) if f.body.is_none() && f.foreign.is_none());
     if !diags.has_errors() && module.statements.is_empty() && module.items.iter().all(bodies) {
-        return Some(vec!["module_program"]);
+        return Some(vec![("module_program", file.base)]);
     }
     let mut lexed = Diagnostics::default();
     let tokens = lexer::lex(file, None, &mut lexed);
@@ -90,7 +96,7 @@ pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
             && (parser.tokens[end - 1].tok == Tok::Newline || matches!(parser.tok(), Tok::Newline | Tok::Eof));
         (parsed && ended && !scratch.has_errors()).then_some(end)
     };
-    let mut productions = vec!["syntax_sequence"];
+    let mut productions = vec![("syntax_sequence", file.base)];
     let mut pos = 0;
     // The imports its items use come first.
     loop {
@@ -109,7 +115,7 @@ pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
         }
         let items = ["top_decl", "function_signature", "statement", "type_expr_line", "pattern_line"];
         let Some((end, item)) = items.iter().find_map(|item| attempt(pos, item).map(|end| (end, *item))) else { break };
-        productions.push(item);
+        productions.push((item, tokens[pos].span.start));
         pos = end;
     }
     // A block on its own.
@@ -120,7 +126,7 @@ pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
     let block = parser.block().is_ok();
     parser.skip_newlines();
     let ended = parser.at(&Tok::Eof);
-    (block && ended && !scratch.has_errors()).then(|| vec!["standalone_block"])
+    (block && ended && !scratch.has_errors()).then(|| vec![("standalone_block", file.base)])
 }
 
 struct Parser<'a> {

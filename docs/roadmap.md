@@ -87,10 +87,3 @@ language and remain planned work, scheduled after H7:
 | Milestone | Scope |
 |---|---|
 | **Windows** | Its calling convention, exceptions, network polling and executables |
-
-What the specifications define and Tondo does not do yet, found by
-compiling every example they contain and reading the rest against the
-code (2026-10-24):
-
-- **Tools:** `tondo doc-test` gives no `formatted_sha256` for an example the
-  formatter cannot print on its own, a signature, a type or a pattern.
