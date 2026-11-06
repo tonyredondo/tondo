@@ -770,7 +770,12 @@ async fn accept(
             }
         };
         let (sender, tls, mut stopping) = (sender.clone(), tls.clone(), stopped.clone());
+        // Counted first: either the drain sees it, or this sees that the server
+        // stops, as a connection nobody would answer waits out the whole grace.
         let counted = Counted::new(life.clone());
+        if *stopped.borrow() != Phase::Serving {
+            continue;
+        }
         tokio::spawn(async move {
             let _counted = counted;
             let secure = tls.is_some();
