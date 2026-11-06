@@ -414,6 +414,27 @@ fn lower_function(
         .collect();
     let mut points = b.points;
     if osr.is_some() {
+        // What each statement that declares bindings reads, from its code to
+        // where the next statement starts.
+        let starts: Vec<u32> = points.iter().map(|point| point.begins.0).collect();
+        for (index, point) in points.iter_mut().enumerate().filter(|(_, point)| !point.binds.is_empty()) {
+            // Entries come last, with the blocks of the points they enter.
+            let next = starts.get(index + 1).copied().filter(|&next| next >= point.continues.0);
+            let end = next.unwrap_or(blocks.len() as u32);
+            let mut used = Vec::new();
+            for block in &blocks[point.continues.0 as usize..(end as usize).min(blocks.len())] {
+                let mut defined = Vec::new();
+                let reading = block.stmts.iter().filter(|statement| !matches!(statement, Statement::Release(_)));
+                reading.for_each(|statement| statement_locals(statement, &mut used, &mut defined));
+            }
+            let named = used.iter().filter_map(|local| match &b.origins[local.0 as usize] {
+                Origin::Named(name) if !point.binds.contains(name) => Some(name.clone()),
+                _ => None,
+            });
+            point.reads = named.collect();
+            point.reads.sort();
+            point.reads.dedup();
+        }
         let live = crate::mir::live_in(&blocks, b.locals.len());
         for point in &mut points {
             point.state = live[point.continues.0 as usize]
@@ -1227,15 +1248,17 @@ impl Builder<'_> {
         finish(self, Rvalue::CallOsr(function, arguments, Operand::local(state)));
         let defers = self.scopes.iter().flatten().filter(|exit| matches!(exit, Exit::Defer(_))).count() as u32;
         let loops = self.loops.len() as u32;
-        let (binds, entry_of, runs, path) = (None, None, Vec::new(), self.path.clone());
+        let (binds, reads, entry_of, runs, path) = (Vec::new(), Vec::new(), None, Vec::new(), self.path.clone());
         self.points.push(Point {
             path,
             span,
+            begins: start,
             continues: next,
             state: Vec::new(),
             kind,
             defers,
             binds,
+            reads,
             changes: false,
             loops,
             entry_of,
@@ -1293,6 +1316,11 @@ impl Builder<'_> {
                         let local = b.bind(id);
                         b.store(Place::local(local), value, Span::default());
                     }),
+                    Some(hir::Stmt::Destructure(pattern, value)) => self.in_frame(|b| {
+                        let value = b.expr(&value);
+                        let place = b.place_of(value, pattern.ty);
+                        b.bind_pattern(&pattern, &place);
+                    }),
                     Some(hir::Stmt::Defer { local, closure, call }) => self.in_frame(|b| {
                         let value = b.expr(&closure);
                         let local = b.bind(local);
@@ -1309,7 +1337,14 @@ impl Builder<'_> {
             self.cleaning -= 1;
             self.terminate(Terminator::Goto(point.continues));
             let runs = lets.clone();
-            self.points.push(Point { continues: entry, kind: "entry", entry_of: Some(target), runs, ..point });
+            self.points.push(Point {
+                continues: entry,
+                kind: "entry",
+                entry_of: Some(target),
+                runs,
+                binds: Vec::new(),
+                ..point
+            });
         }
     }
 
@@ -1666,10 +1701,16 @@ impl Builder<'_> {
     fn stmt(&mut self, stmt: &hir::Stmt) {
         let point = self.points.len() as u32;
         self.restart_point(stmt_span(stmt), stmt_kind(stmt));
-        if let (hir::Stmt::Let(id, _), Some(made)) = (stmt, self.points.get_mut(point as usize)) {
-            let declared = &self.function.locals[id.0 as usize];
-            made.binds = Some(declared.name.clone());
-            made.changes = declared.mutable;
+        let mut declared = Vec::new();
+        match stmt {
+            hir::Stmt::Let(id, _) => declared.push(*id),
+            hir::Stmt::Destructure(pattern, _) => pattern_locals(pattern, &mut declared),
+            _ => {}
+        }
+        let locals = &self.function.locals;
+        if let Some(made) = self.points.get_mut(point as usize) {
+            made.binds = declared.iter().map(|id| locals[id.0 as usize].name.clone()).collect();
+            made.changes = declared.iter().any(|id| locals[id.0 as usize].mutable);
         }
         if self.entries.is_some_and(|entries| entries.values().flatten().flatten().any(|&at| at == point)) {
             self.lets.insert(point, stmt.clone());
@@ -2687,6 +2728,18 @@ fn stmt_span(stmt: &hir::Stmt) -> Span {
 }
 
 /// What a statement is, for matching it with one of the new code.
+/// The locals a pattern binds.
+fn pattern_locals(pattern: &hir::Pattern, found: &mut Vec<LocalId>) {
+    match &pattern.kind {
+        hir::PatKind::Binding(id) => found.push(*id),
+        hir::PatKind::Fields(items) | hir::PatKind::Variant(_, items) => {
+            items.iter().for_each(|item| pattern_locals(item, found))
+        }
+        hir::PatKind::Newtype(inner) => pattern_locals(inner, found),
+        _ => {}
+    }
+}
+
 fn stmt_kind(stmt: &hir::Stmt) -> &'static str {
     match stmt {
         hir::Stmt::Let(..) => "let",

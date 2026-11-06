@@ -2520,6 +2520,7 @@ impl Codegen<'_> {
                     "path": crate::live::path_text(&point.path),
                     "defers": point.defers,
                     "binds": point.binds,
+                    "reads": point.reads,
                     "changes": point.changes,
                     "loops": point.loops,
                     "entry_of": point.entry_of,

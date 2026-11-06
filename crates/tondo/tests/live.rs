@@ -661,19 +661,30 @@ fn a_loop_takes_the_bindings_it_passed() {
     let (done, said) = reload(&dir, &server.pid());
     assert!(done, "{said}");
     assert_eq!(server.answer("c"), "c seven 1 true 1 2 8");
+    // What reads what runs again is made of it: it runs again too.
+    edit(&file, "let limit = 7", "let limit = 8");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`more` at line 9 runs again"), "{said}");
+    assert_eq!(server.answer("c2"), "c2 seven 1 true 1 2 9");
+    // A pattern that is new.
+    edit(&file, "    let limit = 8\n", "    let (limit, twice) = (7, 14)\n");
+    edit(&file, "{more}\")", "{more} {twice}\")");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("c3"), "c3 seven 1 true 1 2 8 14");
     // A closure with another capture, and a binding of another type.
     edit(&file, "let add = (n: Int) { n + 1 }", "let add = (n: Int) { n + limit }");
     edit(&file, "var mode = Mode { fast: true }", "var mode = \"quick\"");
     edit(&file, "{mode.fast}", "{mode}");
     let (done, said) = reload(&dir, &server.pid());
     assert!(done, "{said}");
-    assert_eq!(server.answer("d"), "d seven 1 quick 1 8 8");
+    assert_eq!(server.answer("d"), "d seven 1 quick 1 8 8 14");
     // A binding that goes, and a `defer` the frame never registered.
     edit(&file, "    let held = [\"kept\"]\n", "    defer console.println(\"bye\")\n");
     edit(&file, " {held.length()}", "");
     let (done, said) = reload(&dir, &server.pid());
     assert!(done && !said.contains("stays on"), "{said}");
-    assert_eq!(server.answer("e"), "e seven 1 quick 8 8");
+    assert_eq!(server.answer("e"), "e seven 1 quick 8 8 14");
     drop(server.input);
     assert_eq!(server.lines.recv_timeout(Duration::from_secs(60)).unwrap(), "bye");
     let _ = server.child.wait();

@@ -173,7 +173,7 @@ pub(super) fn moves(
             };
             let target = entry.unwrap_or(&to[pair]);
             let running = Entering {
-                bindings: lets.iter().filter_map(|&at| to[at]["binds"].as_str()).collect(),
+                bindings: lets.iter().flat_map(|&at| list(&to[at], "binds")).filter_map(Value::as_str).collect(),
                 defers: lets.iter().filter(|&&at| to[at]["kind"] == "defer").count() as u64,
                 leaves: true,
             };
@@ -196,17 +196,18 @@ pub(super) fn moves(
                     // Frames of older versions are rare: what is told is of
                     // the code that runs now.
                     if current {
-                        let named = lets.iter().filter_map(|&at| Some((to[at]["binds"].as_str()?, at)));
-                        again.extend(named.map(|(name, at)| format!("`{name}` at line {} runs again", line(at))));
+                        let name = |at: usize| {
+                            list(&to[at], "binds").iter().filter_map(Value::as_str).collect::<Vec<_>>().join("`, `")
+                        };
+                        let named = lets.iter().filter(|&&at| !list(&to[at], "binds").is_empty());
+                        again.extend(named.map(|&at| format!("`{}` at line {} runs again", name(at), line(at))));
                         // What a frame keeps though its line says otherwise.
                         let written = (0..pair)
                             .filter(|&at| to[at]["changes"] == true && !kept(to[at]["line"].as_u64().unwrap_or(0)));
-                        let held = written
-                            .filter(|at| !lets.contains(at))
-                            .filter_map(|at| Some((to[at]["binds"].as_str()?, at)));
+                        let held = written.filter(|at| !lets.contains(at));
                         again.extend(
-                            held.map(|(name, at)| {
-                                format!("`{name}` at line {} keeps its value: it is a `var`", line(at))
+                            held.map(|at| {
+                                format!("`{}` at line {} keeps its value: it is a `var`", name(at), line(at))
                             }),
                         );
                     }
@@ -300,7 +301,8 @@ fn passed_lets(
 ) -> Vec<usize> {
     let depth = |point: &Value| point["loops"].as_u64().unwrap_or(0);
     let passed = |at: &usize| depth(&to[*at]) == 0 || depth(&to[*at]) < depth(&to[pair]);
-    let declared = |name: &str| (0..pair).rev().filter(passed).find(|&at| to[at]["binds"].as_str() == Some(name));
+    let binds = |at: usize, name: &str| list(&to[at], "binds").iter().any(|bound| bound == name);
+    let declared = |name: &str| (0..pair).rev().filter(passed).find(|&at| binds(at, name));
     let given = given_state(old, paths);
     let line = |at: usize| to[at]["line"].as_u64().unwrap_or(0);
     // The `defer`s written since, which the old code never registered.
@@ -333,6 +335,43 @@ fn passed_lets(
         if !usable || (written && same && !shared) {
             lets.push(at);
         }
+    }
+    // A `let` written anew that the loop no longer holds may have given what
+    // it does hold.
+    let held = |name: &&Value| {
+        name.as_str().is_some_and(|name| {
+            list(target, "state")
+                .iter()
+                .chain(list(&to[pair], "state"))
+                .any(|item| item["key"].as_str().is_some_and(|key| bound_name(key) == name))
+        })
+    };
+    lets.extend((0..pair).filter(passed).filter(|&at| {
+        let bound = list(&to[at], "binds");
+        !bound.is_empty()
+            && !bound.iter().any(|name| held(&name))
+            && !kept(line(at))
+            && to[at]["changes"] == false
+            && depth(&to[at]) < depth(&to[pair])
+    }));
+    // What reads what runs again is made of it, and runs again too, but for
+    // the state of the frame.
+    loop {
+        let reads = |at: usize| {
+            list(&to[at], "reads")
+                .iter()
+                .any(|read| lets.iter().any(|&ran| read.as_str().is_some_and(|name| binds(ran, name))))
+        };
+        let more: Vec<usize> = (0..pair)
+            .filter(passed)
+            .filter(|&at| {
+                !lets.contains(&at) && !list(&to[at], "binds").is_empty() && to[at]["changes"] == false && reads(at)
+            })
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        lets.extend(more);
     }
     lets.sort();
     lets.dedup();

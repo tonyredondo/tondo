@@ -171,17 +171,19 @@ pub struct Point {
     /// function, and where it is.
     pub path: Vec<u32>,
     pub span: Span,
-    /// The block its code starts at, after the check.
+    /// The block its check starts at, and the one its code does, after it.
+    pub begins: BlockId,
     pub continues: BlockId,
     pub state: Vec<Local>,
     /// What the statement is, for matching it with one of the new code,
     /// and how many `defer`s are registered there.
     pub kind: &'static str,
     pub defers: u32,
-    /// The binding the statement declares, whether it is a `var`, and how
-    /// many loops the statement is in.
-    pub binds: Option<String>,
+    /// The bindings the statement declares, whether they are `var`s, what
+    /// bindings it reads, and how many loops the statement is in.
+    pub binds: Vec<String>,
     pub changes: bool,
+    pub reads: Vec<String>,
     pub loops: u32,
     /// An entry a patch adds to the point it names, which runs the
     /// statements of the points in `runs`, that a frame from the old code
