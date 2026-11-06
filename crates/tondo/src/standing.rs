@@ -198,7 +198,7 @@ impl Standing {
     fn answer(&mut self, word: &str, rest: &str) -> Value {
         let result = match word {
             "debug" => Ok(json!({ "debugging": true, "lines": 0 })),
-            "sources" => reach(&self.name, self.via.as_deref()).and_then(|mut program| program.ask("sources")),
+            "sources" | "requests" => reach(&self.name, self.via.as_deref()).and_then(|mut program| program.ask(word)),
             "break" => self.set(rest),
             "delete" => self.delete(rest),
             "continue" => {

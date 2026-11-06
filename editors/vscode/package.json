@@ -545,6 +545,12 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.refreshRequests",
+        "title": "Refresh Requests",
+        "category": "Tondo",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "tondo.refreshModules",
         "title": "Refresh Modules",
         "category": "Tondo",
@@ -770,6 +776,11 @@
       ],
       "view/title": [
         {
+          "command": "tondo.refreshRequests",
+          "when": "view == tondoRequests",
+          "group": "navigation@0"
+        },
+        {
           "command": "tondo.refreshModules",
           "when": "view == tondoModules",
           "group": "navigation@0"
@@ -924,6 +935,13 @@
       }
     ],
     "views": {
+      "debug": [
+        {
+          "id": "tondoRequests",
+          "name": "Tondo Requests",
+          "when": "debugType == tondo"
+        }
+      ],
       "explorer": [
         {
           "id": "tondoModules",
@@ -938,6 +956,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "tondoRequests",
+        "contents": "No request yet, or the program does not serve the tools: it starts with TONDO_DIAGNOSTICS=1, and `tondo debug` gives it that."
+      },
       {
         "view": "tondoCounters",
         "contents": "No program watched.\n[Watch a Running Program](command:tondo.watchCounters)"

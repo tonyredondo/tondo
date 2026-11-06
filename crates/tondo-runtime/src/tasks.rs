@@ -348,6 +348,9 @@ pub(crate) struct Task {
     pub(crate) caught: Option<Box<super::panics::Record>>,
     /// While exploring orders, its priority: the highest that can run runs.
     priority: u64,
+    /// The request it works for, by its number in a timeline, as the task
+    /// that started it; 0 for none.
+    flight: u64,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -491,6 +494,25 @@ pub(crate) fn origin() -> Option<&'static Origin> {
 pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<&'static Origin> {
     unsafe { task.as_ref()?.origin }
 }
+
+/// The running task works for a request, from now on.
+pub(crate) fn join_flight(flight: u64) {
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.flight = flight;
+    }
+}
+
+/// Adds what the running task did to the timeline of its request, if it has
+/// one.
+pub(crate) fn flight_step(did: impl FnOnce() -> super::diagnostics::Did) {
+    if let Some(task) = unsafe { current().as_ref() }.filter(|task| task.flight != 0) {
+        let here = super::trace::walk(super::trace::frame_pointer(), stack_bounds().unwrap_or((0, 0)));
+        super::diagnostics::step(task.flight, task.id, did(), here.take(FLIGHT_FRAMES).collect());
+    }
+}
+
+/// How many callers of a step its timeline keeps, to find the program's code.
+const FLIGHT_FRAMES: usize = 16;
 
 /// The running task's number in a trace, or 0 outside any task.
 pub(crate) fn current_id() -> u64 {
@@ -1626,6 +1648,9 @@ fn run(task: *mut Task) {
         if (*task).finished && super::events::on() {
             super::events::add_of((*task).id, super::events::What::Ended);
         }
+        if (*task).finished && (*task).flight != 0 {
+            super::diagnostics::step((*task).flight, (*task).id, super::diagnostics::Did::Ended, Vec::new());
+        }
         if (*task).finished {
             super::debugger::task_ended((*task).id);
             let (was_main, join) = ((*task).main, (*task).join);
@@ -2644,6 +2669,7 @@ fn new_task(
         blocked: AtomicUsize::new(0),
         blocked_kind: AtomicU8::new(0),
         blocked_since: AtomicU64::new(0),
+        flight: 0,
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
@@ -2846,8 +2872,30 @@ impl Wait {
     }
 
     /// Parks until the operation that claimed the wait notifies the task;
-    /// returns its index, or `CANCELLED` if the task is cancelled first.
+    /// returns its index, or `CANCELLED` if the task is cancelled first. A
+    /// wait that counts goes on the timeline of the task's request.
     pub(crate) fn block(&self) -> usize {
+        let task = unsafe { &*self.task };
+        if task.flight == 0 {
+            return self.parked();
+        }
+        let on = match task.blocked_kind.load(Ordering::Acquire) {
+            LOCK => "a lock",
+            RECEIVING => "a value of a channel",
+            SENDING => "room in a channel",
+            JOIN => "a task",
+            _ => "time or input",
+        };
+        let since = Instant::now();
+        let fired = self.parked();
+        let took = since.elapsed().as_millis();
+        if took >= 1 {
+            flight_step(|| super::diagnostics::Did::Waited(on, took));
+        }
+        fired
+    }
+
+    fn parked(&self) -> usize {
         let task = unsafe { &mut *self.task };
         // The deadline of a `within` ends the wait when it passes, as a
         // cancellation would, and the task unwinds to it (11.17).
@@ -3423,6 +3471,11 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         if super::events::on() {
             let at = spawned.frames().first().copied().unwrap_or(0);
             super::events::add(super::events::What::Spawned((*task).id, at));
+        }
+        if let Some(parent) = current().as_ref().filter(|parent| parent.flight != 0) {
+            (*task).flight = parent.flight;
+            let did = super::diagnostics::Did::Spawned((*task).id);
+            super::diagnostics::step(parent.flight, parent.id, did, spawned.frames().to_vec());
         }
         (*task).origin = Some(spawned);
     }

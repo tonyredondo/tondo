@@ -74,6 +74,44 @@ struct Flight {
     path: String,
     since: Instant,
     task: u64,
+    steps: Vec<Step>,
+}
+
+/// What a task of a request did, so many milliseconds after it came, and
+/// from where.
+struct Step {
+    ms: u128,
+    task: u64,
+    did: Did,
+    at: Vec<usize>,
+}
+
+/// What a request's timeline shows.
+pub(crate) enum Did {
+    /// It takes the request.
+    Took,
+    Spawned(u64),
+    /// It waited so many milliseconds, for what is said.
+    Waited(&'static str, u128),
+    Ended,
+    Panicked(String),
+}
+
+/// How many steps a request keeps, and how many answered requests stay.
+const STEPS: usize = 64;
+const SERVED: usize = 32;
+
+/// The requests answered last, the oldest first, and how long each took.
+static ANSWERED: Mutex<std::collections::VecDeque<(Flight, u128)>> = Mutex::new(std::collections::VecDeque::new());
+
+/// Adds to the timeline of a request in flight, by its number in a task.
+pub(crate) fn step(flight: u64, task: u64, did: Did, at: Vec<usize>) {
+    let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(flight) = flights.iter_mut().find(|found| found.id + 1 == flight)
+        && flight.steps.len() < STEPS
+    {
+        flight.steps.push(Step { ms: flight.since.elapsed().as_millis(), task, did, at });
+    }
 }
 
 impl Flight {
@@ -95,7 +133,7 @@ impl Flown {
         enabled().then(|| {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
             let (method, path) = (method.to_string(), path.to_string());
-            let flight = Flight { id, method, path, since: Instant::now(), task: 0 };
+            let flight = Flight { id, method, path, since: Instant::now(), task: 0, steps: Vec::new() };
             if super::events::on() {
                 super::events::add(super::events::What::Request(flight.text()));
             }
@@ -110,6 +148,9 @@ impl Flown {
         if let Some(flight) = flights.iter_mut().find(|flight| flight.id == self.0) {
             flight.task = task;
         }
+        drop(flights);
+        super::tasks::join_flight(self.0 + 1);
+        step(self.0 + 1, task, Did::Took, Vec::new());
     }
 }
 
@@ -119,10 +160,15 @@ impl Drop for Flown {
         if let Some(index) = flights.iter().position(|flight| flight.id == self.0) {
             let flight = flights.swap_remove(index);
             drop(flights);
+            let took = flight.since.elapsed().as_millis();
             if super::events::on() {
-                let took = flight.since.elapsed().as_millis() as u64;
-                super::events::add(super::events::What::Answered(flight.text(), took));
+                super::events::add(super::events::What::Answered(flight.text(), took as u64));
             }
+            let mut answered = ANSWERED.lock().unwrap_or_else(|e| e.into_inner());
+            if answered.len() == SERVED {
+                answered.pop_front();
+            }
+            answered.push_back((flight, took));
         }
     }
 }
@@ -134,20 +180,40 @@ fn flights_now() -> Vec<(u64, String, std::time::Duration)> {
     flights.iter().map(|flight| (flight.id, flight.text(), flight.since.elapsed())).collect()
 }
 
-/// The requests in flight as JSON: a thread that stopped may hold the
-/// list, and then a dump goes without it.
-fn flights_json() -> String {
+/// A request as JSON, with its timeline.
+fn flight_json(flight: &Flight, ms: u128, frames: &mut Frames) -> String {
+    let steps: Vec<String> = flight
+        .steps
+        .iter()
+        .map(|step| {
+            let detail = match &step.did {
+                Did::Took => "\"what\":\"took\"".to_string(),
+                Did::Spawned(other) => format!("\"what\":\"spawned\",\"other\":{other}"),
+                Did::Waited(on, took) => format!("\"what\":\"waited\",\"on\":{},\"took_ms\":{took}", quoted(on)),
+                Did::Ended => "\"what\":\"ended\"".to_string(),
+                Did::Panicked(text) => format!("\"what\":\"panicked\",\"text\":{}", quoted(text)),
+            };
+            format!("{{\"ms\":{},\"task\":{},{detail},\"at\":{}}}", step.ms, step.task, frames.list(&step.at))
+        })
+        .collect();
+    format!(
+        "{{\"id\":{},\"method\":{},\"path\":{},\"ms\":{ms},\"task\":{},\"steps\":[{}]}}",
+        flight.id,
+        quoted(&flight.method),
+        quoted(&flight.path),
+        flight.task,
+        steps.join(",")
+    )
+}
+
+/// The requests in flight and those answered last as JSON: a thread that
+/// stopped may hold a list, and then a dump goes without it.
+fn flights_json(frames: &mut Frames) -> String {
     let Ok(flights) = FLIGHTS.try_lock() else { return String::new() };
-    let flight = |f: &Flight| {
-        format!(
-            "{{\"method\":{},\"path\":{},\"ms\":{},\"task\":{}}}",
-            quoted(&f.method),
-            quoted(&f.path),
-            f.since.elapsed().as_millis(),
-            f.task
-        )
-    };
-    format!(",\"requests\":[{}]", flights.iter().map(flight).collect::<Vec<_>>().join(","))
+    let Ok(answered) = ANSWERED.try_lock() else { return String::new() };
+    let now: Vec<String> = flights.iter().map(|f| flight_json(f, f.since.elapsed().as_millis(), frames)).collect();
+    let served: Vec<String> = answered.iter().map(|(f, took)| flight_json(f, *took, frames)).collect();
+    format!(",\"requests\":[{}],\"served\":[{}]", now.join(","), served.join(","))
 }
 
 /// A count of the runtime: a total that only grows, or a level.
@@ -820,6 +886,11 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             "debug" => super::debugger::attach(client),
             "info" => info(),
             "sources" => format!("{{\"sources\":{}}}", quoted(&roots())),
+            "requests" => {
+                let mut frames = Frames::default();
+                let flights = flights_json(&mut frames);
+                format!("{{\"dump\":1{flights},\"frames\":{{{}}}}}", frames.json)
+            }
             "live" => super::live::describe(),
             "barrier" => super::live::hold(),
             "release" => super::live::let_go(),
@@ -1202,7 +1273,8 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
     }
     match values_shown() {
         true => {
-            out.push_str(&flights_json());
+            let flights = flights_json(&mut frames);
+            out.push_str(&flights);
             let _ = write!(out, ",\"events\":{}", super::events::json(|address| frames.list(&[address])));
         }
         false => out.push_str(",\"values_off\":true"),

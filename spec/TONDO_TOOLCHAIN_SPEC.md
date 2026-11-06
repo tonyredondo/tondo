@@ -936,7 +936,8 @@ las más pobladas a las menos, y `find <texto>` busca sin mirar mayúsculas en e
 mensaje, las variables y sus partes, los contextos, las pilas, los textos de los
 objetos y los sitios de memoria, cada sitio una vez y lo más hondo que esté.
 `requests` da las peticiones HTTP y gRPC en curso, de la más antigua a la más
-nueva: su método, su ruta sin la query, cuánto llevan y qué tarea las atiende.
+nueva: su método, su ruta sin la query, cuánto llevan y qué tarea las atiende, y
+`served` las últimas respondidas, cada una con su línea de tiempo.
 Solo un programa con `TONDO_DUMP` o `TONDO_DIAGNOSTICS` las apunta, y
 `TONDO_DUMP_VALUES=off` las quita. `events` da lo último que hizo el programa,
 hasta 256: las tareas que empezó y que acabaron, los pánicos, también los que un
@@ -989,6 +990,19 @@ tarea sola, en un build sin sondas: la tarea espera, con dónde está y sus valo
 que se pulse Enter, pase el tiempo o se vaya la herramienta, y el resto del programa
 sigue, lo que deja mirarlo con `dump`, `blocked` o `counters`. El tiempo es obligatorio:
 un servicio no se queda parado porque alguien se fue.
+
+`tondo requests <pid|nombre>` sigue las peticiones HTTP y gRPC de un programa que corre,
+las que están en curso y las 32 últimas respondidas, por todas las tareas que tocan: una
+tarea trabaja para la petición de la tarea que la lanzó. Cada petición guarda hasta 64
+pasos, con cuántos milisegundos después de llegar ocurrió cada uno, su tarea y su línea:
+qué tarea la toma, qué tareas lanza, qué esperó cada una y durante cuánto, si fue al menos
+un milisegundo, cuándo acabó y si hizo panic. Lo que una tarea hace después de responderse
+la petición no cuenta. Cuesta lo mismo que el resto de lo observable: solo lo guarda un
+programa que sirve a las herramientas o deja volcados. `dump read <archivo> requests` da
+lo mismo de un volcado, el MCP lo da con `requests` y `dump_read`, y el editor en la
+vista *Tondo Requests* del panel de depuración, para un programa depurado, uno al que se
+adjunta o un volcado, donde cada paso abre su línea. El adaptador la responde a la
+petición `requests`, propia de Tondo.
 
 `tondo debug <pid|nombre>`, el `attach` del editor y `debug_start` del MCP también valen
 con un programa sin sondas, con `TONDO_DIAGNOSTICS=1` y en Linux: un breakpoint es entonces
@@ -1805,6 +1819,7 @@ campos de su resultado:
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |
+| `requests` | `tondo-requests-0.1/1` | `requests`, en curso, y `served`, respondidas, cada una con `method`, `path`, `ms`, `task` y `steps`: `ms`, `task`, `what`, `at` y lo propio de cada paso |
 | `logpoint` | `tondo-logpoint-0.1/1` | `hits`: cada vez, su `task`, `text`, `values` y `dump`, y `stack` con `--stop` |
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |

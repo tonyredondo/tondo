@@ -1147,3 +1147,60 @@ export function failureMarks(failures: Failure[]): { file: string; line: number;
     return [...orders, { file: found[1], line: Number(found[2]), text: `Fell here ${times}${since}: ${failure.message ?? ''}` }];
   });
 }
+
+/** A step of a request's timeline, as `tondo requests` gives it. */
+export interface RequestStep {
+  ms: number;
+  task: number;
+  what: string;
+  other?: number;
+  on?: string;
+  took_ms?: number;
+  text?: string;
+  at?: string | null;
+}
+
+export interface Flight {
+  id: number;
+  flying?: boolean;
+  method: string;
+  path: string;
+  ms: number;
+  task: number;
+  steps: RequestStep[];
+}
+
+export interface Requests {
+  requests: Flight[];
+  served: Flight[];
+}
+
+/** A row of the view of requests: what it says, and the place it opens. */
+export interface RequestRow {
+  label: string;
+  description: string;
+  place?: { file: string; line: number };
+}
+
+/** A request as its row, in flight or answered. */
+export function requestRow(request: Flight): RequestRow {
+  const tasks = new Set(request.steps.map((step) => step.task)).size;
+  const through = `${tasks} task${tasks === 1 ? '' : 's'}`;
+  const took = request.flying ? `for ${request.ms} ms, in flight` : `${request.ms} ms`;
+  return { label: `${request.method} ${request.path}`, description: `${took}, ${through}` };
+}
+
+/** A step as its row, at how long after the request came. */
+export function stepRow(step: RequestStep): RequestRow {
+  const task = `task ${step.task}`;
+  const said: Record<string, string> = {
+    took: `${task} takes it`,
+    spawned: `${task} starts task ${step.other}`,
+    waited: `${task} waited ${step.took_ms} ms for ${step.on}`,
+    ended: `${task} ended`,
+    panicked: `${task} panicked: ${step.text}`,
+  };
+  const at = step.at?.match(/^(.*):(\d+) in /);
+  const place = at ? { file: at[1], line: Number(at[2]) } : undefined;
+  return { label: `${step.ms} ms  ${said[step.what] ?? step.what}`, description: step.at ?? '', place };
+}

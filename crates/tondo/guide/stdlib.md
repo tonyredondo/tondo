@@ -796,6 +796,12 @@ tasks | task 2 | blocked | cancel 2 | pause | delete 1 | quit
 break on spawn | send | receive | lock | request | recover | wait 100
 ```
 
+`tondo requests <pid|name>` follows the HTTP and gRPC requests of a running
+program, those in flight and the last 32 answered: which tasks each one went
+through, what they started and waited for, where, and how long. A task works for
+the request of the task that started it. `dump read <file> requests` shows the
+same of a dump, and in an editor the view *Tondo Requests* of the debugger.
+
 A Release build that runs with `TONDO_DIAGNOSTICS=1`, on Linux, is debugged too:
 `tondo debug <pid|name>`, `attach` in an editor, or `debug_start`. A breakpoint
 stops only the task that reaches it, for 300 seconds at most, and the rest of the

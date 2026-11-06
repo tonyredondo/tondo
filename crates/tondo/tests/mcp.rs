@@ -529,6 +529,8 @@ fn reads_dumps_sources_and_a_running_program() {
     }
     let waits = said(&mut agent, "blocked", json!({ "program": pid }));
     assert!(serde_json::from_str::<Value>(&waits).is_ok(), "{waits}");
+    let requests = said(&mut agent, "requests", json!({ "program": pid }));
+    assert!(requests.contains("\"served\":[]"), "{requests}");
     // A breakpoint in that build, which has no probes: its task stops.
     if cfg!(target_os = "linux") {
         let (started, _) = agent.call("debug_start", json!({ "target": pid }));

@@ -3094,6 +3094,97 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
     adapter.stop();
 }
 
+/// What a request did goes with it, through the tasks it started: from the
+/// command, the tools and the editor, in a build with or without probes.
+#[test]
+fn a_request_is_followed_through_its_tasks() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("followed-request");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let program = format!(
+        "import std.http\nimport std.time\n\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
+         id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App.new()\n    \
+         app.get(\"/slow\", () {{\n        let job = spawn fetch(1)\n        \"{{job.wait()}}\"\n    }})\n    \
+         app.listen({port})?\n}}\n"
+    );
+    let source = dir.join("server.to");
+    std::fs::write(&source, program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let get = || {
+        use std::io::{Read, Write};
+        let connected = (0..1200).find_map(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::net::TcpStream::connect(("127.0.0.1", port)).ok()
+        });
+        let mut client = connected.expect("the server listens");
+        client.write_all(b"GET /slow HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").unwrap();
+        let mut answer = String::new();
+        client.read_to_string(&mut answer).unwrap();
+        assert!(answer.ends_with('2'), "{answer}");
+    };
+    let mut server = Command::new(dir.join("server"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    get();
+    let pid = server.id().to_string();
+    let asked = Command::new(tondo_bin).args(["requests", &pid, "--json"]).output().unwrap();
+    let found: Value = serde_json::from_slice(&asked.stdout).unwrap();
+    let served = &found["served"][0];
+    assert_eq!((served["method"].as_str(), served["path"].as_str()), (Some("GET"), Some("/slow")), "{found}");
+    let steps = served["steps"].as_array().unwrap();
+    let step = |what: &str| steps.iter().find(|step| step["what"] == what).unwrap_or_else(|| panic!("{found}"));
+    let (answers, started) = (&step("took")["task"], &step("spawned")["other"]);
+    assert_eq!(&step("spawned")["task"], answers, "{found}");
+    assert_eq!(step("spawned")["at"], "server.to:12 in closure in main", "{found}");
+    let waits: Vec<&Value> = steps.iter().filter(|step| step["what"] == "waited").collect();
+    let slept = waits.iter().find(|step| step["task"] == *started).unwrap_or_else(|| panic!("{found}"));
+    assert_eq!(slept["at"], "server.to:5 in fetch", "{found}");
+    assert!(slept["took_ms"].as_u64().unwrap() >= 20, "{found}");
+    let joined = waits.iter().find(|step| step["task"] == *answers).unwrap_or_else(|| panic!("{found}"));
+    assert_eq!(joined["on"], "a task", "{found}");
+    assert!(steps.iter().any(|step| step["what"] == "ended" && step["task"] == *started), "{found}");
+    let text = Command::new(tondo_bin).args(["requests", &pid]).output().unwrap();
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.contains("no request in flight") && text.contains("GET /slow took"), "{text}");
+    assert!(text.contains(&format!("task {answers} starts task {started}, at server.to:12")), "{text}");
+    // A dump keeps them.
+    let dump = dir.join("server.dump.json");
+    let dumped = Command::new(tondo_bin).args(["dump", &pid, "--output"]).arg(&dump).output().unwrap();
+    assert!(dumped.status.success(), "{}", String::from_utf8_lossy(&dumped.stderr));
+    let read = Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).arg("requests").output().unwrap();
+    assert!(String::from_utf8_lossy(&read.stdout).contains("GET /slow took"), "{read:?}");
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "dump": dump, "cwd": dir }));
+    assert_eq!(adapter.ask("requests", json!({}))["served"][0]["path"], "/slow");
+    adapter.ask("disconnect", json!({}));
+    let _ = server.kill();
+    let _ = server.wait();
+
+    // A program the editor debugs, which it asks while it runs.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": source, "cwd": dir }));
+    adapter.ask("configurationDone", json!({}));
+    get();
+    let found = adapter.ask("requests", json!({}));
+    assert_eq!(found["served"][0]["path"], "/slow", "{found}");
+    assert!(found["served"][0]["steps"].as_array().unwrap().len() >= 3, "{found}");
+    adapter.ask("disconnect", json!({}));
+}
+
 /// A breakpoint from the editor in a Release build that runs: its task stops
 /// with its variables, and the rest of the program goes on.
 #[test]

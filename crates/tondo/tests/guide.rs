@@ -107,6 +107,7 @@ fn what_observes_is_in_the_tools_and_the_editor() {
         ("tondo trace", "trace", "tondo.trace"),
         ("tondo blocked", "blocked", "tondo.blocked"),
         ("tondo logpoint", "logpoint", "tondo.logpoint"),
+        ("tondo requests", "requests", "tondo.refreshRequests"),
         ("tondo source", "source", DEBUGGER),
         ("tondo reload", "reload", "tondo.reload"),
         ("tondo profile", "profile", "tondo.profile"),

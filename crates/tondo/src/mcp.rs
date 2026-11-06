@@ -1231,6 +1231,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_report" => push(&["dump", "report", &args.need("file")?, "--output", &args.need("output")?]),
         "dump_redact" => push(&["dump", "redact", &args.need("file")?, &args.need("output")?]),
         "blocked" => push(&["blocked", &args.need("program")?, "--json"]),
+        "requests" => push(&["requests", &args.need("program")?, "--json"]),
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             if let Some(frame) = args.text("frame") {
@@ -2291,6 +2292,14 @@ are here, so one written today finds when a bug came. A commit that does not com
     Tool {
         name: "blocked",
         description: "What the tasks of a running program wait for, and who holds them up.",
+        kind: Kind::Reads,
+        params: &[("program", "string!", "The running program: its process ID or name.")],
+    },
+    Tool {
+        name: "requests",
+        description: "The HTTP and gRPC requests of a running program, in flight and answered last, each with its \
+timeline: which tasks it went through, what each started and waited for, where, and how long. `dump_read` with the \
+view `requests` gives the same of a dump.",
         kind: Kind::Reads,
         params: &[("program", "string!", "The running program: its process ID or name.")],
     },

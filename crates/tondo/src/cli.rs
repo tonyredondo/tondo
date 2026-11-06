@@ -202,6 +202,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["say who waits for whom in a running program"],
     },
     Command {
+        name: "requests",
+        usage: &["tondo requests <pid|name> [--json]"],
+        summary: &["say what each request of a running program did, task by task"],
+    },
+    Command {
         name: "counters",
         usage: &["tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--via <command>] [--json]"],
         summary: &["watch a running program's counters, the runtime's", "and its own (std.diagnostics)"],

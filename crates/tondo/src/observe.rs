@@ -1156,6 +1156,7 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
     dump["values_off"] = json!(true);
     if let Some(object) = dump.as_object_mut() {
         object.remove("requests");
+        object.remove("served");
         object.remove("events");
     }
     for task in dump["tasks"].as_array_mut().into_iter().flatten() {
@@ -1707,8 +1708,11 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Why => why_text(&why(&dump)),
         View::Stacks if json => return shown("stacks", Value::Array(stacks(&tasks))),
         View::Stacks => stacks_text(&stacks(&tasks)),
-        View::Requests if json => return shown("requests", Value::Array(requests(&dump))),
-        View::Requests => requests_text(&requests(&dump)),
+        View::Requests if json => {
+            crate::cli::print_json("dump-read", true, timelines(dump));
+            return Ok(());
+        }
+        View::Requests => timelines_text(&timelines(dump)),
         View::Sources if json => return shown("sources", sources(&dump)),
         View::Sources => sources_text(&sources(&dump)),
         View::Events if json => return shown("events", Value::Array(events(&dump))),
@@ -1909,10 +1913,10 @@ fn diff_text(found: &Value) -> String {
 
 /// A dump as a debugger shows it after the fact (toolchain 7.6): its
 /// summary, each task with its stack in words, and the memory by site.
-pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value, crate::roots::Roots), String> {
+pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value, crate::roots::Roots, Value), String> {
     let dump = load(path)?;
     let summary = format!("{}\n{}\n", why_text(&why(&dump)), summary(&dump).trim_end());
-    Ok((summary, tasks(&dump), heap(&dump), roots_of(&dump)))
+    Ok((summary, tasks(&dump), heap(&dump), roots_of(&dump), timelines(dump)))
 }
 
 /// The tasks of a dump that came over a connection.
@@ -2181,11 +2185,85 @@ fn events_text(list: &[Value]) -> String {
     list.iter().map(line).collect::<Vec<_>>().join("\n")
 }
 
-/// The requests in flight, the oldest first.
+/// The requests in flight, the oldest first, with where each step was.
 fn requests(dump: &Value) -> Vec<Value> {
-    let mut list = dump["requests"].as_array().cloned().unwrap_or_default();
+    let mut list = placed_requests(dump, "requests");
     list.sort_by_key(|request| std::cmp::Reverse(request["ms"].as_u64()));
     list
+}
+
+/// The requests of a list of the dump, each step with the program's code
+/// that took it, as `file:line in function`.
+fn placed_requests(dump: &Value, list: &str) -> Vec<Value> {
+    let mut list = dump[list].as_array().cloned().unwrap_or_default();
+    for step in list.iter_mut().flat_map(|request| request["steps"].as_array_mut().into_iter().flatten()) {
+        let at = step["at"].as_array().into_iter().flatten().find(|address| compiled(dump, address));
+        step["at"] = at.and_then(|address| frame_text(dump, address)).map_or(Value::Null, Value::from);
+    }
+    list
+}
+
+/// The requests of a dump, or of a program as it answers `requests`: those in
+/// flight and those answered last, the newest first.
+pub(crate) fn timelines(mut dump: Value) -> Value {
+    name_frames(&mut dump);
+    let mut served = placed_requests(&dump, "served");
+    served.reverse();
+    json!({ "requests": requests(&dump), "served": served })
+}
+
+/// A request's timeline, a line each.
+fn timeline_text(request: &Value) -> String {
+    let mut out = String::new();
+    for step in request["steps"].as_array().into_iter().flatten() {
+        let task = &step["task"];
+        let did = match step["what"].as_str().unwrap_or_default() {
+            "took" => format!("task {task} takes it"),
+            "spawned" => format!("task {task} starts task {}", step["other"]),
+            "waited" => {
+                let took = duration(step["took_ms"].as_f64().unwrap_or(0.0) / 1000.0);
+                format!("task {task} waited {took} for {}", step["on"].as_str().unwrap_or_default())
+            }
+            "ended" => format!("task {task} ended"),
+            "panicked" => format!("task {task} panicked: {}", step["text"].as_str().unwrap_or_default()),
+            other => other.to_string(),
+        };
+        let at = step["at"].as_str().map_or(String::new(), |at| format!(", at {at}"));
+        out.push_str(&format!("  {:>6} ms  {did}{at}\n", step["ms"]));
+    }
+    out
+}
+
+/// What `timelines` gives, as text.
+fn timelines_text(found: &Value) -> String {
+    let list = |name: &str| found[name].as_array().map_or(&[][..], Vec::as_slice);
+    let mut out = String::new();
+    for request in list("requests") {
+        out.push_str(&requests_text(std::slice::from_ref(request)));
+        out.push('\n');
+        out.push_str(&timeline_text(request));
+    }
+    if list("requests").is_empty() {
+        out.push_str("no request in flight\n");
+    }
+    for request in list("served") {
+        let (method, path) =
+            (request["method"].as_str().unwrap_or_default(), request["path"].as_str().unwrap_or_default());
+        let took = duration(request["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        out.push_str(&format!("{method} {path} took {took}\n{}", timeline_text(request)));
+    }
+    out.trim_end().to_string()
+}
+
+/// `tondo requests <pid|name>`: the requests of a running program, in flight
+/// and answered last, each with what its tasks did.
+pub fn requests_in(name: &str, as_json: bool) -> Result<(), String> {
+    let found = timelines(connect(name)?.ask("requests")?);
+    match as_json {
+        true => crate::cli::print_json("requests", true, found),
+        false => println!("{}", timelines_text(&found)),
+    }
+    Ok(())
 }
 
 fn requests_text(list: &[Value]) -> String {

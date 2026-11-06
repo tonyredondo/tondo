@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec, programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Compared, Diff, Origin, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
+import { Compared, Diff, Origin, Flight, RequestRow, Requests, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, requestRow, stepRow, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -47,6 +47,11 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     ),
     vscode.languages.registerInlineValuesProvider({ language: 'tondo' }, { provideInlineValues: effects }),
     vscode.commands.registerCommand('tondo.taskGraph', taskGraph),
+    watchRequests(),
+    vscode.commands.registerCommand('tondo.refreshRequests', () => requests.refresh()),
+    vscode.commands.registerCommand('tondo.openRequestStep', openStep),
+    vscode.debug.onDidChangeActiveDebugSession(() => requests.refresh()),
+    vscode.debug.onDidChangeActiveStackItem(() => requests.refresh()),
     vscode.commands.registerCommand('tondo.when', when),
     vscode.commands.registerCommand('tondo.diff', diff),
     vscode.commands.registerCommand('tondo.compareRecordings', compareRecordings),
@@ -210,6 +215,72 @@ async function timeline(expression?: string): Promise<void> {
       failed(error);
     }
   });
+}
+
+/** The view of what the requests of the program debugged did, task by task:
+ *  those in flight and the last answered, each opening to its timeline, and
+ *  each step to the line it took place at. */
+class RequestsView implements vscode.TreeDataProvider<Flight | RequestRow> {
+  private readonly changed = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this.changed.event;
+
+  refresh(): void {
+    this.changed.fire();
+  }
+
+  async getChildren(request?: Flight | RequestRow): Promise<(Flight | RequestRow)[]> {
+    if (request) {
+      return 'steps' in request ? request.steps.map(stepRow) : [];
+    }
+    const session = vscode.debug.activeDebugSession;
+    if (session?.type !== 'tondo') {
+      return [];
+    }
+    try {
+      const found = (await session.customRequest('requests')) as Requests;
+      return [...found.requests.map((request) => ({ ...request, flying: true })), ...found.served];
+    } catch {
+      return [];
+    }
+  }
+
+  getTreeItem(element: Flight | RequestRow): vscode.TreeItem {
+    const row = 'steps' in element ? requestRow(element) : element;
+    const opens = 'steps' in element && element.steps.length > 0;
+    const item = new vscode.TreeItem(
+      row.label,
+      opens ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+    );
+    item.description = row.description;
+    // Refreshing keeps what was open.
+    item.id = 'steps' in element ? String(element.id) : undefined;
+    if (row.place) {
+      item.command = { command: 'tondo.openRequestStep', title: 'Open', arguments: [row.place] };
+    }
+    return item;
+  }
+}
+
+const requests = new RequestsView();
+
+/** While the view shows, what it shows keeps up with the program, which may
+ *  never stop. */
+function watchRequests(): vscode.Disposable {
+  const view = vscode.window.createTreeView('tondoRequests', { treeDataProvider: requests });
+  const timer = setInterval(() => {
+    if (view.visible && vscode.debug.activeDebugSession?.type === 'tondo') {
+      requests.refresh();
+    }
+  }, 2000);
+  return vscode.Disposable.from(view, { dispose: () => clearInterval(timer) });
+}
+
+/** Opens the line a step of a request took place at. */
+async function openStep(place: { file: string; line: number }): Promise<void> {
+  const root = vscode.debug.activeDebugSession?.workspaceFolder?.uri.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const file = path.isAbsolute(place.file) || !root ? place.file : path.join(root, place.file);
+  const line = Math.max(place.line - 1, 0);
+  await vscode.window.showTextDocument(vscode.Uri.file(file), { selection: new vscode.Range(line, 0, line, 0) });
 }
 
 /** The tasks of the program stopped, as a graph: each task where it is,

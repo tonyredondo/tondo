@@ -23,6 +23,8 @@ import {
   apiMarks,
   failureMarks,
   logpointArgs,
+  requestRow,
+  stepRow,
   programOf,
   recordedRun,
   reloadShown,
@@ -647,4 +649,18 @@ test('the failures of dumps go to the lines of the program', () => {
     { count: 1, at: null, lock_orders: ['locks taken in orders that can deadlock: here a.to:3 then b.to:9, and elsewhere <std>/x.to:1 then a.to:7'] },
   ]);
   assert.deepEqual(orders.map((mark) => `${mark.file}:${mark.line}`), ['a.to:3', 'b.to:9', 'a.to:7']);
+});
+
+test('a request and its steps as rows of the view', () => {
+  const steps = [
+    { ms: 0, task: 3, what: 'took', at: null },
+    { ms: 1, task: 3, what: 'spawned', other: 4, at: 'api.to:12 in main' },
+    { ms: 30, task: 4, what: 'waited', on: 'a lock', took_ms: 29, at: 'src/a.to:5 in fetch' },
+  ];
+  const request = { id: 1, method: 'GET', path: '/slow', ms: 35, task: 3, steps };
+  assert.deepEqual(requestRow(request), { label: 'GET /slow', description: '35 ms, 2 tasks' });
+  assert.equal(requestRow({ ...request, flying: true }).description, 'for 35 ms, in flight, 2 tasks');
+  assert.equal(stepRow(steps[1]).label, '1 ms  task 3 starts task 4');
+  assert.deepEqual(stepRow(steps[2]).place, { file: 'src/a.to', line: 5 });
+  assert.equal(stepRow(steps[0]).place, undefined);
 });

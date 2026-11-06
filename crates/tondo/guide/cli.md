@@ -105,7 +105,8 @@ tondo logpoint api app.to:12 --if "total > 100" --dump d.json   the whole progra
 tondo logpoint api app.to:12 --stop 60   a breakpoint of that task alone, in a Release build
 tondo dump read api.dump why      what went wrong, as far as it can tell
 tondo dump read api.dump stacks   the tasks by the stack they share
-tondo dump read api.dump requests the HTTP and gRPC requests in flight
+tondo dump read api.dump requests the HTTP and gRPC requests, each with its timeline
+tondo requests api                what each request did, through every task it started
 tondo dump read api.dump events   what it did last, with TONDO_DUMP on
 tondo dump read api.dump find id  where a text is, in values, stacks and contexts
 tondo dump read api.dump tasks    read a dump; TONDO_DUMP=<dir> writes one at a crash

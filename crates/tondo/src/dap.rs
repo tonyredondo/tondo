@@ -427,10 +427,10 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                     .map(PathBuf::from)
                     .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
                 match observe::opened(&root.join(&path)) {
-                    Ok((summary, tasks, heap, roots)) => {
+                    Ok((summary, tasks, heap, roots, requests)) => {
                         editor.event("output", json!({ "category": "console", "output": summary.clone() }));
                         let (opened, sources) = Default::default();
-                        dumped = Some(Dumped { summary, tasks, heap, root, roots, sources, opened });
+                        dumped = Some(Dumped { summary, tasks, heap, root, roots, sources, opened, requests });
                         editor.respond(&request, Ok(json!({})));
                         editor.event("initialized", json!({}));
                         continue;
@@ -558,6 +558,8 @@ struct Dumped {
     sources: std::cell::RefCell<Vec<String>>,
     /// The bindings or parts each reference above `OPENED` opens to.
     opened: std::cell::RefCell<Vec<Value>>,
+    /// What the requests did, as `observe::timelines` gives it.
+    requests: Value,
 }
 
 /// References to what a dump's values open to start past those of tasks.
@@ -580,6 +582,7 @@ impl Dumped {
         let task = |id: &Value| self.tasks.iter().find(|t| t["id"] == *id);
         match command {
             "setBreakpoints" => Ok(json!({ "breakpoints": [] })),
+            "requests" => Ok(self.requests.clone()),
             "source" => Ok(source_text(&self.roots, &self.sources.borrow(), arguments)),
             "setExceptionBreakpoints" | "configurationDone" => Ok(json!({})),
             "threads" => {
@@ -1461,6 +1464,8 @@ fn handle(
         }
         // The tasks: where each is, and what each waits for and on whom.
         "tasks" => program.ask("tasks"),
+        // The editor's view of what each request did.
+        "requests" => program.ask("requests").map(observe::timelines),
         // What each line of the call the frame shows changed the last time
         // it ran, as the history has it, for the editor to show beside it.
         "effects" => {
