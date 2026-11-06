@@ -52,3 +52,4 @@ fn main() {
 // expect-stdout: count: 50
 // expect-stdout: notes: some(last defer)
 // expect-stdout: stuck: some(first) none
+// expect-warning: W1017 in a cancelled task this `defer` ends here

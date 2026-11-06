@@ -246,6 +246,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A cell of `std.sync` written from what was read of it earlier: another task can change it in between, and \
          that change is lost. Read and write it in one `update`, or with `compareExchange`.",
     ),
+    (
+        "W1017",
+        "lock-in-defer",
+        "A lock taken in a `defer`: in a cancelled task a `defer` does what needs no wait, so if another task holds \
+         the lock it ends there and what it does is lost. Use an `Atomic`, or send to a channel with room.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

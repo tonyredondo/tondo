@@ -13343,6 +13343,12 @@ impl<'a> Checker<'a> {
             if handle == Handle::Clock {
                 return self.clock_method(cx, value, method, args, span);
             }
+            // A cancelled task's `defer` ends at a wait: a lock another holds.
+            if cx.deferred && matches!(handle, Handle::Mutex | Handle::RwLock) && method.name != "tryUpdate" {
+                let message = "in a cancelled task this `defer` ends here if another task holds the lock, and what it \
+                               does is lost: use an `Atomic`, or send to a channel with room, which need no wait";
+                self.diags.warning("W1017", span, message);
+            }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 let cell = Self::cell(cx, &value)
                     .filter(|_| matches!(handle, Handle::Mutex | Handle::RwLock | Handle::Atomic));
