@@ -78,6 +78,18 @@ tondo test --report junit=out.xml one or more reports: json, junit, lcov, markdo
 tondo doc-test README.md          check the Tondo examples of a document
 ```
 
+A warning you accept stays out of the list with a comment on its line or above
+it, which says why:
+
+```tondo
+// tondo: allow W1004: the name C gives this type
+pub alias CUShort = UInt16
+```
+
+Without a reason it is an error, and when its line stops giving the warning
+`W1019` says to remove it. `tondo check --json` lists what it silenced in
+`silenced`.
+
 `tondo guide testing` says how to write tests, suites, snapshots, benchmarks
 and fuzz tests.
 

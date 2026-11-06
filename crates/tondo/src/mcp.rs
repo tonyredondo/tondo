@@ -190,7 +190,10 @@ impl Server {
                 crate::lints::run(&analysis.sources, &mut analysis.diags, args.flag("docs"), args.flag("performance"));
                 let diagnostics = diagnostics(&analysis);
                 let text = report(&analysis, &diagnostics);
-                Ok(Reply::new(text, json!({ "compiles": analysis.program.is_some(), "diagnostics": diagnostics })))
+                let silenced = analysis.diags.silenced_json(&analysis.sources, &analysis.source_id);
+                let data =
+                    json!({ "compiles": analysis.program.is_some(), "diagnostics": diagnostics, "silenced": silenced });
+                Ok(Reply::new(text, data))
             }
             "fix" => fix(args),
             "graph" => {

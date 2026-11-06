@@ -8688,6 +8688,7 @@ oculten un diagnóstico independiente.
 | `E0004` | `invalid-syntax` | Los tokens no forman la producción requerida. |
 | `E0005` | `invalid-operator-chain` | Cadena de operadores prohibida, incluida una comparación encadenada. |
 | `E0006` | `invalid-source-form` | Mezcla o selección inválida de forma módulo, script o snippet. |
+| `E0007` | `invalid-allow` | Un comentario `// tondo: allow` sin códigos de aviso o sin razón. |
 
 #### Nombres y módulos
 
@@ -8863,6 +8864,7 @@ oculten un diagnóstico independiente.
 | `W1017` | `lock-in-defer` | Un lock de `std.sync` tomado en un `defer`: en una tarea cancelada, si otra lo tiene, ese `defer` termina ahí. |
 | `W1016` | `lost-update` | Una celda de `std.sync` escrita con un valor hecho de lo que se leyó de ella antes: otra tarea puede cambiarla entre medias. |
 | `W1018` | `unused-result` | Una llamada escrita como sentencia, o como valor de un bloque `Unit`, cuyo resultado nada usa y que no hace nada más: un `String` que hizo, un método del lenguaje que solo lee, o una función del programa que solo calcula. `_ = ...` lo descarta. |
+| `W1019` | `unused-allow` | Un comentario `// tondo: allow` que no silencia nada. |
 
 #### Pánicos del lenguaje
 
@@ -9235,6 +9237,21 @@ Los defectos de tipos, exhaustividad, préstamos, visibilidad, shadowing, uso de
 de estilo, documentación o rendimiento identificados con `W` son warnings y no
 cambian semántica. La selección de perfiles forma parte de los flags declarados
 del target. Un modo estricto puede promoverlos, pero conserva el código `W`.
+
+Un aviso aceptado se dice en el código, con su razón:
+
+~~~tondo
+// tondo: allow W1004: the name C gives this type
+pub alias CUShort = UInt16
+~~~
+
+El comentario va en la línea del aviso o sobre ella, separado por otros
+comentarios o líneas en blanco si hace falta, y nombra uno o más códigos `W`
+separados por espacios. Sin razón, sin códigos, o con un código que no sea de
+aviso, es `E0007`: un error no se acepta. Si su línea no da ese aviso es
+`W1019`, salvo en un programa con errores, que puede no haber llegado a él, y en
+un perfil de 22.8 que no se pidió. Lo silenciado no sale de la salida: `tondo
+check --json` y la herramienta `check` lo dan en `silenced`, para revisarlo.
 
 ### 22.9 Conformidad ejecutable
 

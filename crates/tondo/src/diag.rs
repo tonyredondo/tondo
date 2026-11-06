@@ -35,6 +35,10 @@ pub struct Fix {
 #[derive(Default)]
 pub struct Diagnostics {
     pub list: Vec<Diagnostic>,
+    /// The warnings a `// tondo: allow` comment took out of the list (22.8).
+    pub silenced: Vec<Diagnostic>,
+    /// The codes of the profiles this check asked for.
+    pub asked: Vec<&'static str>,
 }
 
 impl Diagnostics {
@@ -119,6 +123,7 @@ impl Diagnostics {
     /// generators wrote are not the program's.
     pub fn sort(&mut self, sources: &SourceMap) {
         self.drop_warnings(sources, |file| file.logical.starts_with('<'));
+        crate::lints::allow(sources, self);
         let key = |d: &Diagnostic| {
             let location = d.span.map(|span| {
                 let file = sources.file_of(span.start);
@@ -147,6 +152,12 @@ impl Diagnostics {
 
     /// The diagnostics as a JSON array in the form of 22.3. `source_id`
     /// identifies the package or the single file.
+    /// What was silenced, as `json` gives the diagnostics.
+    pub fn silenced_json(&self, sources: &SourceMap, source_id: &str) -> serde_json::Value {
+        let silenced = Diagnostics { list: self.silenced.clone(), ..Diagnostics::default() };
+        silenced.json(sources, source_id)
+    }
+
     /// The diagnostics as JSON values (22.3).
     pub fn json(&self, sources: &SourceMap, source_id: &str) -> serde_json::Value {
         serde_json::from_str(&self.render_json(sources, source_id)).expect("diagnostics as JSON")

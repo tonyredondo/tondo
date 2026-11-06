@@ -10,6 +10,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E0004", "invalid-syntax", "The tokens do not form what the grammar requires there."),
     ("E0005", "invalid-operator-chain", "A chain of operators the language forbids, such as a chained comparison."),
     ("E0006", "invalid-source-form", "A file mixes, or is used as, the wrong form: module, script or snippet."),
+    (
+        "E0007",
+        "invalid-allow",
+        "A `// tondo: allow` comment without the codes of warnings or without why: `// tondo: allow W1004: the name C gives it`.",
+    ),
     ("E1001", "unknown-name", "No visible declaration has the name."),
     ("E1002", "duplicate-name", "Two declarations take the same name in the same namespace and scope."),
     ("E1003", "shadowing", "A declaration would hide a binding that is still visible."),
@@ -272,6 +277,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A call whose result nothing uses, and that does nothing else: a `String` it made, a method of the language \
          that only reads, or a function that only computes. A function that gives a text, as `cli.markup`, writes \
          nothing by itself. Use it, write it with `console.println(...)`, or discard it with `_ = ...`.",
+    ),
+    (
+        "W1019",
+        "unused-allow",
+        "A `// tondo: allow` comment for a warning its line does not give: the reason for it has gone.",
     ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),

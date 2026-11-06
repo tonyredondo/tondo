@@ -1,0 +1,23 @@
+// A warning accepted says why, on its line or above it, and goes to `silenced`.
+
+// tondo: allow W1004: the name C gives this type
+type CUShort = UInt16
+
+type CUInt = UInt32 // tondo: allow W1004: the name C gives this type
+
+// tondo: allow W1003 W1018: nothing here gives these
+fn quiet(value: Int): Int {
+    value
+}
+
+// tondo: allow W1004
+type CSSize = Int
+
+// tondo: allow E1102: an error is not accepted
+fn main() {
+    _ = quiet(1)
+}
+
+// expect-error: E0007 this comment takes the codes of warnings and why: `// tondo: allow W1004: the name C gives it`
+// expect-error: E0007 this comment takes the codes of warnings and why: `// tondo: allow W1004: the name C gives it`
+// expect-warning: W1004 `CSSize` should be `CsSize`: types, traits, variants and constants are `PascalCase`, with acronyms written as words

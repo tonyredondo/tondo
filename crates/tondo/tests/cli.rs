@@ -654,3 +654,19 @@ fn check_says_what_it_is_asked() {
     assert!(said.contains("`before` shares `values`"), "{said}");
     assert!(!said.contains("`kept` shares"), "what it reads after the write keeps it: {said}");
 }
+
+/// What a comment silences stays in the data, and a profile that was not asked
+/// for gives nothing to silence.
+#[test]
+fn check_lists_what_it_silences() {
+    let source: &[u8] = b"// tondo: allow W1004: the name C gives it\ntype CUShort = UInt16\n\n\
+        // tondo: allow W1010: a library of one\npub fn told() {}\n\nfn main() {\n    told()\n}\n";
+    let dir = project_at("check-allow", &[("allow.to", source)]);
+    let said = said_by(&dir, &["check", "allow.to"]);
+    assert!(!said.contains("W1004") && !said.contains("W1019"), "{said}");
+    let said = said_by(&dir, &["check", "allow.to", "--docs"]);
+    assert!(!said.contains("W1010") && !said.contains("W1019"), "{said}");
+    let said = said_by(&dir, &["check", "allow.to", "--json"]);
+    let found: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert_eq!(found["silenced"][0]["code"], "W1004", "{said}");
+}

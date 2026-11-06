@@ -5336,3 +5336,12 @@ written once for every format cannot ask whether its `S` has one: that is specia
 which 12 excludes. A record and a field go to the format as data instead, in `beginRecord`
 and `field`, whose defaults use them to write the map and the key, and only XML overrides
 them. The other hooks stay.
+
+## A warning accepted says why
+
+`// tondo: allow W1004: why` keeps a warning out of the list, on its line or the next one
+with code. A comment rather than an annotation, since a warning may be on any line. It has
+to give a reason, because the authors Tondo is made for silence what they could repair; it
+warns when it silences nothing, so that none outlives its reason; and what it silences stays
+in `silenced`, to be reviewed. A program with errors may not have reached the warning, and a
+profile nobody asked for gives none, so neither counts as silencing nothing.

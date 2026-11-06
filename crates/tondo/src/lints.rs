@@ -6,6 +6,68 @@ use crate::ast::{self, Block, ExprKind, Item, StmtKind};
 use crate::diag::Diagnostics;
 use crate::source::{SourceFile, SourceMap};
 
+/// The codes only a check that asks for its profile gives.
+const PROFILES: [&str; 2] = ["W1009", "W1010"];
+
+/// `// tondo: allow W1004: why`: takes the warnings of a code on the line the
+/// comment is on, or on the next one with code, out of the list. It has to say
+/// why, and to silence something: a program with errors may not have reached
+/// the warning, and a profile nobody asked for gives none.
+pub(crate) fn allow(sources: &SourceMap, diags: &mut Diagnostics) {
+    diags.list.retain(|diagnostic| diagnostic.code != Some("W1019"));
+    let foreign = |file: &SourceFile| file.dependency || file.logical.starts_with('<');
+    for file in sources.files().filter(|file| !foreign(file) && file.text.contains("tondo: allow")) {
+        let (_, comments) = crate::lexer::lex_with_comments(file, None, &mut Diagnostics::default());
+        for comment in comments {
+            let text = file.slice(comment).trim_start_matches('/').trim();
+            let Some(rest) = text.strip_prefix("tondo: allow") else { continue };
+            let (codes, why) = rest.split_once(':').unwrap_or((rest, ""));
+            let codes: Vec<&str> = codes.split_whitespace().collect();
+            let known = |code: &&str| code.starts_with('W') && crate::explain::CODES.iter().any(|c| c.0 == *code);
+            if why.trim().is_empty() || codes.is_empty() || !codes.iter().all(known) {
+                let message =
+                    "this comment takes the codes of warnings and why: `// tondo: allow W1004: the name C gives it`";
+                diags.error("E0007", comment, message);
+                continue;
+            }
+            let line = target(file, comment);
+            let here = |diagnostic: &crate::diag::Diagnostic, code: &str| {
+                diagnostic.code == Some(code)
+                    && diagnostic.span.is_some_and(|span| {
+                        sources.file_of(span.start).base == file.base && file.line_col(span.start).0 == line
+                    })
+            };
+            for code in codes {
+                let (silenced, kept): (Vec<_>, Vec<_>) =
+                    std::mem::take(&mut diags.list).into_iter().partition(|d| here(d, code));
+                diags.list = kept;
+                diags.silenced.extend(silenced);
+                let asked = !PROFILES.contains(&code) || diags.asked.contains(&code);
+                if asked && !diags.silenced.iter().any(|d| here(d, code)) {
+                    diags.warning("W1019", comment, format!("nothing here gives `{code}`: remove this comment"));
+                }
+            }
+        }
+    }
+    if diags.has_errors() {
+        diags.list.retain(|diagnostic| diagnostic.code != Some("W1019"));
+    }
+}
+
+/// The line a comment speaks of: its own when it follows code, or else the
+/// next one with code.
+fn target(file: &SourceFile, comment: crate::source::Span) -> usize {
+    let (line, column) = file.line_col(comment.start);
+    if file.line_text(line).chars().take(column - 1).any(|c| !c.is_whitespace()) {
+        return line;
+    }
+    let code = |at: &usize| {
+        let text = file.line_text(*at).trim();
+        !text.is_empty() && !text.starts_with("//")
+    };
+    (line + 1..=file.text.lines().count()).find(code).unwrap_or(line)
+}
+
 /// What `tondo check` adds to a program's diagnostics.
 pub fn run(sources: &SourceMap, diags: &mut Diagnostics, docs: bool, performance: bool) {
     for file in (0..sources.len()).map(|index| sources.file(index)) {
@@ -25,6 +87,8 @@ pub fn run(sources: &SourceMap, diags: &mut Diagnostics, docs: bool, performance
             }
         }
     }
+    diags.asked = PROFILES.iter().copied().filter(|code| if *code == "W1010" { docs } else { performance }).collect();
+    diags.sort(sources);
 }
 
 /// W1010: a `pub` declaration with no `///` above it (22.8).

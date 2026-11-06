@@ -606,6 +606,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         }
         drop_dependency_warnings(&mut diags, &sources, &dependencies);
         diags.sort(&sources);
+        let program = program.filter(|_| !diags.has_errors());
         return Ok(Analysis {
             sources,
             diags,
@@ -634,6 +635,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     });
     drop_dependency_warnings(&mut diags, &sources, &dependencies);
     diags.sort(&sources);
+    // A comment of `tondo: allow` is read last, and may be wrong.
+    let program = program.filter(|_| !diags.has_errors());
     Ok(Analysis {
         sources,
         diags,

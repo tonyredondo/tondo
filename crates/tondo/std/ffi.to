@@ -72,6 +72,7 @@ pub alias CShort = Int16
 /// let port: ffi.CUShort = 8080
 /// console.println("{port} is {unsafe { htons(port) }} in network order on this machine")
 /// ```
+// tondo: allow W1004: the name C gives this type
 pub alias CUShort = UInt16
 
 /// C's `int`.
@@ -103,6 +104,7 @@ pub alias CInt = Int32
 /// let address: ffi.CUInt = 0x7f000001u32
 /// console.println("127.0.0.1 is {address} here and {unsafe { htonl(address) }} on the wire")
 /// ```
+// tondo: allow W1004: the name C gives this type
 pub alias CUInt = UInt32
 
 /// C's `long`, of 64 bits on the supported targets.
@@ -128,6 +130,7 @@ pub alias CLong = Int
 /// let mask: ffi.CULong = unsafe { strtoul("11110000", none, 2) }
 /// console.println("{mask}")
 /// ```
+// tondo: allow W1004: the name C gives this type
 pub alias CULong = UInt64
 
 /// C's `long long`.
@@ -156,6 +159,7 @@ pub alias CLongLong = Int
 /// let largest: ffi.CULongLong = unsafe { strtoull("18446744073709551615", none, 10) }
 /// console.println("{largest}")
 /// ```
+// tondo: allow W1004: the name C gives this type
 pub alias CULongLong = UInt64
 
 /// C's `size_t`.
@@ -186,6 +190,7 @@ pub alias CSize = UInt64
 ///     panic("write failed")
 /// }
 /// ```
+// tondo: allow W1004: the name C gives this type
 pub alias CSSize = Int
 
 /// C's `float`.

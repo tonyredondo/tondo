@@ -1,0 +1,12 @@
+// A comment that silences nothing says so, so that none outlives its reason.
+
+// tondo: allow W1003: `value` was not used once
+fn quiet(value: Int): Int {
+    value
+}
+
+fn main() {
+    _ = quiet(1)
+}
+
+// expect-warning: W1019 nothing here gives `W1003`: remove this comment

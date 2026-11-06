@@ -246,7 +246,8 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     let ok = analysis.program.is_some();
     if json {
         let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
-        print_json("check", ok, serde_json::json!({ "diagnostics": diagnostics }));
+        let silenced = analysis.diags.silenced_json(&analysis.sources, &analysis.source_id);
+        print_json("check", ok, serde_json::json!({ "diagnostics": diagnostics, "silenced": silenced }));
     } else {
         show(&analysis, Shown::Human);
     }
