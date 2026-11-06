@@ -24,6 +24,7 @@ import {
   failureMarks,
   logpointArgs,
   lineValues,
+  needsLive,
   heldPlace,
   liveHover,
   requestRow,
@@ -691,4 +692,11 @@ test('where a held panic is, and a live value on hover', () => {
   const lines = { '3': [{ name: 'n', value: '1' }], '9': [{ name: 'n', value: '2' }] };
   assert.equal(liveHover(lines, 'n', 8), 'n = 2');
   assert.equal(liveHover(lines, 'other', 8), undefined);
+});
+
+test('what a session refused for not being live', () => {
+  const refused = 'the program is not a live build: build it with --live: a call runs in a live build';
+  assert.equal(needsLive({ type: 'response', success: false, message: refused }), true);
+  assert.equal(needsLive({ type: 'response', success: false, message: 'no method `push`' }), false);
+  assert.equal(needsLive({ type: 'response', success: true, message: refused }), false);
 });

@@ -1798,6 +1798,11 @@ además los bindings de su frame, para entender qué falló. La ejecuta una tare
 estado de error, y el programa sigue. El MCP la da con `eval` y el editor con *Evaluate in a
 Running Program*.
 
+El editor depura un build vivo por omisión, con F5 y con *Debug*, salvo con
+`tondo.debugLive` en falso, y una configuración de `launch` que dice `"live"` manda; un
+programa, no un volcado, una grabación ni un test. Lo que una sesión que no es viva rechaza
+por eso ofrece *Restart Live*, que la arranca de nuevo viva.
+
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos,
 también los que embebe, lo cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los

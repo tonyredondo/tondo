@@ -119,6 +119,11 @@
           "scope": "resource",
           "markdownDescription": "Arguments added to `tondo test --bench` by the *Benchmark* profile of the Testing view, as `[\"--against\", \"main\", \"--max-regression\", \"5\"]` or `[\"--bench-time\", \"5\"]`."
         },
+        "tondo.debugLive": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Start a live build with F5 and *Debug*, as *Debug Live* does: calls in the console, jumps and changes while it runs need one. Off, they start a plain debug build."
+        },
         "tondo.liveValues": {
           "type": "boolean",
           "default": true,

@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec, programFor, settings } from './cli';
 import { tondo } from './extension';
-import { Compared, Diff, Origin, Flight, RequestRow, Requests, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, requestRow, stepRow, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
+import { Compared, Diff, Origin, Flight, RequestRow, Requests, Table, Task, Timeline, comparedMarkdown, diffMarkdown, mermaid, needsLive, requestRow, stepRow, originsMarkdown, recordedRun, shortPlace, tableHtml, timelineHtml } from './report';
 import { tondoTask } from './tasks';
 
 export function registerDebugging(context: vscode.ExtensionContext): void {
@@ -25,7 +25,11 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
             void vscode.window.showInformationMessage('Open a Tondo file to debug its program.');
             return undefined;
           }
-          return { type: 'tondo', request: 'launch', name: 'Debug', ...(await launched(file)) };
+          return { type: 'tondo', request: 'launch', name: 'Debug', live: debugsLive(), ...(await launched(file)) };
+        }
+        // A program, unless the configuration says: not a dump or a recording.
+        if (config.request === 'launch' && config.program && config.live === undefined && !config.test) {
+          config.live = debugsLive();
         }
         if (config.request === 'launch' && !config.cwd) {
           config.cwd = folder?.uri.fsPath ?? path.dirname(String(config.program ?? ''));
@@ -36,6 +40,15 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
         }
         return config;
       },
+    }),
+    vscode.debug.registerDebugAdapterTrackerFactory('tondo', {
+      createDebugAdapterTracker: (session) => ({
+        onDidSendMessage: (message) => {
+          if (needsLive(message)) {
+            void offerLive(session, message.message);
+          }
+        },
+      }),
     }),
     vscode.commands.registerCommand('tondo.run', (uri?: vscode.Uri) => run(uri, 'run')),
     vscode.commands.registerCommand('tondo.runLive', (uri?: vscode.Uri) => run(uri, 'watch')),
@@ -448,6 +461,28 @@ async function run(uri: vscode.Uri | undefined, command: 'run' | 'watch'): Promi
   }
 }
 
+/** Whether debugging starts a live build: what development wants, and what
+ *  a call in the console, a jump or a reload need. */
+function debugsLive(): boolean {
+  return vscode.workspace.getConfiguration('tondo').get<boolean>('debugLive', true);
+}
+
+/** The sessions already offered to start again live: asking once is enough. */
+const offered = new WeakSet<vscode.DebugSession>();
+
+/** What was asked needs a live build: starts the session again as one. */
+async function offerLive(session: vscode.DebugSession, why: string): Promise<void> {
+  if (offered.has(session) || session.configuration.request !== 'launch') {
+    return;
+  }
+  offered.add(session);
+  const asked = await vscode.window.showInformationMessage(why, 'Restart Live');
+  if (asked === 'Restart Live') {
+    await vscode.debug.stopDebugging(session);
+    await vscode.debug.startDebugging(session.workspaceFolder, { ...session.configuration, live: true });
+  }
+}
+
 async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> {
   const file = activeFile(uri);
   if (!file) {
@@ -457,7 +492,7 @@ async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> 
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
   const name = live ? 'Debug live' : 'Debug';
   try {
-    await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...(await launched(file)) });
+    await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live: live || debugsLive(), ...(await launched(file)) });
   } catch (error) {
     failed(error);
   }

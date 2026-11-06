@@ -1250,3 +1250,8 @@ export function liveHover(lines: Record<string, { name: string; value: string }[
   const nearest = shown[0]?.[1].find((binding) => binding.name === name);
   return nearest && `${name} = ${nearest.value}`;
 }
+
+/** Whether what a debug session refused needs a live build. */
+export function needsLive(message: { type?: string; success?: boolean; message?: string }): boolean {
+  return message.type === 'response' && message.success === false && /\blive build\b/.test(message.message ?? '');
+}
