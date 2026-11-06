@@ -829,7 +829,15 @@ pub(crate) fn listen_again() -> bool {
     let path = directory().join(std::process::id().to_string());
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else { return false };
-    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.clone());
+    // It lives for its debugger: nothing else would ever end it.
+    let _ = super::tasks::try_spawn_thread(Some(128 * 1024), move || {
+        while !super::replay::orphaned() {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        let _ = std::fs::remove_file(&path);
+        unsafe { libc::_exit(0) };
+    });
     super::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_ok()
 }
 
