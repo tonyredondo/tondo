@@ -476,3 +476,76 @@ func BenchmarkTasks(b *testing.B) {
 		}
 	})
 }
+
+func nine() int {
+	return 9
+}
+
+// A goroutine started and waited for, as a task and its `Join`.
+func joinedOne() int {
+	result := make(chan int, 1)
+	go func() { result <- nine() }()
+	return <-result
+}
+
+// Goroutines that take one lock in turn.
+func contended(tasks, times int) int {
+	var lock sync.Mutex
+	var group sync.WaitGroup
+	count := 0
+	for t := 0; t < tasks; t++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for i := 0; i < times; i++ {
+				lock.Lock()
+				count++
+				lock.Unlock()
+			}
+		}()
+	}
+	group.Wait()
+	return count
+}
+
+func feed(out chan<- int, count int) {
+	for i := 0; i < count; i++ {
+		out <- i
+	}
+}
+
+// What two producers send, taken by `select` as it comes.
+func selected(count int) int {
+	first, second := make(chan int, 16), make(chan int, 16)
+	go feed(first, count)
+	go feed(second, count)
+	total, received := 0, 0
+	for received < 2*count {
+		select {
+		case value := <-first:
+			total += value
+		case value := <-second:
+			total += value
+		}
+		received++
+	}
+	return total
+}
+
+func BenchmarkRuntime(b *testing.B) {
+	b.Run("join 1", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = joinedOne()
+		}
+	})
+	b.Run("mutex 4x1000", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = contended(4, 1000)
+		}
+	})
+	b.Run("select 1000", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = selected(1000)
+		}
+	})
+}

@@ -1,0 +1,26 @@
+import std.testing
+import std.yaml
+
+type Server = {
+    name: String
+    port: Int
+    hosts: Array[String]
+    secure: Bool
+}
+
+test yaml {
+    var servers: Array[Server] = []
+    for i in 0..100 {
+        servers.push(
+            Server {
+                name: "server {i}"
+                port: 8000 + i
+                hosts: ["a.example", "b.example"]
+                secure: i % 2 == 0
+            },
+        )
+    }
+    let text = yaml.encode(servers)
+    testing.bench("encode 100 structs", () { yaml.encode(servers) })
+    testing.bench("decode 100 structs", () { yaml.decode[Array[Server]](text) })?
+}

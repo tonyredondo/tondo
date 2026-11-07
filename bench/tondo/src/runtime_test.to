@@ -1,0 +1,65 @@
+import std.sync
+import std.testing
+
+fn nine(): Int {
+    9
+}
+
+fn bump(counter: sync.Mutex[Int], times: Int) {
+    for _ in 0..times {
+        counter.update(
+            (count) {
+                count += 1
+            },
+        )
+    }
+}
+
+/// Tasks that take one lock in turn.
+fn contended(tasks: Int, times: Int): Int {
+    let counter = sync.Mutex(0)
+    var group = Group[Unit]()
+    for _ in 0..tasks {
+        group.add(spawn bump(counter, times))
+    }
+    _ = group.wait()
+    counter.get()
+}
+
+fn feed(out: Sender[Int], count: Int) {
+    for i in 0..count {
+        out.send(i)
+    }
+}
+
+/// What two producers send, taken by `select` as it comes; the senders
+/// kept here keep the channels open, so that it always waits for a value.
+fn selected(count: Int): Int {
+    let (first, fromFirst) = channel[Int](16)
+    let (second, fromSecond) = channel[Int](16)
+    let a = spawn feed(first.copy(), count)
+    let b = spawn feed(second.copy(), count)
+    var (total, received) = (0, 0)
+    for received < 2 * count {
+        let value = select {
+            let value = fromFirst.receive() => value
+            let value = fromSecond.receive() => value
+        }
+        match value {
+            some(number) => {
+                total += number
+                received += 1
+            }
+            none => {}
+        }
+    }
+    a.wait()
+    b.wait()
+    total
+}
+
+test runtime {
+    testing.bench("join 1", () { (spawn nine()).wait() })
+    testing.bench("mutex 4x1000", () { contended(4, 1000) })
+    testing.bench("select 1000", () { selected(1000) })
+}
