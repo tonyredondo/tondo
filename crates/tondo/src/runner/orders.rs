@@ -207,3 +207,40 @@ pub(super) fn others(written: &str, every: bool, given: usize) -> Vec<Order> {
 pub(super) fn path(written: &str) -> Vec<u32> {
     read(written).0.iter().map(|choice| choice.made).collect()
 }
+
+/// Choices as `--schedules at:` and the runtime take them: dotted, and a
+/// choice made many times in a row as `0*1000`, since a long run makes
+/// millions.
+pub(super) fn dotted(choices: &[u32]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut at = 0;
+    while at < choices.len() {
+        let same = choices[at..].iter().take_while(|&&choice| choice == choices[at]).count();
+        parts.push(if same > 2 { format!("{}*{same}", choices[at]) } else { choices[at].to_string() });
+        if same <= 2 {
+            parts.extend(std::iter::repeat_n(choices[at].to_string(), same - 1));
+        }
+        at += same;
+    }
+    parts.join(".")
+}
+
+/// The choices `dotted` writes.
+pub(super) fn undotted(text: &str) -> Vec<u32> {
+    let each = text.split('.').filter_map(|part| {
+        let (choice, times) = part.split_once('*').unwrap_or((part, "1"));
+        Some(std::iter::repeat_n(choice.parse().ok()?, times.parse().ok()?))
+    });
+    each.flatten().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn choices_made_many_times_in_a_row_are_written_once() {
+        let choices = [0, 0, 0, 0, 1, 2, 2, 0];
+        assert_eq!(super::dotted(&choices), "0*4.1.2.2.0");
+        assert_eq!(super::undotted("0*4.1.2.2.0"), choices);
+        assert_eq!(super::undotted(&super::dotted(&[3; 2_000_000])).len(), 2_000_000);
+    }
+}

@@ -1282,7 +1282,7 @@ fn explore(
     for &test in plan.iter().filter(|&&test| !tree.suite(test)) {
         let (limit, first) = match orders {
             Orders::All(limit) => (*limit, (Vec::new(), Vec::new())),
-            Orders::At(path) => (1, (path.split('.').filter_map(|choice| choice.parse().ok()).collect(), Vec::new())),
+            Orders::At(path) => (1, (orders::undotted(path), Vec::new())),
         };
         // What a model never did in any order: in none of them.
         let mut never: Option<Vec<[std::collections::BTreeSet<String>; 2]>> = None;
@@ -1298,9 +1298,8 @@ fn explore(
                 left_out = true;
                 break;
             }
-            let dotted = |numbers: Vec<String>| numbers.join(".");
-            let text = dotted(given.iter().map(u32::to_string).collect());
-            let text = format!("{text}/{}", dotted(next.iter().map(u64::to_string).collect()));
+            let next: Vec<String> = next.iter().map(u64::to_string).collect();
+            let text = format!("{}/{}", orders::dotted(&given), next.join("."));
             let order = (text, out.clone());
             let one = worker::Run { stores: worker::Stores { ..run.stores }, order: Some(&order), ..*run };
             last = worker::execute(&one, vec![(vec![test], context)], |_| {});
@@ -1316,7 +1315,7 @@ fn explore(
                 break;
             }
             if last.iter().any(|attempt| attempt.status.failed()) {
-                let text = dotted(orders::path(&written).iter().map(u32::to_string).collect());
+                let text = orders::dotted(&orders::path(&written));
                 if !options.json {
                     say!("{}: failed in order {ran}", tree.id(test));
                     say!("again in that order: tondo test --exact {} --schedules at:{text}", tree.id(test));

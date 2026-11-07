@@ -2156,6 +2156,22 @@ test aTimeoutWins {
     assert!(stdout.contains("again in that order"), "{stdout}");
 }
 
+/// An order takes the same task, or the same arm of a `select`, a thousand
+/// times in a row at most while another can go, as a scheduler does: a
+/// `select` that keeps finding a closed channel ends when the other has
+/// its values, rather than spin until the test's time runs out.
+#[test]
+fn an_order_lets_every_task_and_arm_go() {
+    let tests = "fn feed(out: Sender[Int], count: Int) {\n    for i in 0..count {\n        out.send(i)\n    }\n}\n\ntest selectsUntilBothEnd {\n    let (first, fromFirst) = channel[Int](4)\n    let (second, fromSecond) = channel[Int](4)\n    let a = spawn feed(first, 2)\n    let b = spawn feed(second, 2)\n    var received = 0\n    for received < 4 {\n        let value = select {\n            let value = fromFirst.receive() => value\n            let value = fromSecond.receive() => value\n        }\n        if value.isSome() {\n            received += 1\n        }\n    }\n    a.wait()\n    b.wait()\n}\n";
+    let dir = project("every-order-fair", tests);
+    for schedules in [None, Some("all:50")] {
+        let mut args = vec!["test", "--timeout", "20"];
+        args.extend(schedules.iter().flat_map(|given| ["--schedules", given]));
+        let (stdout, stderr, status) = tondo(&dir, &args);
+        assert_eq!(status, 0, "{schedules:?}: {stdout}{stderr}");
+    }
+}
+
 /// Only orders that turn around two steps that touch the same thing are
 /// worth running: tasks that share nothing have one, and none of what comes
 /// of the others goes missing, which `TONDO_ORDERS_EVERY` holds it to.

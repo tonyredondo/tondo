@@ -3373,7 +3373,18 @@ struct Script {
     next: VecDeque<u64>,
     following: bool,
     out: Option<std::fs::File>,
+    /// The task chosen last when nothing said which, none for an arm of a
+    /// `select`, and how many times in a row: a task that waits by spinning
+    /// gives way after `FAIR` of them, and an arm to the next.
+    last: Option<u64>,
+    streak: usize,
 }
+
+/// How many times in a row a run given its choices takes the same task, or
+/// the first arm of a `select`, by itself while another can go: no scheduler
+/// leaves a task spinning for ever, nor a `select` taking one arm, so
+/// neither does an order (testing 8.10).
+const FAIR: usize = 1000;
 
 fn script() -> Option<&'static Mutex<Script>> {
     static SCRIPT: std::sync::OnceLock<Option<Mutex<Script>>> = std::sync::OnceLock::new();
@@ -3381,10 +3392,18 @@ fn script() -> Option<&'static Mutex<Script>> {
         .get_or_init(|| {
             let text = std::env::var("TONDO_RT_ORDER").ok()?;
             let (given, next) = text.split_once('/').unwrap_or((&text, ""));
-            let given = given.split('.').filter_map(|choice| choice.parse().ok()).collect();
+            // `2*5` is five choices of 2.
+            let given = given
+                .split('.')
+                .flat_map(|choice| {
+                    let (choice, times) = choice.split_once('*').unwrap_or((choice, "1"));
+                    let times = times.parse().unwrap_or(1);
+                    choice.parse().ok().map(|choice| std::iter::repeat_n(choice, times)).into_iter().flatten()
+                })
+                .collect();
             let next = next.split('.').filter_map(|task| task.parse().ok()).collect();
             let out = std::env::var_os("TONDO_RT_ORDER_OUT").and_then(|path| std::fs::File::create(path).ok());
-            Some(Mutex::new(Script { given, made: 0, next, following: false, out }))
+            Some(Mutex::new(Script { given, made: 0, next, following: false, out, last: None, streak: 0 }))
         })
         .as_ref()
 }
@@ -3486,7 +3505,17 @@ fn scripted(count: usize, tasks: &[u64]) -> Option<usize> {
     if count < 2 {
         return Some(0);
     }
-    let choice = given.or(next).unwrap_or(0) % count;
+    let choice = given.or(next).unwrap_or_else(|| {
+        // By itself the first, unless that one has gone too long.
+        let first = tasks.first().copied();
+        script.streak = if first == script.last { script.streak + 1 } else { 1 };
+        script.last = first;
+        if script.streak <= FAIR {
+            return 0;
+        }
+        script.streak = 0;
+        tasks.iter().position(|&task| Some(task) != first).unwrap_or(1)
+    }) % count;
     script.made += 1;
     if let Some(out) = &mut script.out {
         use std::io::Write;

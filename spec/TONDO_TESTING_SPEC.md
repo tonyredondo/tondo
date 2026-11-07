@@ -1745,8 +1745,12 @@ los de menos cambios primero, hasta agotarlos o hasta que falla, y dice cuántos
 órdenes probó y si fueron todos. Las elecciones son las de esta sección: qué tarea
 corre, qué operación lista toma un `select` y si un temporizador vence antes. Hace
 hasta 20 000 ejecuciones por test, o las de `--schedules all:<n>`; si quedan más lo
-dice, y eso no es un fallo, pero tampoco prueba nada de los que faltan. Un fallo da
-su camino:
+dice, y eso no es un fallo, pero tampoco prueba nada de los que faltan. Como un
+planificador, un orden no toma la misma tarea, ni la primera operación lista de un
+`select`, más de mil veces seguidas por sí mismo mientras otra puede ir: una tarea
+que espera girando, o un `select` que encuentra cerrado un canal, deja ir a las
+demás en vez de agotar el tiempo del test. Un fallo da su camino, con una elección
+repetida escrita una vez, `0*1000`:
 `tondo test --exact <id> --schedules at:<elecciones>` lo repite y
 `tondo debug --test <id> --schedule at:<elecciones>` lo depura.
 
