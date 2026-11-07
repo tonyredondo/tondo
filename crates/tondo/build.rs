@@ -130,7 +130,14 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         .args(["-C", "llvm-args=-align-all-functions=6"])
         .env("CARGO_PROFILE_RELEASE_INCREMENTAL", fast.to_string())
         .args(["--cfg", "tondo_staticlib"])
-        .args(coverage.then_some(["-C", "instrument-coverage"]).into_iter().flatten())
+        // Counters that live in the file, with `%c` in `LLVM_PROFILE_FILE`:
+        // a program a test kills, or that ends with `_exit`, counts too.
+        .args(
+            coverage
+                .then_some(["-C", "instrument-coverage", "-C", "llvm-args=-runtime-counter-relocation"])
+                .into_iter()
+                .flatten(),
+        )
         .args(["--print", "native-static-libs"])
         .current_dir(runtime)
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
