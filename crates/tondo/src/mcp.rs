@@ -1691,8 +1691,26 @@ fn execute(argv: &[String], stdin: Option<String>, timeout: Option<Duration>) ->
     use std::os::unix::process::CommandExt;
     let mut command = Command::new(tondo()?);
     // A program's failure comes as data (toolchain 7.5).
-    if argv.first().is_some_and(|command| command == "run") {
+    let running = argv.first().is_some_and(|command| command == "run");
+    if running {
         command.env("TONDO_PANIC_FORMAT", "json");
+    }
+    // A program's time counts from when it is built: `tondo run` closes the
+    // end of this pipe it has then, and its only reader sees the end.
+    let mut ends = [-1; 2];
+    let built = running && unsafe { libc::pipe(ends.as_mut_ptr()) } == 0;
+    if built {
+        let [read, write] = ends;
+        unsafe { libc::fcntl(read, libc::F_SETFD, libc::FD_CLOEXEC) };
+        unsafe { libc::fcntl(write, libc::F_SETFD, libc::FD_CLOEXEC) };
+        command.env("TONDO_RUN_STARTS", write.to_string());
+        // Only that child has it: what this server starts at once does not.
+        unsafe {
+            command.pre_exec(move || {
+                libc::fcntl(write, libc::F_SETFD, 0);
+                Ok(())
+            })
+        };
     }
     let mut child = command
         .args(argv)
@@ -1707,12 +1725,19 @@ fn execute(argv: &[String], stdin: Option<String>, timeout: Option<Duration>) ->
     }
     let stdout = drain(child.stdout.take().expect("piped"));
     let stderr = drain(child.stderr.take().expect("piped"));
-    let start = Instant::now();
+    let program = built.then(|| {
+        unsafe { libc::close(ends[1]) };
+        drain(unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(ends[0]) })
+    });
+    let mut start = program.is_none().then(Instant::now);
     let (status, timed_out) = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break (status, false);
         }
-        if timeout.is_some_and(|limit| start.elapsed() >= limit) {
+        if start.is_none() && program.as_ref().is_some_and(|reading| reading.is_finished()) {
+            start = Some(Instant::now());
+        }
+        if timeout.is_some_and(|limit| start.is_some_and(|start| start.elapsed() >= limit)) {
             unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
             break (child.wait().map_err(|e| e.to_string())?, true);
         }

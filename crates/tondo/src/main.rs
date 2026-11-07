@@ -14,7 +14,16 @@ const USAGE: &str = "\u{0}usage";
 /// Exit status for usage and toolchain failures (distinct from program errors).
 const TOOL_FAILURE: u8 = 3;
 
+/// The pipe `tondo mcp` gives a run in `TONDO_RUN_STARTS`, closed once the
+/// program is built: its time counts from then, not from the build.
+static RUN_STARTS: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
+
 fn main() -> ExitCode {
+    // Taken out before anything starts a thread, so that no program inherits it.
+    if let Some(fd) = std::env::var("TONDO_RUN_STARTS").ok().and_then(|fd| fd.parse().ok()) {
+        unsafe { std::env::remove_var("TONDO_RUN_STARTS") };
+        *RUN_STARTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(fd);
+    }
     // A panic of `tondo` itself says so, and what to give whoever looks at it.
     let panicked = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -2704,6 +2713,10 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
         let linking = driver::Linking { strip: false, statically: *statically, target: *target, debug: *debug };
         driver::link(&object, &partial, &libraries, linking)?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
+    }
+    #[cfg(unix)]
+    if let Some(fd) = RUN_STARTS.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        unsafe { libc::close(fd) };
     }
     Ok(Some(executable))
 }

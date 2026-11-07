@@ -206,6 +206,26 @@ test fails {
 }
 ";
 
+/// The time `run` gives a program counts from when it is built: a build
+/// longer than it, as a cold one is, does not end the program.
+#[test]
+fn a_run_times_the_program_and_not_its_build() {
+    // Text of its own, so that no build of it is in the cache.
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let program = format!("import std.console\n\nfn main() {{\n    console.println(\"built {nonce}\")\n}}\n");
+    let dir = project("mcp_run_built", &[("built.to", &program)]);
+    let mut agent = Agent::start(&dir);
+    let (ran, _) = agent.call("run", json!({ "path": "built.to", "timeout": 0.2 }));
+    assert_ne!(ran["timed_out"], true, "{ran}");
+    assert_eq!(ran["stdout"], format!("built {nonce}\n"), "{ran}");
+    // A program that runs past it is still ended.
+    std::fs::write(dir.join("spins.to"), "fn main() {\n    var n = 0\n    for true {\n        n += 1\n    }\n}\n")
+        .unwrap();
+    let (ran, _) = agent.call("run", json!({ "path": "spins.to", "timeout": 0.5 }));
+    assert_eq!(ran["timed_out"], true, "{ran}");
+    agent.stop();
+}
+
 #[test]
 fn runs_tests_and_debugs() {
     let dir = project("mcp_run", &[("src/main.to", ECHO), ("src/main_test.to", TESTS)]);
