@@ -18,6 +18,7 @@ is a topic of the guide.
 | Memory keeps growing | `runbook-memory` |
 | Failures come from many machines, or must be shared | `runbook-production` |
 | You want to find the inputs that break a function | `runbook-fuzz` |
+| You change code and must show it works: which tests, alone and together | `runbook-testing` |
 
 Every step of these runbooks runs in the tests of the toolchain, so what they
 show is what the tools give. A block of tool calls reads `tool {arguments}`,

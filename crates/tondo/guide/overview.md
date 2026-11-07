@@ -123,6 +123,9 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
    error about a name that does not exist says which `tondo api` to run.
 2. Write the code; layout does not matter.
 3. `tondo check --json`, fix what it reports, repeat; then `tondo test`.
+   `tondo guide runbook-testing` says which tests a change needs, from a
+   test beside the code to every order of its tasks, and how they go
+   together.
 4. `tondo fmt` the files you wrote. To show a file to a model, `tondo fmt
    --compact` uses about 15% fewer tokens.
 

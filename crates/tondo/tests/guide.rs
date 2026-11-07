@@ -50,7 +50,7 @@ fn examples_compile() {
                 scope.spawn(move || {
                     let mut failures = Vec::new();
                     for (name, info, case, code) in chunk {
-                        // `check` leaves out a project's tests, which `--list` builds.
+                        // A test needs a project, whose tests `--list` builds.
                         let checks: &[&str] =
                             if info == "tondo test" { &["test", "--list"] } else { &["check", "main.to"] };
                         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))

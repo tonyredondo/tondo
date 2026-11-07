@@ -1,6 +1,8 @@
 # Testing
 
 `tondo test` runs the tests of a project in parallel worker processes.
+`tondo guide runbook-testing` goes through every kind of test on one change,
+and says when each is worth it.
 
 ```text
 src/parse.to           the code
