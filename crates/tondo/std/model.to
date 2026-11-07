@@ -80,6 +80,9 @@ pub type Checked = {
     steps: Int
     depth: Int
     never: Array[String]
+    /// The properties that held because what they are about never came, as
+    /// a `leadsTo` whose `when` held in no state: they said nothing.
+    vacuous: Array[String] = []
 }
 
 /// A state on the way to what broke: the step that led there, empty for the
@@ -431,6 +434,9 @@ pub fn Formula[S].until(self, other: Formula[S]): Formula[S] {
 pub type Property[S] = {
     priv name: String
     priv kind: Kind[S]
+    /// What starts the property, as `leadsTo`'s `when`: if it holds in no
+    /// state, the property holds with nothing to say.
+    priv applies: (fn(S): Bool)? = none
 }
 
 enum Kind[S] {
@@ -461,6 +467,7 @@ pub fn leadsTo[S](
     Property {
         name
         kind: Kind.Temporal(state(when).implies(state(then).eventually()).always().term)
+        applies: some(when)
     }
 }
 
@@ -677,6 +684,7 @@ fn checking[S: reflect.Reflect + serialization.Encode + serialization.Decode](
         steps: graph.edges.map((out) { out.length() }).sum()
         depth: graph.depth
         never: []
+        vacuous: vacuous(holds, (applies) { eachState(graph, applies).any((held) { held }) })
     }
 }
 
@@ -697,13 +705,26 @@ fn reported(kind: String, result: Checked ! Violation): Checked ! Violation {
         }
         let text = match result {
             ok(checked) =>
-                "{{\"kind\":{json.encode(kind)},\"states\":{checked.states},\"steps\":{checked.steps},\"depth\":{checked.depth},\"never\":{quoted(checked.never)},\"broken\":null}}"
+                "{{\"kind\":{json.encode(kind)},\"states\":{checked.states},\"steps\":{checked.steps},\"depth\":{checked.depth},\"never\":{quoted(checked.never)},\"vacuous\":{quoted(checked.vacuous)},\"broken\":null}}"
             err(broken) =>
                 "{{\"kind\":{json.encode(kind)},\"broken\":{{\"what\":{json.encode(broken.what)},\"property\":{json.encode(broken.property)},\"path\":{listed(broken.path)},\"loop\":{listed(broken.loop)}}}}}"
         }
         modelNative.report(text)
     }
     result
+}
+
+/// The names of the properties of `holds` that what starts them never came
+/// to, as `came` says of each.
+fn vacuous[S](holds: Array[Property[S]], came: fn(fn(S): Bool): Bool): Array[String] {
+    var idle: Array[String] = []
+    for property in holds {
+        match property.applies {
+            some(applies) if not came(applies) => idle.push(property.name)
+            _ => {}
+        }
+    }
+    idle
 }
 
 /// What comes of the properties that are checked once every state is known.
@@ -837,6 +858,7 @@ fn machining[
         steps: graph.edges.map((out) { out.length() }).sum()
         depth: graph.depth
         never
+        vacuous: vacuous(holds, (applies) { eachState(graph, applies).any((held) { held }) })
     }
 }
 
@@ -2105,6 +2127,7 @@ fn watching[S: reflect.Reflect](
         steps: trace.length() - 1
         depth: trace.length() - 1
         never: []
+        vacuous: vacuous(holds, (applies) { trace.any(applies) })
     }
 }
 

@@ -6939,7 +6939,7 @@ debe cumplirse, paso a paso y con cada estado del camino.
 
 ~~~tondo
 pub type Step[S] = { name: String, state: S }
-pub type Checked = { states: Int, steps: Int, depth: Int, never: Array[String] }
+pub type Checked = { states: Int, steps: Int, depth: Int, never: Array[String], vacuous: Array[String] = [] }
 pub type Visit = { step: String, state: String }
 pub type Violation = { what: String, path: Array[Visit], loop: Array[Visit], property: String? = none }
 pub fn step[S](name: String, next: S): Step[S]
@@ -7028,7 +7028,9 @@ el orden en que llegaron sus elementos. `step(nombre, estado)` es el
 `Step` de ese nombre. `expect` da lo comprobado, o hace fallar el test que la
 llama con lo que se rompió. `Violation.property` nombra la propiedad de `holds`
 que se rompió, y es `none` para un estado sin pasos, un paso que falló o un
-código que se salió del modelo. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
+código que se salió del modelo. `Checked.vacuous` nombra las propiedades que se
+cumplieron sin decir nada, porque lo que las empieza no se dio en ningún estado,
+como un `leadsTo` cuyo `when` no se cumple nunca. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
 
 ## 15. Contrato exigido a cada módulo
 

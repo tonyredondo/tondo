@@ -196,6 +196,13 @@ impl<'a> Printer<'a> {
                     let what = if model["kind"] == "follows" { "the code never took" } else { "no state took" };
                     say!("  model: {what} {}", never.join(", "));
                 }
+                // What held with nothing to say.
+                for name in model["vacuous"].as_array().into_iter().flatten().filter_map(serde_json::Value::as_str) {
+                    say!("  model: `{name}` says nothing: what starts it held in no state");
+                }
+                if model["states"] == 1 && matches!(model["kind"].as_str(), Some("check" | "machine")) {
+                    say!("  model: it never leaves its start state: no step can be taken there");
+                }
             }
             // What its benchmarks measured, under `--bench`.
             if !attempt.benchmarks.is_empty() {

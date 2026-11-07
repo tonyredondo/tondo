@@ -2384,3 +2384,16 @@ fn the_models_of_the_runtime_hold() {
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert!(stdout.contains("lockAsTlcDoes ... ok"), "{stdout}");
 }
+
+/// A model that holds with nothing to say says so: a property whose start
+/// held in no state, and a model that never leaves its start.
+#[test]
+fn a_model_that_says_nothing_is_told() {
+    let tests = "import std.model\n\nfn steps(n: Int): Array[model.Step[Int]] {\n    if n < 3 { [model.step(\"add\", n + 1)] } else { [] }\n}\n\ntest idle {\n    let never = model.leadsTo((n: Int) { n > 10 }, (n: Int) { n == 0 }, name: \"past ten comes back\")\n    let fine = model.leadsTo((n: Int) { n == 1 }, (n: Int) { n == 3 }, name: \"one goes to three\")\n    let checked = model.expect(model.check(0, steps, holds: [never, fine]))\n    assert(checked.vacuous == [\"past ten comes back\"])\n}\n\ntest stuck {\n    model.expect(model.check(0, (_: Int): Array[model.Step[Int]] { [] }))\n}\n";
+    let dir = project("models-nothing", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("model: `past ten comes back` says nothing"), "{stdout}");
+    assert!(!stdout.contains("`one goes to three` says nothing"), "{stdout}");
+    assert!(stdout.contains("model: it never leaves its start state"), "{stdout}");
+}

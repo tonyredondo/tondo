@@ -535,6 +535,22 @@ fn next_step(name: &str, args: &Args, reply: &Reply) -> Option<&'static str> {
         "run" | "test" if said("panic[") => {
             Some("`explain` says what the code means; a dump shows the values: `guide` topic `runbook-crash`")
         }
+        // A model that holds with nothing to say.
+        "test"
+            if tests.iter().any(|t| {
+                t["attempts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|a| a["models"].as_array().into_iter().flatten())
+                    .any(|m| m["vacuous"].as_array().is_some_and(|v| !v.is_empty()) || m["states"] == 1)
+            }) =>
+        {
+            Some(
+                "a model held with nothing to say: what starts a property of `vacuous` held in no state, or a model of \
+one state never left it; `guide` topic `models`",
+            )
+        }
         // What a run that passed did not try.
         "test" if args.text("schedules").is_none() && tests.iter().filter(passed).any(|t| t["tasks"] == true) => {
             Some("tests that start tasks ran in one order of them: `schedules: \"all\"` runs every order that differs")

@@ -1224,7 +1224,7 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             Orders::At(path) => (1, (path.split('.').filter_map(|choice| choice.parse().ok()).collect(), Vec::new())),
         };
         // What a model never did in any order: in none of them.
-        let mut never: Option<Vec<std::collections::BTreeSet<String>>> = None;
+        let mut never: Option<Vec<[std::collections::BTreeSet<String>; 2]>> = None;
         let mut tried = std::collections::HashSet::from([first.clone()]);
         let mut classes = std::collections::HashSet::new();
         let mut pending: std::collections::VecDeque<orders::Order> = [first].into();
@@ -1256,16 +1256,20 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 pending.clear();
                 break;
             }
+            // What a model never did, and the properties that said nothing:
+            // in none of the orders.
             for (at, model) in last.iter().flat_map(|attempt| &attempt.models).enumerate() {
-                let here: std::collections::BTreeSet<String> = model["never"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|s| s.as_str().map(String::from))
-                    .collect();
+                let names = |key: &str| -> std::collections::BTreeSet<String> {
+                    model[key].as_array().into_iter().flatten().filter_map(|s| s.as_str().map(String::from)).collect()
+                };
+                let here = [names("never"), names("vacuous")];
                 let all = never.get_or_insert_with(Vec::new);
                 match all.get_mut(at) {
-                    Some(before) => before.retain(|step| here.contains(step)),
+                    Some(before) => {
+                        for (kept, now) in before.iter_mut().zip(&here) {
+                            kept.retain(|name| now.contains(name));
+                        }
+                    }
                     None => all.push(here),
                 }
             }
@@ -1298,8 +1302,9 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             }
         }
         for attempt in &mut last {
-            for (model, all) in attempt.models.iter_mut().zip(never.iter().flatten()) {
-                model["never"] = serde_json::json!(all);
+            for (model, [none, idle]) in attempt.models.iter_mut().zip(never.iter().flatten()) {
+                model["never"] = serde_json::json!(none);
+                model["vacuous"] = serde_json::json!(idle);
             }
         }
         for mut attempt in last.drain(..) {

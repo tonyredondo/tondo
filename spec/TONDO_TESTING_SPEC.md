@@ -1800,8 +1800,9 @@ llama, comprueba un modelo, y `tondo test --models` ejecuta solo esos. Cada comp
 en `models` de cada intento, con `kind`, cuántos estados, pasos y profundidad,
 `never` y lo que se rompió, si algo se rompió. La salida humana nombra lo que un
 modelo nunca hizo: los eventos que ningún estado de una máquina toma, y los pasos
-del modelo que el código no dio. Con `--schedules all`, esto último en ningún
-orden.
+del modelo que el código no dio, las propiedades que no dijeron nada
+(`vacuous`) y el modelo que nunca sale de su primer estado. Con
+`--schedules all`, los pasos y las propiedades, en ningún orden.
 
 Una ejecución dice además lo que no probó. Un test que lanza tareas, él o lo que
 llama, lleva `tasks` en el informe; si pasó sin `--schedules`, la salida humana
