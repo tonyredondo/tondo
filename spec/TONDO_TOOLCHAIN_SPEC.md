@@ -296,6 +296,9 @@ tondo version [--json]
   (sección 7.12 y 22.3 del lenguaje).
   `check` no pide `main`: un paquete de solo declaraciones, como una librería
   de la que otros dependen, se comprueba sin `E1806`, que dan `run` y `build`.
+  `check` de un proyecto comprueba también sus tests, los `_test.to` y los de
+  `tests/`, cuando su código no tiene errores, como los ve un editor: da lo
+  que dicen ellos solos, en sus archivos.
 - `--link` enlaza una librería de C más, por nombre o archivo como en
   `[native] libraries`; un archivo suelto, que no tiene `tondo.toml`, la usa
   para sus `extern fn`.

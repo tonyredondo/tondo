@@ -214,6 +214,14 @@ pub fn check(path: &Path) -> Result<Analysis, String> {
         let more = for_system(other, || analyze_with(path, false, false, false, Root::Checked))?;
         merge_system(&mut analysis, &more, other);
     }
+    // A project's tests too, once its code is right, as an editor shows
+    // them: what they alone say, in their own files.
+    if path.is_dir() && !analysis.diags.has_errors() {
+        let tests = analyze_with(path, true, false, false, Root::Checked)?;
+        merge(&mut analysis, &tests, None, |file| {
+            file.logical.ends_with("_test.to") || Path::new(&file.logical).starts_with("tests")
+        });
+    }
     // What fails on one system does not build.
     if analysis.diags.has_errors() {
         analysis.program = None;
@@ -247,6 +255,18 @@ pub fn checked_systems(path: &Path) -> Result<Vec<project::System>, String> {
 /// Adds to an analysis the diagnostics of another system's that it does
 /// not have, each saying the system, with the files they are in.
 pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::System) {
+    merge(into, from, Some(system), |_| true);
+}
+
+/// Adds to an analysis the diagnostics of another that it does not have,
+/// of the files `wanted` takes, with those files; of another system's, each
+/// says which.
+fn merge(
+    into: &mut Analysis,
+    from: &Analysis,
+    system: Option<project::System>,
+    wanted: impl Fn(&crate::source::SourceFile) -> bool,
+) {
     let mut moved = |span: Span| -> Span {
         let file = from.sources.file_of(span.start);
         let found = (0..into.sources.len()).find(|&i| {
@@ -265,7 +285,11 @@ pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::Syste
         Span::new(span.start - file.base + base, span.end - file.base + base)
     };
     let mut added = Vec::new();
-    for mut diagnostic in from.diags.list.iter().cloned() {
+    let taken = from.diags.list.iter().filter(|d| match d.span {
+        Some(span) => wanted(from.sources.file_of(span.start)),
+        None => system.is_some(),
+    });
+    for mut diagnostic in taken.cloned() {
         diagnostic.span = diagnostic.span.map(&mut moved);
         for fix in &mut diagnostic.fixes {
             for edit in &mut fix.edits {
@@ -281,7 +305,9 @@ pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::Syste
             .iter()
             .any(|d| d.code == diagnostic.code && d.message == diagnostic.message && d.span == diagnostic.span);
         if !known {
-            diagnostic.message = format!("on {}: {}", system.shown(), diagnostic.message);
+            if let Some(system) = system {
+                diagnostic.message = format!("on {}: {}", system.shown(), diagnostic.message);
+            }
             added.push(diagnostic);
         }
     }

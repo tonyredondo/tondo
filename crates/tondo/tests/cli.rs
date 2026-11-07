@@ -294,6 +294,29 @@ fn every_code_is_explained() {
     assert!(missing.is_empty(), "codes without an explanation: {missing:?}");
 }
 
+/// `check` of a project checks its tests too, once its code is right, as an
+/// editor shows them: a test that does not compile is not left for `test`.
+#[test]
+fn checks_the_tests_of_a_project() {
+    let dir = scratch("checked-tests");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "pub fn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test doubles {\n    assert(twice(\"2\") == 4)\n}\n").unwrap();
+    std::fs::write(dir.join("tests/api.to"), "import app\n\ntest api {\n    assert(app.twice(2) == true)\n}\n")
+        .unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("src/main_test.to:2:"), "{err}");
+    assert!(err.contains("tests/api.to:4:"), "{err}");
+    // An error of the code comes alone: the tests are checked once it is right.
+    std::fs::write(dir.join("src/main.to"), "pub fn twice(n: Int): Int {\n    n * \"2\"\n}\n\nfn main() {}\n").unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("src/main.to:2:") && !err.contains("_test.to"), "{err}");
+}
+
 /// A project with files of each system (language 6.8): this machine's are
 /// built, run and tested; `check` checks the other's too and names it; the
 /// other's files are not counted by coverage; `systems` limits a package.
