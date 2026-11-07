@@ -1,0 +1,9 @@
+fn holds(test: fn(Int): Bool): Bool {
+    test(1)
+}
+
+fn main() {
+    _ = holds((select: Int) { true })
+}
+
+// expect-error: E0004 `select` is a keyword and cannot name a parameter: choose another name

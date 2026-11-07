@@ -2039,7 +2039,16 @@ impl Parser<'_> {
                 if self.at(&Tok::RParen) {
                     break;
                 }
-                let name = self.ident()?;
+                // `(select: T)` is a closure whatever the name: say what is wrong with it.
+                let name = match (self.tok().clone(), self.nth(1)) {
+                    (Tok::Kw(kw), Tok::Colon) => {
+                        let message =
+                            format!("`{}` is a keyword and cannot name a parameter: choose another name", kw.as_str());
+                        self.diags.error("E0004", self.span(), message);
+                        Ident { name: kw.as_str().into(), span: self.bump() }
+                    }
+                    _ => self.ident()?,
+                };
                 let (ty, mode, variadic) = if self.eat(&Tok::Colon) {
                     let mode = self.mode();
                     let variadic = mode == Mode::Value && self.eat(&Tok::Ellipsis);
