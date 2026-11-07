@@ -127,6 +127,10 @@ race with little CPU, which is where a failure otherwise shows hours later.
   The toolchain does what it can by itself rather than ask for
   annotations.
 - Keep it small: no code a feature does not need.
+- The public API of the standard library is recorded in
+  `crates/tondo/tests/snapshots/std-api.txt`, which a test holds it to: a
+  change to it on purpose records it again with
+  `TONDO_UPDATE_API=1 cargo test -p tondo --test api standard_api`.
 - The skill in `.agents/skills/tondo`, which `.claude/skills/tondo` links
   to, is `tondo guide --skill`: after changing the guide's overview, write
   it again with

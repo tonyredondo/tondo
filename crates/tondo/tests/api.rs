@@ -294,3 +294,47 @@ fn the_standard_library_has_no_warnings() {
     let own: Vec<_> = diagnostics.iter().filter(|d| d["file"].as_str().unwrap().starts_with("<std>")).collect();
     assert!(own.is_empty(), "{own:#?}");
 }
+
+/// The public API of the standard library, every declaration of every
+/// module, as recorded in `tests/snapshots/std-api.txt`: a change to it, as
+/// the refactoring's moves could make by mistake, shows here
+/// (docs/refactor.md, phase 0.5). `TONDO_UPDATE_API=1` records it again, on
+/// purpose.
+#[test]
+fn the_standard_api_is_as_recorded() {
+    let dir = std::env::temp_dir();
+    let (listed, _, _) = tondo(&dir, &["api", "--list", "--json"]);
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let mut text = String::new();
+    for module in listed["modules"].as_array().unwrap().iter().filter_map(|m| m.as_str()) {
+        if module != "prelude" && !module.starts_with("std.") {
+            continue;
+        }
+        let (shown, stderr, status) = tondo(&dir, &["api", module, "--json"]);
+        assert_eq!(status, 0, "{module}: {stderr}");
+        let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        let mut declarations: Vec<&str> =
+            shown["declarations"].as_array().unwrap().iter().filter_map(|d| d["declaration"].as_str()).collect();
+        declarations.sort();
+        text.push_str(&format!("== {module}\n"));
+        for declaration in declarations {
+            text.push_str(declaration);
+            text.push('\n');
+        }
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/std-api.txt");
+    if std::env::var_os("TONDO_UPDATE_API").is_some() {
+        write(path, &text);
+        return;
+    }
+    let recorded = std::fs::read_to_string(&path).unwrap_or_default();
+    if recorded != text {
+        let before: std::collections::BTreeSet<&str> = recorded.lines().collect();
+        let after: std::collections::BTreeSet<&str> = text.lines().collect();
+        let gone: Vec<&&str> = before.difference(&after).take(20).collect();
+        let new: Vec<&&str> = after.difference(&before).take(20).collect();
+        panic!(
+            "the standard library's API changed; if on purpose, run with TONDO_UPDATE_API=1\ngone: {gone:#?}\nnew: {new:#?}"
+        );
+    }
+}

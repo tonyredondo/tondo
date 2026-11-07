@@ -1,0 +1,4363 @@
+== prelude
+impl Discrete for Char
+impl Discrete for Int
+impl Discrete for Int128
+impl Discrete for Int16
+impl Discrete for Int32
+impl Discrete for Int8
+impl Discrete for UInt
+impl Discrete for UInt128
+impl Discrete for UInt16
+impl Discrete for UInt32
+impl Discrete for UInt8
+impl Display for Failure
+impl Iterator[Char] for CharIterator
+impl Ordered for Bool
+impl Ordered for Byte
+impl Ordered for Char
+impl Ordered for Float
+impl Ordered for Int
+impl Ordered for Int128
+impl Ordered for Int16
+impl Ordered for Int32
+impl Ordered for Int8
+impl Ordered for String
+impl Ordered for UInt
+impl Ordered for UInt128
+impl Ordered for UInt16
+impl Ordered for UInt32
+impl Ordered for UInt8
+impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T]
+impl[I: Iterator[T], J: Iterator[U], T, U] Iterator[(T, U)] for ZipIterator[I, J, T, U]
+impl[I: Iterator[T], T, U] Iterator[U] for FlatMapIterator[I, T, U]
+impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U]
+impl[I: Iterator[T], T] Iterator[(Int, T)] for EnumerateIterator[I, T]
+impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T]
+impl[I: Iterator[T], T] Iterator[T] for SkipIterator[I, T]
+impl[I: Iterator[T], T] Iterator[T] for SkipWhileIterator[I, T]
+impl[I: Iterator[T], T] Iterator[T] for TakeIterator[I, T]
+impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T]
+impl[T: Discrete + Ordered] Iterator[T] for Range[T]
+impl[T: Display] Display for Range[T]
+impl[T] Iterator[T] for ArrayIterator[T]
+pub alias Panic = panics.Panic
+pub enum ByteOrder {
+    Big
+    Little
+}
+pub fn Array[T: Additive].sum(self): T
+pub fn Array[T: Display].join(self, separator: String): String
+pub fn Array[T: Equatable].contains(self, value: T): Bool
+pub fn Array[T: Key].unique(self): Array[T]
+pub fn Array[T: Ordered].max(self): T?
+pub fn Array[T: Ordered].min(self): T?
+pub fn Array[T: Ordered].sort(mut self)
+pub fn Array[T: Ordered].sorted(self): Array[T]
+pub fn Array[T].all(self, predicate: fn(T): Bool): Bool
+pub fn Array[T].any(self, predicate: fn(T): Bool): Bool
+pub fn Array[T].chunks(self, size: Int): Array[Array[T]]
+pub fn Array[T].count(self, predicate: fn(T): Bool): Int
+pub fn Array[T].drop(self, count: Int): Array[T]
+pub fn Array[T].enumerate(self): Array[(Int, T)]
+pub fn Array[T].extend(var self, other: Array[T])
+pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T]
+pub fn Array[T].find(self, predicate: fn(T): Bool): T?
+pub fn Array[T].findIndex(self, predicate: fn(T): Bool): Int?
+pub fn Array[T].first(self): T?
+pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U]
+pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]]
+pub fn Array[T].iter(self): ArrayIterator[T]
+pub fn Array[T].last(self): T?
+pub fn Array[T].map[U](self, transform: fn(T): U): Array[U]
+pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T])
+pub fn Array[T].reduce[A](self, initial: A, combine: fn(A, T): A): A
+pub fn Array[T].replaced(self, index: Int, item: T): Array[T]
+pub fn Array[T].retain(var self, keep: fn(T): Bool)
+pub fn Array[T].reverse(mut self)
+pub fn Array[T].reversed(self): Array[T]
+pub fn Array[T].sortBy[K: Ordered](mut self, key: fn(T): K)
+pub fn Array[T].sortedBy[K: Ordered](self, key: fn(T): K): Array[T]
+pub fn Array[T].sortedWith(self, compare: fn(T, T): Int): Array[T]
+pub fn Array[T].swap(mut self, i: Int, j: Int)
+pub fn Array[T].take(self, count: Int): Array[T]
+pub fn Array[T].windows(self, size: Int): Array[Array[T]]
+pub fn Array[T].zip[U](self, other: Array[U]): Array[(T, U)]
+pub fn Char.code(self): Int
+pub fn Char.compare(self, other: Char): Int
+pub fn Char.from(code: Int): Char?
+pub fn Char.isAlphanumeric(self): Bool
+pub fn Char.isDigit(self): Bool
+pub fn Char.isLetter(self): Bool
+pub fn Char.isLower(self): Bool
+pub fn Char.isMark(self): Bool
+pub fn Char.isPunctuation(self): Bool
+pub fn Char.isSymbol(self): Bool
+pub fn Char.isUpper(self): Bool
+pub fn Char.isWhitespace(self): Bool
+pub fn Char.toLower(self): Char
+pub fn Char.toUpper(self): Char
+pub fn Contexts.current(): Contexts
+pub fn Deque[T: Equatable].contains(self, value: T): Bool
+pub fn Failure.find[E](self): E?
+pub fn Map[K: Key, V].filter(self, keep: fn(K, V): Bool): Map[K, V]
+pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V
+pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W]
+pub fn Map[K: Key, V].merge(self, other: Map[K, V]): Map[K, V]
+pub fn Option[T].andThen[U](self, next: fn(T): U?): U?
+pub fn Option[T].context(self, message: String): T ! Failure
+pub fn Option[T].expect(self, message: String): T
+pub fn Option[T].filter(self, keep: fn(T): Bool): T?
+pub fn Option[T].isNone(self): Bool
+pub fn Option[T].isSome(self): Bool
+pub fn Option[T].map[U](self, transform: fn(T): U): U?
+pub fn Option[T].okOr[E](self, error: E): T ! E
+pub fn Option[T].orElse(self, other: T?): T?
+pub fn Option[T].unwrapOr(self, fallback: T): T
+pub fn Range[T: Ordered].contains(self, value: T): Bool
+pub fn Range[T: Ordered].isEmpty(self): Bool
+pub fn Range[T].end(self): T
+pub fn Range[T].isInclusive(self): Bool
+pub fn Range[T].start(self): T
+pub fn Result[T, E].andThen[U](self, next: fn(T): U ! E): U ! E
+pub fn Result[T, E].context(self, message: String): T ! Failure
+pub fn Result[T, E].err(self): E?
+pub fn Result[T, E].expect(self, message: String): T
+pub fn Result[T, E].isErr(self): Bool
+pub fn Result[T, E].isOk(self): Bool
+pub fn Result[T, E].mapErr[F](self, transform: fn(E): F): T ! F
+pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E
+pub fn Result[T, E].ok(self): T?
+pub fn Result[T, E].unwrapOr(self, fallback: T): T
+pub fn Set[T: Key].difference(self, other: Set[T]): Set[T]
+pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T]
+pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool
+pub fn Set[T: Key].union(self, other: Set[T]): Set[T]
+pub fn String.chars(self): CharIterator
+pub fn String.compare(self, other: String): Int
+pub fn String.count(self, needle: String): Int
+pub fn String.equalsIgnoringCase(self, other: String): Bool
+pub fn String.findLast(self, needle: String): Int?
+pub fn String.lines(self): Array[String]
+pub fn String.padEnd(self, width: Int, fill: String = " "): String
+pub fn String.padStart(self, width: Int, fill: String = " "): String
+pub fn String.removePrefix(self, prefix: String): String
+pub fn String.removeSuffix(self, suffix: String): String
+pub fn String.repeat(self, count: Int): String
+pub fn String.split(self, separator: String, limit: Int? = none): Array[String]
+pub fn String.splitOnce(self, separator: String): (String, String)?
+pub fn String.toLower(self): String
+pub fn String.toUpper(self): String
+pub fn String.trim(self, characters: String? = none): String
+pub fn String.trimEnd(self, characters: String? = none): String
+pub fn String.trimStart(self, characters: String? = none): String
+pub fn String.words(self): Array[String]
+pub trait Additive {
+    fn zero(): Self
+
+    fn plus(self, other: Self): Self
+
+    fn minus(self, other: Self): Self
+}
+pub trait Integer: Number + Ordered + Display {
+
+}
+pub trait Iterator[T] {
+    fn map[U](self, transform: fn(T): U): MapIterator[Self, T, U]
+
+    fn filter(self, keep: fn(T): Bool): FilterIterator[Self, T]
+
+    /// The first `count` elements.
+    fn take(self, count: Int): TakeIterator[Self, T]
+
+    /// The elements after the first `count`.
+    fn skip(self, count: Int): SkipIterator[Self, T]
+
+    /// The elements until the first that fails the test.
+    fn takeWhile(self, predicate: fn(T): Bool): TakeWhileIterator[Self, T]
+
+    /// The elements from the first that fails the test.
+    fn skipWhile(self, predicate: fn(T): Bool): SkipWhileIterator[Self, T]
+
+    /// Each element with its position.
+    fn enumerate(self): EnumerateIterator[Self, T]
+
+    /// Pairs of elements from both, as long as both have one.
+    fn zip[U, J: Iterator[U]](self, other: J): ZipIterator[Self, J, T, U]
+
+    /// The elements, then those of `other`.
+    fn chain[J: Iterator[T]](self, other: J): ChainIterator[Self, J, T]
+
+    /// The elements of the array each element gives, in order.
+    fn flatMap[U](self, transform: fn(T): Array[U]): FlatMapIterator[Self, T, U]
+
+    fn collect(self): Array[T]
+
+    fn count(self): Int
+
+    fn any(self, predicate: fn(T): Bool): Bool
+
+    fn all(self, predicate: fn(T): Bool): Bool
+
+    fn find(self, predicate: fn(T): Bool): T?
+
+    fn reduce[A](self, initial: A, combine: fn(A, T): A): A
+
+    fn forEach(self, action: fn(T))
+}
+pub trait Number: Additive {
+    fn one(): Self
+
+    fn fromInt(value: Int): Self
+
+    fn times(self, other: Self): Self
+
+    fn dividedBy(self, other: Self): Self
+}
+pub trait Ordered {
+    fn compare(self, other: Self): Int
+}
+pub type ArrayIterator[T] = {
+    // private fields
+}
+pub type ChainIterator[I, J, T] = {
+    // private fields
+}
+pub type CharIterator = {
+    // private fields
+}
+pub type Contexts = {
+    // private fields
+}
+pub type EnumerateIterator[I, T] = {
+    // private fields
+}
+pub type Failure = {
+    message: String
+    // private fields
+}
+pub type FilterIterator[I, T] = {
+    // private fields
+}
+pub type FlatMapIterator[I, T, U] = {
+    // private fields
+}
+pub type MapIterator[I, T, U] = {
+    // private fields
+}
+pub type Range[T] = {
+    // private fields
+}
+pub type SkipIterator[I, T] = {
+    // private fields
+}
+pub type SkipWhileIterator[I, T] = {
+    // private fields
+}
+pub type TakeIterator[I, T] = {
+    // private fields
+}
+pub type TakeWhileIterator[I, T] = {
+    // private fields
+}
+pub type ZipIterator[I, J, T, U] = {
+    // private fields
+}
+== std.acme
+impl Display for AcmeError
+pub const LetsEncrypt: String = "https://acme-v02.api.letsencrypt.org/directory"
+pub const LetsEncryptStaging: String = "https://acme-staging-v02.api.letsencrypt.org/directory"
+pub fn tls(
+    domains: Array[String],
+    email: String,
+    directory: String = LetsEncrypt,
+    cache: String? = none,
+    trust: String? = none,
+): net.Tls
+pub type AcmeError = {
+    message: String
+}
+== std.archive
+impl Display for ArchiveError
+impl Display for Format
+pub enum EntryKind {
+    File
+    Directory
+    Symlink
+}
+pub enum Format {
+    Zip
+    Tar
+    TarGzip
+    TarZstd
+}
+pub fn Archive.entries(self): Array[Entry]
+pub fn Archive.extract(self, into: String): !ArchiveError
+pub fn Archive.files(self): fs.FileSystem
+pub fn Archive.format(self): Format
+pub fn Archive.readBytes(self, name: String): Array[Byte] ! ArchiveError
+pub fn Archive.readText(self, name: String): String ! ArchiveError
+pub fn Writer.add(self, name: String, data: Array[Byte], permissions: Int = 0o644): !ArchiveError
+pub fn Writer.addDirectory(self, name: String): !ArchiveError
+pub fn Writer.addFile(self, name: String, path: String): !ArchiveError
+pub fn Writer.finish(self): !ArchiveError
+pub fn create(path: String, from: fs.FileSystem, format: Format? = none): !ArchiveError
+pub fn open(path: String): Archive ! ArchiveError
+pub fn read(bytes: Array[Byte]): Archive ! ArchiveError
+pub fn writer(out: io.Writer, format: Format): Writer
+pub type Archive = {
+    // private fields
+}
+pub type ArchiveError = {
+    message: String
+}
+pub type Entry = {
+    name: String
+    kind: EntryKind
+    size: Int
+    modified: time.DateTime
+    permissions: Int
+    target: String?
+}
+pub type Writer = {
+    // private fields
+}
+== std.cbor
+impl Display for Value
+impl serialization.Decode for Value
+impl serialization.Encode for Value
+pub alias CborError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    /// A date and time (tag 0 or 1), as RFC 3339 text in UTC.
+    DateTime(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asBytes(self): Array[Byte]?
+pub fn Value.asDateTime(self): String?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asInt(self): Int?
+pub fn Value.asMap(self): Map[String, Value]?
+pub fn Value.asText(self): String?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?
+pub fn Value.get(self, key: String): Value?
+pub fn Value.isNull(self): Bool
+pub fn decode[T: serialization.Decode](
+    input: Array[Byte],
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! CborError
+pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): Array[Byte]
+pub fn parse(input: Array[Byte]): Value ! CborError
+== std.cli
+impl Display for CliError
+impl reflect.Reflect for Argument
+impl reflect.Reflect for Option
+impl reflect.Reflect for Rest
+pub annotation Argument = {
+    /// The value when it is missing, written as on the command line.
+    default: String? = none
+}
+pub annotation Option = {
+    short: String? = none
+    default: String? = none
+    env: Array[String] = []
+    hidden: Bool = false
+}
+pub annotation Rest = {
+    /// What the help calls them.
+    name: String = "args"
+}
+pub enum Shell {
+    Bash
+    Zsh
+    Fish
+}
+pub fn Progress.advance(self, by: Int = 1)
+pub fn Progress.finish(self)
+pub fn ask(question: String, default: String = ""): String
+pub fn choose(question: String, options: Array[String]): Int
+pub fn completions[T: reflect.Reflect](shell: Shell): String
+pub fn confirm(question: String, default: Bool = false): Bool
+pub fn help[T: reflect.Reflect](): String
+pub fn isTerminal(): Bool
+pub fn markup(text: String): String
+pub fn parseArgs[T: reflect.Reflect](args: Array[String]): T ! CliError
+pub fn parse[T: reflect.Reflect](): T
+pub fn progress(label: String, total: Int? = none): Progress
+pub fn secret(question: String): String
+pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
+pub fn width(): Int
+pub type CliError = {
+    message: String
+    help: Bool
+}
+pub type Progress = {
+    // private fields
+}
+== std.collections
+pub enum CollectionError {
+    InvalidCapacity
+    InvalidIndex
+    InvalidStep
+    ResourceLimit
+}
+== std.console
+pub fn eprint(text: String)
+pub fn eprintln(text: String)
+pub fn flush(): !io.IoError
+pub fn print(text: String)
+pub fn println(text: String)
+pub fn readLine(): String?
+pub fn setError(writer: io.Writer)
+pub fn setInput(reader: io.Reader)
+pub fn setOutput(writer: io.Writer)
+pub fn stderr(): io.Writer
+pub fn stdin(): io.Reader
+pub fn stdout(): io.Writer
+== std.crypto
+impl Display for CryptoError
+impl Display for KeyKind
+pub enum Cipher {
+    Aes256Gcm
+    ChaCha20Poly1305
+}
+pub enum Curve {
+    Ed25519
+    P256
+    P384
+}
+pub enum KeyKind {
+    Ed25519
+    EcdsaP256
+    EcdsaP384
+    Rsa
+}
+pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError
+pub fn PrivateKey.fromPem(text: String): PrivateKey ! CryptoError
+pub fn PrivateKey.generate(curve: Curve = Curve.Ed25519): PrivateKey
+pub fn PrivateKey.kind(self): KeyKind
+pub fn PrivateKey.pem(self): String
+pub fn PrivateKey.publicKey(self): PublicKey
+pub fn PrivateKey.sign(self, data: Array[Byte]): Array[Byte]
+pub fn PublicKey.fromPem(text: String): PublicKey ! CryptoError
+pub fn PublicKey.kind(self): KeyKind
+pub fn PublicKey.pem(self): String
+pub fn PublicKey.verify(self, data: Array[Byte], signature: Array[Byte]): Bool
+pub fn SecretKey.bytes(self): Array[Byte]
+pub fn SecretKey.fromBytes(
+    bytes: Array[Byte],
+    cipher: Cipher = Cipher.Aes256Gcm,
+): SecretKey ! CryptoError
+pub fn SecretKey.generate(cipher: Cipher = Cipher.Aes256Gcm): SecretKey
+pub fn SecretKey.open(
+    self,
+    sealed: Array[Byte],
+    context: Array[Byte] = [],
+): Array[Byte] ! CryptoError
+pub fn SecretKey.seal(self, data: Array[Byte], context: Array[Byte] = []): Array[Byte]
+pub fn certificates(pem: String): Array[Certificate] ! CryptoError
+pub fn equalSecrets(a: Array[Byte], b: Array[Byte]): Bool
+pub fn hashPassword(password: String): String
+pub fn hkdf(
+    secret: Array[Byte],
+    salt: Array[Byte] = [],
+    info: Array[Byte] = [],
+    length: Int = 32,
+): Array[Byte]
+pub fn pbkdf2(
+    password: Array[Byte],
+    salt: Array[Byte],
+    iterations: Int,
+    length: Int = 32,
+): Array[Byte]
+pub fn verifyPassword(password: String, hash: String): Bool
+pub type Certificate = {
+    subject: String
+    issuer: String
+    names: Array[String]
+    serialNumber: String
+    validFrom: time.DateTime
+    validUntil: time.DateTime
+    der: Array[Byte]
+}
+pub type CryptoError = {
+    message: String
+}
+pub type PrivateKey = {
+    // private fields
+}
+pub type PublicKey = {
+    // private fields
+}
+pub type SecretKey = {
+    // private fields
+}
+== std.csv
+impl Display for CsvError
+impl Iterator[Array[String] ! CsvError] for Rows
+impl Iterator[Map[String, String] ! CsvError] for Records
+pub enum CsvError {
+    /// A quote inside a field that does not start with one, or text after a
+    /// closing quote, at this line and column.
+    Malformed(Int, Int)
+    /// A quoted field that does not end, from this line on.
+    Unterminated(Int)
+    /// A record at this line with other than the header's number of fields:
+    /// the line, the header's count and the record's.
+    FieldCount(Int, Int, Int)
+    /// Reading the input failed.
+    Io(io.IoError)
+}
+pub fn Writer(output: io.Writer, separator: Char = ','): Writer
+pub fn Writer.write(self, fields: Array[String]): !io.IoError
+pub fn format(table: Array[Array[String]], separator: Char = ','): String
+pub fn formatRecords(entries: Array[Map[String, String]], separator: Char = ','): String
+pub fn parse(input: String, separator: Char = ','): Array[Array[String]] ! CsvError
+pub fn parseRecords(input: String, separator: Char = ','): Array[Map[String, String]] ! CsvError
+pub fn records(input: io.Reader, separator: Char = ','): Records
+pub fn rows(input: io.Reader, separator: Char = ','): Rows
+pub type Records = {
+    // private fields
+}
+pub type Rows = {
+    // private fields
+}
+pub type Writer = {
+    // private fields
+}
+== std.debug
+pub trait View[T] {
+    /// The value the debugger shows instead of this one.
+    fn view(self): T
+}
+== std.diagnostics
+impl Display for Frame
+pub fn Counter.add(self, amount: Int = 1)
+pub fn Counter.value(self): Int
+pub fn Gauge.add(self, amount: Int)
+pub fn Gauge.set(self, value: Int)
+pub fn Gauge.value(self): Int
+pub fn counter(name: String): Counter
+pub fn gauge(name: String): Gauge
+pub fn metrics(): Array[Metric]
+pub fn stack(): Array[Frame]
+pub type Counter = {
+    // private fields
+}
+pub type Frame = {
+    function: String
+    file: String
+    line: Int
+    column: Int
+}
+pub type Gauge = {
+    // private fields
+}
+pub type Metric = {
+    name: String
+    value: Int
+    unit: String
+    gauge: Bool
+}
+== std.embed
+pub fn bytes(path: String): Array[Byte]
+pub fn files(path: String): fs.FileSystem
+pub fn text(path: String): String
+== std.encoding
+impl Display for EncodingError
+pub enum Base64Alphabet {
+    Standard
+    Url
+}
+pub enum EncodingError {
+    /// A character the encoding does not use, at this byte offset.
+    InvalidCharacter(Int)
+    /// The text ends in the middle of a value.
+    Truncated
+    /// What the text encodes is not UTF-8.
+    NotUtf8
+}
+pub fn base64Decode(
+    input: String,
+    alphabet: Base64Alphabet = Base64Alphabet.Standard,
+): Array[Byte] ! EncodingError
+pub fn base64Encode(bytes: Array[Byte], alphabet: Base64Alphabet = Base64Alphabet.Standard): String
+pub fn hexDecode(input: String): Array[Byte] ! EncodingError
+pub fn hexEncode(bytes: Array[Byte]): String
+pub fn htmlEscape(input: String): String
+pub fn htmlUnescape(input: String): String
+pub fn urlDecode(input: String): String ! EncodingError
+pub fn urlEncode(input: String): String
+== std.env
+pub enum EnvError {
+    NotFound
+    NotADirectory
+    PermissionDenied
+    Host
+}
+pub fn args(): Array[String]
+pub fn build(): Build
+pub fn cacheDirectory(): String?
+pub fn configDirectory(): String?
+pub fn currentDirectory(): String
+pub fn executable(): String
+pub fn get(name: String): String?
+pub fn homeDirectory(): String?
+pub fn hostname(): String
+pub fn invokedAs(): String
+pub fn processId(): Int
+pub fn processors(physical: Bool = false): Int
+pub fn remove(name: String)
+pub fn set(name: String, value: String)
+pub fn setAll(values: Map[String, String])
+pub fn setCurrentDirectory(path: String): !EnvError
+pub fn syncNative()
+pub fn system(): System
+pub fn user(): User
+pub fn vars(): Map[String, String]
+pub type Build = {
+    /// The package's name, or the file's without `.to`.
+    name: String
+    /// The `version` of `tondo.toml`'s `[package]`, or `0.0.0`.
+    version: String
+    /// The commit of the git repository the package was in.
+    commit: String?
+    /// Whether tracked files had changes that were not committed.
+    modified: Bool
+    /// The target, as tondo names it: `x86_64-linux-gnu`, `aarch64-macos`.
+    target: String
+    /// The compiler that built it: `tondo 0.1.0`.
+    compiler: String
+    /// The packages it uses, without those only its tests use.
+    dependencies: Array[Dependency]
+}
+pub type Dependency = {
+    name: String
+    version: String
+}
+pub type System = {
+    name: String
+    release: String
+    machine: String
+}
+pub type User = {
+    id: Int
+    group: Int
+    name: String
+    home: String
+}
+== std.executor
+impl Display for ExecutorError
+impl Display for SendError
+impl Display for SubmitError
+pub enum ExecutorError {
+    /// A pool runs at least one job at a time: the number given.
+    InvalidWorkers(Int)
+    /// A capacity cannot be negative: the number given.
+    InvalidCapacity(Int)
+}
+pub enum SendError {
+    /// The mailbox is full; only `trySend` says it.
+    Saturated
+    /// The actor stopped: `stop`, the end of its owner's block, or an
+    /// error of its handler.
+    Stopped
+}
+pub enum SubmitError {
+    /// Every worker is busy and the queue is full; only `trySubmit` says it.
+    Saturated
+    /// The pool was shut down.
+    Closed
+}
+pub fn ActorRef[M].send(self, message: M): !SendError
+pub fn ActorRef[M].trySend(self, message: M): !SendError
+pub fn Actor[M, E].reference(self): ActorRef[M]
+pub fn Actor[M, E].stop(self): !E
+pub fn Pool.shutdown(self)
+pub fn Pool.submit[T](self, job: fn(): T): Join[T] ! SubmitError
+pub fn Pool.trySubmit[T](self, job: fn(): T): Join[T] ! SubmitError
+pub fn actor[S, M, E](
+    state: S,
+    capacity: Int,
+    handle: fn(var S, M): !E,
+): Actor[M, E] ! ExecutorError
+pub fn pool(workers: Int, capacity: Int): Pool ! ExecutorError
+pub type ActorRef[M] = {
+    // private fields
+}
+pub type Actor[M, E] = {
+    // private fields
+}
+pub type Pool = {
+    // private fields
+}
+== std.ffi
+pub alias CBool = Bool
+pub alias CChar = Byte
+pub alias CDouble = Float
+pub alias CFloat = Float32
+pub alias CInt = Int32
+pub alias CLong = Int
+pub alias CLongLong = Int
+pub alias CSSize = Int
+pub alias CShort = Int16
+pub alias CSize = UInt64
+pub alias CString = memory.CString
+pub alias CUInt = UInt32
+pub alias CULong = UInt64
+pub alias CULongLong = UInt64
+pub alias CUShort = UInt16
+pub alias Void = memory.Void
+pub extern type VaList
+pub fn alignOf[T](): Int
+pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T]
+pub fn context[T: ~Copy](value: T): Pointer[Void]
+pub fn fromCChars(chars: Array[CChar]): String
+pub fn sizeOf[T](): Int
+pub fn toCChars(text: String, count: Int): Array[CChar]
+pub fn toCString(text: String): CString
+pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
+pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1)
+pub unsafe fn free(pointer: Pointer[Void]?)
+pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
+pub unsafe fn fromCString(text: CString): String
+pub unsafe fn fromContext[T](data: Pointer[Void]): T
+== std.format
+impl Display for Builder
+impl Display for FormatError
+impl Display for Plural
+pub enum Plural {
+    Zero
+    One
+    Two
+    Few
+    Many
+    Other
+}
+pub fn Builder(): Builder
+pub fn Builder.addLine[T: Display](mut self, value: T)
+pub fn Builder.add[T: Display](mut self, value: T)
+pub fn Builder.isEmpty(self): Bool
+pub fn Builder.text(self): String
+pub fn apply[T: Display](value: T, spec: String): String ! FormatError
+pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "en"): String
+pub fn number[T: Number + Display](value: T, locale: String = "en", decimals: Int? = none): String
+pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: Int = 0): String
+pub fn plural(count: Int, locale: String = "en"): Plural
+pub type Builder = {
+    // private fields
+}
+pub type FormatError = {
+    message: String
+}
+== std.fs
+pub enum ChangeKind {
+    Created
+    Modified
+    Removed
+}
+pub enum FileKind {
+    File
+    Directory
+    Symlink
+    Other
+}
+pub enum FsError {
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    NotADirectory
+    IsADirectory
+    InvalidData
+    InvalidName
+    /// A failure the others do not name, with the system's number of it,
+    /// `errno`: it shows with the system's text of it, `os error 28: No
+    /// space left on device`, and `Host(0)` as `host`.
+    Host(Int)
+}
+pub enum OpenMode {
+    Read
+    Write
+    Append
+    CreateNew
+    ReadWrite
+}
+pub fn File.close(self): Unit ! FsError
+pub fn File.flush(var self): Unit ! FsError
+pub fn File.lock(var self, shared: Bool = false): Unit ! FsError
+pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
+pub fn File.readLine(var self): String? ! FsError
+pub fn File.readText(var self): String ! FsError
+pub fn File.reader(self): io.Reader
+pub fn File.tryLock(var self, shared: Bool = false): Bool ! FsError
+pub fn File.write(var self, text: String): Unit ! FsError
+pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
+pub fn File.writer(self): io.Writer
+pub fn FileSystem.createDirectory(self, path: String): !FsError
+pub fn FileSystem.directory(self): String?
+pub fn FileSystem.exists(self, path: String): Bool
+pub fn FileSystem.glob(self, pattern: String): Array[String] ! FsError
+pub fn FileSystem.list(self, path: String = ""): Array[String] ! FsError
+pub fn FileSystem.metadata(self, path: String): Metadata ! FsError
+pub fn FileSystem.readBytes(self, path: String): Array[Byte] ! FsError
+pub fn FileSystem.readText(self, path: String): String ! FsError
+pub fn FileSystem.remove(self, path: String, recursive: Bool = false): !FsError
+pub fn FileSystem.sub(self, directory: String): FileSystem
+pub fn FileSystem.tag(self, path: String): String?
+pub fn FileSystem.walk(self, root: String = ""): Array[Entry] ! FsError
+pub fn FileSystem.writeBytes(self, path: String, data: Array[Byte]): !FsError
+pub fn FileSystem.writeText(self, path: String, text: String): !FsError
+pub fn appendText(path: String, text: String): Unit ! FsError
+pub fn copy(from: String, to: String): Unit ! FsError
+pub fn createDirectory(path: String): Unit ! FsError
+pub fn createLink(target: String, link: String): !FsError
+pub fn createSymlink(target: String, link: String): !FsError
+pub fn createTemporaryDirectory(directory: String? = none, pattern: String = ""): String ! FsError
+pub fn createTemporaryFile(directory: String? = none, pattern: String = ""): String ! FsError
+pub fn disk(root: String = "."): FileSystem
+pub fn exists(path: String): Bool
+pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! FsError
+pub fn list(path: String): Array[String] ! FsError
+pub fn memory(): FileSystem
+pub fn metadata(path: String): Metadata ! FsError
+pub fn open(path: String, mode: OpenMode): File ! FsError
+pub fn overlay(layers: ...FileSystem): FileSystem
+pub fn readBytes(path: String): Array[Byte] ! FsError
+pub fn readSymlink(path: String): String ! FsError
+pub fn readText(path: String): String ! FsError
+pub fn realPath(path: String): String ! FsError
+pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
+pub fn rename(from: String, to: String): Unit ! FsError
+pub fn setModified(path: String, time: time.DateTime): !FsError
+pub fn setPermissions(path: String, permissions: Int): !FsError
+pub fn space(path: String): Space ! FsError
+pub fn walk(
+    root: String,
+    enter: (fn(Entry): Bool)? = none,
+    skipUnreadable: Bool = false,
+): Array[Entry] ! FsError
+pub fn watch(
+    paths: Array[String],
+    settle: time.Duration? = none,
+): Receiver[Array[Change]] ! FsError
+pub fn writeBytes(path: String, data: Array[Byte]): Unit ! FsError
+pub fn writeText(path: String, text: String): Unit ! FsError
+pub type Change = {
+    path: String
+    kind: ChangeKind
+}
+pub type Entry = {
+    path: String
+    kind: FileKind
+}
+pub type File
+pub type FileSystem = {
+    // private fields
+}
+pub type Metadata = {
+    kind: FileKind
+    size: Int
+    readOnly: Bool
+    modified: time.DateTime
+    permissions: Int
+    inode: Int
+    links: Int
+    owner: Int
+    group: Int
+}
+pub type Space = {
+    total: Int
+    free: Int
+    available: Int
+}
+== std.graphql
+pub fn Schema.execute(
+    self,
+    document: String,
+    variables: Map[String, json.Value] = [:],
+    operation: String? = none,
+): json.Value
+pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
+pub fn Schema.mutation[M: reflect.Reflect](self, root: M): Schema
+pub fn Schema.sdl(self): String
+pub fn schema[Q: reflect.Reflect](query: Q): Schema
+pub type Schema = {
+    // private fields
+}
+== std.grpc
+impl Display for Code
+impl Display for Direction
+impl Display for ServingStatus
+impl Display for Status
+impl http.GrpcService for Service
+impl[T: protobuf.Message + reflect.Reflect] Iterator[T ! Status] for Stream[T]
+pub enum Balancing {
+    /// All on the first address that answers, in order, until it drops.
+    PickFirst
+    /// Each on the next of the addresses that answer.
+    RoundRobin
+}
+pub enum Code {
+    Ok
+    Cancelled
+    Unknown
+    InvalidArgument
+    DeadlineExceeded
+    NotFound
+    AlreadyExists
+    PermissionDenied
+    ResourceExhausted
+    FailedPrecondition
+    Aborted
+    OutOfRange
+    Unimplemented
+    Internal
+    Unavailable
+    DataLoss
+    Unauthenticated
+}
+pub enum Compression {
+    None
+    Gzip
+}
+pub enum Direction {
+    Received
+    Sent
+}
+pub enum ServingStatus {
+    Unknown
+    Serving
+    NotServing
+    /// A service the server does not know, which only a watch gives.
+    ServiceUnknown
+}
+pub fn Channel.bidiStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](self, path: String, metadata: Map[String, String] = [:]): Duplex[In, Out]
+pub fn Channel.clientStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
+pub fn Channel.onCall(self, interceptor: fn(Call, fn(Call): !Status): !Status): Channel
+pub fn Channel.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Channel
+pub fn Channel.serverStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
+pub fn Channel.unary[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status
+pub fn Code.number(self): Int
+pub fn Code.of(number: Int): Code
+pub fn Duplex[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+].replies(self): Stream[Out]
+pub fn Duplex[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+].send(self, message: In): !Status
+pub fn Duplex[In, Out].closeSend(self)
+pub fn Duplex[In, Out].headers(self): Map[String, String]
+pub fn Duplex[In, Out].trailers(self): Map[String, String]
+pub fn Health(): Health
+pub fn Health.service(self): Service
+pub fn Health.set(self, service: String, status: ServingStatus)
+pub fn ServerCall.receive[T: protobuf.Message + reflect.Reflect](self): T? ! Status
+pub fn ServerCall.send[T: protobuf.Message + reflect.Reflect](self, message: T): !Status
+pub fn Service.compress(self): Service
+pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
+pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
+pub fn Status.from[E: Display](error: E): Status
+pub fn Upload[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+].finish(self): Out ! Status
+pub fn Upload[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+].send(self, message: In): !Status
+pub fn bidiStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In], Sender[Out]): !Status): !Status
+pub fn call(): Call
+pub fn clientStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In]): Out ! Status): !Status
+pub fn connect(
+    target: String,
+    trust: String = "",
+    certificate: String = "",
+    key: String = "",
+    compression: Compression = Compression.None,
+    balancing: Balancing = Balancing.PickFirst,
+): Channel ! Status
+pub fn reflection(services: Array[Service]): Service
+pub fn serverStream[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](exchange: ServerCall, method: fn(In, Sender[Out]): !Status): !Status
+pub fn setHeader(name: String, value: String)
+pub fn setTrailer(name: String, value: String)
+pub fn unary[
+    In: protobuf.Message + reflect.Reflect,
+    Out: protobuf.Message + reflect.Reflect,
+](exchange: ServerCall, method: fn(In): Out ! Status): !Status
+pub type Call = {
+    method: String = ""
+    metadata: Map[String, String] = [:]
+    peer: String = ""
+    timeout: time.Duration? = none
+}
+pub type Channel = {
+    // private fields
+}
+pub type Duplex[In, Out] = {
+    // private fields
+}
+pub type Health = {
+    // private fields
+}
+pub type Method = {
+    name: String
+    handler: fn(ServerCall): !Status
+    noSideEffects: Bool = false
+}
+pub type ServerCall = {
+    // private fields
+}
+pub type Service = {
+    name: String
+    methods: Array[Method]
+    /// The `.proto` file that declares it, which reflection gives.
+    files: Array[protobuf.FileDescriptor]
+    // private fields
+}
+pub type Status = {
+    code: Code
+    message: String = ""
+    details: Array[protobuf.Any] = []
+}
+pub type Stream[T] = {
+    // private fields
+}
+pub type Upload[In, Out] = {
+    // private fields
+}
+== std.gzip
+pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte]
+pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn reader(from: io.Reader): io.Reader
+pub fn writer(to: io.Writer, level: Int = 6): io.Writer
+== std.hash
+impl Display for Digest
+pub enum Algorithm {
+    Md5
+    Sha1
+    Sha256
+    Sha384
+    Sha512
+}
+pub fn Digest.bytes(self): Array[Byte]
+pub fn Digest.hex(self): String
+pub fn Hasher.finish(self): Digest
+pub fn Hasher.update(self, data: Array[Byte])
+pub fn fnv32(data: Array[Byte]): UInt32
+pub fn fnv32a(data: Array[Byte]): UInt32
+pub fn fnv64(data: Array[Byte]): UInt
+pub fn fnv64a(data: Array[Byte]): UInt
+pub fn hasher(algorithm: Algorithm): Hasher
+pub fn hmac(algorithm: Algorithm, key: Array[Byte]): Hasher
+pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest
+pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest
+pub fn md5(data: Array[Byte]): Digest
+pub fn murmur3(data: Array[Byte], seed: UInt32 = 0): UInt128
+pub fn sha1(data: Array[Byte]): Digest
+pub fn sha256(data: Array[Byte]): Digest
+pub fn sha384(data: Array[Byte]): Digest
+pub fn sha512(data: Array[Byte]): Digest
+pub fn xxhash64(data: Array[Byte], seed: UInt = 0): UInt
+pub type Digest = {
+    // private fields
+}
+pub type Hasher = {
+    // private fields
+}
+== std.http
+impl Display for HttpError
+impl Display for Message
+impl Display for Problem
+impl Display for Response
+impl Iterator[Event ! HttpError] for Events
+impl Iterator[Message ! HttpError] for WebSocket
+impl Iterator[String ! HttpError] for Lines
+impl Iterator[Upload ! Problem] for Uploads
+impl serialization.Decode for Saved
+impl serialization.Decode for UploadedFile
+impl serialization.Encode for Saved
+impl serialization.Encode for UploadedFile
+pub alias Tls = net.Tls
+pub alias TlsVersion = net.TlsVersion
+pub enum HttpError {
+    /// A URL that does not parse, or whose scheme is not `http` or `https`.
+    InvalidUrl(String)
+    /// The name did not resolve, the server refused, or TLS failed.
+    Connect(String)
+    /// The server cannot take the address, as one that is in use.
+    Listen(String)
+    /// The request took longer than its timeout.
+    Timeout
+    /// The server answered with a status of 400 or more: the response, to
+    /// read its body.
+    Status(Response)
+    /// The request's or the response's body failed, or is not what was
+    /// asked for: not UTF-8, not the JSON of the type.
+    Body(String)
+    /// Anything else of HTTP: too many redirects, a broken connection.
+    Protocol(String)
+}
+pub enum Message {
+    Text(String)
+    Binary(Array[Byte])
+}
+pub enum SameSite {
+    Lax
+    Strict
+    None
+}
+pub fn App(): App
+pub fn App.client(self): Client
+pub fn App.compress(mut self, minimum: Int = 1024)
+pub fn App.cors(
+    mut self,
+    origins: Array[String],
+    headers: Array[String] = [],
+    exposed: Array[String] = [],
+    credentials: Bool = false,
+    maxAge: time.Duration = time.seconds(600),
+)
+pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem)
+pub fn App.files(mut self, prefix: String, files: fs.FileSystem, listing: Bool = false)
+pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem)
+pub fn App.grpc[S: GrpcService](mut self, service: S)
+pub fn App.listen(
+    self,
+    port: Int = 8080,
+    host: String = "0.0.0.0",
+    tls: Tls? = none,
+    socket: String? = none,
+    limits: Limits? = none,
+    grace: time.Duration = time.seconds(30),
+): !HttpError
+pub fn App.mount(mut self, prefix: String, other: App)
+pub fn App.openApi(
+    mut self,
+    path: String = "/openapi.json",
+    title: String = "API",
+    version: String = "1.0",
+)
+pub fn App.patch(mut self, path: String, handler: fn(Request): Reply ! Problem)
+pub fn App.post(mut self, path: String, handler: fn(Request): Reply ! Problem)
+pub fn App.put(mut self, path: String, handler: fn(Request): Reply ! Problem)
+pub fn App.route(
+    mut self,
+    method: String,
+    path: String,
+    handler: fn(Request): Reply ! Problem,
+    operation: String = "",
+    schemas: Map[String, String] = [:],
+)
+pub fn App.start(
+    self,
+    port: Int = 0,
+    host: String = "127.0.0.1",
+    tls: Tls? = none,
+    socket: String? = none,
+    limits: Limits? = none,
+): Server ! HttpError
+pub fn App.trustProxies(mut self, networks: ...net.Network)
+pub fn App.uploads(mut self, prefix: String, directory: String)
+pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
+pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): !HttpError)
+pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body
+pub fn Body.form(fields: Map[String, String]): Body
+pub fn Body.json[T: serialization.Encode](value: T): Body
+pub fn Body.multipart(parts: Array[Part]): Body
+pub fn Body.stream(
+    input: io.Reader,
+    length: Int? = none,
+    contentType: String = "application/octet-stream",
+): Body
+pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body
+pub fn Client(
+    baseUrl: String = "",
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+    connectTimeout: time.Duration? = none,
+    redirects: Int = 10,
+    trust: String? = none,
+    socket: String? = none,
+    cookies: Bool = false,
+    identity: Tls? = none,
+): Client
+pub fn Client.delete(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.get(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.head(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.patch(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.post(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.put(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.request(
+    self,
+    method: String,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn Client.use(
+    mut self,
+    hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
+)
+pub fn Limits.standard(): Limits
+pub fn Part.bytes(
+    name: String,
+    bytes: Array[Byte],
+    fileName: String,
+    contentType: String = "",
+): Part
+pub fn Part.field(name: String, value: String): Part
+pub fn Part.file(name: String, path: String, contentType: String = ""): Part
+pub fn Part.stream(
+    name: String,
+    input: io.Reader,
+    fileName: String,
+    contentType: String = "",
+    length: Int? = none,
+): Part
+pub fn Problem(status: Int, message: String): Problem
+pub fn Problem.badRequest(message: String): Problem
+pub fn Problem.conflict(message: String): Problem
+pub fn Problem.forbidden(message: String = "this is not allowed"): Problem
+pub fn Problem.from[E: Display](error: E): Problem
+pub fn Problem.invalid(violations: Array[serialization.Violation]): Problem
+pub fn Problem.notFound(message: String = "not found"): Problem
+pub fn Problem.unauthorized(message: String = "authentication is required"): Problem
+pub fn Reply.addHeader(self, name: String, value: String): Reply
+pub fn Reply.body(self): Array[Byte]?
+pub fn Reply.bytes(
+    bytes: Array[Byte],
+    contentType: String = "application/octet-stream",
+    status: Int = 200,
+): Reply
+pub fn Reply.cookie(
+    self,
+    name: String,
+    value: String,
+    maxAge: time.Duration? = none,
+    path: String = "/",
+    domain: String = "",
+    secure: Bool = false,
+    httpOnly: Bool = true,
+    sameSite: SameSite = SameSite.Lax,
+): Reply
+pub fn Reply.empty(status: Int = 204): Reply
+pub fn Reply.events(events: Receiver[Event]): Reply
+pub fn Reply.file(path: String, download: String? = none): Reply
+pub fn Reply.header(self, name: String, value: String): Reply
+pub fn Reply.headers(self): Map[String, String]
+pub fn Reply.html(html: String, status: Int = 200): Reply
+pub fn Reply.json[T: serialization.Encode](value: T, status: Int = 200): Reply
+pub fn Reply.notFound(): Reply
+pub fn Reply.problem(problem: Problem): Reply
+pub fn Reply.redirect(url: String, status: Int = 302): Reply
+pub fn Reply.status(self): Int
+pub fn Reply.stream(
+    input: io.Reader,
+    contentType: String = "application/octet-stream",
+    status: Int = 200,
+    trailers: Trailers? = none,
+): Reply
+pub fn Reply.text(text: String, status: Int = 200): Reply
+pub fn Reply.withBody(self, bytes: Array[Byte]): Reply
+pub fn Reply.withStatus(self, status: Int): Reply
+pub fn Request.body(self): io.Reader
+pub fn Request.bytes(self): Array[Byte] ! Problem
+pub fn Request.clientCertificate(self): crypto.Certificate?
+pub fn Request.clientIp(self): String
+pub fn Request.cookie(self, name: String): String?
+pub fn Request.cookies(self): Map[String, String]
+pub fn Request.form(self): Map[String, String] ! Problem
+pub fn Request.formAs[T: serialization.Decode](self): T ! Problem
+pub fn Request.header(self, name: String): String?
+pub fn Request.headerValues(self, name: String): Array[String]
+pub fn Request.headers(self): Map[String, String]
+pub fn Request.host(self): String
+pub fn Request.intParam(self, name: String): Int ! Problem
+pub fn Request.intQuery(self, name: String): Int? ! Problem
+pub fn Request.json[T: serialization.Decode](self): T ! Problem
+pub fn Request.limitBody(self, bytes: Int): Request
+pub fn Request.method(self): String
+pub fn Request.param(self, name: String): String
+pub fn Request.path(self): String
+pub fn Request.query(self, name: String): String?
+pub fn Request.queryAs[T: serialization.Decode](self): T ! Problem
+pub fn Request.queryValues(self, name: String): Array[String]
+pub fn Request.rawQuery(self): String
+pub fn Request.remoteAddress(self): String
+pub fn Request.requiredIntQuery(self, name: String): Int ! Problem
+pub fn Request.requiredQuery(self, name: String): String ! Problem
+pub fn Request.route(self): String?
+pub fn Request.saveTo(self, path: String): Int ! Problem
+pub fn Request.scheme(self): String
+pub fn Request.text(self): String ! Problem
+pub fn Request.uploads(self): Uploads
+pub fn Request.url(self): url.Url
+pub fn Request.version(self): String
+pub fn Request.withBody(self, body: Array[Byte]): Request
+pub fn Response.body(self): io.Reader
+pub fn Response.bytes(self): Array[Byte] ! HttpError
+pub fn Response.cookie(self, name: String): String?
+pub fn Response.cookies(self): Map[String, String]
+pub fn Response.copyTo(self, output: io.Writer): Int ! HttpError
+pub fn Response.events(self): Events
+pub fn Response.header(self, name: String): String?
+pub fn Response.headerValues(self, name: String): Array[String]
+pub fn Response.headers(self): Map[String, String]
+pub fn Response.json[T: serialization.Decode](self): T ! HttpError
+pub fn Response.lines(self): Lines
+pub fn Response.reason(self): String
+pub fn Response.status(self): Int
+pub fn Response.text(self): String ! HttpError
+pub fn Response.url(self): String
+pub fn Response.version(self): String
+pub fn Server.address(self): String
+pub fn Server.stop(self, grace: time.Duration = time.seconds(30))
+pub fn Server.url(self): String
+pub fn Trailers(): Trailers
+pub fn Trailers.all(self): Map[String, String]
+pub fn Trailers.set(self, name: String, value: String)
+pub fn Upload.bytes(self): Array[Byte] ! Problem
+pub fn Upload.contentType(self): String
+pub fn Upload.fileName(self): String
+pub fn Upload.name(self): String
+pub fn Upload.saveTo(self, path: String): Int ! Problem
+pub fn Upload.text(self): String ! Problem
+pub fn WebSocket.close(self): !HttpError
+pub fn WebSocket.connect(
+    url: String,
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): WebSocket ! HttpError
+pub fn WebSocket.receive(self): Message? ! HttpError
+pub fn WebSocket.send(self, message: Message): !HttpError
+pub fn WebSocket.sendBytes(self, bytes: Array[Byte]): !HttpError
+pub fn WebSocket.sendText(self, text: String): !HttpError
+pub fn delete(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn get(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn head(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn mediaType(path: String): String
+pub fn patch(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn post(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub fn proxy(
+    target: String,
+    strip: String = "",
+    client: Client? = none,
+): fn(Request): Reply ! Problem
+pub fn put(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: time.Duration? = none,
+): Response ! HttpError
+pub trait GrpcService {
+    fn serveOn(self, app: mut App)
+}
+pub type App = {
+    // private fields
+}
+pub type Body = {
+    // private fields
+}
+pub type Client = {
+    // private fields
+}
+pub type ClientRequest = {
+    method: String
+    url: String
+    headers: Map[String, String]
+    body: Body?
+}
+pub type Event = {
+    event: String
+    data: String
+    id: String?
+}
+pub type Events = {
+    // private fields
+}
+pub type Limits = {
+    body: Int
+    head: Int
+    headTimeout: time.Duration
+    bodyTimeout: time.Duration
+    replyTimeout: time.Duration
+}
+pub type Lines = {
+    // private fields
+}
+pub type Part = {
+    // private fields
+}
+pub type Problem = {
+    status: Int
+    message: String
+    /// The rules of its type a value breaks, which a `422` lists in
+    /// `errors`.
+    violations: Array[serialization.Violation]
+}
+pub type Reply = {
+    // private fields
+}
+pub type Request = {
+    // private fields
+}
+pub type Response = {
+    // private fields
+}
+pub type Saved = {
+    path: String
+    size: Int
+}
+pub type Server = {
+    // private fields
+}
+pub type Trailers = {
+    // private fields
+}
+pub type Upload = {
+    // private fields
+}
+pub type UploadedFile = {
+    name: String
+    fileName: String
+    contentType: String
+    bytes: Array[Byte]
+}
+pub type Uploads = {
+    // private fields
+}
+pub type WebSocket = {
+    // private fields
+}
+== std.image
+impl Display for Color
+impl Display for Format
+impl Display for ImageError
+pub enum Anchor {
+    Center
+    Top
+    Bottom
+    Left
+    Right
+    TopLeft
+    TopRight
+    BottomLeft
+    BottomRight
+}
+pub enum Filter {
+    Nearest
+    Linear
+    CatmullRom
+    Lanczos
+}
+pub enum Format {
+    Png
+    Jpeg
+    Gif
+    WebP
+}
+pub fn Color.hex(text: String): Color ! ImageError
+pub fn Color.rgb(red: Int, green: Int, blue: Int): Color
+pub fn Format.of(path: String): Format?
+pub fn Image.adjust(
+    self,
+    brightness: Float = 0.0,
+    contrast: Float = 0.0,
+    saturation: Float = 0.0,
+    gamma: Float = 1.0,
+    hue: Float = 0.0,
+): Image
+pub fn Image.blur(self, sigma: Float): Image
+pub fn Image.colors(self, count: Int = 3): Array[Color]
+pub fn Image.crop(self, x: Int, y: Int, width: Int, height: Int): Image
+pub fn Image.encode(self, format: Format, quality: Int = 85): Array[Byte] ! ImageError
+pub fn Image.fill(
+    self,
+    width: Int,
+    height: Int,
+    anchor: Anchor = Anchor.Center,
+    filter: Filter = Filter.Lanczos,
+): Image
+pub fn Image.fit(self, width: Int, height: Int, filter: Filter = Filter.Lanczos): Image
+pub fn Image.flipHorizontal(self): Image
+pub fn Image.flipVertical(self): Image
+pub fn Image.format(self): Format?
+pub fn Image.grayscale(self): Image
+pub fn Image.height(self): Int
+pub fn Image.invert(self): Image
+pub fn Image.opacity(self, alpha: Float): Image
+pub fn Image.overlay(self, top: Image, x: Int, y: Int): Image
+pub fn Image.pixel(self, x: Int, y: Int): Color?
+pub fn Image.pixelate(self, size: Int): Image
+pub fn Image.pixels(self): Array[Byte]
+pub fn Image.resize(
+    self,
+    width: Int? = none,
+    height: Int? = none,
+    filter: Filter = Filter.Lanczos,
+): Image
+pub fn Image.rotate(self, degrees: Int): Image
+pub fn Image.save(self, path: String, quality: Int = 85): !ImageError
+pub fn Image.sepia(self, amount: Float = 100.0): Image
+pub fn Image.sharpen(self, sigma: Float = 1.0, amount: Float = 1.0): Image
+pub fn Image.width(self): Int
+pub fn blank(width: Int, height: Int, color: Color): Image
+pub fn exif(bytes: Array[Byte]): Exif?
+pub fn fromPixels(width: Int, height: Int, pixels: Array[Byte]): Image ! ImageError
+pub fn info(bytes: Array[Byte]): Info ! ImageError
+pub fn open(path: String): Image ! ImageError
+pub fn read(bytes: Array[Byte]): Image ! ImageError
+pub type Color = {
+    red: Int
+    green: Int
+    blue: Int
+    alpha: Int
+}
+pub type Exif = {
+    date: time.DateTime?
+    latitude: Float?
+    longitude: Float?
+    camera: String?
+    orientation: Int
+    tags: Map[String, String]
+}
+pub type Image = {
+    // private fields
+}
+pub type ImageError = {
+    message: String
+}
+pub type Info = {
+    format: Format
+    width: Int
+    height: Int
+}
+== std.io
+pub enum IoError {
+    Closed
+    InvalidData
+    Host
+}
+pub fn Buffer(): Buffer
+pub fn Buffer.bytes(self): Array[Byte]
+pub fn Buffer.clear(self)
+pub fn Buffer.length(self): Int
+pub fn Buffer.reader(self): Reader
+pub fn Buffer.text(self): String ! IoError
+pub fn Buffer.writer(self): Writer
+pub fn Reader.close(self): Unit ! IoError
+pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
+pub fn Reader.readBytes(self): Array[Byte] ! IoError
+pub fn Reader.readLine(self): String? ! IoError
+pub fn Reader.readText(self): String ! IoError
+pub fn Writer.close(self): Unit ! IoError
+pub fn Writer.flush(self): Unit ! IoError
+pub fn Writer.write(self, text: String): Unit ! IoError
+pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
+pub fn Writer.writeLine(self, text: String): Unit ! IoError
+pub fn copy(from: Reader, to: Writer): Int ! IoError
+pub fn discard(): Writer
+pub fn multiWriter(writers: ...Writer): Writer
+pub fn pipe(capacity: Int = 65536): (Writer, Reader)
+pub fn reader(text: String): Reader
+pub type Buffer
+pub type Reader
+pub type Writer
+== std.json
+impl Display for Number
+impl Display for Raw
+impl Display for Value
+impl reflect.Reflect for Value
+impl serialization.Decode for Number
+impl serialization.Decode for Raw
+impl serialization.Decode for Value
+impl serialization.Encode for Number
+impl serialization.Encode for Raw
+impl serialization.Encode for Value
+impl serialization.Sink for Writer
+impl serialization.Source for Reader
+impl[T: serialization.Decode] Iterator[T ! JsonError] for Values[T]
+pub alias ErrorKind = serialization.ErrorKind
+pub alias JsonError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+pub enum Event {
+    Null
+    Bool(Bool)
+    Number(Number)
+    Text(String)
+    BeginArray
+    EndArray
+    BeginObject
+    EndObject
+    Key(String)
+}
+pub enum Value {
+    Null
+    Bool(Bool)
+    Number(Number)
+    Text(String)
+    Array(Array[Value])
+    Object(Map[String, Value])
+}
+pub fn Number.text(self): String
+pub fn Number.toFloat(self): Float
+pub fn Number.toInt(self): Int?
+pub fn Raw.text(self): String
+pub fn Reader.beginArray(self, first: Event, name: String): !JsonError
+pub fn Reader.beginObject(self, first: Event, name: String): !JsonError
+pub fn Reader.endArray(self): !JsonError
+pub fn Reader.failure(self, kind: ErrorKind, message: String): JsonError
+pub fn Reader.mismatch(self, first: Event, expected: String): JsonError
+pub fn Reader.next(self): Event? ! JsonError
+pub fn Reader.nextKey(self): String? ! JsonError
+pub fn Reader.required[T: ~Copy](self, value: T?, field: String): T ! JsonError
+pub fn Reader.skip(self, first: Event): !JsonError
+pub fn Reader.unknownField(self, key: String, first: Event): !JsonError
+pub fn Reader.value(self): Event ! JsonError
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asInt(self): Int?
+pub fn Value.asObject(self): Map[String, Value]?
+pub fn Value.asText(self): String?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.field(self, key: String): Value
+pub fn Value.find(self, path: String): Value?
+pub fn Value.get(self, key: String): Value?
+pub fn Value.isNull(self): Bool
+pub fn Value.item(self, index: Int): Value
+pub fn Writer.beginArray(self)
+pub fn Writer.beginObject(self)
+pub fn Writer.bool(self, value: Bool)
+pub fn Writer.endArray(self)
+pub fn Writer.endObject(self)
+pub fn Writer.finish(self): String
+pub fn Writer.float(self, value: Float)
+pub fn Writer.flush(self): !JsonError
+pub fn Writer.int(self, value: Int)
+pub fn Writer.key(self, name: String)
+pub fn Writer.null(self)
+pub fn Writer.number(self, value: Number)
+pub fn Writer.string(self, value: String)
+pub fn decodeAll[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Array[T] ! JsonError
+pub fn decodeFrom[T: serialization.Decode](
+    stream: io.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): T ! JsonError
+pub fn decode[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): T ! JsonError
+pub fn encodeTo[T: serialization.Encode](
+    value: T,
+    stream: io.Writer,
+    pretty: Bool = false,
+    canonical: Bool = false,
+    htmlSafe: Bool = false,
+): !JsonError
+pub fn encode[T: serialization.Encode](
+    value: T,
+    pretty: Bool = false,
+    canonical: Bool = false,
+    htmlSafe: Bool = false,
+): String
+pub fn fromValue[T: serialization.Decode](value: Value): T ! JsonError
+pub fn number(text: String): Number ! JsonError
+pub fn parse(text: String): Value ! JsonError
+pub fn parseAll(text: String): Array[Value] ! JsonError
+pub fn raw(text: String): Raw ! JsonError
+pub fn reader(
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Reader
+pub fn readerFrom(
+    stream: io.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Reader
+pub fn toValue[T: serialization.Encode](value: T): Value
+pub fn values[T: serialization.Decode](
+    stream: io.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Values[T]
+pub fn writer(pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
+pub fn writerTo(
+    stream: io.Writer,
+    pretty: Bool = false,
+    canonical: Bool = false,
+    htmlSafe: Bool = false,
+): Writer
+pub type Number = {
+    // private fields
+}
+pub type Raw = {
+    // private fields
+}
+pub type Reader = {
+    // private fields
+}
+pub type Values[T] = {
+    // private fields
+}
+pub type Writer = {
+    // private fields
+}
+== std.log
+impl Display for Level
+pub context Context = {
+    logger: Logger? = none
+}
+pub enum Format {
+    Text
+    Json
+}
+pub enum Level {
+    Trace
+    Debug
+    Info
+    Warn
+    Error
+}
+pub fn Logger(
+    output: io.Writer? = none,
+    level: Level = Level.Info,
+    format: Format = Format.Text,
+    timestamps: Bool = true,
+): Logger
+pub fn Logger.debug(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.error(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.flush(self): !io.IoError
+pub fn Logger.info(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.isEnabled(self, level: Level): Bool
+pub fn Logger.log(self, level: Level, message: String, fields: Map[String, String] = [:])
+pub fn Logger.trace(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.withFields(self, fields: Map[String, String]): Logger
+pub fn current(): Logger
+pub fn debug(message: String, fields: Map[String, String] = [:])
+pub fn error(message: String, fields: Map[String, String] = [:])
+pub fn info(message: String, fields: Map[String, String] = [:])
+pub fn trace(message: String, fields: Map[String, String] = [:])
+pub fn warn(message: String, fields: Map[String, String] = [:])
+pub type Logger = {
+    // private fields
+}
+== std.math
+impl Additive for BigInt
+impl Additive for Decimal
+impl Display for BigInt
+impl Display for Decimal
+impl Display for MathError
+impl Number for BigInt
+impl Number for Decimal
+impl Ordered for BigInt
+impl Ordered for Decimal
+impl reflect.Reflect for BigInt
+impl reflect.Reflect for Decimal
+impl serialization.Decode for BigInt
+impl serialization.Decode for Decimal
+impl serialization.Encode for BigInt
+impl serialization.Encode for Decimal
+pub enum MathError {
+    /// The value is outside the operation's domain, such as the square root
+    /// of a negative number.
+    Domain
+    /// A text that is not a number of the type.
+    NotANumber(String)
+}
+pub enum Rounding {
+    HalfEven
+    HalfUp
+    Down
+    Up
+    Floor
+    Ceiling
+}
+pub fn BigInt.abs(self): BigInt
+pub fn BigInt.gcd(self, other: BigInt): BigInt
+pub fn BigInt.modPow(self, exponent: BigInt, modulus: BigInt): BigInt
+pub fn BigInt.parse(text: String, radix: Int = 10): BigInt ! MathError
+pub fn BigInt.pow(self, exponent: Int): BigInt
+pub fn BigInt.remainder(self, divisor: BigInt): BigInt
+pub fn BigInt.toInt(self): Int?
+pub fn BigInt.toString(self, radix: Int = 10): String
+pub fn Decimal.divide(self, by: Decimal, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
+pub fn Decimal.parse(text: String): Decimal ! MathError
+pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
+pub fn Decimal.scale(self): Int
+pub fn Decimal.toFloat(self): Float
+pub fn acos(value: Float): Float ! MathError
+pub fn asin(value: Float): Float ! MathError
+pub fn atan(value: Float): Float
+pub fn atan2(y: Float, x: Float): Float
+pub fn ceil(value: Float): Float
+pub fn cos(value: Float): Float
+pub fn exp(value: Float): Float
+pub fn floor(value: Float): Float
+pub fn fma(a: Float, b: Float, c: Float): Float
+pub fn gcd[T: Integer](a: T, b: T): T
+pub fn hypot(x: Float, y: Float): Float
+pub fn lcm[T: Integer](a: T, b: T): T
+pub fn ln(value: Float): Float ! MathError
+pub fn log10(value: Float): Float ! MathError
+pub fn log2(value: Float): Float ! MathError
+pub fn pow(base: Float, exponent: Float): Float
+pub fn round(value: Float): Float
+pub fn roundTiesAway(value: Float): Float
+pub fn sin(value: Float): Float
+pub fn sqrt(value: Float): Float ! MathError
+pub fn tan(value: Float): Float
+pub fn truncate(value: Float): Float
+pub type BigInt = {
+    // private fields
+}
+pub type Decimal = {
+    // private fields
+}
+== std.mcp
+impl Display for McpError
+impl reflect.Reflect for Prompt
+impl reflect.Reflect for Resource
+pub annotation Prompt = {}
+pub annotation Resource = {
+    uri: String
+    mime: String = "text/plain"
+}
+pub fn handler[T: reflect.Reflect](
+    server: T,
+    name: String = "",
+    version: String = "0.1.0",
+): fn(http.Request): http.Reply ! http.Problem
+pub fn serve[T: reflect.Reflect](
+    server: T,
+    name: String = "",
+    version: String = "0.1.0",
+): !McpError
+pub type McpError = {
+    message: String
+}
+== std.messagepack
+impl Display for Value
+impl serialization.Decode for Value
+impl serialization.Encode for Value
+impl serialization.Sink for Writer
+pub alias MessagePackError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+pub enum Value {
+    Nil
+    Bool(Bool)
+    Int(Int)
+    /// An integer above `Int.max`, which MessagePack holds up to `UInt.max`.
+    UInt(UInt)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    /// The timestamp extension, as RFC 3339 text in UTC.
+    Timestamp(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asBytes(self): Array[Byte]?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asInt(self): Int?
+pub fn Value.asMap(self): Map[String, Value]?
+pub fn Value.asText(self): String?
+pub fn Value.asTimestamp(self): String?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?
+pub fn Value.get(self, key: String): Value?
+pub fn Value.isNil(self): Bool
+pub fn Writer.beginArray(self, count: Int)
+pub fn Writer.beginMap(self, count: Int)
+pub fn Writer.bool(self, value: Bool)
+pub fn Writer.bytes(self, value: Array[Byte])
+pub fn Writer.finish(self): Array[Byte]
+pub fn Writer.float(self, value: Float)
+pub fn Writer.flush(self): !MessagePackError
+pub fn Writer.int(self, value: Int)
+pub fn Writer.nil(self)
+pub fn Writer.string(self, value: String)
+pub fn Writer.value[T: serialization.Encode](self, value: T)
+pub fn decode[T: serialization.Decode](
+    input: Array[Byte],
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! MessagePackError
+pub fn encode[T: serialization.Encode](value: T): Array[Byte]
+pub fn parse(input: Array[Byte]): Value ! MessagePackError
+pub fn writer(): Writer
+pub fn writerTo(stream: io.Writer): Writer
+pub type Writer = {
+    // private fields
+}
+== std.meta
+impl Display for Error
+impl Display for TypeRef
+pub enum DeclarationKind {
+    Record
+    Enum
+    Newtype
+    Function
+}
+pub enum Error {
+    UnknownInput(String)
+    UnknownOutput(String)
+    DuplicateOutput(String)
+    MissingOutput(String)
+    OutputLimit
+    Provider(String)
+    TypeRendering(String)
+}
+pub fn AnnotationView.name(self): String
+pub fn AnnotationView.to[T: serialization.Decode](self): T ! Error
+pub fn Declaration.annotations(self): Array[AnnotationView]
+pub fn Declaration.fields(self): Array[FieldView]
+pub fn Declaration.generics(self): Array[GenericView]
+pub fn Declaration.kind(self): DeclarationKind
+pub fn Declaration.module(self): String
+pub fn Declaration.name(self): String
+pub fn Declaration.parameters(self): Array[ParameterView]
+pub fn Declaration.result(self): TypeRef?
+pub fn Declaration.typeName(self): String
+pub fn Declaration.underlying(self): TypeRef?
+pub fn Declaration.variants(self): Array[VariantView]
+pub fn DeriveRequest.sourceBuilder(self): SourceBuilder
+pub fn DeriveRequest.target(self): Declaration
+pub fn DeriveRequest.traitName(self): String
+pub fn GenerateRequest.declarations(self): Array[Declaration]
+pub fn GenerateRequest.input(self, name: String): Input ! Error
+pub fn GenerateRequest.inputs(self): Array[Input]
+pub fn GenerateRequest.outputs(self): Array[String]
+pub fn GenerateRequest.sourceBuilder(self): SourceBuilder
+pub fn Input.text(self): String ! Error
+pub fn SourceBuilder.add(mut self, source: String): !Error
+pub fn SourceBuilder.error(mut self, message: String)
+pub fn SourceBuilder.finish(self): GenerateResponse ! Error
+pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error
+pub fn SourceBuilder.renderType(mut self, ty: TypeRef): String ! Error
+pub fn SourceBuilder.write(mut self, output: String, source: String): !Error
+pub fn TypeRef.identity(self): String
+pub fn code(template: String, values: Map[String, String]): String
+pub fn literal(value: String): String
+pub fn serveDerive(provider: fn(DeriveRequest): DeriveResponse ! Error)
+pub fn serveGenerate(generator: fn(GenerateRequest): GenerateResponse ! Error)
+pub type AnnotationView = {
+    // private fields
+}
+pub type Declaration = {
+    // private fields
+}
+pub type DeriveRequest = {
+    // private fields
+}
+pub type DeriveResponse = {
+    // private fields
+}
+pub type FieldView = {
+    name: String
+    typeRef: TypeRef
+    private: Bool
+    annotations: Array[AnnotationView]
+}
+pub type GenerateRequest = {
+    // private fields
+}
+pub type GenerateResponse = {
+    // private fields
+}
+pub type GenericView = {
+    name: String
+    bounds: Array[String]
+}
+pub type Input = {
+    name: String
+    bytes: Array[Byte]
+    sha256: String
+}
+pub type ParameterView = {
+    name: String
+    typeRef: TypeRef
+    annotations: Array[AnnotationView]
+}
+pub type SourceBuilder = {
+    // private fields
+}
+pub type TypeRef = {
+    // private fields
+}
+pub type VariantView = {
+    name: String
+    fields: Array[FieldView]
+    elements: Array[TypeRef]
+    annotations: Array[AnnotationView]
+}
+== std.model
+impl Display for Violation
+impl[T: reflect.Reflect] reflect.Reflect for Bag[T]
+impl[T: reflect.Reflect] reflect.Reflect for Queue[T]
+impl[T: serialization.Decode] serialization.Decode for Bag[T]
+impl[T: serialization.Decode] serialization.Decode for Queue[T]
+impl[T: serialization.Encode] serialization.Encode for Bag[T]
+impl[T: serialization.Encode] serialization.Encode for Queue[T]
+pub enum Queue[T] {
+    Empty
+    Item(T, Queue[T])
+}
+pub fn Bag[T: Equatable].contains(self, item: T): Bool
+pub fn Bag[T: Equatable].count(self, item: T): Int
+pub fn Bag[T: Equatable].remove(self, item: T): Bag[T]
+pub fn Bag[T: reflect.Reflect](items: Array[T]): Bag[T]
+pub fn Bag[T: reflect.Reflect].add(self, item: T): Bag[T]
+pub fn Bag[T].isEmpty(self): Bool
+pub fn Bag[T].items(self): Array[T]
+pub fn Bag[T].length(self): Int
+pub fn Formula[S].always(self): Formula[S]
+pub fn Formula[S].eventually(self): Formula[S]
+pub fn Formula[S].implies(self, other: Formula[S]): Formula[S]
+pub fn Formula[S].negated(self): Formula[S]
+pub fn Formula[S].next(self): Formula[S]
+pub fn Formula[S].until(self, other: Formula[S]): Formula[S]
+pub fn Queue[T: Equatable].contains(self, item: T): Bool
+pub fn Queue[T: Equatable].without(self, item: T): Queue[T]
+pub fn Queue[T](items: Array[T]): Queue[T]
+pub fn Queue[T].first(self): T?
+pub fn Queue[T].isEmpty(self): Bool
+pub fn Queue[T].items(self): Array[T]
+pub fn Queue[T].length(self): Int
+pub fn Queue[T].push(self, item: T): Queue[T]
+pub fn Queue[T].rest(self): Queue[T]
+pub fn allOf[S](first: Formula[S], rest: ...Formula[S]): Formula[S]
+pub fn always[S](predicate: fn(S): Bool, name: String = "what must always hold"): Property[S]
+pub fn anyOf[S](first: Formula[S], rest: ...Formula[S]): Formula[S]
+pub fn check[S: reflect.Reflect + serialization.Encode + serialization.Decode](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
+    ends: (fn(S): Bool)? = none,
+    symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
+): Checked ! Violation
+pub fn eventuallyAlways[S](predicate: fn(S): Bool, name: String = "what must settle"): Property[S]
+pub fn eventually[S](
+    predicate: fn(S): Bool,
+    name: String = "what must come in the end",
+): Property[S]
+pub fn every[T: reflect.Reflect + serialization.Decode](): Array[T] ! String
+pub fn expect(checked: Checked ! Violation): Checked
+pub fn follows[S: reflect.Reflect + serialization.Encode + serialization.Decode](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    code: fn(),
+): Checked ! Violation
+pub fn infinitelyOften[S](
+    predicate: fn(S): Bool,
+    name: String = "what must keep coming",
+): Property[S]
+pub fn leadsTo[S](
+    when: fn(S): Bool,
+    then: fn(S): Bool,
+    name: String = "what must follow",
+): Property[S]
+pub fn machine[
+    S: reflect.Reflect + serialization.Encode + serialization.Decode,
+    E: reflect.Reflect + serialization.Decode,
+    X,
+](
+    start: S,
+    apply: fn(S, E): S ! X,
+    events: (fn(S): Array[E])? = none,
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
+    ends: (fn(S): Bool)? = none,
+    symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
+): Checked ! Violation
+pub fn mark(name: String)
+pub fn reachable[S](
+    predicate: fn(S): Bool,
+    name: String = "what must stay within reach",
+): Property[S]
+pub fn state[S](predicate: fn(S): Bool): Formula[S]
+pub fn step[S](name: String, next: S): Step[S]
+pub fn strong(name: String, each: Bool = false): Fair
+pub fn temporal[S](formula: Formula[S], name: String = "the formula"): Property[S]
+pub fn watch[S: reflect.Reflect](
+    observe: fn(): S,
+    holds: Array[Property[S]],
+    code: fn(),
+): Checked ! Violation
+pub fn weak(name: String, each: Bool = false): Fair
+pub type Bag[T] = {
+    // private fields
+}
+pub type Checked = {
+    states: Int
+    steps: Int
+    depth: Int
+    never: Array[String]
+    /// The properties that held because what they are about never came, as
+    /// a `leadsTo` whose `when` held in no state: they said nothing.
+    vacuous: Array[String] = []
+}
+pub type Fair = {
+    // private fields
+}
+pub type Formula[S] = {
+    // private fields
+}
+pub type Property[S] = {
+    // private fields
+}
+pub type Step[S] = {
+    name: String
+    state: S
+}
+pub type Violation = {
+    what: String
+    path: Array[Visit]
+    loop: Array[Visit]
+    /// The name of the property of `holds` that broke; none for a state
+    /// nothing can follow, a step that failed or code that strayed.
+    property: String? = none
+}
+pub type Visit = {
+    step: String
+    state: String
+}
+== std.net
+impl Display for Address
+impl Display for Ip
+impl Display for NetError
+impl Display for Network
+impl Iterator[Stream] for Listener
+pub enum NetError {
+    /// The name does not resolve: the name.
+    NotFound(String)
+    /// Nothing listens at the address.
+    Refused
+    /// The operation took longer than its timeout.
+    TimedOut
+    /// The other side ended the connection abruptly.
+    Reset
+    /// The connection, listener or socket is closed.
+    Closed
+    /// Another socket has the address.
+    AddressInUse
+    /// No route reaches the network or the host.
+    Unreachable
+    /// An address or port that is not valid here: why.
+    InvalidAddress(String)
+    /// The TLS handshake failed, or a certificate is not trusted: why.
+    Tls(String)
+    /// Anything else the system reports: what it said.
+    Io(String)
+}
+pub enum TlsVersion {
+    Tls12
+    Tls13
+}
+pub fn Certificates(protocols: Array[String] = []): Certificates
+pub fn Certificates.isServing(self): Bool
+pub fn Certificates.removeForProtocol(self, protocol: String, name: String)
+pub fn Certificates.set(self, certificate: String, privateKey: String): !NetError
+pub fn Certificates.setForProtocol(
+    self,
+    protocol: String,
+    name: String,
+    certificate: String,
+    privateKey: String,
+): !NetError
+pub fn Ip.isLoopback(self): Bool
+pub fn Ip.isPrivate(self): Bool
+pub fn Ip.isUnspecified(self): Bool
+pub fn Ip.isV4(self): Bool
+pub fn Ip.isV6(self): Bool
+pub fn Listener.accept(self, timeout: time.Duration? = none): Stream ! NetError
+pub fn Listener.address(self): Address
+pub fn Listener.close(self)
+pub fn Network.contains(self, member: Ip): Bool
+pub fn Network.ip(self): Ip
+pub fn Network.prefix(self): Int
+pub fn Socket.address(self): Address
+pub fn Socket.close(self)
+pub fn Socket.receive(self, timeout: time.Duration? = none): (Array[Byte], Address) ! NetError
+pub fn Socket.sendTo(self, data: Array[Byte], to: Address): !NetError
+pub fn Stream.close(self, timeout: time.Duration? = none): !NetError
+pub fn Stream.closeWrite(self, timeout: time.Duration? = none): !NetError
+pub fn Stream.localAddress(self): Address
+pub fn Stream.read(
+    self,
+    max: Int = 65536,
+    timeout: time.Duration? = none,
+): Array[Byte]? ! NetError
+pub fn Stream.readAll(self, timeout: time.Duration? = none): Array[Byte] ! NetError
+pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
+pub fn Stream.readText(self, timeout: time.Duration? = none): String ! NetError
+pub fn Stream.reader(self): io.Reader
+pub fn Stream.remoteAddress(self): Address
+pub fn Stream.startTls(
+    self,
+    host: String,
+    trust: String? = none,
+    identity: Tls? = none,
+    timeout: time.Duration? = none,
+): Stream ! NetError
+pub fn Stream.write(self, text: String, timeout: time.Duration? = none): !NetError
+pub fn Stream.writeBytes(self, data: Array[Byte], timeout: time.Duration? = none): !NetError
+pub fn Stream.writer(self): io.Writer
+pub fn Tls.files(
+    certificate: String,
+    privateKey: String,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls
+pub fn Tls.from(
+    certificates: Certificates,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls
+pub fn Tls.pem(
+    certificate: String,
+    privateKey: String,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls
+pub fn address(text: String, port: Int): Address ! NetError
+pub fn bind(host: String, port: Int): Socket ! NetError
+pub fn bindUnix(path: String? = none): Socket ! NetError
+pub fn connect(host: String, port: Int, timeout: time.Duration? = none): Stream ! NetError
+pub fn connectTls(
+    host: String,
+    port: Int,
+    trust: String? = none,
+    identity: Tls? = none,
+    timeout: time.Duration? = none,
+): Stream ! NetError
+pub fn connectUnix(path: String, timeout: time.Duration? = none): Stream ! NetError
+pub fn ip(text: String): Ip ! NetError
+pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError
+pub fn listenUnix(path: String): Listener ! NetError
+pub fn network(text: String): Network ! NetError
+pub fn resolve(host: String, timeout: time.Duration? = none): Array[String] ! NetError
+pub fn unixAddress(path: String): Address
+pub type Address = {
+    ip: String
+    port: Int
+    path: String
+}
+pub type Certificates = {
+    // private fields
+}
+pub type Ip = {
+    // private fields
+}
+pub type Listener = {
+    // private fields
+}
+pub type Network = {
+    // private fields
+}
+pub type Socket = {
+    // private fields
+}
+pub type Stream = {
+    // private fields
+}
+pub type Tls = {
+    certificate: String
+    privateKey: String
+    clients: String?
+    minimumVersion: TlsVersion
+}
+== std.path
+pub fn clean(path: String): String
+pub fn extension(path: String): String?
+pub fn fileName(path: String): String?
+pub fn isAbsolute(path: String): Bool
+pub fn join(base: String, part: String): String
+pub fn matches(pattern: String, path: String): Bool
+pub fn parent(path: String): String?
+pub fn relative(from: String, to: String): String?
+== std.process
+pub enum Input {
+    Inherit
+    Null
+    Text(String)
+    Bytes(Array[Byte])
+    File(String)
+    Reader(io.Reader)
+    Pipe
+}
+pub enum Output {
+    Inherit
+    Null
+    Capture
+    File(String)
+    Append(String)
+    Writer(io.Writer)
+    Stdout
+    Pipe
+}
+pub enum ProcessError {
+    NotFound
+    PermissionDenied
+    InvalidData
+    /// From `check`: a stage did not succeed.
+    Failed(ExitStatus, ProcessOutput)
+    Host
+}
+pub enum Signal {
+    Interrupt
+    Terminate
+    Hangup
+    User1
+    User2
+    /// Ctrl-\: as `Interrupt`, but ending a program that does not listen
+    /// with a dump of its memory, by the system's default.
+    Quit
+    /// Ends a process at once, without letting it answer: it is sent and
+    /// never received, so `signals` leaves it out.
+    Kill
+}
+pub fn Command.clearEnv(self): Command
+pub fn Command.directory(self, path: String): Command
+pub fn Command.env(self, name: String, value: String): Command
+pub fn Command.exec(self): Never ! ProcessError
+pub fn Command.grace(self, grace: time.Duration): Command
+pub fn Command.group(self): Command
+pub fn Command.invokedAs(self, name: String): Command
+pub fn Command.mergeStderr(self): Command
+pub fn Command.removeEnv(self, name: String): Command
+pub fn Command.stderr(self, output: Output): Command
+pub fn Command.stdin(self, input: Input): Command
+pub fn Command.stdout(self, output: Output): Command
+pub fn Pipeline.grace(self, grace: time.Duration): Pipeline
+pub fn Pipeline.group(self): Pipeline
+pub fn Pipeline.mergeStderr(self): Pipeline
+pub fn Pipeline.stdin(self, input: Input): Pipeline
+pub fn Pipeline.stdout(self, output: Output): Pipeline
+pub fn Process.cancel(self): ExitStatus ! ProcessError
+pub fn Process.check(self): ProcessOutput ! ProcessError
+pub fn Process.detach(self)
+pub fn Process.id(self): Int
+pub fn Process.output(self): ProcessOutput ! ProcessError
+pub fn Process.signal(self, signal: Signal)
+pub fn Process.stderr(self): io.Reader
+pub fn Process.stdin(self): io.Writer
+pub fn Process.stdout(self): io.Reader
+pub fn Process.wait(self): ExitStatus ! ProcessError
+pub fn ProcessOutput.text(self): String ! ProcessError
+pub fn check(self): ProcessOutput ! ProcessError
+pub fn command(program: String, arguments: ...String): Command
+pub fn exit(code: Int): Never
+pub fn output(self): ProcessOutput ! ProcessError
+pub fn quoted(words: Array[String]): String
+pub fn run(self): ExitStatus ! ProcessError
+pub fn shell(text: String): Command
+pub fn signal(pid: Int, sent: Signal): !ProcessError
+pub fn signals(wanted: ...Signal): Receiver[Signal]
+pub fn splitWords(text: String): Array[String]?
+pub fn start(self): Process ! ProcessError
+pub fn status(self): ExitStatus ! ProcessError
+pub fn which(name: String): String?
+pub type ExitStatus = {
+    code: Int
+    success: Bool
+}
+pub type Process
+pub type ProcessOutput = {
+    stdout: Array[Byte]
+    stderr: Array[Byte]
+    combined: Array[Byte]
+    statuses: Array[ExitStatus]
+}
+== std.profile
+pub fn CpuProfile.period(self): Profile
+pub fn CpuProfile.stop(self): Profile
+pub fn Labels.restore(self)
+pub fn Profile.folded(self): String
+pub fn Profile.pprof(self): Array[Byte]
+pub fn Profile.since(self, earlier: Profile): Profile
+pub fn blocking(): Profile
+pub fn contention(): Profile
+pub fn memory(): Profile
+pub fn setLabels(labels: Map[String, String]): Labels
+pub fn startBlocking(every: time.Duration = time.microseconds(100))
+pub fn startContention(every: time.Duration = time.microseconds(100))
+pub fn startCpu(every: time.Duration = time.milliseconds(1)): CpuProfile
+pub fn startMemory(every: Int = 512 * 1024)
+pub fn tasks(): Profile
+pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
+pub type CpuProfile = {
+    // private fields
+}
+pub type Labels = {
+    // private fields
+}
+pub type Profile = {
+    // private fields
+}
+== std.protobuf
+impl Message for Any
+impl Message for Empty
+impl Message for FieldMask
+impl reflect.Reflect for Any
+impl reflect.Reflect for Empty
+impl reflect.Reflect for Field
+impl reflect.Reflect for FieldMask
+impl reflect.Reflect for Name
+impl reflect.Reflect for Unknown
+impl reflect.Reflect for UnknownFields
+impl reflect.Reflect for Value
+impl serialization.Decode for Any
+impl serialization.Decode for Empty
+impl serialization.Decode for FieldMask
+impl serialization.Decode for UnknownFields
+impl serialization.Encode for Any
+impl serialization.Encode for Empty
+impl serialization.Encode for FieldMask
+impl serialization.Encode for UnknownFields
+pub alias JsonValue = json.Value
+pub alias ProtobufError = serialization.Error
+pub annotation Field = {
+    number: Int
+    encoding: Encoding = Encoding.Default
+    packed: Bool = true
+    /// Its name in the `.proto`, when it is not the field's, as `user_id`,
+    /// which JSON reads and, with `protoNames`, writes.
+    name: String = ""
+}
+pub annotation Name = {
+    name: String
+}
+pub annotation Unknown = {}
+pub annotation Value = {
+    number: Int
+}
+pub enum Encoding {
+    /// As its type says: an integer as a varint, int32 to uint64.
+    Default
+    /// A signed integer as a zigzag varint: sint32 and sint64.
+    ZigZag
+    /// An integer in 4 or 8 bytes, by its width: fixed32, fixed64, sfixed32
+    /// and sfixed64.
+    Fixed
+    /// A message as a group of proto2.
+    Group
+    /// An optional value as a wrapper of `google.protobuf`, as `Int32Value`.
+    Wrapper
+    /// A `json.Value` as a `google.protobuf.Struct`, an object, or a
+    /// `ListValue`, an array, rather than as a `Value`.
+    Struct
+    List
+}
+pub fn Any.unpack[T: Message](self): T ! ProtobufError
+pub fn JsonReader.array(
+    self,
+    value: json.Value,
+    path: String,
+): Array[json.Value] ! ProtobufError
+pub fn JsonReader.bool(self, value: json.Value, path: String): Bool ! ProtobufError
+pub fn JsonReader.boolKey(self, key: String, path: String): Bool ! ProtobufError
+pub fn JsonReader.bytes(self, value: json.Value, path: String): Array[Byte] ! ProtobufError
+pub fn JsonReader.double(self, value: json.Value, path: String): Float ! ProtobufError
+pub fn JsonReader.duration(self, value: json.Value, path: String): time.Duration ! ProtobufError
+pub fn JsonReader.entries(
+    self,
+    value: json.Value,
+    path: String,
+): Array[(String, json.Value)] ! ProtobufError
+pub fn JsonReader.enumValue[T: Enum](self, value: json.Value, path: String): T? ! ProtobufError
+pub fn JsonReader.fields(
+    self,
+    value: json.Value,
+    path: String,
+): Array[(String, json.Value)] ! ProtobufError
+pub fn JsonReader.float(self, value: json.Value, path: String): Float32 ! ProtobufError
+pub fn JsonReader.int32(self, value: json.Value, path: String): Int32 ! ProtobufError
+pub fn JsonReader.int64(self, value: json.Value, path: String): Int ! ProtobufError
+pub fn JsonReader.message[T: Message](self, value: json.Value, path: String): T ! ProtobufError
+pub fn JsonReader.missing(self, name: String): ProtobufError
+pub fn JsonReader.string(self, value: json.Value, path: String): String ! ProtobufError
+pub fn JsonReader.text(self, key: String): json.Value
+pub fn JsonReader.timestamp(
+    self,
+    value: json.Value,
+    path: String,
+): time.DateTime ! ProtobufError
+pub fn JsonReader.uint32(self, value: json.Value, path: String): UInt32 ! ProtobufError
+pub fn JsonReader.uint64(self, value: json.Value, path: String): UInt ! ProtobufError
+pub fn JsonReader.unknown(self, key: String, path: String): !ProtobufError
+pub fn JsonWriter.begin(self)
+pub fn JsonWriter.beginArray(self)
+pub fn JsonWriter.bool(self, value: Bool)
+pub fn JsonWriter.bytes(self, value: Array[Byte])
+pub fn JsonWriter.double(self, value: Float)
+pub fn JsonWriter.duration(self, value: time.Duration)
+pub fn JsonWriter.end(self)
+pub fn JsonWriter.endArray(self)
+pub fn JsonWriter.enumValue[T: Enum](self, value: T)
+pub fn JsonWriter.field(self, jsonName: String, protoName: String)
+pub fn JsonWriter.float(self, value: Float32)
+pub fn JsonWriter.int32(self, value: Int32)
+pub fn JsonWriter.int64(self, value: Int)
+pub fn JsonWriter.jsonValue(self, value: json.Value)
+pub fn JsonWriter.key(self, key: String)
+pub fn JsonWriter.message[T: Message](self, value: T): !ProtobufError
+pub fn JsonWriter.string(self, value: String)
+pub fn JsonWriter.timestamp(self, value: time.DateTime)
+pub fn JsonWriter.uint32(self, value: UInt32)
+pub fn JsonWriter.uint64(self, value: UInt)
+pub fn Reader.bool(self, name: String): Bool ! ProtobufError
+pub fn Reader.bytes(self, name: String): Array[Byte] ! ProtobufError
+pub fn Reader.double(self, name: String): Float ! ProtobufError
+pub fn Reader.duration(self, name: String): time.Duration ! ProtobufError
+pub fn Reader.enter(self, name: String): !ProtobufError
+pub fn Reader.enterPacked(self, name: String): !ProtobufError
+pub fn Reader.enumValue[T: Enum](self, name: String): T? ! ProtobufError
+pub fn Reader.fixed32(self, name: String): UInt32 ! ProtobufError
+pub fn Reader.fixed64(self, name: String): UInt ! ProtobufError
+pub fn Reader.float(self, name: String): Float32 ! ProtobufError
+pub fn Reader.group[T: Message](self, name: String): T ! ProtobufError
+pub fn Reader.int32(self, name: String): Int32 ! ProtobufError
+pub fn Reader.int64(self, name: String): Int ! ProtobufError
+pub fn Reader.isPacked(self): Bool
+pub fn Reader.jsonList(self, name: String): json.Value ! ProtobufError
+pub fn Reader.jsonStruct(self, name: String): json.Value ! ProtobufError
+pub fn Reader.jsonValue(self, name: String): json.Value ! ProtobufError
+pub fn Reader.keep(self, fields: UnknownFields): UnknownFields ! ProtobufError
+pub fn Reader.message[T: Message](self, name: String): T ! ProtobufError
+pub fn Reader.missing(self, name: String): ProtobufError
+pub fn Reader.more(self): Bool
+pub fn Reader.next(self): Int ! ProtobufError
+pub fn Reader.sfixed32(self, name: String): Int32 ! ProtobufError
+pub fn Reader.sfixed64(self, name: String): Int ! ProtobufError
+pub fn Reader.sint32(self, name: String): Int32 ! ProtobufError
+pub fn Reader.sint64(self, name: String): Int ! ProtobufError
+pub fn Reader.skip(self): !ProtobufError
+pub fn Reader.string(self, name: String): String ! ProtobufError
+pub fn Reader.timestamp(self, name: String): time.DateTime ! ProtobufError
+pub fn Reader.uint32(self, name: String): UInt32 ! ProtobufError
+pub fn Reader.uint64(self, name: String): UInt ! ProtobufError
+pub fn UnknownFields.isEmpty(self): Bool
+pub fn Writer.begin(self, number: Int)
+pub fn Writer.bool(self, number: Int, value: Bool)
+pub fn Writer.bytes(self, number: Int, value: Array[Byte])
+pub fn Writer.deterministic(self): Bool
+pub fn Writer.double(self, number: Int, value: Float)
+pub fn Writer.duration(self, number: Int, value: time.Duration)
+pub fn Writer.end(self)
+pub fn Writer.enumValue[T: Enum](self, number: Int, value: T)
+pub fn Writer.fixed32(self, number: Int, value: UInt32)
+pub fn Writer.fixed64(self, number: Int, value: UInt)
+pub fn Writer.float(self, number: Int, value: Float32)
+pub fn Writer.group[T: Message](self, number: Int, value: T)
+pub fn Writer.int32(self, number: Int, value: Int32)
+pub fn Writer.int64(self, number: Int, value: Int)
+pub fn Writer.jsonList(self, number: Int, value: json.Value)
+pub fn Writer.jsonStruct(self, number: Int, value: json.Value)
+pub fn Writer.jsonValue(self, number: Int, value: json.Value)
+pub fn Writer.message[T: Message](self, number: Int, value: T)
+pub fn Writer.sfixed32(self, number: Int, value: Int32)
+pub fn Writer.sfixed64(self, number: Int, value: Int)
+pub fn Writer.sint32(self, number: Int, value: Int32)
+pub fn Writer.sint64(self, number: Int, value: Int)
+pub fn Writer.string(self, number: Int, value: String)
+pub fn Writer.timestamp(self, number: Int, value: time.DateTime)
+pub fn Writer.uint32(self, number: Int, value: UInt32)
+pub fn Writer.uint64(self, number: Int, value: UInt)
+pub fn Writer.unknown(self, fields: UnknownFields)
+pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
+pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
+pub fn emptyReader(): Reader
+pub fn encodeTo[T: Message](value: T, out: io.Writer, deterministic: Bool = false): !io.IoError
+pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte]
+pub fn entries[K: Key + Ordered, V](map: Map[K, V], sorted: Bool): Array[(K, V)]
+pub fn epoch(): time.DateTime
+pub fn fromJson[T: Message](text: String, ignoreUnknown: Bool = false): T ! ProtobufError
+pub fn nullValue(): json.Value
+pub fn pack[T: Message](message: T): Any
+pub fn toJson[T: Message](message: T, protoNames: Bool = false): String ! ProtobufError
+pub fn zeroDuration(): time.Duration
+pub trait Enum {
+    fn number(self): Int32
+
+    fn fromNumber(number: Int32): Self?
+
+    /// The value's name in the `.proto`, as JSON writes it; its number
+    /// without one.
+    fn protobufValueName(self): String
+
+    /// The value of a name in the `.proto`.
+    fn fromProtobufValueName(name: String): Self?
+}
+pub trait Message {
+    fn writeTo(self, out: Writer)
+
+    fn readFrom(input: Reader): Self ! ProtobufError
+
+    /// Its full name, as `users.v1.User`.
+    fn protobufName(): String
+
+    /// Writes the message as proto3's mapping to JSON gives it, which the
+    /// compiler writes for each message it implements.
+    fn writeJson(self, out: JsonWriter): !ProtobufError
+
+    /// The message a JSON value gives, as proto3's mapping reads it.
+    fn readJson(input: JsonReader, value: json.Value): Self ! ProtobufError
+}
+pub type Any = {
+    typeUrl: String = ""
+    value: Array[Byte] = []
+}
+pub type Empty = {}
+pub type FieldMask = {
+    paths: Array[String] = []
+}
+pub type FileDescriptor = {
+    name: String
+    symbols: Array[String] = []
+    bytes: Array[Byte] = []
+    imports: Array[FileDescriptor] = []
+}
+pub type JsonReader = {
+    // private fields
+}
+pub type JsonWriter = {
+    // private fields
+}
+pub type Reader = {
+    // private fields
+}
+pub type UnknownFields = {
+    // private fields
+}
+pub type Writer = {
+    // private fields
+}
+== std.random
+pub fn Random(): Random
+pub fn Random.bool(mut self): Bool
+pub fn Random.bytes(mut self, count: Int): Array[Byte]
+pub fn Random.choice[T](mut self, items: Array[T]): T?
+pub fn Random.float(mut self): Float
+pub fn Random.int[T: Integer](mut self, range: Range[T]): T
+pub fn Random.seeded(seed: Int): Random
+pub fn Random.shuffled[T](mut self, items: Array[T]): Array[T]
+pub fn entropy(count: Int): Array[Byte]
+pub type Random = {
+    // private fields
+}
+== std.reflect
+impl Display for AppliedKind
+impl Display for ParameterMode
+impl Display for PrimitiveKind
+impl Display for ReferenceKind
+impl Display for ReflectError
+impl Display for ReflectErrorKind
+impl Display for TypeCapability
+impl Display for TypeInfo
+impl Display for TypeKind
+impl Display for Value
+impl Display for VariantPayloadKind
+impl Reflect for Bool
+impl Reflect for Byte
+impl Reflect for Char
+impl Reflect for Float
+impl Reflect for Float32
+impl Reflect for Int
+impl Reflect for Int128
+impl Reflect for Int16
+impl Reflect for Int32
+impl Reflect for Int8
+impl Reflect for String
+impl Reflect for UInt
+impl Reflect for UInt128
+impl Reflect for UInt16
+impl Reflect for UInt32
+impl Reflect for UInt8
+impl Reflect for Unit
+impl Reflect for Value
+impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V]
+impl[T: Reflect + Key] Reflect for Set[T]
+impl[T: Reflect, E: Reflect] Reflect for T ! E
+impl[T: Reflect] Reflect for Array[T]
+impl[T: Reflect] Reflect for Deque[T]
+impl[T: Reflect] Reflect for Ref[T]
+impl[T: Reflect] Reflect for T?
+pub enum AppliedKind {
+    Array
+    Map
+    Set
+    Range
+    Option
+    Result
+    Other
+}
+pub enum ParameterMode {
+    Value
+    Ref
+    Mut
+    Var
+}
+pub enum PrimitiveKind {
+    Bool
+    Int
+    Int8
+    Int16
+    Int32
+    Int128
+    UInt
+    UInt8
+    UInt16
+    UInt32
+    UInt128
+    Float
+    Float32
+    Byte
+    Char
+    String
+    Unit
+    Never
+}
+pub enum ReferenceKind {
+    Ref
+    Pointer
+}
+pub enum ReflectErrorKind {
+    NoField
+    NoMethod
+    NoValue
+    WrongType
+    WrongArguments
+    OutOfRange
+}
+pub enum TypeCapability {
+    Copy
+    Equatable
+    Key
+    Send
+    Share
+}
+pub enum TypeKind {
+    Primitive(PrimitiveKind)
+    Record
+    Enum
+    Newtype
+    Tuple
+    Union
+    Function
+    Applied(AppliedKind)
+    Reference(ReferenceKind)
+    Opaque
+}
+pub enum VariantPayloadKind {
+    Unit
+    Tuple
+    Record
+}
+pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo
+pub fn FieldInfo.annotation[A: Reflect](self): A?
+pub fn FieldInfo.annotations(self): Array[Value]
+pub fn FieldInfo.default(self): Value?
+pub fn FieldInfo.defaulted(self, value: Value): FieldInfo
+pub fn FieldInfo.docs(self): String?
+pub fn FieldInfo.externalName(self): String
+pub fn FieldInfo.externallyNamed(self, name: String): FieldInfo
+pub fn FieldInfo.name(self): String
+pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): FieldInfo
+pub fn FieldInfo.ordinal(self): Int
+pub fn FieldInfo.typeInfo(self): TypeInfo
+pub fn FunctionInfo.isUnsafe(self): Bool
+pub fn FunctionInfo.of(
+    parameters: Array[ParameterInfo],
+    outcome: TypeInfo,
+    variadic: Bool,
+    isUnsafe: Bool,
+): FunctionInfo
+pub fn FunctionInfo.outcome(self): TypeInfo
+pub fn FunctionInfo.parameters(self): Array[ParameterInfo]
+pub fn FunctionInfo.variadic(self): Bool
+pub fn MethodInfo.annotated(self, annotations: Array[Value]): MethodInfo
+pub fn MethodInfo.annotation[A: Reflect](self): A?
+pub fn MethodInfo.annotations(self): Array[Value]
+pub fn MethodInfo.docs(self): String?
+pub fn MethodInfo.documented(self, docs: String?): MethodInfo
+pub fn MethodInfo.function(self): FunctionInfo
+pub fn MethodInfo.name(self): String
+pub fn MethodInfo.of(name: String, receiver: ParameterMode, function: FunctionInfo): MethodInfo
+pub fn MethodInfo.receiver(self): ParameterMode
+pub fn ParameterInfo.annotated(self, annotations: Array[Value]): ParameterInfo
+pub fn ParameterInfo.annotation[A: Reflect](self): A?
+pub fn ParameterInfo.annotations(self): Array[Value]
+pub fn ParameterInfo.mode(self): ParameterMode
+pub fn ParameterInfo.name(self): String
+pub fn ParameterInfo.of(
+    index: Int,
+    info: TypeInfo,
+    mode: ParameterMode,
+    name: String = "",
+): ParameterInfo
+pub fn ParameterInfo.position(self): Int
+pub fn ParameterInfo.typeInfo(self): TypeInfo
+pub fn ReflectError.arguments(
+    typeName: String,
+    method: String,
+    expected: Int,
+    found: Int,
+    optional: Int = 0,
+    variadic: Bool = false,
+): ReflectError
+pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
+pub fn ReflectError.noField(typeName: String, name: String, fields: Array[String]): ReflectError
+pub fn ReflectError.noMethod(typeName: String, name: String, methods: Array[String]): ReflectError
+pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
+pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError
+pub fn TypeDescription.of(kind: TypeKind): TypeDescription
+pub fn TypeInfo.annotation[A: Reflect](self): A?
+pub fn TypeInfo.annotations(self): Array[Value]
+pub fn TypeInfo.capabilities(self): Set[TypeCapability]
+pub fn TypeInfo.docs(self): String?
+pub fn TypeInfo.fields(self): Array[FieldInfo]
+pub fn TypeInfo.genericArguments(self): Array[TypeInfo]
+pub fn TypeInfo.id(self): TypeId
+pub fn TypeInfo.kind(self): TypeKind
+pub fn TypeInfo.methods(self): Array[MethodInfo]
+pub fn TypeInfo.qualifiedName(self): String
+pub fn TypeInfo.tupleElements(self): Array[TypeInfo]
+pub fn TypeInfo.underlying(self): TypeInfo?
+pub fn TypeInfo.variants(self): Array[VariantInfo]
+pub fn Value.brokenRules(self): Array[(String, String)]
+pub fn Value.call(self, method: String, args: ...Value): Value ! ReflectError
+pub fn Value.callMut(mut self, method: String, args: ...Value): Value ! ReflectError
+pub fn Value.elements(self): Array[Value]
+pub fn Value.entries(self): Array[(Value, Value)]
+pub fn Value.fields(self): Array[Field]
+pub fn Value.get(self, path: String): Value ! ReflectError
+pub fn Value.optional(self, name: String): Value? ! ReflectError
+pub fn Value.set(mut self, path: String, new: Value): !ReflectError
+pub fn Value.to[T: Reflect](self): T ! ReflectError
+pub fn Value.typeInfo(self): TypeInfo
+pub fn Value.typeName(self): String
+pub fn Value.variant(self): String?
+pub fn VariantInfo.annotated(self, annotations: Array[Value]): VariantInfo
+pub fn VariantInfo.annotation[A: Reflect](self): A?
+pub fn VariantInfo.annotations(self): Array[Value]
+pub fn VariantInfo.docs(self): String?
+pub fn VariantInfo.documented(self, docs: String?): VariantInfo
+pub fn VariantInfo.externalName(self): String
+pub fn VariantInfo.externallyNamed(self, name: String): VariantInfo
+pub fn VariantInfo.fields(self): Array[FieldInfo]
+pub fn VariantInfo.name(self): String
+pub fn VariantInfo.of(
+    name: String,
+    ordinal: Int,
+    payloadKind: VariantPayloadKind,
+    tupleElements: Array[TypeInfo],
+    fields: Array[FieldInfo],
+): VariantInfo
+pub fn VariantInfo.ordinal(self): Int
+pub fn VariantInfo.payloadKind(self): VariantPayloadKind
+pub fn VariantInfo.tupleElements(self): Array[TypeInfo]
+pub fn annotationsOf[T](place: Int, index: Int, part: Int, method: String): Array[Value]
+pub fn callMut[R: Reflect, S: Reflect](
+    target: mut S,
+    method: String,
+    args: ...Value,
+): R ! ReflectError
+pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): R ! ReflectError
+pub fn convert[T: Reflect, S: Reflect](value: S): T
+pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError
+pub fn set[S: Reflect](value: mut S, path: String, new: Value): !ReflectError
+pub fn typeInfo[T: Reflect](): TypeInfo
+pub fn typeOf[T: Reflect](value: T): TypeInfo
+pub fn valueOf[T: Reflect](value: T): Value
+pub trait Reflect {
+    /// The value of a field, element or key.
+    fn reflectGet(self, name: String): Value ! ReflectError
+
+    /// Changes a field, element or key.
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError
+
+    /// The visible fields of a record or of the active variant's record
+    /// payload; `none` for any other value.
+    fn reflectFields(self): Array[Field]?
+
+    /// The elements of a sequence or of the active variant's payload.
+    fn reflectElements(self): Array[Value]?
+
+    /// The entries of a map.
+    fn reflectEntries(self): Array[(Value, Value)]?
+
+    /// The name of the active variant of an enum.
+    fn reflectVariant(self): String?
+
+    /// Calls a `pub` method with `self`.
+    fn reflectCall(self, method: String, args: Array[Value]): Value ! ReflectError
+
+    /// Calls a `pub` method, which may change the value.
+    fn reflectCallMut(mut self, method: String, args: Array[Value]): Value ! ReflectError
+
+    /// The value as `Value` displays it; strings are quoted when `nested`.
+    fn reflectShow(self, nested: Bool): String
+
+    /// A value of this type from a value of another type of the same shape.
+    fn reflectFrom(value: Value): Self ! ReflectError
+
+    /// What the type is made of.
+    fn reflectDescription(): TypeDescription
+
+    /// The rules of its own the value breaks, as `validate.Rules` gives
+    /// them: each path and message.
+    fn reflectRules(self): Array[(String, String)]
+}
+pub type Field = {
+    name: String
+    value: Value
+}
+pub type FieldInfo = {
+    // private fields
+}
+pub type FunctionInfo = {
+    // private fields
+}
+pub type MethodInfo = {
+    // private fields
+}
+pub type ParameterInfo = {
+    // private fields
+}
+pub type ReflectError = {
+    kind: ReflectErrorKind
+    path: String
+    message: String
+}
+pub type TypeDescription = {
+    kind: TypeKind
+    generics: Array[TypeInfo]
+    fields: Array[FieldInfo]
+    variants: Array[VariantInfo]
+    methods: Array[MethodInfo]
+    elements: Array[TypeInfo]
+    underlying: TypeInfo?
+    /// The program's annotations of the type (language 27.13).
+    annotations: Array[Value]
+    /// Its `///` documentation.
+    docs: String?
+}
+pub type TypeId = {
+    // private fields
+}
+pub type TypeInfo = {
+    // private fields
+}
+pub type Value = {
+    // private fields
+}
+pub type VariantInfo = {
+    // private fields
+}
+== std.regex
+impl Display for RegexError
+impl Display for RegexErrorKind
+impl Display for RegexPhase
+impl Iterator[RegexMatch ! RegexError] for RegexFindIterator
+pub enum RegexErrorKind {
+    InvalidSyntax
+    UnexpectedEnd
+    InvalidEscape
+    InvalidUnicodeScalar
+    InvalidUnicodeProperty
+    InvalidClass
+    InvalidRange
+    InvalidQuantifier
+    InvalidCaptureName
+    DuplicateCaptureName
+    UnsupportedFeature
+    PatternLimitExceeded
+    ProgramLimitExceeded
+    InputLimitExceeded
+    MatchLimitExceeded
+    ReplacementLimitExceeded
+    InvalidReplacement
+    OutputLimitExceeded
+    InvalidBoundary
+}
+pub enum RegexPhase {
+    Compile
+    Match
+    Replace
+}
+pub fn Regex.captureCount(self): Int
+pub fn Regex.captureNames(self): Array[String]
+pub fn Regex.compile(
+    pattern: String,
+    options: RegexOptions = RegexOptions {
+        caseInsensitive: false
+        multiLine: false
+        dotMatchesNewline: false
+        crlf: false
+        ungreedy: false
+    },
+    limits: RegexLimits = RegexLimits {
+        maxPatternBytes: 65536
+        maxSyntaxDepth: 256
+        maxCaptureGroups: 256
+        maxProgramStates: 1000000
+        maxInputBytes: 16777216
+        maxMatches: 1000000
+        maxOutputBytes: 67108864
+        maxReplacementBytes: 65536
+    },
+): Regex ! RegexError
+pub fn Regex.escape(text: String): String
+pub fn Regex.find(self, input: String): RegexMatch? ! RegexError
+pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError
+pub fn Regex.isFullMatch(self, input: String): Bool ! RegexError
+pub fn Regex.isMatch(self, input: String): Bool ! RegexError
+pub fn Regex.pattern(self): String
+pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError
+pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError
+pub fn Regex.replaceAllWith(
+    self,
+    input: String,
+    replacement: fn(RegexMatch): String,
+): String ! RegexError
+pub fn Regex.replaceWith(
+    self,
+    input: String,
+    replacement: fn(RegexMatch): String,
+): String ! RegexError
+pub fn RegexLimits.defaults(): RegexLimits
+pub fn RegexMatch.capture(self, index: Int): RegexCapture?
+pub fn RegexMatch.captureName(self, name: String): RegexCapture?
+pub fn RegexOptions.defaults(): RegexOptions
+pub fn RegexSpan.slice(self, input: String): String ! RegexError
+pub type Regex = {
+    // private fields
+}
+pub type RegexCapture = {
+    span: RegexSpan
+    text: String
+}
+pub type RegexError = {
+    kind: RegexErrorKind
+    phase: RegexPhase
+    offset: Int
+}
+pub type RegexFindIterator = {
+    // private fields
+}
+pub type RegexLimits = {
+    maxPatternBytes: Int
+    maxSyntaxDepth: Int
+    maxCaptureGroups: Int
+    maxProgramStates: Int
+    maxInputBytes: Int
+    maxMatches: Int
+    maxOutputBytes: Int
+    maxReplacementBytes: Int
+}
+pub type RegexMatch = {
+    span: RegexSpan
+    text: String
+    // private fields
+}
+pub type RegexOptions = {
+    caseInsensitive: Bool
+    multiLine: Bool
+    dotMatchesNewline: Bool
+    crlf: Bool
+    ungreedy: Bool
+}
+pub type RegexSpan = {
+    start: Int
+    end: Int
+}
+== std.serialization
+impl Decode for Bool
+impl Decode for Byte
+impl Decode for Bytes
+impl Decode for Float
+impl Decode for Float32
+impl Decode for Int
+impl Decode for Int128
+impl Decode for Int16
+impl Decode for Int32
+impl Decode for Int8
+impl Decode for String
+impl Decode for UInt
+impl Decode for UInt128
+impl Decode for UInt16
+impl Decode for UInt32
+impl Decode for UInt8
+impl Display for Error
+impl Display for ErrorKind
+impl Display for Violation
+impl Encode for Bool
+impl Encode for Byte
+impl Encode for Bytes
+impl Encode for Float
+impl Encode for Float32
+impl Encode for Int
+impl Encode for Int128
+impl Encode for Int16
+impl Encode for Int32
+impl Encode for Int8
+impl Encode for String
+impl Encode for UInt
+impl Encode for UInt128
+impl Encode for UInt16
+impl Encode for UInt32
+impl Encode for UInt8
+impl[A: Decode, B: Decode, C: Decode, D: Decode, E: Decode, F: Decode, G: Decode, H: Decode] Decode for (
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+)
+impl[A: Decode, B: Decode, C: Decode, D: Decode, E: Decode, F: Decode, G: Decode] Decode for (
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+)
+impl[A: Decode, B: Decode, C: Decode, D: Decode, E: Decode, F: Decode] Decode for (A, B, C, D, E, F)
+impl[A: Decode, B: Decode, C: Decode, D: Decode, E: Decode] Decode for (A, B, C, D, E)
+impl[A: Decode, B: Decode, C: Decode, D: Decode] Decode for (A, B, C, D)
+impl[A: Decode, B: Decode, C: Decode] Decode for (A, B, C)
+impl[A: Decode, B: Decode] Decode for (A, B)
+impl[A: Encode, B: Encode, C: Encode, D: Encode, E: Encode, F: Encode, G: Encode, H: Encode] Encode for (
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+)
+impl[A: Encode, B: Encode, C: Encode, D: Encode, E: Encode, F: Encode, G: Encode] Encode for (
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+)
+impl[A: Encode, B: Encode, C: Encode, D: Encode, E: Encode, F: Encode] Encode for (A, B, C, D, E, F)
+impl[A: Encode, B: Encode, C: Encode, D: Encode, E: Encode] Encode for (A, B, C, D, E)
+impl[A: Encode, B: Encode, C: Encode, D: Encode] Encode for (A, B, C, D)
+impl[A: Encode, B: Encode, C: Encode] Encode for (A, B, C)
+impl[A: Encode, B: Encode] Encode for (A, B)
+impl[T: Decode] Decode for Array[T]
+impl[T: Decode] Decode for T?
+impl[T: Encode] Encode for Array[T]
+impl[T: Encode] Encode for T?
+impl[V: Decode] Decode for Map[String, V]
+impl[V: Encode] Encode for Map[String, V]
+pub enum ErrorKind {
+    /// The input is not in the format.
+    Syntax
+    /// A value of another kind than the type needs.
+    Type
+    /// A field the type needs is absent.
+    Missing
+    /// A field the type does not have, when unknown fields are rejected.
+    Unknown
+    /// A number that does not fit the type.
+    Range
+    /// The stream it was read from or written to failed.
+    Io
+    /// A value the format cannot hold, as a `none` in a TOML array.
+    Unsupported
+    /// A value that reads but breaks the rules of its type, as
+    /// `@validate.Min(18)` says them (14.35): `violations` says which.
+    Invalid
+}
+pub enum Event {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    /// A number as a text format writes it, which keeps its precision
+    /// until a type takes it.
+    Number(String)
+    Text(String)
+    /// A scalar written as text with no type, as XML writes them: each
+    /// scalar type reads it from its text, a number or a `Bool` without
+    /// the whitespace around it.
+    Untyped(String)
+    /// A date, a time or both, as RFC 3339 writes them, in a format that
+    /// has them: `1979-05-27T07:32:00Z`, `1979-05-27`, `07:32:00`.
+    DateTime(String)
+    Bytes(Array[Byte])
+    BeginList
+    EndList
+    BeginMap
+    /// The key of the next member of a map.
+    Key(String)
+    EndMap
+}
+pub enum UnknownFields {
+    Ignore
+    Reject
+}
+pub trait Decode {
+    fn decode[S: Source](input: S, first: Event): Self ! Error
+}
+pub trait Encode {
+    fn encode[S: Sink](self, out: S)
+}
+pub trait Sink {
+    fn null(self)
+
+    fn bool(self, value: Bool)
+
+    fn int(self, value: Int)
+
+    fn float(self, value: Float)
+
+    /// A number as a text format writes it.
+    fn number(self, digits: String)
+
+    fn text(self, value: String)
+
+    fn bytes(self, value: Array[Byte])
+
+    /// A date, a time or both, as RFC 3339 writes them; as text in a
+    /// format without them.
+    fn dateTime(self, text: String)
+
+    /// The map of a record follows, for a format that names its values, as
+    /// XML its elements.
+    fn beginRecord(self, record: Record)
+
+    /// The key of a field with notes.
+    fn field(self, field: Field)
+
+    /// Before a value: a tag of its own, as YAML's `!reference`, for a
+    /// format that has them.
+    fn tag(self, name: String)
+
+    /// A list of `count` values follows, then its end.
+    fn beginList(self, count: Int)
+
+    fn endList(self)
+
+    /// A map of `count` members follows, each a key and a value, then its
+    /// end.
+    fn beginMap(self, count: Int)
+
+    fn key(self, name: String)
+
+    fn endMap(self)
+
+    /// Whether a map leaves out its members that are `none`, as in a
+    /// format without null.
+    fn omitsNone(self): Bool
+
+    /// Writes JSON text as it is, for `json.Raw`; false when the format
+    /// does not take it, and the value is written event by event instead.
+    fn rawJson(self, text: String): Bool
+}
+pub trait Source {
+    /// The next event, or `none` after the whole document.
+    fn next(self): Event? ! Error
+
+    /// Skips the rest of a value whose first event was `first`.
+    fn skip(self, first: Event): !Error
+
+    /// An error at the current position, with its path, line and column.
+    fn failure(self, kind: ErrorKind, message: String): Error
+
+    /// Whether a field the type does not have is an error.
+    fn rejectsUnknown(self): Bool
+
+    /// The tag of its own the value just read has, in a format that has
+    /// them, as YAML's `!reference`; `none` without one.
+    fn tag(self): String?
+
+    /// The value whose first event was `first` as the JSON text it was
+    /// read from, for `json.Raw`; `none` from another format.
+    fn rawJson(self, first: Event): String?
+
+    /// What the format calls a map and a list, for messages.
+    fn mapName(self): String
+
+    fn listName(self): String
+
+    /// Before the fields of a record are read, when some have notes: the
+    /// notes of each, in the order of the names `nextField` takes.
+    fn fields(self, notes: Array[Array[Note]])
+
+    /// The next event, which must exist.
+    fn value(self): Event ! Error
+
+    /// The next key of a map, or `none` at its end.
+    fn nextKey(self): String? ! Error
+
+    /// The next member of a map, read up to its value: the index of its
+    /// key in `names`, or `none` at the map's end. A member whose key is
+    /// none of them is skipped whole, or fails when unknown fields are
+    /// rejected, and gives `names.length()`. A format that reads keys in
+    /// place compares them there, with no string made for each.
+    fn nextField(self, names: Array[String]): Int? ! Error
+
+    /// A member the type does not have: skipped, or an error when unknown
+    /// fields are rejected.
+    fn unknownField(self, key: String, first: Event): !Error
+
+    /// Checks that a map starts, for the type `name`.
+    fn beginMap(self, first: Event, name: String): !Error
+
+    /// Checks that a list starts, for `name`.
+    fn beginList(self, first: Event, name: String): !Error
+
+    /// Checks that a list ends.
+    fn endList(self): !Error
+
+    /// A field that must have been present.
+    fn required[T: ~Copy](self, value: T?, field: String): T ! Error
+
+    /// The error of a value that breaks the rules of its type.
+    fn invalid(self, violations: Array[Violation]): Error
+
+    /// An error for a value of the wrong kind.
+    fn mismatch(self, first: Event, expected: String): Error
+}
+pub type Bytes = Array[Byte]
+pub type Error = {
+    kind: ErrorKind
+    message: String
+    /// Where in the document, as `$.users[2].age`.
+    path: String
+    line: Int
+    column: Int
+    /// The rules a value of kind `Invalid` breaks, each of its fields.
+    violations: Array[Violation]
+}
+pub type Field = {
+    name: String
+    notes: Array[Note]
+}
+pub type Note = {
+    format: String
+    name: String
+    /// The annotation's argument as text; empty without one.
+    value: String
+}
+pub type Record = {
+    name: String
+    count: Int
+    notes: Array[Note]
+}
+pub type Violation = {
+    path: String
+    message: String
+}
+== std.sql
+impl Display for ErrorKind
+impl Display for Operation
+impl Display for SqlError
+impl Display for Value
+impl reflect.Reflect for Database
+impl reflect.Reflect for SqlError
+pub enum ErrorKind {
+    /// It could not connect, or lost the connection.
+    Connection
+    /// `queryOne` found no row, for a type that is not optional.
+    NoRows
+    /// A unique key would repeat.
+    Unique
+    /// A foreign key names a row that does not exist, or is still named.
+    ForeignKey
+    /// A column that cannot be null would be.
+    NotNull
+    /// A check constraint would not hold.
+    Check
+    /// The transaction met another and has to be tried again.
+    Conflict
+    /// The SQL does not read.
+    Syntax
+    /// The statement took longer than allowed.
+    Timeout
+    /// A row could not be read into the type.
+    Decode
+    /// Anything else the database says.
+    Other
+}
+pub enum Operation {
+    Query
+    Execute
+    Begin
+    Commit
+    Rollback
+}
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    /// An exact number, as its digits: a `math.Decimal`, a `NUMERIC`.
+    Number(String)
+    Text(String)
+    Bytes(Array[Byte])
+    DateTime(time.DateTime)
+    /// An array as one parameter, which `sql.array` makes.
+    List(Array[Value])
+}
+pub fn Database.close(self)
+pub fn Database.execute(self, query: Query): Done ! SqlError
+pub fn Database.migrate(self, files: fs.FileSystem): !SqlError
+pub fn Database.queryOne[T: serialization.Decode](self, query: Query): T ! SqlError
+pub fn Database.query[T: serialization.Decode](self, query: Query): Array[T] ! SqlError
+pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T ! SqlError
+pub fn Database.use(
+    mut self,
+    middleware: fn(Statement, fn(Statement): Outcome ! SqlError): Outcome ! SqlError,
+)
+pub fn SqlError.of(kind: ErrorKind, message: String): SqlError
+pub fn array[T: serialization.Encode](values: Array[T]): Query
+pub fn identifier(name: String): Query
+pub fn join(parts: Array[Query], separator: String = ", "): Query
+pub fn open(url: String, connections: Int = 10, driver: Driver? = none): Database ! SqlError
+pub fn raw(text: String): Query
+pub type Connection = {
+    run: fn(Statement): Outcome ! SqlError
+    close: fn()
+}
+pub type Database = {
+    // private fields
+}
+pub type Done = {
+    affected: Int
+    lastId: Int?
+}
+pub type Driver = {
+    system: String
+    placeholder: fn(Int): String
+    identifier: fn(String): String
+    connect: fn(String): Connection ! SqlError
+    /// The database's name and host in a URL, for `Statement`.
+    place: fn(String): (String, String?)
+}
+pub type Outcome = {
+    columns: Array[String]
+    rows: Array[Array[Value]]
+    affected: Int
+    lastId: Int?
+}
+pub type Query = {
+    // private fields
+}
+pub type SqlError = {
+    kind: ErrorKind
+    message: String
+    code: String?
+    constraint: String?
+}
+pub type Statement = {
+    text: String
+    parameters: Array[Value]
+    operation: Operation
+    system: String
+    database: String
+    host: String?
+}
+== std.sync
+impl reflect.Reflect for Semaphore
+impl[K: Key, V] reflect.Reflect for Map[K, V]
+impl[T] reflect.Reflect for Atomic[T]
+impl[T] reflect.Reflect for Mutex[T]
+impl[T] reflect.Reflect for RwLock[T]
+pub enum CompareExchange[T] {
+    Exchanged(T)
+    Mismatch(T)
+}
+pub fn Array.compareExchange(self, index: Int, expected: T, desired: T): CompareExchange[T] ! collections.CollectionError
+pub fn Array.get(self, index: Int): T?
+pub fn Array.length(self): Int
+pub fn Array.set(self, index: Int, value: T): T ! collections.CollectionError
+pub fn Array.snapshot(self): Array[T]
+pub fn Atomic(value: T): Atomic[T]
+pub fn Atomic.add(self, delta: T): T
+pub fn Atomic.compareExchange(self, expected: T, desired: T): CompareExchange[T]
+pub fn Atomic.load(self): T
+pub fn Atomic.store(self, value: T)
+pub fn Atomic.swap(self, value: T): T
+pub fn Barrier(parties: Int): Barrier
+pub fn Barrier.wait(self): Bool
+pub fn Map.compareExchange(self, key: K, expected: V?, desired: V?): CompareExchange[V?]
+pub fn Map.contains(self, key: K): Bool
+pub fn Map.get(self, key: K): V?
+pub fn Map.insert(self, key: K, value: V): V?
+pub fn Map.length(self): Int
+pub fn Map.remove(self, key: K): V?
+pub fn Map.snapshot(self): Map[K, V]
+pub fn Mutex(value: T): Mutex[T]
+pub fn Mutex.get(self): T
+pub fn Mutex.set(self, value: T)
+pub fn Mutex.tryUpdate(self, change: fn(var T): R): R?
+pub fn Mutex.update(self, change: fn(var T): R): R
+pub fn Mutex.updateWhen(self, ready: fn(T): Bool, change: fn(var T): R): R
+pub fn Once.get(self): T?
+pub fn Once.getOrInit(self, init: fn(): T): T
+pub fn Once.isReady(self): Bool
+pub fn Once[T](): Once[T]
+pub fn Permit.release(self)
+pub fn Queue.get(self, index: Int): T?
+pub fn Queue.popFront(self): T?
+pub fn Queue.push(self, value: T)
+pub fn Queue.snapshot(self): Deque[T]
+pub fn RateLimiter(
+    rate: Int,
+    per: time.Duration = time.seconds(1),
+    burst: Int? = none,
+): RateLimiter
+pub fn RateLimiter.allow(self): Bool
+pub fn RateLimiter.wait(self)
+pub fn RwLock(value: T): RwLock[T]
+pub fn RwLock.get(self): T
+pub fn RwLock.read(self, observe: fn(T): R): R
+pub fn RwLock.set(self, value: T)
+pub fn RwLock.update(self, change: fn(var T): R): R
+pub fn Semaphore(permits: Int): Semaphore
+pub fn Semaphore.acquire(self): Permit
+pub fn Semaphore.tryAcquire(self): Permit?
+pub fn Set.contains(self, key: K): Bool
+pub fn Set.insert(self, key: K): Bool
+pub fn Set.length(self): Int
+pub fn Set.remove(self, key: K): Bool
+pub fn Set.snapshot(self): Set[K]
+pub fn Stack.get(self, index: Int): T?
+pub fn Stack.pop(self): T?
+pub fn Stack.push(self, value: T)
+pub fn Stack.snapshot(self): Array[T]
+pub fn retry[T: ~Copy, E: ~Copy](
+    work: fn(): T ! E,
+    attempts: Int = 3,
+    delay: time.Duration = time.milliseconds(100),
+    maxDelay: time.Duration = time.seconds(10),
+    when: (fn(ref E): Bool)? = none,
+): T ! E
+pub type Array[T]
+pub type Map[K: Key, V]
+pub type Queue[T]
+pub type RateLimiter = {
+    // private fields
+}
+pub type Set[K: Key]
+pub type Stack[T]
+== std.template
+impl Display for Html
+impl Display for TemplateError
+impl reflect.Reflect for Html
+impl reflect.Reflect for TemplateError
+impl serialization.Decode for Html
+impl serialization.Encode for Html
+pub fn Set.add(mut self, name: String, source: String): !TemplateError
+pub fn Set.addFile(mut self, path: String): !TemplateError
+pub fn Set.addFiles(mut self, files: fs.FileSystem, pattern: String = "**"): !TemplateError
+pub fn Set.functions[H: reflect.Reflect](mut self, helpers: H)
+pub fn Set.html(): Set
+pub fn Set.render[T: reflect.Reflect](self, name: String, data: T): String ! TemplateError
+pub fn Set.text(): Set
+pub fn Set.write[T: reflect.Reflect](
+    self,
+    name: String,
+    data: T,
+    out: io.Writer,
+): !TemplateError
+pub fn Template[T].render(self, data: T): String
+pub fn Template[T].write(self, data: T, out: io.Writer): !io.IoError
+pub fn html[T](source: String): Template[T]
+pub fn text[T](source: String): Template[T]
+pub type Html = {
+    value: String
+}
+pub type Set = {
+    // private fields
+}
+pub type TemplateError = {
+    message: String
+    template: String
+    line: Int
+    column: Int
+}
+pub type Template[T] = {
+    // private fields
+}
+== std.testing
+pub fn VirtualTime.advance(self, duration: time.Duration)
+pub fn VirtualTime.settle(self)
+pub fn attach(name: String, mediaType: String, data: Array[Byte])
+pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): !E
+pub fn failNow(message: String): Never
+pub fn keep[T](value: T)
+pub fn log(message: String)
+pub fn skip(reason: String): Never
+pub fn snapshot[T: serialization.Encode](
+    name: String,
+    value: T,
+    ignore: Array[String] = [],
+    matches: Map[String, String] = [:],
+    replace: Map[String, String] = [:],
+)
+pub fn tags(values: Map[String, String])
+pub fn withVirtualTime[E, F: Send + CallOnce[fn(VirtualTime): !E]](body: F): !E
+== std.text
+impl Display for Category
+impl Display for Script
+pub enum Category {
+    UppercaseLetter
+    LowercaseLetter
+    TitlecaseLetter
+    ModifierLetter
+    OtherLetter
+    NonspacingMark
+    SpacingMark
+    EnclosingMark
+    DecimalNumber
+    LetterNumber
+    OtherNumber
+    ConnectorPunctuation
+    DashPunctuation
+    OpenPunctuation
+    ClosePunctuation
+    InitialPunctuation
+    FinalPunctuation
+    OtherPunctuation
+    MathSymbol
+    CurrencySymbol
+    ModifierSymbol
+    OtherSymbol
+    SpaceSeparator
+    LineSeparator
+    ParagraphSeparator
+    Control
+    Format
+    Surrogate
+    PrivateUse
+    Unassigned
+}
+pub enum Normalization {
+    Nfc
+    Nfd
+    Nfkc
+    Nfkd
+}
+pub enum Script {
+    Adlam
+    Ahom
+    AnatolianHieroglyphs
+    Arabic
+    Armenian
+    Avestan
+    Balinese
+    Bamum
+    BassaVah
+    Batak
+    Bengali
+    BeriaErfe
+    Bhaiksuki
+    Bopomofo
+    Brahmi
+    Braille
+    Buginese
+    Buhid
+    CanadianAboriginal
+    Carian
+    CaucasianAlbanian
+    Chakma
+    Cham
+    Cherokee
+    Chorasmian
+    Common
+    Coptic
+    Cuneiform
+    Cypriot
+    CyproMinoan
+    Cyrillic
+    Deseret
+    Devanagari
+    DivesAkuru
+    Dogra
+    Duployan
+    EgyptianHieroglyphs
+    Elbasan
+    Elymaic
+    Ethiopic
+    Garay
+    Georgian
+    Glagolitic
+    Gothic
+    Grantha
+    Greek
+    Gujarati
+    GunjalaGondi
+    Gurmukhi
+    GurungKhema
+    Han
+    Hangul
+    HanifiRohingya
+    Hanunoo
+    Hatran
+    Hebrew
+    Hiragana
+    ImperialAramaic
+    Inherited
+    InscriptionalPahlavi
+    InscriptionalParthian
+    Javanese
+    Jurchen
+    Kaithi
+    Kannada
+    Katakana
+    Kawi
+    KayahLi
+    Kharoshthi
+    KhitanSmallScript
+    Khmer
+    Khojki
+    Khudawadi
+    KiratRai
+    Lao
+    Latin
+    Lepcha
+    Limbu
+    LinearA
+    LinearB
+    Lisu
+    Lycian
+    Lydian
+    Mahajani
+    Makasar
+    Malayalam
+    Mandaic
+    Manichaean
+    Marchen
+    MasaramGondi
+    Medefaidrin
+    MeeteiMayek
+    MendeKikakui
+    MeroiticCursive
+    MeroiticHieroglyphs
+    Miao
+    Modi
+    Mongolian
+    Mro
+    Multani
+    Myanmar
+    Nabataean
+    NagMundari
+    Nandinagari
+    NewTaiLue
+    Newa
+    Nko
+    Nushu
+    NyiakengPuachueHmong
+    Ogham
+    OlChiki
+    OlOnal
+    OldHungarian
+    OldItalic
+    OldNorthArabian
+    OldPermic
+    OldPersian
+    OldSogdian
+    OldSouthArabian
+    OldTurkic
+    OldUyghur
+    Oriya
+    Osage
+    Osmanya
+    PahawhHmong
+    Palmyrene
+    PauCinHau
+    PhagsPa
+    Phoenician
+    ProtoCuneiform
+    PsalterPahlavi
+    Rejang
+    Runic
+    Samaritan
+    Saurashtra
+    Seal
+    Sharada
+    Shavian
+    Siddham
+    Sidetic
+    SignWriting
+    Sinhala
+    Sogdian
+    SoraSompeng
+    Soyombo
+    Sundanese
+    Sunuwar
+    SylotiNagri
+    Syriac
+    Tagalog
+    Tagbanwa
+    TaiLe
+    TaiTham
+    TaiViet
+    TaiYo
+    Takri
+    Tamil
+    Tangsa
+    Tangut
+    Telugu
+    Thaana
+    Thai
+    Tibetan
+    Tifinagh
+    Tirhuta
+    Todhri
+    TolongSiki
+    Toto
+    TuluTigalari
+    Ugaritic
+    Unknown
+    Vai
+    Vithkuqi
+    Wancho
+    WarangCiti
+    Yezidi
+    Yi
+    ZanabazarSquare
+}
+pub enum Strength {
+    Primary
+    Secondary
+    Tertiary
+}
+pub enum TextError {
+    InvalidIndex
+    InvalidBoundary
+    ResourceLimit
+    /// Bytes that are not UTF-8, or text that is not a number.
+    InvalidData
+}
+pub fn Collator.compare(self, a: String, b: String): Int
+pub fn category(c: Char): Category
+pub fn collator(
+    locale: String,
+    strength: Strength = Strength.Tertiary,
+    numeric: Bool = false,
+): Collator
+pub fn isNormalized(text: String, form: Normalization = Normalization.Nfc): Bool
+pub fn normalize(text: String, form: Normalization = Normalization.Nfc): String
+pub fn script(c: Char): Script
+pub type Collator = {
+    // private fields
+}
+== std.time
+impl Additive for Duration
+impl Display for IsoWeek
+impl Display for TimedOut
+impl Display for Weekday
+impl Display for Zone
+impl Display for ZonedDateTime
+impl Ordered for DateTime
+impl Ordered for Duration
+impl Ordered for Instant
+impl Ordered for ZonedDateTime
+impl reflect.Reflect for DateTime
+impl reflect.Reflect for Duration
+impl reflect.Reflect for IsoWeek
+impl reflect.Reflect for Weekday
+impl reflect.Reflect for Zone
+impl reflect.Reflect for ZonedDateTime
+impl serialization.Decode for DateTime
+impl serialization.Decode for ZonedDateTime
+impl serialization.Encode for DateTime
+impl serialization.Encode for ZonedDateTime
+pub enum TimeError {
+    InvalidDateTime
+    InvalidDuration
+    UnknownZone
+}
+pub enum Weekday {
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+    Sunday
+}
+pub fn DateTime.add(self, delta: Duration): DateTime
+pub fn DateTime.addDays(self, days: Int): DateTime
+pub fn DateTime.addMonths(self, months: Int): DateTime
+pub fn DateTime.addYears(self, years: Int): DateTime
+pub fn DateTime.dayOfYear(self): Int
+pub fn DateTime.format(self, pattern: String, locale: String = "en"): String
+pub fn DateTime.inZone(self, place: Zone): ZonedDateTime
+pub fn DateTime.isoWeek(self): IsoWeek
+pub fn DateTime.since(self, earlier: DateTime): Duration
+pub fn DateTime.sinceEpoch(self): Duration
+pub fn DateTime.weekday(self): Weekday
+pub fn Duration.hours(self): Int
+pub fn Duration.isLessThan(self, other: Duration): Bool
+pub fn Duration.isNegative(self): Bool
+pub fn Duration.isZero(self): Bool
+pub fn Duration.microseconds(self): Int
+pub fn Duration.milliseconds(self): Int
+pub fn Duration.minutes(self): Int
+pub fn Duration.multiply(self, factor: Int): Duration
+pub fn Duration.nanoseconds(self): Int
+pub fn Duration.seconds(self): Int
+pub fn Instant.add(self, delta: Duration): Instant
+pub fn Instant.elapsed(self): Duration
+pub fn Instant.since(self, earlier: Instant): Duration
+pub fn Zone.at(
+    self,
+    year: Int,
+    month: Int,
+    day: Int,
+    hour: Int = 0,
+    minute: Int = 0,
+    second: Int = 0,
+    nanosecond: Int = 0,
+): ZonedDateTime ! TimeError
+pub fn Zone.name(self): String
+pub fn ZonedDateTime.add(self, delta: Duration): ZonedDateTime
+pub fn ZonedDateTime.addDays(self, days: Int): ZonedDateTime
+pub fn ZonedDateTime.addMonths(self, months: Int): ZonedDateTime
+pub fn ZonedDateTime.addYears(self, years: Int): ZonedDateTime
+pub fn ZonedDateTime.dayOfYear(self): Int
+pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): String
+pub fn ZonedDateTime.isoWeek(self): IsoWeek
+pub fn ZonedDateTime.since(self, earlier: ZonedDateTime): Duration
+pub fn ZonedDateTime.utc(self): DateTime
+pub fn ZonedDateTime.weekday(self): Weekday
+pub fn deadline(): Instant?
+pub fn fixedZone(offset: Duration): Zone
+pub fn hours(count: Int): Duration
+pub fn localNow(): ZonedDateTime
+pub fn localZone(): Zone
+pub fn microseconds(count: Int): Duration
+pub fn milliseconds(count: Int): Duration
+pub fn minutes(count: Int): Duration
+pub fn nanoseconds(count: Int): Duration
+pub fn now(): Instant
+pub fn parseDateTime(
+    text: String,
+    pattern: String? = none,
+    locale: String = "en",
+): DateTime ! TimeError
+pub fn parseDuration(text: String): Duration ! TimeError
+pub fn parseZoned(
+    text: String,
+    zone: Zone,
+    pattern: String? = none,
+    locale: String = "en",
+): ZonedDateTime ! TimeError
+pub fn remaining(): Duration?
+pub fn seconds(count: Int): Duration
+pub fn sleep(delay: Duration)
+pub fn unixTime(): Duration
+pub fn utc(sinceEpoch: Duration): DateTime
+pub fn utcNow(): DateTime
+pub fn utcZone(): Zone
+pub fn zone(name: String): Zone ! TimeError
+pub type DateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+}
+pub type Duration
+pub type Instant
+pub type IsoWeek = {
+    year: Int
+    week: Int
+}
+pub type TimedOut = {
+    limit: Duration
+}
+pub type Zone = {
+    // private fields
+}
+pub type ZonedDateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+    offset: Duration
+    zone: Zone
+}
+== std.toml
+impl Display for Value
+impl reflect.Reflect for Value
+impl serialization.Decode for Value
+impl serialization.Encode for Value
+pub alias TomlError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+pub enum Value {
+    Text(String)
+    Int(Int)
+    Float(Float)
+    Bool(Bool)
+    /// A date, a time or both, as written: `1979-05-27T07:32:00Z`.
+    DateTime(String)
+    Array(Array[Value])
+    Table(Map[String, Value])
+}
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asDateTime(self): String?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asInt(self): Int?
+pub fn Value.asTable(self): Map[String, Value]?
+pub fn Value.asText(self): String?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?
+pub fn Value.get(self, key: String): Value?
+pub fn decode[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! TomlError
+pub fn encode[T: serialization.Encode](value: T): String ! TomlError
+pub fn parse(text: String): Value ! TomlError
+== std.url
+impl Display for Url
+impl Display for UrlError
+impl reflect.Reflect for Url
+pub fn Url.escapedPath(self): String
+pub fn Url.isAbsolute(self): Bool
+pub fn Url.param(self, name: String): String?
+pub fn Url.params(self, name: String): Array[String]
+pub fn Url.resolve(self, reference: String): Url ! UrlError
+pub fn encodeQuery(values: Map[String, String]): String
+pub fn parse(text: String): Url ! UrlError
+pub type Url = {
+    /// `https`; empty in a relative reference.
+    scheme: String
+    user: String
+    password: String?
+    /// A name or an address, without brackets for IPv6; empty without one.
+    host: String
+    port: Int?
+    /// Decoded: `/docs/a b` for `/docs/a%20b`.
+    path: String
+    /// As it is written, without `?`.
+    query: String
+    /// Decoded, without `#`.
+    fragment: String
+    // private fields
+}
+pub type UrlError = {
+    message: String
+    offset: Int
+}
+== std.uuid
+impl Display for Uuid
+impl Display for UuidError
+impl Ordered for Uuid
+impl reflect.Reflect for Uuid
+impl serialization.Decode for Uuid
+impl serialization.Encode for Uuid
+pub enum UuidError {
+    /// A text other than `8-4-4-4-12` hexadecimal, after an optional
+    /// `urn:uuid:`.
+    InvalidText
+    /// Other than sixteen bytes.
+    WrongLength
+}
+pub fn Uuid.bytes(self): Array[Byte]
+pub fn Uuid.compare(self, other: Uuid): Int
+pub fn Uuid.fromBytes(bytes: Array[Byte]): Uuid ! UuidError
+pub fn Uuid.namespaceDns(): Uuid
+pub fn Uuid.namespaceOid(): Uuid
+pub fn Uuid.namespaceUrl(): Uuid
+pub fn Uuid.namespaceX500(): Uuid
+pub fn Uuid.nil(): Uuid
+pub fn Uuid.parse(input: String): Uuid ! UuidError
+pub fn Uuid.v4(): Uuid
+pub fn Uuid.v5(namespace: Uuid, name: String): Uuid
+pub fn Uuid.v7(): Uuid
+pub fn Uuid.version(self): Int
+pub type Uuid = {
+    // private fields
+}
+== std.validate
+impl Display for Invalid
+impl reflect.Reflect for Email
+impl reflect.Reflect for Length
+impl reflect.Reflect for Matches
+impl reflect.Reflect for Max
+impl reflect.Reflect for Min
+pub alias Violation = serialization.Violation
+pub annotation Email = {}
+pub annotation Length = {
+    min: Int = 0
+    max: Int? = none
+}
+pub annotation Matches = {
+    pattern: String
+}
+pub annotation Max = {
+    value: Float
+}
+pub annotation Min = {
+    value: Float
+}
+pub fn checkAs(value: reflect.Value, info: reflect.TypeInfo): !Invalid
+pub fn check[T: reflect.Reflect](value: T): !Invalid
+pub trait Rules {
+    fn violations(self): Array[Violation]
+}
+pub type Invalid = {
+    violations: Array[Violation]
+}
+== std.xml
+impl Display for Element
+impl Display for XmlError
+impl reflect.Reflect for Attribute
+impl reflect.Reflect for Name
+impl reflect.Reflect for Text
+pub annotation Attribute = {}
+pub annotation Name = {
+    value: String
+}
+pub annotation Text = {}
+pub enum Node {
+    Element(Element)
+    Text(String)
+}
+pub fn Element.attribute(self, name: String): String?
+pub fn Element.child(self, name: String): Element?
+pub fn Element.children(self, name: String): Array[Element]
+pub fn Element.text(self): String
+pub fn decode[T: serialization.Decode](text: String): T ! XmlError
+pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false): String
+pub fn parse(text: String): Element ! XmlError
+pub type Element = {
+    name: String
+    attributes: Map[String, String]
+    nodes: Array[Node]
+}
+pub type XmlError = {
+    message: String
+    line: Int
+    column: Int
+}
+== std.yaml
+impl Display for NodeKind
+impl Display for NodeStyle
+impl Display for Value
+impl reflect.Reflect for Value
+impl serialization.Decode for Value
+impl serialization.Encode for Value
+pub alias UnknownFields = serialization.UnknownFields
+pub alias YamlError = serialization.Error
+pub enum NodeKind {
+    Scalar
+    Sequence
+    Map
+}
+pub enum NodeStyle {
+    Plain
+    SingleQuoted
+    DoubleQuoted
+    Literal
+    Folded
+    Block
+    Flow
+    Alias
+}
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+    /// A value with a tag of its own, as GitLab's `!reference [.setup,
+    /// script]`: the tag, and the value, whose scalars are text. The other
+    /// methods read the value, and writing keeps the tag.
+    Tagged(String, Value)
+}
+pub fn Document.find(self, path: String): Node?
+pub fn Document.insert[T: serialization.Encode](
+    mut self,
+    path: String,
+    index: Int,
+    value: T,
+): !YamlError
+pub fn Document.remove(mut self, path: String): !YamlError
+pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError
+pub fn Document.text(self): String
+pub fn Document.value(self): Value
+pub fn Document.writeTo(self, out: io.Writer): !io.IoError
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asInt(self): Int?
+pub fn Value.asMap(self): Map[String, Value]?
+pub fn Value.asText(self): String?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?
+pub fn Value.get(self, key: String): Value?
+pub fn Value.isNull(self): Bool
+pub fn decodeAll[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): Array[T] ! YamlError
+pub fn decode[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! YamlError
+pub fn encodeAll[T: serialization.Encode](values: Array[T]): String
+pub fn encode[T: serialization.Encode](value: T): String
+pub fn load(text: String): Document ! YamlError
+pub fn parse(text: String): Value ! YamlError
+pub fn parseAll(text: String): Array[Value] ! YamlError
+pub type Document = {
+    // private fields
+}
+pub type Node = {
+    value: Value
+    line: Int
+    column: Int
+    comment: String?
+    kind: NodeKind
+    style: NodeStyle
+    tag: String?
+    anchor: String?
+}
+== std.zstd
+pub fn compress(data: Array[Byte]): Array[Byte]
+pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn reader(from: io.Reader): io.Reader
+pub fn writer(to: io.Writer): io.Writer
