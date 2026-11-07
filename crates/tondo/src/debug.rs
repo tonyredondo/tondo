@@ -286,6 +286,8 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .env("TONDO_LIVE_HOLD", "1")
                 .env("TONDO_TEST_PLAN", &plan)
                 .envs(environment)
+                // As `tondo test`, whose points of change this adds to.
+                .envs(schedule.as_ref().map(|_| ("TONDO_RACE", "1".to_string())))
                 .envs(schedule.map(|order| match order.strip_prefix("at:") {
                     Some(choices) => ("TONDO_RT_ORDER", choices.to_string()),
                     None => ("TONDO_RT_SCHEDULE", order.clone()),

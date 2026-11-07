@@ -2077,4 +2077,18 @@ test loses {
         let (stdout, _, status) = tondo(&dir, &args);
         assert_eq!(status, 1, "{stdout}");
     }
+    // The debugger goes the same way, and stops at what failed.
+    let debug = stdout.lines().find_map(|line| line.strip_prefix("debug it in that order: tondo ")).expect(&stdout);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(debug.split(' ').chain(["--json"]))
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"continue\ncontinue\ncontinue\n").unwrap();
+    drop(child.stdin.take());
+    let said = child.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&said.stdout);
+    assert!(said.contains("in test loses") && said.contains("P0007"), "{said}");
 }
