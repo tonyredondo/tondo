@@ -2124,7 +2124,7 @@ fn answers(out: Sender[Int]) {
 
 test aDeadlinePasses {
     let (out, input) = channel[Int](1)
-    let answer = within time.seconds(30) {
+    let answer = within time.seconds(3600) {
         input.receive()
     }
     out.close()
@@ -2143,13 +2143,14 @@ test aTimeoutWins {
 }
 ";
     let dir = project("every-order-clock", tests);
-    let started = std::time::Instant::now();
-    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "anHour", "--schedules", "all"]);
-    assert_eq!(status, 0, "{stdout}{stderr}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(60), "{stdout}");
-    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "aDeadlinePasses", "--schedules", "all"]);
-    assert_eq!(status, 0, "{stdout}{stderr}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(25), "{stdout}");
+    // Each waits an hour, which a slow machine, as one emulated, never takes
+    // to build and run it.
+    for test in ["anHour", "aDeadlinePasses"] {
+        let started = std::time::Instant::now();
+        let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", test, "--schedules", "all"]);
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(600), "{stdout}");
+    }
     let (stdout, _, status) = tondo(&dir, &["test", "--filter", "aTimeoutWins", "--schedules", "all"]);
     assert_eq!(status, 1, "the timeout never won: {stdout}");
     assert!(stdout.contains("again in that order"), "{stdout}");
