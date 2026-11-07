@@ -2092,3 +2092,52 @@ test loses {
     let said = String::from_utf8_lossy(&said.stdout);
     assert!(said.contains("in test loses") && said.contains("P0007"), "{said}");
 }
+
+/// In `--schedules all` nothing waits for the clock, and a timer that comes
+/// before an answer is one more order.
+#[test]
+fn every_order_has_a_clock_of_its_own() {
+    let tests = "import std.time
+
+test anHour {
+    let start = time.now()
+    time.sleep(time.seconds(3600))
+    assert(start.elapsed() >= time.seconds(3600))
+}
+
+fn answers(out: Sender[Int]) {
+    out.send(1)
+}
+
+test aDeadlinePasses {
+    let (out, input) = channel[Int](1)
+    let answer = within time.seconds(30) {
+        input.receive()
+    }
+    out.close()
+    assert(answer.isErr())
+}
+
+test aTimeoutWins {
+    let (out, input) = channel[Int](1)
+    let job = spawn answers(out)
+    let answered = select {
+        let answer = input.receive() => answer.isSome()
+        time.sleep(time.seconds(30)) => false
+    }
+    job.wait()
+    assert(answered)
+}
+";
+    let dir = project("every-order-clock", tests);
+    let started = std::time::Instant::now();
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "anHour", "--schedules", "all"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(60), "{stdout}");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "aDeadlinePasses", "--schedules", "all"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(25), "{stdout}");
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "aTimeoutWins", "--schedules", "all"]);
+    assert_eq!(status, 1, "the timeout never won: {stdout}");
+    assert!(stdout.contains("again in that order"), "{stdout}");
+}

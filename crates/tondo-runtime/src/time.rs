@@ -14,14 +14,14 @@ pub extern "C" fn tondo_rt_time_now() -> i64 {
         return now;
     }
     static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_nanos() as i64
+    START.get_or_init(Instant::now).elapsed().as_nanos() as i64 + super::tasks::ahead() as i64
 }
 
 /// `time.unixTime()`: nanoseconds since 1970-01-01T00:00:00Z.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_time_unix() -> i64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(after) => after.as_nanos() as i64,
+        Ok(after) => after.as_nanos() as i64 + super::tasks::ahead() as i64,
         Err(before) => -(before.duration().as_nanos() as i64),
     }
 }

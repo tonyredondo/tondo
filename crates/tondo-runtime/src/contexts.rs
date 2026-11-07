@@ -521,7 +521,7 @@ pub(crate) fn deadline_nanos() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_within_enter(limit: i64) {
     let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
-    let at = Instant::now() + Duration::from_nanos(limit.max(0) as u64);
+    let at = crate::tasks::clock_now() + Duration::from_nanos(limit.max(0) as u64);
     let level = task.withins.len();
     let held = match task.withins.last() {
         Some(&(outer, owner)) if outer <= at => (outer, owner),
@@ -549,7 +549,7 @@ pub extern "C" fn tondo_rt_within_leave() {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_deadline_remaining() -> i64 {
     match deadline() {
-        Some(at) => at.saturating_duration_since(Instant::now()).as_nanos().min(i64::MAX as u128) as i64,
+        Some(at) => at.saturating_duration_since(crate::tasks::clock_now()).as_nanos().min(i64::MAX as u128) as i64,
         None => -1,
     }
 }

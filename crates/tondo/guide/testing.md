@@ -75,7 +75,9 @@ suite slow {
   first, and says how many and whether they were all, up to 20 000 for each test,
   or `all:<n>`. A failure gives `--schedules at:0.2.1`, which repeats it, and
   `tondo debug --test <id> --schedule at:0.2.1`. It suits a small test of what
-  tasks share; the orders grow fast with the steps.
+  tasks share; the orders grow fast with the steps. Nothing waits for the clock
+  in these runs: time jumps to the next timer, and that it comes before an
+  answer is one more order, so a test with a timeout is tried both ways.
 - `tondo test --record target/recordings`, on Linux, records each test and
   keeps the runs of those that fail: `tondo debug --replay
   target/recordings/<id>` debugs one again, the same, with what it read

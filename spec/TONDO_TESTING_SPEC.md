@@ -1747,8 +1747,13 @@ qué tarea corre, y qué operación lista toma un `select`. Prueba hasta 20 000
 órdenes por test, o los de `--schedules all:<n>`; si quedan más lo dice, y eso no
 es un fallo, pero tampoco prueba nada de los que faltan. Un fallo da su camino:
 `tondo test --exact <id> --schedules at:<elecciones>` lo repite y
-`tondo debug --test <id> --schedule at:<elecciones>` lo depura. Las mismas reservas
-valen aquí: el reloj, la red, los archivos y los procesos siguen siendo los reales.
+`tondo debug --test <id> --schedule at:<elecciones>` lo depura.
+
+El reloj de estas ejecuciones es propio: nadie espera. El tiempo salta al siguiente
+temporizador cuando ninguna tarea puede correr, y que venza antes es una elección
+más, de modo que un timeout que llega antes que la respuesta es un orden como
+cualquier otro. `time.now()` y `time.unixTime()` dicen ese tiempo. La red, los
+archivos y los procesos siguen siendo los reales.
 
 `--schedules` es incompatible con `--repeat`, `--retry`, `--allow-flaky`,
 `--list` y `--update-snapshots`, y con más de una iteración sigue la política

@@ -1349,7 +1349,7 @@ fn fire_timers(queue: &mut Queue) {
     if queue.timers.is_empty() {
         return;
     }
-    let now = Instant::now();
+    let now = clock_now();
     while queue.timers.peek().is_some_and(|t| t.at <= now) {
         let timer = queue.timers.pop().unwrap();
         if timer.wait.claim(timer.index) {
@@ -1378,7 +1378,7 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
     let mut queue = queue();
     queue.sequence += 1;
     let sequence = queue.sequence;
-    queue.timers.push(Timer { at: Instant::now() + delay, sequence, wait, index });
+    queue.timers.push(Timer { at: clock_now() + delay, sequence, wait, index });
     // An idle worker recomputes how long to sleep.
     wake_one(queue);
 }
@@ -1492,6 +1492,9 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     if main && program_ended(&queue) {
                         continue;
                     }
+                }
+                if script().is_some() {
+                    time_passes(&mut queue);
                 }
                 fire_timers(&mut queue);
                 // Now and then a worker with tasks to run looks at the
@@ -2363,7 +2366,7 @@ fn monitor() {
             busy = true;
             if last.insert(key, calls) == Some(calls) {
                 let mut queue = queue();
-                let due = queue.timers.peek().is_some_and(|timer| timer.at <= Instant::now());
+                let due = queue.timers.peek().is_some_and(|timer| timer.at <= clock_now());
                 if !due && queue.runnable.is_empty() && waiting_next().is_empty() && waiting_local().is_empty() {
                     continue;
                 }
@@ -3006,7 +3009,7 @@ impl Wait {
         // The deadline of a `within` ends the wait when it passes, as a
         // cancellation would, and the task unwinds to it (11.17).
         if let Some(&(at, _)) = task.withins.last() {
-            let now = Instant::now();
+            let now = clock_now();
             match at.checked_duration_since(now).filter(|left| !left.is_zero()) {
                 Some(left) => {
                     // Every wait is made in an `Arc` by `Wait::new`.
@@ -3326,6 +3329,30 @@ fn script() -> Option<&'static Mutex<Script>> {
             Some(Mutex::new(Script { given, made: 0, out }))
         })
         .as_ref()
+}
+
+/// How far a run given its choices is ahead of the clock.
+static AHEAD: AtomicU64 = AtomicU64::new(0);
+
+/// What the clock says, which a run given its choices moves itself.
+pub(crate) fn clock_now() -> Instant {
+    Instant::now() + Duration::from_nanos(AHEAD.load(Ordering::Relaxed))
+}
+
+/// How far the clock of a run given its choices is ahead, in nanoseconds.
+pub(crate) fn ahead() -> u64 {
+    AHEAD.load(Ordering::Relaxed)
+}
+
+/// In a run given its choices nothing waits for the clock: time goes to the
+/// next timer once no task can run, and sooner is one more choice, so that a
+/// timeout that comes before an answer is an order like any other.
+fn time_passes(queue: &mut Queue) {
+    let Some(at) = queue.timers.peek().map(|timer| timer.at) else { return };
+    if queue.runnable.is_empty() || scripted(2) == Some(1) {
+        let left = at.saturating_duration_since(clock_now());
+        AHEAD.fetch_add(left.as_nanos() as u64, Ordering::Relaxed);
+    }
 }
 
 /// A choice among `count` things, when the run is given its choices.
