@@ -1233,6 +1233,8 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             last = worker::execute(&one, vec![(vec![test], context)], |_| {});
             ran += 1;
             let written = std::fs::read_to_string(&out).unwrap_or_default();
+            // Another run of an order gives what the first did.
+            let another = classes.insert(orders::class(&written));
             if last.iter().any(|attempt| attempt.status.failed()) {
                 let text = dotted(orders::path(&written).iter().map(u32::to_string).collect());
                 if !options.json {
@@ -1257,8 +1259,7 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                     None => all.push(here),
                 }
             }
-            // Another run of an order gives what the first did.
-            if !classes.insert(orders::class(&written)) && !every {
+            if !another && !every {
                 continue;
             }
             for mut other in orders::others(&written, every, given.len()) {
@@ -1274,7 +1275,8 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 pending.truncate(limit);
             }
         }
-        if matches!(orders, Orders::All(_)) {
+        // A failure said where it stopped.
+        if matches!(orders, Orders::All(_)) && failed_at.is_none() {
             let how = if left_out { "not all of them: `--schedules all:<n>` tries more" } else { "all that differ" };
             let count = match classes.len() {
                 1 => "1 order".to_string(),
@@ -1292,7 +1294,8 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
         }
         for mut attempt in last.drain(..) {
             let failed_at = failed_at.clone();
-            attempt.explored = Some(Explored { orders: classes.len(), complete: !left_out, failed_at });
+            let complete = !left_out && failed_at.is_none();
+            attempt.explored = Some(Explored { orders: classes.len(), complete, failed_at });
             printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
             attempts.push(attempt);
         }

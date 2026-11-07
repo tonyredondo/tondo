@@ -2071,6 +2071,8 @@ test loses {
     assert!(stdout.contains(", not all of them"), "{stdout}");
     let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "loses", "--schedules", "all"]);
     assert_eq!(status, 1, "{stdout}{stderr}");
+    // It stopped at the order that fails, which is all it says of them.
+    assert!(!stdout.contains("all that differ") && stdout.contains("loses: failed in order "), "{stdout}");
     let again = stdout.lines().find_map(|line| line.strip_prefix("again in that order: tondo ")).expect(&stdout);
     let args: Vec<&str> = again.split(' ').collect();
     for _ in 0..3 {
