@@ -325,8 +325,7 @@ tondo version [--json]
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos y nombra los que
-  cambió; `--check` falla si
-  alguno no lo cumple. `--compact` escribe en stdout, sin tocar el archivo, su
+  cambió; `--check` falla si alguno no lo cumple. `--compact` escribe en stdout, sin tocar el archivo, su
   forma compacta: los mismos tokens, comentarios incluidos, sin sangría, con
   espacios solo donde dos tokens se unirían y una línea por línea lógica, sin
   la que sigue a `{`. Es Tondo válido, para dar código a un modelo con unos

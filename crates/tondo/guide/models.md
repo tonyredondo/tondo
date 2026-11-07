@@ -78,7 +78,12 @@ test which broke. A property can hold with nothing to say, as a `leadsTo`
 whose `when` held in no state: `tondo test` says so, `model: ... says
 nothing`, and so of a model that never leaves its start, and
 `checked.vacuous` names them. Read it as a model that does not reach what
-you meant. A run takes a step whenever one is possible, and one with no
+you meant.
+
+A model sees only what its state holds. A rule about how many times something
+happens, as "refunded once", needs the count in the state, `refunds: Int`
+rather than `refunded: Bool`, or a second refund leaves the same state and
+nothing can tell it from the first. A run takes a step whenever one is possible, and one with no
 step left stays where it is. A loop that never gets where it must breaks
 `eventually`, shown as `and then round for ever:`; a step that cannot be put
 off for ever goes in `fair`: `model.weak("grant")` if it comes when it stays
