@@ -1,0 +1,15 @@
+// The function `update` runs with the lock held cannot change what it
+// captures: the change would stay in its own copy, and be lost.
+//
+// expect-error: E1108 this function changes its captures, which only changes its own copy of them: give what it computes back instead, as `let seen = lock.update((value) { value })`
+import std.console
+import std.sync
+
+fn main() {
+    let lock = sync.Mutex(3)
+    var seen = 0
+    lock.update((value) {
+        seen = value
+    })
+    console.println("{seen}")
+}

@@ -8349,6 +8349,14 @@ impl<'a> Checker<'a> {
             return None;
         }
         match self.callable(value.ty) {
+            // What it writes of its captures stays in its own copy (11.8),
+            // which nobody sees once the lock is let go.
+            Some(callable) if callable.mutates => {
+                let message = "this function changes its captures, which only changes its own copy of them: \
+                    give what it computes back instead, as `let seen = lock.update((value) { value })`";
+                self.diags.error("E1108", value.span, message);
+                None
+            }
             Some(callable) if callable.params == params && callable.modes == modes => Some((value, callable.result)),
             _ => {
                 let message = match (params.as_slice(), mode) {
