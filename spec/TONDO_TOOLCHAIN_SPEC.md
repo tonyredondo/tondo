@@ -473,8 +473,12 @@ comandos, un tema cada vez para leer solo lo necesario.
 
 ### 7.4 `tondo lsp`
 
-`tondo lsp` es un servidor del Language Server Protocol 3.17 por la entrada y
-la salida estándar, que el editor arranca. Analiza el proyecto de cada archivo
+`tondo lsp` es un servidor del Language Server Protocol 3.18 por la entrada y
+la salida estándar, que el editor arranca, salvo lo que el protocolo dice de los
+notebooks, que Tondo no tiene. Cada respuesta se ajusta a lo que el editor dijo en
+`initialize` que admite: texto sin marcado, sin snippets o símbolos planos. Una
+petición que el editor cancela antes de su turno no se hace, y una de un documento
+entero con un cambio detrás responde `ContentModified`. Analiza el proyecto de cada archivo
 abierto como su build de tests, para incluir los archivos de tests, o el
 archivo solo si no está en un proyecto, con el texto que el editor tiene aunque
 no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de

@@ -1,4 +1,4 @@
-//! `tondo lsp`: a language server (LSP 3.17) over standard input and
+//! `tondo lsp`: a language server (LSP 3.18) over standard input and
 //! output. A project is analyzed as its test build, so test files are too,
 //! with the text of the files the editor has open, again after changes.
 
@@ -10,21 +10,24 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 /// Serves one editor until it says `exit`.
 pub fn serve() -> Result<(), String> {
     let (send, messages) = mpsc::channel();
+    let inbox = Arc::new(Mutex::new(Inbox::default()));
+    let reading = inbox.clone();
     std::thread::spawn(move || {
         let mut input = std::io::stdin().lock();
         while let Some(message) = read_message(&mut input) {
-            if send.send(message).is_err() {
+            let queued = reading.lock().unwrap_or_else(|e| e.into_inner()).arrived(&message);
+            if queued && send.send(message).is_err() {
                 break;
             }
         }
     });
-    let mut server = Server::default();
+    let mut server = Server { inbox, ..Server::default() };
     loop {
         // A burst of changes is analyzed once, when the typing pauses.
         let message = if server.dirty.is_empty() {
@@ -71,6 +74,85 @@ fn send(message: Value) {
     let mut out = std::io::stdout().lock();
     let _ = write!(out, "Content-Length: {}\r\n\r\n{body}", body.len());
     let _ = out.flush();
+}
+
+/// What came in behind the message being handled, known as it arrives: a
+/// request can be given up on before its turn comes.
+#[derive(Default)]
+struct Inbox {
+    /// The requests the editor gave up on.
+    cancelled: HashSet<String>,
+    /// How many changes wait their turn, of each document.
+    changing: HashMap<String, usize>,
+}
+
+impl Inbox {
+    /// A message came: whether it is to be handled in its turn.
+    fn arrived(&mut self, message: &Value) -> bool {
+        match message["method"].as_str() {
+            Some("$/cancelRequest") => {
+                self.cancelled.insert(message["params"]["id"].to_string());
+                return false;
+            }
+            Some("textDocument/didChange") => {
+                if let Some(uri) = message["params"]["textDocument"]["uri"].as_str() {
+                    *self.changing.entry(uri.to_string()).or_default() += 1;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+}
+
+/// What the editor can take, which an answer is fitted to: as given by
+/// `initialize`, and all of it for what asks with no editor.
+#[derive(Default)]
+struct Client {
+    plain_hover: bool,
+    plain_completion: bool,
+    plain_signature: bool,
+    no_snippets: bool,
+    no_label_details: bool,
+    flat_symbols: bool,
+    progress: bool,
+}
+
+impl Client {
+    fn of(capabilities: &Value) -> Client {
+        let document = &capabilities["textDocument"];
+        let item = &document["completion"]["completionItem"];
+        let plain = |formats: &Value| !formats.as_array().is_some_and(|f| f.iter().any(|f| f == "markdown"));
+        Client {
+            plain_hover: plain(&document["hover"]["contentFormat"]),
+            plain_completion: plain(&item["documentationFormat"]),
+            plain_signature: plain(&document["signatureHelp"]["signatureInformation"]["documentationFormat"]),
+            no_snippets: item["snippetSupport"] != true,
+            no_label_details: item["labelDetailsSupport"] != true,
+            flat_symbols: document["documentSymbol"]["hierarchicalDocumentSymbolSupport"] != true,
+            progress: capabilities["window"]["workDoneProgress"] == true,
+        }
+    }
+}
+
+/// What a snippet writes with nothing to fill in: its placeholders' text.
+fn unsnippet(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.extend(chars.next()),
+            '$' if chars.peek() == Some(&'{') => {
+                chars.next();
+                let inner: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                let (_, text) = inner.split_once(':').unwrap_or(("", ""));
+                out.push_str(text);
+            }
+            '$' => while chars.next_if(char::is_ascii_digit).is_some() {},
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A file the editor has open.
@@ -191,6 +273,12 @@ struct Server {
     listed: HashMap<PathBuf, Value>,
     started: bool,
     shut: bool,
+    inbox: Arc<Mutex<Inbox>>,
+    client: Client,
+    /// `off`, `messages` or `verbose`, as the editor says (`$/setTrace`).
+    trace: String,
+    /// The first analysis says how it goes, under its token.
+    starting: bool,
 }
 
 /// The language server's answers outside an editor, as `tondo mcp` asks
@@ -226,7 +314,22 @@ impl Server {
         }
         // The editor's answer to what the server asked, as to watch files.
         if method.is_empty() {
+            if message["id"] == PROGRESS {
+                self.starting = message.get("error").is_none();
+                self.analyze_workspace();
+            }
             return true;
+        }
+        if method == "textDocument/didChange"
+            && let Some(uri) = params["textDocument"]["uri"].as_str()
+        {
+            let mut inbox = self.inbox();
+            if let Some(waiting) = inbox.changing.get_mut(uri) {
+                *waiting -= 1;
+                if *waiting == 0 {
+                    inbox.changing.remove(uri);
+                }
+            }
         }
         // Before `initialize` and after `shutdown` nothing else is answered.
         if let Some(id) = id.as_ref().filter(|_| method != "initialize") {
@@ -240,12 +343,30 @@ impl Server {
                 return true;
             }
         }
+        if let Some(id) = &id
+            && let Some((code, text)) = self.given_up(&method, id, params)
+        {
+            send(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": text } }));
+            return true;
+        }
+        let token = params.get("workDoneToken").filter(|_| self.client.progress && id.is_some());
+        if let Some(token) = token {
+            let value = json!({ "kind": "begin", "title": method });
+            send(json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": token, "value": value } }));
+        }
+        let started = Instant::now();
         // A bug in one request ends that request: what is open stays open.
         let asked =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.answer(&method, params, id.is_some())));
         let result = asked.unwrap_or_else(|_| {
             id.is_some().then(|| Err((-32603, format!("tondo failed inside `{method}`; its error output says where"))))
         });
+        if let Some(token) = token {
+            let value = json!({ "kind": "end" });
+            send(json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": token, "value": value } }));
+        }
+        self.log_trace(&method, params, started);
+        let result = result.map(|result| result.map(|answer| self.fit(&method, params, answer)));
         if let (Some(id), Some(result)) = (id, result) {
             send(match result {
                 Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -257,6 +378,90 @@ impl Server {
         true
     }
 
+    fn inbox(&self) -> std::sync::MutexGuard<'_, Inbox> {
+        self.inbox.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Why a request is not worth its work: the editor gave up on it, or
+    /// what it asks of a document changes in a message behind it.
+    fn given_up(&mut self, method: &str, id: &Value, params: &Value) -> Option<(i64, &'static str)> {
+        let mut inbox = self.inbox();
+        if inbox.cancelled.remove(&id.to_string()) {
+            return Some((-32800, "the request was cancelled"));
+        }
+        let uri = params["textDocument"]["uri"].as_str()?;
+        (WHOLE_DOCUMENT.contains(&method) && inbox.changing.contains_key(uri))
+            .then_some((-32801, "the document changed"))
+    }
+
+    /// What the editor asked to be told of each message (`$/logTrace`).
+    fn log_trace(&self, method: &str, params: &Value, started: Instant) {
+        if self.trace.is_empty() || self.trace == "off" {
+            return;
+        }
+        let took = started.elapsed().as_millis();
+        let mut value = json!({ "message": format!("`{method}` took {took} ms") });
+        if self.trace == "verbose" {
+            value["verbose"] = json!(params.to_string());
+        }
+        send(json!({ "jsonrpc": "2.0", "method": "$/logTrace", "params": value }));
+    }
+
+    /// An answer as this editor can take it.
+    fn fit(&self, method: &str, params: &Value, mut answer: Value) -> Value {
+        let plain = |text: Option<&mut Value>| {
+            if let Some(text) = text.filter(|text| text.is_object()) {
+                text["kind"] = json!("plaintext");
+            }
+        };
+        match method {
+            "textDocument/hover" if self.client.plain_hover => plain(answer.get_mut("contents")),
+            "textDocument/signatureHelp" if self.client.plain_signature => {
+                let signatures = answer.get_mut("signatures").and_then(Value::as_array_mut);
+                for signature in signatures.into_iter().flatten() {
+                    plain(signature.get_mut("documentation"));
+                }
+            }
+            "textDocument/completion" => {
+                let items = match answer.is_array() {
+                    true => answer.as_array_mut(),
+                    false => answer.get_mut("items").and_then(Value::as_array_mut),
+                };
+                for item in items.into_iter().flatten() {
+                    self.fit_item(item, &plain);
+                }
+            }
+            "textDocument/documentSymbol" if self.client.flat_symbols => {
+                let mut flat = Vec::new();
+                let uri = &params["textDocument"]["uri"];
+                flatten_symbols(answer.as_array().map_or(&[], Vec::as_slice), uri, None, &mut flat);
+                answer = Value::Array(flat);
+            }
+            _ => {}
+        }
+        answer
+    }
+
+    fn fit_item(&self, item: &mut Value, plain: &impl Fn(Option<&mut Value>)) {
+        if self.client.plain_completion {
+            plain(item.get_mut("documentation"));
+        }
+        if self.client.no_label_details
+            && let Some(details) = item.as_object_mut().and_then(|item| item.remove("labelDetails"))
+            && item.get("detail").is_none()
+        {
+            item["detail"] = details["description"].clone();
+        }
+        if self.client.no_snippets && item["insertTextFormat"] == 2 {
+            item["insertTextFormat"] = json!(1);
+            for at in ["/insertText", "/textEdit/newText"] {
+                if let Some(text) = item.pointer_mut(at) {
+                    *text = json!(unsnippet(text.as_str().unwrap_or_default()));
+                }
+            }
+        }
+    }
+
     /// What a message asks for: none for a notification.
     fn answer(&mut self, method: &str, params: &Value, request: bool) -> Option<Result<Value, (i64, String)>> {
         match method {
@@ -265,6 +470,13 @@ impl Server {
                 Some(Ok(self.initialize(params)))
             }
             "tondo/panic" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => panic!("as a test asks"),
+            // A test has a change arrive before the next message is handled.
+            "tondo/hold" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => {
+                while !self.inbox().changing.contains_key(params["uri"].as_str().unwrap_or_default()) {
+                    std::thread::yield_now();
+                }
+                Some(Ok(Value::Null))
+            }
             "shutdown" => {
                 self.shut = true;
                 Some(Ok(Value::Null))
@@ -342,7 +554,17 @@ impl Server {
                         "params": { "registrations": [{ "id": "watch", "method": "workspace/didChangeWatchedFiles",
                             "registerOptions": { "watchers": watchers } }] } }));
                 }
-                self.analyze_workspace();
+                // The first analysis says how it goes, once the editor has a
+                // place for that.
+                match self.client.progress {
+                    true => send(json!({ "jsonrpc": "2.0", "id": PROGRESS, "method": "window/workDoneProgress/create",
+                        "params": { "token": PROGRESS } })),
+                    false => self.analyze_workspace(),
+                }
+                None
+            }
+            "$/setTrace" => {
+                self.trace = params["value"].as_str().unwrap_or_default().to_string();
                 None
             }
             // Files that changed on disk, not in the editor: their projects
@@ -368,6 +590,8 @@ impl Server {
         let encodings = &params["capabilities"]["general"]["positionEncodings"];
         let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
         self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
+        self.client = Client::of(&params["capabilities"]);
+        self.trace = params["trace"].as_str().unwrap_or_default().to_string();
         self.tests = params["initializationOptions"]["tests"] == true;
         self.pulling = params["initializationOptions"]["pullDiagnostics"] == true;
         self.watches = params["capabilities"]["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"] == true;
@@ -382,14 +606,14 @@ impl Server {
                 "definitionProvider": true,
                 "declarationProvider": true,
                 "inlineValueProvider": true,
-                "referencesProvider": true,
-                "renameProvider": { "prepareProvider": true },
+                "referencesProvider": { "workDoneProgress": true },
+                "renameProvider": { "prepareProvider": true, "workDoneProgress": true },
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
                 "completionProvider": { "triggerCharacters": ["."] },
                 "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll", "source.organizeImports"] },
                 "documentHighlightProvider": true,
-                "workspaceSymbolProvider": true,
+                "workspaceSymbolProvider": { "workDoneProgress": true },
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                 "inlayHintProvider": true,
                 "codeLensProvider": { "resolveProvider": false },
@@ -436,9 +660,21 @@ impl Server {
 
     /// Analyzes again what changed, and shows its diagnostics.
     fn refresh(&mut self) {
-        for root in std::mem::take(&mut self.dirty) {
-            self.analyze(&root);
+        let starting = std::mem::take(&mut self.starting);
+        let roots = std::mem::take(&mut self.dirty);
+        let progress = |value: Value| {
+            if starting {
+                send(
+                    json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": PROGRESS, "value": value } }),
+                );
+            }
+        };
+        progress(json!({ "kind": "begin", "title": "Analyzing", "percentage": 0 }));
+        for (done, root) in roots.iter().enumerate() {
+            self.analyze(root);
+            progress(json!({ "kind": "report", "percentage": (done + 1) * 100 / roots.len() }));
         }
+        progress(json!({ "kind": "end" }));
     }
 
     /// Analyzes the root of the file a request is about again, if it
@@ -3502,6 +3738,40 @@ impl Server {
 }
 
 /// The token types of semantic highlighting, by number.
+/// The id of the request for a place to say how the first analysis goes, and
+/// its token.
+const PROGRESS: &str = "tondo.analysis";
+
+/// What is asked of a whole document, which the next change makes out of date.
+const WHOLE_DOCUMENT: [&str; 8] = [
+    "textDocument/semanticTokens/full",
+    "textDocument/semanticTokens/range",
+    "textDocument/documentSymbol",
+    "textDocument/inlayHint",
+    "textDocument/codeLens",
+    "textDocument/foldingRange",
+    "textDocument/documentLink",
+    "textDocument/documentColor",
+];
+
+/// `DocumentSymbol`s as the flat `SymbolInformation`s of a client that takes
+/// no others.
+fn flatten_symbols(symbols: &[Value], uri: &Value, container: Option<&str>, flat: &mut Vec<Value>) {
+    for symbol in symbols {
+        let mut information = json!({
+            "name": symbol["name"],
+            "kind": symbol["kind"],
+            "location": { "uri": uri, "range": symbol["selectionRange"] },
+        });
+        if let Some(container) = container {
+            information["containerName"] = json!(container);
+        }
+        flat.push(information);
+        let children = symbol["children"].as_array().map_or(&[][..], Vec::as_slice);
+        flatten_symbols(children, uri, symbol["name"].as_str(), flat);
+    }
+}
+
 const TOKEN_TYPES: [&str; 16] = [
     "namespace",
     "type",

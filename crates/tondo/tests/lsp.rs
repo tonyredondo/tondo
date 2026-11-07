@@ -6,6 +6,22 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+/// What an editor as VS Code says it takes, of what changes the answers.
+fn everything() -> Value {
+    json!({
+        "textDocument": {
+            "hover": { "contentFormat": ["markdown"] },
+            "signatureHelp": { "signatureInformation": { "documentationFormat": ["markdown"] } },
+            "completion": { "completionItem": {
+                "snippetSupport": true,
+                "labelDetailsSupport": true,
+                "documentationFormat": ["markdown"],
+            } },
+            "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+        },
+    })
+}
+
 struct Editor {
     child: Child,
     input: ChildStdin,
@@ -33,6 +49,10 @@ impl Editor {
     }
 
     fn launch(options: Value, folders: Value) -> Editor {
+        Editor::launch_with(everything(), options, folders, "off")
+    }
+
+    fn launch_with(mut capabilities: Value, options: Value, folders: Value, trace: &str) -> Editor {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("lsp")
             .env("TONDO_TEST_LSP_PANIC", "1")
@@ -44,10 +64,11 @@ impl Editor {
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
         let mut editor = Editor { child, input, output, next: 0, diagnostics: Vec::new(), tests: Vec::new() };
-        let capabilities = json!({ "general": { "positionEncodings": ["utf-8"] } });
+        capabilities["general"] = json!({ "positionEncodings": ["utf-8"] });
         let initialized = editor.request(
             "initialize",
-            json!({ "capabilities": capabilities, "initializationOptions": options, "workspaceFolders": folders }),
+            json!({ "capabilities": capabilities, "initializationOptions": options, "workspaceFolders": folders,
+                "trace": trace }),
         );
         assert_eq!(initialized["capabilities"]["positionEncoding"], "utf-8");
         editor.notify("initialized", json!({}));
@@ -2180,4 +2201,115 @@ fn it_keeps_to_the_start_and_the_end_of_a_session() {
     assert_eq!(refused["code"], -32600, "{refused}");
     editor.notify("exit", Value::Null);
     assert!(editor.child.wait().unwrap().success());
+}
+
+/// A server on a file with a snippet, a documented function and a symbol in a
+/// type, for an editor that says only what is given.
+fn session(capabilities: Value, trace: &str) -> (Editor, String) {
+    let dir = project(
+        "lsp-session",
+        &[(
+            "main.to",
+            "/// Says hello.\nfn hello() {}\n\ntype Door = {\n    open: Bool\n}\n\nfn main() {\n    hello()\n}\n",
+        )],
+    );
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, trace);
+    let uri = editor.open(&dir.join("main.to"));
+    (editor, uri)
+}
+
+/// An answer fits what the editor said it takes.
+#[test]
+fn answers_fit_what_the_editor_takes() {
+    let (mut editor, uri) = session(json!({}), "off");
+    let at = json!({ "textDocument": { "uri": uri }, "position": { "line": 8, "character": 6 } });
+    let hover = editor.request("textDocument/hover", at);
+    assert_eq!(hover["contents"]["kind"], "plaintext", "{hover}");
+    let symbols = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    let names: Vec<&str> = symbols.as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"open") && symbols[0].get("location").is_some(), "{symbols}");
+    let line = json!({ "textDocument": { "uri": uri }, "position": { "line": 8, "character": 4 } });
+    let completion = editor.request("textDocument/completion", line);
+    let items = completion["items"].as_array().unwrap();
+    assert!(!items.is_empty() && items.iter().all(|item| item["insertTextFormat"] != 2), "{completion}");
+    assert!(items.iter().all(|item| item.get("labelDetails").is_none()), "{completion}");
+    editor.stop();
+}
+
+/// A request the editor gave up on is not answered with its work, and neither
+/// is one of a whole document with a change behind it.
+#[test]
+fn a_request_can_be_given_up_on() {
+    let (mut editor, uri) = session(json!({}), "off");
+    editor.notify("$/cancelRequest", json!({ "id": editor.next + 1 }));
+    let refused = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    assert_eq!(refused["code"], -32800, "{refused}");
+    // The next change is read before the request's turn comes.
+    let change = json!({
+        "textDocument": { "uri": uri, "version": 2 },
+        "contentChanges": [{ "text": "fn main() {}\n" }],
+    });
+    editor.next += 2;
+    let (hold, asked) = (editor.next - 1, editor.next);
+    editor.send(json!({ "jsonrpc": "2.0", "id": hold, "method": "tondo/hold", "params": { "uri": uri } }));
+    editor.send(json!({ "jsonrpc": "2.0", "id": asked, "method": "textDocument/semanticTokens/full",
+        "params": { "textDocument": { "uri": uri } } }));
+    editor.notify("textDocument/didChange", change);
+    let answer = loop {
+        let message = editor.receive();
+        if message["id"] == asked {
+            break message;
+        }
+    };
+    assert_eq!(answer["error"]["code"], -32801, "{answer}");
+    editor.stop();
+}
+
+/// The editor is told how the first analysis goes, how long each request
+/// took if it asked, and of a request's own progress.
+#[test]
+fn says_how_work_goes() {
+    let capabilities = json!({ "window": { "workDoneProgress": true } });
+    let dir =
+        project("lsp-progress", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {}\n")]);
+    let mut editor = Editor::launch_with(
+        capabilities,
+        json!({}),
+        json!([{ "uri": format!("file://{}", dir.display()) }]),
+        "messages",
+    );
+    let create = loop {
+        let message = editor.receive();
+        if message["method"] == "window/workDoneProgress/create" {
+            break message;
+        }
+    };
+    editor.send(json!({ "jsonrpc": "2.0", "id": create["id"], "result": null }));
+    let token = create["params"]["token"].clone();
+    let mut kinds = Vec::new();
+    while kinds.last().is_none_or(|kind| kind != "end") {
+        let message = editor.receive();
+        if message["method"] == "$/progress" && message["params"]["token"] == token {
+            kinds.push(message["params"]["value"]["kind"].as_str().unwrap().to_string());
+        }
+    }
+    assert_eq!(kinds, ["begin", "report", "end"]);
+    let (mut progress, mut traced) = (Vec::new(), false);
+    editor.next += 1;
+    let id = editor.next;
+    editor.send(json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/symbol",
+        "params": { "query": "main", "workDoneToken": "mine" } }));
+    loop {
+        let message = editor.receive();
+        if message["method"] == "$/progress" {
+            progress.push(message["params"]["token"].clone());
+        }
+        traced |= message["method"] == "$/logTrace";
+        if message["id"] == id {
+            break;
+        }
+    }
+    assert_eq!(progress, ["mine", "mine"]);
+    assert!(traced);
+    editor.stop();
 }
