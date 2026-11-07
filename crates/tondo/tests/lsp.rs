@@ -2148,3 +2148,36 @@ fn an_accepted_warning_is_a_hint() {
     assert!(published.iter().any(|d| d["severity"] == 2 && d["code"] == "W1004"), "{published:?}");
     editor.stop();
 }
+
+/// Nothing is answered before `initialize` or after `shutdown`, and `exit`
+/// with no `shutdown` before it says so in its status.
+#[test]
+fn it_keeps_to_the_start_and_the_end_of_a_session() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut said = |message: Value| {
+        let text = message.to_string();
+        write!(stdin, "Content-Length: {}\r\n\r\n{text}", text.len()).unwrap();
+    };
+    said(json!({ "jsonrpc": "2.0", "id": 1, "method": "textDocument/hover", "params": {} }));
+    said(json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": { "capabilities": {} } }));
+    said(json!({ "jsonrpc": "2.0", "method": "exit" }));
+    drop(stdin);
+    let run = child.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(out.contains("-32002"), "{out}");
+    assert!(!run.status.success(), "{out}");
+
+    let mut editor = Editor::start();
+    assert_eq!(editor.request("shutdown", Value::Null), Value::Null);
+    let refused = editor.request("textDocument/hover", json!({}));
+    assert_eq!(refused["code"], -32600, "{refused}");
+    editor.notify("exit", Value::Null);
+    assert!(editor.child.wait().unwrap().success());
+}

@@ -41,7 +41,7 @@ pub fn serve() -> Result<(), String> {
         };
         let Some(message) = message else { return Ok(()) };
         if !server.handle(message) {
-            return Ok(());
+            return if server.shut { Ok(()) } else { Err("the editor said `exit` before `shutdown`".into()) };
         }
     }
 }
@@ -189,6 +189,7 @@ struct Server {
     /// The editor's folders, whose projects are analyzed when it starts.
     folders: Vec<PathBuf>,
     listed: HashMap<PathBuf, Value>,
+    started: bool,
     shut: bool,
 }
 
@@ -227,6 +228,18 @@ impl Server {
         if method.is_empty() {
             return true;
         }
+        // Before `initialize` and after `shutdown` nothing else is answered.
+        if let Some(id) = id.as_ref().filter(|_| method != "initialize") {
+            let refused = match (self.started, self.shut) {
+                (false, _) => Some((-32002, "the server is not initialized yet")),
+                (_, true) => Some((-32600, "the server is shutting down")),
+                _ => None,
+            };
+            if let Some((code, text)) = refused {
+                send(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": text } }));
+                return true;
+            }
+        }
         // A bug in one request ends that request: what is open stays open.
         let asked =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.answer(&method, params, id.is_some())));
@@ -247,7 +260,10 @@ impl Server {
     /// What a message asks for: none for a notification.
     fn answer(&mut self, method: &str, params: &Value, request: bool) -> Option<Result<Value, (i64, String)>> {
         match method {
-            "initialize" => Some(Ok(self.initialize(params))),
+            "initialize" => {
+                self.started = true;
+                Some(Ok(self.initialize(params)))
+            }
             "tondo/panic" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => panic!("as a test asks"),
             "shutdown" => {
                 self.shut = true;
