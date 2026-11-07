@@ -2410,15 +2410,20 @@ fn a_plain_run_tries_the_orders_of_tasks() {
     std::fs::write(dir.join("src/main.to"), code).unwrap();
     let (stdout, stderr, status) = tondo(&dir, &["test"]);
     assert_eq!(status, 1, "{stdout}{stderr}");
-    assert!(stdout.contains("countsBoth: failed in order"), "{stdout}");
-    assert!(stdout.contains("--schedules at:"), "{stdout}");
+    // In another order, or already in the one the machine gave.
+    let explored = stdout.contains("countsBoth: failed in order");
+    assert!(explored || stdout.contains("countsBoth ... FAILED"), "{stdout}");
+    assert!(!explored || stdout.contains("--schedules at:"), "{stdout}");
     assert!(stdout.contains("1 test that starts tasks and reached outside the program ran in one order"), "{stdout}");
     let (stdout, _, _) = tondo(&dir, &["test", "--test-format", "json"]);
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
     let test = |name: &str| report["tests"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap().clone();
     assert_eq!(test("writesFiles")["attempts"][0]["outside"], true, "{report}");
     assert_eq!(test("countsBoth")["attempts"][0]["outside"], false, "{report}");
-    assert!(test("countsBoth")["attempts"][0]["orders"]["failed_at"].as_str().unwrap().starts_with("at:"), "{report}");
+    let counted = test("countsBoth");
+    assert_eq!(counted["status"], "failed-panic", "{report}");
+    let orders = &counted["attempts"][0]["orders"];
+    assert!(orders.is_null() || orders["failed_at"].as_str().unwrap().starts_with("at:"), "{report}");
     // One order each, when asked.
     let (stdout, _, _) = tondo(&dir, &["test", "--schedules", "1"]);
     assert!(!stdout.contains("failed in order") && !stdout.contains("ran in one order"), "{stdout}");

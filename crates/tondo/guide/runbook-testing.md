@@ -128,14 +128,15 @@ test payAndCancelAtOnce {
 the fuzz test with its seeds and the benchmark once. A test that starts tasks
 and stays in the program, as `payAndCancelAtOnce`, it also runs in every order
 of its tasks that differs, a few hundred at most, since one run proves only the
-order the machine gave: here one of them loses a write.
+order the machine gave: here one of them loses a write, in the order the
+machine gave or in another, and the run names it either way.
 
 ```mcp
 check {}
 => it compiles
 test {}
 => shipsOnlyWhatIsPaid ... ok
-=> payAndCancelAtOnce: failed in order
+=> payAndCancelAtOnce
 => that write is lost
 ```
 
