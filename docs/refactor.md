@@ -114,9 +114,18 @@ Profiles of the benchmarks and of allocations, and only changes that measure bet
 lock of the scheduler's queue, allocations in JSON and serialization, the fingerprints of
 `std.model`, the pairs of retain and release the optimizer leaves.
 
+## Found on the way
+
+Bugs the work of phase 0 found, each fixed in its own commit with its test: on macOS a dump lost
+the bindings of the tasks that waited, and an outermost frame broke the copy that shows them; the
+workers of `tondo test` ran one at a time; `run` of `tondo mcp` counted the build in a program's
+time; a string built while the tools count memory was copied whole at each append; and the fuzz
+tests of 0.6 found five bugs in `std.xml`, `std.yaml` and `std.url`, and writing them a misnamed
+protobuf encoding that the compiler blamed on the field's type.
+
 ## Status
 
 | Phase | State |
 | --- | --- |
-| 0 | started 2026-11-07 |
+| 0 | started 2026-11-07: 0.3, 0.4, 0.5 and 0.6 done; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.7 to 0.9 to do |
 | 1–8 | not started |
