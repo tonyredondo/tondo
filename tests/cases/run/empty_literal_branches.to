@@ -1,0 +1,19 @@
+import std.console
+
+fn pending(): Array[Int] {
+    [1, 2]
+}
+
+fn main() {
+    let done = false
+    // An empty literal takes its type from the other branch, whichever comes first.
+    let first = if done { [] } else { pending() }
+    let names = if done { [:] } else { ["a": 1] }
+    let picked = match first.length() {
+        0 => []
+        _ => pending()
+    }
+    console.println("{first.length()} {names.length()} {picked.length()}")
+}
+
+// expect-stdout: 2 1 2

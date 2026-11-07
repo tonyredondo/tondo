@@ -880,7 +880,10 @@ let jobs = sync.Queue[first, second, third]
 ~~~
 
 Los literales vacíos `[]` y `Set[]` requieren contexto de tipo. `[:]` identifica
-siempre un map. `Set` es un nombre intrínseco del prelude, no una keyword, y no
+siempre un map. En un `if` o un `match` sin tipo esperado, un literal vacío que es
+el valor de una rama o de un brazo toma el tipo de los demás: en
+`if done { [] } else { pending() }` es el de `pending()`, como lo sería en el
+orden contrario. `Set` es un nombre intrínseco del prelude, no una keyword, y no
 puede redeclararse como nombre no calificado.
 
 Las formas `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`,

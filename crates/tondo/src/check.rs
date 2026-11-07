@@ -12152,6 +12152,9 @@ impl<'a> Checker<'a> {
         let scrutinee = self.expr(cx, scrutinee, None);
         let mut result = expected;
         let mut out = Vec::new();
+        // An arm whose value is an empty literal, `[]`, before any other with
+        // a value: the others give it its type.
+        let mut later = Vec::new();
         for arm in arms {
             cx.scopes.open();
             let outer = std::mem::replace(&mut cx.diverged, false);
@@ -12165,10 +12168,19 @@ impl<'a> Checker<'a> {
                 let guard = self.expr(cx, guard, Some(Ty::BOOL));
                 self.coerce(guard, Ty::BOOL)
             });
-            let body = self.arm_body(cx, &arm.body, &mut result);
+            let body = match &arm.body {
+                ast::ArmBody::Expr(body) if result.is_none() && empty_literal(body) => {
+                    later.push(out.len());
+                    Self::error_expr(body.span)
+                }
+                _ => self.arm_body(cx, &arm.body, &mut result),
+            };
             cx.diverged = outer;
             cx.scopes.close();
             out.push(hir::Arm { pattern, guard, body });
+        }
+        for index in later {
+            out[index].body = self.arm_body(cx, &arms[index].body, &mut result);
         }
         let checked: Vec<(&hir::Pattern, bool)> = out.iter().map(|a| (&a.pattern, a.guard.is_some())).collect();
         if scrutinee.ty != Ty::ERROR && !checked.iter().any(|(p, _)| p.ty == Ty::ERROR) {
@@ -17661,6 +17673,15 @@ impl<'a> Checker<'a> {
             }
             return Self::mk(hir::ExprKind::If(condition, then, None), Ty::UNIT, span);
         };
+        // `if c { [] } else { items }`: the other branch gives the type an
+        // empty literal needs, as the first does the other way round.
+        if expected.is_none() && then.tail.as_deref().is_some_and(empty_literal) {
+            let other = self.expr(cx, otherwise, None);
+            let then_expected = (![Ty::NEVER, Ty::ERROR].contains(&other.ty)).then_some(other.ty);
+            let then = self.block(cx, then, then_expected);
+            let ty = if then.ty == Ty::NEVER { other.ty } else { then.ty };
+            return Self::mk(hir::ExprKind::If(condition, then, Some(Box::new(other))), ty, span);
+        }
         let then = self.block(cx, then, expected);
         let other_expected = expected.or((then.ty != Ty::NEVER).then_some(then.ty));
         let other = self.expr(cx, otherwise, other_expected);
@@ -17680,6 +17701,15 @@ impl<'a> Checker<'a> {
             then.ty
         };
         Self::mk(hir::ExprKind::If(condition, then, Some(Box::new(other))), ty, span)
+    }
+}
+
+/// `[]`, `Set[]` or `[:]`, whose type only what is expected of it can give.
+fn empty_literal(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        ast::ExprKind::Array(items) | ast::ExprKind::Set(items) => items.is_empty(),
+        ast::ExprKind::Map(entries) => entries.is_empty(),
+        _ => false,
     }
 }
 
