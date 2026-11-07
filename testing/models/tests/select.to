@@ -4,7 +4,6 @@
 // registers one waiter in each queue under the locks of both, and one `claim`
 // decides which operation won. A sender that loses the claim goes on to the
 // next waiter, or to the buffer.
-import models
 import std.model
 
 enum Sender {
@@ -63,7 +62,7 @@ fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
                     model.step(
                         "register",
                         now with {
-                            channels: models.replaced(now.channels, c, took)
+                            channels: now.channels.replaced(c, took)
                             selecting: Selecting.Done
                         },
                     ),
@@ -78,9 +77,7 @@ fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
         }
     }
     for (c, ch) in channels.enumerate() {
-        let becomes = (after: Channel) {
-            now with { channels: models.replaced(now.channels, c, after) }
-        }
+        let becomes = (after: Channel) { now with { channels: now.channels.replaced(c, after) } }
         // `try_send`, with the ch's lock: the first waiter it can claim
         // gets the value; one another operation claimed is dropped from the queue.
         if ch.sender == Sender.Start {

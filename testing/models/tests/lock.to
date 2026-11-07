@@ -2,7 +2,6 @@
 // grant, wake_lockers, tondo_rt_sync_unlock), as Lock.tla says it, with two
 // writers and a reader that take it twice each. A step is an atomic operation
 // on the state, or what the code does with the queue locked.
-import models
 import std.model
 
 enum Pc {
@@ -49,7 +48,7 @@ fn take(lock: Lock, t: Int): Lock {
 }
 
 fn changed(lock: Lock, t: Int, task: Task): Lock {
-    lock with { tasks: models.replaced(lock.tasks, t, task) }
+    lock with { tasks: lock.tasks.replaced(t, task) }
 }
 
 fn steps(lock: Lock, grantLooks: Bool): Array[model.Step[Lock]] {

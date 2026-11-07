@@ -3,7 +3,6 @@
 // Chan.tla says it. A step is what the code does with the channel's lock held.
 // A wait is claimed by one operation or by a cancellation, as `Wait::claim`,
 // and the claimer notifies. Each sender sends one value: its number.
-import models
 import std.model
 
 enum Sender {
@@ -37,11 +36,11 @@ const Capacity = 1
 
 // What receiver `r` got, with `value`.
 fn gets(chan: Chan, r: Int, value: Int): Array[model.Bag[Int]] {
-    models.replaced(chan.got, r, chan.got[r].add(value))
+    chan.got.replaced(r, chan.got[r].add(value))
 }
 
 fn send(chan: Chan, s: Int): Chan {
-    let sender = (after: Sender) { models.replaced(chan.senders, s, after) }
+    let sender = (after: Sender) { chan.senders.replaced(s, after) }
     if chan.closed {
         return chan with { senders: sender(Sender.Panicked) }
     }
@@ -49,7 +48,7 @@ fn send(chan: Chan, s: Int): Chan {
         some(r) => chan with {
             receiving: chan.receiving.rest()
             got: gets(chan, r, s)
-            receivers: models.replaced(chan.receivers, r, Receiver.Woken)
+            receivers: chan.receivers.replaced(r, Receiver.Woken)
             senders: sender(Sender.Sent)
         }
         none if chan.buffer.length() < Capacity => chan with {
@@ -65,21 +64,21 @@ fn receive(chan: Chan, r: Int): Chan {
         (some(value), some(s)) => chan with {
             got: gets(chan, r, value)
             buffer: chan.buffer.rest().push(s)
-            senders: models.replaced(chan.senders, s, Sender.Sent)
+            senders: chan.senders.replaced(s, Sender.Sent)
             sending: chan.sending.rest()
         }
         (some(value), none) => chan with { got: gets(chan, r, value), buffer: chan.buffer.rest() }
         (none, some(s)) => chan with {
             got: gets(chan, r, s)
-            senders: models.replaced(chan.senders, s, Sender.Sent)
+            senders: chan.senders.replaced(s, Sender.Sent)
             sending: chan.sending.rest()
         }
         (none, none) if chan.closed => chan with {
-            receivers: models.replaced(chan.receivers, r, Receiver.Ended)
+            receivers: chan.receivers.replaced(r, Receiver.Ended)
         }
         (none, none) => chan with {
             receiving: chan.receiving.push(r)
-            receivers: models.replaced(chan.receivers, r, Receiver.Waiting)
+            receivers: chan.receivers.replaced(r, Receiver.Waiting)
         }
     }
 }
@@ -95,7 +94,7 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
                     "cancel sender",
                     chan with {
                         cancels: chan.cancels - 1
-                        senders: models.replaced(chan.senders, s, Sender.Cancelled)
+                        senders: chan.senders.replaced(s, Sender.Cancelled)
                         sending: chan.sending.without(s)
                     },
                 ),
@@ -110,7 +109,7 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
             Receiver.Woken => next.push(
                 model.step(
                     "again",
-                    chan with { receivers: models.replaced(chan.receivers, r, Receiver.Start) },
+                    chan with { receivers: chan.receivers.replaced(r, Receiver.Start) },
                 ),
             )
             Receiver.Waiting if chan.cancels > 0 => next.push(
@@ -118,7 +117,7 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
                     "cancel receiver",
                     chan with {
                         cancels: chan.cancels - 1
-                        receivers: models.replaced(chan.receivers, r, Receiver.Cancelled)
+                        receivers: chan.receivers.replaced(r, Receiver.Cancelled)
                         receiving: chan.receiving.without(r)
                     },
                 ),

@@ -54,6 +54,9 @@ fn main() {
     }
     let built = Array[Int]()
     console.println("{built} {built.length()}")
+    // A copy with one element changed; the array stays as it was.
+    let states = ["idle", "idle", "idle"]
+    console.println("{states.replaced(1, "runs")} {states.replaced(-1, "done")} {states}")
 }
 
 // expect-stdout: [1, 20, 30, 40, 55, 60] [10, 20, 30, 40, 50] 6 5
@@ -67,3 +70,4 @@ fn main() {
 // expect-stdout: 500 500 item 0 item 499
 // expect-stdout: [20, 30]
 // expect-stdout: [] 0
+// expect-stdout: [idle, runs, idle] [idle, idle, done] [idle, idle, idle]

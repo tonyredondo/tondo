@@ -1019,6 +1019,22 @@ pub fn Array[T].reversed(self): Array[T] {
     self[::-1]
 }
 
+/// A copy with the element at `index` replaced by `item`; the array itself
+/// stays as it was. An index out of range panics, as `items[index] = item`
+/// does.
+///
+/// ```tondo
+/// import std.console
+///
+/// let tasks = ["idle", "idle"]
+/// console.println("{tasks.replaced(1, "runs")} {tasks}")
+/// ```
+pub fn Array[T].replaced(self, index: Int, item: T): Array[T] {
+    var copy = self
+    copy[index] = item
+    copy
+}
+
 /// The elements without repeats, each where it first appears.
 pub fn Array[T: Key].unique(self): Array[T] {
     var seen: Set[T] = Set[]

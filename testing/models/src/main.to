@@ -1,12 +1,4 @@
 // The models of the runtime, in `std.model`, beside those of TLA+ they
 // replace: each goes through as many states as TLC does.
 
-/// The items with the one at `index` changed: what TLA+ writes as
-/// `[f EXCEPT ![index] = item]`, for the states of the tasks of a model.
-pub fn replaced[T](items: Array[T], index: Int, item: T): Array[T] {
-    var changed = items
-    changed[index] = item
-    changed
-}
-
 fn main() {}

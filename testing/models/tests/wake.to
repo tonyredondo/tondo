@@ -2,7 +2,6 @@
 // work_until, enqueue, wake_idle, wake_one, step_back), as Wake.tla says it,
 // with three workers, the first of them `main`'s. A step here is what the code
 // does with the queue's lock held, or one atomic operation.
-import models
 import std.model
 
 enum Task {
@@ -64,7 +63,7 @@ fn worker(pool: Pool, w: Int): Worker {
 }
 
 fn changed(pool: Pool, w: Int, after: Worker): Pool {
-    pool with { workers: models.replaced(pool.workers, w, after) }
+    pool with { workers: pool.workers.replaced(w, after) }
 }
 
 fn idle(pool: Pool): Array[Int] {

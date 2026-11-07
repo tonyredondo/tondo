@@ -3,7 +3,6 @@
 // it. `add` counts the task with the group's lock, then with the join's lock
 // either finds it done or leaves its place in the join, so that `complete`
 // tells the group.
-import models
 import std.model
 
 type Task = {
@@ -31,9 +30,7 @@ type Group = {
 fn steps(group: Group, looks: Bool): Array[model.Step[Group]] {
     var next: Array[model.Step[Group]] = []
     let tasks = group.tasks
-    let becomes = (t: Int, after: Task) {
-        group with { tasks: models.replaced(group.tasks, t, after) }
-    }
+    let becomes = (t: Int, after: Task) { group with { tasks: group.tasks.replaced(t, after) } }
     for (t, task) in tasks.enumerate() {
         // `add`, with the group's lock.
         if group.owner == Owner.Adding and group.adding.isNone() and not task.added {

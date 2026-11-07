@@ -2892,6 +2892,7 @@ fn sorted(self): Array[T]                           // T: Ordered, estable
 fn sortedBy[K: Ordered](self, key: fn(T): K): Array[T]
 fn sortedWith(self, compare: fn(T, T): Int): Array[T]
 fn reversed(self): Array[T]
+fn replaced(self, index: Int, item: T): Array[T]   // una copia; fuera de rango, pánico
 fn unique(self): Array[T]                           // T: Key
 fn take(self, count: Int): Array[T]
 fn drop(self, count: Int): Array[T]

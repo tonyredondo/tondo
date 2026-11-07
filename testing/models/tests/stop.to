@@ -2,7 +2,6 @@
 // resume_world, enter_tondo, leave_tondo), as Stop.tla says it. The cycle
 // collector, dumps, profiles, logpoints and reloads each stop it, and read or
 // change memory meanwhile, so nothing may run while any of them is inside.
-import models
 import std.model
 
 enum At {
@@ -34,9 +33,7 @@ type World = {
 fn steps(world: World, oneAtATime: Bool): Array[model.Step[World]] {
     var next: Array[model.Step[World]] = []
     for (t, thread) in world.threads.enumerate() {
-        let becomes = (after: Thread) {
-            world with { threads: models.replaced(world.threads, t, after) }
-        }
+        let becomes = (after: Thread) { world with { threads: world.threads.replaced(t, after) } }
         match thread.at {
             // `enter_tondo`: it says it runs, and then looks.
             At.Out => next.push(
@@ -58,9 +55,7 @@ fn steps(world: World, oneAtATime: Bool): Array[model.Step[World]] {
         }
     }
     for (s, stopper) in world.stoppers.enumerate() {
-        let turns = (after: Stopper) {
-            world with { stoppers: models.replaced(world.stoppers, s, after) }
-        }
+        let turns = (after: Stopper) { world with { stoppers: world.stoppers.replaced(s, after) } }
         match stopper {
             // `stop_world`: one stopper at a time.
             Stopper.Idle if world.owner.isNone() or not oneAtATime => {

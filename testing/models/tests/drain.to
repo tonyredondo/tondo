@@ -1,7 +1,6 @@
 // A server that stops (crates/tondo-runtime/src/server.rs: accept, handle,
 // tondo_rt_http_server_stop, tondo_rt_http_next; std/http.to: serve, listen),
 // as Drain.tla says it.
-import models
 import std.model
 
 enum Phase {
@@ -48,7 +47,7 @@ fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
     let conns = server.conns
     for (c, conn) in conns.enumerate() {
         let becomes = (name: String, after: Conn) {
-            model.step(name, server with { conns: models.replaced(server.conns, c, after) })
+            model.step(name, server with { conns: server.conns.replaced(c, after) })
         }
         match conn {
             // The loop of `accept`: it counts the connection first and then

@@ -164,8 +164,9 @@ test theLockFollowsItsModel {
 
 A state is any value that encodes, arrays and maps included, and two states are
 the same when they encode the same; a map is the same state whatever order its
-keys came in. A list of tasks is an `Array`, changed as any array:
-`var tasks = lock.tasks`, `tasks[t] = ...`, then `lock with { tasks: tasks }`. A
+keys came in. A list of tasks is an `Array`, and
+`lock with { tasks: lock.tasks.replaced(t, task) }` is the state with one of
+them changed. A
 queue is a `model.Queue([1, 2])`, and a collection whose order says nothing a
 `model.Bag(...)`. `symmetry: (state) { ... }` gives the one state that stands
 for all those it equals, as the same with its tasks numbered otherwise, so that
