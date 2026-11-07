@@ -1141,7 +1141,7 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
                 let order =
                     given.filter(|given| given.strip_prefix("at:").is_some() || u64::from_str_radix(given, 16).is_ok());
                 schedule = Some(order.ok_or_else(|| {
-                    usage("--schedule takes what `tondo test --schedules` says: a seed in hex, or `at:0.2.1`".into())
+                    usage("--schedule takes what `tondo test --schedules` says: a seed in hex, or `at:0.2.1`")
                 })?);
             }
             "--test" => {
