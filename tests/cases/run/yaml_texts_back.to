@@ -12,7 +12,7 @@ fn main() {
     let box = Box { texts: ["a\nb", "a\n\n", "\n", "x\r\ny", "\na"] }
     console.println("{yaml.decode[Box](yaml.encode(box)) == ok(box)}")
     let plain = Box { texts: ["a\nb\n"] }
-    console.println(yaml.encode(plain))
+    console.print(yaml.encode(plain))
 }
 
 // expect-stdout: true
