@@ -6,6 +6,14 @@
 //
 //   tondo run bench/compare.to [--time <seconds>] [--output <file>]
 //
+// With `--old <tondo>` it compares that `tondo` with this one instead, as a
+// change of the runtime is held to a baseline (docs/refactor.md, 0.7): the
+// two measure in turns, `--rounds` of them, so that a machine that speeds up
+// or slows down weighs on both, and it fails when a benchmark is slower than
+// `--max` percent, 5 by default, or allocates more.
+//
+//   tondo run bench/compare.to -- --old <tondo> [--rounds 4] [--max 5]
+//
 // It runs from the repository's root; `TONDO` names the `tondo` to measure
 // with, `tondo` on PATH by default.
 
@@ -121,19 +129,106 @@ fn time(nanoseconds: Float): String {
     "{(nanoseconds / 1_000_000.0).toFixed(2)} ms"
 }
 
+/// The median of some numbers.
+fn median(values: Array[Float]): Float {
+    var sorted = values
+    sorted.sortBy((value) { value })
+    if sorted.isEmpty() { 0.0 } else { sorted[sorted.length() / 2] }
+}
+
+/// The old `tondo` against this one, in turns: a table of what changed, the
+/// worst first, and an error when something regressed.
+fn againstOld(
+    old: String,
+    tondo: String,
+    seconds: String,
+    rounds: Int,
+    max: Float,
+    output: String,
+): !String {
+    var (olds, news): (Array[Map[String, Measure]], Array[Map[String, Measure]]) = ([], [])
+    for round in 0..rounds {
+        // Each goes first in turn.
+        if round % 2 == 1 {
+            news.push(tondoSide(tondo, seconds)?)
+        }
+        olds.push(tondoSide(old, seconds)?)
+        if round % 2 == 0 {
+            news.push(tondoSide(tondo, seconds)?)
+        }
+    }
+    let combined = (runs: Array[Map[String, Measure]], name: String) {
+        var (times, allocations): (Array[Float], Array[Float]) = ([], [])
+        for run in runs {
+            match run.get(name) {
+                some(measure) => {
+                    times.push(measure.nanoseconds)
+                    allocations.push(measure.allocations)
+                }
+                none => {}
+            }
+        }
+        Measure { nanoseconds: median(times), allocations: median(allocations) }
+    }
+    var rows: Array[(String, Measure, Measure)] = []
+    for (name, _) in news.first().unwrapOr([:]) {
+        rows.push((name, combined(olds, name), combined(news, name)))
+    }
+    rows.sortBy((row) { -row.2.nanoseconds / row.1.nanoseconds })
+    var lines: Array[String] = [
+        "| Benchmark | Before | Now | Change | Allocs/op before | Allocs/op now |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    var regressed: Array[String] = []
+    for (name, before, now) in rows {
+        let change = (now.nanoseconds / before.nanoseconds - 1.0) * 100.0
+        // Allocations under contention vary a little from run to run.
+        let allocates = now.allocations > before.allocations * 1.01 + 0.5
+        let mark = if change > max or allocates { " ⚠" } else { "" }
+        if mark != "" {
+            regressed.push(name)
+        }
+        lines.push(
+            "| {name} | {time(before.nanoseconds)} | {time(now.nanoseconds)} | {change.toFixed(1)}%{mark} | {before.allocations.toFixed(0)} | {now.allocations.toFixed(0)} |",
+        )
+    }
+    lines.push("")
+    lines.push(
+        "{regressed.length()} of {rows.length()} benchmarks regressed: slower than {max}% or more allocations.",
+    )
+    let table = lines.join("\n")
+    console.println(table)
+    if output != "" {
+        fs.writeText(output, "{table}\n").mapErr((e) { "cannot write {output}: {e}" })?
+    }
+    if not regressed.isEmpty() {
+        fail "regressed: {regressed.join(", ")}"
+    }
+}
+
 fn main(): !String {
     var seconds = "1"
     var output = ""
+    var old = ""
+    var rounds = 4
+    var max = 5.0
     let arguments = env.args()
     for i in 0..arguments.length() {
-        if arguments[i] == "--time" and i + 1 < arguments.length() {
-            seconds = arguments[i + 1]
-        }
-        if arguments[i] == "--output" and i + 1 < arguments.length() {
-            output = arguments[i + 1]
+        let value = if i + 1 < arguments.length() { arguments[i + 1] } else { "" }
+        match arguments[i] {
+            "--time" => seconds = value
+            "--output" => output = value
+            "--old" => old = value
+            "--rounds" => rounds = Int.parse(value).unwrapOr(4)
+            "--max" => max = Float.parse(value).unwrapOr(5.0)
+            _ => {}
         }
     }
     let tondo = env.get("TONDO").unwrapOr("tondo")
+    if old != "" {
+        againstOld(old, tondo, seconds, rounds, max, output)?
+        return
+    }
     let ours = tondoSide(tondo, seconds)?
     let theirs = goSide(seconds)?
     var rows: Array[Row] = []

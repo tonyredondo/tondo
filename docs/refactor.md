@@ -33,7 +33,8 @@ Measured on 2026-11-07, at 9439931:
 - A phase ends published, with its gate passed: fmt, clippy and the workspace's tests; the cases
   in debug, replay, live and static builds; the containers of `.github/scripts/local.sh`, musl and
   one core; a round on macOS for arm64; the Nightly; the models with TLC and `std.model`; the
-  baseline of performance and allocations of phase 0.7, within 5% and no more allocations.
+  baseline of performance and allocations of phase 0.7, within 5% and no more allocations, as
+  `bench/compare.to --old` measures it (bench/baselines/pre-refactor.md).
 
 ## Phase 0: pin what it does
 
@@ -127,5 +128,5 @@ protobuf encoding that the compiler blamed on the field's type.
 
 | Phase | State |
 | --- | --- |
-| 0 | started 2026-11-07: 0.3, 0.4, 0.5 and 0.6 done; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.7 to 0.9 to do |
+| 0 | started 2026-11-07: 0.3 to 0.7 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 and 0.9 to do |
 | 1–8 | not started |
