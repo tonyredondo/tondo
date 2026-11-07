@@ -748,7 +748,7 @@ pub(crate) fn start() {
     }
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
-    super::lockorder::start(debugged || std::env::var_os("TONDO_DUMP").is_some());
+    super::lockorder::start(debugged || asked_dump().is_some());
     if on("TONDO_RACE") {
         super::race::start();
     }
@@ -757,7 +757,7 @@ pub(crate) fn start() {
     // change.
     let processor = std::env::var_os("TONDO_TRACE").is_some_and(|value| value == "cpu");
     let traced = on("TONDO_TRACE") || processor;
-    if !on("TONDO_DIAGNOSTICS") && !traced && !debugged && !live && std::env::var_os("TONDO_DUMP").is_none() {
+    if !on("TONDO_DIAGNOSTICS") && !traced && !debugged && !live && asked_dump().is_none() {
         return;
     }
     if !processor || on("TONDO_DIAGNOSTICS") {
@@ -767,7 +767,7 @@ pub(crate) fn start() {
     if !super::replay::on() {
         schedule_dumps();
     }
-    if std::env::var_os("TONDO_DUMP").is_some() {
+    if asked_dump().is_some() {
         super::events::start();
     }
     // `tondo debug -- program` debugs that program, not those it starts.
@@ -1350,13 +1350,63 @@ fn here_now() -> (Option<usize>, usize, (usize, usize)) {
     }
 }
 
-/// With `TONDO_DUMP=<dir>`, a program that panics, faults or deadlocks
-/// leaves a dump there before it ends, named after it and its process.
+/// `TONDO_DUMP` as the program was started with: the directory it asked its
+/// dumps in, which also has it record what a dump of a running program
+/// shows; none with `off`.
+pub(crate) fn asked_dump() -> Option<std::ffi::OsString> {
+    std::env::var_os("TONDO_DUMP").filter(|dir| dir != "off" && dir != "0")
+}
+
+/// How many dumps of crashes the cache keeps, the latest.
+const KEPT_DUMPS: usize = 20;
+
+/// Where a crash leaves its dump: where `TONDO_DUMP` says, or, unless it is
+/// `off`, in the user's cache of Tondo, which only the user can read, as a
+/// dump holds the program's values; and whether it is that cache.
+fn crash_dir() -> Option<(PathBuf, bool)> {
+    if let Some(dir) = asked_dump() {
+        return Some((PathBuf::from(dir), false));
+    }
+    if std::env::var_os("TONDO_DUMP").is_some() {
+        return None;
+    }
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("tondo").join("dumps");
+    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+    let private = std::fs::symlink_metadata(&dir)
+        .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
+    private.then_some((dir, true))
+}
+
+/// The latest dumps of the cache, and no more.
+fn prune_dumps(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".dump.json"))
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .collect();
+    dumps.sort();
+    let extra = dumps.len().saturating_sub(KEPT_DUMPS);
+    for (_, path) in dumps.into_iter().take(extra) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// A program that panics, faults or deadlocks leaves a dump before it ends,
+/// named after it and its process: where `TONDO_DUMP` says, or in the cache.
 pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bool) {
-    let Some(dir) = std::env::var_os("TONDO_DUMP").filter(|_| !super::debugger::rendering()) else { return };
+    if super::debugger::rendering() {
+        return;
+    }
+    let Some((dir, cache)) = crash_dir() else { return };
     let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
     let name = format!("{}-{}.dump.json", program.unwrap_or_else(|| "tondo".into()), std::process::id());
-    let path = PathBuf::from(dir).join(name);
+    let path = dir.join(name);
     // This thread stands still too while the others stop.
     let paused = super::tasks::pause_here();
     let text = dump(reason, message, Some(here), stop.then_some(std::time::Duration::from_millis(100)));
@@ -1367,6 +1417,9 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
         Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
     };
+    if cache {
+        prune_dumps(&dir);
+    }
     dumped(&path);
 }
 
@@ -1593,7 +1646,7 @@ pub(crate) fn tasks_to_stderr() {
 /// `kill -QUIT`, with `TONDO_DUMP`: a dump of the program, which goes on.
 pub(crate) fn dump_on_signal() {
     static NUMBER: AtomicU64 = AtomicU64::new(0);
-    let Some(dir) = std::env::var_os("TONDO_DUMP") else { return };
+    let Some(dir) = asked_dump() else { return };
     let number = NUMBER.fetch_add(1, Ordering::Relaxed) + 1;
     let _ = super::tasks::try_spawn_thread(Some(DUMPING_STACK), move || {
         retire_here();
@@ -1610,7 +1663,7 @@ pub(crate) fn dump_on_signal() {
 
 /// Starts the thread of `TONDO_DUMP_WHEN`, when it is set with `TONDO_DUMP`.
 fn schedule_dumps() {
-    let (Some(when), Some(dir)) = (std::env::var("TONDO_DUMP_WHEN").ok(), std::env::var_os("TONDO_DUMP")) else {
+    let (Some(when), Some(dir)) = (std::env::var("TONDO_DUMP_WHEN").ok(), asked_dump()) else {
         return;
     };
     let schedule = match Schedule::parse(&when) {

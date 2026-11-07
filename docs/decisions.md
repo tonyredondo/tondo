@@ -5491,3 +5491,15 @@ two forms differ in nothing but whether the record is new, and the shorter one c
 both: writing the models of the runtime, three updates computed a field's new value in a binding of
 its name and then had to spell it twice. A field whose name is a keyword still needs its value, as
 in a literal.
+
+## A crash leaves its dump by itself
+
+A program that panicked, faulted or deadlocked left a dump only with `TONDO_DUMP=<dir>`, so the
+first crash of a program, the one nobody expected, left its report on standard error and nothing
+to read the values from. Now it leaves one by default, values and all, in the cache of Tondo,
+`~/.cache/tondo/dumps`: a directory only its user can open, as a dump holds what the program held,
+which keeps the latest 20, and whose path the last line of the error output gives. It costs nothing
+while the program runs, since it is written when the program falls; what a dump of a running
+program needs, as the events and the order of locks, still runs only with a `TONDO_DUMP` given, so
+that a build for production stays as fast. `TONDO_DUMP=off` leaves none, and the tests of the
+toolchain run their programs so.

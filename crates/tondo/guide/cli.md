@@ -129,7 +129,7 @@ tondo dump read api.dump requests the HTTP and gRPC requests, each with its time
 tondo requests api                what each request did, through every task it started
 tondo dump read api.dump events   what it did last, with TONDO_DUMP on
 tondo dump read api.dump find id  where a text is, in values, stacks and contexts
-tondo dump read api.dump tasks    read a dump; TONDO_DUMP=<dir> writes one at a crash
+tondo dump read api.dump tasks    read a dump, as a crash leaves in ~/.cache/tondo/dumps
 tondo dump read api.dump locals   the bindings of a frame; `print user.name` a part
 tondo source lib/x.to --from a.dump  a file as the build had it, from its repository
 tondo dump diff a.dump b.dump     what changed between two dumps of a program

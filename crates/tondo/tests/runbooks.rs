@@ -22,6 +22,8 @@ impl Agent {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("mcp")
             .current_dir(dir)
+            // What a crash leaves stays with the tests, not in the user's cache.
+            .env("XDG_CACHE_HOME", Path::new(env!("CARGO_TARGET_TMPDIR")).join("runbook-cache"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()

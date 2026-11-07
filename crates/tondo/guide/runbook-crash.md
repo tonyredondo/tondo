@@ -25,13 +25,15 @@ fn main() {
 ```
 
 `run` says all a panic knows: its code, its words and where each call was.
-Often that is the whole answer, and nothing else is needed.
+Often that is the whole answer, and nothing else is needed. The program also
+left a dump, with what each task held, which `dump_read` reads (below).
 
 ```mcp
 run {"path": "orders.to"}
 => panic[P0001]: bounds: index 2 is out of bounds
 => orders.to:8:16
-=> next: `explain` says what the code means
+=> a dump of the program is in
+=> next: `dump_read` reads the dump it left
 ```
 
 `explain` says what a code means and what usually causes it.
@@ -43,8 +45,10 @@ explain {"code": "P0001"}
 
 ## With a dump
 
-A program that runs elsewhere leaves a dump where `TONDO_DUMP` says, and the
-dump is all there is: what each task held when it ended.
+A program that panics, faults or deadlocks leaves a dump, with the values each
+task held when it ended, and its last line of error output says where: in
+`~/.cache/tondo/dumps`, the latest 20, or where `TONDO_DUMP` says, as here, to
+keep them together. Of a program that ran elsewhere, the dump is all there is.
 
 ```sh
 tondo build orders.to --output orders

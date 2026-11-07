@@ -166,6 +166,8 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
             command = Command::new("sh");
             command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
         }
+        // A case that panics on purpose leaves no dump in the user's cache.
+        command.env("TONDO_DUMP", "off");
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
         if let Some(seed) = std::env::var_os("TONDO_CASES_SCHEDULE").filter(|_| !expect.no_schedule) {

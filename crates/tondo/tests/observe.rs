@@ -405,6 +405,44 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     assert!(summary.contains("dumped at a panic") && summary.contains("1 runs panics.to:3 in main"), "{summary}");
 }
 
+/// With no `TONDO_DUMP`, a crash leaves its dump, values and all, in the
+/// cache of Tondo, where only its user can read it, the latest 20 kept; with
+/// `TONDO_DUMP=off`, none.
+#[test]
+fn a_crash_leaves_a_dump_by_itself() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("crash-dumps");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "type Order = { id: Int }\n\nfn main() {\n    let order = Order { id: 42 }\n    let values = [order.id]\n    let _ = values[3]\n}\n";
+    std::fs::write(dir.join("falls.to"), program).unwrap();
+    let cache = dir.join("cache");
+    let dumps = cache.join("tondo/dumps");
+    let run = |dump: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        command.args(["run", "falls.to"]).env("XDG_CACHE_HOME", &cache).env_remove("TONDO_DUMP").current_dir(&dir);
+        command.envs(dump.map(|value| ("TONDO_DUMP", value)));
+        String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned()
+    };
+    let said = run(None);
+    assert!(said.contains(&format!("a dump of the program is in {}", dumps.display())), "{said}");
+    let mode = std::fs::metadata(&dumps).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "{mode:o}");
+    let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
+    let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "--json"]);
+    assert!(locals.to_string().contains("42"), "{locals}");
+    // Of many, the latest 20 stay.
+    for n in 0..25 {
+        std::fs::write(dumps.join(format!("old-{n}.dump.json")), "{}").unwrap();
+    }
+    run(None);
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 20);
+    // None when asked so.
+    let before = std::fs::read_dir(&dumps).unwrap().count();
+    assert!(!run(Some("off")).contains("a dump of the program"));
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), before);
+}
+
 const DEBUGGED: &str = r#"import std.console
 
 type User = { name: String, age: Int }

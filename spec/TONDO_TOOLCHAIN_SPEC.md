@@ -799,8 +799,16 @@ contadores, cada tarea con su estado (`waits`, `ready`, `runs` o `in C`), la
 pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, sus
 contextos con los campos que no tienen su valor inicial, y su memoria viva.
 Para ver dónde están las tareas que corren, los workers se paran un momento,
-y el que no llega a un punto donde pararse da su pila por una señal. Con `TONDO_DUMP=<dir>`, un programa que acaba en un pánico, en una
-señal fatal o en un deadlock deja su volcado allí antes de terminar. `dump`
+y el que no llega a un punto donde pararse da su pila por una señal. Un
+programa que acaba en un pánico, en una señal fatal o en un deadlock deja su
+volcado antes de terminar, con los valores, y dice en la salida de error dónde:
+en `TONDO_DUMP=<dir>` si se da, y si no en la caché de Tondo,
+`$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio que solo
+su usuario puede abrir, donde quedan los 20 últimos. No cuesta nada mientras
+el programa corre: se escribe al fallar. `TONDO_DUMP=off` no deja ninguno, y
+solo un `TONDO_DUMP` dado pone en marcha lo que un volcado de un programa en
+marcha muestra, como los eventos y el orden de los locks. Un pánico que
+`recover` detiene no es un fallo, y uno de un test lo informa `tondo test`. `dump`
 nombra cada marco, así que su volcado se lee en otra máquina; uno al fallar
 se nombra al leerlo, con el ejecutable del programa.
 

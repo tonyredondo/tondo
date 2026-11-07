@@ -532,6 +532,9 @@ fn next_step(name: &str, args: &Args, reply: &Reply) -> Option<&'static str> {
         "run_start" | "run_output" if said("waits here: save a fix") => {
             Some("the task waits: `values` shows what it held, and `reload` after a fix goes on; topic `runbook-live`")
         }
+        "run" if said("a dump of the program is in") => Some(
+            "`dump_read` reads the dump it left, whose path its error output gives, with `view: \"why\"` or `\"locals\"` for the values; `explain` says what the code means; `guide` topic `runbook-crash`",
+        ),
         "run" | "test" if said("panic[") => {
             Some("`explain` says what the code means; a dump shows the values: `guide` topic `runbook-crash`")
         }
@@ -2603,7 +2606,7 @@ the memory by where it was made, and its tasks.",
     },
     Tool {
         name: "dump_read",
-        description: "Read a dump, as `dump` writes or a crash leaves with TONDO_DUMP=<dir>.",
+        description: "Read a dump, as `dump` writes or a crash leaves, in ~/.cache/tondo/dumps or TONDO_DUMP=<dir>, the path its error output gives.",
         kind: Kind::Reads,
         params: &[
             ("file", "string!", "The dump."),

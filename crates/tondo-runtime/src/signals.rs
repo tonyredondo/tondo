@@ -108,7 +108,7 @@ pub(crate) fn start() {
                 // `kill -QUIT` asks a program that dumps for one, and it
                 // goes on; another says where its tasks are, and ends.
                 if signal == libc::SIGQUIT && !routed(signal) {
-                    if std::env::var_os("TONDO_DUMP").is_some() {
+                    if super::diagnostics::asked_dump().is_some() {
                         super::diagnostics::dump_on_signal();
                         continue;
                     }

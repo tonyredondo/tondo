@@ -711,8 +711,11 @@ lines with their code, `--html flame.html` a flame graph, `--json` data:
 runs, where it was spawned, the locks it holds and the fields of its
 contexts a `with` set, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it
-(`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
-program that panics, crashes or deadlocks leaves its dump there. The dump
+(`tasks`, `task <id>`, `heap`, `--json`). A program that panics, crashes or
+deadlocks leaves its dump, with its values, and its error output says where:
+in `~/.cache/tondo/dumps`, which keeps the latest 20 and only its user can
+read, or in `TONDO_DUMP=<dir>`; `TONDO_DUMP=off` leaves none. It costs nothing
+until the program falls. The dump
 of a `--debug` build has every object: `objects` by type and what keeps the
 most alive, and `object <address>` with what holds it, `task 1 -> Map[...] ->
 String`. In any build, `heap` gives the live memory by site and by type, from
@@ -738,7 +741,8 @@ is, by their signature, with the commit each was first seen at, `tondo dump repo
 <file>` makes one page of a dump, and `tondo dump redact <file> <output>` one to
 share, with where each task was and nothing the program held.
 
-A program that dies with no dump left, as one with no `TONDO_DUMP`, may leave a
+A program that dies with no dump left, as one killed by the system or with
+`TONDO_DUMP=off`, may leave a
 core of the system, on Linux or macOS, where it needs `--executable`. `tondo dump read <core> stacks` reads it as a dump,
 with the program where the core says, and `tondo dump core <core> --executable
 <file> --output <path>` writes the dump, for a program that is somewhere else: the
