@@ -29,8 +29,10 @@ pub(crate) fn restored(address: usize, fp: usize, registers: &Registers, bounds:
     let frame = fp as i64 + rules.frame_offset;
     for (register, rule) in rules.saved.iter().enumerate() {
         let Some(offset) = rule else { continue };
+        // The outermost frame's pointer is 0, and what it gives is no place.
         let at = (frame + offset) as usize;
-        out[register] = (at >= bounds.0 && at + 8 <= bounds.1).then(|| unsafe { *(at as *const usize) });
+        let inside = at >= bounds.0 && at.checked_add(8).is_some_and(|end| end <= bounds.1);
+        out[register] = inside.then(|| unsafe { *(at as *const usize) });
     }
     out
 }
