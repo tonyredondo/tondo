@@ -2027,7 +2027,30 @@ pub unsafe extern "C" fn tondo_rt_sb_map(
 /// FNV-1a over the bytes of a string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
-    unsafe { str_bytes(s) }.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    hash_bytes(unsafe { str_bytes(s) })
+}
+
+/// A hash of bytes for the program's maps, eight at a time: a long key, as a
+/// path or a whole value written out, costs a step for each word rather than
+/// for each byte. The last mix spreads every bit to the low ones the tables
+/// index with.
+pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ bytes.len() as u64;
+    let mut words = bytes.chunks_exact(8);
+    for word in &mut words {
+        let word = u64::from_le_bytes(word.try_into().unwrap_or_default());
+        hash = (hash ^ word).wrapping_mul(K).rotate_left(29);
+    }
+    let rest = words.remainder();
+    if !rest.is_empty() {
+        let mut last = [0u8; 8];
+        last[..rest.len()].copy_from_slice(rest);
+        hash = (hash ^ u64::from_le_bytes(last)).wrapping_mul(K).rotate_left(29);
+    }
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^ (hash >> 33)
 }
 
 // ---------------------------------------------------------------------------
