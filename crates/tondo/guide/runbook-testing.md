@@ -126,14 +126,15 @@ test payAndCancelAtOnce {
 
 `check` reads the tests too, once the code is right. Then `test` runs them all:
 the fuzz test with its seeds, the benchmark once, and each test in one order of
-its tasks, where they pass.
+its tasks, whichever the machine gives: `payAndCancelAtOnce` may pass or fail,
+and either proves little.
 
 ```mcp
 check {}
 => it compiles
 test {}
-=> payAndCancelAtOnce ... ok
-=> 5 passed
+=> shipsOnlyWhatIsPaid ... ok
+=> readsWhatClientsWrite ... ok
 ```
 
 `apply` gives the next state for an event: it is a state machine, and the
@@ -173,8 +174,8 @@ and a shipping after a cancel, or the next run gives the other.
 +        Event.Cancel => order with { cancelled: true }
 ```
 
-`payAndCancelAtOnce` passed, in one order of its two tasks. `--schedules all`
-runs it in every order that differs, and says which loses what.
+`--schedules all` runs `payAndCancelAtOnce` in every order of its two tasks
+that differs, and says which loses what.
 
 ```mcp
 test {"flags": ["--schedules", "all"]}
