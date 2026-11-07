@@ -1,0 +1,14 @@
+// A relative path whose first segment has a `:` writes it as `%3A`, so that
+// it does not read back as a scheme (standard library 14.28, RFC 3986 4.2).
+import std.console
+import std.url
+
+fn main() {
+    let read = url.parse("%3A]").expect("a path")
+    console.println("{read.path} {read}")
+    let again = url.parse("{read}").expect("the same path")
+    console.println("{again.path} {again}")
+}
+
+// expect-stdout: :] %3A%5D
+// expect-stdout: :] %3A%5D

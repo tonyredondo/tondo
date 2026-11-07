@@ -356,10 +356,18 @@ impl Display for Url {
         }
         // A path that starts with `//` would read as an authority: an empty
         // one goes before it (RFC 3986, 3.3).
-        let path = self.escapedPath()
-        if hasAuthority(self) or
-            path.startsWith("//") or
-            (not self.scheme.isEmpty() and path.startsWith("/")) {
+        var path = self.escapedPath()
+        let authority =
+            hasAuthority(self) or
+                path.startsWith("//") or
+                (not self.scheme.isEmpty() and path.startsWith("/"))
+        // And a `:` in the first segment of a relative path, as a scheme (4.2).
+        if self.scheme.isEmpty() and not authority {
+            let first = path.find("/").unwrapOr(path.length())
+            let head = path.slice(0, first).unwrapOr("")
+            path = "{head.replace(":", "%3A")}{path.slice(first, path.length()).unwrapOr("")}"
+        }
+        if authority {
             out.push("//")
             if not self.user.isEmpty() or self.password.isSome() {
                 out.push(encoded(self.user, ""))
