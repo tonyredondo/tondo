@@ -6940,8 +6940,9 @@ debe cumplirse, paso a paso y con cada estado del camino.
 pub type Step[S] = { name: String, state: S }
 pub type Checked = { states: Int, steps: Int, depth: Int, never: Array[String] }
 pub type Visit = { step: String, state: String }
-pub type Violation = { what: String, path: Array[Visit], loop: Array[Visit] }
-pub fn check[S: Key + Reflect + Encode + Decode](
+pub type Violation = { what: String, path: Array[Visit], loop: Array[Visit], property: String? = none }
+pub fn step[S](name: String, next: S): Step[S]
+pub fn check[S: Reflect + Encode + Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]] = [],
@@ -6951,7 +6952,7 @@ pub fn check[S: Key + Reflect + Encode + Decode](
     workers: Int = 1,
     disk: String? = none,
 ): Checked ! Violation
-pub fn machine[S: Key + Reflect + Encode + Decode, E: Reflect + Decode, X](
+pub fn machine[S: Reflect + Encode + Decode, E: Reflect + Decode, X](
     start: S,
     apply: fn(S, E): S ! X,
     events: (fn(S): Array[E])? = none,
@@ -6962,10 +6963,10 @@ pub fn machine[S: Key + Reflect + Encode + Decode, E: Reflect + Decode, X](
     workers: Int = 1,
     disk: String? = none,
 ): Checked ! Violation
-pub fn follows[S: Key + Reflect + Encode + Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
+pub fn follows[S: Reflect + Encode + Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
 pub fn watch[S: Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation
-pub fn mark(step: String)
-pub fn expect(checked: Checked ! Violation)
+pub fn mark(name: String)
+pub fn expect(checked: Checked ! Violation): Checked
 pub fn every[T: Reflect + Decode](): Array[T] ! String
 ~~~
 
@@ -6989,9 +6990,12 @@ Las propiedades son `always(p)`, que se cumple en todo estado alcanzado;
 que desde todo estado se puede llegar aún a uno donde se cumple; y
 `temporal(f)`, una fórmula de lógica temporal lineal hecha con `state(p)`,
 `next`, `always`, `eventually`, `until`, `implies`, `negated`, `allOf` y
-`anyOf`. Cada una lleva un `name`, que dice el fallo. `fair` nombra los pasos
-que no pueden quedar ignorados: `weak(paso)` se da si sigue siendo posible, y
-`strong(paso)` si vuelve a serlo una y otra vez.
+`anyOf`. Cada una lleva un `name`, que dice el fallo y `Violation.property`. `fair`
+nombra los pasos que no pueden quedar ignorados: `weak(paso)` se da si sigue
+siendo posible, y `strong(paso)` si vuelve a serlo una y otra vez. La equidad es
+de un nombre de paso: la de los pasos `"resume"` de todas las tareas juntas, que
+se cumple aunque una sola los dé siempre. Para la de cada tarea, el paso lleva
+la tarea en el nombre, como `"resume {t}"`, y `fair` nombra el de cada una.
 
 `machine` es `check` sobre la función que da el siguiente estado para un
 evento, la misma que llama el programa, sin modelo que mantener: prueba en cada
@@ -7014,10 +7018,16 @@ al estado que da `observe` al empezar, en cada paso marcado y al terminar, como
 un recorrido que acaba. Bajo `tondo test --schedules all` las dos lo hacen en
 todos los órdenes de las tareas del código.
 
-Un estado es `Key`, y un `Array` no lo es: `Queue[T]` es una cola que un estado
-puede llevar, y `Bag[T]` una colección sin orden, igual sea cual sea el orden en
-que llegaron sus elementos. `expect` hace fallar el test que la llama con lo que
-se rompió. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
+Un estado es cualquier valor que se codifica, y dos estados son el mismo si se
+codifican igual: puede llevar arrays, maps y opcionales. Un map da el mismo
+estado sea cual sea el orden en que entraron sus claves, porque de un tipo que
+puede llevar uno la huella escribe en orden las claves de cada objeto.
+`Queue[T]` es una cola, y `Bag[T]` una colección sin orden, igual sea cual sea
+el orden en que llegaron sus elementos. `step(nombre, estado)` es el
+`Step` de ese nombre. `expect` da lo comprobado, o hace fallar el test que la
+llama con lo que se rompió. `Violation.property` nombra la propiedad de `holds`
+que se rompió, y es `none` para un estado sin pasos, un paso que falló o un
+código que se salió del modelo. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
 
 ## 15. Contrato exigido a cada módulo
 

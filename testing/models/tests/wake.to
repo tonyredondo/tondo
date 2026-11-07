@@ -2,6 +2,7 @@
 // work_until, enqueue, wake_idle, wake_one, step_back), as Wake.tla says it,
 // with three workers, the first of them `main`'s. A step here is what the code
 // does with the queue's lock held, or one atomic operation.
+import models
 import std.model
 
 enum Task {
@@ -31,7 +32,7 @@ type Worker = {
 }
 
 type Pool = {
-    workers: model.Queue[Worker]
+    workers: Array[Worker]
     queue: model.Bag[Task]
     parked: model.Bag[Task]
     todo: model.Bag[Task]
@@ -47,13 +48,6 @@ type Change = {
     retiringWakes: Bool
 }
 
-// The list with the item at `index` changed.
-fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
-    var items = list.items()
-    items[index] = item
-    model.Queue(items)
-}
-
 // The tasks of both, once each.
 fn union(bag: model.Bag[Task], more: Array[Task]): model.Bag[Task] {
     var all = bag
@@ -66,28 +60,24 @@ fn union(bag: model.Bag[Task], more: Array[Task]): model.Bag[Task] {
 }
 
 fn worker(pool: Pool, w: Int): Worker {
-    pool.workers.items()[w]
+    pool.workers[w]
 }
 
 fn changed(pool: Pool, w: Int, after: Worker): Pool {
-    pool with { workers: set(pool.workers, w, after) }
+    pool with { workers: models.replaced(pool.workers, w, after) }
 }
 
 fn idle(pool: Pool): Array[Int] {
-    pool.workers
-        .items()
-        .enumerate()
-        .filter((pair) { pair.1.phase == Phase.Asleep })
-        .map((pair) { pair.0 })
+    pool.workers.enumerate().filter((pair) { pair.1.phase == Phase.Asleep }).map((pair) { pair.0 })
 }
 
 // Some worker has tasks of its own.
 fn waiting(pool: Pool): Bool {
-    pool.workers.items().any((each) { not each.own.isEmpty() })
+    pool.workers.any((each) { not each.own.isEmpty() })
 }
 
 fn nexts(pool: Pool): Array[Int] {
-    pool.workers.items().enumerate().filter((pair) { pair.1.next.isSome() }).map((pair) { pair.0 })
+    pool.workers.enumerate().filter((pair) { pair.1.next.isSome() }).map((pair) { pair.0 })
 }
 
 fn work(pool: Pool): Bool {
@@ -113,15 +103,14 @@ fn found(pool: Pool, w: Int, task: Task, more: Bool): Pool {
 
 fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
     var next: Array[model.Step[Pool]] = []
-    let step = (name: String, after: Pool) { model.Step { name, state: after } }
-    for (w, it) in pool.workers.items().enumerate() {
+    for (w, it) in pool.workers.enumerate() {
         let free = pool.surplus == 0 or w == 0
         match it.phase {
             Phase.Look => {
                 for task in it.own.items() {
                     // A task of its own, which it runs.
                     next.push(
-                        step(
+                        model.step(
                             "take own",
                             changed(
                                 pool,
@@ -136,7 +125,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                     )
                     // One turn in 61 its own task goes to the queue, for fairness.
                     next.push(
-                        step(
+                        model.step(
                             "turn",
                             changed(pool, w, it with { own: it.own.remove(task) }) with {
                                 queue: union(pool.queue, [task])
@@ -162,7 +151,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         }
                     }
                     next.push(
-                        step(
+                        model.step(
                             "retire",
                             changed(pool, w, after) with {
                                 surplus: pool.surplus - 1
@@ -176,7 +165,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                     for task in pool.queue.items() {
                         let rest = pool.queue.remove(task)
                         next.push(
-                            step(
+                            model.step(
                                 "pop",
                                 found(
                                     pool,
@@ -188,7 +177,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         )
                     }
                     if pool.queue.isEmpty() {
-                        for (v, other) in pool.workers.items().enumerate() {
+                        for (v, other) in pool.workers.enumerate() {
                             for task in other.own.items() {
                                 if v != w {
                                     let stolen = changed(
@@ -196,7 +185,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                                         v,
                                         other with { own: other.own.remove(task) },
                                     )
-                                    next.push(step("steal", found(stolen, w, task, false)))
+                                    next.push(model.step("steal", found(stolen, w, task, false)))
                                 }
                             }
                         }
@@ -213,7 +202,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                     let stopped = if it.seeker { false } else { pool.seeking }
                     let again = waiting(pool) and not stopped
                     next.push(
-                        step(
+                        model.step(
                             "sleep",
                             changed(
                                 pool,
@@ -225,7 +214,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                 }
                 match it.next {
                     some(task) => next.push(
-                        step(
+                        model.step(
                             "take next",
                             changed(
                                 pool,
@@ -243,7 +232,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                             let other = worker(pool, v)
                             match other.next {
                                 some(task) => next.push(
-                                    step(
+                                    model.step(
                                         "take other",
                                         found(
                                             changed(pool, v, other with { next: none }),
@@ -264,25 +253,25 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                 let sleeping = if change.retiringWakes { idle(pool) } else { [] }
                 let spare = changed(pool, w, it with { phase: Phase.Spare })
                 for v in sleeping {
-                    next.push(step("retiring", told(spare, v, worker(pool, v).seeker)))
+                    next.push(model.step("retiring", told(spare, v, worker(pool, v).seeker)))
                 }
                 if sleeping.isEmpty() {
-                    next.push(step("retiring", spare))
+                    next.push(model.step("retiring", spare))
                 }
             }
             // The end of a wait for a moment.
             Phase.Asleep if it.timed => next.push(
-                step("timeout", changed(pool, w, it with { timed: false, phase: Phase.Look })),
+                model.step("timeout", changed(pool, w, it with { timed: false, phase: Phase.Look })),
             )
             // `wake_idle`, whose worker then goes on.
             Phase.WakeIdle => {
                 let runs = changed(pool, w, it with { phase: Phase.Run })
                 let sleeping = if not pool.seeking { idle(pool) } else { [] }
                 for v in sleeping {
-                    next.push(step("wake idle", told(runs, v, true) with { seeking: true }))
+                    next.push(model.step("wake idle", told(runs, v, true) with { seeking: true }))
                 }
                 if sleeping.isEmpty() {
-                    next.push(step("wake idle", runs))
+                    next.push(model.step("wake idle", runs))
                 }
             }
             Phase.Run => {
@@ -293,7 +282,10 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         phase: if it.own.isEmpty() { Phase.WakeIdle } else { Phase.Run }
                     }
                     next.push(
-                        step("spawn", changed(pool, w, after) with { todo: pool.todo.remove(task) }),
+                        model.step(
+                            "spawn",
+                            changed(pool, w, after) with { todo: pool.todo.remove(task) },
+                        ),
                     )
                 }
                 // A task that runs wakes another, which runs next on its worker,
@@ -306,7 +298,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                     }
                     let woke = it with { next: some(task), own: own }
                     next.push(
-                        step(
+                        model.step(
                             "notify",
                             changed(pool, w, woke with { phase: Phase.WakeIdle }) with {
                                 parked: pool.parked.remove(task)
@@ -314,27 +306,30 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         ),
                     )
                     next.push(
-                        step(
+                        model.step(
                             "notify",
                             changed(pool, w, woke) with { parked: pool.parked.remove(task) },
                         ),
                     )
                 }
                 next.push(
-                    step("finish", changed(pool, w, it with { current: none, phase: Phase.Look })),
+                    model.step(
+                        "finish",
+                        changed(pool, w, it with { current: none, phase: Phase.Look }),
+                    ),
                 )
                 // A long call of C, or a task a tool holds: the worker runs nothing else.
-                next.push(step("enter C", changed(pool, w, it with { phase: Phase.C })))
+                next.push(model.step("enter C", changed(pool, w, it with { phase: Phase.C })))
             }
             Phase.C => {
                 // The monitor starts another when tasks wait and nobody is
                 // idle, which is told to look.
                 if not it.replaced and idle(pool).isEmpty() and work(pool) {
-                    for (v, other) in pool.workers.items().enumerate() {
+                    for (v, other) in pool.workers.enumerate() {
                         if other.phase == Phase.Spare {
                             let replaced = changed(pool, w, it with { replaced: true })
                             next.push(
-                                step(
+                                model.step(
                                     "monitor",
                                     changed(
                                         replaced,
@@ -349,7 +344,9 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                 // And one that sleeps is told to look, even if it replaced this one already.
                 if not pool.seeking and work(pool) {
                     for v in idle(pool) {
-                        next.push(step("monitor wakes", told(pool, v, true) with { seeking: true }))
+                        next.push(
+                            model.step("monitor wakes", told(pool, v, true) with { seeking: true }),
+                        )
                     }
                 }
                 // The call returns: a worker that was replaced makes one retire, and wakes one.
@@ -359,10 +356,10 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                     }
                     let sleeping = if it.replaced { idle(pool) } else { [] }
                     for v in sleeping {
-                        next.push(step("leave C", told(back, v, worker(pool, v).seeker)))
+                        next.push(model.step("leave C", told(back, v, worker(pool, v).seeker)))
                     }
                     if sleeping.isEmpty() {
-                        next.push(step("leave C", back))
+                        next.push(model.step("leave C", back))
                     }
                 }
             }
@@ -383,7 +380,7 @@ fn check(change: Change): model.Checked ! model.Violation {
         replaced: false
     }
     let start = Pool {
-        workers: model.Queue([spare with { phase: Phase.Look }, spare, spare])
+        workers: ([spare with { phase: Phase.Look }, spare, spare])
         queue: model.Bag([Task.A])
         parked: model.Bag([Task.P])
         todo: model.Bag([Task.B])
@@ -393,7 +390,7 @@ fn check(change: Change): model.Checked ! model.Violation {
     // A task runs on one worker at a time.
     let oneWorker = model.always(
         (pool: Pool) {
-            let workers = pool.workers.items()
+            let workers = pool.workers
             [Task.A, Task.B, Task.P].all(
                 (task) { workers.count((each) { each.current == some(task) }) <= 1 },
             )
@@ -404,26 +401,20 @@ fn check(change: Change): model.Checked ! model.Violation {
         pool.queue.isEmpty() and
             nexts(pool).isEmpty() and
             not waiting(pool) and
-            pool.workers
-                .items()
-                .all((each) { each.current.isNone() or not change.cEnds and each.phase == Phase.C })
+            pool.workers.all(
+                (each) { each.current.isNone() or not change.cEnds and each.phase == Phase.C },
+            )
     }
     model.check(start, (pool) { steps(pool, change) }, holds: [oneWorker], ends: some(allDone))
 }
 
 test wakeAsTlcDoes {
-    match check(Change { cEnds: true, retiringWakes: true }) {
-        ok(checked) => assert(checked.states == 1806)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(Change { cEnds: true, retiringWakes: true })).states == 1806)
 }
 
 // As WakeInC.cfg: a call of C that never returns.
 test wakeInCAsTlcDoes {
-    match check(Change { cEnds: false, retiringWakes: true }) {
-        ok(checked) => assert(checked.states == 170)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(Change { cEnds: false, retiringWakes: true })).states == 170)
 }
 
 // Without the wake of a worker that retires, a task stays in the queue with

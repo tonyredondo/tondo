@@ -2,6 +2,7 @@
 // resume_world, enter_tondo, leave_tondo), as Stop.tla says it. The cycle
 // collector, dumps, profiles, logpoints and reloads each stop it, and read or
 // change memory meanwhile, so nothing may run while any of them is inside.
+import models
 import std.model
 
 enum At {
@@ -25,59 +26,62 @@ enum Stopper {
 
 type World = {
     stopping: Bool
-    threads: model.Queue[Thread]
-    stoppers: model.Queue[Stopper]
+    threads: Array[Thread]
+    stoppers: Array[Stopper]
     owner: Int?
-}
-
-// The list with the item at `index` changed.
-fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
-    var items = list.items()
-    items[index] = item
-    model.Queue(items)
 }
 
 fn steps(world: World, oneAtATime: Bool): Array[model.Step[World]] {
     var next: Array[model.Step[World]] = []
-    let step = (name: String, after: World) { model.Step { name, state: after } }
-    for (t, thread) in world.threads.items().enumerate() {
-        let becomes = (after: Thread) { world with { threads: set(world.threads, t, after) } }
+    for (t, thread) in world.threads.enumerate() {
+        let becomes = (after: Thread) {
+            world with { threads: models.replaced(world.threads, t, after) }
+        }
         match thread.at {
             // `enter_tondo`: it says it runs, and then looks.
-            At.Out => next.push(step("enter", becomes(Thread { running: true, at: At.Entering })))
-            At.Entering if world.stopping => next.push(
-                step("look", becomes(Thread { running: false, at: At.Waiting })),
+            At.Out => next.push(
+                model.step("enter", becomes(Thread { running: true, at: At.Entering })),
             )
-            At.Entering => next.push(step("look", becomes(Thread { running: true, at: At.In })))
+            At.Entering if world.stopping => next.push(
+                model.step("look", becomes(Thread { running: false, at: At.Waiting })),
+            )
+            At.Entering => next.push(
+                model.step("look", becomes(Thread { running: true, at: At.In })),
+            )
             // It waits while the world is stopped, and then enters again.
             At.Waiting if not world.stopping => next.push(
-                step("resumed {t}", becomes(Thread { running: false, at: At.Out })),
+                model.step("resumed {t}", becomes(Thread { running: false, at: At.Out })),
             )
             // `leave_tondo`, or a safe point.
-            At.In => next.push(step("leave", becomes(Thread { running: false, at: At.Out })))
+            At.In => next.push(model.step("leave", becomes(Thread { running: false, at: At.Out })))
             _ => {}
         }
     }
-    for (s, stopper) in world.stoppers.items().enumerate() {
-        let turns = (after: Stopper) { world with { stoppers: set(world.stoppers, s, after) } }
+    for (s, stopper) in world.stoppers.enumerate() {
+        let turns = (after: Stopper) {
+            world with { stoppers: models.replaced(world.stoppers, s, after) }
+        }
         match stopper {
             // `stop_world`: one stopper at a time.
             Stopper.Idle if world.owner.isNone() or not oneAtATime => {
                 next.push(
-                    step("stop", turns(Stopper.Stopping) with { stopping: true, owner: some(s) }),
+                    model.step(
+                        "stop",
+                        turns(Stopper.Stopping) with { stopping: true, owner: some(s) },
+                    ),
                 )
             }
             Stopper.Stopping => {
-                if world.threads.items().all((thread) { not thread.running }) {
-                    next.push(step("stopped", turns(Stopper.Inside)))
+                if world.threads.all((thread) { not thread.running }) {
+                    next.push(model.step("stopped", turns(Stopper.Inside)))
                 }
                 // It gives up, as when a task runs long without a safe point.
-                next.push(step("give up", turns(Stopper.Resuming)))
+                next.push(model.step("give up", turns(Stopper.Resuming)))
             }
-            Stopper.Inside => next.push(step("done", turns(Stopper.Resuming)))
+            Stopper.Inside => next.push(model.step("done", turns(Stopper.Resuming)))
             // `resume_world`.
             Stopper.Resuming => next.push(
-                step("resume", turns(Stopper.Idle) with { stopping: false, owner: none }),
+                model.step("resume", turns(Stopper.Idle) with { stopping: false, owner: none }),
             )
             _ => {}
         }
@@ -89,18 +93,14 @@ fn check(oneAtATime: Bool): model.Checked ! model.Violation {
     let out = Thread { running: false, at: At.Out }
     let start = World {
         stopping: false
-        threads: model.Queue([out, out])
-        stoppers: model.Queue([Stopper.Idle, Stopper.Idle])
+        threads: ([out, out])
+        stoppers: ([Stopper.Idle, Stopper.Idle])
         owner: none
     }
-    let inside = (world: World) {
-        world.stoppers.items().count((stopper) { stopper == Stopper.Inside })
-    }
+    let inside = (world: World) { world.stoppers.count((stopper) { stopper == Stopper.Inside }) }
     // While a stopper is inside, no thread runs Tondo code.
     let quiet = model.always(
-        (world: World) {
-            inside(world) == 0 or world.threads.items().all((thread) { thread.at != At.In })
-        },
+        (world: World) { inside(world) == 0 or world.threads.all((thread) { thread.at != At.In }) },
         name: "Quiet",
     )
     // And no other stopper is inside with it.
@@ -115,13 +115,13 @@ fn waits(fair: model.Fair): model.Checked ! model.Violation {
     let out = Thread { running: false, at: At.Out }
     let start = World {
         stopping: false
-        threads: model.Queue([out, out])
-        stoppers: model.Queue([Stopper.Idle, Stopper.Idle])
+        threads: ([out, out])
+        stoppers: ([Stopper.Idle, Stopper.Idle])
         owner: none
     }
     let goesOn = model.leadsTo(
-        (world: World) { world.threads.items()[0].at == At.Waiting },
-        (world: World) { world.threads.items()[0].at == At.Out },
+        (world: World) { world.threads[0].at == At.Waiting },
+        (world: World) { world.threads[0].at == At.Out },
         name: "a waiting thread goes on",
     )
     // Stoppers end what they do.
@@ -143,15 +143,14 @@ test aWaitingThreadGoesOn {
 test aWaitingThreadCanBePassedOverWithWeakFairness {
     match waits(model.weak("resumed 0")) {
         ok(_) => panic("a thread passed over went unseen")
-        err(broken) => assert(broken.what.contains("goes on") and not broken.loop.isEmpty())
+        err(broken) => assert(
+            broken.property == some("a waiting thread goes on") and not broken.loop.isEmpty(),
+        )
     }
 }
 
 test stopAsTlcDoes {
-    match check(true) {
-        ok(checked) => assert(checked.states == 98)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(true)).states == 98)
 }
 
 // Without one stopper at a time, the first to end lets the world go on under
@@ -159,6 +158,6 @@ test stopAsTlcDoes {
 test stopFindsTwoStoppersInside {
     match check(false) {
         ok(_) => panic("two stoppers at once went unseen")
-        err(broken) => assert(broken.what.contains("Quiet") or broken.what.contains("Alone"))
+        err(broken) => assert(broken.property == some("Alone"), "{broken}")
     }
 }

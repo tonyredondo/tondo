@@ -11,9 +11,9 @@
 // type Door = { open: Bool, locked: Bool }
 //
 // fn steps(door: Door): Array[model.Step[Door]] {
-//     var next = [model.Step { name: "lock", state: door with { locked: true } }]
+//     var next = [model.step("lock", door with { locked: true })]
 //     if not door.locked {
-//         next.push(model.Step { name: "open", state: door with { open: true } })
+//         next.push(model.step("open", door with { open: true }))
 //     }
 //     next
 // }
@@ -41,12 +41,27 @@ import std.sync
 /// import std.console
 /// import std.model
 ///
-/// let step = model.Step { name: "add", state: 2 }
+/// let step = model.step("add", 2)
 /// console.println("{step.name} leads to {step.state}")
 /// ```
 pub type Step[S] = {
     name: String
     state: S
+}
+
+/// The step `name`, which leads to `state`.
+///
+/// ```tondo
+/// import std.model
+///
+/// fn steps(count: Int): Array[model.Step[Int]] {
+///     if count < 2 { [model.step("add", count + 1)] } else { [] }
+/// }
+///
+/// _ = steps(0)
+/// ```
+pub fn step[S](name: String, next: S): Step[S] {
+    Step { name, state: next }
 }
 
 /// How much of a model was checked: the states it reaches, the steps between
@@ -97,6 +112,9 @@ pub type Violation = {
     what: String
     path: Array[Visit]
     loop: Array[Visit]
+    /// The name of the property of `holds` that broke; none for a state
+    /// nothing can follow, a step that failed or code that strayed.
+    property: String? = none
 }
 
 impl Display for Violation {
@@ -118,8 +136,8 @@ impl Display for Violation {
     }
 }
 
-/// A queue a state can hold: what came first goes first. A state is a `Key`,
-/// and an `Array` is not one, so a model writes its queues with this.
+/// A queue a state can hold: what came first goes first, as a model says
+/// of a queue of the code it checks.
 ///
 /// ```tondo
 /// import std.console
@@ -487,13 +505,13 @@ pub type Fair = {
 }
 
 /// A step that comes if it stays possible.
-pub fn weak(step: String): Fair {
-    Fair { step, strong: false }
+pub fn weak(name: String): Fair {
+    Fair { step: name, strong: false }
 }
 
 /// A step that comes if it keeps becoming possible, even if not all the time.
-pub fn strong(step: String): Fair {
-    Fair { step, strong: true }
+pub fn strong(name: String): Fair {
+    Fair { step: name, strong: true }
 }
 
 type Edge = {
@@ -611,7 +629,7 @@ fn eachState[S: serialization.Decode, T](graph: Graph[S], of: fn(S): T): Array[T
 /// import std.model
 ///
 /// fn steps(count: Int): Array[model.Step[Int]] {
-///     if count < 3 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+///     if count < 3 { [model.step("add", count + 1)] } else { [] }
 /// }
 ///
 /// let holds = [model.always((count: Int) { count <= 3 }), model.eventually((count: Int) { count == 3 })]
@@ -620,7 +638,7 @@ fn eachState[S: serialization.Decode, T](graph: Graph[S], of: fn(S): T): Array[T
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn check[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+pub fn check[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]] = [],
@@ -633,7 +651,7 @@ pub fn check[S: Key + reflect.Reflect + serialization.Encode + serialization.Dec
     reported("check", checking(start, steps, holds, fair, ends, symmetry, workers, disk))
 }
 
-fn checking[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+fn checking[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]],
@@ -681,7 +699,7 @@ fn reported(kind: String, result: Checked ! Violation): Checked ! Violation {
             ok(checked) =>
                 "{{\"kind\":{json.encode(kind)},\"states\":{checked.states},\"steps\":{checked.steps},\"depth\":{checked.depth},\"never\":{quoted(checked.never)},\"broken\":null}}"
             err(broken) =>
-                "{{\"kind\":{json.encode(kind)},\"broken\":{{\"what\":{json.encode(broken.what)},\"path\":{listed(broken.path)},\"loop\":{listed(broken.loop)}}}}}"
+                "{{\"kind\":{json.encode(kind)},\"broken\":{{\"what\":{json.encode(broken.what)},\"property\":{json.encode(broken.property)},\"path\":{listed(broken.path)},\"loop\":{listed(broken.loop)}}}}}"
         }
         modelNative.report(text)
     }
@@ -703,6 +721,7 @@ fn properties[S: reflect.Reflect + serialization.Decode](
                         what: "`{property.name}` is out of reach from here"
                         path: visits(graph, at)
                         loop: []
+                        property: some(property.name)
                     }
                     none => {}
                 }
@@ -745,7 +764,7 @@ fn properties[S: reflect.Reflect + serialization.Decode](
 /// }
 /// ```
 pub fn machine[
-    S: Key + reflect.Reflect + serialization.Encode + serialization.Decode,
+    S: reflect.Reflect + serialization.Encode + serialization.Decode,
     E: reflect.Reflect + serialization.Decode,
     X,
 ](
@@ -763,7 +782,7 @@ pub fn machine[
 }
 
 fn machining[
-    S: Key + reflect.Reflect + serialization.Encode + serialization.Decode,
+    S: reflect.Reflect + serialization.Encode + serialization.Decode,
     E: reflect.Reflect + serialization.Decode,
     X,
 ](
@@ -941,25 +960,27 @@ fn combinations(lists: Array[Array[String]]): Array[Array[String]] {
     all
 }
 
-/// Fails the test that calls it with what broke, step by step.
+/// What was checked, or a failure of the test that calls it with what
+/// broke, step by step.
 ///
 /// ```tondo
 /// import std.model
 ///
 /// fn steps(count: Int): Array[model.Step[Int]] {
-///     if count < 2 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+///     if count < 2 { [model.step("add", count + 1)] } else { [] }
 /// }
 ///
-/// model.expect(model.check(0, steps, holds: [model.always((count: Int) { count <= 2 })]))
+/// let checked = model.expect(model.check(0, steps, holds: [model.always((count: Int) { count <= 2 })]))
+/// assert(checked.states == 3)
 /// ```
-pub fn expect(checked: Checked ! Violation) {
+pub fn expect(checked: Checked ! Violation): Checked {
     match checked {
-        ok(_) => {}
+        ok(done) => done
         err(broken) => panic("{broken}")
     }
 }
 
-fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+fn explore[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]] ! String,
     holds: Array[Property[S]],
@@ -975,7 +996,7 @@ fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decod
         }
     }
     let canonicalSteps = (current: S): Array[Step[S]] ! String {
-        steps(current)?.map((step) { step with { state: canonical(step.state) } })
+        steps(current)?.map((taken) { taken with { state: canonical(taken.state) } })
     }
     match disk {
         some(directory) => return exploreOnDisk(
@@ -989,8 +1010,9 @@ fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decod
         none => {}
     }
     let first = canonical(start)
-    var numbers: Map[S, Int] = [:]
-    _ = numbers.insert(first, 0)
+    let known = identity[S]()
+    var numbers: Map[String, Int] = [:]
+    _ = numbers.insert(known(first), 0)
     var graph = Graph[S] {
         states: [first]
         count: 1
@@ -1009,7 +1031,7 @@ fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decod
         next = end
         let found = ahead(graph.states, from, end, canonicalSteps, workers)
         for at in from..end {
-            explored(var graph, var numbers, var depths, at, found[at - from], holds, ends)?
+            explored(var graph, var numbers, var depths, at, found[at - from], holds, ends, known)?
         }
     }
     graph
@@ -1017,7 +1039,7 @@ fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decod
 
 /// `explore` with the states on disk, a level of the search at a time, and in
 /// memory only their fingerprints, what came before each, and the steps.
-fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+fn exploreOnDisk[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     first: S,
     steps: fn(S): Array[Step[S]] ! String,
     holds: Array[Property[S]],
@@ -1044,7 +1066,8 @@ fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization
             _ = fs.remove("{directory}/{name}")
         }
     }
-    let print = (value: S) { hash.xxhash64(json.encode(value).bytes()) }
+    let known = identity[S]()
+    let print = (value: S) { hash.xxhash64(known(value).bytes()) }
     var prints: Map[UInt, Int] = [:]
     _ = prints.insert(print(first), 0)
     match fs.writeText(levelFile(directory, 0), "{json.encode(first)}\n") {
@@ -1076,6 +1099,7 @@ fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization
                             what: "`{property.name}` does not hold"
                             path: visits(graph, at)
                             loop: []
+                            property: some(property.name)
                         }
                     }
                     _ => {}
@@ -1096,20 +1120,20 @@ fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization
                 _ => {}
             }
             var out: Array[Edge] = []
-            for step in next {
-                let fingerprint = print(step.state)
+            for successor in next {
+                let fingerprint = print(successor.state)
                 let to = match prints.get(fingerprint) {
                     some(to) => to
                     none => {
                         let to = graph.count
                         _ = prints.insert(fingerprint, to)
                         graph.count += 1
-                        graph.reached.push(Reached { from: at, name: step.name })
-                        lines.push(json.encode(step.state))
+                        graph.reached.push(Reached { from: at, name: successor.name })
+                        lines.push(json.encode(successor.state))
                         to
                     }
                 }
-                out.push(Edge { name: step.name, to })
+                out.push(Edge { name: successor.name, to })
             }
             graph.edges.push(out)
         }
@@ -1124,6 +1148,77 @@ fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization
         graph.disk = some(Disk { directory, starts })
         graph.depth = level + 1
         level += 1
+    }
+}
+
+/// What a state is known by: its encoding, the same for equal states, so
+/// that a state can hold arrays and maps. The entries of a map encode in the
+/// order they came, which says nothing of the map: of a state that can hold
+/// one, the keys of every object are put in order.
+fn identity[S: reflect.Reflect + serialization.Encode](): fn(S): String {
+    var seen = Set[String]()
+    match holdsMaps(reflect.typeInfo[S](), var seen) {
+        true => (value: S) {
+            let text = json.encode(value)
+            match json.parse(text) {
+                ok(parsed) => sortedJson(parsed)
+                err(_) => text
+            }
+        }
+        false => (value: S) { json.encode(value) }
+    }
+}
+
+/// Whether a value of the type can hold a `Map`, anywhere in it. A union
+/// may, as what it is is only known of each value.
+fn holdsMaps(info: reflect.TypeInfo, seen: var Set[String]): Bool {
+    if not seen.insert(info.qualifiedName()) {
+        return false
+    }
+    var inside: Array[reflect.TypeInfo] = info.genericArguments()
+    match info.kind() {
+        reflect.TypeKind.Applied(reflect.AppliedKind.Map) => return true
+        reflect.TypeKind.Union => return true
+        reflect.TypeKind.Record => inside.extend(info.fields().map((field) { field.typeInfo() }))
+        reflect.TypeKind.Tuple => inside.extend(info.tupleElements())
+        reflect.TypeKind.Newtype => inside.extend(
+            info.underlying().map((under) { [under] }).unwrapOr([]),
+        )
+        reflect.TypeKind.Enum => {
+            for variant in info.variants() {
+                inside.extend(variant.tupleElements())
+                inside.extend(variant.fields().map((field) { field.typeInfo() }))
+            }
+        }
+        _ => {}
+    }
+    for part in inside {
+        if holdsMaps(part, var seen) {
+            return true
+        }
+    }
+    false
+}
+
+/// A JSON value written with the keys of each object in order, and its
+/// numbers as they were.
+fn sortedJson(value: json.Value): String {
+    match value {
+        json.Value.Null => "null"
+        json.Value.Bool(flag) => "{flag}"
+        json.Value.Number(exact) => exact.text()
+        json.Value.Text(text) => json.encode(text)
+        json.Value.Array(items) => "[{items.map(sortedJson).join(",")}]"
+        json.Value.Object(entries) => {
+            var keys: Array[String] = entries.keys().collect()
+            keys.sort()
+            let pairs = keys.map(
+                (key) {
+                    "{json.encode(key)}:{sortedJson(entries.get(key).unwrapOr(json.Value.Null))}"
+                },
+            )
+            "{{{pairs.join(",")}}}"
+        }
     }
 }
 
@@ -1159,14 +1254,15 @@ fn successors[S](
 }
 
 /// One state gone through: what must hold of it, and the states that follow.
-fn explored[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+fn explored[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     graph: var Graph[S],
-    numbers: var Map[S, Int],
+    numbers: var Map[String, Int],
     depths: var Array[Int],
     at: Int,
     found: Array[Step[S]] ! String,
     holds: Array[Property[S]],
     ends: (fn(S): Bool)?,
+    known: fn(S): String,
 ): !Violation {
     {
         let current = graph.states[at]
@@ -1177,6 +1273,7 @@ fn explored[S: Key + reflect.Reflect + serialization.Encode + serialization.Deco
                         what: "`{property.name}` does not hold"
                         path: visits(graph, at)
                         loop: []
+                        property: some(property.name)
                     }
                 }
                 _ => {}
@@ -1197,22 +1294,23 @@ fn explored[S: Key + reflect.Reflect + serialization.Encode + serialization.Deco
             _ => {}
         }
         var out: Array[Edge] = []
-        for step in next {
-            let reached = step.state
-            let to = match numbers.get(reached) {
+        for successor in next {
+            let reached = successor.state
+            let identified = known(reached)
+            let to = match numbers.get(identified) {
                 some(to) => to
                 none => {
                     let to = graph.states.length()
-                    _ = numbers.insert(reached, to)
+                    _ = numbers.insert(identified, to)
                     graph.states.push(reached)
                     graph.count += 1
-                    graph.reached.push(Reached { from: at, name: step.name })
+                    graph.reached.push(Reached { from: at, name: successor.name })
                     depths.push(depths[at] + 1)
                     graph.depth = graph.depth.max(depths[at] + 1)
                     to
                 }
             }
-            out.push(Edge { name: step.name, to })
+            out.push(Edge { name: successor.name, to })
         }
         graph.edges.push(out)
     }
@@ -1525,23 +1623,23 @@ fn later[S: reflect.Reflect + serialization.Decode](
     var at = 0
     for at < product.states.length() {
         var out: Array[Edge] = []
-        for step in steps(product.states[at]) {
+        for edge in steps(product.states[at]) {
             for node in after[product.nodes[at]] {
-                if not fits(step.to, node) {
+                if not fits(edge.to, node) {
                     continue
                 }
-                let to = match numbers.get((step.to, node)) {
+                let to = match numbers.get((edge.to, node)) {
                     some(to) => to
                     none => {
                         let to = product.states.length()
-                        _ = numbers.insert((step.to, node), to)
-                        product.states.push(step.to)
+                        _ = numbers.insert((edge.to, node), to)
+                        product.states.push(edge.to)
                         product.nodes.push(node)
-                        product.reached.push(Reached { from: at, name: step.name })
+                        product.reached.push(Reached { from: at, name: edge.name })
                         to
                     }
                 }
-                out.push(Edge { name: step.name, to })
+                out.push(Edge { name: edge.name, to })
             }
         }
         product.edges.push(out)
@@ -1564,9 +1662,9 @@ fn later[S: reflect.Reflect + serialization.Decode](
     }
     match fairLoop(product, accepting, fair, enabled) {
         some(loop) => {
-            let visit = (node: Int, step: String) {
+            let visit = (node: Int, label: String) {
                 Visit {
-                    step: if step.isEmpty() { "(stays)" } else { step }
+                    step: if label.isEmpty() { "(stays)" } else { label }
                     state: shown(stateOf(graph, product.states[node]))
                 }
             }
@@ -1590,6 +1688,7 @@ fn later[S: reflect.Reflect + serialization.Decode](
                 what: "`{name}` does not hold"
                 path: path.reversed()
                 loop: loop.drop(1).map((stop) { visit(stop.0, stop.1) })
+                property: some(name)
             }
         }
         none => {}
@@ -1807,10 +1906,10 @@ context Marking = {
 ///
 /// _ = grant(1)
 /// ```
-pub fn mark(step: String) {
+pub fn mark(name: String) {
     if modelNative.recording() {
         match Marking.observe {
-            some(observe) => observe(step)
+            some(observe) => observe(name)
             none => {}
         }
     }
@@ -1835,7 +1934,7 @@ fn marked(code: fn(), observe: fn(String)) {
 /// import std.model
 ///
 /// fn steps(open: Bool): Array[model.Step[Bool]] {
-///     if open { [model.Step { name: "close", state: false }] } else { [model.Step { name: "open", state: true }] }
+///     if open { [model.step("close", false)] } else { [model.step("open", true)] }
 /// }
 ///
 /// fn door() {
@@ -1848,7 +1947,7 @@ fn marked(code: fn(), observe: fn(String)) {
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn follows[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+pub fn follows[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     code: fn(),
@@ -1856,33 +1955,36 @@ pub fn follows[S: Key + reflect.Reflect + serialization.Encode + serialization.D
     reported("follows", following(start, steps, code))
 }
 
-fn following[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+fn following[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     code: fn(),
 ): Checked ! Violation {
     let taken = sync.Queue[String]()
-    marked(code, (step: String) { taken.push(step) })
-    var now: Map[S, Array[Visit]] = [:]
-    _ = now.insert(start, [Visit { step: "", state: shown(start) }])
+    marked(code, (name: String) { taken.push(name) })
+    // The states the model can be in after the marks so far, by what they
+    // encode to, each with the way there.
+    let known = identity[S]()
+    var now: Map[String, (S, Array[Visit])] = [:]
+    _ = now.insert(known(start), (start, [Visit { step: "", state: shown(start) }]))
     var marks: Array[String] = []
-    for step in taken.snapshot() {
-        marks.push(step)
-        var next: Map[S, Array[Visit]] = [:]
-        for here in now.keys() {
-            let path = now.get(here).unwrapOr([])
+    for took in taken.snapshot() {
+        marks.push(took)
+        var next: Map[String, (S, Array[Visit])] = [:]
+        for (here, path) in now.values() {
             for possible in steps(here) {
-                if possible.name == step and not next.contains(possible.state) {
+                let identified = known(possible.state)
+                if possible.name == took and not next.contains(identified) {
                     var longer = path
-                    longer.push(Visit { step, state: shown(possible.state) })
-                    _ = next.insert(possible.state, longer)
+                    longer.push(Visit { step: took, state: shown(possible.state) })
+                    _ = next.insert(identified, (possible.state, longer))
                 }
             }
         }
         if next.length() == 0 {
             var paths = now.values()
-            let path = paths.next().unwrapOr([])
-            fail Violation { what: "the code took `{step}` where the model cannot", path, loop: [] }
+            let path = paths.next().map((found) { found.1 }).unwrapOr([])
+            fail Violation { what: "the code took `{took}` where the model cannot", path, loop: [] }
         }
         now = next
     }
@@ -1948,9 +2050,9 @@ fn watching[S: reflect.Reflect](
     let seen = sync.Mutex(first)
     marked(
         code,
-        (step: String) {
+        (name: String) {
             let now = observe()
-            seen.update((all) { all.push((step, now)) })
+            seen.update((all) { all.push((name, now)) })
         },
     )
     let run = seen.update(
@@ -1971,6 +2073,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` does not hold"
                         path: upTo(at)
                         loop: []
+                        property: some(property.name)
                     }
                     none => {}
                 }
@@ -1981,6 +2084,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` never came"
                         path: upTo(trace.length() - 1)
                         loop: []
+                        property: some(property.name)
                     }
                 }
             }
@@ -1990,6 +2094,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` does not hold of this run"
                         path: upTo(trace.length() - 1)
                         loop: []
+                        property: some(property.name)
                     }
                 }
             }

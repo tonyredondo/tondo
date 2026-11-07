@@ -5456,10 +5456,16 @@ other in every order: a step one takes and the other cannot fails the test, and 
 the code never takes in any order is said. `mark` costs nothing outside a build of tests: the
 compiler writes `false` for whether it records.
 
-A state is a `Key`, and an `Array` is not, as `Key` implies `Copy`. Rather than change the language,
-`model.Queue` and `model.Bag` are enums a state can hold. The standard library's types got no
-reflection of their own, so the two are named where derivation accepts a standard type, with their
-arguments checked.
+A state was first a `Key`, which an `Array` is not, as `Key` implies `Copy`, and writing the 11
+models of the runtime showed what that cost: six kept a list of tasks in a `model.Queue` and changed
+it through a function of their own. A state is now known by what it encodes to, so it can hold
+arrays and maps; of a type that can hold a map, the keys of every object are put in order first, as
+a map encodes in the order its keys came, and with the numbers as they are, since the canonical form
+of JSON writes them as doubles and two large integers would be one state. That costs a search about
+twice the time, 0.14 s to 0.38 s for the 66,058 states of `Lock`. `model.Queue` and `model.Bag` stay
+for queues and collections without order. `model.step(name, state)` writes a step, `model.expect`
+gives what was checked, and `Violation.property` names what broke, so a test of a bug put back says
+which property finds it.
 
 The models of the runtime in `testing/models` are written in both: each `.tla` has a test of
 `std.model` that goes through as many distinct states as TLC does, and finds a bug the test puts

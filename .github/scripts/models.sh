@@ -24,7 +24,7 @@ for config in *.cfg; do
   cat "$out"
   states=$(sed -n 's/.* \([0-9][0-9]*\) distinct states found.*/\1/p' "$out" | tail -n 1)
   test=tests/$(echo "$model" | tr '[:upper:]' '[:lower:]').to
-  grep -q "checked.states == $states)" "$test" || {
+  grep -q ".states == $states)" "$test" || {
     echo "$test does not say it goes through the $states states TLC does with $config"
     exit 1
   }

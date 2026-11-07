@@ -30,32 +30,34 @@ type Task = {
 
 fn steps(task: Task, notifyOnParking: Bool): Array[model.Step[Task]] {
     var next: Array[model.Step[Task]] = []
-    let step = (name: String, after: Task) { model.Step { name, state: after } }
     match task.pc {
         // What it waits for came: it is done. Otherwise it goes to park.
         Pc.Check => next.push(
-            step("check", task with { pc: if task.event { Pc.Done } else { Pc.Park } }),
+            model.step("check", task with { pc: if task.event { Pc.Done } else { Pc.Park } }),
         )
         // `park`: RUNNING to PARKING, or a notification came and it looks again.
         Pc.Park => next.push(
             match task.state {
-                State.Running => step("park", task with { state: State.Parking, pc: Pc.Out })
-                _ => step("park", task with { state: State.Running, pc: Pc.Check })
+                State.Running => model.step("park", task with { state: State.Parking, pc: Pc.Out })
+                _ => model.step("park", task with { state: State.Running, pc: Pc.Check })
             },
         )
         // `run`, on its worker: PARKING to PARKED, or notified meanwhile, and it runs.
         Pc.Out => next.push(
             match task.state {
-                State.Parking => step("out", task with { state: State.Parked, pc: Pc.Parked })
-                _ => step("out", task with { state: State.Running, pc: Pc.Queued, queued: true })
+                State.Parking => model.step("out", task with { state: State.Parked, pc: Pc.Parked })
+                _ => model.step(
+                    "out",
+                    task with { state: State.Running, pc: Pc.Queued, queued: true },
+                )
             },
         )
         // A worker takes it from the queue. Done, it stays.
         Pc.Parked if task.queued => next.push(
-            step("resume", task with { queued: false, pc: Pc.Check }),
+            model.step("resume", task with { queued: false, pc: Pc.Check }),
         )
         Pc.Queued if task.queued => next.push(
-            step("resume", task with { queued: false, pc: Pc.Check }),
+            model.step("resume", task with { queued: false, pc: Pc.Check }),
         )
         _ => {}
     }
@@ -63,7 +65,7 @@ fn steps(task: Task, notifyOnParking: Bool): Array[model.Step[Task]] {
     if task.left > 0 {
         let notified = task with { left: task.left - 1, event: true }
         next.push(
-            step(
+            model.step(
                 "notify",
                 match task.state {
                     State.Parked => notified with { state: State.Running, queued: true }
@@ -128,12 +130,12 @@ test aNotifiedTaskIsDone {
 }
 
 test parkAsTlcDoes {
-    match check(false) {
-        ok(checked) => assert(checked.states == 30)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(false)).states == 30)
 }
 
 test parkFindsALostWake {
-    assert(check(true).isErr())
+    match check(true) {
+        ok(_) => panic("a lost wake went unseen")
+        err(broken) => assert(broken.property == some("NoLostWake"), "{broken}")
+    }
 }

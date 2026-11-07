@@ -1,0 +1,50 @@
+// A state holds arrays and maps as any other value: two workers write their
+// names into a map in either order, and the map they leave is one state
+// however it was built.
+
+import std.console
+import std.model
+
+type Office = {
+    done: Array[Bool]
+    signed: Map[String, Int]
+}
+
+fn steps(office: Office): Array[model.Step[Office]] {
+    var next: Array[model.Step[Office]] = []
+    for (worker, finished) in office.done.enumerate() {
+        if not finished {
+            var done = office.done
+            done[worker] = true
+            var signed = office.signed
+            _ = signed.insert("w{worker}", worker)
+            next.push(model.step("sign", office with { done: done, signed: signed }))
+        }
+    }
+    next
+}
+
+fn main() {
+    let start = Office { done: [false, false], signed: [:] }
+    let both = model.eventually((office: Office) { office.signed.length() == 2 }, name: "both sign")
+    let checked = model.expect(
+        model.check(
+            start,
+            steps,
+            holds: [both],
+            ends: some((office: Office) { office.done.all((one) { one }) }),
+        ),
+    )
+    console.println("{checked.states} states")
+    match model.check(
+        start,
+        steps,
+        holds: [model.always((office: Office) { office.signed.length() < 2 }, name: "one at most")],
+    ) {
+        ok(_) => console.println("missed")
+        err(broken) => console.println("{broken.property}")
+    }
+}
+
+// expect-stdout: 4 states
+// expect-stdout: some(one at most)

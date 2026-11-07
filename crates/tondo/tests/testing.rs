@@ -2325,6 +2325,14 @@ fn models_are_checked_and_reported() {
     let test = report["tests"].as_array().unwrap().iter().find(|test| test["model"] == true).unwrap();
     assert_eq!(test["attempts"][0]["models"][0]["never"], serde_json::json!(["Jam"]), "{test}");
     assert_eq!(test["attempts"][0]["models"][0]["kind"], "machine", "{test}");
+    // What broke names the property, for a tool to tell them apart.
+    let (stdout, _, _) = tondo(
+        &dir,
+        &["test", "--exact", "app::unit::app::watchesTheCount", "--schedules", "all", "--test-format", "json"],
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+    let broken = &report["tests"][0]["attempts"][0]["models"][0]["broken"];
+    assert_eq!(broken["property"], "both add", "{report}");
     // A project with no models says how to write one.
     let none = project("no-models", "test plain {\n    assert(1 == 1)\n}\n");
     let (stdout, stderr, status) = tondo(&none, &["test", "--models"]);

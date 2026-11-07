@@ -3,6 +3,7 @@
 // Chan.tla says it. A step is what the code does with the channel's lock held.
 // A wait is claimed by one operation or by a cancellation, as `Wait::claim`,
 // and the claimer notifies. Each sender sends one value: its number.
+import models
 import std.model
 
 enum Sender {
@@ -26,28 +27,21 @@ type Chan = {
     sending: model.Queue[Int]
     receiving: model.Queue[Int]
     closed: Bool
-    senders: model.Queue[Sender]
-    receivers: model.Queue[Receiver]
-    got: model.Queue[model.Bag[Int]]
+    senders: Array[Sender]
+    receivers: Array[Receiver]
+    got: Array[model.Bag[Int]]
     cancels: Int
 }
 
 const Capacity = 1
 
-// The list with the item at `index` changed.
-fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
-    var items = list.items()
-    items[index] = item
-    model.Queue(items)
-}
-
 // What receiver `r` got, with `value`.
-fn gets(chan: Chan, r: Int, value: Int): model.Queue[model.Bag[Int]] {
-    set(chan.got, r, chan.got.items()[r].add(value))
+fn gets(chan: Chan, r: Int, value: Int): Array[model.Bag[Int]] {
+    models.replaced(chan.got, r, chan.got[r].add(value))
 }
 
 fn send(chan: Chan, s: Int): Chan {
-    let sender = (after: Sender) { set(chan.senders, s, after) }
+    let sender = (after: Sender) { models.replaced(chan.senders, s, after) }
     if chan.closed {
         return chan with { senders: sender(Sender.Panicked) }
     }
@@ -55,7 +49,7 @@ fn send(chan: Chan, s: Int): Chan {
         some(r) => chan with {
             receiving: chan.receiving.rest()
             got: gets(chan, r, s)
-            receivers: set(chan.receivers, r, Receiver.Woken)
+            receivers: models.replaced(chan.receivers, r, Receiver.Woken)
             senders: sender(Sender.Sent)
         }
         none if chan.buffer.length() < Capacity => chan with {
@@ -71,38 +65,37 @@ fn receive(chan: Chan, r: Int): Chan {
         (some(value), some(s)) => chan with {
             got: gets(chan, r, value)
             buffer: chan.buffer.rest().push(s)
-            senders: set(chan.senders, s, Sender.Sent)
+            senders: models.replaced(chan.senders, s, Sender.Sent)
             sending: chan.sending.rest()
         }
         (some(value), none) => chan with { got: gets(chan, r, value), buffer: chan.buffer.rest() }
         (none, some(s)) => chan with {
             got: gets(chan, r, s)
-            senders: set(chan.senders, s, Sender.Sent)
+            senders: models.replaced(chan.senders, s, Sender.Sent)
             sending: chan.sending.rest()
         }
         (none, none) if chan.closed => chan with {
-            receivers: set(chan.receivers, r, Receiver.Ended)
+            receivers: models.replaced(chan.receivers, r, Receiver.Ended)
         }
         (none, none) => chan with {
             receiving: chan.receiving.push(r)
-            receivers: set(chan.receivers, r, Receiver.Waiting)
+            receivers: models.replaced(chan.receivers, r, Receiver.Waiting)
         }
     }
 }
 
 fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
     var next: Array[model.Step[Chan]] = []
-    let step = (name: String, after: Chan) { model.Step { name, state: after } }
-    for (s, sender) in chan.senders.items().enumerate() {
+    for (s, sender) in chan.senders.enumerate() {
         match sender {
-            Sender.Start => next.push(step("send", send(chan, s)))
+            Sender.Start => next.push(model.step("send", send(chan, s)))
             // A cancellation claims a wait first: the task leaves the queue under the lock.
             Sender.Waiting if chan.cancels > 0 => next.push(
-                step(
+                model.step(
                     "cancel sender",
                     chan with {
                         cancels: chan.cancels - 1
-                        senders: set(chan.senders, s, Sender.Cancelled)
+                        senders: models.replaced(chan.senders, s, Sender.Cancelled)
                         sending: chan.sending.without(s)
                     },
                 ),
@@ -110,19 +103,22 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
             _ => {}
         }
     }
-    for (r, receiver) in chan.receivers.items().enumerate() {
+    for (r, receiver) in chan.receivers.enumerate() {
         match receiver {
-            Receiver.Start => next.push(step("receive", receive(chan, r)))
+            Receiver.Start => next.push(model.step("receive", receive(chan, r)))
             // A receiver handed a value looks for the next.
             Receiver.Woken => next.push(
-                step("again", chan with { receivers: set(chan.receivers, r, Receiver.Start) }),
+                model.step(
+                    "again",
+                    chan with { receivers: models.replaced(chan.receivers, r, Receiver.Start) },
+                ),
             )
             Receiver.Waiting if chan.cancels > 0 => next.push(
-                step(
+                model.step(
                     "cancel receiver",
                     chan with {
                         cancels: chan.cancels - 1
-                        receivers: set(chan.receivers, r, Receiver.Cancelled)
+                        receivers: models.replaced(chan.receivers, r, Receiver.Cancelled)
                         receiving: chan.receiving.without(r)
                     },
                 ),
@@ -132,29 +128,27 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
     }
     // `close_waits`: the waits of the channel end, the senders' with a panic.
     if not chan.closed {
-        let receivers = chan.receivers
-            .items()
-            .map(
-                (receiver) { if receiver == Receiver.Waiting { Receiver.Ended } else { receiver } },
-            )
-        let senders = chan.senders
-            .items()
-            .map((sender) { if sender == Sender.Waiting { Sender.Panicked } else { sender } })
+        let receivers = chan.receivers.map(
+            (receiver) { if receiver == Receiver.Waiting { Receiver.Ended } else { receiver } },
+        )
+        let senders = chan.senders.map(
+            (sender) { if sender == Sender.Waiting { Sender.Panicked } else { sender } },
+        )
         next.push(
-            step(
+            model.step(
                 "close",
                 match wakes {
                     true => chan with {
                         closed: true
                         receiving: model.Queue([])
                         sending: model.Queue([])
-                        receivers: model.Queue(receivers)
-                        senders: model.Queue(senders)
+                        receivers: (receivers)
+                        senders: (senders)
                     }
                     false => chan with {
                         closed: true
                         sending: model.Queue([])
-                        senders: model.Queue(senders)
+                        senders: (senders)
                     }
                 },
             ),
@@ -169,22 +163,21 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
         sending: model.Queue([])
         receiving: model.Queue([])
         closed: false
-        senders: model.Queue([Sender.Start, Sender.Start, Sender.Start])
-        receivers: model.Queue([Receiver.Start, Receiver.Start])
-        got: model.Queue([model.Bag([]), model.Bag([])])
+        senders: ([Sender.Start, Sender.Start, Sender.Start])
+        receivers: ([Receiver.Start, Receiver.Start])
+        got: ([model.Bag([]), model.Bag([])])
         cancels: 2
     }
-    let got = (chan: Chan, s: Int) { chan.got.items().any((bag) { bag.contains(s) }) }
+    let got = (chan: Chan, s: Int) { chan.got.any((bag) { bag.contains(s) }) }
     // A value goes to one receiver, once.
     let once = model.always(
-        (chan: Chan) { (0..3).all((s) { chan.got.items().map((bag) { bag.count(s) }).sum() <= 1 }) },
+        (chan: Chan) { (0..3).all((s) { chan.got.map((bag) { bag.count(s) }).sum() <= 1 }) },
         name: "Once",
     )
     // A value is never lost: what was sent is in the buffer or was received.
     let kept = model.always(
         (chan: Chan) {
             chan.senders
-                .items()
                 .enumerate()
                 .all(
                     (pair) {
@@ -198,7 +191,6 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
     let notBoth = model.always(
         (chan: Chan) {
             chan.senders
-                .items()
                 .enumerate()
                 .all(
                     (pair) {
@@ -220,16 +212,14 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
     )
     let bounded = model.always((chan: Chan) { chan.buffer.length() <= Capacity }, name: "Bounded")
     let ended = (chan: Chan) {
-        chan.senders.items().all((sender) { sender != Sender.Start }) and
-            chan.receivers
-                .items()
-                .all(
-                    (receiver) {
-                        receiver == Receiver.Ended or
-                            receiver == Receiver.Cancelled or
-                            receiver == Receiver.Waiting
-                    },
-                )
+        chan.senders.all((sender) { sender != Sender.Start }) and
+            chan.receivers.all(
+                (receiver) {
+                    receiver == Receiver.Ended or
+                        receiver == Receiver.Cancelled or
+                        receiver == Receiver.Waiting
+                },
+            )
     }
     model.check(
         start,
@@ -240,16 +230,13 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
 }
 
 test chanAsTlcDoes {
-    match check(true) {
-        ok(checked) => assert(checked.states == 2652)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(true)).states == 2652)
 }
 
 // A close that leaves the receivers waiting: they wait on a closed channel.
 test chanFindsAWaitOnAClosedChannel {
     match check(false) {
         ok(_) => panic("a wait on a closed channel went unseen")
-        err(broken) => assert(broken.what.contains("NoUselessWait"))
+        err(broken) => assert(broken.property == some("NoUselessWait"))
     }
 }

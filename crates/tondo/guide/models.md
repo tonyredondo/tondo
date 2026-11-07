@@ -52,7 +52,8 @@ test theGateOpensOnlyWhenPaid {
 }
 ```
 
-`model.expect` fails the test with what broke. `tondo test` also says which
+`model.expect` gives what was checked, as `model.expect(...).states`, or fails
+the test with what broke. `tondo test` also says which
 events no state took, which is often a mistake. An event that holds a number or
 a string has no end of values: then `events: (gate) { [...] }` says which can
 happen in a state.
@@ -72,13 +73,19 @@ happen in a state.
   logic built from `model.state(p)` with `next`, `always`, `eventually`,
   `until`, `implies`, `negated`, `model.allOf` and `model.anyOf`.
 
-Each takes a `name`, which the failure says. A run takes a step whenever one is
-possible, and one with no step left stays where it is. A loop that never gets
-where it must breaks `eventually`, shown as `and then round for ever:`; a step
-that cannot be put off for ever goes in `fair`: `model.weak("grant")` if it
-comes when it stays possible, `model.strong("grant")` if it comes when it keeps
-becoming possible. `ends: (state) { ... }` says where a run may stop: anywhere
-else, stopping is a deadlock.
+Each takes a `name`, which the failure says, and `broken.property` gives, to
+test which broke. A run takes a step whenever one is possible, and one with no
+step left stays where it is. A loop that never gets where it must breaks
+`eventually`, shown as `and then round for ever:`; a step that cannot be put
+off for ever goes in `fair`: `model.weak("grant")` if it comes when it stays
+possible, `model.strong("grant")` if it comes when it keeps becoming possible.
+`ends: (state) { ... }` says where a run may stop: anywhere else, stopping is a
+deadlock.
+
+Fairness is of a step's name: `model.weak("resume")` holds when some task
+resumes, even if it is always the same one. To say that each task resumes, put
+the task in the name, `model.step("resume {t}", ...)`, and make each fair:
+`[0, 1].map((t) { model.weak("resume {t}") })`.
 
 ## Concurrent code: properties of the real thing
 
@@ -129,8 +136,8 @@ type Lock = {
 
 fn steps(lock: Lock): Array[model.Step[Lock]] {
     match lock.holder {
-        none => [model.Step { name: "take", state: Lock { holder: some(1) } }]
-        some(_) => [model.Step { name: "give", state: Lock { holder: none } }]
+        none => [model.step("take", Lock { holder: some(1) })]
+        some(_) => [model.step("give", Lock { holder: none })]
     }
 }
 
@@ -155,8 +162,11 @@ test theLockFollowsItsModel {
 }
 ```
 
-A state is a `Key`: an `Array` is not one, so a queue in a state is a
-`model.Queue([1, 2])` and a collection whose order says nothing is a
+A state is any value that encodes, arrays and maps included, and two states are
+the same when they encode the same; a map is the same state whatever order its
+keys came in. A list of tasks is an `Array`, changed as any array:
+`var tasks = lock.tasks`, `tasks[t] = ...`, then `lock with { tasks: tasks }`. A
+queue is a `model.Queue([1, 2])`, and a collection whose order says nothing a
 `model.Bag(...)`. `symmetry: (state) { ... }` gives the one state that stands
 for all those it equals, as the same with its tasks numbered otherwise, so that
 only it is gone through. `model.every[T]()` gives every value of a type.

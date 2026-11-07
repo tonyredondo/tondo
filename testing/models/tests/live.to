@@ -29,25 +29,24 @@ type Reload = {
 
 fn steps(reload: Reload, guarded: Bool): Array[model.Step[Reload]] {
     var next: Array[model.Step[Reload]] = []
-    let step = (name: String, after: Reload) { model.Step { name, state: after } }
     // `park`, at a statement: a task says it waits, and looks at the barrier.
     if reload.barrier and reload.first == Task.Runs {
-        next.push(step("statement", reload with { first: Task.Parked }))
+        next.push(model.step("statement", reload with { first: Task.Parked }))
     }
     if reload.barrier and reload.second == Task.Runs {
-        next.push(step("statement", reload with { second: Task.Parked }))
+        next.push(model.step("statement", reload with { second: Task.Parked }))
     }
     match reload.tool {
         // `hold`: the barrier, and the answer once the tasks settled.
         Tool.Idle if not reload.converted => next.push(
-            step("hold", reload with { barrier: true, expired: false, tool: Tool.Settling }),
+            model.step("hold", reload with { barrier: true, expired: false, tool: Tool.Settling }),
         )
         Tool.Settling if (reload.first == Task.Parked and reload.second == Task.Parked) => next.push(
-            step("settled", reload with { tool: Tool.Patching }),
+            model.step("settled", reload with { tool: Tool.Patching }),
         )
         // The patch converts what values hold, in place, unless the barrier let go.
         Tool.Patching => next.push(
-            step(
+            model.step(
                 "patch",
                 reload with {
                     tool: if guarded and reload.expired { Tool.Releasing } else { Tool.Converting }
@@ -55,11 +54,11 @@ fn steps(reload: Reload, guarded: Bool): Array[model.Step[Reload]] {
             ),
         )
         Tool.Converting => next.push(
-            step("convert", reload with { converted: true, tool: Tool.Releasing }),
+            model.step("convert", reload with { converted: true, tool: Tool.Releasing }),
         )
         // `let_go`.
         Tool.Releasing => next.push(
-            step(
+            model.step(
                 "let go",
                 reload with { barrier: false, first: Task.Runs, second: Task.Runs, tool: Tool.Idle },
             ),
@@ -67,12 +66,12 @@ fn steps(reload: Reload, guarded: Bool): Array[model.Step[Reload]] {
         _ => {}
     }
     if reload.tool == Tool.Settling and reload.expired {
-        next.push(step("gave up", reload with { tool: Tool.Releasing }))
+        next.push(model.step("gave up", reload with { tool: Tool.Releasing }))
     }
     // After a while with no answer, the barrier lets go by itself.
     if reload.barrier and (reload.tool == Tool.Settling or reload.tool == Tool.Patching) {
         next.push(
-            step(
+            model.step(
                 "expire",
                 reload with { barrier: false, expired: true, first: Task.Runs, second: Task.Runs },
             ),
@@ -107,12 +106,12 @@ fn check(guarded: Bool): model.Checked ! model.Violation {
 }
 
 test liveAsTlcDoes {
-    match check(true) {
-        ok(checked) => assert(checked.states == 13)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(true)).states == 13)
 }
 
 test liveFindsAPatchAfterTheBarrierLetGo {
-    assert(check(false).isErr())
+    match check(false) {
+        ok(_) => panic("a patch after the barrier let go went unseen")
+        err(broken) => assert(broken.property == some("Quiet"), "{broken}")
+    }
 }

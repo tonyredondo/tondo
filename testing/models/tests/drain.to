@@ -1,6 +1,7 @@
 // A server that stops (crates/tondo-runtime/src/server.rs: accept, handle,
 // tondo_rt_http_server_stop, tondo_rt_http_next; std/http.to: serve, listen),
 // as Drain.tla says it.
+import models
 import std.model
 
 enum Phase {
@@ -22,7 +23,7 @@ enum Conn {
 
 type Server = {
     phase: Phase
-    conns: model.Queue[Conn]
+    conns: Array[Conn]
     listening: Bool
     stopper: Stopper
     serving: Bool
@@ -32,13 +33,6 @@ enum Stopper {
     Idle
     Waiting
     Done
-}
-
-// The list with the item at `index` changed.
-fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
-    var items = list.items()
-    items[index] = item
-    model.Queue(items)
 }
 
 fn isOpen(conn: Conn): Bool {
@@ -51,11 +45,10 @@ fn isOpen(conn: Conn): Bool {
 
 fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
     var next: Array[model.Step[Server]] = []
-    let step = (name: String, after: Server) { model.Step { name, state: after } }
-    let conns = server.conns.items()
+    let conns = server.conns
     for (c, conn) in conns.enumerate() {
         let becomes = (name: String, after: Conn) {
-            step(name, server with { conns: set(server.conns, c, after) })
+            model.step(name, server with { conns: models.replaced(server.conns, c, after) })
         }
         match conn {
             // The loop of `accept`: it counts the connection first and then
@@ -87,29 +80,31 @@ fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
         }
     }
     if server.listening and server.phase != Phase.Serving {
-        next.push(step("stop listening", server with { listening: false }))
+        next.push(model.step("stop listening", server with { listening: false }))
     }
     let drained = not conns.any(isOpen)
     if server.serving and
         (server.phase == Phase.Closed or server.phase == Phase.Draining and (drained or not drains)) {
-        next.push(step("ended", server with { serving: false }))
+        next.push(model.step("ended", server with { serving: false }))
     }
     // `tondo_rt_http_server_stop`.
     if server.stopper == Stopper.Idle and server.phase == Phase.Serving {
-        next.push(step("stop", server with { phase: Phase.Draining, stopper: Stopper.Waiting }))
+        next.push(
+            model.step("stop", server with { phase: Phase.Draining, stopper: Stopper.Waiting }),
+        )
     }
     // The task that waits for the connections, or for the grace to pass.
     if server.phase == Phase.Draining {
         if drained {
-            next.push(step("drained", server with { phase: Phase.Closed }))
+            next.push(model.step("drained", server with { phase: Phase.Closed }))
         }
         let cut = conns.map(
             (conn) { if isOpen(conn) and conn != Conn.Counted { Conn.Cut } else { conn } },
         )
-        next.push(step("grace", server with { phase: Phase.Closed, conns: model.Queue(cut) }))
+        next.push(model.step("grace", server with { phase: Phase.Closed, conns: (cut) }))
     }
     if server.stopper == Stopper.Waiting and not server.listening {
-        next.push(step("returned", server with { stopper: Stopper.Done }))
+        next.push(model.step("returned", server with { stopper: Stopper.Done }))
     }
     next
 }
@@ -117,7 +112,7 @@ fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
 fn check(drains: Bool): model.Checked ! model.Violation {
     let start = Server {
         phase: Phase.Serving
-        conns: model.Queue([Conn.Nothing, Conn.Nothing])
+        conns: ([Conn.Nothing, Conn.Nothing])
         listening: true
         stopper: Stopper.Idle
         serving: true
@@ -127,13 +122,11 @@ fn check(drains: Bool): model.Checked ! model.Violation {
         (server: Server) {
             server.serving or
                 server.phase != Phase.Draining or
-                server.conns
-                    .items()
-                    .all(
-                        (conn) {
-                            conn != Conn.Queued and conn != Conn.Answering and conn != Conn.Answered
-                        },
-                    )
+                server.conns.all(
+                    (conn) {
+                        conn != Conn.Queued and conn != Conn.Answering and conn != Conn.Answered
+                    },
+                )
         },
         name: "Answered",
     )
@@ -152,16 +145,13 @@ fn check(drains: Bool): model.Checked ! model.Violation {
 }
 
 test drainAsTlcDoes {
-    match check(true) {
-        ok(checked) => assert(checked.states == 319)
-        err(broken) => panic("{broken}")
-    }
+    assert(model.expect(check(true)).states == 319)
 }
 
 // A serving loop that ends as soon as the server stops leaves requests unanswered.
 test drainFindsAnUnansweredRequest {
     match check(false) {
         ok(_) => panic("an unanswered request went unseen")
-        err(broken) => assert(broken.what.contains("Answered"))
+        err(broken) => assert(broken.property == some("Answered"))
     }
 }
