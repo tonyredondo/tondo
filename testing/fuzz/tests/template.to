@@ -1,0 +1,18 @@
+import std.template
+import std.testing
+
+test templateReadsAnySource {
+    let seeds = ["Hello {{{{ name }}}}!", "{{% for tag in tags %}}{{{{ tag }}}}{{% end %}}", ""]
+    testing.fuzz(
+        "source",
+        seeds,
+        (source: String) {
+            for each in [template.Set.text(), template.Set.html()] {
+                var set = each
+                if set.add("page", source).isOk() {
+                    _ = set.render("page", sample())
+                }
+            }
+        },
+    )?
+}

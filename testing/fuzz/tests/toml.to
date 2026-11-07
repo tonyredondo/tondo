@@ -1,0 +1,27 @@
+import std.testing
+import std.toml
+
+test tomlReadsAnyText {
+    let seeds = [
+        "a = 1\n[b]\nc = [1, 2.5, true, \"x\"]\nd = 1979-05-27T07:32:00Z\n[[e]]\nf = 'g'\n",
+        "",
+    ]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (text: String) {
+            _ = toml.parse(text)
+        },
+    )?
+}
+
+test tomlReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) {
+            let written = toml.encode(value)?
+            assert(toml.decode[Sample](written) == ok(value))
+        },
+    )?
+}

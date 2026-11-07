@@ -1,0 +1,22 @@
+import std.messagepack
+import std.testing
+
+test messagepackReadsAnyBytes {
+    testing.fuzz(
+        "parse",
+        [messagepack.encode(sample()), []],
+        (bytes: Array[Byte]) {
+            _ = messagepack.parse(bytes)
+        },
+    )?
+}
+
+test messagepackReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) {
+            assert(messagepack.decode[Sample](messagepack.encode(value)) == ok(value))
+        },
+    )?
+}

@@ -1,0 +1,36 @@
+import std.regex
+import std.testing
+
+test regexCompilesAnyPattern {
+    let seeds = [
+        ("a(b|c)*d", "abcbd"),
+        ("(?<n>\\d+)-\\k<n>", "12-12"),
+        ("[^\\p{{L}}]+$", "x9 "),
+        ("", ""),
+    ]
+    testing.fuzz(
+        "compile",
+        seeds,
+        (tried: (String, String)) {
+            let (pattern, input) = tried
+            match regex.Regex.compile(pattern) {
+                ok(compiled) => {
+                    _ = compiled.isMatch(input)
+                    _ = compiled.replaceAll(input, "<$0>")
+                }
+                err(_) => {}
+            }
+        },
+    )?
+}
+
+test regexMatchesWhatItEscapes {
+    testing.fuzz(
+        "escape",
+        ["a.b*c", "(x)[y]{{z}}", ""],
+        (text: String) {
+            let compiled = regex.Regex.compile(regex.Regex.escape(text))?
+            assert(compiled.isFullMatch(text)?, text)
+        },
+    )?
+}

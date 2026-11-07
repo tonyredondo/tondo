@@ -2397,6 +2397,16 @@ fn the_models_of_the_runtime_hold() {
     assert!(stdout.contains("lockAsTlcDoes ... ok"), "{stdout}");
 }
 
+/// The fuzz tests of the standard library's parsers in `testing/fuzz`, with
+/// their seeds and the inputs that failed before; the Nightly searches.
+#[test]
+fn the_parsers_of_the_standard_library_take_their_seeds() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/fuzz");
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("xmlReadsBackWhatItWrites ... ok"), "{stdout}");
+}
+
 /// A model that holds with nothing to say says so: a property whose start
 /// held in no state, and a model that never leaves its start.
 #[test]

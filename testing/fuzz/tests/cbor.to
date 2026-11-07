@@ -1,0 +1,23 @@
+import std.cbor
+import std.testing
+
+test cborReadsAnyBytes {
+    testing.fuzz(
+        "parse",
+        [cbor.encode(sample()), []],
+        (bytes: Array[Byte]) {
+            _ = cbor.parse(bytes)
+        },
+    )?
+}
+
+test cborReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) {
+            assert(cbor.decode[Sample](cbor.encode(value)) == ok(value))
+            assert(cbor.decode[Sample](cbor.encode(value, deterministic: true)) == ok(value))
+        },
+    )?
+}

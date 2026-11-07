@@ -1,0 +1,26 @@
+import std.testing
+import std.yaml
+
+test yamlReadsAnyText {
+    let seeds = [
+        "a: [1, 2.5, true, ~, 'x']\nb:\n  - c: |\n      text\n",
+        "--- &a\n- *a\n",
+        "{{x: y}}",
+        "",
+    ]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (text: String) {
+            _ = yaml.parseAll(text)
+        },
+    )?
+}
+
+test yamlReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) { assert(yaml.decode[Sample](yaml.encode(value)) == ok(value)) },
+    )?
+}

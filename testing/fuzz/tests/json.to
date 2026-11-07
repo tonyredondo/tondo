@@ -1,0 +1,26 @@
+import std.json
+import std.testing
+
+test jsonReadsAnyText {
+    let seeds = [
+        "{{\"a\": [1, -2.5e3, true, null, \"x\\u00e9\"]}}",
+        "[[]]",
+        "\"\\ud83d\\ude00\"",
+        "",
+    ]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (text: String) {
+            _ = json.parse(text)
+        },
+    )?
+}
+
+test jsonReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) { assert(json.decode[Sample](json.encode(value)) == ok(value)) },
+    )?
+}

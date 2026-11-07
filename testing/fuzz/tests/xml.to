@@ -1,0 +1,24 @@
+import std.testing
+import std.xml
+
+test xmlReadsAnyText {
+    let seeds = [
+        "<?xml version=\"1.0\"?><a b=\"1\" xmlns:c=\"u\"><c:d>t&amp;</c:d><![CDATA[x]]><!-- n --></a>",
+        "",
+    ]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (text: String) {
+            _ = xml.parse(text)
+        },
+    )?
+}
+
+test xmlReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [sample()],
+        (value: Sample) { assert(xml.decode[Sample](xml.encode(value)) == ok(value)) },
+    )?
+}

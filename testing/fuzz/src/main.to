@@ -1,0 +1,37 @@
+// The fuzz tests of the standard library's parsers, in tests/: no input
+// panics, and what a format writes reads back the same (docs/refactor.md,
+// 0.6). `tondo test` runs their seeds and the inputs in fuzz/ that failed
+// before; the Nightly searches with `--fuzz`. This is what they write and
+// read back: a value of every kind a format holds.
+
+pub enum Kind {
+    Plain
+    Tagged(String)
+    Pair(Int, Int)
+}
+
+pub type Sample = {
+    name: String
+    count: Int
+    ratio: Float
+    flag: Bool
+    tags: Array[String]
+    scores: Map[String, Int]
+    note: String?
+    kind: Kind
+}
+
+pub fn sample(): Sample {
+    Sample {
+        name: "ada"
+        count: -3
+        ratio: 0.25
+        flag: true
+        tags: ["a", "b c", ""]
+        scores: ["x": 1, "y z": -2]
+        note: some("hi")
+        kind: Kind.Pair(1, 2)
+    }
+}
+
+fn main() {}

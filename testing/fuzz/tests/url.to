@@ -1,0 +1,26 @@
+import std.testing
+import std.url
+
+test urlReadsAnyText {
+    let seeds = [
+        "https://user:pw@example.com:8080/a/b%20c?d=e&f#g",
+        "//h/p",
+        "mailto:a@b",
+        "[::1]",
+        "",
+    ]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (text: String) {
+            // What it reads, written, reads back as what writes the same.
+            match url.parse(text) {
+                ok(read) => {
+                    let again = url.parse("{read}")
+                    assert(again.map((written) { "{written}" }) == ok("{read}"), "{read}")
+                }
+                err(_) => {}
+            }
+        },
+    )?
+}

@@ -1,0 +1,40 @@
+import std.protobuf
+import std.testing
+
+type Point = {
+    @protobuf.Field(1)
+    x: Int32 = 0
+    @protobuf.Field(2, encoding: protobuf.Encoding.ZigZag)
+    y: Int64 = 0
+    @protobuf.Field(3)
+    name: String = ""
+    @protobuf.Field(4)
+    tags: Array[String] = []
+    @protobuf.Field(5)
+    weights: Map[String, Float] = [:]
+}
+
+test protobufReadsAnyBytes {
+    let seeds = [
+        protobuf.encode(Point { x: 3, y: -4, name: "p", tags: ["a"], weights: ["w": 0.5] }),
+        [],
+    ]
+    testing.fuzz(
+        "decode",
+        seeds,
+        (bytes: Array[Byte]) {
+            _ = protobuf.decode[Point](bytes)
+        },
+    )?
+}
+
+test protobufReadsBackWhatItWrites {
+    testing.fuzz(
+        "roundTrip",
+        [Point { x: 1, y: -1, name: "n", tags: [], weights: [:] }],
+        (value: Point) {
+            assert(protobuf.decode[Point](protobuf.encode(value)) == ok(value))
+            assert(protobuf.fromJson[Point](protobuf.toJson(value)?) == ok(value))
+        },
+    )?
+}
