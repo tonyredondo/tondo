@@ -5640,7 +5640,11 @@ impl Display for Element
 - Un valor es un elemento con el nombre de su tipo, o el de su `@xml.Name`;
   cada campo, un hijo con el nombre del campo, o el de su `@xml.Name`, en su
   orden. Un `Array` da un hijo por elemento, todos con ese nombre, sin
-  envoltorio; un opcional sin valor no da ninguno.
+  envoltorio; un opcional sin valor no da ninguno. Un `Map` da un hijo por
+  clave. Un nombre escribe como `_xHHHH_`, en hexadecimal, cada carácter que
+  no puede ir en un nombre de XML, como un espacio o un dígito al principio,
+  y el `_` que va antes de una `x`; una clave vacía es `_x_`. `decode` lo
+  deshace, así que todo mapa vuelve igual, y los nombres válidos no cambian.
 - `@xml.Attribute` hace de un campo un atributo, y `@xml.Text` el texto del
   elemento; los dos son para escalares: textos, números, `Bool`,
   `time.DateTime` y enums sin datos. Un escalar se escribe como texto, como en

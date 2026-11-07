@@ -1,0 +1,39 @@
+// A map's keys that are no names of XML are written escaped, as `_xHHHH_`,
+// and read back as they were (standard library 14.30).
+import std.console
+import std.xml
+
+type Keys = {
+    scores: Map[String, Int]
+}
+
+fn main() {
+    let keys = [
+        "",
+        "1a",
+        "_x",
+        "_x0020_",
+        "a:b",
+        "é",
+        "😀",
+        "a b<c>&\"d'",
+        "-x",
+        ".y",
+        "x-1.2",
+        "_",
+        "__x",
+    ]
+    var scores: Map[String, Int] = [:]
+    for (at, key) in keys.enumerate() {
+        scores[key] = at
+    }
+    let text = xml.encode(Keys { scores })
+    console.println(text)
+    match xml.decode[Keys](text) {
+        ok(read) => console.println("{read.scores == scores}")
+        err(error) => console.println("error: {error}")
+    }
+}
+
+// expect-stdout: <Keys><scores><_x_>0</_x_><_x0031_a>1</_x0031_a><_x005F_x>2</_x005F_x><_x005F_x0020_>3</_x005F_x0020_><a:b>4</a:b><é>5</é><😀>6</😀><a_x0020_b_x003C_c_x003E__x0026__x0022_d_x0027_>7</a_x0020_b_x003C_c_x003E__x0026__x0022_d_x0027_><_x002D_x>8</_x002D_x><_x002E_y>9</_x002E_y><x-1.2>10</x-1.2><_>11</_><__x005F_x>12</__x005F_x></scores></Keys>
+// expect-stdout: true

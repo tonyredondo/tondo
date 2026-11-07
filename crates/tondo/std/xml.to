@@ -818,11 +818,11 @@ fn Reading.written(mut self, names: Array[String]): Array[String] {
 fn membersOf(item: Item, notes: Array[Array[serialization.Note]]): Array[(String, Piece)] {
     var members: Array[(String, Piece)] = []
     for (name, value) in item.attributes {
-        members.push((name, Piece.Characters(value)))
+        members.push((decodeName(name), Piece.Characters(value)))
     }
     for piece in item.nodes {
         match piece {
-            Piece.Child(child) => members.push((child.name, piece))
+            Piece.Child(child) => members.push((decodeName(child.name), piece))
             _ => {}
         }
     }
@@ -1103,12 +1103,68 @@ fn marked(notes: Array[serialization.Note], name: String): Bool {
     notes.any((note) { note.format == "xml" and note.name == name })
 }
 
-/// The name the notes' `@xml.Name` gives, or `name`.
+/// The name the notes' `@xml.Name` gives, or `name`, as a name of XML.
 fn renamed(notes: Array[serialization.Note], name: String): String {
     for note in notes {
         if note.format == "xml" and note.name == "Name" {
-            return note.value
+            return encodeName(note.value)
         }
     }
-    name
+    encodeName(name)
+}
+
+/// A key as the name of an element or an attribute (standard library
+/// 14.30): each character that cannot be in a name there, and a `_` before
+/// an `x`, as `_xHHHH_`; no key as `_x_`.
+fn encodeName(key: String): String {
+    let chars: Array[Char] = key.chars().collect()
+    if chars.isEmpty() {
+        return "_x_"
+    }
+    var written = ""
+    for (at, c) in chars.enumerate() {
+        let escaped = not nameCharacter(c, at == 0) or (c == '_' and chars.get(at + 1) == some('x'))
+        written = if escaped {
+            let hex = c.code().toString(16).toUpper()
+            let width = if hex.length() <= 4 { 4 } else { 8 }
+            "{written}_x{"0000000".slice(0, width - hex.length()).unwrapOr("")}{hex}_"
+        } else {
+            "{written}{c}"
+        }
+    }
+    written
+}
+
+/// The key a name of an element or an attribute stands for, undoing what
+/// `encodeName` does.
+fn decodeName(name: String): String {
+    if name == "_x_" {
+        return ""
+    }
+    let chars: Array[Char] = name.chars().collect()
+    var (read, at) = ("", 0)
+    for at < chars.length() {
+        var end = at + 2
+        for end < chars.length() and end - at < 11 and chars[end] != '_' {
+            end += 1
+        }
+        let digits = chars.slice(at + 2, end).unwrapOr([]).map((c) { "{c}" }).join("")
+        let code = if chars[at] == '_' and chars.get(at + 1) == some('x') and chars.get(end) == some('_') and
+            (digits.length() == 4 or digits.length() == 8) {
+            Int.parse(digits, radix: 16).ok().andThen((code) { Char.from(code) })
+        } else {
+            none
+        }
+        match code {
+            some(c) => {
+                read = "{read}{c}"
+                at = end + 1
+            }
+            none => {
+                read = "{read}{chars[at]}"
+                at += 1
+            }
+        }
+    }
+    read
 }

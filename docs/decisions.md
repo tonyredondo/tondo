@@ -5530,3 +5530,13 @@ every package, and takes its literals after the project's. In ten seconds, fuzz 
 which reach 35% and 43% of what their build counts, at fewer inputs a second, since each goes
 deeper. The loop of `testing.fuzz` itself is not counted, nor are the tests, whose code is not
 under test.
+
+## A key that is no name of XML is escaped as `_xHHHH_`
+
+`xml.encode` wrote a map's key as the name of an element, so a key with a space, one that starts
+with a digit or an empty one gave XML that is not well formed, which `xml.decode` refused: the fuzz
+tests of the standard library found it at their first seed. `encode` gives a `String`, with no
+error to return, and a panic for a user's data would end a program for its input. So a name writes
+each character that cannot be in it, and a `_` before an `x`, as `_xHHHH_`, the convention of
+.NET's `XmlConvert.EncodeName`, and an empty key as `_x_`; `decode` undoes it. Names that were
+valid do not change, and every map reads back as it was written.
