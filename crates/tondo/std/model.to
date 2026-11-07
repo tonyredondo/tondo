@@ -70,8 +70,16 @@ pub type Violation = {
 
 impl Display for Violation {
     fn display(self): String {
-        let here = if self.path.isEmpty() { self.what } else { "{self.what}, after: {self.path.join(", ")}" }
-        if self.loop.isEmpty() { here } else { "{here}, and round for ever: {self.loop.join(", ")}" }
+        let here = if self.path.isEmpty() {
+            self.what
+        } else {
+            "{self.what}, after: {self.path.join(", ")}"
+        }
+        if self.loop.isEmpty() {
+            here
+        } else {
+            "{here}, and round for ever: {self.loop.join(", ")}"
+        }
     }
 }
 
@@ -283,7 +291,7 @@ fn comesTo(
     reached: Array[Reached],
     goals: Array[Bool],
     fair: Array[String],
-): Unit ! Violation {
+): !Violation {
     for at in 0..edges.length() {
         if edges[at].isEmpty() and not goals[at] {
             fail broken("it ends without what it must come to", reached, at)
@@ -377,7 +385,11 @@ pub fn check[S: Key](
     }
     match reaches {
         some(goal) => match stranded(edges, states.map(goal)) {
-            some(stuck) => fail broken("what it must reach is out of reach from here", reached, stuck)
+            some(stuck) => fail broken(
+                "what it must reach is out of reach from here",
+                reached,
+                stuck,
+            )
             none => {}
         }
         none => {}
