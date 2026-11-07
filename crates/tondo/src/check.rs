@@ -16684,14 +16684,14 @@ impl<'a> Checker<'a> {
         self.infer_from_bounds(&mut inference);
         // An error nothing fixes is that of what does not fail (12.1).
         for &generic in &signature.generics {
-            if !inference.map.contains_key(&generic) {
+            if let std::collections::hash_map::Entry::Vacant(slot) = inference.map.entry(generic) {
                 let types: Vec<Ty> = signature.params.iter().copied().chain([signature.result]).collect();
                 let (error, elsewhere) = types.iter().fold((false, false), |(error, elsewhere), &ty| {
                     let (e, o) = self.where_mentioned(ty, generic);
                     (error || e, elsewhere || o)
                 });
                 if error && !elsewhere {
-                    inference.map.insert(generic, Ty::NEVER);
+                    slot.insert(Ty::NEVER);
                 }
             }
         }
