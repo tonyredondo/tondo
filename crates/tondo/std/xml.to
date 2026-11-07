@@ -1149,7 +1149,9 @@ fn decodeName(name: String): String {
             end += 1
         }
         let digits = chars.slice(at + 2, end).unwrapOr([]).map((c) { "{c}" }).join("")
-        let code = if chars[at] == '_' and chars.get(at + 1) == some('x') and chars.get(end) == some('_') and
+        let code = if chars[at] == '_' and
+            chars.get(at + 1) == some('x') and
+            chars.get(end) == some('_') and
             (digits.length() == 4 or digits.length() == 8) {
             Int.parse(digits, radix: 16).ok().andThen((code) { Char.from(code) })
         } else {
