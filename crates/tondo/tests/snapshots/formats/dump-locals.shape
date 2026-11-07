@@ -1,0 +1,9 @@
+.format: string
+.locals.at: string
+.locals.bindings[]
+.locals.bindings[].name: string
+.locals.bindings[].parts[]
+.locals.bindings[].type: string
+.locals.bindings[].value: string
+.locals.frame: number
+.ok: bool

@@ -1,0 +1,8 @@
+panic[P0001]: bounds: index 3 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+ --> falls.to:14:5
+context: id=r-7
+stack:
+  total  falls.to:14:5
+in a task spawned at:
+  main  falls.to:20:15
+tondo runtime: a dump of the program is in <dump>

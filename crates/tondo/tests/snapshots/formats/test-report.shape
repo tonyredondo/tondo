@@ -1,0 +1,203 @@
+.artifact_store.algorithm: string
+.artifact_store.format: string
+.bench: null
+.compiled: bool
+.edition: string
+.execution_plan[]
+.execution_plan[]: string
+.format: string
+.fuzz: null
+.limits.jobs: number
+.limits.timeout_ms: number
+.machines[]
+.order.algorithm: string
+.order.mode: string
+.order.seed: null
+.ownership.mode: string
+.ownership.sha256: null
+.ownership.source: null
+.policy.allow_flaky: bool
+.policy.deny_skips: bool
+.profiles: null
+.repeat.count: number
+.repeat.isolation: string
+.retry.isolation: string
+.retry.max_additional_rounds: number
+.retry.rounds[]
+.schedules: null
+.selection.kind: string
+.selection.value: null
+.shard: null
+.snapshot_policy.after_sha256: string
+.snapshot_policy.before_sha256: string
+.snapshot_policy.format: string
+.snapshot_policy.mode: string
+.snapshot_policy.published: null
+.suites[]
+.suites[].attempts[]
+.suites[].attempts[].artifacts[]
+.suites[].attempts[].benchmarks[]
+.suites[].attempts[].blocked_by: null
+.suites[].attempts[].failure.code: null
+.suites[].attempts[].failure.comparison: null
+.suites[].attempts[].failure.data: null
+.suites[].attempts[].failure.error_type: string
+.suites[].attempts[].failure.kind: string
+.suites[].attempts[].failure.message: string
+.suites[].attempts[].failure.source.column: number
+.suites[].attempts[].failure.source.file: string
+.suites[].attempts[].failure.source.line: number
+.suites[].attempts[].failure.stack[]
+.suites[].attempts[].failure: null
+.suites[].attempts[].fuzz[]
+.suites[].attempts[].index: number
+.suites[].attempts[].iteration: number
+.suites[].attempts[].logs[]
+.suites[].attempts[].models[]
+.suites[].attempts[].orders: null
+.suites[].attempts[].outside: bool
+.suites[].attempts[].phase: null
+.suites[].attempts[].phase: string
+.suites[].attempts[].round: number
+.suites[].attempts[].skip.reason: string
+.suites[].attempts[].skip.source.column: number
+.suites[].attempts[].skip.source.file: string
+.suites[].attempts[].skip.source.line: number
+.suites[].attempts[].skip: null
+.suites[].attempts[].snapshots[]
+.suites[].attempts[].status: string
+.suites[].attempts[].stderr.data: string
+.suites[].attempts[].stderr.encoding: string
+.suites[].attempts[].stdout.data: string
+.suites[].attempts[].stdout.encoding: string
+.suites[].attempts[].unit: null
+.suites[].attempts[].virtual_time[]
+.suites[].attempts[].warnings[]
+.suites[].decisive_attempt: number
+.suites[].id: string
+.suites[].kind: string
+.suites[].module: string
+.suites[].name: string
+.suites[].owners[]
+.suites[].package: string
+.suites[].parent: null
+.suites[].parent: string
+.suites[].path[]
+.suites[].path[]: string
+.suites[].source.column: number
+.suites[].source.file: string
+.suites[].source.line: number
+.suites[].status: string
+.summary.artifact_bytes: string
+.summary.artifacts: number
+.summary.blocked_setup: number
+.summary.blocked_skip: number
+.summary.crashed: number
+.summary.executed: number
+.summary.failed: number
+.summary.failed_error: number
+.summary.failed_panic: number
+.summary.flaky_passed: number
+.summary.infrastructure: number
+.summary.passed: number
+.summary.repeated: number
+.summary.resource_limit: number
+.summary.retried: number
+.summary.selected: number
+.summary.skipped: number
+.summary.snapshot_created: number
+.summary.snapshot_matched: number
+.summary.snapshot_mismatched: number
+.summary.snapshot_missing: number
+.summary.snapshot_updated: number
+.summary.snapshots: number
+.summary.suite_attempts: number
+.summary.suite_blocked_setup: number
+.summary.suite_blocked_skip: number
+.summary.suite_failed: number
+.summary.suite_flaky_passed: number
+.summary.suite_passed: number
+.summary.suite_repeated: number
+.summary.suite_retried: number
+.summary.suite_selected: number
+.summary.suite_skipped: number
+.summary.test_attempts: number
+.summary.timeout: number
+.target.name: string
+.target.profile: string
+.tests[]
+.tests[].attempts[]
+.tests[].attempts[].artifacts[]
+.tests[].attempts[].benchmarks[]
+.tests[].attempts[].blocked_by.attempt: number
+.tests[].attempts[].blocked_by.id: string
+.tests[].attempts[].blocked_by: null
+.tests[].attempts[].failure.code: null
+.tests[].attempts[].failure.code: string
+.tests[].attempts[].failure.comparison.left: string
+.tests[].attempts[].failure.comparison.right: string
+.tests[].attempts[].failure.comparison: null
+.tests[].attempts[].failure.data.condition: string
+.tests[].attempts[].failure.data.left: string
+.tests[].attempts[].failure.data.right: string
+.tests[].attempts[].failure.data: null
+.tests[].attempts[].failure.data: string
+.tests[].attempts[].failure.error_type: null
+.tests[].attempts[].failure.error_type: string
+.tests[].attempts[].failure.kind: string
+.tests[].attempts[].failure.message: string
+.tests[].attempts[].failure.source.column: number
+.tests[].attempts[].failure.source.file: string
+.tests[].attempts[].failure.source.line: number
+.tests[].attempts[].failure.source: null
+.tests[].attempts[].failure.stack[]
+.tests[].attempts[].failure.stack[].function: string
+.tests[].attempts[].failure.stack[].source.column: number
+.tests[].attempts[].failure.stack[].source.file: string
+.tests[].attempts[].failure.stack[].source.line: number
+.tests[].attempts[].failure.stack[].task: number
+.tests[].attempts[].failure.stack[].times: number
+.tests[].attempts[].failure: null
+.tests[].attempts[].fuzz[]
+.tests[].attempts[].index: number
+.tests[].attempts[].iteration: number
+.tests[].attempts[].logs[]
+.tests[].attempts[].logs[]: string
+.tests[].attempts[].models[]
+.tests[].attempts[].orders: null
+.tests[].attempts[].outside: bool
+.tests[].attempts[].round: number
+.tests[].attempts[].skip.reason: string
+.tests[].attempts[].skip.source.column: number
+.tests[].attempts[].skip.source.file: string
+.tests[].attempts[].skip.source.line: number
+.tests[].attempts[].skip: null
+.tests[].attempts[].snapshots[]
+.tests[].attempts[].status: string
+.tests[].attempts[].stderr.data: string
+.tests[].attempts[].stderr.encoding: string
+.tests[].attempts[].stdout.data: string
+.tests[].attempts[].stdout.encoding: string
+.tests[].attempts[].tags.area: string
+.tests[].attempts[].unit: null
+.tests[].attempts[].virtual_time[]
+.tests[].attempts[].warnings[]
+.tests[].bench: bool
+.tests[].decisive_attempt: number
+.tests[].fuzz: bool
+.tests[].id: string
+.tests[].kind: string
+.tests[].model: bool
+.tests[].module: string
+.tests[].name: string
+.tests[].owners[]
+.tests[].package: string
+.tests[].parent: null
+.tests[].parent: string
+.tests[].path[]
+.tests[].path[]: string
+.tests[].source.column: number
+.tests[].source.file: string
+.tests[].source.line: number
+.tests[].status: string
+.tests[].tasks: bool

@@ -1,0 +1,29 @@
+.format: string
+.ok: bool
+.why.bytes: number
+.why.crowded[]
+.why.cycles[]
+.why.events[]
+.why.events[].ago_ms: number
+.why.events[].at: string
+.why.events[].other: number
+.why.events[].task: number
+.why.events[].text: string
+.why.events[].what: string
+.why.holding[]
+.why.holding[].at: string
+.why.holding[].holds_up[]
+.why.holding[].holds_up[]: number
+.why.holding[].state: string
+.why.holding[].task: number
+.why.in_flight: number
+.why.lock_order[]
+.why.longest.at: string
+.why.longest.for: string
+.why.longest.ms: number
+.why.longest.task: number
+.why.memory[]
+.why.message: string
+.why.reason: string
+.why.requests[]
+.why.signature: string

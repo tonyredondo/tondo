@@ -1,0 +1,37 @@
+.format: string
+.ok: bool
+.tasks[]
+.tasks[].at: string
+.tasks[].cancelled: bool
+.tasks[].contexts[]
+.tasks[].contexts[].fields.id: string
+.tasks[].contexts[].name: string
+.tasks[].frames[]
+.tasks[].frames[].at: string
+.tasks[].frames[].bindings[]
+.tasks[].frames[].bindings[].name: string
+.tasks[].frames[].bindings[].parts[]
+.tasks[].frames[].bindings[].parts[].name: string
+.tasks[].frames[].bindings[].parts[].parts[]
+.tasks[].frames[].bindings[].parts[].parts[].name: string
+.tasks[].frames[].bindings[].parts[].parts[].parts[]
+.tasks[].frames[].bindings[].parts[].parts[].value: string
+.tasks[].frames[].bindings[].parts[].value: string
+.tasks[].frames[].bindings[].type: string
+.tasks[].frames[].bindings[].value: string
+.tasks[].frames[].frame: number
+.tasks[].id: number
+.tasks[].locks[]
+.tasks[].request: null
+.tasks[].runs: string
+.tasks[].spawned[]
+.tasks[].spawned[]: string
+.tasks[].stack[]
+.tasks[].stack[]: string
+.tasks[].state: string
+.tasks[].wait.for: string
+.tasks[].wait.ms: number
+.tasks[].wait.object: string
+.tasks[].wait.on[]
+.tasks[].wait.on[]: number
+.tasks[].wait: null

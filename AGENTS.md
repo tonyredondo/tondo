@@ -131,6 +131,10 @@ race with little CPU, which is where a failure otherwise shows hours later.
   `crates/tondo/tests/snapshots/std-api.txt`, which a test holds it to: a
   change to it on purpose records it again with
   `TONDO_UPDATE_API=1 cargo test -p tondo --test api standard_api`.
+- The formats others read, the report of a panic, a dump and the report of
+  `tondo test`, are recorded in `crates/tondo/tests/snapshots/formats`: a
+  change on purpose records them again with
+  `TONDO_UPDATE_FORMATS=1 cargo test -p tondo --test formats`.
 - The skill in `.agents/skills/tondo`, which `.claude/skills/tondo` links
   to, is `tondo guide --skill`: after changing the guide's overview, write
   it again with

@@ -1,0 +1,43 @@
+{
+  "code": "P0001",
+  "context": {
+    "id": "r-7"
+  },
+  "data": {
+    "index": 3,
+    "length": 2
+  },
+  "error_type": null,
+  "format": "tondo-panic-0.1/1",
+  "kind": "panic",
+  "message": "index 3 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end",
+  "name": "bounds",
+  "recovered": false,
+  "source": {
+    "column": 5,
+    "file": "falls.to",
+    "line": 14
+  },
+  "stack": [
+    {
+      "function": "total",
+      "source": {
+        "column": 5,
+        "file": "falls.to",
+        "line": 14
+      },
+      "task": 0,
+      "times": 1
+    },
+    {
+      "function": "main",
+      "source": {
+        "column": 15,
+        "file": "falls.to",
+        "line": 20
+      },
+      "task": 1,
+      "times": 1
+    }
+  ]
+}

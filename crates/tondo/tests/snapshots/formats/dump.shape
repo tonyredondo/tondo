@@ -1,0 +1,65 @@
+.counters[]
+.counters[].kind: string
+.counters[].name: string
+.counters[].unit: string
+.counters[].value: number
+.dump: number
+.events (varies)
+.frames.<address>.file: string
+.frames.<address>.function: string
+.frames.<address>.image: string
+.frames.<address>.inlined[]
+.frames.<address>.inlined[].file: string
+.frames.<address>.inlined[].function: string
+.frames.<address>.inlined[].line: number
+.frames.<address>.line: number
+.frames.<address>.offset: number
+.frames.<address>.type: string
+.heap.dropped: number
+.heap.rate: number
+.heap.samples (varies)
+.info.arguments[]
+.info.pid: number
+.info.probes: bool
+.info.program: string
+.info.uptime_ms: number
+.lock_order[]
+.message: string
+.reason: string
+.requests[]
+.served[]
+.sources: string
+.stopped: bool
+.tasks[]
+.tasks[].cancelled: bool
+.tasks[].contexts[]
+.tasks[].contexts[].fields.id: string
+.tasks[].contexts[].name: string
+.tasks[].id: number
+.tasks[].locks[]
+.tasks[].main: bool
+.tasks[].spawned[]
+.tasks[].spawned[]: string
+.tasks[].stack[]
+.tasks[].stack[]: string
+.tasks[].state: string
+.tasks[].wait.for: string
+.tasks[].wait.ms: number
+.tasks[].wait.object: string
+.tasks[].wait.on[]
+.tasks[].wait.on[]: number
+.time_ms: number
+.values[]
+.values[].at: string
+.values[].frame: number
+.values[].name: string
+.values[].parts[]
+.values[].parts[].name: string
+.values[].parts[].parts[]
+.values[].parts[].parts[].name: string
+.values[].parts[].parts[].parts[]
+.values[].parts[].parts[].value: string
+.values[].parts[].value: string
+.values[].task: number
+.values[].type: string
+.values[].value: string
