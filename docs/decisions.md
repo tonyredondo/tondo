@@ -5428,6 +5428,9 @@ stops between one project and the next, as the analysis of a project is what the
 anyway. Results in parts are there for the protocol more than for speed: `references` and
 `workspace/symbol` read an index in memory, so what takes long comes before them.
 
+`testing/editors/neovim.lua` drives a real Neovim, because the extension can hide what a client of the
+protocol needs. It caught nothing yet, and is there so that "any editor" stays true.
+
 The standard modules stay files by default, even with `workspace/textDocumentContent`: a virtual
 document is read-only to everything else the server offers, so it would lose hover and navigation
 inside them. `virtualStandardLibrary` is there for an editor that cannot read the cache.

@@ -257,10 +257,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p tondo
         working-directory: .
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb neovim
       - run: xvfb-run -a npm run test:editor
         env:
           TONDO_BIN: ${{ github.workspace }}/target/debug/tondo
+      # And in an editor with nothing of ours but the server.
+      - run: nvim --headless --clean -l testing/editors/neovim.lua target/debug/tondo
+        working-directory: .
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
