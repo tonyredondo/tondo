@@ -111,6 +111,9 @@ fn check_with<'a>(
         pacing_module: None,
         unrepeatable: HashMap::new(),
         checks_models: HashSet::new(),
+        calling: None,
+        calls: HashMap::new(),
+        test_calls: HashMap::new(),
         interpolating: false,
         script_bindings: Vec::new(),
         scripting: false,
@@ -880,6 +883,12 @@ struct Checker<'a> {
     /// The functions of `std.model` that make a test that calls them one
     /// that checks a model.
     checks_models: HashSet<FnId>,
+    /// The function whose body is being checked, and the functions each
+    /// body calls, and each test: a test that reaches `checks_models` through
+    /// its own functions checks a model too.
+    calling: Option<FnId>,
+    calls: HashMap<FnId, HashSet<FnId>>,
+    test_calls: HashMap<u32, HashSet<FnId>>,
     types: Types,
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
@@ -1448,6 +1457,7 @@ impl<'a> Checker<'a> {
         let main = match &module.test_package {
             Some(package) => {
                 functions.push(self.tests(module, package));
+                self.mark_models();
                 Some(FnId(functions.len() as u32 - 1))
             }
             None => main,
@@ -2587,6 +2597,29 @@ impl<'a> Checker<'a> {
 
     /// A provider or generator gives the same output for the same request,
     /// so it cannot call what reads the clock or the system's entropy.
+    /// The tests that check a model: those that call a function of
+    /// `checks_models`, or one of theirs that does, however deep.
+    fn mark_models(&mut self) {
+        let mut reach: HashSet<FnId> = self.checks_models.clone();
+        loop {
+            let more: Vec<FnId> = self
+                .calls
+                .iter()
+                .filter(|(caller, callees)| !reach.contains(caller) && callees.iter().any(|f| reach.contains(f)))
+                .map(|(caller, _)| *caller)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            reach.extend(more);
+        }
+        for (test, callees) in &self.test_calls {
+            if callees.iter().any(|f| reach.contains(f)) {
+                self.test_nodes[*test as usize].model = true;
+            }
+        }
+    }
+
     fn repeatable(&mut self, id: FnId, span: Span) {
         if let Some(name) = self.unrepeatable.get(&id) {
             let what = format!("{name}, which gives another value each time,");
@@ -6513,6 +6546,7 @@ impl<'a> Checker<'a> {
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
         self.leaving = Some(f.name.span);
+        self.calling = Some(id);
         let signature = self.signatures[id.0 as usize].clone();
         let scope = self.fn_scopes[id.0 as usize].clone();
         let trait_default = scope.self_type.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Param(_)));
@@ -6599,6 +6633,7 @@ impl<'a> Checker<'a> {
         self.type_params = outer_types;
         self.self_type = outer_self;
         self.implementing = outer_implementing;
+        self.calling = None;
         let result = match cx.error {
             Some(error) if main => {
                 let result = self.types.intern(TyKind::Result(Ty::UNIT, error));
@@ -16442,12 +16477,12 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
-        if let Callee::Fn(id) = target.callee
-            && self.checks_models.contains(&id)
-            && cx.test_member
-            && let Some(test) = self.measuring
-        {
-            self.test_nodes[test as usize].model = true;
+        if let Callee::Fn(id) = target.callee {
+            match (self.measuring, self.calling) {
+                (Some(test), _) => _ = self.test_calls.entry(test).or_default().insert(id),
+                (None, Some(caller)) => _ = self.calls.entry(caller).or_default().insert(id),
+                (None, None) => {}
+            }
         }
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
         if let Callee::Fn(id) = callee {
