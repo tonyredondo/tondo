@@ -28,6 +28,8 @@ pub type Bad = {
     i: Map[Float, Int32] = [:]
     @protobuf.Field(6)
     j: Mood = Mood.Calm
+    @protobuf.Field(7, encoding: protobuf.Encoding.Zigzag)
+    k: Int = 0
 }
 
 fn main() {}
@@ -41,3 +43,4 @@ fn main() {}
 // expect-error: E1910 the field `g`: a `uint64` has no zigzag encoding
 // expect-error: E1910 the field `h`: `Encoding.Wrapper` goes with an optional value, `T?`
 // expect-error: E1910 the field `i`: the key of a map is an integer, `Bool` or `String`
+// expect-error: E1910 the field `k`: there is no `Encoding.Zigzag`: write `Encoding.ZigZag`

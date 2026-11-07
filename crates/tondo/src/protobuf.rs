@@ -223,6 +223,9 @@ impl Generator<'_> {
     /// The kind of a value of a type, written with an encoding; or why
     /// protobuf has none for it.
     fn kind(&self, ty: &ast::TypeExpr, encoding: &str) -> Result<Kind, String> {
+        if let Some(message) = not_an_encoding(encoding) {
+            return Err(message);
+        }
         let plain = |name: &str| matches!(&ty.kind, ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 && segments[0].name == name);
         let bytes = matches!(&ty.kind, ast::TypeKind::Path { segments, args } if segments.len() == 1 && segments[0].name == "Array" && matches!(&args[..], [inner] if matches!(&inner.kind, ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 && segments[0].name == "Byte")));
         let scalar = |default: &'static str, zigzag: Option<&'static str>, fixed: Option<&'static str>| match encoding {
@@ -347,6 +350,9 @@ impl Generator<'_> {
     /// The shape of a field.
     fn shape(&self, field: &ast::FieldDecl, annotated: &Annotated) -> Result<Shape, String> {
         let encoding = annotated.encoding.as_str();
+        if let Some(message) = not_an_encoding(encoding) {
+            return Err(message);
+        }
         let ty = &field.ty;
         if let Some((module, name)) = self.standard(ty)
             && module == "protobuf"
@@ -1042,4 +1048,17 @@ fn json_arm(keys: &str, kind: &Kind, path: &str, local: &str, optional: bool) ->
         (_, true) => format!("                {keys} => {local} = some({read})\n"),
         (_, false) => format!("                {keys} => {local} = {read}\n"),
     }
+}
+
+/// Why a name is none of the variants of `protobuf.Encoding`, with the one
+/// meant when only its case differs.
+fn not_an_encoding(name: &str) -> Option<String> {
+    const ENCODINGS: [&str; 7] = ["Default", "ZigZag", "Fixed", "Group", "Wrapper", "Struct", "List"];
+    if ENCODINGS.contains(&name) {
+        return None;
+    }
+    Some(match ENCODINGS.iter().find(|encoding| encoding.eq_ignore_ascii_case(name)) {
+        Some(meant) => format!("there is no `Encoding.{name}`: write `Encoding.{meant}`"),
+        None => format!("there is no `Encoding.{name}`: the encodings are `{}`", ENCODINGS.join("`, `")),
+    })
 }
