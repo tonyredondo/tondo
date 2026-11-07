@@ -81,10 +81,7 @@ fn steps(lock: Lock, grantLooks: Bool): Array[model.Step[Lock]] {
                 var first = [t]
                 first.extend(lock.waiting.items())
                 let waiting = if task.woken { model.Queue(first) } else { lock.waiting.push(t) }
-                let parks = at(
-                    lock with { parked: true, waiting: waiting },
-                    task with { pc: Pc.Waits },
-                )
+                let parks = at(lock with { parked: true, waiting }, task with { pc: Pc.Waits })
                 next.push(model.step("park", parks))
                 if task.woken {
                     next.push(model.step("park", parks with { starving: true }))

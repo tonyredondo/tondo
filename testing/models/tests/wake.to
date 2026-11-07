@@ -86,7 +86,7 @@ fn work(pool: Pool): Bool {
 
 // One that sleeps, told to look.
 fn told(pool: Pool, v: Int, seeker: Bool): Pool {
-    changed(pool, v, worker(pool, v) with { phase: Phase.Look, timed: false, seeker: seeker })
+    changed(pool, v, worker(pool, v) with { phase: Phase.Look, timed: false, seeker })
 }
 
 // Found in the queue, or taken from another worker's: if it was the one
@@ -296,7 +296,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         some(before) => it.own.add(before)
                         none => it.own
                     }
-                    let woke = it with { next: some(task), own: own }
+                    let woke = it with { next: some(task), own }
                     next.push(
                         model.step(
                             "notify",

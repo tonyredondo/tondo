@@ -114,7 +114,7 @@ fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
             } else {
                 now.fired
             }
-            next.push(model.step("close", becomes(closed) with { fired: fired }))
+            next.push(model.step("close", becomes(closed) with { fired }))
         }
     }
     // A cancellation claims the wait like any operation.

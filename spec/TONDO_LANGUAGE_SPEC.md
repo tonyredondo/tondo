@@ -2053,6 +2053,8 @@ El resultado es un record nuevo. Los campos no mencionados conservan su valor. E
 - Debe actualizar al menos un campo; `value with {}` no es una forma alternativa de copiar.
 - No puede actualizar campos privados desde otro módulo.
 - Cada nombre debe ser un campo existente y puede aparecer como máximo una vez.
+- Admite la forma corta del literal: `lock with { parked: true, waiting }` es
+  `lock with { parked: true, waiting: waiting }`, con el binding `waiting`.
 - Evalúa el record base antes que los nuevos valores.
 - Evalúa actualizaciones de arriba abajo.
 - No modifica el record original cuando este cumple `Copy`.

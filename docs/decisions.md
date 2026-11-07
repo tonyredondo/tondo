@@ -5483,3 +5483,11 @@ that nothing fixes, is `Never`, which is the one answer that fits any call; and 
 there is the closure that calls it, as the closure written by hand already was. Inference otherwise
 still refuses to choose.
 
+
+## `with` takes a field named alone
+
+`user with { name }` is `user with { name: name }`, as the literal `User { name }` already was. The
+two forms differ in nothing but whether the record is new, and the shorter one came naturally in
+both: writing the models of the runtime, three updates computed a field's new value in a binding of
+its name and then had to spell it twice. A field whose name is a keyword still needs its value, as
+in a literal.

@@ -57,9 +57,11 @@ fn main() {
     var ada = User("Ada")
     ada.birthday()
     let older = ada with { age: 40 }            // a copy with changes
+    let age = 41
+    let later = ada with { age }                // `age: age`, as in a literal
     let id = UserId(7)
     let pair: Pair = (id.value, "seven")
-    console.println("{ada.describe()} {older.age} {pair.1}")
+    console.println("{ada.describe()} {older.age} {later.age} {pair.1}")
 }
 ```
 

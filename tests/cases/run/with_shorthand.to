@@ -1,0 +1,18 @@
+// `with` takes a field named alone, as a record literal does: the binding of
+// that name is its new value.
+
+import std.console
+
+type Lock = {
+    parked: Bool
+    waiting: Array[Int]
+}
+
+fn main() {
+    let lock = Lock { parked: false, waiting: [] }
+    let waiting = [1, 2]
+    let parked = lock with { parked: true, waiting }
+    console.println("{parked.parked} {parked.waiting} {lock.waiting}")
+}
+
+// expect-stdout: true [1, 2] []

@@ -12825,7 +12825,7 @@ impl<'a> Checker<'a> {
 
     fn with_expr(&mut self, cx: &mut FnCx, base: &ast::Expr, updates: &[ast::FieldInit], span: Span) -> hir::Expr {
         let base = self.expr(cx, base, None);
-        self.update(cx, base, updates, false, span)
+        self.update(cx, base, updates, true, span)
     }
 
     /// `base` with the fields of `updates` changed; with `shorthand`, a
