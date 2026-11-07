@@ -48,7 +48,7 @@ while read -r said; do
       > "$spec.out" 2>&1 || true
     if grep -q "No error has been found" "$spec.out"; then
       tlc=holds
-    elif grep -q -e "Temporal properties were violated" -e "is violated by the initial state" "$spec.out"; then
+    elif grep -q -e "Temporal properties were violated" -e "is violated" "$spec.out"; then
       tlc=fails
     else
       cat "$spec.out"
