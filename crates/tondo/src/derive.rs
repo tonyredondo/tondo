@@ -71,6 +71,7 @@ impl Kind {
             (Kind::Serialization, "toml" | "yaml" | "messagepack" | "cbor") => name == "Value",
             (Kind::Serialization, "serialization") => name == "Bytes",
             (Kind::Serialization, "time") => matches!(name, "DateTime" | "ZonedDateTime"),
+            (Kind::Serialization, "model") => matches!(name, "Queue" | "Bag"),
             (Kind::Reflect, "reflect") => name == "Value",
             (Kind::Reflect, "json" | "yaml" | "toml") => name == "Value",
             (Kind::Reflect, "url") => name == "Url",
@@ -589,7 +590,7 @@ impl Context<'_> {
                             // Reflection carries what `std.sync` shares as it is,
                             // and the collections of `std.model` as their items.
                             let opaque = self.kind == Kind::Reflect && *standard == "sync";
-                            let holds = self.kind == Kind::Reflect && *standard == "model" && each(args);
+                            let holds = *standard == "model" && each(args);
                             return (args.is_empty() || opaque || holds) && self.kind.standard(standard, name);
                         }
                         match self.paths.iter().position(|p| p.iter().map(String::as_str).eq(path.iter().copied())) {

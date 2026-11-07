@@ -26,6 +26,8 @@
 // }
 // ```
 
+import std.fs
+import std.hash
 import std.internal.model as modelNative
 import std.json
 import std.reflect
@@ -139,6 +141,20 @@ impl[T: reflect.Reflect] reflect.Reflect for Queue[T] {
     }
 }
 
+// Written as its items, the first first.
+impl[T: serialization.Encode] serialization.Encode for Queue[T] {
+    fn encode[O: serialization.Sink](self, out: O) {
+        self.items().encode(out)
+    }
+}
+
+impl[T: serialization.Decode] serialization.Decode for Queue[T] {
+    fn decode[I: serialization.Source](input: I, first: serialization.Event): Queue[T] ! serialization.Error {
+        let items: Array[T] = serialization.Decode.decode[Array[T]](input, first)?
+        Queue(items)
+    }
+}
+
 /// A queue of the items, the first first.
 pub fn Queue[T](items: Array[T]): Queue[T] {
     var queue: Queue[T] = Queue.Empty
@@ -232,6 +248,19 @@ impl[T: reflect.Reflect] reflect.Reflect for Bag[T] {
 
     fn reflectElements(self): Array[reflect.Value]? {
         some(self.items().map((item) { reflect.valueOf(item) }))
+    }
+}
+
+impl[T: serialization.Encode] serialization.Encode for Bag[T] {
+    fn encode[O: serialization.Sink](self, out: O) {
+        self.items().encode(out)
+    }
+}
+
+impl[T: serialization.Decode] serialization.Decode for Bag[T] {
+    fn decode[I: serialization.Source](input: I, first: serialization.Event): Bag[T] ! serialization.Error {
+        let items: Array[T] = serialization.Decode.decode[Array[T]](input, first)?
+        Bag { held: Queue(items) }
     }
 }
 
@@ -444,7 +473,10 @@ type Reached = {
 
 /// The states of a model and its steps.
 type Graph[S] = {
+    /// In memory: the states, by number. On disk, none: `disk` says where.
     states: Array[S]
+    count: Int
+    disk: Disk?
     edges: Array[Array[Edge]]
     reached: Array[Reached]
     depth: Int
@@ -454,16 +486,70 @@ fn shown[S: reflect.Reflect](value: S): String {
     "{reflect.valueOf(value)}"
 }
 
-fn visits[S: reflect.Reflect](graph: Graph[S], end: Int): Array[Visit] {
+fn visits[S: reflect.Reflect + serialization.Decode](graph: Graph[S], end: Int): Array[Visit] {
     var path: Array[Visit] = []
     var at = end
     for {
         let came = graph.reached[at]
-        path.push(Visit { step: came.name, state: shown(graph.states[at]) })
+        path.push(Visit { step: came.name, state: shown(stateOf(graph, at)) })
         if came.from < 0 {
             return path.reversed()
         }
         at = came.from
+    }
+}
+
+/// Where the states of a model too big to hold go: a file for each level of
+/// the search, as JSON a line each, and of each state in memory only its
+/// fingerprint and what came before it, as TLC keeps them.
+type Disk = {
+    directory: String
+    /// The number of the first state of each level.
+    starts: Array[Int]
+}
+
+fn levelFile(directory: String, level: Int): String {
+    "{directory}/states-{level}.jsonl"
+}
+
+/// The state numbered `at`, from memory or from its level's file.
+fn stateOf[S: serialization.Decode](graph: Graph[S], at: Int): S {
+    match graph.disk {
+        none => graph.states[at]
+        some(disk) => {
+            var level = 0
+            for level + 1 < disk.starts.length() and disk.starts[level + 1] <= at {
+                level += 1
+            }
+            levelStates[S](disk.directory, level)[at - disk.starts[level]]
+        }
+    }
+}
+
+/// The states of a level, as `exploreOnDisk` wrote them.
+fn levelStates[S: serialization.Decode](directory: String, level: Int): Array[S] {
+    let text = fs.readText(levelFile(directory, level)).unwrapOr("")
+    var states: Array[S] = []
+    for line in text.lines() {
+        match json.decode[S](line) {
+            ok(read) => states.push(read)
+            err(error) => panic("a state written to {levelFile(directory, level)} cannot be read: {error}")
+        }
+    }
+    states
+}
+
+/// What `of` says of each state, in order of their numbers.
+fn eachState[S: serialization.Decode, T](graph: Graph[S], of: fn(S): T): Array[T] {
+    match graph.disk {
+        none => graph.states.map(of)
+        some(disk) => {
+            var all: Array[T] = []
+            for level in 0..disk.starts.length() {
+                all.extend(levelStates[S](disk.directory, level).map(of))
+            }
+            all
+        }
     }
 }
 
@@ -474,7 +560,10 @@ fn visits[S: reflect.Reflect](graph: Graph[S], end: Int): Array[Visit] {
 /// breaks, with the loop that breaks it. A step in `fair` comes as it says
 /// rather than be put off for ever. `symmetry` gives the one state that
 /// stands for all those it equals, as the same with the tasks numbered
-/// otherwise, so that only it is gone through.
+/// otherwise, so that only it is gone through. `workers` tasks work out what
+/// follows each state at once, with the same result as one. With `disk`, a
+/// directory, the states go there, a level of the search at a time, and in
+/// memory stay only a fingerprint of each, as TLC keeps them, and the steps.
 ///
 /// A run takes a step whenever one is possible; one that ends stays at its
 /// last state.
@@ -493,28 +582,32 @@ fn visits[S: reflect.Reflect](graph: Graph[S], end: Int): Array[Visit] {
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn check[S: Key + reflect.Reflect](
+pub fn check[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]] = [],
     fair: Array[Fair] = [],
     ends: (fn(S): Bool)? = none,
     symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
 ): Checked ! Violation {
-    reported("check", checking(start, steps, holds, fair, ends, symmetry))
+    reported("check", checking(start, steps, holds, fair, ends, symmetry, workers, disk))
 }
 
-fn checking[S: Key + reflect.Reflect](
+fn checking[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]],
     fair: Array[Fair],
     ends: (fn(S): Bool)?,
     symmetry: (fn(S): S)?,
+    workers: Int,
+    disk: String?,
 ): Checked ! Violation {
-    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, holds, ends, symmetry)?
+    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, holds, ends, symmetry, workers, disk)?
     properties(graph, holds, fair)?
-    Checked { states: graph.states.length(), steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never: [] }
+    Checked { states: graph.count, steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never: [] }
 }
 
 /// Tells `tondo test` what a model came to, in a build of tests, and gives it
@@ -536,12 +629,12 @@ fn reported(kind: String, result: Checked ! Violation): Checked ! Violation {
 }
 
 /// What comes of the properties that are checked once every state is known.
-fn properties[S: reflect.Reflect](graph: Graph[S], holds: Array[Property[S]], fair: Array[Fair]): Unit ! Violation {
+fn properties[S: reflect.Reflect + serialization.Decode](graph: Graph[S], holds: Array[Property[S]], fair: Array[Fair]): Unit ! Violation {
     for property in holds {
         match property.kind {
             Kind.Invariant(_) => {}
             Kind.Reachable(goal) => {
-                match stranded(graph.edges, graph.states.map(goal)) {
+                match stranded(graph.edges, eachState(graph, goal)) {
                     some(at) => fail Violation {
                         what: "`{property.name}` is out of reach from here"
                         path: visits(graph, at)
@@ -587,7 +680,7 @@ fn properties[S: reflect.Reflect](graph: Graph[S], holds: Array[Property[S]], fa
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn machine[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode, X](
+pub fn machine[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode, E: reflect.Reflect + serialization.Decode, X](
     start: S,
     apply: fn(S, E): S ! X,
     events: (fn(S): Array[E])? = none,
@@ -595,11 +688,13 @@ pub fn machine[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Deco
     fair: Array[Fair] = [],
     ends: (fn(S): Bool)? = none,
     symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
 ): Checked ! Violation {
-    reported("machine", machining(start, apply, events, holds, fair, ends, symmetry))
+    reported("machine", machining(start, apply, events, holds, fair, ends, symmetry, workers, disk))
 }
 
-fn machining[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode, X](
+fn machining[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode, E: reflect.Reflect + serialization.Decode, X](
     start: S,
     apply: fn(S, E): S ! X,
     events: (fn(S): Array[E])?,
@@ -607,6 +702,8 @@ fn machining[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode
     fair: Array[Fair],
     ends: (fn(S): Bool)?,
     symmetry: (fn(S): S)?,
+    workers: Int,
+    disk: String?,
 ): Checked ! Violation {
     let all: Array[E] = match events {
         some(_) => []
@@ -636,7 +733,7 @@ fn machining[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode
         }
         next
     }
-    let graph = explore(start, steps, holds, ends, symmetry)?
+    let graph = explore(start, steps, holds, ends, symmetry, workers, disk)?
     properties(graph, holds, fair)?
     for out in graph.edges {
         for edge in out {
@@ -644,7 +741,7 @@ fn machining[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode
         }
     }
     let never = all.map((event) { shown(event) }).filter((name) { not named.contains(name) })
-    Checked { states: graph.states.length(), steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never }
+    Checked { states: graph.count, steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never }
 }
 
 /// Every value of `T` there is: each variant of an enum with each value of
@@ -777,12 +874,14 @@ pub fn expect(checked: Checked ! Violation) {
     }
 }
 
-fn explore[S: Key + reflect.Reflect](
+fn explore[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
     start: S,
     steps: fn(S): Array[Step[S]] ! String,
     holds: Array[Property[S]],
     ends: (fn(S): Bool)?,
     symmetry: (fn(S): S)?,
+    workers: Int,
+    disk: String?,
 ): Graph[S] ! Violation {
     let canonical = (raw: S) {
         match symmetry {
@@ -790,13 +889,171 @@ fn explore[S: Key + reflect.Reflect](
             none => raw
         }
     }
+    let canonicalSteps = (current: S): Array[Step[S]] ! String {
+        steps(current)?.map((step) { step with { state: canonical(step.state) } })
+    }
+    match disk {
+        some(directory) => return exploreOnDisk(canonical(start), canonicalSteps, holds, ends, workers, directory)
+        none => {}
+    }
     let first = canonical(start)
     var numbers: Map[S, Int] = [:]
     _ = numbers.insert(first, 0)
-    var graph = Graph[S] { states: [first], edges: [], reached: [Reached { from: -1, name: "" }], depth: 0 }
+    var graph = Graph[S] { states: [first], count: 1, disk: none, edges: [], reached: [Reached { from: -1, name: "" }], depth: 0 }
     var depths = [0]
-    var at = 0
-    for at < graph.states.length() {
+    var next = 0
+    // The states found and not gone through yet, as a batch: what follows
+    // each is worked out by `workers` tasks, and taken in order, so that
+    // the result is the same with one.
+    for next < graph.states.length() {
+        let (from, end) = (next, graph.states.length())
+        next = end
+        let found = ahead(graph.states, from, end, canonicalSteps, workers)
+        for at in from..end {
+            explored(var graph, var numbers, var depths, at, found[at - from], holds, ends)?
+        }
+    }
+    graph
+}
+
+/// `explore` with the states on disk, a level of the search at a time, and in
+/// memory only their fingerprints, what came before each, and the steps.
+fn exploreOnDisk[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+    first: S,
+    steps: fn(S): Array[Step[S]] ! String,
+    holds: Array[Property[S]],
+    ends: (fn(S): Bool)?,
+    workers: Int,
+    directory: String,
+): Graph[S] ! Violation {
+    let failed = (why: String) {
+        Violation { what: "the states cannot go to {directory}: {why}", path: [Visit { step: "", state: shown(first) }], loop: [] }
+    }
+    if not fs.exists(directory) {
+        match fs.createDirectory(directory) {
+            ok(_) => {}
+            err(error) => fail failed("{error}")
+        }
+    }
+    // What an earlier search left there.
+    for name in fs.list(directory).unwrapOr([]) {
+        if name.startsWith("states-") {
+            _ = fs.remove("{directory}/{name}")
+        }
+    }
+    let print = (value: S) { hash.xxhash64(json.encode(value).bytes()) }
+    var prints: Map[UInt, Int] = [:]
+    _ = prints.insert(print(first), 0)
+    match fs.writeText(levelFile(directory, 0), "{json.encode(first)}\n") {
+        ok(_) => {}
+        err(error) => fail failed("{error}")
+    }
+    var starts = [0]
+    var graph = Graph[S] {
+        states: []
+        count: 1
+        disk: some(Disk { directory, starts })
+        edges: []
+        reached: [Reached { from: -1, name: "" }]
+        depth: 0
+    }
+    var level = 0
+    for {
+        let current = levelStates[S](directory, level)
+        let base = starts[level]
+        let found = ahead(current, 0, current.length(), steps, workers)
+        var lines: Array[String] = []
+        for index in 0..current.length() {
+            let at = base + index
+            let here = current[index]
+            for property in holds {
+                match property.kind {
+                    Kind.Invariant(predicate) if not predicate(here) => {
+                        fail Violation { what: "`{property.name}` does not hold", path: visits(graph, at), loop: [] }
+                    }
+                    _ => {}
+                }
+            }
+            let next = match found[index] {
+                ok(next) => next
+                err(why) => fail Violation { what: why, path: visits(graph, at), loop: [] }
+            }
+            match ends {
+                some(allowed) if next.isEmpty() and not allowed(here) => {
+                    fail Violation { what: "nothing can follow here", path: visits(graph, at), loop: [] }
+                }
+                _ => {}
+            }
+            var out: Array[Edge] = []
+            for step in next {
+                let fingerprint = print(step.state)
+                let to = match prints.get(fingerprint) {
+                    some(to) => to
+                    none => {
+                        let to = graph.count
+                        _ = prints.insert(fingerprint, to)
+                        graph.count += 1
+                        graph.reached.push(Reached { from: at, name: step.name })
+                        lines.push(json.encode(step.state))
+                        to
+                    }
+                }
+                out.push(Edge { name: step.name, to })
+            }
+            graph.edges.push(out)
+        }
+        if lines.isEmpty() {
+            return graph
+        }
+        match fs.writeText(levelFile(directory, level + 1), "{lines.join("\n")}\n") {
+            ok(_) => {}
+            err(error) => fail failed("{error}")
+        }
+        starts.push(base + current.length())
+        graph.disk = some(Disk { directory, starts })
+        graph.depth = level + 1
+        level += 1
+    }
+}
+
+/// What follows each state from `from` to `end`, by `workers` tasks.
+fn ahead[S](
+    states: Array[S],
+    from: Int,
+    end: Int,
+    steps: fn(S): Array[Step[S]] ! String,
+    workers: Int,
+): Array[Array[Step[S]] ! String] {
+    let ids: Array[Int] = (from..end).collect()
+    if workers <= 1 or ids.length() < 2 {
+        return successors(states, ids, steps)
+    }
+    var group = Group[Array[Array[Step[S]] ! String]]()
+    for chunk in ids.chunks((ids.length() + workers - 1) / workers) {
+        group.add(spawn successors(states, chunk, steps))
+    }
+    group.wait().flatMap((part) { part })
+}
+
+fn successors[S](states: Array[S], ids: Array[Int], steps: fn(S): Array[Step[S]] ! String): Array[Array[Step[S]] ! String] {
+    var found: Array[Array[Step[S]] ! String] = []
+    for id in ids {
+        found.push(steps(states[id]))
+    }
+    found
+}
+
+/// One state gone through: what must hold of it, and the states that follow.
+fn explored[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](
+    graph: var Graph[S],
+    numbers: var Map[S, Int],
+    depths: var Array[Int],
+    at: Int,
+    found: Array[Step[S]] ! String,
+    holds: Array[Property[S]],
+    ends: (fn(S): Bool)?,
+): Unit ! Violation {
+    {
         let current = graph.states[at]
         for property in holds {
             match property.kind {
@@ -806,7 +1063,7 @@ fn explore[S: Key + reflect.Reflect](
                 _ => {}
             }
         }
-        let next = match steps(current) {
+        let next = match found {
             ok(next) => next
             err(why) => fail Violation { what: why, path: visits(graph, at), loop: [] }
         }
@@ -818,13 +1075,14 @@ fn explore[S: Key + reflect.Reflect](
         }
         var out: Array[Edge] = []
         for step in next {
-            let reached = canonical(step.state)
+            let reached = step.state
             let to = match numbers.get(reached) {
                 some(to) => to
                 none => {
                     let to = graph.states.length()
                     _ = numbers.insert(reached, to)
                     graph.states.push(reached)
+                    graph.count += 1
                     graph.reached.push(Reached { from: at, name: step.name })
                     depths.push(depths[at] + 1)
                     graph.depth = graph.depth.max(depths[at] + 1)
@@ -834,9 +1092,7 @@ fn explore[S: Key + reflect.Reflect](
             out.push(Edge { name: step.name, to })
         }
         graph.edges.push(out)
-        at += 1
     }
-    graph
 }
 
 /// For each state, the states with a step to it.
@@ -1074,12 +1330,12 @@ type Product = {
 }
 
 /// Checks a property of what comes later: fails with a run that breaks it.
-fn later[S: reflect.Reflect](graph: Graph[S], term: Term[S], name: String, fair: Array[Fair]): Unit ! Violation {
+fn later[S: reflect.Reflect + serialization.Decode](graph: Graph[S], term: Term[S], name: String, fair: Array[Fair]): Unit ! Violation {
     var formulas = Formulas[S] { ops: [], numbers: [:], atoms: [] }
     let root = normal(var formulas, term, true)
     let nodes = automaton(formulas, root)
     // What each atom says of each state, once.
-    let values = graph.states.map((at) { formulas.atoms.map((predicate) { predicate(at) }) })
+    let values = eachState(graph, (current: S) { formulas.atoms.map((predicate) { predicate(current) }) })
     let fits = (at: Int, node: Int) {
         sorted(nodes[node].old).all((id) {
             match formulas.ops[id] {
@@ -1149,13 +1405,13 @@ fn later[S: reflect.Reflect](graph: Graph[S], term: Term[S], name: String, fair:
     match fairLoop(product, accepting, fair, enabled) {
         some(loop) => {
             let visit = (node: Int, step: String) {
-                Visit { step: if step.isEmpty() { "(stays)" } else { step }, state: shown(graph.states[product.states[node]]) }
+                Visit { step: if step.isEmpty() { "(stays)" } else { step }, state: shown(stateOf(graph, product.states[node])) }
             }
             var path: Array[Visit] = []
             var back = loop[0].0
             for {
                 let came = product.reached[back]
-                path.push(if came.from < 0 { Visit { step: "", state: shown(graph.states[product.states[back]]) } } else { visit(back, came.name) })
+                path.push(if came.from < 0 { Visit { step: "", state: shown(stateOf(graph, product.states[back])) } } else { visit(back, came.name) })
                 if came.from < 0 {
                     break
                 }
@@ -1406,11 +1662,11 @@ fn marked(code: fn(), observe: fn(String)) {
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn follows[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
+pub fn follows[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
     reported("follows", following(start, steps, code))
 }
 
-fn following[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
+fn following[S: Key + reflect.Reflect + serialization.Encode + serialization.Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
     let taken = sync.Queue[String]()
     marked(code, (step: String) { taken.push(step) })
     var now: Map[S, Array[Visit]] = [:]
@@ -1437,7 +1693,7 @@ fn following[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], c
         now = next
     }
     // The steps of the model that this run never took.
-    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, [], none, none)?
+    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, [], none, none, 1, none)?
     var named: Array[String] = []
     for out in graph.edges {
         for edge in out {
@@ -1446,7 +1702,7 @@ fn following[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], c
             }
         }
     }
-    Checked { states: graph.states.length(), steps: marks.length(), depth: marks.length(), never: named }
+    Checked { states: graph.count, steps: marks.length(), depth: marks.length(), never: named }
 }
 
 /// Runs `code` and holds what `holds` says to the state `observe` gives at the

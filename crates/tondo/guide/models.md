@@ -161,6 +161,12 @@ A state is a `Key`: an `Array` is not one, so a queue in a state is a
 for all those it equals, as the same with its tasks numbered otherwise, so that
 only it is gone through. `model.every[T]()` gives every value of a type.
 
+A big model goes faster with `workers: 8`, tasks that work out what follows
+each state at once, with the same result as one; and one too big for memory
+goes to `disk: some("target/model")`, where its states are written a level of
+the search at a time, with only a fingerprint of each kept in memory, as TLC
+does.
+
 ## Running them
 
 - `tondo test --models` runs the tests that check a model; `--schedules all`

@@ -6941,15 +6941,17 @@ pub type Step[S] = { name: String, state: S }
 pub type Checked = { states: Int, steps: Int, depth: Int, never: Array[String] }
 pub type Visit = { step: String, state: String }
 pub type Violation = { what: String, path: Array[Visit], loop: Array[Visit] }
-pub fn check[S: Key + Reflect](
+pub fn check[S: Key + Reflect + Encode + Decode](
     start: S,
     steps: fn(S): Array[Step[S]],
     holds: Array[Property[S]] = [],
     fair: Array[Fair] = [],
     ends: (fn(S): Bool)? = none,
     symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
 ): Checked ! Violation
-pub fn machine[S: Key + Reflect, E: Reflect + Decode, X](
+pub fn machine[S: Key + Reflect + Encode + Decode, E: Reflect + Decode, X](
     start: S,
     apply: fn(S, E): S ! X,
     events: (fn(S): Array[E])? = none,
@@ -6957,8 +6959,10 @@ pub fn machine[S: Key + Reflect, E: Reflect + Decode, X](
     fair: Array[Fair] = [],
     ends: (fn(S): Bool)? = none,
     symmetry: (fn(S): S)? = none,
+    workers: Int = 1,
+    disk: String? = none,
 ): Checked ! Violation
-pub fn follows[S: Key + Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
+pub fn follows[S: Key + Reflect + Encode + Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
 pub fn watch[S: Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation
 pub fn mark(step: String)
 pub fn expect(checked: Checked ! Violation)
@@ -6972,7 +6976,12 @@ camino más corto. Después comprueba lo que viene más tarde, y falla con un
 recorrido que lo rompe: el camino hasta un ciclo y el ciclo. Un recorrido da un
 paso siempre que hay alguno posible, y uno sin pasos se queda en su último
 estado. `symmetry` da el estado que representa a todos los que equivale, como el
-mismo con las tareas numeradas de otro modo, y solo se recorre ese.
+mismo con las tareas numeradas de otro modo, y solo se recorre ese. `workers`
+tareas calculan a la vez lo que sigue a cada estado, con el mismo resultado que
+una. Con `disk`, un directorio, los estados van allí, un nivel de la búsqueda cada
+vez, y en memoria queda solo una huella de cada uno, de 64 bits, y los pasos entre
+ellos: dos estados distintos con la misma huella contarían como uno, con la
+probabilidad de una colisión de 64 bits, como en TLC.
 
 Las propiedades son `always(p)`, que se cumple en todo estado alcanzado;
 `eventually(p)`, que todo recorrido llega a un estado donde se cumple;

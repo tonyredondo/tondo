@@ -14,9 +14,22 @@
 // expect-stdout:   release: Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
 // expect-stdout:   and then round for ever:
 // expect-stdout:   (stays): Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
+// expect-stdout: in parallel: 9 states
+// expect-stdout: on disk: 16 states
+// expect-stdout: next on disk: `1 holds it next, always` does not hold
+// expect-stdout:   start: Turns { holder: none, waiting: Queue([]), done: Bag([]) }
+// expect-stdout:   ask 1: Turns { holder: none, waiting: Queue([1]), done: Bag([]) }
+// expect-stdout:   ask 2: Turns { holder: none, waiting: Queue([1, 2]), done: Bag([]) }
+// expect-stdout:   grant: Turns { holder: some(1), waiting: Queue([2]), done: Bag([]) }
+// expect-stdout:   release: Turns { holder: none, waiting: Queue([2]), done: Bag([1]) }
+// expect-stdout:   grant: Turns { holder: some(2), waiting: Queue([]), done: Bag([1]) }
+// expect-stdout:   release: Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
+// expect-stdout:   and then round for ever:
+// expect-stdout:   (stays): Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
 // expect-stdout: every light: 3
 // expect-stdout: `Int` has no end, so its values cannot all be gone through
 import std.console
+import std.fs
 import std.model
 
 // Two tasks ask for a lock, in either order, and take turns at it: which
@@ -89,6 +102,12 @@ fn main() {
     say("until", model.check(start, steps, holds: [model.temporal(once, name: "1 holds it until done")]))
     let never = model.state(holds).next().always()
     say("next", model.check(start, steps, holds: [model.temporal(never, name: "1 holds it next, always")]))
+    // The same with four tasks at once, and with the states on disk.
+    say("in parallel", model.check(start, steps, holds: [both], symmetry: some(mirror), workers: 4))
+    let directory = fs.createTemporaryDirectory().unwrapOr("model-states")
+    say("on disk", model.check(start, steps, holds: [both], disk: some(directory)))
+    say("next on disk", model.check(start, steps, holds: [model.temporal(never, name: "1 holds it next, always")], disk: some(directory), workers: 2))
+    _ = fs.remove(directory, recursive: true)
     match model.every[Light]() {
         ok(all) => console.println("every light: {all.length()}")
         err(why) => console.println(why)
