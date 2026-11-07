@@ -22,7 +22,7 @@ tondo completions zsh             what bash, zsh or fish completes of tondo
 tondo check [<path>]              diagnostics only, each with its code and repair;
                                   of a project, of its tests too once its code is right
 tondo fix [<path>]                apply the compiler's safe repairs, then check
-tondo fmt <file.to>...            canonical layout; --check changes nothing
+tondo fmt <file.to>...            canonical layout, naming the files it changed; --check changes nothing
 tondo fmt --compact <file.to>     the same code in about 15% fewer tokens
 tondo explain E1102               what an error, warning or panic code means
 tondo model apply                 write and run the test of a state machine, with no model to write
