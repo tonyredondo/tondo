@@ -480,7 +480,10 @@ notebooks, que Tondo no tiene. Cada respuesta se ajusta a lo que el editor dijo 
 petición que el editor cancela antes de su turno no se hace, y una de un documento
 entero con un cambio detrás responde `ContentModified`. Los cambios llegan por partes,
 y las carpetas, los archivos que el editor crea, borra o renombra y la configuración
-(`tondo.lsp`: `inlayHints`, `codeLenses`, `formatOnSave`) se siguen mientras corre. Analiza el proyecto de cada archivo
+(`tondo.lsp`: `inlayHints`, `codeLenses`, `formatOnSave`) se siguen mientras corre.
+El servidor aplica sus refactors con `workspace/applyEdit`, pide al editor que vuelva
+a pedir lo que muestra cuando cambia bajo él, y tras un test que falla ofrece abrir
+el lugar del fallo (`window/showMessageRequest`, `window/showDocument`). Analiza el proyecto de cada archivo
 abierto como su build de tests, para incluir los archivos de tests, o el
 archivo solo si no está en un proyecto, con el texto que el editor tiene aunque
 no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de

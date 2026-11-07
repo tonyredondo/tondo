@@ -18,6 +18,7 @@ fn everything() -> Value {
                 "documentationFormat": ["markdown"],
             } },
             "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+            "codeAction": { "codeActionLiteralSupport": {} },
         },
     })
 }
@@ -2445,4 +2446,83 @@ fn folders_and_files_come_and_go() {
 
 fn folder_of(dir: &Path) -> Value {
     json!({ "uri": format!("file://{}", dir.display()), "name": "app" })
+}
+
+/// What the server does in the editor, as it says it can: an edit of a
+/// refactor, the views it shows, and the place a test failed.
+#[test]
+fn asks_the_editor_to_act() {
+    let mut capabilities = everything();
+    capabilities["workspace"] = json!({
+        "applyEdit": true,
+        "semanticTokens": { "refreshSupport": true },
+        "inlayHint": { "refreshSupport": true },
+        "workspaceFolders": true,
+    });
+    capabilities["window"] = json!({ "showDocument": { "support": true }, "showMessage": {} });
+    let dir = project(
+        "lsp-acts",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", "fn add(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {\n    _ = add(1, 2)\n}\n"),
+            ("src/main_test.to", "test wrong {\n    assert(1 == 2)\n}\n"),
+        ],
+    );
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let asked = editor.receive_method("workspace/workspaceFolders");
+    editor.send(json!({ "jsonrpc": "2.0", "id": asked["id"], "result": [folder_of(&dir)] }));
+    let main = editor.open(&dir.join("src/main.to"));
+
+    let at = json!({ "line": 0, "character": 3 });
+    let signature = json!({ "command": "tondo.signature", "arguments": [main, at, "b: Int, a: Int"] });
+    editor.next += 1;
+    let id = editor.next;
+    editor.send(json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/executeCommand", "params": signature }));
+    let apply = editor.receive_method("workspace/applyEdit");
+    assert!(apply["params"]["edit"]["changes"].to_string().contains("b: Int, a: Int"), "{apply}");
+    editor.send(json!({ "jsonrpc": "2.0", "id": apply["id"], "result": { "applied": true } }));
+
+    editor.notify("workspace/didChangeWatchedFiles", json!({ "changes": [{ "uri": main, "type": 2 }] }));
+    let refresh = editor.receive_method("workspace/semanticTokens/refresh");
+    editor.send(json!({ "jsonrpc": "2.0", "id": refresh["id"], "result": null }));
+    let refresh = editor.receive_method("workspace/inlayHint/refresh");
+    editor.send(json!({ "jsonrpc": "2.0", "id": refresh["id"], "result": null }));
+
+    let run = json!({ "command": "tondo.runTest", "arguments": [main, "app::unit::app::wrong"] });
+    editor.request("workspace/executeCommand", run);
+    let failed = editor.receive_method("window/showMessageRequest");
+    assert!(failed["params"]["message"].to_string().contains("failed"), "{failed}");
+    let chosen = failed["params"]["actions"][0].clone();
+    editor.send(json!({ "jsonrpc": "2.0", "id": failed["id"], "result": chosen }));
+    let shown = editor.receive_method("window/showDocument");
+    assert!(shown["params"]["uri"].as_str().unwrap().ends_with("src/main_test.to"), "{shown}");
+    assert_eq!(shown["params"]["selection"]["start"]["line"], 1, "{shown}");
+    editor.send(json!({ "jsonrpc": "2.0", "id": shown["id"], "result": { "success": true } }));
+    editor.stop();
+}
+
+/// A client with no literals for code actions gets commands, which apply.
+#[test]
+fn code_actions_go_as_commands_where_they_must() {
+    let mut capabilities = everything();
+    capabilities["workspace"] = json!({ "applyEdit": true });
+    capabilities["textDocument"]["codeAction"] = json!({});
+    let dir = project("lsp-commands", &[("main.to", "fn main() {\n    let unused = 1\n}\n")]);
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("main.to"));
+    let start = json!({ "line": 1, "character": 8 });
+    let actions = editor.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": { "start": start, "end": start }, "context": { "diagnostics": [] } }),
+    );
+    let command = actions.as_array().unwrap().iter().find(|action| action["command"] == "tondo.apply");
+    let command = command.expect(&actions.to_string());
+    assert!(command.get("kind").is_none(), "{command}");
+    let run = json!({ "command": "tondo.apply", "arguments": command["arguments"] });
+    editor.next += 1;
+    let id = editor.next;
+    editor.send(json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/executeCommand", "params": run }));
+    let apply = editor.receive_method("workspace/applyEdit");
+    assert!(apply["params"]["edit"].to_string().contains("_unused"), "{apply}");
+    editor.stop();
 }

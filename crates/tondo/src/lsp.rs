@@ -121,6 +121,18 @@ struct Client {
     /// It takes these registered as the server starts.
     register_configuration: bool,
     register_saves: bool,
+    /// It applies what it is sent (`workspace/applyEdit`).
+    applies: bool,
+    /// It takes only commands for code actions.
+    command_actions: bool,
+    /// It opens what it is told to (`window/showDocument`).
+    shows: bool,
+    /// It answers a message with a choice (`window/showMessageRequest`).
+    chooses: bool,
+    /// It answers `workspace/workspaceFolders`.
+    folders: bool,
+    /// The methods that tell it to ask again for what it shows.
+    views: Vec<&'static str>,
 }
 
 impl Client {
@@ -139,6 +151,16 @@ impl Client {
             configuration: capabilities["workspace"]["configuration"] == true,
             register_configuration: capabilities["workspace"]["didChangeConfiguration"]["dynamicRegistration"] == true,
             register_saves: document["synchronization"]["dynamicRegistration"] == true,
+            applies: capabilities["workspace"]["applyEdit"] == true,
+            command_actions: document["codeAction"].get("codeActionLiteralSupport").is_none(),
+            shows: capabilities["window"]["showDocument"]["support"] == true,
+            chooses: capabilities["window"].get("showMessage").is_some(),
+            folders: capabilities["workspace"]["workspaceFolders"] == true,
+            views: VIEWS
+                .into_iter()
+                .filter(|(view, _)| capabilities["workspace"][view]["refreshSupport"] == true)
+                .map(|(_, method)| method)
+                .collect(),
         }
     }
 }
@@ -316,6 +338,9 @@ struct Server {
     settings: Settings,
     /// `willSaveWaitUntil` is registered, while saving formats.
     formats_saves: bool,
+    /// What the editor shows of files changed under it: it asks again after
+    /// the next analysis.
+    views_stale: bool,
 }
 
 /// The language server's answers outside an editor, as `tondo mcp` asks
@@ -358,6 +383,22 @@ impl Server {
             if message["id"] == SETTINGS {
                 self.settings = Settings::of(&message["result"][0]);
                 self.register_saves();
+                self.refresh_views();
+            }
+            if message["id"] == FOLDERS {
+                let folders = message["result"].as_array().into_iter().flatten();
+                self.folders = folders.filter_map(|folder| uri_path(folder["uri"].as_str()?)).collect();
+                self.analyze_workspace();
+            }
+            // What the person chose, to the place a failure was.
+            if let Some(place) = message["id"].as_str().and_then(|id| id.strip_prefix(OPEN))
+                && message["result"].is_object()
+                && let Some((line, uri)) = place.split_once(' ')
+            {
+                let line = line.parse::<u32>().unwrap_or(1).saturating_sub(1);
+                let at = json!({ "line": line, "character": 0 });
+                send(json!({ "jsonrpc": "2.0", "id": "tondo.show", "method": "window/showDocument",
+                    "params": { "uri": uri, "takeFocus": true, "selection": { "start": at, "end": at } } }));
             }
             return true;
         }
@@ -471,6 +512,10 @@ impl Server {
                 for item in items.into_iter().flatten() {
                     self.fit_item(item, &plain);
                 }
+            }
+            "textDocument/codeAction" if self.client.command_actions => {
+                let actions = answer.as_array().map_or(&[][..], Vec::as_slice);
+                answer = actions.iter().filter_map(as_command).collect();
             }
             "textDocument/documentSymbol" if self.client.flat_symbols => {
                 let mut flat = Vec::new();
@@ -649,6 +694,10 @@ impl Server {
                         "params": { "token": PROGRESS } })),
                     false => self.analyze_workspace(),
                 }
+                // An editor that gave no folders may have some by now.
+                if self.client.folders && self.folders.is_empty() {
+                    send(json!({ "jsonrpc": "2.0", "id": FOLDERS, "method": "workspace/workspaceFolders" }));
+                }
                 None
             }
             "$/setTrace" => {
@@ -661,6 +710,7 @@ impl Server {
                 for change in params["changes"].as_array().into_iter().flatten() {
                     if let Some(path) = change["uri"].as_str().and_then(uri_path) {
                         self.dirty.insert(root_of(&path).0);
+                        self.views_stale = true;
                     }
                 }
                 None
@@ -717,7 +767,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": false },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
+                    "tondo.apply", "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": true,
@@ -811,6 +861,7 @@ impl Server {
             for uri in ["uri", "oldUri", "newUri"].iter().filter_map(|name| file[*name].as_str()) {
                 if let Some(path) = uri_path(uri) {
                     self.dirty.insert(root_of(&path).0);
+                    self.views_stale = true;
                 }
             }
         }
@@ -855,6 +906,16 @@ impl Server {
             progress(json!({ "kind": "report", "percentage": (done + 1) * 100 / roots.len() }));
         }
         progress(json!({ "kind": "end" }));
+        if std::mem::take(&mut self.views_stale) {
+            self.refresh_views();
+        }
+    }
+
+    /// Tells the editor to ask again for what it shows.
+    fn refresh_views(&self) {
+        for method in &self.client.views {
+            send(json!({ "jsonrpc": "2.0", "id": "tondo.refresh", "method": method }));
+        }
     }
 
     /// Analyzes the root of the file a request is about again, if it
@@ -1010,12 +1071,21 @@ impl Server {
     /// it went.
     fn execute(&mut self, params: &Value) -> Option<Value> {
         let arguments = &params["arguments"];
+        let applies = self.client.applies;
         let answer = |result: Result<Value, String>| match result {
+            Ok(edit) if applies => {
+                apply_edit(&edit);
+                json!({})
+            }
             Ok(edit) => json!({ "edit": edit }),
             Err(message) => json!({ "error": message }),
         };
         match params["command"].as_str()? {
             "tondo.runTest" => {}
+            "tondo.apply" => {
+                apply_edit(&arguments[0]);
+                return Some(Value::Null);
+            }
             "tondo.signature" => return Some(answer(self.change_signature(arguments))),
             "tondo.moveTo" => return Some(answer(self.move_to(arguments))),
             "tondo.group" => return Some(answer(self.group_parameters(arguments))),
@@ -1028,6 +1098,7 @@ impl Server {
             "tondo.useDump" => {
                 let file = arguments[0].as_str().map(Path::new);
                 self.dump = file.and_then(|file| crate::observe::load(file).ok());
+                self.refresh_views();
                 return Some(Value::Null);
             }
             _ => return None,
@@ -1041,6 +1112,7 @@ impl Server {
         let suite = arguments[2].as_bool().unwrap_or(false);
         let (root, _) = root_of(&path);
         let tondo = std::env::current_exe().ok()?;
+        let offers = self.client.shows && self.client.chooses;
         std::thread::spawn(move || {
             let chosen: Vec<String> = match suite {
                 true => vec!["--filter".to_string(), format!("{id}::")],
@@ -1057,7 +1129,15 @@ impl Server {
                     );
                     // Why: the panic or the error, as the report writes it.
                     let why = output.lines().find(|l| l.starts_with("panic[") || l.starts_with("error"));
-                    (1, format!("`{id}` failed: {}", why.unwrap_or("see the output").trim()))
+                    let message = format!("`{id}` failed: {}", why.unwrap_or("see the output").trim());
+                    if offers && let Some((file, line)) = failed_at(&output) {
+                        let uri = file_uri(&root.join(file));
+                        send(json!({ "jsonrpc": "2.0", "id": format!("{OPEN}{line} {uri}"),
+                            "method": "window/showMessageRequest",
+                            "params": { "type": 1, "message": message, "actions": [{ "title": "Show Where" }] } }));
+                        return;
+                    }
+                    (1, message)
                 }
                 Err(error) => (1, format!("`{id}` did not run: {error}")),
             };
@@ -3921,6 +4001,23 @@ impl Server {
 }
 
 /// The token types of semantic highlighting, by number.
+/// The views the editor can be told to ask for again.
+const VIEWS: [(&str, &str); 6] = [
+    ("semanticTokens", "workspace/semanticTokens/refresh"),
+    ("inlayHint", "workspace/inlayHint/refresh"),
+    ("inlineValue", "workspace/inlineValue/refresh"),
+    ("codeLens", "workspace/codeLens/refresh"),
+    ("diagnostics", "workspace/diagnostic/refresh"),
+    ("foldingRange", "workspace/foldingRange/refresh"),
+];
+
+/// The id of the request for the editor's folders.
+const FOLDERS: &str = "tondo.folders";
+
+/// What the id of a choice to open a place starts with, before its line and
+/// its file: the place comes back with the answer.
+const OPEN: &str = "tondo.open ";
+
 /// The id of the request for the editor's settings.
 const SETTINGS: &str = "tondo.settings";
 
@@ -3939,6 +4036,31 @@ const WHOLE_DOCUMENT: [&str; 8] = [
     "textDocument/documentLink",
     "textDocument/documentColor",
 ];
+
+/// Has the editor apply an edit.
+fn apply_edit(edit: &Value) {
+    send(json!({ "jsonrpc": "2.0", "id": "tondo.apply", "method": "workspace/applyEdit", "params": { "edit": edit } }));
+}
+
+/// A code action as the command of a client that takes no others.
+fn as_command(action: &Value) -> Option<Value> {
+    let title = action.get("title")?;
+    match (action.get("command"), action.get("edit")) {
+        (Some(command), _) => Some(command.clone()),
+        (None, Some(edit)) => Some(json!({ "title": title, "command": "tondo.apply", "arguments": [edit] })),
+        (None, None) => None,
+    }
+}
+
+/// The file and the line of the top of the stack of a failure of a test, as
+/// its report writes it: `  test name  src/main_test.to:12:5`.
+fn failed_at(report: &str) -> Option<(&str, u32)> {
+    let mut lines = report.lines().skip_while(|line| *line != "stack:");
+    let top = lines.nth(1)?.rsplit(' ').next()?;
+    let mut place = top.rsplitn(3, ':');
+    let (_, line, file) = (place.next()?, place.next()?, place.next()?);
+    Some((file, line.parse().ok()?))
+}
 
 /// `DocumentSymbol`s as the flat `SymbolInformation`s of a client that takes
 /// no others.
