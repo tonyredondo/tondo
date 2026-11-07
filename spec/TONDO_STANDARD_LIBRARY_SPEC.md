@@ -4097,7 +4097,10 @@ pub fn Document.writeTo(self, out: io.Writer): !io.IoError
   documento no puede superar el millón de valores con sus alias expandidos.
 - `decode` exige exactamente un documento; `decodeAll` y `parseAll` leen todos
   los que separa `---`, y `encodeAll` los escribe así. Un texto que necesita
-  comillas se escribe entre ellas, y uno de varias líneas como bloque `|`.
+  comillas se escribe entre ellas, y uno de varias líneas como bloque `|`,
+  salvo que el bloque lo cambie: con un retorno de carro, con más de un salto
+  al final o hecho solo de saltos, todos los textos de la salida van entre
+  comillas.
 - Los errores llevan el camino, la línea y la columna del valor.
 - Un `Document` es para editar un archivo de configuración sin perder lo que
   escribió una persona. `load` lee el primer documento del texto y guarda el

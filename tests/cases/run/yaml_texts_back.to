@@ -1,0 +1,22 @@
+// A text of several lines that a literal block would change, with a carriage
+// return, breaks past the first at its end or nothing but breaks, is written
+// in quotes and reads back the same (standard library 14.13).
+import std.console
+import std.yaml
+
+type Box = {
+    texts: Array[String]
+}
+
+fn main() {
+    let box = Box { texts: ["a\nb", "a\n\n", "\n", "x\r\ny", "\na"] }
+    console.println("{yaml.decode[Box](yaml.encode(box)) == ok(box)}")
+    let plain = Box { texts: ["a\nb\n"] }
+    console.println(yaml.encode(plain))
+}
+
+// expect-stdout: true
+// expect-stdout: texts:
+// expect-stdout:   - |
+// expect-stdout:     a
+// expect-stdout:     b

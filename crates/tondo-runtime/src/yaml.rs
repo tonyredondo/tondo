@@ -648,6 +648,16 @@ struct Writer {
     tag: Option<String>,
     collections: Vec<String>,
     documents: Vec<Yaml<'static>>,
+    /// A text that a literal block would not give back was written, so
+    /// every text goes in quotes.
+    quoted: bool,
+}
+
+/// Whether the literal block the emitter writes a text of several lines in
+/// loses some of it: a carriage return, the breaks at its end past the
+/// first, or a text of nothing but breaks.
+fn literal_loses(text: &str) -> bool {
+    text.contains('\n') && (text.contains('\r') || text.ends_with("\n\n") || text.trim_matches('\n').is_empty())
 }
 
 fn writer(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Writer>> {
@@ -741,7 +751,13 @@ pub extern "C" fn tondo_rt_yaml_write_float(object: *mut NativeObject, value: f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_write_text(object: *mut NativeObject, value: *const Str) {
-    scalar(object, Scalar::String(Cow::Owned(text(value))));
+    let value = text(value);
+    if literal_loses(&value)
+        && let Some(mut writer) = writer(object)
+    {
+        writer.quoted = true;
+    }
+    scalar(object, Scalar::String(Cow::Owned(value)));
 }
 
 #[unsafe(no_mangle)]
@@ -794,7 +810,7 @@ pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject) -> *mut Str {
     for document in &writer.documents {
         let mut text = String::new();
         let mut emitter = YamlEmitter::new(&mut text);
-        emitter.multiline_strings(true);
+        emitter.multiline_strings(!writer.quoted);
         if emitter.dump(document).is_err() {
             continue;
         }
