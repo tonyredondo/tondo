@@ -2850,3 +2850,29 @@ fn what_is_deprecated_shows_before_it_is_used() {
     assert_eq!(found[0]["tags"], json!([1]), "{found}");
     editor.stop();
 }
+
+/// What an `impl` lacks is written one method at a time, or all at once.
+#[test]
+fn an_impl_writes_what_it_lacks() {
+    let text = "trait Shape {\n    fn area(self): Float\n    fn sides(self): Int\n}\n\ntype Square = {\n    side: Float\n}\n\nimpl Shape for Square {\n}\n\nfn main() {}\n";
+    let dir = project("lsp-impl", &[("main.to", text)]);
+    let mut editor = Editor::launch_with(everything(), json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("main.to"));
+    let at = json!({ "line": 9, "character": 0 });
+    let asked = json!({ "textDocument": { "uri": uri }, "range": { "start": at, "end": at }, "context": { "diagnostics": [] } });
+    let actions = editor.request("textDocument/codeAction", asked);
+    let all = actions.as_array().unwrap().iter().find(|action| action["title"] == "write the 2 methods missing");
+    let all = all.unwrap_or_else(|| panic!("{actions}"));
+    let written = all["edit"].to_string();
+    assert!(written.contains("fn area(self): Float") && written.contains("fn sides(self): Int"), "{written}");
+    let edit = &all["edit"]["changes"][&uri][0];
+    let at = edit["range"]["start"]["line"].as_u64().unwrap() as usize;
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    lines.insert(at, edit["newText"].as_str().unwrap().trim_end().to_string());
+    let change = json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": lines.join("\n") + "\n" }] });
+    editor.notify("textDocument/didChange", change);
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    let (_, diagnostics) = editor.published(&uri);
+    assert!(!diagnostics.to_string().contains("E1114"), "{diagnostics}");
+    editor.stop();
+}

@@ -5253,14 +5253,21 @@ impl<'a> Checker<'a> {
             bodies.push(f);
             methods[index] = Some(id);
         }
+        let mut stubs: Vec<(Span, String)> = Vec::new();
         for ((name, signature, has_default), provided) in declared.iter().zip(&methods) {
             if provided.is_none() && !has_default {
                 let message = format!("`impl {trait_name} for {target_name}` is missing `{name}`");
                 self.diags.error("E1114", decl.span, message);
                 if let Some(edit) = self.method_stub(decl.span, name, signature, &map) {
-                    self.diags.fix(format!("write `{name}`"), false, vec![edit]);
+                    self.diags.fix(format!("write `{name}`"), false, vec![edit.clone()]);
+                    stubs.push(edit);
                 }
             }
+        }
+        // They all go in the same place.
+        if let [(at, _), _, ..] = stubs[..] {
+            let every: String = stubs.iter().map(|(_, stub)| stub.as_str()).collect();
+            self.diags.fix(format!("write the {} methods missing", stubs.len()), false, vec![(at, every)]);
         }
         let name =
             self.index.is_some().then(|| self.index_type_name(target).unwrap_or_else(|| self.types.display(target)));
