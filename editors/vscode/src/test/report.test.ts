@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import {
   NEEDED,
   exploredOrders,
+  modelSteps,
   apiMatches,
   dependencyArgs,
   splitArgs,
@@ -751,4 +752,17 @@ test('the orders of a test, and the one it failed in', () => {
   assert.equal(exploredOrders(report({ tried: 2, complete: false, failed_at: 'at:0.1' }))?.failedAt, 'at:0.1');
   assert.equal(exploredOrders(report(null)), undefined);
   assert.equal(exploredOrders('not json'), undefined);
+});
+
+test('what broke in a model, as a table of its steps', () => {
+  const visit = (step: string, state: string) => ({ step, state });
+  const model = {
+    kind: 'check',
+    broken: { what: '`safe` does not hold', path: [visit('', 'Door { open: false }'), visit('open', 'Door { open: true }')], loop: [] },
+  };
+  const table = modelSteps(model) ?? '';
+  assert.match(table, /\*\*`safe` does not hold\*\*/);
+  assert.match(table, /\| start \| `Door \{ open: false \}` \|/);
+  assert.match(table, /\| open \| `Door \{ open: true \}` \|/);
+  assert.equal(modelSteps({ kind: 'check', broken: null }), undefined);
 });

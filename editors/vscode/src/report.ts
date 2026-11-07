@@ -72,6 +72,8 @@ export interface Outcome {
   /** The code of the panic or error, as `P2007` for a snapshot that
    *  differs. */
   code?: string;
+  /** What each model it checked came to. */
+  models?: ModelJson[];
   /** Where the failure happened, the innermost frame first. */
   stack: Frame[];
   /** What it wrote, and what it logged. */
@@ -177,6 +179,34 @@ interface Attempt {
   benchmarks?: Benchmark[];
   tags?: Record<string, string>;
   fuzz?: FuzzJson[];
+  models?: ModelJson[];
+}
+
+/** What a model of `std.model` came to (testing 8.12). */
+export interface ModelJson {
+  kind: string;
+  never?: string[];
+  broken?: { what: string; path: Visit[]; loop: Visit[] } | null;
+}
+
+interface Visit {
+  step: string;
+  state: string;
+}
+
+/** What broke in a model, as a table of each step and the state it led to. */
+export function modelSteps(model: ModelJson): string | undefined {
+  const broken = model.broken;
+  if (!broken) {
+    return undefined;
+  }
+  const cell = (text: string) => text.replace(/\|/g, '\\|');
+  const row = (visit: Visit) => `| ${cell(visit.step || 'start')} | \`${cell(visit.state)}\` |`;
+  const rows = [`**${broken.what}**`, '', '| step | state |', '| --- | --- |', ...broken.path.map(row)];
+  if (broken.loop.length > 0) {
+    rows.push('| *and then round for ever:* | |', ...broken.loop.map(row));
+  }
+  return rows.join('\n');
 }
 
 interface Stream {
@@ -286,6 +316,7 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
     })),
     tags: attempt?.tags ?? {},
     fuzz: (attempt?.fuzz ?? []).map(fuzzed),
+    models: attempt?.models ?? [],
   };
 }
 

@@ -11,7 +11,7 @@ import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents, RUNS_HERE } from './docs';
 import { ShowProfile } from './profiles';
-import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, exploredOrders, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
+import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, exploredOrders, kindMark, modelSteps, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 /** What the last run found, in the Problems panel: the tests that failed and
@@ -281,6 +281,13 @@ export function registerTesting(
         return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
       });
       const messages = [message];
+      // What broke in a model, step by step, with each state.
+      for (const model of outcome.models ?? []) {
+        const steps = modelSteps(model);
+        if (steps) {
+          messages.push(new vscode.TestMessage(new vscode.MarkdownString(steps)));
+        }
+      }
       if (fuzzed?.input?.file) {
         const input = new vscode.TestMessage(`the input \`${fuzzed.name}\` failed with`);
         input.location = new vscode.Location(vscode.Uri.file(path.resolve(dir, fuzzed.input.file)), new vscode.Position(0, 0));
