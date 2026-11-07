@@ -292,6 +292,10 @@ pub(crate) struct Task {
     /// guarded by `waiting_lock`.
     waiting: *const Wait,
     waiting_lock: AtomicBool,
+    /// Under `tondo test`, what it goes by in the orders of a test, from
+    /// who started it, and how many it started.
+    name: u64,
+    started: u64,
     /// The `std.sync` locks it holds, whether exclusively, and where it
     /// took them.
     pub(crate) held: Vec<(usize, bool, *const Str)>,
@@ -1685,6 +1689,9 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// ends is freed.
 fn run(task: *mut Task) {
     CURRENT.with(|c| c.set(task));
+    if super::race::on() && noting() {
+        noted(format!("s {}\n", unsafe { (*task).name }));
+    }
     let traced = recorder::on();
     if traced {
         recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
@@ -2256,6 +2263,7 @@ fn in_c() -> &'static InC {
 /// worker runs nothing else, so the monitor may start another in its place.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_enter() {
+    touch(OUTSIDE);
     // C follows no references of Tondo values.
     leave_tondo();
     let state = in_c();
@@ -2748,6 +2756,15 @@ fn new_task(
     // `spawn detached` said so just before (11.11).
     let detached = unsafe { current().as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
     let id = IDS.fetch_add(1, Ordering::Relaxed);
+    let name = match unsafe { current().as_mut() }.filter(|_| super::race::on() && noting()) {
+        Some(parent) => {
+            parent.started += 1;
+            let name = parent.name.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(parent.started);
+            noted(format!("n {name}\n"));
+            name
+        }
+        None => id,
+    };
     // A debugger that stops tasks as they start stops this one, but the
     // main task.
     if !join.is_null() {
@@ -2771,6 +2788,8 @@ fn new_task(
         again: AtomicBool::new(false),
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),
+        name,
+        started: 0,
         held: Vec::new(),
         blocked: AtomicUsize::new(0),
         blocked_kind: AtomicU8::new(0),
@@ -3006,6 +3025,9 @@ impl Wait {
 
     fn parked(&self) -> usize {
         let task = unsafe { &mut *self.task };
+        if super::race::on() && noting() {
+            noted("b\n".to_string());
+        }
         // The deadline of a `within` ends the wait when it passes, as a
         // cancellation would, and the task unwinds to it (11.17).
         if let Some(&(at, _)) = task.withins.last() {
@@ -3022,7 +3044,7 @@ impl Wait {
                 None => expire(task),
             }
         }
-        lock(&task.waiting_lock);
+        lock_unseen(&task.waiting_lock);
         let stopped = halted(task);
         let fired = if stopped && self.claim(CANCELLED) {
             unlock(&task.waiting_lock);
@@ -3031,7 +3053,7 @@ impl Wait {
             task.waiting = self;
             unlock(&task.waiting_lock);
             let fired = self.block_fully();
-            lock(&task.waiting_lock);
+            lock_unseen(&task.waiting_lock);
             task.waiting = std::ptr::null();
             unlock(&task.waiting_lock);
             if fired == DEADLINE {
@@ -3079,7 +3101,7 @@ pub(crate) fn wait_again(id: u64) -> bool {
         let t = &mut *task;
         // The task leaves its wait only after taking this lock, so it sees
         // the flag; a wait that ended first leaves no flag behind.
-        lock(&t.waiting_lock);
+        lock_unseen(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
         if woken && !t.again.swap(true, Ordering::SeqCst) {
             attend(true);
@@ -3310,12 +3332,20 @@ fn exploring() -> Option<&'static AtomicU64> {
 }
 
 /// `TONDO_RT_ORDER`, the choices to make, as `0.2.1`, for `tondo test
-/// --schedules all`: the rest are the first of each. `TONDO_RT_ORDER_OUT`
-/// names where each choice goes as it is made, with how many there were, so
-/// that the runner knows what else this run could have done.
+/// --schedules all`, and after a `/` the tasks to run next, as `5.7`: the
+/// rest are the first of each. A task goes by its name, which unlike its
+/// number does not depend on the order. `TONDO_RT_ORDER_OUT`
+/// names where what the run did goes, so that the runner knows what else it
+/// could have done and which of that would differ: a line for each choice,
+/// `d <choice> <count> <tasks>`, with the tasks it was among, for a choice of
+/// a task; `s <task>` as a task runs; `t <object>` for what it touches;
+/// `h <object>` for what it only comes after; `b` as it waits; `n <task>`
+/// for one it starts.
 struct Script {
     given: Vec<usize>,
     made: usize,
+    next: VecDeque<u64>,
+    following: bool,
     out: Option<std::fs::File>,
 }
 
@@ -3323,12 +3353,66 @@ fn script() -> Option<&'static Mutex<Script>> {
     static SCRIPT: std::sync::OnceLock<Option<Mutex<Script>>> = std::sync::OnceLock::new();
     SCRIPT
         .get_or_init(|| {
-            let given = std::env::var("TONDO_RT_ORDER").ok()?;
+            let text = std::env::var("TONDO_RT_ORDER").ok()?;
+            let (given, next) = text.split_once('/').unwrap_or((&text, ""));
             let given = given.split('.').filter_map(|choice| choice.parse().ok()).collect();
+            let next = next.split('.').filter_map(|task| task.parse().ok()).collect();
             let out = std::env::var_os("TONDO_RT_ORDER_OUT").and_then(|path| std::fs::File::create(path).ok());
-            Some(Mutex::new(Script { given, made: 0, out }))
+            Some(Mutex::new(Script { given, made: 0, next, following: false, out }))
         })
         .as_ref()
+}
+
+/// Whether what the run does goes to the runner.
+#[cold]
+#[inline(never)]
+fn noting() -> bool {
+    script().is_some()
+}
+
+fn noted(line: String) {
+    use std::io::Write;
+    let Some(script) = script() else { return };
+    if let Some(out) = &mut script.lock().unwrap_or_else(|e| e.into_inner()).out {
+        let _ = out.write_all(line.as_bytes());
+    }
+}
+
+/// The running task touched something other tasks may touch, for the runner
+/// to try the orders in which that comes the other way around.
+#[inline(always)]
+pub(crate) fn touch(object: usize) {
+    if super::race::on() {
+        touched(object);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn touched(object: usize) {
+    if noting() {
+        noted(format!("t {object}\n"));
+    }
+}
+
+/// A task uses a collection of `std.sync`: another may go first, as before
+/// the write of an `Atomic`.
+#[inline]
+pub(crate) fn shared_used(object: usize) {
+    if super::race::on() {
+        may_switch();
+        touch(object);
+    }
+}
+
+/// What every task reaches outside the program, as files and sockets, in the
+/// orders of a test: what the program cannot see the identity of.
+const OUTSIDE: usize = 0;
+
+/// A test calls something that reaches outside the program.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_outside() {
+    touch(OUTSIDE);
 }
 
 /// How far a run given its choices is ahead of the clock.
@@ -3349,23 +3433,34 @@ pub(crate) fn ahead() -> u64 {
 /// timeout that comes before an answer is an order like any other.
 fn time_passes(queue: &mut Queue) {
     let Some(at) = queue.timers.peek().map(|timer| timer.at) else { return };
-    if queue.runnable.is_empty() || scripted(2) == Some(1) {
+    if queue.runnable.is_empty() || scripted(2, &[]) == Some(1) {
         let left = at.saturating_duration_since(clock_now());
         AHEAD.fetch_add(left.as_nanos() as u64, Ordering::Relaxed);
     }
 }
 
-/// A choice among `count` things, when the run is given its choices.
-fn scripted(count: usize) -> Option<usize> {
+/// A choice among `count` things, when the run is given its choices: which
+/// are `tasks`, if they are.
+fn scripted(count: usize, tasks: &[u64]) -> Option<usize> {
     let mut script = script()?.lock().unwrap_or_else(|e| e.into_inner());
+    let script = &mut *script;
+    let given = script.given.get(script.made).copied();
+    // They start at a choice: before it, a task that can run alone ran.
+    let wanted = given.is_none() && (count > 1 || script.following);
+    let next = script.next.front().filter(|_| wanted).and_then(|name| tasks.iter().position(|task| task == name));
+    if next.is_some() {
+        script.next.pop_front();
+        script.following = true;
+    }
     if count < 2 {
         return Some(0);
     }
-    let choice = script.given.get(script.made).copied().unwrap_or(0) % count;
+    let choice = given.or(next).unwrap_or(0) % count;
     script.made += 1;
     if let Some(out) = &mut script.out {
         use std::io::Write;
-        let _ = writeln!(out, "{choice} {count}");
+        let tasks = tasks.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let _ = out.write_all(format!("d {choice} {count} {tasks}\n").as_bytes());
     }
     Some(choice)
 }
@@ -3375,7 +3470,8 @@ fn scripted(count: usize) -> Option<usize> {
 /// comes before its own and a lost update does not depend on chance.
 pub(crate) fn may_lose_update() {
     let Some(seed) = exploring() else { return };
-    if scripted(2).map_or(seeded(seed).is_multiple_of(2), |choice| choice == 1) {
+    // The choice of the task to run next covers it, given the choices.
+    if script().is_some() || seeded(seed).is_multiple_of(2) {
         if let Some(task) = unsafe { current().as_mut() } {
             task.priority = 1;
         }
@@ -3400,8 +3496,9 @@ pub(crate) fn may_switch() {
 /// steps comes with a probability that does not fall with the program's
 /// length.
 fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
-    if let Some(choice) = scripted(runnable.len()) {
-        return choice;
+    if script().is_some() {
+        let tasks: Vec<u64> = runnable.iter().map(|&task| unsafe { (*task).name }).collect();
+        return scripted(runnable.len(), &tasks).unwrap_or(0);
     }
     static STEPS: AtomicU64 = AtomicU64::new(0);
     static CHANGES: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
@@ -3488,7 +3585,9 @@ unsafe fn cancel_task(task: *mut Task) {
         if t.cancelled.swap(true, Ordering::SeqCst) {
             attend(false);
         }
-        lock(&t.waiting_lock);
+        // Every step of a task is one that this could come before.
+        touch(t.name as usize);
+        lock_unseen(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
         unlock(&t.waiting_lock);
         if woken {
@@ -3506,7 +3605,7 @@ pub(crate) unsafe fn alarm(task: *mut Task) {
         if !t.alarm.swap(true, Ordering::SeqCst) {
             attend(true);
         }
-        lock(&t.waiting_lock);
+        lock_unseen(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
         unlock(&t.waiting_lock);
         if woken {
@@ -3516,7 +3615,15 @@ pub(crate) unsafe fn alarm(task: *mut Task) {
 }
 
 /// A short spin lock over one object's state.
+#[inline(always)]
 pub(crate) fn lock(flag: &AtomicBool) {
+    touch(flag as *const AtomicBool as usize);
+    lock_unseen(flag);
+}
+
+/// A lock whose taking changes nothing another task could tell.
+#[inline(always)]
+fn lock_unseen(flag: &AtomicBool) {
     while flag.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         std::hint::spin_loop();
     }
@@ -3776,7 +3883,11 @@ fn end_detached() {
 unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
     unsafe {
         let j = &mut *join;
-        lock(&j.lock);
+        // It comes after the task whenever it asks, which makes no difference.
+        if super::race::on() && noting() {
+            noted(format!("h {}\n", &raw const j.lock as usize));
+        }
+        lock_unseen(&j.lock);
         if j.done {
             unlock(&j.lock);
             return true;
@@ -3791,7 +3902,7 @@ unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
         if blocked_in(JOIN, join as usize, || wait.block_on_task()) != CANCELLED {
             return true;
         }
-        lock(&j.lock);
+        lock_unseen(&j.lock);
         j.waiters.retain(|&(w, _)| w != Arc::as_ptr(&wait));
         unlock(&j.lock);
         false
@@ -4755,7 +4866,7 @@ impl Case {
 /// seed's, while exploring orders.
 fn random(bound: usize) -> usize {
     if let Some(seed) = exploring() {
-        return scripted(bound).unwrap_or_else(|| (seeded(seed) % bound as u64) as usize);
+        return scripted(bound, &[]).unwrap_or_else(|| (seeded(seed) % bound as u64) as usize);
     }
     static STATE: AtomicUsize = AtomicUsize::new(0x9e37_79b9_7f4a_7c15);
     let mut x = STATE.load(Ordering::Relaxed);

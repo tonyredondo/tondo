@@ -57,6 +57,7 @@ fn seen<T>(with: impl FnOnce(&mut Seen) -> T) -> T {
 
 /// The running task read the cell.
 pub(crate) fn read(cell: usize) {
+    super::tasks::touch(cell);
     let (task, at) = (super::tasks::current_id(), here());
     seen(|seen| {
         let writes = seen.cells.get(&cell).map_or(0, |cell| cell.writes);
@@ -68,6 +69,7 @@ pub(crate) fn read(cell: usize) {
 /// sees the value it changes, which loses nothing (`checked`), as `add` and
 /// `compareExchange` do.
 pub(crate) fn wrote(cell: usize, checked: bool) {
+    super::tasks::touch(cell);
     let (task, at) = (super::tasks::current_id(), here());
     let lost = seen(|seen| {
         let read = seen.reads.remove(&(task, cell)).filter(|_| !checked);

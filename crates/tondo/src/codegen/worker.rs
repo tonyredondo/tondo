@@ -59,6 +59,7 @@ pub(super) struct Shared<'s, 't> {
     debug: bool,
     coverage: Option<DataId>,
     fuzz: bool,
+    testing: bool,
     dumps: bool,
 }
 
@@ -89,6 +90,7 @@ impl<'s, 't> Shared<'s, 't> {
             dumps: cg.dump.is_some(),
             coverage: Gen::coverage(cg),
             fuzz: Gen::fuzzing(cg),
+            testing: Gen::testing(cg),
         }
     }
 }
@@ -223,6 +225,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     }
     fn fuzzing(&self) -> bool {
         self.shared.fuzz
+    }
+    fn testing(&self) -> bool {
+        self.shared.testing
     }
     fn counter(&mut self, counted: Counted) -> usize {
         self.ask(Asked::Counter(counted));

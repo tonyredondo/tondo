@@ -461,6 +461,7 @@ pub(crate) unsafe fn clear_map(map: *mut u8) -> Option<Taken> {
 /// with a copy of its value in `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_map_get(map: *mut SharedMap, key: *const u8, out: *mut u8) -> u8 {
+    super::tasks::shared_used(map as usize);
     unsafe {
         let m = &*map;
         let hash = (m.glue().hash)(key);
@@ -490,6 +491,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_insert(
     old: *mut u8,
     keep: u8,
 ) -> u8 {
+    super::tasks::shared_used(map as usize);
     unsafe {
         let m = &*map;
         let hash = (m.glue().hash)(key);
@@ -529,6 +531,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_insert(
 /// `remove`: 1 when the key was present, with its value moved to `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_map_remove(map: *mut SharedMap, key: *const u8, out: *mut u8) -> u8 {
+    super::tasks::shared_used(map as usize);
     unsafe {
         let m = &*map;
         let hash = (m.glue().hash)(key);
@@ -561,6 +564,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_exchange(
     out: *mut u8,
     value_eq: EqualGlue,
 ) -> u8 {
+    super::tasks::shared_used(map as usize);
     unsafe {
         let m = &*map;
         let glue = m.glue();
@@ -619,6 +623,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_exchange(
 /// writers run at the same time.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_map_length(map: *mut SharedMap) -> i64 {
+    super::tasks::shared_used(map as usize);
     let total: isize = unsafe { (*map).stripes.iter().map(|s| s.count.load(Ordering::Relaxed)).sum() };
     total.max(0) as i64
 }
@@ -627,6 +632,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_length(map: *mut SharedMap) -> i64 
 /// with every stripe locked.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_map_snapshot(map: *mut SharedMap) -> *mut MapObject {
+    super::tasks::shared_used(map as usize);
     unsafe {
         let m = &*map;
         let glue = m.glue();
@@ -863,6 +869,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
 /// `push`: the value moves in.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_queue_push(queue: *mut SharedQueue, value: *const u8) {
+    super::tasks::shared_used(queue as usize);
     unsafe { (*queue).push(value) }
 }
 
@@ -870,6 +877,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_push(queue: *mut SharedQueue, val
 /// queue is empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_queue_pop(queue: *mut SharedQueue, out: *mut u8) -> u8 {
+    super::tasks::shared_used(queue as usize);
     unsafe {
         let q = &*queue;
         let pin = pin();
@@ -905,6 +913,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_pop(queue: *mut SharedQueue, out:
 /// from the tail when negative.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_queue_get(queue: *mut SharedQueue, index: i64, out: *mut u8) -> u8 {
+    super::tasks::shared_used(queue as usize);
     unsafe {
         let q = &*queue;
         let _pin = pin();
@@ -919,6 +928,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_get(queue: *mut SharedQueue, inde
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_queue_length(queue: *mut SharedQueue) -> i64 {
+    super::tasks::shared_used(queue as usize);
     let _pin = pin();
     let (_, start, end) = unsafe { (*queue).bounds() };
     (end - start) as i64
@@ -927,6 +937,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_length(queue: *mut SharedQueue) -
 /// `snapshot()`: the values from the head to the tail of one instant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_queue_snapshot(queue: *mut SharedQueue) -> *mut ArrayHeader {
+    super::tasks::shared_used(queue as usize);
     unsafe {
         let q = &*queue;
         let _pin = pin();
@@ -1096,12 +1107,14 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_stack_push(stack: *mut SharedStack, value: *const u8) {
+    super::tasks::shared_used(stack as usize);
     unsafe { (*stack).push(value) }
 }
 
 /// `pop`: 1 with the top value copied to `out`, or 0 when empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_stack_pop(stack: *mut SharedStack, out: *mut u8) -> u8 {
+    super::tasks::shared_used(stack as usize);
     unsafe {
         let s = &*stack;
         let pin = pin();
@@ -1132,6 +1145,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_pop(stack: *mut SharedStack, out:
 /// `get(index)`: from the base, or from the top when negative.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_stack_get(stack: *mut SharedStack, index: i64, out: *mut u8) -> u8 {
+    super::tasks::shared_used(stack as usize);
     unsafe {
         let s = &*stack;
         let _pin = pin();
@@ -1149,6 +1163,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_get(stack: *mut SharedStack, inde
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_stack_length(stack: *mut SharedStack) -> i64 {
+    super::tasks::shared_used(stack as usize);
     let _pin = pin();
     let top = unsafe { (*stack).top.load(Ordering::Acquire) };
     if top.is_null() { 0 } else { unsafe { (*top).depth as i64 } }
@@ -1157,6 +1172,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_length(stack: *mut SharedStack) -
 /// `snapshot()`: the values from the base to the top of one instant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_stack_snapshot(stack: *mut SharedStack) -> *mut ArrayHeader {
+    super::tasks::shared_used(stack as usize);
     unsafe {
         let s = &*stack;
         let _pin = pin();
@@ -1287,6 +1303,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_from(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_array_get(array: *mut SharedArray, index: i64, out: *mut u8) -> u8 {
+    super::tasks::shared_used(array as usize);
     unsafe {
         let a = &*array;
         let Some(index) = position(index, a.length) else { return 0 };
@@ -1306,6 +1323,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_set(
     value: *const u8,
     old: *mut u8,
 ) -> u8 {
+    super::tasks::shared_used(array as usize);
     unsafe {
         let a = &*array;
         let Some(index) = position(index, a.length) else {
@@ -1334,6 +1352,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_exchange(
     out: *mut u8,
     equal: EqualGlue,
 ) -> u8 {
+    super::tasks::shared_used(array as usize);
     unsafe {
         let a = &*array;
         let drop_desired = || {
@@ -1362,12 +1381,14 @@ pub unsafe extern "C" fn tondo_rt_shared_array_exchange(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_array_length(array: *mut SharedArray) -> i64 {
+    super::tasks::shared_used(array as usize);
     unsafe { (*array).length as i64 }
 }
 
 /// `snapshot()`: the values of one instant, taken with every stripe locked.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_shared_array_snapshot(array: *mut SharedArray) -> *mut ArrayHeader {
+    super::tasks::shared_used(array as usize);
     unsafe {
         let a = &*array;
         for lock in a.stripes.iter() {

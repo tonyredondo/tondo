@@ -193,6 +193,8 @@ fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
 /// in a way that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
+    // One that has to wait touches it as much as one that takes it.
+    super::tasks::touch(object as usize);
     let guard = unsafe { taken(object, mode, location) };
     if guard != 0 && super::race::on() {
         match mode {
@@ -379,6 +381,7 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     }
     let exclusive = guard & 1 == 0;
     let address = object(guard) as usize;
+    super::tasks::touch(address);
     let holds = held();
     if let Some(index) = holds.iter().position(|&(o, _, _)| o == address) {
         holds.swap_remove(index);

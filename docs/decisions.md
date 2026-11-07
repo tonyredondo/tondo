@@ -5400,3 +5400,17 @@ steps named in `fair`. A strongly connected set of states out of the goal is a l
 step its due if the step is taken in it or is impossible somewhere in it, and if it is neither,
 no smaller loop can do better, so one look at each set decides, with no search for cycles.
 
+Going through every choice grows too fast to finish but for a tiny test, and most of what it
+runs is the same order again. So `--schedules all` is dynamic partial order reduction: each run
+says what its steps touched, and only an order that turns around two steps that touched the same
+thing is worth a run, as Source-DPOR does it. Three things decide whether it is sound, and each was
+wrong at first. A step must say all it touches, so the mark is in the runtime's lock, which nearly
+every object goes through, not at each operation, which could forget one, and at both ends of a
+`Mutex`, whose free path takes no such lock and lost an outcome for it; what no address names,
+files, sockets, a call of C, counts as one thing, marked by the compiler in test builds so that
+Release pays nothing. An alternative must carry the whole sequence that turns the pair around:
+forcing only its first step lands in the same order, and that was enough to lose outcomes once
+runs of a known order stopped being expanded. And a task that could run and never did says nothing
+of what it would touch, so it gets tried. It is held to the plain enumeration, kept behind
+`TONDO_ORDERS_EVERY`, on random programs: what the one reaches the other must reach.
+

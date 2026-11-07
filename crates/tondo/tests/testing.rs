@@ -2065,10 +2065,10 @@ test loses {
     let dir = project("every-order", tests);
     let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "counts", "--schedules", "all"]);
     assert_eq!(status, 0, "{stdout}{stderr}");
-    assert!(stdout.contains(" orders, all of them"), "{stdout}");
+    assert!(stdout.contains(", all that differ"), "{stdout}");
     let (stdout, _, status) = tondo(&dir, &["test", "--filter", "counts", "--schedules", "all:2"]);
     assert_eq!(status, 0, "{stdout}");
-    assert!(stdout.contains("2 orders, not all of them"), "{stdout}");
+    assert!(stdout.contains(", not all of them"), "{stdout}");
     let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "loses", "--schedules", "all"]);
     assert_eq!(status, 1, "{stdout}{stderr}");
     let again = stdout.lines().find_map(|line| line.strip_prefix("again in that order: tondo ")).expect(&stdout);
@@ -2140,4 +2140,107 @@ test aTimeoutWins {
     let (stdout, _, status) = tondo(&dir, &["test", "--filter", "aTimeoutWins", "--schedules", "all"]);
     assert_eq!(status, 1, "the timeout never won: {stdout}");
     assert!(stdout.contains("again in that order"), "{stdout}");
+}
+
+/// Only orders that turn around two steps that touch the same thing are
+/// worth running: tasks that share nothing have one, and none of what comes
+/// of the others goes missing, which `TONDO_ORDERS_EVERY` holds it to.
+#[test]
+fn every_order_that_differs_is_all_there_is_to_try() {
+    let tests = "import std.fs
+import std.sync
+
+fn alone(own: sync.Atomic[Int]) {
+    own.store(own.load() + 1)
+    own.store(own.load() + 1)
+}
+
+test sharesNothing {
+    let (a, b, c) = (sync.Atomic(0), sync.Atomic(0), sync.Atomic(0))
+    let jobs = [spawn alone(a), spawn alone(b), spawn alone(c)]
+    for job in jobs {
+        job.wait()
+    }
+}
+
+fn sends(out: Sender[Int], value: Int) {
+    out.send(value)
+}
+
+test whoComesFirst {
+    let (out, input) = channel[Int](2)
+    let first = spawn sends(out.copy(), 1)
+    let second = spawn sends(out.copy(), 2)
+    first.wait()
+    second.wait()
+    assert(input.receive() == some(1))
+}
+
+fn doubles(cell: sync.Atomic[Int]) {
+    cell.store(cell.load() * 2)
+}
+
+fn sets(cell: sync.Atomic[Int], value: Int) {
+    cell.store(value)
+}
+
+fn upTo(cell: sync.Atomic[Int], lock: sync.Mutex[Int], value: Int) {
+    lock.update((seen) { seen = seen * 10 + value })
+    cell.store(value)
+}
+
+test seenThroughAFile {
+    let cell = sync.Atomic(1)
+    let lock = sync.Mutex(0)
+    let jobs = [spawn doubles(cell), spawn sets(cell, 5), spawn upTo(cell, lock, 3)]
+    for job in jobs {
+        job.wait()
+    }
+    let seen = lock.update((value) { value })
+    _ = fs.appendText(\"seen.txt\", \"{seen} {cell.load()}\\n\")
+}
+
+fn writes(path: String) {
+    _ = fs.writeText(path, \"written\")
+}
+
+fn reads(path: String, out: Sender[Bool]) {
+    out.send(fs.exists(path))
+}
+
+test aFileIsShared {
+    let (out, input) = channel[Bool](1)
+    let writer = spawn writes(\"shared.txt\")
+    let reader = spawn reads(\"shared.txt\", out)
+    writer.wait()
+    reader.wait()
+    _ = fs.remove(\"shared.txt\")
+    assert(input.receive() == some(true))
+}
+";
+    let dir = project("every-order-that-differs", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "sharesNothing", "--schedules", "all"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("sharesNothing: 1 order, all that differ"), "{stdout}");
+    // What the channel takes first, and a file, are what tasks share too.
+    for test in ["whoComesFirst", "aFileIsShared"] {
+        let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", test, "--schedules", "all"]);
+        assert_eq!(status, 1, "{test}: {stdout}{stderr}");
+    }
+    let outcomes = |every: bool| {
+        let seen = dir.join("seen.txt");
+        let _ = std::fs::remove_file(&seen);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        command.args(["test", "--filter", "seenThroughAFile", "--schedules", "all:3000"]).current_dir(&dir);
+        if every {
+            command.env("TONDO_ORDERS_EVERY", "1");
+        }
+        let run = command.output().unwrap();
+        assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stdout));
+        let text = std::fs::read_to_string(&seen).unwrap();
+        text.lines().map(String::from).collect::<std::collections::BTreeSet<_>>()
+    };
+    let reduced = outcomes(false);
+    assert!(outcomes(true).is_subset(&reduced), "{reduced:?}");
+    assert!(reduced.len() > 2, "{reduced:?}");
 }

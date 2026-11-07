@@ -19,6 +19,7 @@ mod interrupt;
 mod json;
 pub(crate) use json::base64;
 mod junit;
+mod orders;
 mod owners;
 mod select;
 mod store;
@@ -1180,32 +1181,33 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
     let context = Context { round: 0, iteration: 1, unit: None, target: None };
     let out = std::env::temp_dir().join(format!("tondo-orders-{}", std::process::id()));
     let mut attempts = Vec::new();
+    // Every order there is, to hold the reduction to it in the tests.
+    let every = std::env::var_os("TONDO_ORDERS_EVERY").is_some();
     for &test in plan.iter().filter(|&&test| !tree.suite(test)) {
         let (limit, first) = match orders {
-            Orders::All(limit) => (*limit, Vec::new()),
-            Orders::At(path) => (1, path.split('.').filter_map(|choice| choice.parse().ok()).collect()),
+            Orders::All(limit) => (*limit, (Vec::new(), Vec::new())),
+            Orders::At(path) => (1, (path.split('.').filter_map(|choice| choice.parse().ok()).collect(), Vec::new())),
         };
-        let mut pending: std::collections::VecDeque<Vec<u32>> = [first].into();
+        let mut tried = std::collections::HashSet::from([first.clone()]);
+        let mut classes = std::collections::HashSet::new();
+        let mut pending: std::collections::VecDeque<orders::Order> = [first].into();
         let (mut ran, mut last) = (0, Vec::new());
         let mut left_out = false;
-        while let Some(given) = pending.pop_front() {
+        while let Some((given, next)) = pending.pop_front() {
             if ran == limit || interrupt::requested() {
                 left_out = true;
                 break;
             }
-            let text: Vec<String> = given.iter().map(u32::to_string).collect();
-            let text = text.join(".");
-            let order = (text.clone(), out.clone());
+            let dotted = |numbers: Vec<String>| numbers.join(".");
+            let text = dotted(given.iter().map(u32::to_string).collect());
+            let text = format!("{text}/{}", dotted(next.iter().map(u64::to_string).collect()));
+            let order = (text, out.clone());
             let one = worker::Run { stores: worker::Stores { ..run.stores }, order: Some(&order), ..*run };
             last = worker::execute(&one, vec![(vec![test], context)], |_| {});
             ran += 1;
             let written = std::fs::read_to_string(&out).unwrap_or_default();
-            let made: Vec<(u32, u32)> = written
-                .lines()
-                .filter_map(|line| line.split_once(' '))
-                .filter_map(|(choice, count)| Some((choice.parse().ok()?, count.parse().ok()?)))
-                .collect();
             if last.iter().any(|attempt| attempt.status.failed()) {
+                let text = dotted(orders::path(&written).iter().map(u32::to_string).collect());
                 if !options.json {
                     say!("{}: failed in order {ran}", tree.id(test));
                     say!("again in that order: tondo test --exact {} --schedules at:{text}", tree.id(test));
@@ -1214,24 +1216,32 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 pending.clear();
                 break;
             }
-            // Past what was given, each other choice is an order to try.
-            for at in given.len()..made.len() {
-                for other in 1..made[at].1 {
-                    if pending.len() >= limit {
-                        left_out = true;
-                        break;
-                    }
-                    let mut next: Vec<u32> = made[..at].iter().map(|(choice, _)| *choice).collect();
-                    next.push(other);
-                    pending.push_back(next);
+            // Another run of an order gives what the first did.
+            if !classes.insert(orders::class(&written)) && !every {
+                continue;
+            }
+            for mut other in orders::others(&written, every, given.len()) {
+                while other.1.is_empty() && other.0.last() == Some(&0) {
+                    other.0.pop();
                 }
+                if tried.insert(other.clone()) {
+                    pending.push_back(other);
+                }
+            }
+            if pending.len() > limit {
+                left_out = true;
+                pending.truncate(limit);
             }
         }
         if matches!(orders, Orders::All(_)) {
-            let how = if left_out { "not all of them: `--schedules all:<n>` tries more" } else { "all of them" };
+            let how = if left_out { "not all of them: `--schedules all:<n>` tries more" } else { "all that differ" };
+            let count = match classes.len() {
+                1 => "1 order".to_string(),
+                count => format!("{count} orders"),
+            };
             match options.json {
-                true => eprintln!("tondo: {}: {ran} orders, {how}", tree.id(test)),
-                false => say!("{}: {ran} orders, {how}", tree.id(test)),
+                true => eprintln!("tondo: {}: {count}, {how}", tree.id(test)),
+                false => say!("{}: {count}, {how}", tree.id(test)),
             }
         }
         for attempt in last.drain(..) {

@@ -71,11 +71,15 @@ suite slow {
   find one that depends on which task runs first; a failure prints the
   command that runs that order again, `--schedules 1 --seed hex`, and the
   one that debugs the test in it, `tondo debug --test <id> --schedule hex`.
-- `tondo test --schedules all` tries every order instead of some, fewest changes
-  first, and says how many and whether they were all, up to 20 000 for each test,
-  or `all:<n>`. A failure gives `--schedules at:0.2.1`, which repeats it, and
+- `tondo test --schedules all` tries every order that differs instead of some,
+  fewest changes first, and says how many and whether that was all of them, up
+  to 20 000 runs for each test, or `all:<n>`. Two orders differ only if two tasks
+  touch the same thing the other way around: a lock, an `Atomic`, a channel, a
+  collection of `std.sync`, or anything outside the program, so tasks that share
+  nothing have one order however long they run. A failure gives `--schedules at:0.2.1`, which repeats it, and
   `tondo debug --test <id> --schedule at:0.2.1`. It suits a small test of what
-  tasks share; the orders grow fast with the steps. Nothing waits for the clock
+  tasks share. Memory shared through `unsafe` is not seen: use `--schedules 50`
+  for that. Nothing waits for the clock
   in these runs: time jumps to the next timer, and that it comes before an
   answer is one more order, so a test with a timeout is tried both ways.
 - `tondo test --record target/recordings`, on Linux, records each test and

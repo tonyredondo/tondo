@@ -69,6 +69,8 @@ const SHARED_FOREVER: u64 = 1 << 62;
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Rt {
+    /// A test reaches outside the program.
+    Outside,
     /// A live build's tables, before anything runs (toolchain 7.10).
     Live,
     /// A frame's state for the new code, and its release once taken.
@@ -371,6 +373,23 @@ enum Rt {
 }
 
 impl Rt {
+    /// Whether it reaches outside the program, where the orders of a test
+    /// cannot tell what tasks share (testing 8.10).
+    fn outside(self) -> bool {
+        match self {
+            Rt::Fs(_) | Rt::Env(_) | Rt::Process(_) => true,
+            Rt::Native(index) => {
+                matches!(
+                    crate::hir::NATIVES[index as usize].module,
+                    "env" | "fs" | "grpc" | "http" | "net" | "process" | "sql"
+                )
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Rt {
     fn signature(self) -> (&'static str, &'static [ir::Type], &'static [ir::Type]) {
         use types::{I8, I32, I64};
         match self {
@@ -557,6 +576,7 @@ impl Rt {
             Rt::ReceiveTimeout => ("tondo_rt_channel_receive_timeout", &[I64, I64, I64], &[I8]),
             Rt::Select => ("tondo_rt_select", &[I64, I64, I8, I64], &[I64]),
             Rt::Cancelled => ("tondo_rt_cancelled", &[], &[I8]),
+            Rt::Outside => ("tondo_rt_outside", &[], &[]),
             Rt::PanicUnwind => ("tondo_rt_panic_unwind", &[I32, I64, I64], &[]),
             Rt::PanicValuesUnwind => ("tondo_rt_panic_values_unwind", &[I32, I32, I64, I64, I64], &[]),
             Rt::Unwinding => ("tondo_rt_unwinding", &[], &[I8]),
@@ -938,6 +958,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         pending_forwarders: Vec::new(),
         coverage: None,
         fuzz,
+        testing: !program.tests.is_empty(),
         contexts: program
             .contexts
             .iter()
@@ -1203,6 +1224,7 @@ struct Codegen<'a> {
     coverage: Option<(DataId, Vec<Counted>)>,
     /// A build for the search of `--fuzz`.
     fuzz: bool,
+    testing: bool,
 }
 
 /// What a counter of a test build with coverage counts (testing 10.3):
@@ -1993,6 +2015,8 @@ trait Gen<'t> {
     fn coverage(&self) -> Option<DataId>;
     /// A build for the search of `--fuzz`.
     fn fuzzing(&self) -> bool;
+    /// A build of tests.
+    fn testing(&self) -> bool;
     /// A counter of what `counted` says: its number.
     fn counter(&mut self, counted: Counted) -> usize;
     /// Where the counter `index` is among the counters, as an
@@ -2133,6 +2157,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn fuzzing(&self) -> bool {
         self.fuzz
+    }
+    fn testing(&self) -> bool {
+        self.testing
     }
     fn counter(&mut self, counted: Counted) -> usize {
         let (_, all) = self.coverage.as_mut().expect("a build with coverage");
@@ -3676,6 +3703,11 @@ struct Emit<'a, G: ?Sized> {
 
 impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
     fn call_rt(&mut self, rt: Rt, args: &[ir::Value]) -> Option<ir::Value> {
+        if self.cg.testing() && rt.outside() {
+            let id = self.cg.runtime(Rt::Outside);
+            let callee = self.cg.declare_func_in_func(id, self.fb.func);
+            self.fb.ins().call(callee, &[]);
+        }
         let id = self.cg.runtime(rt);
         let callee = self.cg.declare_func_in_func(id, self.fb.func);
         let call = self.fb.ins().call(callee, args);

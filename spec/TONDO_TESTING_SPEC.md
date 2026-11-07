@@ -1740,14 +1740,25 @@ mismo orden mientras el test solo espere a sus propias tareas; el reloj, la red,
 los archivos y los procesos siguen siendo los reales.
 
 `--schedules all` no elige al azar: recorre las elecciones. Cada test corre en el
-orden de sus primeras elecciones y luego una vez por cada otra elección que pudo
-hacer, las de menos cambios primero, hasta agotarlas o hasta que falla, y dice
-cuántos órdenes probó y si fueron todos. Las elecciones son las de esta sección:
-qué tarea corre, y qué operación lista toma un `select`. Prueba hasta 20 000
-órdenes por test, o los de `--schedules all:<n>`; si quedan más lo dice, y eso no
-es un fallo, pero tampoco prueba nada de los que faltan. Un fallo da su camino:
+orden de sus primeras elecciones y luego en cada orden que difiere de los que corrió,
+los de menos cambios primero, hasta agotarlos o hasta que falla, y dice cuántos
+órdenes probó y si fueron todos. Las elecciones son las de esta sección: qué tarea
+corre, qué operación lista toma un `select` y si un temporizador vence antes. Hace
+hasta 20 000 ejecuciones por test, o las de `--schedules all:<n>`; si quedan más lo
+dice, y eso no es un fallo, pero tampoco prueba nada de los que faltan. Un fallo da
+su camino:
 `tondo test --exact <id> --schedules at:<elecciones>` lo repite y
 `tondo debug --test <id> --schedule at:<elecciones>` lo depura.
+
+Dos pasos de tareas distintas solo pueden cambiar lo que sale de ellos si tocan lo
+mismo, y dos órdenes que difieren solo en lo demás son el mismo orden: `all` prueba
+un orden de cada clase, y por eso dice `all that differ`, sin perder lo que saldría
+de los demás. Los pasos tocan lo que los une: un cerrojo, un `Atomic`, un canal, un
+`join`, un grupo, una colección de `std.sync`, la cancelación de una tarea. Todo lo
+que llega fuera del programa (archivos, red, procesos, entorno, llamadas a C) cuenta
+como una sola cosa, porque el programa no ve su identidad. Lo que escriben en la
+consola no los une, y tampoco la memoria que dos tareas se pasen por `unsafe`: esa
+no se ve, y un test que dependa de ella debe usar `--schedules <n>`.
 
 El reloj de estas ejecuciones es propio: nadie espera. El tiempo salta al siguiente
 temporizador cuando ninguna tarea puede correr, y que venza antes es una elección
