@@ -5414,3 +5414,18 @@ runs of a known order stopped being expanded. And a task that could run and neve
 of what it would touch, so it gets tried. It is held to the plain enumeration, kept behind
 `TONDO_ORDERS_EVERY`, on random programs: what the one reaches the other must reach.
 
+## All of LSP but notebooks
+
+`tondo lsp` covers LSP 3.18 but what it says of notebooks, which Tondo does not have. Three
+choices shaped it. Answers are written once, for the richest client, and fitted to the editor in one
+place, rather than each feature asking what the editor takes: a feature cannot forget. What an editor
+resolves later is held back the same way, by moving it out of a finished answer: the server still
+computes it, so this saves what goes over the wire, not the work, and making each of thirty refactors
+lazy was not worth that. And a cancelled request is only skipped before its turn: requests run in
+order on one thread, as an analysis holds state that a second thread would have to share. What
+the editor gives up on while it waits, which is nearly all of it, costs nothing; one already running
+finishes.
+
+The standard modules stay files by default, even with `workspace/textDocumentContent`: a virtual
+document is read-only to everything else the server offers, so it would lose hover and navigation
+inside them. `virtualStandardLibrary` is there for an editor that cannot read the cache.

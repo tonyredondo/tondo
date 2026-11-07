@@ -486,7 +486,13 @@ a pedir lo que muestra cuando cambia bajo él, y tras un test que falla ofrece a
 el lugar del fallo (`window/showMessageRequest`, `window/showDocument`). Lo que pesa
 de una lista queda fuera hasta que el editor lo pide (`.../resolve`), y los diagnósticos
 y los tokens semánticos dicen solo lo que cambió (`workspace/diagnostic`,
-`textDocument/semanticTokens/full/delta`). Analiza el proyecto de cada archivo
+`textDocument/semanticTokens/full/delta`). `textDocument/moniker` da un nombre que vale
+entre proyectos, `textDocument/inlineCompletion` la única compleción que sigue a lo
+escrito, y con `virtualStandardLibrary` en `initializationOptions` los módulos de la
+stdlib son documentos `tondo-std:` que el servidor da (`workspace/textDocumentContent`)
+en lugar de su copia en disco. Cada análisis dice lo que tardó en `telemetry/event`, que
+solo llega al editor. `workspace/textDocumentContent/refresh` no se envía nunca: esos
+documentos no cambian mientras el servidor corre. Analiza el proyecto de cada archivo
 abierto como su build de tests, para incluir los archivos de tests, o el
 archivo solo si no está en un proyecto, con el texto que el editor tiene aunque
 no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de

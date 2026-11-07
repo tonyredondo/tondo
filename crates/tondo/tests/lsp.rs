@@ -2706,3 +2706,99 @@ fn optional_fields_go_where_they_are_taken() {
     assert!(editor.request("textDocument/rangesFormatting", ranges).is_array());
     editor.stop();
 }
+
+/// The names that hold across projects, what is sure to come next, the
+/// standard modules through the server, and how long an analysis took.
+#[test]
+fn what_the_protocol_adds_at_the_end() {
+    let dir = project(
+        "lsp-last",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            (
+                "src/main.to",
+                "import std.console\nimport std.model\n\npub fn greeting(): String {\n    let word = \"hello\"\n    word\n}\n\nfn main() {\n    console.println(greeting())\n    let step = model.Step { name: \"a\", state: 1 }\n    console.println(step.name)\n}\n",
+            ),
+        ],
+    );
+    let options = json!({ "virtualStandardLibrary": true });
+    let mut editor = Editor::launch_with(everything(), options, Value::Null, "off");
+    let uri = editor.open(&dir.join("src/main.to"));
+    let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } });
+
+    let export = editor.request("textDocument/moniker", at(3, 8));
+    assert_eq!((&export[0]["kind"], &export[0]["unique"]), (&json!("export"), &json!("project")), "{export}");
+    assert!(export[0]["identifier"].as_str().unwrap().ends_with(".greeting"), "{export}");
+    let local = editor.request("textDocument/moniker", at(5, 5));
+    assert_eq!((&local[0]["kind"], &local[0]["unique"]), (&json!("local"), &json!("document")), "{local}");
+    let import = editor.request("textDocument/moniker", at(10, 22));
+    assert_eq!(import[0]["kind"], "import", "{import}");
+
+    let mut inline = at(9, 25);
+    inline["context"] = json!({ "triggerKind": 2 });
+    let inline = editor.request("textDocument/inlineCompletion", inline);
+    assert_eq!(inline["items"][0]["insertText"], "greeting", "{inline}");
+    assert_eq!(inline["items"][0]["range"]["start"]["character"], 20, "{inline}");
+    let mut nothing = at(9, 20);
+    nothing["context"] = json!({ "triggerKind": 2 });
+    assert_eq!(editor.request("textDocument/inlineCompletion", nothing)["items"], json!([]));
+
+    let found = editor.request("textDocument/definition", at(10, 22));
+    let target = found["uri"].as_str().or(found[0]["uri"].as_str()).unwrap_or_else(|| panic!("{found}"));
+    assert!(target.starts_with("tondo-std:/"), "{target}");
+    let content = editor.request("workspace/textDocumentContent", json!({ "uri": target }));
+    assert!(content["text"].as_str().unwrap().contains("pub type Step"), "{content}");
+    let outside = editor.request("workspace/textDocumentContent", json!({ "uri": "tondo-std:/../../secret" }));
+    assert_eq!(outside["code"], -32602, "{outside}");
+    assert_eq!(editor.request("workspace/textDocumentContent", json!({ "uri": uri }))["code"], -32602);
+    editor.stop();
+}
+
+/// An analysis says what it took, to an editor that collects that.
+#[test]
+fn an_analysis_says_what_it_took() {
+    let (mut editor, _) = session("lsp-telemetry", everything());
+    let event = editor.receive_method("telemetry/event");
+    assert_eq!(event["params"]["name"], "analysis", "{event}");
+    assert!(event["params"]["files"].as_u64().unwrap() >= 1, "{event}");
+    editor.stop();
+}
+
+/// The first analysis can be cancelled, and what it left comes when asked.
+#[test]
+fn the_first_analysis_can_be_cancelled() {
+    let dir = project(
+        "lsp-cancel-analysis",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {\n    missing()\n}\n")],
+    );
+    let capabilities = json!({ "window": { "workDoneProgress": true } });
+    let mut editor = Editor::launch_with(capabilities, json!({}), json!([folder_of(&dir)]), "off");
+    let create = editor.receive_method("window/workDoneProgress/create");
+    let token = create["params"]["token"].clone();
+    editor.notify("window/workDoneProgress/cancel", json!({ "token": token }));
+    editor.send(json!({ "jsonrpc": "2.0", "id": create["id"], "result": null }));
+    let begin = editor.receive_method("$/progress");
+    assert_eq!(begin["params"]["value"]["cancellable"], true, "{begin}");
+    let end = editor.receive_method("$/progress");
+    assert_eq!(end["params"]["value"]["kind"], "end", "{end}");
+    let uri = editor.open(&dir.join("src/main.to"));
+    assert!(editor.receive_diagnostics(&uri).to_string().contains("missing"));
+    editor.stop();
+}
+
+/// What is pending is analyzed before a save, and an editor that watches
+/// nothing has what a save changes analyzed.
+#[test]
+fn a_save_is_seen() {
+    let (mut editor, uri) = session("lsp-save", everything());
+    let change = json!({
+        "textDocument": { "uri": uri, "version": 2 },
+        "contentChanges": [{ "text": "fn main() {\n    wrong()\n}\n" }],
+    });
+    editor.notify("textDocument/didChange", change);
+    editor.notify("textDocument/willSave", json!({ "textDocument": { "uri": uri }, "reason": 1 }));
+    assert!(editor.receive_diagnostics(&uri).to_string().contains("wrong"));
+    editor.notify("textDocument/didSave", json!({ "textDocument": { "uri": uri } }));
+    assert!(editor.receive_diagnostics(&uri).to_string().contains("wrong"));
+    editor.stop();
+}

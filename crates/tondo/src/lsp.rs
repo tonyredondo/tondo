@@ -94,6 +94,10 @@ impl Inbox {
                 self.cancelled.insert(message["params"]["id"].to_string());
                 return false;
             }
+            Some("window/workDoneProgress/cancel") => {
+                self.cancelled.insert(message["params"]["token"].to_string());
+                return false;
+            }
             Some("textDocument/didChange") => {
                 if let Some(uri) = message["params"]["textDocument"]["uri"].as_str() {
                     *self.changing.entry(uri.to_string()).or_default() += 1;
@@ -388,6 +392,9 @@ struct Server {
     tokens: HashMap<String, (String, Vec<Value>)>,
     /// Ids of the answers that are told apart.
     answers: u64,
+    /// The editor reads the standard modules through the server, as
+    /// `tondo-std:` documents, rather than from their copy on disk.
+    virtual_std: bool,
 }
 
 /// The language server's answers outside an editor, as `tondo mcp` asks
@@ -729,6 +736,11 @@ impl Server {
                 }
                 None
             }
+            // The diagnostics of what is saved are those of what is saved.
+            "textDocument/willSave" => {
+                self.refresh();
+                None
+            }
             "textDocument/willSaveWaitUntil" => Some(Ok(match self.settings.format_on_save {
                 true => self.formatting(params).unwrap_or(json!([])),
                 false => json!([]),
@@ -865,6 +877,11 @@ impl Server {
             | "documentLink/resolve"
             | "workspaceSymbol/resolve" => Some(Ok(self.resolved(params))),
             "workspace/diagnostic" => Some(Ok(self.workspace_diagnostics(params))),
+            "textDocument/moniker" => Some(Ok(self.monikers(params).unwrap_or(json!([])))),
+            "textDocument/inlineCompletion" => {
+                Some(Ok(self.inline_completion(params).unwrap_or(json!({ "items": [] }))))
+            }
+            "workspace/textDocumentContent" => Some(self.std_content(params)),
             "textDocument/rangesFormatting" => {
                 let ranges = params["ranges"].as_array().into_iter().flatten();
                 let edits = ranges.filter_map(|range| {
@@ -886,6 +903,7 @@ impl Server {
         self.trace = params["trace"].as_str().unwrap_or_default().to_string();
         self.tests = params["initializationOptions"]["tests"] == true;
         self.pulling = params["initializationOptions"]["pullDiagnostics"] == true;
+        self.virtual_std = params["initializationOptions"]["virtualStandardLibrary"] == true;
         self.watches = params["capabilities"]["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"] == true;
         let folders = params["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str());
         self.folders = folders.chain(params["rootUri"].as_str()).filter_map(uri_path).collect();
@@ -898,6 +916,7 @@ impl Server {
                     "openClose": true,
                     "change": 2,
                     "save": { "includeText": false },
+                    "willSave": true,
                     // Otherwise registered while saving formats.
                     "willSaveWaitUntil": !self.client.register_saves,
                 },
@@ -949,6 +968,9 @@ impl Server {
             "serverInfo": { "name": "tondo", "version": driver::VERSION },
         });
         answer["capabilities"]["linkedEditingRangeProvider"] = json!(true);
+        answer["capabilities"]["monikerProvider"] = json!(true);
+        answer["capabilities"]["workspace"]["textDocumentContent"] = json!({ "schemes": [STD_SCHEME] });
+        answer["capabilities"]["inlineCompletionProvider"] = json!(true);
         answer["capabilities"]["codeActionProvider"]["resolveProvider"] =
             json!(self.client.resolves.get("textDocument/codeAction").is_some_and(|fields| !fields.is_empty()));
         if self.pulling {
@@ -1056,10 +1078,21 @@ impl Server {
                 );
             }
         };
-        progress(json!({ "kind": "begin", "title": "Analyzing", "percentage": 0 }));
+        progress(json!({ "kind": "begin", "title": "Analyzing", "percentage": 0, "cancellable": true }));
         for (done, root) in roots.iter().enumerate() {
+            // What is left is analyzed when the editor asks about it.
+            if starting && self.inbox().cancelled.remove(&json!(PROGRESS).to_string()) {
+                break;
+            }
+            let started = Instant::now();
             self.analyze(root);
             progress(json!({ "kind": "report", "percentage": (done + 1) * 100 / roots.len() }));
+            if !self.quiet {
+                let files = self.analyses.get(root).map_or(0, |analyzed| analyzed.analysis.sources.len());
+                let event =
+                    json!({ "name": "analysis", "files": files, "milliseconds": started.elapsed().as_millis() as u64 });
+                send(json!({ "jsonrpc": "2.0", "method": "telemetry/event", "params": event }));
+            }
         }
         progress(json!({ "kind": "end" }));
         if std::mem::take(&mut self.views_stale) {
@@ -1539,7 +1572,66 @@ impl Server {
     }
 
     fn uri(&self, path: &Path) -> String {
+        if self.virtual_std
+            && let Some(name) = self.std.as_ref().and_then(|std| path.strip_prefix(std).ok())
+        {
+            return format!("{STD_SCHEME}:/{}", name.display());
+        }
         self.open.get(path).map(|document| document.uri.clone()).unwrap_or_else(|| file_uri(path))
+    }
+
+    /// The text of a standard module, for an editor that reads it through
+    /// the server.
+    fn std_content(&mut self, params: &Value) -> Result<Value, (i64, String)> {
+        let uri = params["uri"].as_str().unwrap_or_default();
+        let unknown = || (-32602, format!("`{uri}` is not a standard module"));
+        let name = uri.strip_prefix(STD_SCHEME).and_then(|rest| rest.strip_prefix(":/")).ok_or_else(unknown)?;
+        let plain = Path::new(name).components().all(|part| matches!(part, std::path::Component::Normal(_)));
+        let std = self.std_dir().filter(|_| plain).ok_or_else(unknown)?;
+        let text = std::fs::read_to_string(std.join(name)).map_err(|_| unknown())?;
+        Ok(json!({ "text": text }))
+    }
+
+    /// What names what the request points at across projects: the module
+    /// and the name, for all that has one outside its function.
+    fn monikers(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, def, _) = self.def_at(params)?;
+        let declared = &analyzed.analysis.index.as_ref()?.defs[def];
+        let sources = &analyzed.analysis.sources;
+        let at = (0..sources.len()).rev().find(|&i| sources.file(i).base <= declared.name_span.start)?;
+        let file = sources.file(at);
+        let identifier = format!("{}.{}", file.module, declared.name);
+        let moniker = |kind: &str, unique: &str, identifier: String| json!([{ "scheme": "tondo", "identifier": identifier, "unique": unique, "kind": kind }]);
+        let start = (declared.decl_span.start - file.base) as usize;
+        Some(if matches!(declared.kind, DefKind::Local | DefKind::Parameter) {
+            moniker("local", "document", format!("{identifier}@{start}"))
+        } else if file.logical.starts_with("<std>/") {
+            moniker("import", "scheme", identifier)
+        } else if file.text[start..].starts_with("pub ") {
+            moniker("export", "project", identifier)
+        } else {
+            moniker("local", "project", identifier)
+        })
+    }
+
+    /// What is sure to come of the word being written: the one completion
+    /// that goes on with it, if there is only one.
+    fn inline_completion(&mut self, params: &Value) -> Option<Value> {
+        let list = self.completion(params)?;
+        let (_, text) = self.document(params)?;
+        let cursor = offset(&text, &params["position"], self.units)?;
+        let word = text[..cursor].rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |at| at + 1);
+        let written = &text[word..cursor];
+        let items = list.get("items").unwrap_or(&list).as_array()?;
+        let mut goes_on = items
+            .iter()
+            .filter_map(|item| item["label"].as_str())
+            .filter(|label| label.len() > written.len() && label.starts_with(written));
+        let (label, None) = (goes_on.next().filter(|_| !written.is_empty())?, goes_on.next()) else { return None };
+        let start = position(&text, word, self.units);
+        let range = json!({ "start": start, "end": params["position"] });
+        Some(json!({ "items": [{ "insertText": label, "filterText": written, "range": range }] }))
     }
 
     /// The file and range of a span.
@@ -4230,6 +4322,9 @@ const VIEWS: [(&str, &str); 6] = [
     ("diagnostics", "workspace/diagnostic/refresh"),
     ("foldingRange", "workspace/foldingRange/refresh"),
 ];
+
+/// The scheme of the standard modules as the server gives them.
+const STD_SCHEME: &str = "tondo-std";
 
 /// The id of the request for the editor's folders.
 const FOLDERS: &str = "tondo.folders";
