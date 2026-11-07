@@ -3075,6 +3075,7 @@ pub trait Source {
     fn beginList(self, first: Event, name: String): Unit ! Error
     fn endList(self): Unit ! Error
     fn required[T](self, value: T?, field: String): T ! Error
+    fn missingList[T](self, field: String): Array[T] ! Error   // falta, salvo en XML: []
     fn invalid(self, violations: Array[Violation]): Error
     fn mismatch(self, first: Event, expected: String): Error
 }
@@ -5657,7 +5658,8 @@ impl Display for Element
 - `decode` lee el elemento raíz, sea cual sea su nombre. Un elemento con
   atributos o hijos es un mapa de ellos; uno solo con texto es ese texto, que
   un record también lee como mapa, con su texto en el campo `@xml.Text`. Los
-  hijos seguidos del mismo nombre son la lista de un campo `Array`. Ignora
+  hijos seguidos del mismo nombre son la lista de un campo `Array`, y un
+  campo `Array` sin ninguno es una lista vacía, como la escribe `encode`. Ignora
   los elementos y atributos que el tipo no tiene, y falla con `XmlError`, con
   el camino del elemento (`/rss/channel/item`), su línea y su columna, ante un
   XML mal formado, un campo obligatorio que falta o un texto que no es del

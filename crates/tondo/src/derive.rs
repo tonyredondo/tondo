@@ -616,6 +616,12 @@ fn optional(ty: &ast::TypeExpr) -> bool {
     matches!(ty.kind, ast::TypeKind::Optional(_))
 }
 
+/// Whether a field is an `Array`, which a format may write as nothing when
+/// it is empty.
+fn list(ty: &ast::TypeExpr) -> bool {
+    matches!(&ty.kind, ast::TypeKind::Path { segments, .. } if segments.len() == 1 && segments[0].name == "Array")
+}
+
 /// The name of a variant outside the program: its `@name`, or its own.
 fn variant_wire(variant: &ast::VariantDecl) -> String {
     named(&variant.annotations).unwrap_or_else(|| variant.name.name.clone())
@@ -866,6 +872,11 @@ impl Generator<'_> {
                 let default = default.unwrap_or_else(|| "none".to_string());
                 format!(
                     "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => {default}\n{indent}}}"
+                )
+            } else if list(&field.ty) {
+                format!(
+                    "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => input.missingList({:?})?\n{indent}}}",
+                    wire(field)
                 )
             } else {
                 format!("input.required(__field_{name}, {:?})?", wire(field))

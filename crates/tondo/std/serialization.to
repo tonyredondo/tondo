@@ -442,6 +442,12 @@ pub trait Source {
         }
     }
 
+    /// A list field the input left out: missing, but in a format that writes
+    /// an empty list as nothing, as XML, empty.
+    fn missingList[T](self, field: String): Array[T] ! Error {
+        fail self.failure(ErrorKind.Missing, "missing field `{field}`")
+    }
+
     /// The error of a value that breaks the rules of its type.
     fn invalid(self, violations: Array[Violation]): Error {
         let shown = violations.map((violation) { "{violation}" }).join("; ")
@@ -1298,6 +1304,10 @@ impl[S: Source] Source for Replay[S] {
 
     fn rejectsUnknown(self): Bool {
         self.input.rejectsUnknown()
+    }
+
+    fn missingList[T](self, field: String): Array[T] ! Error {
+        self.input.missingList(field)
     }
 
     fn mapName(self): String {

@@ -3441,6 +3441,10 @@ pub trait Source {
     /// A field that must have been present.
     fn required[T: ~Copy](self, value: T?, field: String): T ! Error
 
+    /// A list field the input left out: missing, but in a format that writes
+    /// an empty list as nothing, as XML, empty.
+    fn missingList[T](self, field: String): Array[T] ! Error
+
     /// The error of a value that breaks the rules of its type.
     fn invalid(self, violations: Array[Violation]): Error
 

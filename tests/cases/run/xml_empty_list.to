@@ -1,0 +1,22 @@
+// An empty list writes no element in XML, and reads back as an empty list
+// (standard library 14.30); JSON still says the field is missing.
+import std.console
+import std.json
+import std.xml
+
+type Basket = {
+    owner: String
+    items: Array[String]
+}
+
+fn main() {
+    let empty = Basket { owner: "ana", items: [] }
+    let text = xml.encode(empty)
+    console.println(text)
+    console.println("{xml.decode[Basket](text) == ok(empty)}")
+    console.println("{json.decode[Basket]("{{\"owner\": \"ana\"}}").isErr()}")
+}
+
+// expect-stdout: <Basket><owner>ana</owner></Basket>
+// expect-stdout: true
+// expect-stdout: true

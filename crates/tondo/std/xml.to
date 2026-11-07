@@ -626,6 +626,11 @@ impl serialization.Source for Reader {
         self.state.update((reading) { reading.failure(kind, message) })
     }
 
+    /// An empty list is no element at all.
+    fn missingList[T](self, _field: String): Array[T] ! serialization.Error {
+        []
+    }
+
     fn fields(self, notes: Array[Array[serialization.Note]]) {
         self.state.update(
             (reading) {
