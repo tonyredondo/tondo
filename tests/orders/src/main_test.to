@@ -297,3 +297,31 @@ test cancellingAGroupEndsIt {
     group.cancel()
     _ = out
 }
+
+fn counts(total: var Int, message: Int): !String {
+    total += message
+}
+
+test actorTakesEveryMessage {
+    let worker = executor.actor(0, 4, counts)?
+    let address = worker.reference()
+    address.send(1)?
+    address.send(2)?
+    worker.stop()?
+}
+
+fn tries(limiter: sync.RateLimiter, allowed: sync.Atomic[Int]) {
+    if limiter.allow() {
+        _ = allowed.add(1)
+    }
+}
+
+test rateLimiterKeepsItsBurst {
+    let limiter = sync.RateLimiter(1, per: time.seconds(60), burst: 1)
+    let allowed = sync.Atomic(0)
+    let first = spawn tries(limiter, allowed)
+    let second = spawn tries(limiter, allowed)
+    first.wait()
+    second.wait()
+    assert(allowed.load() == 1)
+}
