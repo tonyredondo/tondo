@@ -494,7 +494,10 @@ impl Iterator for Walk {
 
     fn next(&mut self) -> Option<usize> {
         let fp = self.fp;
-        if fp < self.bottom || fp + 16 > self.top || !fp.is_multiple_of(8) {
+        // A frame of code built without frame pointers, as a library's, may
+        // leave any number where the next one goes: near the top of memory,
+        // adding to it wraps.
+        if fp < self.bottom || fp.checked_add(16).is_none_or(|end| end > self.top) || !fp.is_multiple_of(8) {
             return None;
         }
         let (next, address) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
@@ -1151,5 +1154,18 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         if signal == libc::SIGABRT {
             libc::raise(signal);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A frame pointer near the top of memory, as one a library's frame
+    /// leaves, ends the walk without a read, which would fault.
+    #[test]
+    fn a_walk_stops_at_a_frame_pointer_that_wraps() {
+        let stack = [0usize; 8];
+        let bounds = (stack.as_ptr() as usize, stack.as_ptr() as usize + std::mem::size_of_val(&stack));
+        assert_eq!(super::walk(usize::MAX - 7, bounds).next(), None);
+        assert_eq!(super::walk(usize::MAX - 15, bounds).next(), None);
     }
 }
