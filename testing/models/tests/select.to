@@ -1,0 +1,194 @@
+// `now` over two channels, against a task that sends on each and a task
+// that cancels it (crates/tondo-runtime/src/tasks.rs: now, try_case,
+// claim_first, Wait::claim), as Select.tla says it. The selecting task
+// registers one waiter in each queue under the locks of both, and one `claim`
+// decides which operation won. A sender that loses the claim goes on to the
+// next waiter, or to the buffer.
+import std.model
+
+enum Sender {
+    Start
+    Sent
+    Blocked
+    Panicked
+}
+
+type Channel = {
+    buffer: Int
+    waiter: Bool
+    sender: Sender
+    got: Bool
+    closed: Bool
+}
+
+enum Selecting {
+    Start
+    Blocked
+    Done
+}
+
+enum Fired {
+    Nothing
+    Channel(Int)
+    Cancelled
+}
+
+type Select = {
+    channels: model.Queue[Channel]
+    fired: Fired
+    selecting: Selecting
+    cancelled: Bool
+}
+
+const Capacity = 1
+
+// The list with the item at `index` changed.
+fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
+    var items = list.items()
+    items[index] = item
+    model.Queue(items)
+}
+
+fn waitersGone(now: Select): model.Queue[Channel] {
+    model.Queue(now.channels.items().map((ch) { ch with { waiter: false } }))
+}
+
+fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
+    var next: Array[model.Step[Select]] = []
+    let step = (name: String, after: Select) { model.Step { name, state: after } }
+    let channels = now.channels.items()
+    // With every lock taken: a ch that is ready, or a waiter in each queue.
+    if now.selecting == Selecting.Start {
+        let ready = (ch: Channel) { ch.buffer > 0 or ch.closed }
+        for (c, ch) in channels.enumerate() {
+            if ready(ch) {
+                let took = match ch.buffer > 0 {
+                    true => ch with { got: true, buffer: ch.buffer - 1 }
+                    false => ch
+                }
+                next.push(
+                    step(
+                        "register",
+                        now with { channels: set(now.channels, c, took), selecting: Selecting.Done },
+                    ),
+                )
+            }
+        }
+        if not channels.any(ready) {
+            let waiting = model.Queue(channels.map((ch) { ch with { waiter: true } }))
+            next.push(
+                step("register", now with { channels: waiting, selecting: Selecting.Blocked }),
+            )
+        }
+    }
+    for (c, ch) in channels.enumerate() {
+        let becomes = (after: Channel) { now with { channels: set(now.channels, c, after) } }
+        // `try_send`, with the ch's lock: the first waiter it can claim
+        // gets the value; one another operation claimed is dropped from the queue.
+        if ch.sender == Sender.Start {
+            next.push(
+                step(
+                    "send",
+                    match () {
+                        _ if ch.closed => becomes(ch with { sender: Sender.Panicked })
+                        _ if ch.waiter and (now.fired == Fired.Nothing or not claim) => {
+                            becomes(ch with { waiter: false, got: true, sender: Sender.Sent }) with {
+                                fired: Fired.Channel(c)
+                            }
+                        }
+                        _ if ch.buffer < Capacity => becomes(
+                            ch with { waiter: false, buffer: ch.buffer + 1, sender: Sender.Sent },
+                        )
+                        _ => becomes(ch with { waiter: false, sender: Sender.Blocked })
+                    },
+                ),
+            )
+        }
+        // `close_waits`.
+        if not ch.closed {
+            let closed = ch with {
+                closed: true
+                waiter: false
+                sender: if ch.sender == Sender.Blocked { Sender.Panicked } else { ch.sender }
+            }
+            let fired = if ch.waiter and now.fired == Fired.Nothing {
+                Fired.Channel(c)
+            } else {
+                now.fired
+            }
+            next.push(step("close", becomes(closed) with { fired: fired }))
+        }
+    }
+    // A cancellation claims the wait like any operation.
+    if not now.cancelled and now.selecting == Selecting.Blocked and now.fired == Fired.Nothing {
+        next.push(step("cancel", now with { fired: Fired.Cancelled, cancelled: true }))
+    }
+    // Woken, it leaves every queue with the locks taken.
+    if now.selecting == Selecting.Blocked and now.fired != Fired.Nothing {
+        next.push(step("leave", now with { channels: waitersGone(now), selecting: Selecting.Done }))
+    }
+    next
+}
+
+fn check(claim: Bool): model.Checked ! model.Violation {
+    let empty = Channel {
+        buffer: 0
+        waiter: false
+        sender: Sender.Start
+        got: false
+        closed: false
+    }
+    let start = Select {
+        channels: model.Queue([empty, empty])
+        fired: Fired.Nothing
+        selecting: Selecting.Start
+        cancelled: false
+    }
+    // One operation wins, and a value handed over is one the selecting task got.
+    let oneWins = model.always(
+        (now: Select) {
+            let channels = now.channels.items()
+            let handed = match now.fired {
+                Fired.Channel(c) if now.selecting == Selecting.Done and not channels[c].closed =>
+                    channels[c].got
+                _ => true
+            }
+            (channels.count((ch) { ch.got }) <= 1 or now.selecting == Selecting.Start) and handed
+        },
+        name: "OneWins",
+    )
+    // A value is in a buffer, or was got: none is lost.
+    let kept = model.always(
+        (now: Select) {
+            now.channels.items().all((ch) { ch.sender != Sender.Sent or ch.got or ch.buffer > 0 })
+        },
+        name: "Kept",
+    )
+    // No waiter outlives the now.
+    let gone = model.always(
+        (now: Select) {
+            now.selecting != Selecting.Done or now.channels.items().all((ch) { not ch.waiter })
+        },
+        name: "Gone",
+    )
+    let over = (now: Select) {
+        now.selecting == Selecting.Done and
+            now.channels.items().all((ch) { ch.sender != Sender.Start })
+    }
+    model.check(start, (now) { steps(now, claim) }, holds: [oneWins, kept, gone], ends: some(over))
+}
+
+test selectAsTlcDoes {
+    match check(true) {
+        ok(checked) => assert(checked.states == 192)
+        err(broken) => panic("{broken}")
+    }
+}
+
+// A sender that hands its value over without claiming the wait: two win.
+test selectFindsTwoWinners {
+    match check(false) {
+        ok(_) => panic("two winners went unseen")
+        err(broken) => assert(broken.what.contains("OneWins"))
+    }
+}

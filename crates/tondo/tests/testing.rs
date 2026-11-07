@@ -2360,3 +2360,14 @@ Event.Kick(hard) => if hard and gate.turns == 2 { panic(\"broken\") } else { gat
     assert_ne!(status, 0);
     assert!(stderr.contains("`twice` is not a state machine"), "{stderr}");
 }
+
+/// The models of the runtime's protocols in `testing/models`, in `std.model`:
+/// each goes through as many states as TLC does with its `.tla` beside it, and
+/// finds the bug its test puts back.
+#[test]
+fn the_models_of_the_runtime_hold() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/models");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--models"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("lockAsTlcDoes ... ok"), "{stdout}");
+}

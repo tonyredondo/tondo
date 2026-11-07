@@ -5461,6 +5461,13 @@ A state is a `Key`, and an `Array` is not, as `Key` implies `Copy`. Rather than 
 reflection of their own, so the two are named where derivation accepts a standard type, with their
 arguments checked.
 
+The models of the runtime in `testing/models` are written in both: each `.tla` has a test of
+`std.model` that goes through as many distinct states as TLC does, and finds a bug the test puts
+back, a lost wake or a leak, which an invariant, a deadlock or a formula of what comes later
+catches. `cargo test` runs them, and the Nightly runs TLC on the same models, fails if the counts
+part, and holds the two to each other and to the brute force on random formulas. Whether to leave
+TLC and Java out once that has held a while is the maintainer's call.
+
 ## An error nothing fixes is `Never`
 
 A function that does not fail passes where one that may is expected, `fn(S, E): S` for

@@ -1,0 +1,152 @@
+// A group of tasks (crates/tondo-runtime/src/tasks.rs: tondo_rt_group_add,
+// group_completed, group_try_next, group_block, complete), as Group.tla says
+// it. `add` counts the task with the group's lock, then with the join's lock
+// either finds it done or leaves its place in the join, so that `complete`
+// tells the group.
+import std.model
+
+type Task = {
+    done: Bool
+    added: Bool
+    known: Bool
+    finished: Bool
+    taken: Bool
+}
+
+enum Owner {
+    Adding
+    Next
+    Over
+}
+
+type Group = {
+    tasks: model.Queue[Task]
+    running: Int
+    owner: Owner
+    adding: Int?
+    blocked: Bool
+}
+
+// The list with the item at `index` changed.
+fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
+    var items = list.items()
+    items[index] = item
+    model.Queue(items)
+}
+
+fn steps(group: Group, looks: Bool): Array[model.Step[Group]] {
+    var next: Array[model.Step[Group]] = []
+    let step = (name: String, after: Group) { model.Step { name, state: after } }
+    let tasks = group.tasks.items()
+    let becomes = (t: Int, after: Task) { group with { tasks: set(group.tasks, t, after) } }
+    for (t, task) in tasks.enumerate() {
+        // `add`, with the group's lock.
+        if group.owner == Owner.Adding and group.adding.isNone() and not task.added {
+            next.push(
+                step(
+                    "add",
+                    becomes(t, task with { added: true }) with {
+                        running: group.running + 1
+                        adding: some(t)
+                    },
+                ),
+            )
+        }
+        // `complete`, with the join's lock: a task the group knows tells it.
+        if not task.done {
+            next.push(
+                step(
+                    "complete",
+                    match task.known {
+                        true => becomes(t, task with { done: true, finished: true }) with {
+                            running: group.running - 1
+                            blocked: false
+                        }
+                        false => becomes(t, task with { done: true })
+                    },
+                ),
+            )
+        }
+    }
+    // Then with the join's lock: done, it tells the group itself.
+    match group.adding {
+        some(t) => next.push(
+            step(
+                "link",
+                match tasks[t].done and looks {
+                    true => becomes(t, tasks[t] with { finished: true }) with {
+                        running: group.running - 1
+                        blocked: false
+                        adding: none
+                    }
+                    false => becomes(t, tasks[t] with { known: true }) with { adding: none }
+                },
+            ),
+        )
+        none => {}
+    }
+    if group.owner == Owner.Adding and group.adding.isNone() and tasks.all((task) { task.added }) {
+        next.push(step("added", group with { owner: Owner.Next }))
+    }
+    // `next`: a result, none when all were taken, or it waits.
+    if group.owner == Owner.Next and not group.blocked {
+        let ready = tasks.enumerate().filter((pair) { pair.1.finished and not pair.1.taken })
+        if tasks.all((task) { task.taken == task.added }) {
+            next.push(step("take", group with { owner: Owner.Over }))
+        } else if ready.isEmpty() {
+            next.push(step("take", group with { blocked: true }))
+        }
+        for (t, task) in ready {
+            next.push(step("take", becomes(t, task with { taken: true })))
+        }
+    }
+    next
+}
+
+fn check(looks: Bool): model.Checked ! model.Violation {
+    let fresh = Task { done: false, added: false, known: false, finished: false, taken: false }
+    let start = Group {
+        tasks: model.Queue([fresh, fresh, fresh])
+        running: 0
+        owner: Owner.Adding
+        adding: none
+        blocked: false
+    }
+    // Every result is told once, and the count is right.
+    let counted = model.always(
+        (group: Group) {
+            let tasks = group.tasks.items()
+            group.running >= 0 and
+                group.running + tasks.count((task) { task.finished }) ==
+                    tasks.count((task) { task.added })
+        },
+        name: "Counted",
+    )
+    // The group never hears of a task that is not done.
+    let told = model.always(
+        (group: Group) { group.tasks.items().all((task) { not task.finished or task.done }) },
+        name: "Told",
+    )
+    model.check(
+        start,
+        (group) { steps(group, looks) },
+        holds: [counted, told],
+        ends: some((group: Group) { group.owner == Owner.Over }),
+    )
+}
+
+test groupAsTlcDoes {
+    match check(true) {
+        ok(checked) => assert(checked.states == 427)
+        err(broken) => panic("{broken}")
+    }
+}
+
+// An `add` that does not look whether the task is done: nobody tells the group,
+// and `next` waits for ever.
+test groupFindsAResultNobodyTells {
+    match check(false) {
+        ok(_) => panic("a lost result went unseen")
+        err(broken) => assert(broken.what.contains("nothing can follow"))
+    }
+}

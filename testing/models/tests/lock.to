@@ -1,0 +1,215 @@
+// A lock of `std.sync` (crates/tondo-runtime/src/sync.rs: try_take, taken,
+// grant, wake_lockers, tondo_rt_sync_unlock), as Lock.tla says it, with two
+// writers and a reader that take it twice each. A step is an atomic operation
+// on the state, or what the code does with the queue locked.
+import std.model
+
+enum Pc {
+    Idle
+    Try
+    Park
+    Waits
+    Holds
+    Wake
+}
+
+type Task = {
+    pc: Pc
+    woken: Bool
+    rounds: Int
+    was: Bool
+}
+
+type Lock = {
+    writer: Bool
+    readers: Int
+    parked: Bool
+    starving: Bool
+    waiting: model.Queue[Int]
+    tasks: model.Queue[Task]
+    cancels: Int
+}
+
+// The list with the item at `index` changed.
+fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
+    var items = list.items()
+    items[index] = item
+    model.Queue(items)
+}
+
+// The first two take it to write, the third to read.
+fn exclusive(t: Int): Bool {
+    t < 2
+}
+
+// `try_take`.
+fn free(lock: Lock, t: Int): Bool {
+    not lock.writer and (lock.readers == 0 or not exclusive(t)) and not lock.starving
+}
+
+fn take(lock: Lock, t: Int): Lock {
+    match exclusive(t) {
+        true => lock with { writer: true }
+        false => lock with { readers: lock.readers + 1 }
+    }
+}
+
+fn changed(lock: Lock, t: Int, task: Task): Lock {
+    lock with { tasks: set(lock.tasks, t, task) }
+}
+
+fn steps(lock: Lock, grantLooks: Bool): Array[model.Step[Lock]] {
+    var next: Array[model.Step[Lock]] = []
+    let step = (name: String, after: Lock) { model.Step { name, state: after } }
+    let tasks = lock.tasks.items()
+    for (t, task) in tasks.enumerate() {
+        let at = (state: Lock, after: Task) { state with { tasks: set(state.tasks, t, after) } }
+        match task.pc {
+            Pc.Idle if task.rounds > 0 => next.push(
+                step(
+                    "start",
+                    at(lock, task with { rounds: task.rounds - 1, pc: Pc.Try, woken: false }),
+                ),
+            )
+            Pc.Try if free(lock, t) => next.push(
+                step("try", at(take(lock, t), task with { pc: Pc.Holds })),
+            )
+            Pc.Try => next.push(step("try", at(lock, task with { pc: Pc.Park })))
+            // With the queue locked: PARKED, a last look, and into the queue;
+            // one woken before may make the lock starve.
+            Pc.Park if free(lock, t) => next.push(
+                step("park", at(take(lock, t) with { parked: true }, task with { pc: Pc.Holds })),
+            )
+            Pc.Park => {
+                // One woken before goes first.
+                var first = [t]
+                first.extend(lock.waiting.items())
+                let waiting = if task.woken { model.Queue(first) } else { lock.waiting.push(t) }
+                let parks = at(
+                    lock with { parked: true, waiting: waiting },
+                    task with { pc: Pc.Waits },
+                )
+                next.push(step("park", parks))
+                if task.woken {
+                    next.push(step("park", parks with { starving: true }))
+                }
+            }
+            // The release: the state first, and `before` says if anyone is parked.
+            Pc.Holds => {
+                let released = if exclusive(t) {
+                    lock with { writer: false }
+                } else {
+                    lock with { readers: lock.readers - 1 }
+                }
+                next.push(
+                    step("release", at(released, task with { was: lock.parked, pc: Pc.Wake })),
+                )
+            }
+            // `wake_lockers`, with the queue locked, in its two ways, for a
+            // writer or the first reader at the head of the queue.
+            Pc.Wake => {
+                let idle = task with { pc: Pc.Idle }
+                next.push(
+                    step(
+                        "wake",
+                        match lock.waiting.first() {
+                            _ if not task.was => at(lock, idle)
+                            none => at(lock with { starving: false, parked: false }, idle)
+                            some(h) if lock.starving => {
+                                let canGrant =
+                                    not lock.writer and
+                                        (lock.readers == 0 or not exclusive(h) or not grantLooks)
+                                match canGrant {
+                                    true => {
+                                        let rest = lock.waiting.rest()
+                                        let granted = take(lock, h) with {
+                                            waiting: rest
+                                            starving: not rest.isEmpty()
+                                            parked: not rest.isEmpty()
+                                        }
+                                        changed(
+                                            at(granted, idle),
+                                            h,
+                                            tasks[h] with { pc: Pc.Holds },
+                                        )
+                                    }
+                                    false => at(lock, idle)
+                                }
+                            }
+                            some(h) => {
+                                let rest = lock.waiting.rest()
+                                changed(
+                                    at(
+                                        lock with { waiting: rest, parked: not rest.isEmpty() },
+                                        idle,
+                                    ),
+                                    h,
+                                    tasks[h] with { pc: Pc.Try, woken: true },
+                                )
+                            }
+                        },
+                    ),
+                )
+            }
+            // A cancellation claims a wait, and the task leaves the queue.
+            Pc.Waits if lock.cancels > 0 => {
+                next.push(
+                    step(
+                        "cancel",
+                        at(
+                            lock with {
+                                cancels: lock.cancels - 1
+                                waiting: lock.waiting.without(t)
+                            },
+                            task with { pc: Pc.Idle },
+                        ),
+                    ),
+                )
+            }
+            _ => {}
+        }
+    }
+    next
+}
+
+fn check(grantLooks: Bool): model.Checked ! model.Violation {
+    let fresh = Task { pc: Pc.Idle, woken: false, rounds: 2, was: false }
+    let start = Lock {
+        writer: false
+        readers: 0
+        parked: false
+        starving: false
+        waiting: model.Queue([])
+        tasks: model.Queue([fresh, fresh, fresh])
+        cancels: 1
+    }
+    // One writer alone, or readers.
+    let exclusion = model.always(
+        (lock: Lock) {
+            let holds = lock.tasks.items().map((each) { each.pc == Pc.Holds })
+            not (holds[0] and holds[1]) and
+                not ((holds[0] or holds[1]) and holds[2]) and
+                (not lock.writer or lock.readers == 0)
+        },
+        name: "Exclusion",
+    )
+    let over = (lock: Lock) {
+        lock.tasks.items().all((each) { each.pc == Pc.Idle and each.rounds == 0 })
+    }
+    model.check(start, (lock) { steps(lock, grantLooks) }, holds: [exclusion], ends: some(over))
+}
+
+test lockAsTlcDoes {
+    match check(true) {
+        ok(checked) => assert(checked.states == 66058)
+        err(broken) => panic("{broken}")
+    }
+}
+
+// A grant to a writer that does not look for readers: both hold it.
+test lockFindsAWriterWithAReader {
+    match check(false) {
+        ok(_) => panic("a writer with a reader went unseen")
+        err(broken) => assert(broken.what.contains("Exclusion"))
+    }
+}

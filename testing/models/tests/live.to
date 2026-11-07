@@ -1,0 +1,118 @@
+// A reload that converts values with identity (crates/tondo-runtime/src/live.rs:
+// hold, park, let_go, patch; crates/tondo/src/live.rs: stop_tasks), as Live.tla
+// says it. Every task stops at a statement, the tool sends the patch, and they
+// go on. If the tool goes away the barrier lets go by itself, which `guarded`
+// makes `patch` see.
+import std.model
+
+enum Task {
+    Runs
+    Parked
+}
+
+enum Tool {
+    Idle
+    Settling
+    Patching
+    Converting
+    Releasing
+}
+
+type Reload = {
+    barrier: Bool
+    first: Task
+    second: Task
+    tool: Tool
+    expired: Bool
+    converted: Bool
+}
+
+fn steps(reload: Reload, guarded: Bool): Array[model.Step[Reload]] {
+    var next: Array[model.Step[Reload]] = []
+    let step = (name: String, after: Reload) { model.Step { name, state: after } }
+    // `park`, at a statement: a task says it waits, and looks at the barrier.
+    if reload.barrier and reload.first == Task.Runs {
+        next.push(step("statement", reload with { first: Task.Parked }))
+    }
+    if reload.barrier and reload.second == Task.Runs {
+        next.push(step("statement", reload with { second: Task.Parked }))
+    }
+    match reload.tool {
+        // `hold`: the barrier, and the answer once the tasks settled.
+        Tool.Idle if not reload.converted => next.push(
+            step("hold", reload with { barrier: true, expired: false, tool: Tool.Settling }),
+        )
+        Tool.Settling if (reload.first == Task.Parked and reload.second == Task.Parked) => next.push(
+            step("settled", reload with { tool: Tool.Patching }),
+        )
+        // The patch converts what values hold, in place, unless the barrier let go.
+        Tool.Patching => next.push(
+            step(
+                "patch",
+                reload with {
+                    tool: if guarded and reload.expired { Tool.Releasing } else { Tool.Converting }
+                },
+            ),
+        )
+        Tool.Converting => next.push(
+            step("convert", reload with { converted: true, tool: Tool.Releasing }),
+        )
+        // `let_go`.
+        Tool.Releasing => next.push(
+            step(
+                "let go",
+                reload with { barrier: false, first: Task.Runs, second: Task.Runs, tool: Tool.Idle },
+            ),
+        )
+        _ => {}
+    }
+    if reload.tool == Tool.Settling and reload.expired {
+        next.push(step("gave up", reload with { tool: Tool.Releasing }))
+    }
+    // After a while with no answer, the barrier lets go by itself.
+    if reload.barrier and (reload.tool == Tool.Settling or reload.tool == Tool.Patching) {
+        next.push(
+            step(
+                "expire",
+                reload with { barrier: false, expired: true, first: Task.Runs, second: Task.Runs },
+            ),
+        )
+    }
+    next
+}
+
+fn check(guarded: Bool): model.Checked ! model.Violation {
+    let start = Reload {
+        barrier: false
+        first: Task.Runs
+        second: Task.Runs
+        tool: Tool.Idle
+        expired: false
+        converted: false
+    }
+    // While values convert, no task runs.
+    let quiet = model.always(
+        (reload: Reload) {
+            reload.tool != Tool.Converting or
+                (reload.first == Task.Parked and reload.second == Task.Parked)
+        },
+        name: "Quiet",
+    )
+    model.check(
+        start,
+        (reload) { steps(reload, guarded) },
+        holds: [quiet],
+        ends: some((reload: Reload) { reload.converted and reload.tool == Tool.Idle }),
+    )
+}
+
+test liveAsTlcDoes {
+    match check(true) {
+        ok(checked) => assert(checked.states == 13)
+        err(broken) => panic("{broken}")
+    }
+}
+
+test liveFindsAPatchAfterTheBarrierLetGo {
+    assert(check(false).isErr())
+}

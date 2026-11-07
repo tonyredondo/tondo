@@ -1,0 +1,167 @@
+// A server that stops (crates/tondo-runtime/src/server.rs: accept, handle,
+// tondo_rt_http_server_stop, tondo_rt_http_next; std/http.to: serve, listen),
+// as Drain.tla says it.
+import std.model
+
+enum Phase {
+    Serving
+    Draining
+    Closed
+}
+
+enum Conn {
+    Nothing
+    Counted
+    Open
+    Queued
+    Answering
+    Answered
+    Done
+    Cut
+}
+
+type Server = {
+    phase: Phase
+    conns: model.Queue[Conn]
+    listening: Bool
+    stopper: Stopper
+    serving: Bool
+}
+
+enum Stopper {
+    Idle
+    Waiting
+    Done
+}
+
+// The list with the item at `index` changed.
+fn set[T](list: model.Queue[T], index: Int, item: T): model.Queue[T] {
+    var items = list.items()
+    items[index] = item
+    model.Queue(items)
+}
+
+fn isOpen(conn: Conn): Bool {
+    conn == Conn.Counted or
+        conn == Conn.Open or
+        conn == Conn.Queued or
+        conn == Conn.Answering or
+        conn == Conn.Answered
+}
+
+fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
+    var next: Array[model.Step[Server]] = []
+    let step = (name: String, after: Server) { model.Step { name, state: after } }
+    let conns = server.conns.items()
+    for (c, conn) in conns.enumerate() {
+        let becomes = (name: String, after: Conn) {
+            step(name, server with { conns: set(server.conns, c, after) })
+        }
+        match conn {
+            // The loop of `accept`: it counts the connection first and then
+            // looks at the phase.
+            Conn.Nothing if server.listening => next.push(becomes("accept", Conn.Counted))
+            Conn.Counted => next.push(
+                becomes("looked", if server.phase == Phase.Serving { Conn.Open } else { Conn.Done }),
+            )
+            Conn.Open => {
+                // A request: to the queue, or refused once closed.
+                next.push(
+                    becomes(
+                        "request",
+                        if server.phase == Phase.Closed { Conn.Done } else { Conn.Queued },
+                    ),
+                )
+                // A connection with nothing to do closes once the server stops.
+                if server.phase != Phase.Serving {
+                    next.push(becomes("close", Conn.Done))
+                }
+            }
+            // `tondo_rt_http_next`: the next request; none once it closed, or drained.
+            Conn.Queued if server.serving and server.phase != Phase.Closed => next.push(
+                becomes("next", Conn.Answering),
+            )
+            Conn.Answering => next.push(becomes("answer", Conn.Answered))
+            Conn.Answered => next.push(becomes("sent", Conn.Done))
+            _ => {}
+        }
+    }
+    if server.listening and server.phase != Phase.Serving {
+        next.push(step("stop listening", server with { listening: false }))
+    }
+    let drained = not conns.any(isOpen)
+    if server.serving and
+        (server.phase == Phase.Closed or server.phase == Phase.Draining and (drained or not drains)) {
+        next.push(step("ended", server with { serving: false }))
+    }
+    // `tondo_rt_http_server_stop`.
+    if server.stopper == Stopper.Idle and server.phase == Phase.Serving {
+        next.push(step("stop", server with { phase: Phase.Draining, stopper: Stopper.Waiting }))
+    }
+    // The task that waits for the connections, or for the grace to pass.
+    if server.phase == Phase.Draining {
+        if drained {
+            next.push(step("drained", server with { phase: Phase.Closed }))
+        }
+        let cut = conns.map(
+            (conn) { if isOpen(conn) and conn != Conn.Counted { Conn.Cut } else { conn } },
+        )
+        next.push(step("grace", server with { phase: Phase.Closed, conns: model.Queue(cut) }))
+    }
+    if server.stopper == Stopper.Waiting and not server.listening {
+        next.push(step("returned", server with { stopper: Stopper.Done }))
+    }
+    next
+}
+
+fn check(drains: Bool): model.Checked ! model.Violation {
+    let start = Server {
+        phase: Phase.Serving
+        conns: model.Queue([Conn.Nothing, Conn.Nothing])
+        listening: true
+        stopper: Stopper.Idle
+        serving: true
+    }
+    // The serving loop never ends with a request it did not answer, but past grace.
+    let answered = model.always(
+        (server: Server) {
+            server.serving or
+                server.phase != Phase.Draining or
+                server.conns
+                    .items()
+                    .all(
+                        (conn) {
+                            conn != Conn.Queued and conn != Conn.Answering and conn != Conn.Answered
+                        },
+                    )
+        },
+        name: "Answered",
+    )
+    // `stop` returned: nothing listens.
+    let freed = model.always(
+        (server: Server) { server.stopper != Stopper.Done or not server.listening },
+        name: "Freed",
+    )
+    let over = (server: Server) { not server.serving and server.stopper == Stopper.Done }
+    model.check(
+        start,
+        (server) { steps(server, drains) },
+        holds: [answered, freed],
+        ends: some(over),
+    )
+}
+
+test drainAsTlcDoes {
+    match check(true) {
+        ok(checked) => assert(checked.states == 319)
+        err(broken) => panic("{broken}")
+    }
+}
+
+// A serving loop that ends as soon as the server stops leaves requests unanswered.
+test drainFindsAnUnansweredRequest {
+    match check(false) {
+        ok(_) => panic("an unanswered request went unseen")
+        err(broken) => assert(broken.what.contains("Answered"))
+    }
+}
