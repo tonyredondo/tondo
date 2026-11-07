@@ -1,0 +1,32 @@
+// A cycle through a group of tasks is collected (language 16.7): a record
+// keeps the group whose tasks return the record.
+import std.console
+import std.sync
+
+type Crowd = {
+    name: String
+    group: sync.Mutex[Group[Ref[Crowd]]?]
+}
+
+fn back(crowd: Ref[Crowd]): Ref[Crowd] {
+    crowd
+}
+
+fn circle(i: Int): Int {
+    let crowd = Ref(Crowd { name: "c{i}", group: sync.Mutex(none) })
+    var group = Group[Ref[Crowd]]()
+    group.add(spawn back(crowd))
+    group.add(spawn back(crowd))
+    crowd.value.group.set(some(group))
+    i
+}
+
+fn main() {
+    var made = 0
+    for i in 0..500 {
+        made += circle(i)
+    }
+    console.println("{made}")
+}
+
+// expect-stdout: 124750
