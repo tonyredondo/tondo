@@ -4340,7 +4340,10 @@ let user = parse[User](text)?
 let firstNumber = first(numbers)
 ~~~
 
-Si no puede inferirlos, exige anotación; no elige un valor por defecto.
+Si no puede inferirlos, exige anotación; no elige un valor por defecto, con una
+excepción: un parámetro que solo aparece como error de un resultado, `T ! X`, y que
+nada fija es `Never`. Una función que no falla pasa así donde se espera una que
+puede fallar, como `fn(S, E): S` para `apply: fn(S, E): S ! X`.
 
 ### 12.2 Invariancia
 

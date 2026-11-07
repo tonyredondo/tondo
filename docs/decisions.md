@@ -5461,3 +5461,12 @@ A state is a `Key`, and an `Array` is not, as `Key` implies `Copy`. Rather than 
 reflection of their own, so the two are named where derivation accepts a standard type, with their
 arguments checked.
 
+## An error nothing fixes is `Never`
+
+A function that does not fail passes where one that may is expected, `fn(S, E): S` for
+`apply: fn(S, E): S ! X`, so that `model.machine` takes a production function whatever its result,
+under one name. Two rules make it: a type parameter that only stands for the error of a result, and
+that nothing fixes, is `Never`, which is the one answer that fits any call; and a function named
+there is the closure that calls it, as the closure written by hand already was. Inference otherwise
+still refuses to choose.
+

@@ -16404,6 +16404,36 @@ impl<'a> Checker<'a> {
     /// already checked; otherwise every parameter comes from `args`, which
     /// may be named, variadic or spread (11.3). Arguments are evaluated in
     /// the order they are written.
+    /// Whether `generic` is in `ty` as the error of a result, and whether it is
+    /// anywhere else.
+    fn where_mentioned(&mut self, ty: Ty, generic: Ty) -> (bool, bool) {
+        let both = |a: (bool, bool), b: (bool, bool)| (a.0 || b.0, a.1 || b.1);
+        match self.types.kind(ty).clone() {
+            TyKind::Result(ok, error) if error == generic => (true, self.where_mentioned(ok, generic).1),
+            TyKind::Result(ok, error) => {
+                let ok = self.where_mentioned(ok, generic);
+                let error = self.where_mentioned(error, generic);
+                both(ok, error)
+            }
+            TyKind::Fn(params, result, ..) => {
+                let mut found = self.where_mentioned(result, generic);
+                for param in params {
+                    let inner = self.where_mentioned(param, generic);
+                    found = both(found, inner);
+                }
+                found
+            }
+            TyKind::Option(inner) | TyKind::Array(inner) | TyKind::Deque(inner) | TyKind::Set(inner) => {
+                self.where_mentioned(inner, generic)
+            }
+            _ if ty == generic => (false, true),
+            _ => {
+                let marked = self.types.subst(ty, &HashMap::from([(generic, Ty::UNIT)]));
+                (false, marked != ty)
+            }
+        }
+    }
+
     fn call_signature(
         &mut self,
         cx: &mut FnCx,
@@ -16607,13 +16637,18 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let mode = mode_of(index);
-                let value = self.argument_value(
-                    cx,
-                    arg,
-                    expected,
-                    mode,
-                    parameter_of(index) < first + usize::from(signature.receiver.is_some()) && first == 0,
-                );
+                let total = if arg.mode == ast::Mode::Value { self.total_as_fallible(cx, arg, ty) } else { None };
+                let value = if let Some(value) = total {
+                    value
+                } else {
+                    self.argument_value(
+                        cx,
+                        arg,
+                        expected,
+                        mode,
+                        parameter_of(index) < first + usize::from(signature.receiver.is_some()) && first == 0,
+                    )
+                };
                 let value = if dynamic && value.ty != ty && !arg.spread { self.reflect_value(value) } else { value };
                 self.unify(&mut inference, ty, value.ty);
                 // A closure for a `fn(A): B` parameter fixes what `B` mentions.
@@ -16647,6 +16682,19 @@ impl<'a> Checker<'a> {
             }
         }
         self.infer_from_bounds(&mut inference);
+        // An error nothing fixes is that of what does not fail (12.1).
+        for &generic in &signature.generics {
+            if !inference.map.contains_key(&generic) {
+                let types: Vec<Ty> = signature.params.iter().copied().chain([signature.result]).collect();
+                let (error, elsewhere) = types.iter().fold((false, false), |(error, elsewhere), &ty| {
+                    let (e, o) = self.where_mentioned(ty, generic);
+                    (error || e, elsewhere || o)
+                });
+                if error && !elsewhere {
+                    inference.map.insert(generic, Ty::NEVER);
+                }
+            }
+        }
         let unknown: Vec<String> = signature
             .generics
             .iter()
@@ -16868,6 +16916,60 @@ impl<'a> Checker<'a> {
     /// `mut self` or `var self` receiver in a qualified call is a loan.
     /// One argument as written for a parameter passed as `mode`. A plain
     /// `self` receiver written first in a qualified call takes no keyword.
+    /// A function that does not fail, named where one that may is expected:
+    /// a closure that calls it, whose value is `ok` (12.1).
+    fn total_as_fallible(&mut self, cx: &mut FnCx, arg: &ast::Arg, param: Ty) -> Option<hir::Expr> {
+        if let TyKind::Fn(params, result, false, ..) = self.types.kind(param).clone()
+            && matches!(self.types.kind(result), TyKind::Result(..))
+            && let ast::ExprKind::Path(segments) = &arg.value.kind
+            && let [name] = segments.as_slice()
+            && self.lookup(cx, &name.name).is_none()
+            && let Some(ModuleName::Fn(id)) = self.names.get(&name.name).copied()
+            && let Some(signature) = self.signatures.get(id.0 as usize)
+            && signature.params.len() == params.len()
+            && signature.receiver.is_none()
+            && signature.generics.is_empty()
+            && !matches!(self.types.kind(signature.result), TyKind::Result(..))
+        {
+            // What the function takes is known, though the call may not know
+            // it yet.
+            // Its error, if the call gives one; one it leaves open is `Never`.
+            let TyKind::Result(_, error) = self.types.kind(result).clone() else { unreachable!("matched") };
+            let error = if matches!(self.types.kind(error), TyKind::Param(..)) { Ty::NEVER } else { error };
+            let gives = self.types.intern(TyKind::Result(signature.result, error));
+            let modes = signature.modes.clone();
+            let expected = self.types.intern(TyKind::Fn(signature.params.clone(), gives, false, modes, false));
+            let span = arg.value.span;
+            let names: Vec<ast::Ident> =
+                (0..params.len()).map(|at| ast::Ident { name: format!("#{at}"), span }).collect();
+            let call = ast::Expr {
+                kind: ast::ExprKind::Call {
+                    callee: Box::new(arg.value.clone()),
+                    args: names
+                        .iter()
+                        .map(|name| ast::Arg {
+                            name: None,
+                            value: ast::Expr { kind: ast::ExprKind::Path(vec![name.clone()]), span },
+                            mode: ast::Mode::Value,
+                            spread: false,
+                            span,
+                        })
+                        .collect(),
+                },
+                span,
+            };
+            let params = names
+                .into_iter()
+                .map(|name| ast::ClosureParam { name, ty: None, mode: ast::Mode::Value, variadic: false })
+                .collect();
+            let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call)), span };
+            let closure = ast::Closure { is_unsafe: false, params, result: None, body };
+            let wrapped = ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span };
+            return Some(self.expr(cx, &wrapped, Some(expected)));
+        }
+        None
+    }
+
     fn argument_value(
         &mut self,
         cx: &mut FnCx,

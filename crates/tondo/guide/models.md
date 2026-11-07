@@ -18,7 +18,8 @@ A function that gives the next state for an event is the model already.
 `model.machine` tries every event in every state, every value of the event's
 type there is, and stops at the first that breaks what `holds` says. An event
 the function fails for is one that cannot happen there; one it panics for is a
-bug, shown with the way to it.
+bug, shown with the way to it. A function that never fails, `fn(S, E): S`,
+passes too.
 
 ```tondo test
 import std.model

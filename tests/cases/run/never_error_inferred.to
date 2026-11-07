@@ -1,0 +1,52 @@
+// An error type that nothing fixes is `Never` (12.1), so that a function that
+// does not fail passes where one that may is expected, by name or as a
+// closure, as a state machine's that never refuses an event.
+//
+// expect-stdout: true false
+// expect-stdout: true
+// expect-stdout: 2 states, never []
+import std.console
+import std.model
+
+type Door = {
+    open: Bool
+}
+
+fn run[S, E, X](start: S, event: E, apply: fn(S, E): S ! X): S? {
+    match apply(start, event) {
+        ok(state) => some(state)
+        err(_) => none
+    }
+}
+
+fn close(door: Door, really: Bool): Door {
+    door with { open: not really }
+}
+
+fn open(door: Door, really: Bool): Door ! String {
+    if not really {
+        fail "it stays shut"
+    }
+    door with { open: true }
+}
+
+enum Push {
+    Open
+    Close
+}
+
+fn pushed(_isOpen: Bool, by: Push): Bool {
+    match by {
+        Push.Open => true
+        Push.Close => false
+    }
+}
+
+fn main() {
+    console.println("{run(Door { open: true }, true, close).isSome()} {run(Door { open: false }, false, open).isSome()}")
+    console.println("{run(Door { open: true }, true, (door, really) { close(door, really) }).isSome()}")
+    match model.machine(false, pushed) {
+        ok(checked) => console.println("{checked.states} states, never {checked.never}")
+        err(broken) => console.println("{broken}")
+    }
+}
