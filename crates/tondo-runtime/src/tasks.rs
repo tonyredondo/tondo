@@ -680,6 +680,14 @@ thread_local! {
     static NEXT_TURNS: Cell<u32> = const { Cell::new(0) };
 }
 
+/// This worker's next, read by tasks as they wake others: never inlined, as
+/// `current`, or a task that resumes on another thread writes the next of
+/// the worker it ran on before, which may sleep.
+#[inline(never)]
+fn own_next() -> Option<&'static Next> {
+    OWN_NEXT.with(Cell::get)
+}
+
 /// How long a task waits next to a worker that runs another before an idle
 /// worker takes it, so that tasks that could run in parallel still do.
 const NEXT_WAIT: Duration = Duration::from_micros(20);
@@ -735,7 +743,7 @@ fn take_next() -> (Option<*mut Task>, bool) {
 fn schedule(task: *mut Task) {
     if !current().is_null()
         && exploring().is_none()
-        && let Some(next) = OWN_NEXT.with(Cell::get)
+        && let Some(next) = own_next()
     {
         next.since.store(nanos(), Ordering::Relaxed);
         let replaced = next.task.swap(task, Ordering::AcqRel);
@@ -763,7 +771,7 @@ fn schedule(task: *mut Task) {
 fn enqueue(task: *mut Task) {
     if !current().is_null()
         && exploring().is_none()
-        && let Some(own) = OWN_NEXT.with(Cell::get)
+        && let Some(own) = own_next()
     {
         let mut tasks = own.tasks();
         tasks.0.push_back(task);
@@ -784,7 +792,7 @@ fn enqueue(task: *mut Task) {
     }
     let mut queue = queue();
     queue.runnable.push_back(task);
-    if LOOKS_NEXT.with(|next| next.replace(false)) || SEEKING.load(Ordering::SeqCst) {
+    if looks_next() || SEEKING.load(Ordering::SeqCst) {
         return;
     }
     // One worker woken at a time, not one for each task: the one woken
@@ -814,6 +822,13 @@ thread_local! {
     /// This worker looks at the queue next and finds nothing before the
     /// first task it schedules, which wakes no other worker.
     static LOOKS_NEXT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this worker looks at the queue next, once: never inlined, as
+/// `own_next`.
+#[inline(never)]
+fn looks_next() -> bool {
+    LOOKS_NEXT.with(|next| next.replace(false))
 }
 
 /// Wakes a worker to look at the queue, as for a signal that came.
@@ -941,7 +956,7 @@ fn park() {
         // With C frames on its stack the task cannot resume on another
         // thread, so it waits on this one; the monitor may start another
         // worker meanwhile.
-        let in_c = IN_C.with(|c| c.get());
+        let in_c = in_c_here();
         if !in_c.is_null() && (*in_c).depth.load(Ordering::SeqCst) > 0 {
             if state.compare_exchange(RUNNING, PINNED, Ordering::AcqRel, Ordering::Acquire).is_err() {
                 state.store(RUNNING, Ordering::Release);
@@ -2238,6 +2253,12 @@ static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
 /// How often the monitor looks: a call still in C after one look and the
 /// next is long, and blocks its worker.
 const MONITOR_PERIOD: Duration = Duration::from_millis(1);
+
+/// This worker's calls of C, if it made any: never inlined, as `current`.
+#[inline(never)]
+fn in_c_here() -> *const InC {
+    IN_C.with(|c| c.get())
+}
 
 #[inline(never)]
 fn in_c() -> &'static InC {
@@ -3548,7 +3569,7 @@ fn give_way() {
     if task.is_null() {
         return;
     }
-    let in_c = IN_C.with(|c| c.get());
+    let in_c = in_c_here();
     if !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0 {
         return;
     }
