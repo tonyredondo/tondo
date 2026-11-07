@@ -1,5 +1,5 @@
-fn holds(test: fn(Int): Bool): Bool {
-    test(1)
+fn holds(predicate: fn(Int): Bool): Bool {
+    predicate(1)
 }
 
 fn main() {
