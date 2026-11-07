@@ -5384,3 +5384,14 @@ for the call to return; and a connection accepted as a server stopped could wait
 has shown: a load of clients around a stop never reached it, and with `listen` the program
 ends at once anyway. Channels, `select`, joins, groups, locks and parking held, which is worth
 knowing too.
+
+## Every order, in Tondo
+
+Rather than TLA+ in the toolchain, its idea in two pieces. A model and the code are two things,
+and writing the models showed how they part, so the one that counts most needs none:
+`--schedules all` runs the test itself through every choice the scheduler has, which only a
+language with a scheduler of its own can give with no change to the program. It goes by fewest
+changes first, as most faults need few, and says plainly when it did not finish. `std.model` is
+for a design with no code yet: a library, in Tondo, that needs no new syntax. TLC stays for
+`testing/models`, for what it has and they do not: fairness and a longer record.
+

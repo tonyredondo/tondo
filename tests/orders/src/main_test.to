@@ -1,0 +1,299 @@
+import std.executor
+import std.sync
+import std.time
+
+fn add(total: sync.Mutex[Int]) {
+    total.update((value) { value += 1 })
+}
+
+test mutexCounts {
+    let total = sync.Mutex(0)
+    let first = spawn add(total)
+    let second = spawn add(total)
+    first.wait()
+    second.wait()
+    total.update((value) { assert(value == 2) })
+}
+
+fn bump(count: sync.Atomic[Int]) {
+    _ = count.add(1)
+}
+
+test atomicCounts {
+    let count = sync.Atomic(0)
+    let first = spawn bump(count)
+    let second = spawn bump(count)
+    first.wait()
+    second.wait()
+    assert(count.load() == 2)
+}
+
+fn sends(out: Sender[Int], value: Int) {
+    out.send(value)
+}
+
+test channelKeepsEveryValue {
+    let (out, input) = channel[Int](1)
+    let first = spawn sends(out.copy(), 1)
+    let second = spawn sends(out.copy(), 2)
+    let got = input.receive().unwrapOr(0) + input.receive().unwrapOr(0)
+    first.wait()
+    second.wait()
+    assert(got == 3)
+}
+
+test rendezvousHandsOver {
+    let (out, input) = channel[Int]()
+    let job = spawn sends(out, 7)
+    assert(input.receive() == some(7))
+    job.wait()
+}
+
+fn closes(out: Sender[Int]) {
+    out.send(1)
+}
+
+test closedChannelEnds {
+    let (out, input) = channel[Int](2)
+    let job = spawn closes(out)
+    job.wait()
+    assert(input.receive() == some(1))
+    assert(input.receive() == none)
+}
+
+fn doubled(number: Int): Int {
+    number * 2
+}
+
+test groupGivesEveryResult {
+    var group = Group[Int]()
+    group.add(spawn doubled(1))
+    group.add(spawn doubled(2))
+    let results = group.wait()
+    assert(results.sum() == 6)
+}
+
+test groupNextGivesEach {
+    var group = Group[Int]()
+    group.add(spawn doubled(1))
+    group.add(spawn doubled(2))
+    var sum = 0
+    for {
+        match group.next() {
+            some(result) => sum += result
+            none => break
+        }
+    }
+    assert(sum == 6)
+}
+
+fn holds(permits: sync.Semaphore, inside: sync.Atomic[Int]) {
+    let permit = permits.acquire()
+    assert(inside.add(1) == 1)
+    _ = inside.add(-1)
+    _ = permit
+}
+
+test semaphoreLimits {
+    let permits = sync.Semaphore(1)
+    let inside = sync.Atomic(0)
+    let first = spawn holds(permits, inside)
+    let second = spawn holds(permits, inside)
+    first.wait()
+    second.wait()
+}
+
+fn meets(barrier: sync.Barrier, count: sync.Atomic[Int]) {
+    _ = count.add(1)
+    barrier.wait()
+    assert(count.load() == 2)
+}
+
+test barrierWaitsForAll {
+    let barrier = sync.Barrier(2)
+    let count = sync.Atomic(0)
+    let first = spawn meets(barrier, count)
+    let second = spawn meets(barrier, count)
+    first.wait()
+    second.wait()
+}
+
+test selectTakesOne {
+    let (left, fromLeft) = channel[Int](1)
+    let (right, fromRight) = channel[Int](1)
+    let first = spawn sends(left, 1)
+    let second = spawn sends(right, 2)
+    let got = select {
+        let value = fromLeft.receive() => value
+        let value = fromRight.receive() => value
+    }
+    assert(got == some(1) or got == some(2))
+    first.wait()
+    second.wait()
+}
+
+fn waits(input: Receiver[Int]) {
+    _ = input.receive()
+}
+
+test cancelEndsAWait {
+    let (out, input) = channel[Int]()
+    let job = spawn waits(input)
+    job.cancel()
+    _ = out
+}
+
+fn updates(cell: sync.Mutex[Int]) {
+    cell.updateWhen((value) { value > 0 }, (value) { value = 10 })
+}
+
+fn sets(cell: sync.Mutex[Int]) {
+    cell.update((value) { value = 1 })
+}
+
+test updateWhenWakes {
+    let cell = sync.Mutex(0)
+    let waiting = spawn updates(cell)
+    let setting = spawn sets(cell)
+    waiting.wait()
+    setting.wait()
+    cell.update((value) { assert(value == 10) })
+}
+
+test detachedEnds {
+    let count = sync.Atomic(0)
+    spawn detached bump(count)
+    let job = spawn bump(count)
+    job.wait()
+}
+
+fn reads(cell: sync.RwLock[Int], seen: sync.Atomic[Int]) {
+    cell.read((value) { _ = seen.add(value) })
+}
+
+fn writes(cell: sync.RwLock[Int]) {
+    cell.update((value) { value = 2 })
+}
+
+test rwLockSeesAWholeValue {
+    let cell = sync.RwLock(1)
+    let seen = sync.Atomic(0)
+    let reader = spawn reads(cell, seen)
+    let writer = spawn writes(cell)
+    reader.wait()
+    writer.wait()
+    assert(seen.load() == 1 or seen.load() == 2)
+    assert(cell.get() == 2)
+}
+
+fn makes(count: sync.Atomic[Int]): Int {
+    _ = count.add(1)
+    7
+}
+
+fn takes(once: sync.Once[Int], count: sync.Atomic[Int]) {
+    assert(once.getOrInit(() { makes(count) }) == 7)
+}
+
+test onceMakesOne {
+    let once = sync.Once[Int]()
+    let count = sync.Atomic(0)
+    let first = spawn takes(once, count)
+    let second = spawn takes(once, count)
+    first.wait()
+    second.wait()
+    assert(count.load() == 1)
+}
+
+fn pushes(queue: sync.Queue[Int], number: Int) {
+    queue.push(number)
+}
+
+test queueKeepsEveryValue {
+    let queue = sync.Queue[Int]()
+    let first = spawn pushes(queue, 1)
+    let second = spawn pushes(queue, 2)
+    first.wait()
+    second.wait()
+    assert(queue.popFront().unwrapOr(0) + queue.popFront().unwrapOr(0) == 3)
+    assert(queue.popFront() == none)
+}
+
+fn inserts(map: sync.Map[Int, Int], key: Int) {
+    _ = map.insert(key, key)
+}
+
+test mapKeepsEveryKey {
+    let map = sync.Map[Int, Int]()
+    let first = spawn inserts(map, 1)
+    let second = spawn inserts(map, 2)
+    first.wait()
+    second.wait()
+    assert(map.length() == 2)
+}
+
+test poolRunsEveryJob {
+    let pool = executor.pool(1, 4)?
+    let first = pool.submit(() { 1 })?
+    let second = pool.submit(() { 2 })?
+    assert(first.wait() + second.wait() == 3)
+    pool.shutdown()
+}
+
+test aReceiverHearsTheEnd {
+    let (out, input) = channel[Int]()
+    let job = spawn waits(input)
+    out.close()
+    job.wait()
+}
+
+fn locks(cell: sync.Mutex[Int], out: Sender[Int]) {
+    cell.update((value) {
+        out.send(1)
+        value += 1
+    })
+}
+
+test cancelInALockLetsItGo {
+    let cell = sync.Mutex(0)
+    let (out, input) = channel[Int]()
+    let job = spawn locks(cell, out)
+    assert(input.receive() == some(1))
+    job.cancel()
+    cell.update((value) { assert(value >= 0) })
+}
+
+test selectSends {
+    let (out, input) = channel[Int]()
+    let job = spawn waits(input)
+    select {
+        out.send(1) => {}
+        time.sleep(time.seconds(30)) => assert(false)
+    }
+    job.wait()
+}
+
+fn failing(number: Int): Int ! String {
+    if number == 1 {
+        fail "one"
+    }
+    number
+}
+
+test groupStopsAtAnError {
+    var group = Group[Int ! String]()
+    group.add(spawn failing(1))
+    group.add(spawn failing(2))
+    match group.wait() {
+        ok(_) => assert(false)
+        err(problem) => assert(problem == "one")
+    }
+}
+
+test cancellingAGroupEndsIt {
+    let (out, input) = channel[Int]()
+    var group = Group[Unit]()
+    group.add(spawn waits(input))
+    group.cancel()
+    _ = out
+}

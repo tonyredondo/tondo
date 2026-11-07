@@ -1,0 +1,2 @@
+// The concurrency of the standard library, in `tondo test --schedules all`.
+fn main() {}

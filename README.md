@@ -158,7 +158,7 @@ covers, with what it took, is in [`docs/roadmap.md`](docs/roadmap.md).
 | Linux x86-64 and arm64, glibc 2.34 or later, and musl for anything older | Done |
 | macOS on Apple silicon and Intel, signed and notarized | Done |
 | Standard library, measured against what porting Gin, Hugo and dd-trace-go needs | Done |
-| Tests, benchmarks, fuzzing, coverage, profiling | Done |
+| Tests, every order of their tasks, benchmarks, fuzzing, coverage, profiling | Done |
 | Debugger, dumps, live builds, language server, VS Code, MCP | Done |
 | Windows | Not started |
 | SIMD API | Accepted, not started |

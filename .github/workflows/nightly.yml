@@ -72,6 +72,8 @@ jobs:
       - run: cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
         env:
           TONDO_SWEEP: 1
+      # The concurrency of the standard library, in all of its orders.
+      - run: cargo run -q -p tondo -- test tests/orders --schedules all
       # What a case says of its output holds in any order of its tasks
       # (testing 8.10), and each night tries others.
       - run: |

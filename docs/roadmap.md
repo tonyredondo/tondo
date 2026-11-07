@@ -83,6 +83,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Building by calling** | A type is built by calling it: a function named as a type of its module is its constructor, `App()`, and collections take what they hold, `Array[Int]()`, `sync.Queue[Int]()`. `.new` is gone from the language's types and the standard library's, with its repair | Done |
 | **Accepted warnings** | `// tondo: allow W1004: why` keeps a warning out of the list, on its line or the next with code. It has to say why, warns when it silences nothing, and what it silences stays in `silenced` and as a hint in the editor. Every warning offers to write it | Done |
 | **Orders without waits** | `tondo test --schedules` changes the order of tasks at a `spawn`, a lock let go and a write of an `Atomic` too, with one seed in four choosing at random, and the cases run in the order of a seed in the Nightly | Done |
+| **Every order** | `tondo test --schedules all` goes through the choices of a test, fewest changes first, and a failure gives its path, `at:0.2.1`, to repeat and debug. `std.model` checks a design in every order of its steps, in Tondo. `tests/orders` holds the concurrency of the standard library to it in the Nightly | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
