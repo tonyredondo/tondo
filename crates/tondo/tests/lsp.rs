@@ -183,6 +183,14 @@ impl Editor {
     }
 }
 
+// A test that ends otherwise, or fails, leaves no server behind.
+impl Drop for Editor {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2912,6 +2920,7 @@ fn a_request_can_be_cancelled_while_it_runs() {
     // The other project is analyzed all the same.
     let other = if reached == a { b } else { a };
     assert!(editor.receive_diagnostics(&other).to_string().contains("missing"));
+    editor.stop();
 }
 
 /// A long list goes as it is sent, to an editor that gave a token for that.

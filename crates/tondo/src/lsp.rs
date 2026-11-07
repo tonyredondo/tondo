@@ -26,6 +26,7 @@ pub fn serve() -> Result<(), String> {
                 break;
             }
         }
+        reading.lock().unwrap_or_else(|e| e.into_inner()).closed = true;
     });
     let mut server = Server { inbox, ..Server::default() };
     loop {
@@ -84,6 +85,8 @@ struct Inbox {
     cancelled: HashSet<String>,
     /// How many changes wait their turn, of each document.
     changing: HashMap<String, usize>,
+    /// The editor's input ended: nothing more comes, a cancellation either.
+    closed: bool,
 }
 
 impl Inbox {
@@ -717,6 +720,7 @@ impl Server {
                 self.holds_analysis = params["analysis"] == true;
                 while !self.holds_analysis
                     && !self.inbox().changing.contains_key(params["uri"].as_str().unwrap_or_default())
+                    && !self.inbox().closed
                 {
                     std::thread::yield_now();
                 }
@@ -1106,7 +1110,12 @@ impl Server {
             let started = Instant::now();
             self.analyze(root);
             progress(json!({ "kind": "report", "percentage": (done + 1) * 100 / roots.len() }));
-            while self.holds_analysis && !self.current.as_ref().is_some_and(|c| self.inbox().cancelled.contains(c)) {
+            // Until the request is cancelled, once, or the editor is gone.
+            while self.holds_analysis && !self.inbox().closed {
+                if self.current.as_ref().is_some_and(|c| self.inbox().cancelled.contains(c)) {
+                    self.holds_analysis = false;
+                    break;
+                }
                 std::thread::yield_now();
             }
             if !self.quiet {
