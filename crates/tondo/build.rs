@@ -103,7 +103,10 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
     // of the toolchain run: each program it links writes where its
     // `LLVM_PROFILE_FILE` says (docs/refactor.md, phase 0.1).
     println!("cargo:rerun-if-env-changed=TONDO_RUNTIME_COVERAGE");
-    let coverage = env::var_os("TONDO_RUNTIME_COVERAGE").is_some_and(|value| value == "1");
+    // Only this machine's: the runtimes of other targets, as musl's, have no
+    // profiler to link with.
+    let coverage = env::var_os("TONDO_RUNTIME_COVERAGE").is_some_and(|value| value == "1")
+        && env::var("HOST").is_ok_and(|host| host == target);
     // Its own build directory, so this build does not wait for the one
     // that runs it; and one for each way, so that neither undoes the other.
     let target_dir = out_dir.join(match (coverage, fast) {
