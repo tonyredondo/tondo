@@ -1967,6 +1967,10 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
             status = ExitCode::FAILURE;
         } else {
             std::fs::write(path, formatted).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            // What it changed; a file already formatted goes unsaid.
+            if !json {
+                println!("formatted {}", path.display());
+            }
         }
     }
     if json {
@@ -2019,14 +2023,22 @@ fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut private, mut list, mut json, mut project, mut target) = (false, false, false, PathBuf::from("."), None);
     let (mut search, mut diff) = (None, None);
-    let mut rest = args.iter();
+    let mut rest = args.iter().peekable();
     while let Some(arg) = rest.next() {
         match arg.to_str() {
             Some("--private") => private = true,
             Some("--list") => list = true,
             Some("--json") => json = true,
+            // Its words, quoted together or not, up to the next option.
             Some("--search") => {
-                search = Some(rest.next().and_then(|a| a.to_str()).ok_or(format!("--search takes words\n{USAGE}"))?)
+                let mut words = Vec::new();
+                while let Some(word) = rest.next_if(|a| !a.to_string_lossy().starts_with('-')) {
+                    words.push(word.to_string_lossy().into_owned());
+                }
+                if words.is_empty() {
+                    return Err(format!("--search takes words\n{USAGE}"));
+                }
+                search = Some(words.join(" "));
             }
             Some("--diff") => {
                 diff = Some(rest.next().and_then(|a| a.to_str()).ok_or("--diff takes a commit")?.to_string());
@@ -2090,7 +2102,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         for (name, paths, _) in modules().unwrap_or_default() {
             apis.push((name, render(&paths)?));
         }
-        let found = tondo::api::search(query, apis.iter().map(|(name, api)| (name.clone(), api.as_str())));
+        let found = tondo::api::search(&query, apis.iter().map(|(name, api)| (name.clone(), api.as_str())));
         if json {
             let matches: Vec<serde_json::Value> = found
                 .iter()

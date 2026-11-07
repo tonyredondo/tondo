@@ -237,6 +237,11 @@ fn the_api_of_a_declaration_and_a_search() {
         names.starts_with(&["std.encoding.Base64Alphabet".into(), "std.encoding.base64Decode".into()]),
         "{names:?}"
     );
+    // Several words, quoted together or not, find the same.
+    let (apart, _) = json(&dir, &["api", "--search", "decode", "base64", "--json"]);
+    let (together, _) = json(&dir, &["api", "--search", "decode base64", "--json"]);
+    assert_eq!(apart["matches"], together["matches"]);
+    assert!(!apart["matches"].as_array().unwrap().is_empty(), "{apart}");
     let (module, _) = json(&dir, &["api", "std.csv", "--json"]);
     assert!(module["summary"].as_str().unwrap().starts_with("comma-separated values"), "{module}");
     let (_, stderr, status) = tondo(&dir, &["api", "std.nothing.Here"]);
