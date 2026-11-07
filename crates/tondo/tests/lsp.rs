@@ -2516,7 +2516,7 @@ fn code_actions_go_as_commands_where_they_must() {
         json!({ "textDocument": { "uri": uri }, "range": { "start": start, "end": start }, "context": { "diagnostics": [] } }),
     );
     let command = actions.as_array().unwrap().iter().find(|action| action["command"] == "tondo.apply");
-    let command = command.expect(&actions.to_string());
+    let command = command.unwrap_or_else(|| panic!("{actions}"));
     assert!(command.get("kind").is_none(), "{command}");
     let run = json!({ "command": "tondo.apply", "arguments": command["arguments"] });
     editor.next += 1;
@@ -2524,5 +2524,185 @@ fn code_actions_go_as_commands_where_they_must() {
     editor.send(json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/executeCommand", "params": run }));
     let apply = editor.receive_method("workspace/applyEdit");
     assert!(apply["params"]["edit"].to_string().contains("_unused"), "{apply}");
+    editor.stop();
+}
+
+/// What an editor can ask for later is left out of a list until it does.
+#[test]
+fn items_are_filled_in_when_asked() {
+    let mut capabilities = everything();
+    let properties = |names: Value| json!({ "properties": names });
+    capabilities["textDocument"]["completion"]["completionItem"]["resolveSupport"] =
+        properties(json!(["documentation"]));
+    capabilities["textDocument"]["codeAction"]["resolveSupport"] = properties(json!(["edit"]));
+    capabilities["textDocument"]["codeLens"] = json!({ "resolveSupport": properties(json!(["command"])) });
+    capabilities["textDocument"]["inlayHint"] =
+        json!({ "resolveSupport": properties(json!(["tooltip", "textEdits"])) });
+    capabilities["textDocument"]["documentLink"] = json!({ "tooltipSupport": true });
+    capabilities["workspace"] = json!({ "symbol": { "resolveSupport": properties(json!(["location.range"])) } });
+    let dir = project(
+        "lsp-resolve",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/more/more.to", "pub fn twice(n: Int): Int {\n    n * 2\n}\n"),
+            (
+                "src/main.to",
+                "import app.more\n\n/// Adds one.\nfn next(n: Int): Int {\n    n + 1\n}\n\nfn main() {\n    let unused = next(more.twice(1))\n}\n",
+            ),
+        ],
+    );
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("src/main.to"));
+    let document = json!({ "uri": uri });
+
+    let at = json!({ "textDocument": document, "position": { "line": 8, "character": 19 } });
+    let list = editor.request("textDocument/completion", at);
+    let items = list["items"].as_array().unwrap();
+    let next = items.iter().find(|item| item["label"] == "next").unwrap_or_else(|| panic!("{list}"));
+    assert!(next.get("documentation").is_none() && next.get("data").is_some(), "{next}");
+    let filled = editor.request("completionItem/resolve", next.clone());
+    assert!(filled["documentation"].to_string().contains("Adds one"), "{filled}");
+    assert!(filled.get("data").is_none(), "{filled}");
+
+    let line = json!({ "line": 8, "character": 8 });
+    let context = json!({ "diagnostics": [] });
+    let range = json!({ "start": line, "end": line });
+    let actions = json!({ "textDocument": document, "range": range, "context": context });
+    let actions = editor.request("textDocument/codeAction", actions);
+    let action =
+        actions.as_array().unwrap().iter().find(|a| a.get("data").is_some()).unwrap_or_else(|| panic!("{actions}"));
+    assert!(action.get("edit").is_none(), "{action}");
+    assert!(editor.request("codeAction/resolve", action.clone()).get("edit").is_some());
+
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": document }));
+    let lens =
+        lenses.as_array().unwrap().iter().find(|l| l.get("data").is_some()).unwrap_or_else(|| panic!("{lenses}"));
+    assert!(lens.get("command").is_none(), "{lens}");
+    assert!(editor.request("codeLens/resolve", lens.clone()).get("command").is_some());
+
+    let all = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 11, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": document, "range": all }));
+    let hint = hints.as_array().unwrap().iter().find(|h| h.get("data").is_some()).unwrap_or_else(|| panic!("{hints}"));
+    assert!(hint.get("textEdits").is_none(), "{hint}");
+    let hint = editor.request("inlayHint/resolve", hint.clone());
+    assert_eq!(hint["textEdits"][0]["newText"], hint["label"], "{hint}");
+
+    let links = editor.request("textDocument/documentLink", json!({ "textDocument": document }));
+    assert!(links[0].get("tooltip").is_none(), "{links}");
+    let link = editor.request("documentLink/resolve", links[0].clone());
+    assert!(link["tooltip"].to_string().contains("more"), "{link}");
+
+    let symbols = editor.request("workspace/symbol", json!({ "query": "next" }));
+    assert!(symbols[0]["location"].get("range").is_none(), "{symbols}");
+    let symbol = editor.request("workspaceSymbol/resolve", symbols[0].clone());
+    assert!(symbol["location"].get("range").is_some(), "{symbol}");
+    editor.stop();
+}
+
+/// A client that asks for diagnostics gets them for the workspace, and hears
+/// only of what changed; semantic tokens go the same way.
+#[test]
+fn only_what_changed_is_said_again() {
+    let dir = project(
+        "lsp-pull",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {\n    missing()\n}\n")],
+    );
+    let folders = json!([folder_of(&dir)]);
+    let mut editor = Editor::launch_with(everything(), json!({ "pullDiagnostics": true }), folders, "off");
+    let main = editor.open(&dir.join("src/main.to"));
+    let document = json!({ "textDocument": { "uri": main } });
+    editor.request("textDocument/documentSymbol", document.clone());
+    let report = editor.request("workspace/diagnostic", json!({ "previousResultIds": [] }));
+    let item = report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["uri"] == main)
+        .unwrap_or_else(|| panic!("{report}"));
+    assert_eq!(item["kind"], "full", "{item}");
+    assert!(item["items"].to_string().contains("missing"), "{item}");
+    let known = json!([{ "uri": main, "value": item["resultId"] }]);
+    let again = editor.request("workspace/diagnostic", json!({ "previousResultIds": known }));
+    assert_eq!(again["items"][0]["kind"], "unchanged", "{again}");
+    let previous = json!({ "textDocument": { "uri": main }, "previousResultId": item["resultId"] });
+    assert_eq!(editor.request("textDocument/diagnostic", previous)["kind"], "unchanged");
+
+    let full = editor.request("textDocument/semanticTokens/full", document.clone());
+    let (id, data) = (full["resultId"].clone(), full["data"].as_array().unwrap().clone());
+    assert!(!data.is_empty(), "{full}");
+    let same = json!({ "textDocument": { "uri": main }, "previousResultId": id });
+    let delta = editor.request("textDocument/semanticTokens/full/delta", same);
+    assert_eq!(delta["edits"][0]["deleteCount"], 0, "{delta}");
+    assert_eq!(delta["edits"][0]["data"], json!([]), "{delta}");
+    let change = json!({
+        "textDocument": { "uri": main, "version": 2 },
+        "contentChanges": [{ "text": "fn main() {\n    let more = 1\n    missing(more)\n}\n" }],
+    });
+    editor.notify("textDocument/didChange", change);
+    let next = json!({ "textDocument": { "uri": main }, "previousResultId": delta["resultId"] });
+    let delta = editor.request("textDocument/semanticTokens/full/delta", next);
+    let edit = &delta["edits"][0];
+    let (start, deleted) = (edit["start"].as_u64().unwrap() as usize, edit["deleteCount"].as_u64().unwrap() as usize);
+    let mut patched = data.clone();
+    patched.splice(start..start + deleted, edit["data"].as_array().unwrap().iter().cloned());
+    let whole = editor.request("textDocument/semanticTokens/full", document);
+    assert_eq!(Value::Array(patched), whole["data"], "{delta}");
+    let lost = json!({ "textDocument": { "uri": main }, "previousResultId": "gone" });
+    assert!(editor.request("textDocument/semanticTokens/full/delta", lost).get("data").is_some());
+    editor.stop();
+}
+
+/// What is optional in an answer goes to the editor that takes it.
+#[test]
+fn optional_fields_go_where_they_are_taken() {
+    let mut capabilities = everything();
+    let document = &mut capabilities["textDocument"];
+    document["definition"] = json!({ "linkSupport": true });
+    document["codeAction"]["disabledSupport"] = json!(true);
+    document["foldingRange"] = json!({ "foldingRange": { "collapsedText": true } });
+    document["completion"]["completionItem"]["commitCharactersSupport"] = json!(true);
+    document["completion"]["completionList"] = json!({ "itemDefaults": ["commitCharacters"] });
+    capabilities["workspace"] = json!({
+        "workspaceEdit": { "documentChanges": true, "changeAnnotationSupport": {} },
+    });
+    let dir = project(
+        "lsp-optional",
+        &[(
+            "main.to",
+            "// one\n// two\nfn add(a: Int): Int {\n    a + 1\n}\n\nfn main() {\n    _ = add(1)\n    ad\n}\n",
+        )],
+    );
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("main.to"));
+    let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } });
+
+    let link = editor.request("textDocument/definition", at(7, 9));
+    assert!(link[0].get("targetUri").is_some(), "{link}");
+
+    let start = json!({ "line": 0, "character": 0 });
+    let invoked = json!({ "textDocument": { "uri": uri }, "range": { "start": start, "end": start },
+        "context": { "diagnostics": [], "triggerKind": 1 } });
+    let actions = editor.request("textDocument/codeAction", invoked);
+    assert!(actions.to_string().contains("the imports are in order"), "{actions}");
+
+    let folds = editor.request("textDocument/foldingRange", json!({ "textDocument": { "uri": uri } }));
+    assert!(folds.to_string().contains("collapsedText"), "{folds}");
+
+    let list = editor.request("textDocument/completion", at(8, 6));
+    assert_eq!(list["itemDefaults"]["commitCharacters"], json!(["."]), "{list}");
+    let items = list["items"].as_array().unwrap();
+    let add = items.iter().find(|item| item["label"] == "add").unwrap_or_else(|| panic!("{list}"));
+    assert_eq!(add["commitCharacters"], json!(["("]), "{add}");
+
+    let mut rename = at(7, 9);
+    rename["newName"] = json!("sum");
+    let edit = editor.request("textDocument/rename", rename);
+    assert_eq!(edit["changeAnnotations"]["rename"]["label"], "Rename in 1 file", "{edit}");
+    assert_eq!(edit["documentChanges"][0]["edits"][0]["annotationId"], "rename", "{edit}");
+
+    let range =
+        |line: u32| json!({ "start": { "line": line, "character": 0 }, "end": { "line": line + 1, "character": 0 } });
+    let ranges = json!({ "textDocument": { "uri": uri }, "ranges": [range(0), range(3)], "options": {} });
+    assert!(editor.request("textDocument/rangesFormatting", ranges).is_array());
     editor.stop();
 }

@@ -133,6 +133,20 @@ struct Client {
     folders: bool,
     /// The methods that tell it to ask again for what it shows.
     views: Vec<&'static str>,
+    /// What it asks for of an item only when it needs it, by the method of
+    /// the list.
+    resolves: HashMap<&'static str, Vec<String>>,
+    /// It takes a location with the range of its name.
+    links: bool,
+    /// It shows a code action it cannot use, and why.
+    disabled_actions: bool,
+    /// It shows its own text for what is folded.
+    collapsed_text: bool,
+    /// It takes the commit characters of an item, and of a whole list.
+    commit_characters: bool,
+    commit_defaults: bool,
+    /// It takes the edits of a rename with a word on them.
+    annotations: bool,
 }
 
 impl Client {
@@ -161,6 +175,32 @@ impl Client {
                 .filter(|(view, _)| capabilities["workspace"][view]["refreshSupport"] == true)
                 .map(|(_, method)| method)
                 .collect(),
+            resolves: [
+                ("textDocument/completion", &item["resolveSupport"]),
+                ("textDocument/codeAction", &document["codeAction"]["resolveSupport"]),
+                ("textDocument/codeLens", &document["codeLens"]["resolveSupport"]),
+                ("textDocument/inlayHint", &document["inlayHint"]["resolveSupport"]),
+                ("workspace/symbol", &capabilities["workspace"]["symbol"]["resolveSupport"]),
+            ]
+            .into_iter()
+            .map(|(method, support)| {
+                let names = support["properties"].as_array().into_iter().flatten();
+                (method, names.filter_map(|name| Some(name.as_str()?.to_string())).collect())
+            })
+            .chain(
+                (document["documentLink"]["tooltipSupport"] == true)
+                    .then(|| ("textDocument/documentLink", vec!["tooltip".to_string()])),
+            )
+            .collect(),
+            links: document["definition"]["linkSupport"] == true,
+            disabled_actions: document["codeAction"]["disabledSupport"] == true,
+            collapsed_text: document["foldingRange"]["foldingRange"]["collapsedText"] == true,
+            commit_characters: item["commitCharactersSupport"] == true,
+            commit_defaults: document["completion"]["completionList"]["itemDefaults"]
+                .as_array()
+                .is_some_and(|defaults| defaults.iter().any(|name| name == "commitCharacters")),
+            annotations: capabilities["workspace"]["workspaceEdit"]["documentChanges"] == true
+                && capabilities["workspace"]["workspaceEdit"]["changeAnnotationSupport"].is_object(),
         }
     }
 }
@@ -341,6 +381,13 @@ struct Server {
     /// What the editor shows of files changed under it: it asks again after
     /// the next analysis.
     views_stale: bool,
+    /// What was left out of the items of each list until the editor asks for
+    /// it, by the method and the document of the list.
+    held: HashMap<String, Vec<Value>>,
+    /// The last semantic tokens of each document, and their id.
+    tokens: HashMap<String, (String, Vec<Value>)>,
+    /// Ids of the answers that are told apart.
+    answers: u64,
 }
 
 /// The language server's answers outside an editor, as `tondo mcp` asks
@@ -490,7 +537,7 @@ impl Server {
     }
 
     /// An answer as this editor can take it.
-    fn fit(&self, method: &str, params: &Value, mut answer: Value) -> Value {
+    fn fit(&mut self, method: &str, params: &Value, mut answer: Value) -> Value {
         let plain = |text: Option<&mut Value>| {
             if let Some(text) = text.filter(|text| text.is_object()) {
                 text["kind"] = json!("plaintext");
@@ -512,10 +559,42 @@ impl Server {
                 for item in items.into_iter().flatten() {
                     self.fit_item(item, &plain);
                 }
+                if self.client.commit_defaults && answer.is_object() {
+                    answer["itemDefaults"] = json!({ "commitCharacters": ["."] });
+                }
             }
             "textDocument/codeAction" if self.client.command_actions => {
                 let actions = answer.as_array().map_or(&[][..], Vec::as_slice);
                 answer = actions.iter().filter_map(as_command).collect();
+            }
+            "textDocument/codeAction" if self.client.disabled_actions && params["context"]["triggerKind"] == 1 => {
+                for (kind, title, reason) in NOTHING_TO_DO {
+                    let is_it = |action: &Value| action["kind"].as_str().is_some_and(|k| k.starts_with(kind));
+                    let offered = answer.as_array().is_some_and(|actions| actions.iter().any(is_it));
+                    if !offered && let Some(actions) = answer.as_array_mut() {
+                        actions.push(json!({ "title": title, "kind": kind, "disabled": { "reason": reason } }));
+                    }
+                }
+            }
+            "textDocument/definition" | "textDocument/declaration" if self.client.links => {
+                answer = as_link(&answer);
+            }
+            "textDocument/rename" if self.client.annotations => answer = annotated(answer),
+            "textDocument/foldingRange" if !self.client.collapsed_text => {
+                for range in answer.as_array_mut().into_iter().flatten() {
+                    if let Some(range) = range.as_object_mut() {
+                        range.remove("collapsedText");
+                    }
+                }
+            }
+            "textDocument/semanticTokens/full" => {
+                self.answers += 1;
+                let id = self.answers.to_string();
+                answer["resultId"] = json!(id);
+                if let Some(uri) = params["textDocument"]["uri"].as_str() {
+                    let data = answer["data"].as_array().cloned().unwrap_or_default();
+                    self.tokens.insert(uri.to_string(), (id, data));
+                }
             }
             "textDocument/documentSymbol" if self.client.flat_symbols => {
                 let mut flat = Vec::new();
@@ -525,10 +604,70 @@ impl Server {
             }
             _ => {}
         }
+        self.hold(method, params, &mut answer);
         answer
     }
 
+    /// Leaves out of the items of a list what this editor asks for once it
+    /// needs it, until `.../resolve` asks.
+    fn hold(&mut self, method: &str, params: &Value, answer: &mut Value) {
+        let Some(fields) = self.client.resolves.get(method).filter(|fields| !fields.is_empty()) else { return };
+        let list = format!("{method} {}", params["textDocument"]["uri"]);
+        let mut held = Vec::new();
+        let items = match answer.is_array() {
+            true => answer.as_array_mut(),
+            false => answer.get_mut("items").and_then(Value::as_array_mut),
+        };
+        for item in items.into_iter().flatten() {
+            let Some(fields_of) = item.as_object_mut() else { continue };
+            let mut kept = serde_json::Map::new();
+            // Of a symbol, only the range of its location.
+            if fields.iter().any(|field| field == "location.range")
+                && let Some(location) = fields_of.get_mut("location").and_then(Value::as_object_mut)
+                && let Some(range) = location.remove("range")
+            {
+                kept.insert("range".to_string(), range);
+            }
+            for field in fields {
+                kept.extend(fields_of.remove_entry(field.as_str()));
+            }
+            if !kept.is_empty() {
+                fields_of.insert("data".to_string(), json!({ "list": list, "held": held.len() }));
+                held.push(Value::Object(kept));
+            }
+        }
+        self.held.insert(list, held);
+    }
+
+    /// An item with what was left out of it.
+    fn resolved(&self, item: &Value) -> Value {
+        let mut item = item.clone();
+        let data = item["data"].clone();
+        let list = data["list"].as_str().and_then(|list| self.held.get(list));
+        let kept = list.and_then(|held| held.get(data["held"].as_u64()? as usize));
+        for (field, value) in kept.and_then(Value::as_object).into_iter().flatten() {
+            match field.as_str() {
+                "range" => item["location"]["range"] = value.clone(),
+                _ => item[field] = value.clone(),
+            }
+        }
+        if let Some(fields) = item.as_object_mut() {
+            fields.remove("data");
+        }
+        item
+    }
+
     fn fit_item(&self, item: &mut Value, plain: &impl Fn(Option<&mut Value>)) {
+        // A call goes on with its arguments, anything else with a member;
+        // what is written whole, as a keyword, with neither.
+        let commits = match item["kind"].as_u64() {
+            Some(2 | 3) => json!(["("]),
+            Some(14 | 15) => json!([]),
+            _ => json!(["."]),
+        };
+        if self.client.commit_characters && !(self.client.commit_defaults && commits == json!(["."])) {
+            item["commitCharacters"] = commits;
+        }
         if self.client.plain_completion {
             plain(item.get_mut("documentation"));
         }
@@ -718,6 +857,21 @@ impl Server {
             "textDocument/semanticTokens/full" | "textDocument/semanticTokens/range" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
+            "textDocument/semanticTokens/full/delta" => Some(Ok(self.tokens_delta(params))),
+            "completionItem/resolve"
+            | "codeAction/resolve"
+            | "codeLens/resolve"
+            | "inlayHint/resolve"
+            | "documentLink/resolve"
+            | "workspaceSymbol/resolve" => Some(Ok(self.resolved(params))),
+            "workspace/diagnostic" => Some(Ok(self.workspace_diagnostics(params))),
+            "textDocument/rangesFormatting" => {
+                let ranges = params["ranges"].as_array().into_iter().flatten();
+                let edits = ranges.filter_map(|range| {
+                    self.range_formatting(&json!({ "textDocument": params["textDocument"], "range": range }))
+                });
+                Some(Ok(edits.filter_map(|edits| edits.as_array().cloned()).flatten().collect()))
+            }
             "textDocument/inlineValue" => Some(Ok(self.inline_values(params).unwrap_or(json!([])))),
             _ if request => Some(Err((-32601, format!("`{method}` is not supported")))),
             _ => None,
@@ -755,22 +909,22 @@ impl Server {
                 "renameProvider": { "prepareProvider": true, "workDoneProgress": true },
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
-                "completionProvider": { "triggerCharacters": ["."] },
+                "completionProvider": { "triggerCharacters": ["."], "resolveProvider": true },
                 "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll", "source.organizeImports"] },
                 "documentHighlightProvider": true,
-                "workspaceSymbolProvider": { "workDoneProgress": true },
+                "workspaceSymbolProvider": { "workDoneProgress": true, "resolveProvider": true },
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
-                "inlayHintProvider": true,
-                "codeLensProvider": { "resolveProvider": false },
+                "inlayHintProvider": { "resolveProvider": true },
+                "codeLensProvider": { "resolveProvider": true },
                 "foldingRangeProvider": true,
                 "colorProvider": true,
-                "documentLinkProvider": { "resolveProvider": false },
+                "documentLinkProvider": { "resolveProvider": true },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
                     "tondo.apply", "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
                 ] },
                 "selectionRangeProvider": true,
-                "documentRangeFormattingProvider": true,
+                "documentRangeFormattingProvider": { "rangesSupport": true },
                 "callHierarchyProvider": true,
                 "implementationProvider": true,
                 "typeDefinitionProvider": true,
@@ -788,15 +942,17 @@ impl Server {
                 },
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary", "mutable"] },
-                    "full": true,
+                    "full": { "delta": true },
                     "range": true,
                 },
             },
             "serverInfo": { "name": "tondo", "version": driver::VERSION },
         });
         answer["capabilities"]["linkedEditingRangeProvider"] = json!(true);
+        answer["capabilities"]["codeActionProvider"]["resolveProvider"] =
+            json!(self.client.resolves.get("textDocument/codeAction").is_some_and(|fields| !fields.is_empty()));
         if self.pulling {
-            let provider = json!({ "interFileDependencies": true, "workspaceDiagnostics": false });
+            let provider = json!({ "interFileDependencies": true, "workspaceDiagnostics": true });
             answer["capabilities"]["diagnosticProvider"] = provider;
         }
         answer
@@ -1741,7 +1897,57 @@ impl Server {
         self.prepare(params);
         let path = params["textDocument"]["uri"].as_str().and_then(uri_path);
         let items = path.and_then(|path| self.latest.get(&path).cloned()).unwrap_or_default();
-        json!({ "kind": "full", "items": items })
+        report(&items, params["previousResultId"].as_str())
+    }
+
+    /// What the last analyses say of each file, and of those that said
+    /// something before and no longer do.
+    fn workspace_diagnostics(&mut self, params: &Value) -> Value {
+        self.refresh();
+        let known = params["previousResultIds"].as_array().map_or(&[][..], Vec::as_slice);
+        let previous = |uri: &str| known.iter().find(|id| id["uri"] == uri).and_then(|id| id["value"].as_str());
+        let mut items = Vec::new();
+        for (path, diagnostics) in &self.latest {
+            let uri = self.uri(path);
+            let mut found = report(diagnostics, previous(&uri));
+            found["uri"] = json!(uri);
+            found["version"] = self.open.get(path).map_or(Value::Null, |document| document.version.clone());
+            items.push(found);
+        }
+        for id in known {
+            if !items.iter().any(|item| item["uri"] == id["uri"]) {
+                let mut found = report(&[], id["value"].as_str());
+                found["uri"] = id["uri"].clone();
+                found["version"] = Value::Null;
+                items.push(found);
+            }
+        }
+        json!({ "items": items })
+    }
+
+    /// What changed of a document's semantic tokens since the id the editor
+    /// has, or all of them if the server has lost it.
+    fn tokens_delta(&mut self, params: &Value) -> Value {
+        let full = self.semantic_tokens(params).unwrap_or(json!({ "data": [] }));
+        let new = full["data"].as_array().cloned().unwrap_or_default();
+        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+        self.answers += 1;
+        let id = self.answers.to_string();
+        let old = self.tokens.insert(uri.to_string(), (id.clone(), new.clone()));
+        match old.filter(|(known, _)| params["previousResultId"] == known.as_str()) {
+            Some((_, old)) => {
+                let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+                let same = |(a, b): &(&Value, &Value)| a == b;
+                let end = old[start..].iter().rev().zip(new[start..].iter().rev()).take_while(same).count();
+                let edit = json!({
+                    "start": start,
+                    "deleteCount": old.len() - start - end,
+                    "data": new[start..new.len() - end],
+                });
+                json!({ "resultId": id, "edits": [edit] })
+            }
+            None => json!({ "resultId": id, "data": new }),
+        }
     }
 
     fn highlights(&mut self, params: &Value) -> Option<Value> {
@@ -1988,7 +2194,14 @@ impl Server {
                 continue;
             }
             let position = position(&source.text, (span.end - source.base) as usize, self.units);
-            hints.push(json!({ "position": position, "label": format!(": {ty}"), "kind": 1 }));
+            let write = json!({ "range": { "start": position, "end": position }, "newText": format!(": {ty}") });
+            hints.push(json!({
+                "position": position,
+                "label": format!(": {ty}"),
+                "kind": 1,
+                "tooltip": "the type Tondo infers here",
+                "textEdits": [write],
+            }));
         }
         // The type of each line of a chain of calls written over several.
         let text = &source.text;
@@ -4001,6 +4214,13 @@ impl Server {
 }
 
 /// The token types of semantic highlighting, by number.
+/// The kinds of action that are worth offering even with nothing to do, to
+/// say so.
+const NOTHING_TO_DO: [(&str, &str, &str); 2] = [
+    ("source.fixAll", "Apply every safe repair", "there is no safe repair to apply"),
+    ("source.organizeImports", "Organize Imports", "the imports are in order"),
+];
+
 /// The views the editor can be told to ask for again.
 const VIEWS: [(&str, &str); 6] = [
     ("semanticTokens", "workspace/semanticTokens/refresh"),
@@ -4026,8 +4246,9 @@ const SETTINGS: &str = "tondo.settings";
 const PROGRESS: &str = "tondo.analysis";
 
 /// What is asked of a whole document, which the next change makes out of date.
-const WHOLE_DOCUMENT: [&str; 8] = [
+const WHOLE_DOCUMENT: [&str; 9] = [
     "textDocument/semanticTokens/full",
+    "textDocument/semanticTokens/full/delta",
     "textDocument/semanticTokens/range",
     "textDocument/documentSymbol",
     "textDocument/inlayHint",
@@ -4036,6 +4257,60 @@ const WHOLE_DOCUMENT: [&str; 8] = [
     "textDocument/documentLink",
     "textDocument/documentColor",
 ];
+
+/// An answer to `textDocument/diagnostic`, or an item of one to
+/// `workspace/diagnostic`: the same result with the same id, which is all the
+/// editor needs told.
+fn report(diagnostics: &[Value], previous: Option<&str>) -> Value {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    Value::Array(diagnostics.to_vec()).to_string().hash(&mut hasher);
+    let id = format!("{:x}", hasher.finish());
+    match previous == Some(id.as_str()) {
+        true => json!({ "kind": "unchanged", "resultId": id }),
+        false => json!({ "kind": "full", "resultId": id, "items": diagnostics }),
+    }
+}
+
+/// A `Location`, or a list of them, as `LocationLink`s.
+fn as_link(answer: &Value) -> Value {
+    let link = |location: &Value| {
+        json!({
+            "targetUri": location["uri"],
+            "targetRange": location["range"],
+            "targetSelectionRange": location["range"],
+        })
+    };
+    match answer {
+        Value::Array(locations) => locations.iter().map(link).collect(),
+        Value::Object(_) => json!([link(answer)]),
+        other => other.clone(),
+    }
+}
+
+/// The edits of a rename, as changes the editor can show with what they are.
+fn annotated(answer: Value) -> Value {
+    let Some(changes) = answer["changes"].as_object() else { return answer };
+    let files = changes.len();
+    let edits: Vec<Value> = changes
+        .iter()
+        .map(|(uri, edits)| {
+            let edits: Vec<Value> = edits
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|edit| {
+                    let mut edit = edit.clone();
+                    edit["annotationId"] = json!("rename");
+                    edit
+                })
+                .collect();
+            json!({ "textDocument": { "uri": uri, "version": Value::Null }, "edits": edits })
+        })
+        .collect();
+    let label = format!("Rename in {files} file{}", if files == 1 { "" } else { "s" });
+    json!({ "documentChanges": edits, "changeAnnotations": { "rename": { "label": label } } })
+}
 
 /// Has the editor apply an edit.
 fn apply_edit(edit: &Value) {
@@ -4533,7 +4808,10 @@ impl Server {
                 let target =
                     (0..sources.len()).find(|&i| sources.file(i).module == module && analyzed.paths[i].is_some());
                 if let Some(target) = target.and_then(|i| analyzed.paths[i].as_ref()) {
-                    links.push(json!({ "range": range(7, 7 + module.len()), "target": self.uri(target) }));
+                    let tooltip = format!("Open the module `{module}`");
+                    links.push(
+                        json!({ "range": range(7, 7 + module.len()), "target": self.uri(target), "tooltip": tooltip }),
+                    );
                 }
             }
             for (at, _) in line.match_indices("(\"") {
@@ -4631,7 +4909,8 @@ impl Server {
                 let last = lines.get(i + 1).is_none_or(|&next| next != l + 1);
                 if last {
                     if l > first {
-                        ranges.push(json!({ "startLine": first, "endLine": l, "kind": kind }));
+                        let text = if kind == "imports" { "imports…" } else { "// …" };
+                        ranges.push(json!({ "startLine": first, "endLine": l, "kind": kind, "collapsedText": text }));
                     }
                     start = None;
                 }

@@ -483,7 +483,10 @@ y las carpetas, los archivos que el editor crea, borra o renombra y la configura
 (`tondo.lsp`: `inlayHints`, `codeLenses`, `formatOnSave`) se siguen mientras corre.
 El servidor aplica sus refactors con `workspace/applyEdit`, pide al editor que vuelva
 a pedir lo que muestra cuando cambia bajo él, y tras un test que falla ofrece abrir
-el lugar del fallo (`window/showMessageRequest`, `window/showDocument`). Analiza el proyecto de cada archivo
+el lugar del fallo (`window/showMessageRequest`, `window/showDocument`). Lo que pesa
+de una lista queda fuera hasta que el editor lo pide (`.../resolve`), y los diagnósticos
+y los tokens semánticos dicen solo lo que cambió (`workspace/diagnostic`,
+`textDocument/semanticTokens/full/delta`). Analiza el proyecto de cada archivo
 abierto como su build de tests, para incluir los archivos de tests, o el
 archivo solo si no está en un proyecto, con el texto que el editor tiene aunque
 no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de
