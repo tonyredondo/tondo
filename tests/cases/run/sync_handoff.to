@@ -1,0 +1,29 @@
+// A lock that a task has waited too long for is handed to it (standard
+// library 14.4.4.1): the task that lets it go cannot take it back at once,
+// and every update lands.
+import std.console
+import std.sync
+import std.time
+
+fn hammer(counter: sync.Mutex[Int], rounds: Int) {
+    for _ in 0..rounds {
+        counter.update(
+            (count) {
+                time.sleep(time.milliseconds(2))
+                count += 1
+            },
+        )
+    }
+}
+
+fn main() {
+    let counter = sync.Mutex(0)
+    var group = Group[Unit]()
+    for _ in 0..4 {
+        group.add(spawn hammer(counter, 10))
+    }
+    _ = group.wait()
+    console.println("{counter.get()}")
+}
+
+// expect-stdout: 40
