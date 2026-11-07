@@ -31,9 +31,10 @@ const MOST_THREADS: usize = 64;
 /// Runs a host operation on a thread of the pool while the current task
 /// waits; directly outside a task, and in a recorded run, whose calls are
 /// those of its one thread (toolchain 7.6), where a wait holds the other
-/// tasks. `long` work may wait indefinitely.
+/// tasks; and in an order of the tasks, which the time of a thread would
+/// change, unless it is `long` work, which may wait indefinitely.
 pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send + 'static) -> R {
-    if current().is_null() || super::replay::on() {
+    if current().is_null() || super::replay::on() || (!long && super::tasks::deterministic()) {
         return job();
     }
     let result = Arc::new(Mutex::new(None));
