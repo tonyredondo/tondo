@@ -620,6 +620,17 @@ test deepens {
 
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
+/// The workers of `--jobs` run at once: each of two tests waits for the
+/// other to start.
+#[test]
+fn workers_run_their_tests_at_once() {
+    let tests = "import std.fs\nimport std.time\n\nfn meet(mine: String, theirs: String): Bool {\n    _ = fs.writeText(mine, \"here\")\n    for _ in 0..1000 {\n        if fs.exists(theirs) {\n            return true\n        }\n        time.sleep(time.milliseconds(10))\n    }\n    false\n}\n\ntest first {\n    assert(meet(\"first.txt\", \"second.txt\"))\n}\n\ntest second {\n    assert(meet(\"second.txt\", \"first.txt\"))\n}\n";
+    let dir = project("workers-at-once", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--jobs", "2"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("2 passed"), "{stdout}");
+}
+
 fn project(name: &str, tests: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);

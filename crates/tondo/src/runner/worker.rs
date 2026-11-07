@@ -88,13 +88,15 @@ pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: im
         false => units.len(),
     };
     let queue = Mutex::new(VecDeque::from(units));
+    // The lock goes as the unit leaves the queue, not after it ran.
+    let next = || queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
     let (sender, receiver) = mpsc::channel();
     let mut attempts = Vec::new();
     std::thread::scope(|scope| {
         for _ in 0..threads {
-            let (sender, queue) = (sender.clone(), &queue);
+            let (sender, next) = (sender.clone(), &next);
             scope.spawn(move || {
-                while let Some((plan, context)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+                while let Some((plan, context)) = next()
                     && !interrupt::requested()
                 {
                     lane(run, plan, context, &sender);
