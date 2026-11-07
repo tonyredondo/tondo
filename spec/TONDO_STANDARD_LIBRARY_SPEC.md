@@ -6938,20 +6938,33 @@ que pueden seguir a cada uno y lo que debe cumplirse.
 ~~~tondo
 pub type Step[S] = { name: String, state: S }
 pub type Checked = { states: Int }
-pub type Violation = { what: String, path: Array[String] }
+pub type Violation = { what: String, path: Array[String], loop: Array[String] }
 pub fn check[S: Key](
     start: S,
     steps: fn(S): Array[Step[S]],
     always: fn(S): Bool,
     ends: (fn(S): Bool)? = none,
+    reaches: (fn(S): Bool)? = none,
+    eventually: (fn(S): Bool)? = none,
+    fair: Array[String] = [],
 ): Checked ! Violation
 ~~~
 
 `check` recorre todos los estados que `steps` alcanza desde `start`, los más
 cercanos primero, una vez cada uno, y falla en el primero donde `always` no se
 cumple, o sin pasos donde `ends`, si se da, dice que no debe terminar. `Violation`
-da el camino más corto de nombres de pasos hasta allí. Un modelo solo dice de su
-diseño: lo que el programa hace lo dicen sus tests, y `--schedules all`.
+da el camino más corto de nombres de pasos hasta allí.
+
+Lo anterior dice lo que nunca pasa; los otros dos, lo que acaba pasando. `reaches`
+exige que desde todo estado se pueda llegar aún a uno donde se cumple: encuentra
+una espera perdida o un callejón sin salida, y falla en el primero de esos estados.
+`eventually` exige más, que todo recorrido llegue. Un recorrido puede no hacerlo
+dando vueltas, y por eso `fair` nombra los pasos que no pueden quedar ignorados: el
+que sigue siendo posible acaba dándose (equidad débil). Falla en un estado sin
+pasos donde no se cumple, o en un ciclo de estados donde no se cumple que da a cada
+paso de `fair` lo suyo, y entonces `loop` dice la vuelta que `path` alcanza. Un
+modelo solo dice de su diseño: lo que el programa hace lo dicen sus tests, y
+`--schedules all`.
 
 ## 15. Contrato exigido a cada módulo
 

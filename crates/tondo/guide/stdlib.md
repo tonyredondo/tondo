@@ -415,8 +415,15 @@ fn main() {
 }
 ```
 
-This says `what must always hold does not, after: open, lock`. A model knows of
-the design, not of the code: `tondo test --schedules all` is what tries the code.
+This says `what must always hold does not, after: open, lock`. That is what must
+never happen; two more arguments say what must. `reaches: some(done)` holds if
+every state can still get to one where `done` holds, which finds a wait nobody
+ends. `eventually: some(done)` holds if every way through gets there, and a loop
+that never does breaks it, shown as `..., and round for ever: spin`. A step that
+can only be put off for so long goes in `fair`, by name: `fair: ["go"]` says that
+`go` comes if it stays possible, as a scheduler that is fair gives. A model knows
+of the design, not of the code: `tondo test --schedules all` is what tries the
+code.
 
 ## The network
 

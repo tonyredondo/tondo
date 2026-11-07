@@ -52,44 +52,258 @@ pub type Checked = {
     states: Int
 }
 
-/// What broke, and the shortest path of steps that gets there.
+/// What broke, and the shortest path of steps that gets there; `loop` is what
+/// then goes round for ever, when that is what broke.
 ///
 /// ```tondo
 /// import std.console
 /// import std.model
 ///
-/// let broken = model.Violation { what: "it broke", path: ["start", "stop"] }
+/// let broken = model.Violation { what: "it broke", path: ["start", "stop"], loop: [] }
 /// console.println("{broken}")
 /// ```
 pub type Violation = {
     what: String
     path: Array[String]
+    loop: Array[String]
 }
 
 impl Display for Violation {
     fn display(self): String {
-        "{self.what}, after: {self.path.join(", ")}"
+        let here = if self.path.isEmpty() { self.what } else { "{self.what}, after: {self.path.join(", ")}" }
+        if self.loop.isEmpty() { here } else { "{here}, and round for ever: {self.loop.join(", ")}" }
     }
 }
 
-type Reached[S] = {
-    from: S?
+type Reached = {
+    from: Int
     name: String
 }
 
-fn pathTo[S: Key](reached: Map[S, Reached[S]], end: S): Array[String] {
+type Edge = {
+    name: String
+    to: Int
+}
+
+fn pathTo(reached: Array[Reached], end: Int): Array[String] {
     var path: Array[String] = []
-    var at = some(end)
+    var at = end
+    for reached[at].from >= 0 {
+        path.push(reached[at].name)
+        at = reached[at].from
+    }
+    path.reversed()
+}
+
+fn broken(what: String, reached: Array[Reached], at: Int): Violation {
+    Violation { what, path: pathTo(reached, at), loop: [] }
+}
+
+/// For each state, the states with a step to it.
+fn incoming(edges: Array[Array[Edge]]): Array[Array[Int]] {
+    let empty: Array[Int] = []
+    var into = [empty].repeat(edges.length())
+    for from in 0..edges.length() {
+        for edge in edges[from] {
+            into[edge.to].push(from)
+        }
+    }
+    into
+}
+
+/// The first state from which no state in `goals` can be reached.
+fn stranded(edges: Array[Array[Edge]], goals: Array[Bool]): Int? {
+    let into = incoming(edges)
+    var can = goals
+    var pending: Array[Int] = []
+    for at in 0..goals.length() {
+        if goals[at] {
+            pending.push(at)
+        }
+    }
     for {
-        match at {
-            some(state) => match reached.get(state) {
-                some(found) if found.from.isSome() => {
-                    path.push(found.name)
-                    at = found.from
-                }
-                _ => return path.reversed()
+        let at = match pending.pop() {
+            some(at) => at
+            none => break
+        }
+        for from in into[at] {
+            if not can[from] {
+                can[from] = true
+                pending.push(from)
             }
-            none => return path.reversed()
+        }
+    }
+    for at in 0..can.length() {
+        if not can[at] {
+            return some(at)
+        }
+    }
+    none
+}
+
+/// Which strongly connected component of the states out of `goals` each is
+/// in, by Kosaraju: -1 for those in `goals`.
+fn components(edges: Array[Array[Edge]], goals: Array[Bool]): Array[Int] {
+    let count = edges.length()
+    var seen = goals
+    var finished: Array[Int] = []
+    for root in 0..count {
+        if seen[root] {
+            continue
+        }
+        seen[root] = true
+        var stack = [root]
+        var next = [0].repeat(count)
+        for {
+            let at = match stack.last() {
+                some(at) => at
+                none => break
+            }
+            if next[at] == edges[at].length() {
+                finished.push(at)
+                _ = stack.pop()
+                continue
+            }
+            let to = edges[at][next[at]].to
+            next[at] += 1
+            if not seen[to] {
+                seen[to] = true
+                stack.push(to)
+            }
+        }
+    }
+    let into = incoming(edges)
+    var component = [-1].repeat(count)
+    var number = 0
+    for root in finished.reversed() {
+        if component[root] >= 0 {
+            continue
+        }
+        component[root] = number
+        var pending = [root]
+        for {
+            let at = match pending.pop() {
+                some(at) => at
+                none => break
+            }
+            for from in into[at] {
+                if component[from] < 0 and not goals[from] {
+                    component[from] = number
+                    pending.push(from)
+                }
+            }
+        }
+        number += 1
+    }
+    component
+}
+
+fn enabled(edges: Array[Edge], name: String): Bool {
+    edges.any((edge) { edge.name == name })
+}
+
+/// The shortest way inside `number` from a state to the first for which
+/// `found` holds, as the steps and where it ends; none if no way.
+fn route(
+    edges: Array[Array[Edge]],
+    component: Array[Int],
+    number: Int,
+    start: Int,
+    found: fn(Edge): Bool,
+): (Array[String], Int)? {
+    var from: Map[Int, Reached] = [:]
+    var pending = Deque[Int]()
+    pending.push(start)
+    _ = from.insert(start, Reached { from: -1, name: "" })
+    for {
+        let at = match pending.popFront() {
+            some(at) => at
+            none => return none
+        }
+        for edge in edges[at] {
+            if component[edge.to] != number {
+                continue
+            }
+            if found(edge) {
+                var names = [edge.name]
+                var back = at
+                for {
+                    let came = from.get(back).unwrapOr(Reached { from: -1, name: "" })
+                    if came.from < 0 {
+                        return some((names.reversed(), edge.to))
+                    }
+                    names.push(came.name)
+                    back = came.from
+                }
+            }
+            if not from.contains(edge.to) {
+                _ = from.insert(edge.to, Reached { from: at, name: edge.name })
+                pending.push(edge.to)
+            }
+        }
+    }
+}
+
+/// A way round `number` from `start` back to it that gives every step of
+/// `fair` its due, or none if no way round does. A step that stays possible
+/// all the way round has to come; one that does not, the loop has to pass
+/// where it is not possible.
+fn fairLoop(
+    edges: Array[Array[Edge]],
+    component: Array[Int],
+    number: Int,
+    start: Int,
+    fair: Array[String],
+): Array[String]? {
+    let inside = (0..edges.length()).filter((at) { component[at] == number }).collect()
+    var loop: Array[String] = []
+    var at = start
+    for name in fair {
+        let always = inside.all((state) { enabled(edges[state], name) })
+        let found = (edge: Edge) {
+            if always { edge.name == name } else { not enabled(edges[edge.to], name) }
+        }
+        match route(edges, component, number, at, found) {
+            some((names, end)) => {
+                loop = loop.concat(names)
+                at = end
+            }
+            none => return none
+        }
+    }
+    let home = (edge: Edge) { edge.to == start }
+    match route(edges, component, number, at, home) {
+        some((names, _)) => some(loop.concat(names))
+        none => none
+    }
+}
+
+fn comesTo(
+    edges: Array[Array[Edge]],
+    reached: Array[Reached],
+    goals: Array[Bool],
+    fair: Array[String],
+): Unit ! Violation {
+    for at in 0..edges.length() {
+        if edges[at].isEmpty() and not goals[at] {
+            fail broken("it ends without what it must come to", reached, at)
+        }
+    }
+    let component = components(edges, goals)
+    var tried = Set[Int]()
+    for at in 0..edges.length() {
+        let number = component[at]
+        if number < 0 or tried.contains(number) {
+            continue
+        }
+        _ = tried.insert(number)
+        match fairLoop(edges, component, number, at, fair) {
+            some(loop) => fail Violation {
+                what: "it need not come to what it must"
+                path: pathTo(reached, at)
+                loop
+            }
+            none => {}
         }
     }
 }
@@ -98,6 +312,11 @@ fn pathTo[S: Key](reached: Map[S, Reached[S]], end: S): Array[String] {
 /// fails at the first where `always` does not hold, or with no step left where
 /// `ends` says it should not end, when it is given, with the shortest path
 /// there. A state is a `Key`, so that one reached twice is looked at once.
+///
+/// `reaches` says that from every state a state where it holds can still be
+/// reached, whatever came before. `eventually` says more: that every way
+/// through comes to one, given that a step named in `fair` comes if it stays
+/// possible; what breaks it is a loop that never gets there, or an end.
 ///
 /// ```tondo
 /// import std.console
@@ -117,31 +336,55 @@ pub fn check[S: Key](
     steps: fn(S): Array[Step[S]],
     always: fn(S): Bool,
     ends: (fn(S): Bool)? = none,
+    reaches: (fn(S): Bool)? = none,
+    eventually: (fn(S): Bool)? = none,
+    fair: Array[String] = [],
 ): Checked ! Violation {
-    var reached: Map[S, Reached[S]] = [:]
-    _ = reached.insert(start, Reached[S] { from: none, name: "" })
-    var pending = Deque[S]()
-    pending.push(start)
-    for {
-        let state = match pending.popFront() {
-            some(state) => state
-            none => return Checked { states: reached.length() }
-        }
+    var numbers: Map[S, Int] = [:]
+    _ = numbers.insert(start, 0)
+    var states = [start]
+    var reached = [Reached { from: -1, name: "" }]
+    var edges: Array[Array[Edge]] = []
+    var at = 0
+    for at < states.length() {
+        let state = states[at]
         if not always(state) {
-            fail Violation { what: "what must always hold does not", path: pathTo(reached, state) }
+            fail broken("what must always hold does not", reached, at)
         }
         let next = steps(state)
         match ends {
             some(allowed) if next.isEmpty() and not allowed(state) => {
-                fail Violation { what: "nothing can follow here", path: pathTo(reached, state) }
+                fail broken("nothing can follow here", reached, at)
             }
             _ => {}
         }
+        var out: Array[Edge] = []
         for step in next {
-            if not reached.contains(step.state) {
-                _ = reached.insert(step.state, Reached[S] { from: some(state), name: step.name })
-                pending.push(step.state)
+            let to = match numbers.get(step.state) {
+                some(to) => to
+                none => {
+                    let to = states.length()
+                    _ = numbers.insert(step.state, to)
+                    states.push(step.state)
+                    reached.push(Reached { from: at, name: step.name })
+                    to
+                }
             }
+            out.push(Edge { name: step.name, to })
         }
+        edges.push(out)
+        at += 1
     }
+    match reaches {
+        some(goal) => match stranded(edges, states.map(goal)) {
+            some(stuck) => fail broken("what it must reach is out of reach from here", reached, stuck)
+            none => {}
+        }
+        none => {}
+    }
+    match eventually {
+        some(goal) => comesTo(edges, reached, states.map(goal), fair)?
+        none => {}
+    }
+    Checked { states: states.length() }
 }

@@ -5393,5 +5393,10 @@ and writing the models showed how they part, so the one that counts most needs n
 language with a scheduler of its own can give with no change to the program. It goes by fewest
 changes first, as most faults need few, and says plainly when it did not finish. `std.model` is
 for a design with no code yet: a library, in Tondo, that needs no new syntax. TLC stays for
-`testing/models`, for what it has and they do not: fairness and a longer record.
+`testing/models`, for what it has and they do not: a longer record of what it found.
+`std.model` says what must happen too, as what breaks that is a loop as often as a state:
+`reaches` for what can always still come, and `eventually` for what does, given weak fairness of the
+steps named in `fair`. A strongly connected set of states out of the goal is a loop that gives a
+step its due if the step is taken in it or is impossible somewhere in it, and if it is neither,
+no smaller loop can do better, so one look at each set decides, with no search for cycles.
 
