@@ -1,0 +1,18 @@
+// A step marked or made fair that no model has is a mistake: its name was
+// written wrong, or changed on one side only.
+
+import std.console
+import std.model
+
+fn steps(open: Bool): Array[model.Step[Bool]] {
+    if open { [model.step("close", false)] } else { [model.step("open", true)] }
+}
+
+fn main() {
+    model.mark("opne")
+    let checked = model.expect(model.check(false, steps, fair: [model.weak("close")]))
+    console.println("{checked.states} states")
+}
+
+// expect-stdout: 2 states
+// expect-warning: W1020 `model.mark("opne")` names no step of a model of the program, whose steps are `close`, `open`; did you mean `open`?

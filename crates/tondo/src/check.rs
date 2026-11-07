@@ -116,6 +116,8 @@ fn check_with<'a>(
         test_calls: HashMap::new(),
         spawning: HashSet::new(),
         test_spawns: HashSet::new(),
+        model_steps: Vec::new(),
+        model_names: Vec::new(),
         interpolating: false,
         script_bindings: Vec::new(),
         scripting: false,
@@ -891,6 +893,12 @@ struct Checker<'a> {
     calling: Option<FnId>,
     calls: HashMap<FnId, HashSet<FnId>>,
     test_calls: HashMap<u32, HashSet<FnId>>,
+    /// The names the program gives the steps of its models, `model.step`'s,
+    /// and those it marks or makes fair, each as its text up to the first
+    /// interpolation, whether that was all of it, and where: a name of the
+    /// second kind that is no step's is a mistake (`W1020`).
+    model_steps: Vec<(String, bool)>,
+    model_names: Vec<(&'static str, String, bool, Span)>,
     /// The functions whose bodies `spawn`, and the tests that do.
     spawning: HashSet<FnId>,
     test_spawns: HashSet<u32>,
@@ -1467,6 +1475,7 @@ impl<'a> Checker<'a> {
             }
             None => main,
         };
+        self.check_model_names();
         let makers = self.context_makers();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
         let mut contexts = Vec::new();
@@ -2325,6 +2334,68 @@ impl<'a> Checker<'a> {
     /// A literal pattern of `Regex.compile`, which must be in the dialect
     /// the runtime compiles (standard library 14.16): checked here, so that
     /// its `?` cannot fail.
+    /// The name a call of `model.step`, `model.mark`, `model.weak` or
+    /// `model.strong` gives, when it is written out.
+    fn note_model_name(&mut self, id: FnId, args: &[ast::Arg]) {
+        let what =
+            ["step", "mark", "weak", "strong"].into_iter().find(|f| self.is_std_fn(id, "model", &format!("model.{f}")));
+        let Some(what) = what else { return };
+        let Some(arg) = args.first().filter(|a| a.name.is_none()) else { return };
+        let ast::ExprKind::Str(segments) = &arg.value.kind else { return };
+        let mut text = String::new();
+        let mut whole = true;
+        for segment in segments {
+            match segment {
+                ast::StrSegment::Text(part) => text.push_str(part),
+                ast::StrSegment::Expr(..) => {
+                    whole = false;
+                    break;
+                }
+            }
+        }
+        match what {
+            "step" => self.model_steps.push((text, whole)),
+            _ => self.model_names.push((what, text, whole, arg.value.span)),
+        }
+    }
+
+    /// `W1020`: a step marked or made fair that no model of the program has,
+    /// as its name was written wrong or changed on one side only.
+    fn check_model_names(&mut self) {
+        if self.model_steps.is_empty() {
+            return;
+        }
+        for (what, name, whole, span) in std::mem::take(&mut self.model_names) {
+            // A step named in parts, as `"resume {t}"`, has every name that
+            // starts as it does.
+            let known = self.model_steps.iter().any(|(step, all)| match (all, whole) {
+                (true, true) => *step == name,
+                (true, false) => step.starts_with(&name),
+                (false, _) => name.starts_with(step.as_str()) || step.starts_with(&name),
+            });
+            if known {
+                continue;
+            }
+            let mut steps: Vec<String> = self
+                .model_steps
+                .iter()
+                .map(|(step, all)| if *all { format!("`{step}`") } else { format!("`{step}...`") })
+                .collect();
+            steps.sort();
+            steps.dedup();
+            let near = closest(&name, self.model_steps.iter().map(|(step, _)| step.as_str()));
+            let hint = near.map_or(String::new(), |near| format!("; did you mean `{near}`?"));
+            let message = format!(
+                "`model.{what}(\"{name}\")` names no step of a model of the program, whose steps are {}{hint}",
+                steps.join(", ")
+            );
+            self.diags.warning("W1020", span, message);
+            if let Some(near) = near.filter(|_| whole) {
+                self.diags.fix(format!("write `{near}`"), false, vec![(span, format!("\"{near}\""))]);
+            }
+        }
+    }
+
     fn check_regex_literal(&mut self, id: FnId, args: &[ast::Arg]) {
         let Some(&TypeName::Nominal(regex)) = self.type_names.get("regex.Regex") else { return };
         if self.methods.get(&(regex, "compile".to_string())) != Some(&id) {
@@ -16528,6 +16599,7 @@ impl<'a> Checker<'a> {
             self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
             self.check_template_literals(id, args);
             self.check_regex_literal(id, args);
+            self.note_model_name(id, args);
             if self.is_std_fn(id, "cli", "cli.markup")
                 && let Some(arg) = args.first()
                 && let ast::ExprKind::Str(segments) = &arg.value.kind

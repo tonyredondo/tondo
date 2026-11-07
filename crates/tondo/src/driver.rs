@@ -218,8 +218,12 @@ pub fn check(path: &Path) -> Result<Analysis, String> {
     // them: what they alone say, in their own files.
     if path.is_dir() && !analysis.diags.has_errors() {
         let tests = analyze_with(path, true, false, false, Root::Checked)?;
-        merge(&mut analysis, &tests, None, |file| {
-            file.logical.ends_with("_test.to") || Path::new(&file.logical).starts_with("tests")
+        // And of the code, what only the tests show: a mark in it of a step
+        // no model in them has (`W1020`).
+        merge(&mut analysis, &tests, None, |diagnostic, file| {
+            file.logical.ends_with("_test.to")
+                || Path::new(&file.logical).starts_with("tests")
+                || diagnostic.code == Some("W1020")
         });
     }
     // What fails on one system does not build.
@@ -255,7 +259,7 @@ pub fn checked_systems(path: &Path) -> Result<Vec<project::System>, String> {
 /// Adds to an analysis the diagnostics of another system's that it does
 /// not have, each saying the system, with the files they are in.
 pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::System) {
-    merge(into, from, Some(system), |_| true);
+    merge(into, from, Some(system), |_, _| true);
 }
 
 /// Adds to an analysis the diagnostics of another that it does not have,
@@ -265,7 +269,7 @@ fn merge(
     into: &mut Analysis,
     from: &Analysis,
     system: Option<project::System>,
-    wanted: impl Fn(&crate::source::SourceFile) -> bool,
+    wanted: impl Fn(&crate::diag::Diagnostic, &crate::source::SourceFile) -> bool,
 ) {
     let mut moved = |span: Span| -> Span {
         let file = from.sources.file_of(span.start);
@@ -286,7 +290,7 @@ fn merge(
     };
     let mut added = Vec::new();
     let taken = from.diags.list.iter().filter(|d| match d.span {
-        Some(span) => wanted(from.sources.file_of(span.start)),
+        Some(span) => wanted(d, from.sources.file_of(span.start)),
         None => system.is_some(),
     });
     for mut diagnostic in taken.cloned() {

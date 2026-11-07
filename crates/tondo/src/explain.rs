@@ -283,6 +283,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "unused-allow",
         "A `// tondo: allow` comment for a warning its line does not give: the reason for it has gone.",
     ),
+    (
+        "W1020",
+        "unknown-model-step",
+        "A `model.mark`, `model.weak` or `model.strong` names a step no model of the program has: the name was written wrong, or changed on one side only.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

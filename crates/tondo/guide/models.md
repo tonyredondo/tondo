@@ -129,6 +129,9 @@ marks the steps it takes with `model.mark`, and `model.follows` holds what it
 marked to the model, in every order under `--schedules all`. If one changes and
 the other does not, the test fails at the step where they part, and
 `tondo test` names the steps of the model the code never takes in any order.
+Before anything runs, `check` says of a `model.mark("gave")`, or a
+`model.weak("gave")`, that no `model.step` of the program is named so
+(`W1020`), with the nearest.
 
 ```tondo test
 import std.model

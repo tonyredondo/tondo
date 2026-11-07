@@ -8894,6 +8894,7 @@ oculten un diagnóstico independiente.
 | `W1016` | `lost-update` | Una celda de `std.sync` escrita con un valor hecho de lo que se leyó de ella antes: otra tarea puede cambiarla entre medias. |
 | `W1018` | `unused-result` | Una llamada escrita como sentencia, o como valor de un bloque `Unit`, cuyo resultado nada usa y que no hace nada más: un `String` que hizo, un método del lenguaje que solo lee, o una función del programa que solo calcula. `_ = ...` lo descarta. |
 | `W1019` | `unused-allow` | Un comentario `// tondo: allow` que no silencia nada. |
+| `W1020` | `unknown-model-step` | Un `model.mark`, `model.weak` o `model.strong` con un nombre escrito que ningún `model.step` del programa da (biblioteca 14.43). |
 
 #### Pánicos del lenguaje
 

@@ -7010,7 +7010,10 @@ de lo que lleva, de un record cada valor de cada campo, de un opcional `none` y
 cada valor, y de un `Bool` los dos. Un número o un texto no tienen fin, y un tipo
 que lleva uno falla diciendo dónde.
 
-`mark(paso)` dice que el código da ese paso de su modelo. Fuera de la
+`mark(paso)` dice que el código da ese paso de su modelo. Un nombre escrito en
+`mark`, `weak` o `strong` que ningún `step` del programa da, contando sus tests,
+es `W1020`, que propone el más parecido: se escribió mal, o cambió en un lado
+solo. Fuera de la
 compilación de tests no hace nada y no cuesta nada. `follows` ejecuta `code` y
 exige que cada paso que marca, en el orden en que llegan, sea un paso que el
 modelo puede dar desde donde lo llevaron los anteriores; `Checked.never` nombra
