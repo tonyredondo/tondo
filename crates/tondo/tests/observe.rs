@@ -405,6 +405,43 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     assert!(summary.contains("dumped at a panic") && summary.contains("1 runs panics.to:3 in main"), "{summary}");
 }
 
+/// A task that waits, deep in the runtime, keeps in a dump what its code
+/// had in registers: the runtime's frames saved them, and the tables of
+/// unwinding of the executable say where, on Linux and on macOS.
+#[test]
+fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-waits");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
+    std::fs::write(dir.join("waits.to"), program).unwrap();
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "waits.to"])
+        .env("TONDO_DUMP", &dir)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!ran.status.success());
+    let dump = std::fs::read_dir(&dir).unwrap().flatten().map(|f| f.path());
+    let dump = dump.into_iter().find(|p| p.to_string_lossy().ends_with(".dump.json")).unwrap();
+    let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "1", "--json"]);
+    assert_eq!(locals["locals"]["at"], "waits.to:11 in main", "{locals}");
+    let bindings: Vec<String> = locals["locals"]["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            format!(
+                "{}: {} = {}",
+                b["name"].as_str().unwrap(),
+                b["type"].as_str().unwrap(),
+                b["value"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(bindings, ["items: Array[String] = [\"a\", \"b\", \"c\"]", "job: Join[Int] = Join[Int]"], "{locals}");
+}
+
 /// With no `TONDO_DUMP`, a crash leaves its dump, values and all, in the
 /// cache of Tondo, where only its user can read it, the latest 20 kept; with
 /// `TONDO_DUMP=off`, none.

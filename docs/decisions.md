@@ -5012,8 +5012,10 @@ as a dead one may have been moved. Past the runtime's own frames a task that
 waits has its registers from the unwind tables the executable keeps: `switch`
 left them on its stack, and each frame of the runtime says what it saved, which
 a small reader of `.eh_frame` follows in the copy that shows values. macOS keeps
-those tables in another form, so there a task that waits shows only what the
-compiler spilled.
+those tables in another form, `__unwind_info`, which says the usual frames of
+arm64 and x86-64 in a word each and leaves the rest to `__eh_frame`; the reader
+takes both, so a task that waits shows the same there (2026-11-07, found by the
+golden test of a dump, which showed fewer values on macOS).
 
 ## What is secret is what the program says is secret
 

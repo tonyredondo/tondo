@@ -1,10 +1,10 @@
 //! Walks callee-saved registers through the runtime's own frames for a
-//! dump (toolchain 7.5), from the unwind tables of the executable: a task
-//! that waits is deep in the runtime, whose frames hold what the program's
-//! code had in its registers. Only frames with a frame pointer: others
-//! are not on the walk.
+//! dump (toolchain 7.5), from the unwind tables of the executable, ELF's
+//! `.eh_frame` or Mach-O's `__unwind_info`: a task that waits is deep in
+//! the runtime, whose frames hold what the program's code had in its
+//! registers. Only frames with a frame pointer: others are not on the walk.
 
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#![cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 
 /// The registers of a frame, by their DWARF numbers.
 pub(crate) type Registers = [Option<usize>; 32];
@@ -19,7 +19,7 @@ const FRAME_REGISTER: u64 = 29;
 /// The registers of the caller of the frame at `address`, whose frame
 /// pointer is `fp`, given its own: those it saved come back from its
 /// frame. Nothing is known without its tables.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn restored(address: usize, fp: usize, registers: &Registers, bounds: (usize, usize)) -> Registers {
     let (mut out, none) = (*registers, [None; 32]);
     let Some(rules) = rules_at(address - 1) else { return none };
@@ -37,7 +37,7 @@ pub(crate) fn restored(address: usize, fp: usize, registers: &Registers, bounds:
     out
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn restored(_: usize, _: usize, _: &Registers, _: (usize, usize)) -> Registers {
     [None; 32]
 }
@@ -139,7 +139,94 @@ fn described(pc: usize) -> Option<usize> {
 
 #[cfg(target_os = "linux")]
 fn rules_at(pc: usize) -> Option<Rules> {
-    let record = described(pc)?;
+    recorded(described(pc)?, pc)
+}
+
+/// What the image's compact tables say of the code at `pc`: the usual
+/// frames of arm64 and x86-64 they say themselves, and the others they
+/// leave to a record of `__eh_frame`.
+#[cfg(target_os = "macos")]
+fn rules_at(pc: usize) -> Option<Rules> {
+    unsafe extern "C" {
+        // The start of the image the runtime is in, executable or library.
+        static __dso_handle: u8;
+        fn getsectiondata(header: *const u8, segment: *const i8, section: *const i8, size: *mut u64) -> *const u8;
+    }
+    let header = &raw const __dso_handle;
+    let section = |name: &std::ffi::CStr| {
+        let mut size = 0;
+        let at = unsafe { getsectiondata(header, c"__TEXT".as_ptr(), name.as_ptr(), &mut size) };
+        (!at.is_null()).then_some(at as usize)
+    };
+    let encoding = compact(section(c"__unwind_info")?, u32::try_from(pc.checked_sub(header as usize)?).ok()?)?;
+    let mut rules = Rules { frame_register: FRAME_REGISTER, frame_offset: 16, saved: [None; 32] };
+    rules.saved[FRAME_REGISTER as usize] = Some(-16);
+    match (cfg!(target_arch = "aarch64"), encoding & 0x0f00_0000) {
+        // Pairs from x19 and x20 on, as it says, below the frame's record.
+        (true, 0x0400_0000) => {
+            let mut at = -24;
+            for pair in (0..5).filter(|pair| encoding & (1 << pair) != 0) {
+                for register in [19 + 2 * pair, 20 + 2 * pair] {
+                    rules.saved[register] = Some(at);
+                    at -= 8;
+                }
+            }
+        }
+        // Up to five, from where it says on, each as three bits say.
+        (false, 0x0100_0000) => {
+            let mut at = -16 - 8 * i64::from((encoding >> 16) & 0xff);
+            for slot in 0..5 {
+                let register = [None, Some(3), Some(12), Some(13), Some(14), Some(15), Some(6)];
+                if let Some(&Some(register)) = register.get((encoding >> (3 * slot) & 7) as usize) {
+                    rules.saved[register] = Some(at);
+                }
+                at += 8;
+            }
+        }
+        (true, 0x0300_0000) | (false, 0x0400_0000) => {
+            return recorded(section(c"__eh_frame")? + (encoding & 0x00ff_ffff) as usize, pc);
+        }
+        _ => return None,
+    }
+    Some(rules)
+}
+
+/// The compact encoding of the function at `offset` in the image, from
+/// its `__unwind_info`: an index of pages, each regular or compressed.
+#[cfg(target_os = "macos")]
+fn compact(info: usize, offset: u32) -> Option<u32> {
+    let word = |at: usize| unsafe { (at as *const u32).read_unaligned() };
+    let half = |at: usize| usize::from(unsafe { (at as *const u16).read_unaligned() });
+    if word(info) != 1 {
+        return None;
+    }
+    let (common, common_count) = (info + word(info + 4) as usize, word(info + 8));
+    let (index, count) = (info + word(info + 20) as usize, word(info + 24) as usize);
+    // The index's last entry only says where the code ends.
+    let entry = (0..count.checked_sub(1)?).rev().map(|i| index + 12 * i).find(|&e| word(e) <= offset)?;
+    let page = match word(entry + 4) as usize {
+        0 => return None,
+        page => info + page,
+    };
+    let (entries, entry_count) = (page + half(page + 4), half(page + 6));
+    match word(page) {
+        2 => (0..entry_count).rev().map(|i| entries + 8 * i).find(|&e| word(e) <= offset).map(|e| word(e + 4)),
+        3 => {
+            let start = word(entry);
+            let found =
+                (0..entry_count).rev().map(|i| word(entries + 4 * i)).find(|e| start + (e & 0x00ff_ffff) <= offset)?;
+            let which = found >> 24;
+            Some(match which < common_count {
+                true => word(common + 4 * which as usize),
+                false => word(page + half(page + 8) + 4 * (which - common_count) as usize),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The rules of a record of `__eh_frame` for the code at `pc`.
+fn recorded(record: usize, pc: usize) -> Option<Rules> {
     let mut reader = Reader(record);
     let length = reader.read::<u32>() as usize;
     let at_pointer = reader.0;

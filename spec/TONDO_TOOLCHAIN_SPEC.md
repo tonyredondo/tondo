@@ -850,7 +850,7 @@ dejó cada variable en cada tramo del código, cuya ubicación no cambia el cód
 generado, y dónde guarda cada función los registros de quien la llama, y el
 programa guarda los registros antes de un pánico. Los de una tarea que espera
 salen de los que dejó al cambiar de pila y de las tablas de unwind del ejecutable,
-en Linux; en macOS esa tarea muestra lo que el compilador dejó en su pila. Cada frame inlineado tiene las
+`.eh_frame` en Linux y `__unwind_info` en macOS. Cada frame inlineado tiene las
 suyas. En ese build una variable que el código ya no usa no existe y no aparece,
 salvo los números de un `panic` escrito en el programa, que ese pánico conserva en
 código que solo él ejecuta.
