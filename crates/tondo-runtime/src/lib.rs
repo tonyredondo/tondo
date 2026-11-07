@@ -2112,16 +2112,15 @@ impl Builder {
 
     /// The string built. Its block keeps room it does not use, as much as it
     /// uses at most, which the allocator frees with it and a string appended
-    /// to in place grows into, unless a budget or a watch counts the memory
-    /// a string holds by its length.
+    /// to in place grows into. While a budget or a watch counts memory, that
+    /// room is what was asked for, and counted (`meta::usable`).
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
         }
         let mut text = self.text as *mut u8;
         let mut cap = self.room();
-        let counted = diagnostics::hooks() & (diagnostics::BUDGET | diagnostics::WATCHED) != 0;
-        if cap - self.len > self.len.max(16) || (counted && cap != self.len) {
+        if cap - self.len > self.len.max(16) {
             let layout = str_layout(self.len);
             text = unsafe { std::alloc::realloc(text, str_layout(cap), layout.size()) };
             if text.is_null() {

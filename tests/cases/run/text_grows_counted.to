@@ -1,0 +1,15 @@
+// Text built by appending in a loop keeps the room it grows into while the
+// tools count memory, so it takes linear time: with TONDO_DIAGNOSTICS=1 each
+// string was cut to its length and every append copied it whole.
+import std.console
+
+fn main() {
+    var text = ""
+    for i in 0..2000000 {
+        text = "{text}{i % 10}"
+    }
+    console.println("{text.length()}")
+}
+
+// expect-env: TONDO_DIAGNOSTICS=1
+// expect-stdout: 2000000
