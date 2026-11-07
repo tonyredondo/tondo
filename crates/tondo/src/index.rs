@@ -70,6 +70,8 @@ pub struct Shape {
 #[derive(Default)]
 pub struct Index {
     pub defs: Vec<Def>,
+    /// The names of the declarations marked `@deprecated`.
+    pub deprecated: std::collections::HashSet<Span>,
     /// Each name that refers to a declaration, its own included.
     pub uses: Vec<(Span, usize)>,
     /// Fields written by the name of a binding, `User { name }`: renaming

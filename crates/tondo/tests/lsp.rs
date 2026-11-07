@@ -2827,3 +2827,26 @@ fn every_order_of_a_test_is_a_lens() {
     assert!(said["params"]["message"].to_string().contains("all that differ"), "{said}");
     editor.stop();
 }
+
+/// What is deprecated shows so before it is used.
+#[test]
+fn what_is_deprecated_shows_before_it_is_used() {
+    let text = "@deprecated(\"use `fresh`\")\nfn stale() {}\n\nfn fresh() {}\n\nfn main() {\n    fresh()\n    st\n}\n";
+    let dir = project("lsp-deprecated", &[("main.to", text)]);
+    let mut editor = Editor::launch_with(everything(), json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("main.to"));
+    let symbols = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    let named = |list: &Value, name: &str, key: &str| {
+        list.as_array().unwrap().iter().find(|item| item[key] == name).unwrap_or_else(|| panic!("{list}")).clone()
+    };
+    assert_eq!(named(&symbols, "stale", "name")["tags"], json!([1]), "{symbols}");
+    assert_eq!(named(&symbols, "fresh", "name")["tags"], json!([]), "{symbols}");
+    let at = json!({ "textDocument": { "uri": uri }, "position": { "line": 7, "character": 6 } });
+    let list = editor.request("textDocument/completion", at);
+    let items = &list["items"];
+    assert_eq!(named(items, "stale", "label")["tags"], json!([1]), "{list}");
+    assert!(named(items, "fresh", "label").get("tags").is_none(), "{list}");
+    let found = editor.request("workspace/symbol", json!({ "query": "stale" }));
+    assert_eq!(found[0]["tags"], json!([1]), "{found}");
+    editor.stop();
+}

@@ -2129,8 +2129,9 @@ impl Server {
                 if std.as_ref().is_some_and(|std| path.starts_with(std)) {
                     continue;
                 }
-                let symbol =
-                    json!({ "name": def.name, "kind": kind, "location": { "uri": self.uri(&path), "range": range } });
+                let tags: &[u8] = if index.deprecated.contains(&def.name_span) { &[1] } else { &[] };
+                let location = json!({ "uri": self.uri(&path), "range": range });
+                let symbol = json!({ "name": def.name, "kind": kind, "tags": tags, "location": location });
                 symbols.push((score, symbol));
             }
         }
@@ -2515,9 +2516,11 @@ impl Server {
                 DefKind::Variant => 22,
                 _ => 13,
             };
+            let tags: &[u8] = if index.deprecated.contains(&def.name_span) { &[1] } else { &[] };
             json!({
                 "name": def.name,
                 "kind": kind,
+                "tags": tags,
                 "range": self.range(source, def.decl_span),
                 "selectionRange": self.range(source, def.name_span),
                 "children": children,
@@ -3171,7 +3174,11 @@ impl Server {
             DefKind::Module => 9,
         };
         let mut item = json!({ "label": name, "kind": number });
-        let Some(def) = def.and_then(|d| analyzed.analysis.index.as_ref().map(|i| &i.defs[d])) else { return item };
+        let Some(index) = analyzed.analysis.index.as_ref() else { return item };
+        let Some(def) = def.map(|d| &index.defs[d]) else { return item };
+        if index.deprecated.contains(&def.name_span) {
+            item["tags"] = json!([1]);
+        }
         let file = analyzed.analysis.sources.file_of(def.decl_span.start);
         let detail = match def.kind {
             DefKind::Local | DefKind::Parameter => def.ty.clone().unwrap_or_default(),
@@ -4453,6 +4460,7 @@ fn flatten_symbols(symbols: &[Value], uri: &Value, container: Option<&str>, flat
         let mut information = json!({
             "name": symbol["name"],
             "kind": symbol["kind"],
+            "tags": symbol["tags"],
             "location": { "uri": uri, "range": symbol["selectionRange"] },
         });
         if let Some(container) = container {

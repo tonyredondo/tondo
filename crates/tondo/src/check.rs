@@ -158,6 +158,9 @@ fn check_with<'a>(
             }
         }
     }
+    if let Some(index) = &mut checker.index {
+        index.deprecated = deprecated.into_keys().collect();
+    }
     (program, checker.index.filter(|_| asked))
 }
 
