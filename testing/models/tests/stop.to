@@ -135,6 +135,19 @@ test aWaitingThreadGoesOn {
     }
 }
 
+// Strong fairness of each thread's resume, with one name for them all.
+test aWaitingThreadGoesOnWhenEachResumeIsFair {
+    _ = model.expect(waits(model.strong("resumed", each: true)))
+}
+
+// Of all the resumes as one: the other thread may be the one that resumes.
+test aWaitingThreadCanBePassedOverWhenAllResumesAreOne {
+    match waits(model.strong("resumed")) {
+        ok(_) => panic("a thread passed over went unseen")
+        err(broken) => assert(broken.property == some("a waiting thread goes on"), "{broken}")
+    }
+}
+
 test aWaitingThreadCanBePassedOverWithWeakFairness {
     match waits(model.weak("resumed 0")) {
         ok(_) => panic("a thread passed over went unseen")

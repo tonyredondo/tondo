@@ -89,7 +89,8 @@ deadlock.
 Fairness is of a step's name: `model.weak("resume")` holds when some task
 resumes, even if it is always the same one. To say that each task resumes, put
 the task in the name, `model.step("resume {t}", ...)`, and make each fair:
-`[0, 1].map((t) { model.weak("resume {t}") })`.
+`model.weak("resume", each: true)`, which stands for every step named
+`resume` and a space and more.
 
 ## Concurrent code: properties of the real thing
 

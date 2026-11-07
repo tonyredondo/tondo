@@ -6966,6 +6966,8 @@ pub fn machine[S: Reflect + Encode + Decode, E: Reflect + Decode, X](
 ): Checked ! Violation
 pub fn follows[S: Reflect + Encode + Decode](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
 pub fn watch[S: Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation
+pub fn weak(name: String, each: Bool = false): Fair
+pub fn strong(name: String, each: Bool = false): Fair
 pub fn mark(name: String)
 pub fn expect(checked: Checked ! Violation): Checked
 pub fn every[T: Reflect + Decode](): Array[T] ! String
@@ -6996,7 +6998,8 @@ nombra los pasos que no pueden quedar ignorados: `weak(paso)` se da si sigue
 siendo posible, y `strong(paso)` si vuelve a serlo una y otra vez. La equidad es
 de un nombre de paso: la de los pasos `"resume"` de todas las tareas juntas, que
 se cumple aunque una sola los dé siempre. Para la de cada tarea, el paso lleva
-la tarea en el nombre, como `"resume {t}"`, y `fair` nombra el de cada una.
+la tarea en el nombre, como `"resume {t}"`, y `weak("resume", each: true)` (o
+`strong`) hace justo cada paso que se llama `resume`, un espacio y más.
 
 `machine` es `check` sobre la función que da el siguiente estado para un
 evento, la misma que llama el programa, sin modelo que mantener: prueba en cada

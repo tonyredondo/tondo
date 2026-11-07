@@ -509,16 +509,49 @@ pub fn temporal[S](formula: Formula[S], name: String = "the formula"): Property[
 pub type Fair = {
     priv step: String
     priv strong: Bool
+    priv each: Bool = false
 }
 
-/// A step that comes if it stays possible.
-pub fn weak(name: String): Fair {
-    Fair { step: name, strong: false }
+/// A step that comes if it stays possible. With `each`, each step named
+/// `name` and then a space and more, as each task's `"resume {t}"`: each one
+/// comes, rather than one of them.
+pub fn weak(name: String, each: Bool = false): Fair {
+    Fair { step: name, strong: false, each }
 }
 
-/// A step that comes if it keeps becoming possible, even if not all the time.
-pub fn strong(name: String): Fair {
-    Fair { step: name, strong: true }
+/// A step that comes if it keeps becoming possible, even if not all the time;
+/// with `each`, each step of that name, as `weak` says.
+pub fn strong(name: String, each: Bool = false): Fair {
+    Fair { step: name, strong: true, each }
+}
+
+/// The fairness asked, with one for each step that one `each` stands for.
+fn perStep[S](graph: Graph[S], fair: Array[Fair]): Array[Fair] {
+    if not fair.any((one) { one.each }) {
+        return fair
+    }
+    var named = Set[String]()
+    for out in graph.edges {
+        for edge in out {
+            _ = named.insert(edge.name)
+        }
+    }
+    var names: Array[String] = named.values().collect()
+    names.sort()
+    var all: Array[Fair] = []
+    for one in fair {
+        match one.each {
+            false => all.push(one)
+            true => {
+                for name in names {
+                    if name == one.step or name.startsWith("{one.step} ") {
+                        all.push(Fair { step: name, strong: one.strong })
+                    }
+                }
+            }
+        }
+    }
+    all
 }
 
 type Edge = {
@@ -731,8 +764,9 @@ fn vacuous[S](holds: Array[Property[S]], came: fn(fn(S): Bool): Bool): Array[Str
 fn properties[S: reflect.Reflect + serialization.Decode](
     graph: Graph[S],
     holds: Array[Property[S]],
-    fair: Array[Fair],
+    asked: Array[Fair],
 ): !Violation {
+    let fair = perStep(graph, asked)
     for property in holds {
         match property.kind {
             Kind.Invariant(_) => {}
@@ -908,7 +942,7 @@ fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
                     reflect.VariantPayloadKind.Unit => all.push(label)
                     reflect.VariantPayloadKind.Tuple => {
                         let parts = variant.tupleElements()
-                        for values in combinations(each(parts, depth)?) {
+                        for values in combinations(valuesOfEach(parts, depth)?) {
                             let held = if values.length() == 1 {
                                 values[0]
                             } else {
@@ -932,7 +966,7 @@ fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
             none => fail "`{name}` has no values to go through"
         }
         reflect.TypeKind.Tuple => {
-            combinations(each(info.tupleElements(), depth)?).map(
+            combinations(valuesOfEach(info.tupleElements(), depth)?).map(
                 (values) { "[{values.join(",")}]" },
             )
         }
@@ -946,7 +980,7 @@ fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
 }
 
 fn record(fields: Array[reflect.FieldInfo], depth: Int): Array[String] ! String {
-    let parts = each(fields.map((field) { field.typeInfo() }), depth)?
+    let parts = valuesOfEach(fields.map((field) { field.typeInfo() }), depth)?
     let names = fields.map((field) { json.encode(field.externalName()) })
     combinations(parts).map(
         (values) {
@@ -957,7 +991,7 @@ fn record(fields: Array[reflect.FieldInfo], depth: Int): Array[String] ! String 
 }
 
 /// The values of each type.
-fn each(types: Array[reflect.TypeInfo], depth: Int): Array[Array[String]] ! String {
+fn valuesOfEach(types: Array[reflect.TypeInfo], depth: Int): Array[Array[String]] ! String {
     var all: Array[Array[String]] = []
     for info in types {
         all.push(written(info, depth + 1)?)
