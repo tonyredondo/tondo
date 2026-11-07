@@ -207,15 +207,21 @@ test fails {
 ";
 
 /// The time `run` gives a program counts from when it is built: a build
-/// longer than it, as a cold one is, does not end the program.
+/// longer than it, as a cold one of a large project is, does not end the
+/// program.
 #[test]
 fn a_run_times_the_program_and_not_its_build() {
+    if !cfg!(unix) {
+        return;
+    }
     // Text of its own, so that no build of it is in the cache.
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let program = format!("import std.console\n\nfn main() {{\n    console.println(\"built {nonce}\")\n}}\n");
-    let dir = project("mcp_run_built", &[("built.to", &program)]);
-    let mut agent = Agent::start(&dir);
-    let (ran, _) = agent.call("run", json!({ "path": "built.to", "timeout": 0.2 }));
+    let dir = project("mcp_run_built", &[("built.to", &program), ("slow-cc", "#!/bin/sh\nsleep 2\nexec cc \"$@\"\n")]);
+    std::fs::set_permissions(dir.join("slow-cc"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // A linker that takes two seconds, longer than the program's time.
+    let mut agent = Agent::start_with(&dir, &[("TONDO_CC", &dir.join("slow-cc"))]);
+    let (ran, _) = agent.call("run", json!({ "path": "built.to", "timeout": 1 }));
     assert_ne!(ran["timed_out"], true, "{ran}");
     assert_eq!(ran["stdout"], format!("built {nonce}\n"), "{ran}");
     // A program that runs past it is still ended.
