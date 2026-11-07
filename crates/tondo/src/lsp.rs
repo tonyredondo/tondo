@@ -116,6 +116,11 @@ struct Client {
     no_label_details: bool,
     flat_symbols: bool,
     progress: bool,
+    /// It answers `workspace/configuration`.
+    configuration: bool,
+    /// It takes these registered as the server starts.
+    register_configuration: bool,
+    register_saves: bool,
 }
 
 impl Client {
@@ -131,6 +136,9 @@ impl Client {
             no_label_details: item["labelDetailsSupport"] != true,
             flat_symbols: document["documentSymbol"]["hierarchicalDocumentSymbolSupport"] != true,
             progress: capabilities["window"]["workDoneProgress"] == true,
+            configuration: capabilities["workspace"]["configuration"] == true,
+            register_configuration: capabilities["workspace"]["didChangeConfiguration"]["dynamicRegistration"] == true,
+            register_saves: document["synchronization"]["dynamicRegistration"] == true,
         }
     }
 }
@@ -159,6 +167,32 @@ fn unsnippet(text: &str) -> String {
 struct Document {
     uri: String,
     text: String,
+    version: Value,
+}
+
+/// What the editor's settings of `tondo.lsp` say.
+struct Settings {
+    inlay_hints: bool,
+    code_lenses: bool,
+    format_on_save: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings { inlay_hints: true, code_lenses: true, format_on_save: false }
+    }
+}
+
+impl Settings {
+    fn of(value: &Value) -> Settings {
+        let default = Settings::default();
+        let given = |name: &str, otherwise: bool| value[name].as_bool().unwrap_or(otherwise);
+        Settings {
+            inlay_hints: given("inlayHints", default.inlay_hints),
+            code_lenses: given("codeLenses", default.code_lenses),
+            format_on_save: given("formatOnSave", default.format_on_save),
+        }
+    }
 }
 
 /// The last analysis of a project, or of a file on its own, with the path
@@ -279,6 +313,9 @@ struct Server {
     trace: String,
     /// The first analysis says how it goes, under its token.
     starting: bool,
+    settings: Settings,
+    /// `willSaveWaitUntil` is registered, while saving formats.
+    formats_saves: bool,
 }
 
 /// The language server's answers outside an editor, as `tondo mcp` asks
@@ -317,6 +354,10 @@ impl Server {
             if message["id"] == PROGRESS {
                 self.starting = message.get("error").is_none();
                 self.analyze_workspace();
+            }
+            if message["id"] == SETTINGS {
+                self.settings = Settings::of(&message["result"][0]);
+                self.register_saves();
             }
             return true;
         }
@@ -483,14 +524,31 @@ impl Server {
             }
             "textDocument/didOpen" => {
                 let document = &params["textDocument"];
-                self.changed(document["uri"].as_str(), document["text"].as_str());
+                let (uri, text) = (document["uri"].as_str()?, document["text"].as_str()?);
+                let path = uri_path(uri)?;
+                self.dirty.insert(root_of(&path).0);
+                let opened =
+                    Document { uri: uri.to_string(), text: text.to_string(), version: document["version"].clone() };
+                self.open.insert(path, opened);
                 None
             }
             "textDocument/didChange" => {
-                let text = params["contentChanges"].as_array().and_then(|c| c.last()).map(|c| &c["text"]);
-                self.changed(params["textDocument"]["uri"].as_str(), text.and_then(Value::as_str));
+                self.edited(params);
                 None
             }
+            // Open files are analyzed by their text, which saving does not
+            // change: an editor that watches nothing has saved a file that
+            // others read from disk.
+            "textDocument/didSave" => {
+                if !self.watches {
+                    self.dirty.insert(root_of(&uri_path(params["textDocument"]["uri"].as_str()?)?).0);
+                }
+                None
+            }
+            "textDocument/willSaveWaitUntil" => Some(Ok(match self.settings.format_on_save {
+                true => self.formatting(params).unwrap_or(json!([])),
+                false => json!([]),
+            })),
             "textDocument/didClose" => {
                 if let Some(path) = params["textDocument"]["uri"].as_str().and_then(uri_path) {
                     self.open.remove(&path);
@@ -514,6 +572,7 @@ impl Server {
             "textDocument/diagnostic" => Some(Ok(self.pulled(params))),
             "workspace/symbol" => Some(Ok(self.workspace_symbols(params))),
             "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
+            "textDocument/inlayHint" | "textDocument/codeLens" if !self.shown(method) => Some(Ok(json!([]))),
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
             "textDocument/codeLens" => {
                 let mut lenses = self.lenses(params).and_then(|l| l.as_array().cloned()).unwrap_or_default();
@@ -542,18 +601,47 @@ impl Server {
             "typeHierarchy/supertypes" => Some(Ok(self.type_hierarchy(params, true).unwrap_or(json!([])))),
             "typeHierarchy/subtypes" => Some(Ok(self.type_hierarchy(params, false).unwrap_or(json!([])))),
             "workspace/willRenameFiles" => Some(Ok(self.will_rename_files(params).unwrap_or(Value::Null))),
+            // Nothing else in a project follows a file made or deleted.
+            "workspace/willCreateFiles" | "workspace/willDeleteFiles" => Some(Ok(Value::Null)),
+            "workspace/didCreateFiles" | "workspace/didDeleteFiles" | "workspace/didRenameFiles" => {
+                self.files_changed(params);
+                None
+            }
+            "workspace/didChangeWorkspaceFolders" => {
+                self.folders_changed(&params["event"]);
+                None
+            }
+            "workspace/didChangeConfiguration" => {
+                match self.client.configuration {
+                    true => self.ask_settings(),
+                    false => {
+                        self.settings = Settings::of(&params["settings"]["tondo"]["lsp"]);
+                        self.register_saves();
+                    }
+                }
+                None
+            }
             "textDocument/onTypeFormatting" => Some(Ok(self.on_type_formatting(params).unwrap_or(json!([])))),
             "workspace/executeCommand" => Some(Ok(self.execute(params).unwrap_or(Value::Null))),
             "initialized" => {
+                let mut registrations = Vec::new();
                 if self.watches {
                     let watchers: Vec<Value> = ["**/*.to", "**/tondo.toml", "**/tondo.lock"]
                         .iter()
                         .map(|glob| json!({ "globPattern": glob }))
                         .collect();
-                    send(json!({ "jsonrpc": "2.0", "id": "watch", "method": "client/registerCapability",
-                        "params": { "registrations": [{ "id": "watch", "method": "workspace/didChangeWatchedFiles",
-                            "registerOptions": { "watchers": watchers } }] } }));
+                    registrations.push(json!({ "id": "watch", "method": "workspace/didChangeWatchedFiles",
+                        "registerOptions": { "watchers": watchers } }));
                 }
+                if self.client.register_configuration {
+                    registrations.push(json!({ "id": "settings", "method": "workspace/didChangeConfiguration",
+                        "registerOptions": { "section": "tondo.lsp" } }));
+                }
+                if !registrations.is_empty() {
+                    send(json!({ "jsonrpc": "2.0", "id": "register", "method": "client/registerCapability",
+                        "params": { "registrations": registrations } }));
+                }
+                self.ask_settings();
                 // The first analysis says how it goes, once the editor has a
                 // place for that.
                 match self.client.progress {
@@ -598,10 +686,17 @@ impl Server {
         let folders = params["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str());
         self.folders = folders.chain(params["rootUri"].as_str()).filter_map(uri_path).collect();
         self.folders.dedup();
+        let sources = json!({ "filters": [{ "scheme": "file", "pattern": { "glob": "**/*.to", "matches": "file" } }] });
         let mut answer = json!({
             "capabilities": {
                 "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
-                "textDocumentSync": { "openClose": true, "change": 1 },
+                "textDocumentSync": {
+                    "openClose": true,
+                    "change": 2,
+                    "save": { "includeText": false },
+                    // Otherwise registered while saving formats.
+                    "willSaveWaitUntil": !self.client.register_saves,
+                },
                 "hoverProvider": true,
                 "definitionProvider": true,
                 "declarationProvider": true,
@@ -631,8 +726,14 @@ impl Server {
                 "typeDefinitionProvider": true,
                 "typeHierarchyProvider": true,
                 "workspace": {
+                    "workspaceFolders": { "supported": true, "changeNotifications": true },
                     "fileOperations": {
                         "willRename": { "filters": [{ "scheme": "file", "pattern": { "glob": "**", "matches": "folder" } }] },
+                        "didRename": sources,
+                        "didCreate": sources,
+                        "didDelete": sources,
+                        "willCreate": sources,
+                        "willDelete": sources,
                     },
                 },
                 "semanticTokensProvider": {
@@ -651,11 +752,90 @@ impl Server {
         answer
     }
 
-    fn changed(&mut self, uri: Option<&str>, text: Option<&str>) {
-        let (Some(uri), Some(text)) = (uri, text) else { return };
-        let Some(path) = uri_path(uri) else { return };
+    /// A document changed, by the parts of it that did, or all of it.
+    fn edited(&mut self, params: &Value) -> Option<()> {
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let units = self.units;
+        let document = self.open.get_mut(&path)?;
+        for change in params["contentChanges"].as_array()? {
+            let text = change["text"].as_str()?;
+            match change.get("range") {
+                Some(range) => {
+                    let start = offset(&document.text, &range["start"], units)?;
+                    let end = offset(&document.text, &range["end"], units)?;
+                    document.text.replace_range(start..end.max(start), text);
+                }
+                None => document.text = text.to_string(),
+            }
+        }
+        document.version = params["textDocument"]["version"].clone();
         self.dirty.insert(root_of(&path).0);
-        self.open.insert(path, Document { uri: uri.to_string(), text: text.to_string() });
+        Some(())
+    }
+
+    /// Whether what the settings can turn off is on.
+    fn shown(&self, method: &str) -> bool {
+        match method {
+            "textDocument/inlayHint" => self.settings.inlay_hints,
+            _ => self.settings.code_lenses,
+        }
+    }
+
+    fn ask_settings(&self) {
+        if self.client.configuration {
+            send(json!({ "jsonrpc": "2.0", "id": SETTINGS, "method": "workspace/configuration",
+                "params": { "items": [{ "section": "tondo.lsp" }] } }));
+        }
+    }
+
+    /// `textDocument/willSaveWaitUntil` holds up every save, so an editor
+    /// that can is asked for it only while saving formats.
+    fn register_saves(&mut self) {
+        if !self.client.register_saves || self.formats_saves == self.settings.format_on_save {
+            return;
+        }
+        self.formats_saves = self.settings.format_on_save;
+        let method = "textDocument/willSaveWaitUntil";
+        send(match self.formats_saves {
+            true => json!({ "jsonrpc": "2.0", "id": "register", "method": "client/registerCapability",
+                "params": { "registrations": [{ "id": "saves", "method": method,
+                    "registerOptions": { "documentSelector": [{ "language": "tondo" }] } }] } }),
+            false => json!({ "jsonrpc": "2.0", "id": "unregister", "method": "client/unregisterCapability",
+                "params": { "unregisterations": [{ "id": "saves", "method": method }] } }),
+        });
+    }
+
+    /// Files were made, deleted or renamed: their projects are analyzed again.
+    fn files_changed(&mut self, params: &Value) {
+        for file in params["files"].as_array().into_iter().flatten() {
+            for uri in ["uri", "oldUri", "newUri"].iter().filter_map(|name| file[*name].as_str()) {
+                if let Some(path) = uri_path(uri) {
+                    self.dirty.insert(root_of(&path).0);
+                }
+            }
+        }
+    }
+
+    /// Folders came and went: the projects of the new ones are analyzed, and
+    /// the editor is told no more of those gone.
+    fn folders_changed(&mut self, event: &Value) {
+        let uris = |list: &Value| -> Vec<PathBuf> {
+            list.as_array().into_iter().flatten().filter_map(|f| uri_path(f["uri"].as_str()?)).collect()
+        };
+        for folder in uris(&event["removed"]) {
+            let gone: Vec<PathBuf> = self.published.keys().filter(|root| root.starts_with(&folder)).cloned().collect();
+            for root in gone {
+                self.analyses.remove(&root);
+                self.earlier.remove(&root);
+                self.dirty.remove(&root);
+                for path in self.published.remove(&root).unwrap_or_default() {
+                    self.latest.remove(&path);
+                    self.show_diagnostics(&path, &self.uri(&path), &[]);
+                }
+            }
+        }
+        self.folders = uris(&event["added"]);
+        self.analyze_workspace();
     }
 
     /// Analyzes again what changed, and shows its diagnostics.
@@ -1004,6 +1184,17 @@ impl Server {
 
     /// Sends the diagnostics of each file of a root, and clears those of
     /// files that have none now.
+    fn show_diagnostics(&self, path: &Path, uri: &str, diagnostics: &[Value]) {
+        if self.pulling {
+            return;
+        }
+        let mut params = json!({ "uri": uri, "diagnostics": diagnostics });
+        if let Some(document) = self.open.get(path) {
+            params["version"] = document.version.clone();
+        }
+        send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params }));
+    }
+
     fn publish(&mut self, root: &Path, analyzed: &Analyzed) {
         if self.quiet {
             return;
@@ -1081,19 +1272,11 @@ impl Server {
         for path in before.iter().filter(|path| !by_file.contains_key(*path)) {
             self.latest.remove(path);
             let uri = self.uri(path);
-            if !self.pulling {
-                send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                    "params": { "uri": uri, "diagnostics": [] } }));
-            }
+            self.show_diagnostics(path, &uri, &[]);
         }
         for (path, diagnostics) in &by_file {
             self.latest.insert(path.clone(), diagnostics.clone());
-            let uri = self.uri(path);
-            if self.pulling {
-                continue;
-            }
-            send(json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                "params": { "uri": uri, "diagnostics": diagnostics } }));
+            self.show_diagnostics(path, &self.uri(path), diagnostics);
         }
         self.published.insert(root.to_path_buf(), by_file.into_keys().collect());
     }
@@ -3738,6 +3921,9 @@ impl Server {
 }
 
 /// The token types of semantic highlighting, by number.
+/// The id of the request for the editor's settings.
+const SETTINGS: &str = "tondo.settings";
+
 /// The id of the request for a place to say how the first analysis goes, and
 /// its token.
 const PROGRESS: &str = "tondo.analysis";

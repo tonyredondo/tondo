@@ -31,6 +31,8 @@ struct Editor {
     diagnostics: Vec<(String, Value)>,
     /// The tests of projects sent, in order (`tondo/tests`).
     tests: Vec<Value>,
+    /// Each publication of diagnostics: the file, its version, what it said.
+    versions: Vec<(String, u64, Value)>,
 }
 
 impl Editor {
@@ -63,7 +65,8 @@ impl Editor {
             .unwrap();
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
-        let mut editor = Editor { child, input, output, next: 0, diagnostics: Vec::new(), tests: Vec::new() };
+        let mut editor =
+            Editor { child, input, output, next: 0, diagnostics: Vec::new(), tests: Vec::new(), versions: Vec::new() };
         capabilities["general"] = json!({ "positionEncodings": ["utf-8"] });
         let initialized = editor.request(
             "initialize",
@@ -99,6 +102,32 @@ impl Editor {
         serde_json::from_slice(&body).unwrap()
     }
 
+    /// The next request or notification of a method, past all else.
+    fn receive_method(&mut self, method: &str) -> Value {
+        loop {
+            let message = self.receive();
+            if message["method"] == method {
+                return message;
+            }
+        }
+    }
+
+    /// The next diagnostics published of a file.
+    fn receive_diagnostics(&mut self, uri: &str) -> Value {
+        loop {
+            let message = self.receive_method("textDocument/publishDiagnostics");
+            if message["params"]["uri"] == uri {
+                return message["params"]["diagnostics"].clone();
+            }
+        }
+    }
+
+    /// The version and the diagnostics last published of a file.
+    fn published(&mut self, uri: &str) -> (u64, Value) {
+        let last = self.versions.iter().rev().find(|(u, ..)| u == uri).expect("no diagnostics");
+        (last.1, last.2.clone())
+    }
+
     fn notify(&mut self, method: &str, params: Value) {
         self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
     }
@@ -118,7 +147,9 @@ impl Editor {
             if message["method"] == "textDocument/publishDiagnostics" {
                 let uri = message["params"]["uri"].as_str().unwrap().to_string();
                 self.diagnostics.retain(|(u, _)| *u != uri);
-                self.diagnostics.push((uri, message["params"]["diagnostics"].clone()));
+                self.diagnostics.push((uri.clone(), message["params"]["diagnostics"].clone()));
+                let version = message["params"]["version"].as_u64().unwrap_or_default();
+                self.versions.push((uri, version, message["params"]["diagnostics"].clone()));
             }
         }
     }
@@ -2205,15 +2236,15 @@ fn it_keeps_to_the_start_and_the_end_of_a_session() {
 
 /// A server on a file with a snippet, a documented function and a symbol in a
 /// type, for an editor that says only what is given.
-fn session(capabilities: Value, trace: &str) -> (Editor, String) {
+fn session(name: &str, capabilities: Value) -> (Editor, String) {
     let dir = project(
-        "lsp-session",
+        name,
         &[(
             "main.to",
             "/// Says hello.\nfn hello() {}\n\ntype Door = {\n    open: Bool\n}\n\nfn main() {\n    hello()\n}\n",
         )],
     );
-    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, trace);
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
     let uri = editor.open(&dir.join("main.to"));
     (editor, uri)
 }
@@ -2221,7 +2252,7 @@ fn session(capabilities: Value, trace: &str) -> (Editor, String) {
 /// An answer fits what the editor said it takes.
 #[test]
 fn answers_fit_what_the_editor_takes() {
-    let (mut editor, uri) = session(json!({}), "off");
+    let (mut editor, uri) = session("lsp-fit", json!({}));
     let at = json!({ "textDocument": { "uri": uri }, "position": { "line": 8, "character": 6 } });
     let hover = editor.request("textDocument/hover", at);
     assert_eq!(hover["contents"]["kind"], "plaintext", "{hover}");
@@ -2240,7 +2271,7 @@ fn answers_fit_what_the_editor_takes() {
 /// is one of a whole document with a change behind it.
 #[test]
 fn a_request_can_be_given_up_on() {
-    let (mut editor, uri) = session(json!({}), "off");
+    let (mut editor, uri) = session("lsp-given-up", json!({}));
     editor.notify("$/cancelRequest", json!({ "id": editor.next + 1 }));
     let refused = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
     assert_eq!(refused["code"], -32800, "{refused}");
@@ -2312,4 +2343,106 @@ fn says_how_work_goes() {
     assert_eq!(progress, ["mine", "mine"]);
     assert!(traced);
     editor.stop();
+}
+
+/// A change says only what changed, in the units the editor counts.
+#[test]
+fn a_change_says_only_what_changed() {
+    let (mut editor, uri) = session("lsp-change", everything());
+    let change = |line: u32, from: u32, to: u32, text: &str, version: u32| {
+        json!({
+            "textDocument": { "uri": uri, "version": version },
+            "contentChanges": [{
+                "range": { "start": { "line": line, "character": from }, "end": { "line": line, "character": to } },
+                "text": text,
+            }],
+        })
+    };
+    // `hello()` in `main` becomes an error, then back again in two parts.
+    editor.notify("textDocument/didChange", change(8, 4, 9, "goodbye", 2));
+    let symbols = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    assert!(symbols.is_array(), "{symbols}");
+    let (version, diagnostics) = editor.published(&uri);
+    assert_eq!(version, 2);
+    assert!(diagnostics.to_string().contains("goodbye"), "{diagnostics}");
+    editor.notify("textDocument/didChange", change(8, 4, 11, "hel", 3));
+    editor.notify("textDocument/didChange", change(8, 7, 7, "lo", 4));
+    let _ = editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+    let (version, diagnostics) = editor.published(&uri);
+    assert_eq!((version, diagnostics), (4, json!([])));
+    editor.stop();
+}
+
+/// Settings come from the editor, and saving formats only while they say so,
+/// which an editor that can registers and unregisters.
+#[test]
+fn the_settings_of_the_editor_hold() {
+    let mut capabilities = everything();
+    capabilities["workspace"] = json!({
+        "configuration": true,
+        "didChangeConfiguration": { "dynamicRegistration": true },
+    });
+    capabilities["textDocument"]["synchronization"] = json!({ "dynamicRegistration": true });
+    let dir = project("lsp-settings", &[("main.to", "fn main( ) {\n    let total = 1\n    _ = total\n}\n")]);
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let settings = |editor: &mut Editor, value: Value| {
+        let asked = editor.receive_method("workspace/configuration");
+        assert_eq!(asked["params"]["items"][0]["section"], "tondo.lsp");
+        editor.send(json!({ "jsonrpc": "2.0", "id": asked["id"], "result": [value] }));
+    };
+    settings(&mut editor, json!({ "formatOnSave": true, "inlayHints": false }));
+    let registered = editor.receive_method("client/registerCapability");
+    let registered = registered["params"]["registrations"].to_string();
+    assert!(registered.contains("willSaveWaitUntil"), "{registered}");
+    let uri = editor.open(&dir.join("main.to"));
+    let document = json!({ "textDocument": { "uri": uri }, "reason": 1 });
+    let edits = editor.request("textDocument/willSaveWaitUntil", document.clone());
+    assert_eq!(edits.as_array().unwrap().len(), 1, "{edits}");
+    let everywhere = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 9, "character": 0 } });
+    let hints =
+        editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": everywhere }));
+    assert_eq!(hints, json!([]));
+    editor.notify("workspace/didChangeConfiguration", json!({ "settings": null }));
+    settings(&mut editor, json!({ "formatOnSave": false }));
+    let gone = editor.receive_method("client/unregisterCapability");
+    assert!(gone["params"]["unregisterations"].to_string().contains("willSaveWaitUntil"), "{gone}");
+    assert_eq!(editor.request("textDocument/willSaveWaitUntil", document), json!([]));
+    let hints =
+        editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": everywhere }));
+    assert!(!hints.as_array().unwrap().is_empty(), "{hints}");
+    editor.stop();
+}
+
+/// A folder that comes is analyzed, one that goes leaves no diagnostics, and a
+/// file the editor makes or deletes counts at once.
+#[test]
+fn folders_and_files_come_and_go() {
+    let dir = project(
+        "lsp-folders",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {\n    missing()\n}\n")],
+    );
+    let mut editor = Editor::launch_with(everything(), json!({}), json!([]), "off");
+    let folder = json!({ "uri": format!("file://{}", dir.display()), "name": "app" });
+    let main = format!("file://{}/src/main.to", dir.display());
+    let event = json!({ "event": { "added": [folder], "removed": [] } });
+    editor.notify("workspace/didChangeWorkspaceFolders", event);
+    let found = editor.receive_diagnostics(&main);
+    assert!(found.to_string().contains("missing"), "{found}");
+    let write = |text: &str| std::fs::write(dir.join("src/main.to"), text).unwrap();
+    write("fn main() {}\n");
+    let files = json!({ "files": [{ "uri": main }] });
+    assert_eq!(editor.request("workspace/willCreateFiles", files.clone()), Value::Null);
+    editor.notify("workspace/didCreateFiles", files.clone());
+    assert_eq!(editor.receive_diagnostics(&main), json!([]));
+    write("fn main() {\n    missing()\n}\n");
+    editor.notify("workspace/didRenameFiles", json!({ "files": [{ "oldUri": main, "newUri": main }] }));
+    assert!(editor.receive_diagnostics(&main).to_string().contains("missing"));
+    let event = json!({ "event": { "added": [], "removed": [folder_of(&dir)] } });
+    editor.notify("workspace/didChangeWorkspaceFolders", event);
+    assert_eq!(editor.receive_diagnostics(&main), json!([]));
+    editor.stop();
+}
+
+fn folder_of(dir: &Path) -> Value {
+    json!({ "uri": format!("file://{}", dir.display()), "name": "app" })
 }

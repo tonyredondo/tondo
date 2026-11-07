@@ -68,6 +68,21 @@
           "default": "",
           "markdownDescription": "The `tondo` executable, or the directory it is in, as a download's `bin` or the download itself; `~` is your home. Empty: the one on `PATH`, or in `~/.cargo/bin` or `~/.local/bin`."
         },
+        "tondo.lsp.inlayHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the types and parameter names the language server infers, in line."
+        },
+        "tondo.lsp.codeLenses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the language server's lenses, as run, debug and references."
+        },
+        "tondo.lsp.formatOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Format a file as it is saved, by the language server, whatever `editor.formatOnSave` says."
+        },
         "tondo.fuzz.time": {
           "type": "number",
           "default": 0,
