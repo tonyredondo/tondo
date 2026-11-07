@@ -11,7 +11,7 @@ import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents, RUNS_HERE } from './docs';
 import { ShowProfile } from './profiles';
-import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
+import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, exploredOrders, kindMark, listed, searchLine, served, tagLine, testEvent, warningPlace } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 /** What the last run found, in the Problems panel: the tests that failed and
@@ -557,7 +557,11 @@ export function registerTesting(
       void vscode.window.showInformationMessage('Debug one test at a time: choose a test, not a suite or a project.');
       return;
     }
-    const [item] = chosen;
+    await debugTest(chosen[0]);
+  }
+
+  /** Debugs a test, in the order of its tasks a failure named, if one did. */
+  async function debugTest(item: vscode.TestItem, schedule?: string): Promise<void> {
     const dir = projectOf.get(item);
     if (!dir) {
       void vscode.window.showInformationMessage("A document's examples run, but are not debugged: Run them instead.");
@@ -571,6 +575,7 @@ export function registerTesting(
       program: dir,
       cwd: dir,
       test: item.id,
+      schedule,
       env: settings('test', dir).env,
     });
   }
@@ -620,6 +625,31 @@ export function registerTesting(
       const content = `${ran.stdout}${ran.stderr}`;
       const document = await vscode.workspace.openTextDocument({ content, language: 'plaintext' });
       await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+    }),
+    // Every order of a test's tasks that differs, and the one it failed in.
+    vscode.commands.registerCommand('tondo.everyOrder', async (test?: vscode.TestItem) => {
+      const dir = test && projectOf.get(test);
+      if (!dir) {
+        return;
+      }
+      const args = ['test', '--exact', test.id, '--schedules', 'all', '--test-format', 'json'];
+      const ran = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Trying ${test.label} in every order`, cancellable: true },
+        (_, token) => exec(args, dir, token),
+      );
+      const explored = exploredOrders(ran.stdout);
+      if (!explored) {
+        void vscode.window.showErrorMessage(`${test.label} did not run: ${ran.stderr || ran.stdout}`);
+      } else if (explored.failedAt) {
+        const debugIt = 'Debug in That Order';
+        const failed = `${test.label} failed in order ${explored.failedAt}, after ${explored.tried}`;
+        if ((await vscode.window.showErrorMessage(failed, debugIt)) === debugIt) {
+          await debugTest(test, explored.failedAt);
+        }
+      } else {
+        const how = explored.complete ? 'all that differ' : 'not all of them';
+        void vscode.window.showInformationMessage(`${test.label} passed in ${explored.tried} orders, ${how}`);
+      }
     }),
     // The commit that broke a test, among those after one where it passed.
     vscode.commands.registerCommand('tondo.bisectTest', async (test?: vscode.TestItem) => {

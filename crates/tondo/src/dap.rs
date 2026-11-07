@@ -948,9 +948,9 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .map(|(name, value)| (name.clone(), value.as_str().map_or(value.to_string(), str::to_string)))
             .collect();
         let schedule = match arguments["schedule"].as_str() {
-            Some(seed) if u64::from_str_radix(seed, 16).is_ok() => Some(seed.to_string()),
-            Some(seed) => {
-                return Err(format!("`schedule` takes the seed in hex of an order of a test's tasks, not `{seed}`"));
+            Some(order) if is_order(order) => Some(order.to_string()),
+            Some(order) => {
+                return Err(format!("`schedule` takes the order of a test's tasks a failure named, not `{order}`"));
             }
             None => None,
         };
@@ -961,8 +961,8 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             command.env("TONDO_TEST_PLAN", plan);
             command.envs(environment);
             // The order of its tasks a failure of `--schedules` named.
-            if let Some(seed) = schedule {
-                command.env("TONDO_RT_SCHEDULE", seed);
+            if let Some(order) = schedule {
+                command.envs(crate::debug::order_of_tasks(&order));
             }
         }
         command.envs(variables);
@@ -2066,6 +2066,14 @@ fn handle(
         }
         "disconnect" | "terminate" => Ok(json!({})),
         other => Err(format!("tondo dap does not do `{other}`")),
+    }
+}
+
+/// Whether it names an order of a test's tasks: a seed in hex, or choices.
+fn is_order(order: &str) -> bool {
+    match order.strip_prefix("at:") {
+        Some(choices) => choices.chars().all(|c| c.is_ascii_digit() || c == '.'),
+        None => u64::from_str_radix(order, 16).is_ok(),
     }
 }
 

@@ -1305,3 +1305,26 @@ export function splitArgs(text: string): string[] {
   const words = text.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   return words.map((word) => word.replace(/^(["'])(.*)\1$/, '$2'));
 }
+
+/** What `--schedules all` came to, from the report of one test. */
+export interface Explored {
+  tried: number;
+  complete: boolean;
+  failedAt?: string;
+}
+
+export function exploredOrders(report: string): Explored | undefined {
+  try {
+    const parsed = JSON.parse(report) as { tests?: { attempts?: { orders?: OrdersJson | null }[] }[] };
+    const orders = parsed.tests?.flatMap((test) => test.attempts ?? []).find((attempt) => attempt.orders)?.orders;
+    return orders ? { tried: orders.tried, complete: orders.complete, failedAt: orders.failed_at ?? undefined } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface OrdersJson {
+  tried: number;
+  complete: boolean;
+  failed_at?: string | null;
+}

@@ -79,7 +79,9 @@ suite slow {
   nothing have one order however long they run. A failure gives `--schedules at:0.2.1`, which repeats it, and
   `tondo debug --test <id> --schedule at:0.2.1`. It suits a small test of what
   tasks share. Memory shared through `unsafe` is not seen: use `--schedules 50`
-  for that. Nothing waits for the clock
+  for that. In VS Code it is *Test in Every Order*, which offers to debug the
+  order that failed; through `tondo mcp`, `test` with those flags gives it as
+  `orders.failed_at`, for `debug_start` to take as `schedule`. Nothing waits for the clock
   in these runs: time jumps to the next timer, and that it comes before an
   answer is one more order, so a test with a timeout is tried both ways.
 - `tondo test --record target/recordings`, on Linux, records each test and

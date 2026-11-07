@@ -252,6 +252,10 @@
                 "description": "A live build, whose code changes as its files are saved.",
                 "default": false
               },
+              "schedule": {
+                "type": "string",
+                "description": "With `test`, the order of its tasks a failure named: a seed, or `at:0.2.1`."
+              },
               "test": {
                 "type": "string",
                 "description": "The id of one of the project's tests, to run alone (`tondo test --list` lists them)."
@@ -553,6 +557,12 @@
         "title": "Benchmark Test",
         "category": "Tondo",
         "icon": "$(dashboard)"
+      },
+      {
+        "command": "tondo.everyOrder",
+        "title": "Test in Every Order",
+        "category": "Tondo",
+        "icon": "$(git-compare)"
       },
       {
         "command": "tondo.fuzzTest",
@@ -1006,6 +1016,10 @@
         }
       ],
       "testing/item/context": [
+        {
+          "command": "tondo.everyOrder",
+          "when": "controllerId == tondo"
+        },
         {
           "command": "tondo.fuzzTest",
           "when": "controllerId == tondo && testId in tondo.fuzzTests",

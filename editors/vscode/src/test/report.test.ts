@@ -6,6 +6,7 @@ import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   NEEDED,
+  exploredOrders,
   apiMatches,
   dependencyArgs,
   splitArgs,
@@ -738,4 +739,16 @@ test('marks what the layout of a project means', () => {
 test("keeps of a build's options those a debug build takes", () => {
   const flags = ['--target', 'aarch64-linux', '--link', 'z', '--strip', '--static', '--link'];
   assert.deepEqual(debugFlags(flags), ['--link', 'z', '--static']);
+});
+
+test('the orders of a test, and the one it failed in', () => {
+  const report = (orders: unknown) => JSON.stringify({ tests: [{ attempts: [{ orders }] }] });
+  assert.deepEqual(exploredOrders(report({ tried: 4, complete: true, failed_at: null })), {
+    tried: 4,
+    complete: true,
+    failedAt: undefined,
+  });
+  assert.equal(exploredOrders(report({ tried: 2, complete: false, failed_at: 'at:0.1' }))?.failedAt, 'at:0.1');
+  assert.equal(exploredOrders(report(null)), undefined);
+  assert.equal(exploredOrders('not json'), undefined);
 });

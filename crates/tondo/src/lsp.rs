@@ -1223,10 +1223,16 @@ impl Server {
         let lenses = nodes.iter().skip(1).filter(|node| inside(node.span)).filter_map(|node| {
             let (_, range) = self.place(analyzed, node.span)?;
             let title = if node.suite { "Run suite" } else { "Run test" };
-            let arguments = json!([uri, node.id, node.suite]);
-            Some(json!({ "range": range, "command": { "title": title, "command": "tondo.runTest", "arguments": arguments } }))
+            let lens = |title: &str, arguments: Value| {
+                json!({ "range": range, "command": { "title": title, "command": "tondo.runTest", "arguments": arguments } })
+            };
+            let mut lenses = vec![lens(title, json!([uri, node.id, node.suite]))];
+            if !node.suite {
+                lenses.push(lens("Every order", json!([uri, node.id, false, "all"])));
+            }
+            Some(lenses)
         });
-        Some(lenses.collect())
+        Some(lenses.flatten().collect())
     }
 
     /// Over each function of a project, the tests that reach it, which the
@@ -1299,6 +1305,7 @@ impl Server {
         };
         let id = ids.join(", ");
         let suite = arguments[2].as_bool().unwrap_or(false);
+        let orders = arguments[3].as_str().map(str::to_string);
         let (root, _) = root_of(&path);
         let tondo = std::env::current_exe().ok()?;
         let offers = self.client.shows && self.client.chooses;
@@ -1307,9 +1314,16 @@ impl Server {
                 true => vec!["--filter".to_string(), format!("{id}::")],
                 false => ids.into_iter().flat_map(|id| ["--exact".to_string(), id]).collect(),
             };
-            let ran = std::process::Command::new(tondo).arg("test").args(chosen).current_dir(&root).output();
+            let schedules = orders.iter().flat_map(|orders| ["--schedules", orders]);
+            let ran =
+                std::process::Command::new(tondo).arg("test").args(chosen).args(schedules).current_dir(&root).output();
             let (kind, message) = match ran {
-                Ok(ran) if ran.status.success() => (3, format!("`{id}` passed")),
+                Ok(ran) if ran.status.success() => {
+                    // In how many orders, if it went through them.
+                    let said = String::from_utf8_lossy(&ran.stdout);
+                    let tried = said.lines().find_map(|line| line.strip_prefix(&format!("{id}: ")));
+                    (3, tried.map_or(format!("`{id}` passed"), |tried| format!("`{id}` passed: {tried}")))
+                }
                 Ok(ran) => {
                     let output =
                         format!("{}{}", String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));

@@ -422,8 +422,16 @@ impl Context<'_> {
             }
             _ => Value::Null,
         };
+        let orders = attempt.explored.as_ref().map_or(Value::Null, |explored| {
+            obj(vec![
+                ("tried", int(explored.orders)),
+                ("complete", Value::Bool(explored.complete)),
+                ("failed_at", explored.failed_at.as_ref().map_or(Value::Null, |at| str(format!("at:{at}")))),
+            ])
+        });
         let mut fields = vec![
             ("index", int(index)),
+            ("orders", orders),
             ("iteration", int(attempt.iteration as usize)),
             ("round", int(attempt.round as usize)),
             ("unit", unit),

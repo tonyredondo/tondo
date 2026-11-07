@@ -1760,6 +1760,10 @@ como una sola cosa, porque el programa no ve su identidad. Lo que escriben en la
 consola no los une, y tampoco la memoria que dos tareas se pasen por `unsafe`: esa
 no se ve, y un test que dependa de ella debe usar `--schedules <n>`.
 
+El informe JSON da en `orders`, en cada intento, cuántos órdenes probó (`tried`), si
+fueron todos (`complete`) y en cuál falló (`failed_at`, como `at:0.2.1`), que `tondo dap`
+toma en `schedule` igual que una seed.
+
 El reloj de estas ejecuciones es propio: nadie espera. El tiempo salta al siguiente
 temporizador cuando ninguna tarea puede correr, y que venza antes es una elección
 más, de modo que un timeout que llega antes que la respuesta es un orden como

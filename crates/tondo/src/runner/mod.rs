@@ -264,6 +264,16 @@ impl Status {
     }
 }
 
+/// What going through the orders of a test came to (`--schedules all`).
+#[derive(Clone, Debug)]
+pub struct Explored {
+    pub orders: usize,
+    /// None was left to try.
+    pub complete: bool,
+    /// The choices of the order it failed in, as `at:` takes them.
+    pub failed_at: Option<String>,
+}
+
 /// One run of a test, or of a suite's setup and teardown.
 #[derive(Clone, Debug)]
 pub struct Attempt {
@@ -277,6 +287,7 @@ pub struct Attempt {
     pub iteration: u32,
     /// The suite or test a retry round runs again.
     pub unit: Option<u32>,
+    pub explored: Option<Explored>,
     pub logs: Vec<String>,
     /// What looks wrong without failing it, as an update tasks can lose.
     pub warnings: Vec<String>,
@@ -395,6 +406,7 @@ struct Context {
 impl Attempt {
     fn new(node: u32, status: Status, context: Context) -> Attempt {
         Attempt {
+            explored: None,
             node,
             status,
             teardown: false,
@@ -1192,7 +1204,7 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
         let mut classes = std::collections::HashSet::new();
         let mut pending: std::collections::VecDeque<orders::Order> = [first].into();
         let (mut ran, mut last) = (0, Vec::new());
-        let mut left_out = false;
+        let (mut left_out, mut failed_at) = (false, None);
         while let Some((given, next)) = pending.pop_front() {
             if ran == limit || interrupt::requested() {
                 left_out = true;
@@ -1213,6 +1225,7 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                     say!("again in that order: tondo test --exact {} --schedules at:{text}", tree.id(test));
                     say!("debug it in that order: tondo debug --test {} --schedule at:{text}", tree.id(test));
                 }
+                failed_at = Some(text);
                 pending.clear();
                 break;
             }
@@ -1244,7 +1257,9 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 false => say!("{}: {count}, {how}", tree.id(test)),
             }
         }
-        for attempt in last.drain(..) {
+        for mut attempt in last.drain(..) {
+            let failed_at = failed_at.clone();
+            attempt.explored = Some(Explored { orders: classes.len(), complete: !left_out, failed_at });
             printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
             attempts.push(attempt);
         }

@@ -2244,3 +2244,44 @@ test aFileIsShared {
     assert!(outcomes(true).is_subset(&reduced), "{reduced:?}");
     assert!(reduced.len() > 2, "{reduced:?}");
 }
+
+/// What comes of `--schedules all` is in the report, for what reads it, and
+/// the debugger's adapter takes the order it names.
+#[test]
+fn the_report_names_the_order_a_test_failed_in() {
+    let tests = "import std.sync
+
+fn raced(flag: sync.Atomic[Int]) {
+    if flag.load() == 0 {
+        flag.store(1)
+    }
+}
+
+test loses {
+    let flag = sync.Atomic(0)
+    let job = spawn raced(flag)
+    flag.store(2)
+    job.wait()
+    assert(flag.load() == 2)
+}
+
+test holds {
+    assert(1 == 1)
+}
+";
+    let dir = project("every-order-report", tests);
+    let orders = |test: &str| {
+        let args = ["test", "--filter", test, "--schedules", "all", "--test-format", "json"];
+        let (stdout, _, _) = tondo(&dir, &args);
+        let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+        let attempts = report["tests"].as_array().unwrap().iter().find_map(|test| test["attempts"].as_array());
+        attempts.unwrap()[0]["orders"].clone()
+    };
+    let holds = orders("holds");
+    assert_eq!((&holds["complete"], &holds["failed_at"]), (&serde_json::json!(true), &serde_json::Value::Null));
+    let loses = orders("loses");
+    let at = loses["failed_at"].as_str().unwrap_or_else(|| panic!("{loses}"));
+    assert!(at.starts_with("at:"), "{loses}");
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "loses", "--schedules", at]);
+    assert_eq!(status, 1, "{stdout}");
+}

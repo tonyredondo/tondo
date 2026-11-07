@@ -286,12 +286,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .env("TONDO_LIVE_HOLD", "1")
                 .env("TONDO_TEST_PLAN", &plan)
                 .envs(environment)
-                // As `tondo test`, whose points of change this adds to.
-                .envs(schedule.as_ref().map(|_| ("TONDO_RACE", "1".to_string())))
-                .envs(schedule.map(|order| match order.strip_prefix("at:") {
-                    Some(choices) => ("TONDO_RT_ORDER", choices.to_string()),
-                    None => ("TONDO_RT_SCHEDULE", order.clone()),
-                }))
+                .envs(schedule.iter().flat_map(|order| order_of_tasks(order)))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -2432,4 +2427,14 @@ fn source_line(at: &str) -> Option<String> {
     let text = std::fs::read_to_string(kept_source(file).unwrap_or_else(|| PathBuf::from(file))).ok()?;
     let source = text.lines().nth(line.checked_sub(1)?)?;
     Some(format!("{line:>5} | {source}"))
+}
+
+/// What runs a test in an order a failure named: its choices, as `at:0.2.1`,
+/// or a seed. The points of change are those of `tondo test`.
+pub(crate) fn order_of_tasks(order: &str) -> [(&'static str, String); 2] {
+    let chosen = match order.strip_prefix("at:") {
+        Some(choices) => ("TONDO_RT_ORDER", choices.to_string()),
+        None => ("TONDO_RT_SCHEDULE", order.to_string()),
+    };
+    [("TONDO_RACE", "1".to_string()), chosen]
 }

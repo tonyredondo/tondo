@@ -1677,7 +1677,7 @@ fn runs_tests_from_lenses_and_formats_closed_blocks() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|l| l["command"]["command"] == "tondo.runTest")
+        .filter(|l| l["command"]["command"] == "tondo.runTest" && l["command"]["title"] != "Every order")
         .map(|l| l["command"].clone())
         .collect();
     let ids: Vec<&str> = runs.iter().map(|c| c["arguments"][1].as_str().unwrap()).collect();
@@ -2800,5 +2800,30 @@ fn a_save_is_seen() {
     assert!(editor.receive_diagnostics(&uri).to_string().contains("wrong"));
     editor.notify("textDocument/didSave", json!({ "textDocument": { "uri": uri } }));
     assert!(editor.receive_diagnostics(&uri).to_string().contains("wrong"));
+    editor.stop();
+}
+
+/// An editor with no tests of its own has a lens for every order of a test.
+#[test]
+fn every_order_of_a_test_is_a_lens() {
+    let dir = project(
+        "lsp-orders",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", "fn main() {}\n"),
+            ("src/main_test.to", "test holds {\n    assert(1 == 1)\n}\n"),
+        ],
+    );
+    let mut capabilities = everything();
+    capabilities["window"] = json!({ "showMessage": {} });
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("src/main_test.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let every = lenses.as_array().unwrap().iter().find(|lens| lens["command"]["title"] == "Every order");
+    let every = every.unwrap_or_else(|| panic!("{lenses}"));
+    let run = json!({ "command": every["command"]["command"], "arguments": every["command"]["arguments"] });
+    editor.request("workspace/executeCommand", run);
+    let said = editor.receive_method("window/showMessage");
+    assert!(said["params"]["message"].to_string().contains("all that differ"), "{said}");
     editor.stop();
 }

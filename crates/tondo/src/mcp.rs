@@ -2593,8 +2593,8 @@ same each time, with what the world gave it then, and never touches the world.",
             (
                 "schedule",
                 "string",
-                "With `test`, the seed in hex of an order of its tasks, as a failure of `test` with `schedules` \
-names it: the test runs in that order again.",
+                "With `test`, the order of its tasks a failure of `test` names, a seed in hex from `--schedules 50` \
+or `orders.failed_at` from `--schedules all`: the test runs in that order again.",
             ),
             (
                 "via",

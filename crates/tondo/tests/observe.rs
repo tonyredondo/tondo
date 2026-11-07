@@ -5695,3 +5695,40 @@ fn the_adapter_debugs_a_static_build() {
     adapter.ask("continue", json!({ "threadId": 1 }));
     adapter.until("terminated");
 }
+
+/// The adapter debugs a test in the order a failure named, seed or choices,
+/// and says what it does not take.
+#[test]
+fn debug_adapter_takes_an_order_of_tasks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("daporders");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.to"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test holds {\n    assert(1 == 1)\n}\n").unwrap();
+    for (order, takes) in [("at:0.1", true), ("2a", true), ("at:x", false), ("not an order", false)] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .arg("dap")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let mut asked = |seq: u32, command: &str, arguments: Value| {
+            let text = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+            std::io::Write::write_all(&mut input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+                .unwrap();
+            loop {
+                let message = dap_read(&mut output);
+                if message["type"] == "response" && message["command"] == command {
+                    return message;
+                }
+            }
+        };
+        asked(1, "initialize", json!({ "adapterID": "tondo" }));
+        let test = "daporders::unit::daporders::holds";
+        let launched = asked(2, "launch", json!({ "program": ".", "cwd": dir, "test": test, "schedule": order }));
+        assert_eq!(launched["success"], takes, "{order}: {launched}");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
