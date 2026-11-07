@@ -64,8 +64,9 @@ Measured on 2026-11-07, at 9439931:
 8. **Mutation testing** with `cargo mutants` of the scheduler's core and of strings and arrays,
    at night: a mutant that survives is a missing test, or is explained as one that changes
    nothing.
-9. **Weak memory.** A script that runs every case that starts tasks a hundred times on arm64
-   macOS, with a time limit, part of the gate of phases 1 and 2.
+9. **Weak memory.** Every case that starts tasks run a hundred times on arm64 macOS, each with
+   its time limit and its checks, part of the gate of phases 1 and 2:
+   `TONDO_CASES_REPEAT=100 cargo test -p tondo --test cases cases` on the M2.
 
 ## Phase 1: one context for a worker
 

@@ -28,6 +28,8 @@
 //! replayed, which must write the same and end the same. With
 //! `TONDO_CASES_SCHEDULE`, a seed, the tasks of each case run in the order it
 //! gives (testing 8.10): what a case says of its output holds in any order.
+//! With `TONDO_CASES_REPEAT`, a number, each case that starts tasks runs that
+//! many times, each checked.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -179,50 +181,63 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         }
         command
     };
-    let mut command = program();
-    // A seed of its own each time, which a failure says.
-    let recording = std::env::var_os("TONDO_CASES_REPLAY").filter(|_| !expect.no_replay).map(|_| {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        (binary.with_extension("calls"), format!("{:x}", now.as_nanos() as u64))
-    });
-    if let Some((calls, seed)) = &recording {
-        command.env("TONDO_RT_RECORD", calls).env("TONDO_RT_SCHEDULE", seed);
-    }
-    let run = run_with_timeout(&mut command, 60)?;
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
-    if stdout != expected_stdout {
-        return Err(format!("stdout differs\n--- expected\n{expected_stdout}--- actual\n{stdout}--- stderr\n{stderr}"));
-    }
-    let expected_exit = expect.exit.unwrap_or(if expect.panic.is_some() { 101 } else { 0 });
-    if expect.crash {
-        use std::os::unix::process::ExitStatusExt;
-        if run.status.signal().is_none() {
-            return Err(format!("exit status {:?}, expected a signal\n{stderr}", run.status.code()));
-        }
-    } else if run.status.code() != Some(expected_exit) {
-        return Err(format!("exit status {:?}, expected {expected_exit}\n{stderr}", run.status.code()));
-    }
-    if let Some(code) = &expect.panic
-        && !stderr.contains(&format!("panic[{code}]"))
-    {
-        return Err(format!("expected panic {code}, stderr:\n{stderr}"));
-    }
-    if let Some(missing) = expect.stderr.iter().find(|line| !stderr.lines().any(|l| l == line.as_str())) {
-        return Err(format!("missing `{missing}` in stderr:\n{stderr}"));
-    }
-    if let Some((calls, seed)) = &recording {
-        let mut replay = program();
-        let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed), 60)
-            .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
-        if again.stdout != run.stdout || again.status != run.status {
-            let (out, err) = (String::from_utf8_lossy(&again.stdout), String::from_utf8_lossy(&again.stderr));
-            let status = (run.status, again.status);
-            return Err(format!(
-                "its replay, of seed {seed}, differs: {status:?}\n--- recorded\n{stdout}--- replayed\n{out}--- stderr\n{err}"
-            ));
-        }
+    // With `TONDO_CASES_REPEAT`, a case that starts tasks runs that many
+    // times, as memory that orders weakly, as arm64's, brings out what one run
+    // rarely shows (docs/refactor.md, 0.9).
+    let tasks = std::fs::read_to_string(path).is_ok_and(|text| text.contains("spawn"));
+    let repeat = std::env::var("TONDO_CASES_REPEAT").ok().and_then(|n| n.parse().ok()).filter(|_| tasks).unwrap_or(1);
+    for round in 1..=repeat {
+        let once = || -> Result<(), String> {
+            let mut command = program();
+            // A seed of its own each time, which a failure says.
+            let recording = std::env::var_os("TONDO_CASES_REPLAY").filter(|_| !expect.no_replay).map(|_| {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                (binary.with_extension("calls"), format!("{:x}", now.as_nanos() as u64))
+            });
+            if let Some((calls, seed)) = &recording {
+                command.env("TONDO_RT_RECORD", calls).env("TONDO_RT_SCHEDULE", seed);
+            }
+            let run = run_with_timeout(&mut command, 60)?;
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
+            if stdout != expected_stdout {
+                return Err(format!(
+                    "stdout differs\n--- expected\n{expected_stdout}--- actual\n{stdout}--- stderr\n{stderr}"
+                ));
+            }
+            let expected_exit = expect.exit.unwrap_or(if expect.panic.is_some() { 101 } else { 0 });
+            if expect.crash {
+                use std::os::unix::process::ExitStatusExt;
+                if run.status.signal().is_none() {
+                    return Err(format!("exit status {:?}, expected a signal\n{stderr}", run.status.code()));
+                }
+            } else if run.status.code() != Some(expected_exit) {
+                return Err(format!("exit status {:?}, expected {expected_exit}\n{stderr}", run.status.code()));
+            }
+            if let Some(code) = &expect.panic
+                && !stderr.contains(&format!("panic[{code}]"))
+            {
+                return Err(format!("expected panic {code}, stderr:\n{stderr}"));
+            }
+            if let Some(missing) = expect.stderr.iter().find(|line| !stderr.lines().any(|l| l == line.as_str())) {
+                return Err(format!("missing `{missing}` in stderr:\n{stderr}"));
+            }
+            if let Some((calls, seed)) = &recording {
+                let mut replay = program();
+                let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed), 60)
+                    .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
+                if again.stdout != run.stdout || again.status != run.status {
+                    let (out, err) = (String::from_utf8_lossy(&again.stdout), String::from_utf8_lossy(&again.stderr));
+                    let status = (run.status, again.status);
+                    return Err(format!(
+                        "its replay, of seed {seed}, differs: {status:?}\n--- recorded\n{stdout}--- replayed\n{out}--- stderr\n{err}"
+                    ));
+                }
+            }
+            Ok(())
+        };
+        once().map_err(|e| if repeat > 1 { format!("run {round} of {repeat}: {e}") } else { e })?;
     }
     Ok(())
 }
