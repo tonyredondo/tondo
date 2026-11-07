@@ -129,5 +129,5 @@ protobuf encoding that the compiler blamed on the field's type.
 
 | Phase | State |
 | --- | --- |
-| 0 | started 2026-11-07: 0.3 to 0.7 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 and 0.9 to do |
+| 0 | started 2026-11-07: 0.3 to 0.7 and 0.9 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 running a slice a night, `.github/scripts/mutants.sh` |
 | 1–8 | not started |

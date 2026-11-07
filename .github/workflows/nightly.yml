@@ -115,6 +115,22 @@ jobs:
           name: fuzz-store
           path: testing/fuzz/fuzz
 
+  # Mutants of the scheduler's core and of strings and arrays, a slice a
+  # night (docs/refactor.md, 0.8); what survives goes to the summary, to give
+  # a test or to explain in testing/mutants/explained.txt.
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-mutants --locked --version 27.1.0
+      - run: .github/scripts/mutants.sh "$((GITHUB_RUN_NUMBER % 40 + 1))/40" 3600 | tee "$RUNNER_TEMP/mutants.txt"
+      - if: always()
+        run: cat "$RUNNER_TEMP/mutants.txt" >> "$GITHUB_STEP_SUMMARY"
+
   # What the test job of CI leaves out on macOS for Intel.
   intel:
     runs-on: macos-15-intel
