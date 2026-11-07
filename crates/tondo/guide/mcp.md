@@ -55,7 +55,8 @@ one out, and `update` fetches them again.
 - `run`: builds and runs with `args` and `stdin`, and ends a program that
   runs past `timeout`, 60 seconds by default.
 - `test`: `filter`, `glob` or `exact` choose tests and `list` lists them;
-  `coverage`; `update_snapshots`; `bench` with `baseline`, `save_baseline`
+  `schedules: "all"` runs each test in every order of its tasks that differs;
+  `models` only the tests that check a model; `coverage`; `update_snapshots`; `bench` with `baseline`, `save_baseline`
   or `against` a git revision, and `max_regression`; `fuzz` with a number
   of seconds; `flags` takes any other option of `tondo test`.
 - `doc_test` checks a Markdown document's examples, `bind` writes extern

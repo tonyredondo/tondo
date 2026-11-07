@@ -38,7 +38,10 @@ std.http.Client or String, gives its methods and an example that compiles. After
 `run_start` session, whose code `reload` changes after an edit without starting it again. Paths are relative to \
 the server's directory; lines and columns count from 1, columns in characters. When something goes wrong, the \
 `guide` topic `runbooks` gives what to do step by step: a crash or a dump, a failure to keep out with a test, a \
-hang, a change to a running program. A result that leads somewhere says so in `next`.";
+hang, a change to a running program. Its topic `runbook-testing` says which tests a change needs: tests beside \
+the code, a fuzz test for outside input, the tool `model` for a function that gives the next state for an event, \
+and `test` with `schedules: \"all\"` for tasks that share something. A result that leads somewhere says so in \
+`next`.";
 
 /// The names of the tools, as `tools/list` gives them.
 pub fn tool_names() -> impl Iterator<Item = &'static str> {
@@ -165,7 +168,7 @@ impl Server {
             Ok(Err(message)) => Reply::error(message),
             Err(_) => Reply::error(format!("tondo failed inside `{name}`; its error output says where")),
         };
-        if let Some(next) = next_step(name, &reply) {
+        if let Some(next) = next_step(name, &args, &reply) {
             // A text that is data stays so.
             reply.text = match serde_json::from_str::<Value>(&reply.text) {
                 Ok(Value::Object(mut data)) => {
@@ -516,8 +519,11 @@ struct Reply {
 
 /// Where a result leads, for a model that does not know the tools yet: the
 /// tool that goes on from it, and the runbook that goes through it.
-fn next_step(name: &str, reply: &Reply) -> Option<&'static str> {
+fn next_step(name: &str, args: &Args, reply: &Reply) -> Option<&'static str> {
     let said = |text: &str| reply.text.contains(text);
+    let report = &reply.structured["report"];
+    let tests = report["tests"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let passed = |test: &&Value| test["status"] == "passed";
     match name {
         _ if reply.error => None,
         "run" | "test" | "run_start" | "run_output" if said("panic[P0013]") => {
@@ -529,6 +535,13 @@ fn next_step(name: &str, reply: &Reply) -> Option<&'static str> {
         "run" | "test" if said("panic[") => {
             Some("`explain` says what the code means; a dump shows the values: `guide` topic `runbook-crash`")
         }
+        // What a run that passed did not try.
+        "test" if args.text("schedules").is_none() && tests.iter().filter(passed).any(|t| t["tasks"] == true) => {
+            Some("tests that start tasks ran in one order of them: `schedules: \"all\"` runs every order that differs")
+        }
+        "test" if report["machines"].as_array().is_some_and(|machines| !machines.is_empty()) => Some(
+            "each function of `machines` gives the next state for an event, and no test checks it in every state: the tool `model` writes one",
+        ),
         "dump_read" | "dump_group" if !said("\"groups\":[]") => {
             Some("`dump_test` makes a test of this failure, to fix it against; `guide` topic `runbook-regression`")
         }
@@ -1187,6 +1200,8 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--exact", "exact");
             option(&mut argv, "--affected", "affected");
             switch(&mut argv, "--lock-order", "lock_order");
+            switch(&mut argv, "--models", "models");
+            option(&mut argv, "--schedules", "schedules");
             switch(&mut argv, "--library", "library");
             switch(&mut argv, "--update-snapshots", "update_snapshots");
             // Benchmarks, measured and compared (testing 10.4).
@@ -2252,11 +2267,13 @@ message, data, source and stack, as data.",
     Tool {
         name: "test",
         description: "Run a project's tests: what failed and why, and the report of each test as data. `filter`, \
-`glob` or `exact` selects them, `list` only lists them, `bench` measures the benchmarks (tests that call \
-`testing.bench`) and compares them with `baseline` or `against` a git revision, `fuzz` searches for inputs that \
-fail the tests that call `testing.fuzz`, and `flags` takes the other options of `tondo test`: on Linux, \
-[\"--record\", \"dir\"] keeps the runs of the tests that fail, which `debug_start` with `replay` debugs again, the \
-same.",
+`glob` or `exact` selects them, `list` only lists them, `schedules: \"all\"` runs a test whose tasks share \
+something in every order of them that differs (one run proves little: the order is the machine's), `models` runs \
+the tests that check a model of `std.model`, `bench` measures the benchmarks (tests that call `testing.bench`) and \
+compares them with `baseline` or `against` a git revision, `fuzz` searches for inputs that fail the tests that \
+call `testing.fuzz`, and `flags` takes the other options of `tondo test`: on Linux, [\"--record\", \"dir\"] keeps \
+the runs of the tests that fail, which `debug_start` with `replay` debugs again, the same. The `guide` topic \
+`runbook-testing` says which tests a change needs.",
         kind: Kind::Runs,
         params: &[
             ("path", "string", "The project directory; the server's directory by default."),
@@ -2265,6 +2282,13 @@ same.",
             ("exact", "string", "The test with this id."),
             ("affected", "string", "Only the tests that reach what changed since this commit."),
             ("lock_order", "boolean", "Fail a test that takes locks in orders that can deadlock."),
+            (
+                "schedules",
+                "string",
+                "The orders of each test's tasks to run it in: `all`, every order that differs, which a failure gives \
+as `orders.failed_at`; a number, so many orders by chance; or `at:<choices>`, one order again.",
+            ),
+            ("models", "boolean", "Only the tests that check a model of `std.model`."),
             ("list", "boolean", "List the tests instead of running them."),
             ("coverage", "boolean", "Also say which lines, functions and ways of branches of the project's code ran."),
             LIBRARY,

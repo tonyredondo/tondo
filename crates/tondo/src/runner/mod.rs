@@ -160,6 +160,9 @@ impl Options {
 pub struct Tree {
     pub nodes: Vec<TestNodeInfo>,
     pub locations: Vec<String>,
+    /// The state machines of the program no test checks with
+    /// `model.machine`: each name and where it is.
+    pub machines: Vec<(String, String)>,
 }
 
 impl Tree {
@@ -172,10 +175,14 @@ impl Tree {
             .iter()
             .zip(&self.locations)
             .map(|(n, location)| {
-                let flags = format!("{}\t{}\t{}", n.bench as u8, n.fuzz as u8, n.model as u8);
+                let flags = format!("{}\t{}\t{}\t{}", n.bench as u8, n.fuzz as u8, n.model as u8, n.tasks as u8);
                 format!("{}\t{}\t{flags}\t{}\t{location}", n.parent, n.suite as u8, n.id)
             })
             .collect();
+        let machines: Vec<String> = self.machines.iter().map(|(name, at)| format!("{name}\t{at}")).collect();
+        let written = path.with_extension("machines");
+        std::fs::write(&written, machines.join("\n"))
+            .map_err(|e| format!("cannot write {}: {e}", written.display()))?;
         let partial = path.with_extension(format!("partial-{}", std::process::id()));
         std::fs::write(&partial, lines.join("\n")).map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
         std::fs::rename(&partial, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
@@ -184,17 +191,20 @@ impl Tree {
     /// The tree `save` wrote, if it is there.
     pub fn load(path: &Path) -> Option<Tree> {
         let text = std::fs::read_to_string(path).ok()?;
-        let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
+        let machines = std::fs::read_to_string(path.with_extension("machines")).unwrap_or_default();
+        let machines = machines.lines().filter_map(|line| line.split_once('\t')).map(|(n, at)| (n.into(), at.into()));
+        let mut tree = Tree { nodes: Vec::new(), locations: Vec::new(), machines: machines.collect() };
         for line in text.lines() {
-            let mut parts = line.splitn(7, '\t');
+            let mut parts = line.splitn(8, '\t');
             let parent = parts.next()?.parse().ok()?;
             let suite = parts.next()? == "1";
             let bench = parts.next()? == "1";
             let fuzz = parts.next()? == "1";
             let model = parts.next()? == "1";
+            let tasks = parts.next()? == "1";
             let id = parts.next()?.to_string();
             let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, model, span, whole: span });
+            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, model, tasks, span, whole: span });
             tree.locations.push(parts.next()?.to_string());
         }
         Some(tree)
@@ -947,7 +957,7 @@ fn write_manifest(tree: &Tree, artifacts: &store::Artifacts, aggregates: &[Aggre
 /// The report of a test build that did not compile (15.6), where asked.
 pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
-    let tree = Tree { nodes: Vec::new(), locations: Vec::new() };
+    let tree = Tree { nodes: Vec::new(), locations: Vec::new(), machines: Vec::new() };
     let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
     let none = bench::Baselines::default();
     let context = json::Context {

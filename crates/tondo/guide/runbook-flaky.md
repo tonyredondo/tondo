@@ -43,12 +43,12 @@ check {}
 `--schedules all` tries every order that differs, not only some, and says
 if it got through them all.
 
-`flags` takes `--schedules`: each order has a seed, and the result says which
+`schedules` takes a number of orders or `all`: each order has a seed, and the result says which
 tasks wrote what, and where. `debug_start` with `test` and `schedule` runs that
 same order again under the debugger, as many times as it takes.
 
 ```mcp
-test {"flags": ["--schedules", "50"]}
+test {"schedules": "50"}
 => counts ... FAILED
 => that write is lost
 ```
@@ -62,7 +62,7 @@ Read and write it in one step.
 ```
 
 ```mcp
-test {"flags": ["--schedules", "50"]}
+test {"schedules": "50"}
 => counts ... ok
 ```
 

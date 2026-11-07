@@ -178,7 +178,7 @@ and a shipping after a cancel, or the next run gives the other.
 that differs, and says which loses what.
 
 ```mcp
-test {"flags": ["--schedules", "all"]}
+test {"schedules": "all"}
 => payAndCancelAtOnce ... FAILED
 => that write is lost
 ```
@@ -206,7 +206,7 @@ falls between them. Read and write it in one step:
 ```
 
 ```mcp
-test {"flags": ["--schedules", "all"]}
+test {"schedules": "all"}
 => payAndCancelAtOnce: 4 orders, all that differ
 => 6 passed
 ```

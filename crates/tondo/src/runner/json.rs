@@ -260,6 +260,7 @@ impl Context<'_> {
             fields.push(("bench", Value::Bool(tree.nodes[node as usize].bench)));
             fields.push(("fuzz", Value::Bool(tree.nodes[node as usize].fuzz)));
             fields.push(("model", Value::Bool(tree.nodes[node as usize].model)));
+            fields.push(("tasks", Value::Bool(tree.nodes[node as usize].tasks)));
         }
         fields
     }
@@ -354,6 +355,13 @@ impl Context<'_> {
                 ("published", self.snapshots.2.map_or(Value::Null, Value::Bool)),
             ]),
         ));
+        // The state machines no test checks with `model.machine`.
+        let machines = self
+            .tree
+            .machines
+            .iter()
+            .map(|(name, at)| obj(vec![("name", str(name.clone())), ("location", str(at.clone()))]));
+        fields.push(("machines", Value::Array(machines.collect())));
         fields.push((
             "policy",
             obj(vec![

@@ -114,6 +114,8 @@ fn check_with<'a>(
         calling: None,
         calls: HashMap::new(),
         test_calls: HashMap::new(),
+        spawning: HashSet::new(),
+        test_spawns: HashSet::new(),
         interpolating: false,
         script_bindings: Vec::new(),
         scripting: false,
@@ -889,6 +891,9 @@ struct Checker<'a> {
     calling: Option<FnId>,
     calls: HashMap<FnId, HashSet<FnId>>,
     test_calls: HashMap<u32, HashSet<FnId>>,
+    /// The functions whose bodies `spawn`, and the tests that do.
+    spawning: HashSet<FnId>,
+    test_spawns: HashSet<u32>,
     types: Types,
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
@@ -1569,6 +1574,7 @@ impl<'a> Checker<'a> {
             bench: false,
             fuzz: false,
             model: false,
+            tasks: false,
             span: Span::new(0, 0),
             whole: Span::new(0, 0),
         };
@@ -2598,9 +2604,23 @@ impl<'a> Checker<'a> {
     /// A provider or generator gives the same output for the same request,
     /// so it cannot call what reads the clock or the system's entropy.
     /// The tests that check a model: those that call a function of
-    /// `checks_models`, or one of theirs that does, however deep.
+    /// `checks_models`, or one of theirs that does, however deep; and those
+    /// that start tasks, so.
     fn mark_models(&mut self) {
-        let mut reach: HashSet<FnId> = self.checks_models.clone();
+        let models = self.reaching(self.checks_models.clone());
+        let tasks = self.reaching(self.spawning.clone());
+        for (test, callees) in &self.test_calls {
+            let node = &mut self.test_nodes[*test as usize];
+            node.model |= callees.iter().any(|f| models.contains(f));
+            node.tasks |= callees.iter().any(|f| tasks.contains(f));
+        }
+        for test in &self.test_spawns {
+            self.test_nodes[*test as usize].tasks = true;
+        }
+    }
+
+    /// The functions that call one of `reach`, however deep, with them.
+    fn reaching(&self, mut reach: HashSet<FnId>) -> HashSet<FnId> {
         loop {
             let more: Vec<FnId> = self
                 .calls
@@ -2613,11 +2633,7 @@ impl<'a> Checker<'a> {
             }
             reach.extend(more);
         }
-        for (test, callees) in &self.test_calls {
-            if callees.iter().any(|f| reach.contains(f)) {
-                self.test_nodes[*test as usize].model = true;
-            }
-        }
+        reach
     }
 
     fn repeatable(&mut self, id: FnId, span: Span) {
@@ -2722,6 +2738,7 @@ impl<'a> Checker<'a> {
                 bench: false,
                 fuzz: false,
                 model: false,
+                tasks: false,
                 span,
                 whole,
             };
@@ -7476,6 +7493,15 @@ impl<'a> Checker<'a> {
     /// evaluated now, by value, and a new task makes the call.
     fn spawn(&mut self, cx: &mut FnCx, call: &ast::Expr, span: Span) -> hir::Expr {
         self.meta_denied(span, "`spawn`");
+        // `std.model`'s own tasks share out its search, and are none of the
+        // program's.
+        let searching = self.module_paths.get(self.module as usize).is_some_and(|path| path == &["std", "model"]);
+        match (self.measuring, self.calling) {
+            _ if searching => {}
+            (Some(test), _) => _ = self.test_spawns.insert(test),
+            (None, Some(caller)) => _ = self.spawning.insert(caller),
+            (None, None) => {}
+        }
         let ast::ExprKind::Call { args, .. } = &call.kind else {
             let message =
                 "`spawn` takes a call, such as `spawn fetch(url)`; put other work in a function and spawn its call";

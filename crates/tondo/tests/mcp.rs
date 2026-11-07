@@ -279,6 +279,77 @@ fn runs_tests_and_debugs() {
     agent.stop();
 }
 
+const SHOP: &str = "import std.sync
+
+pub enum Event {
+    Pay
+    Ship
+}
+
+pub type Order = {
+    paid: Bool
+    shipped: Bool
+}
+
+pub fn apply(order: Order, event: Event): Order ! String {
+    match event {
+        Event.Pay => order with { paid: true }
+        Event.Ship if order.paid => order with { shipped: true }
+        Event.Ship => fail \"not paid\"
+    }
+}
+
+pub fn add(count: sync.Mutex[Int]) {
+    let now = count.get()
+    count.set(now + 1)
+}
+
+fn main() {}
+";
+
+const SHOP_TESTS: &str = "import std.sync
+
+test pays {
+    assert(apply(Order { paid: false, shipped: false }, Event.Pay).isOk())
+}
+
+test adds {
+    let count = sync.Mutex(0)
+    let a = spawn add(count)
+    let b = spawn add(count)
+    a.wait()
+    b.wait()
+    assert(count.get() == 2)
+}
+";
+
+/// A test run says what it did not try: tests of tasks in one order, and a
+/// state machine with no test of it in every state; `schedules` and the
+/// tool `model` try them.
+#[test]
+fn a_test_run_says_what_it_did_not_try() {
+    let dir = project("mcp_untried", &[("src/main.to", SHOP), ("src/main_test.to", SHOP_TESTS)]);
+    let mut agent = Agent::start(&dir);
+    let (tested, _) = agent.call("test", json!({ "filter": "pays" }));
+    assert_eq!(tested["report"]["machines"][0]["name"], "apply", "{tested}");
+    assert!(tested["next"].as_str().unwrap().contains("the tool `model`"), "{tested}");
+    // One run of the tasks may pass; every order finds the lost update.
+    let (tested, _) = agent.call("test", json!({}));
+    if tested["report"]["summary"]["failed"] == 0 {
+        assert!(tested["next"].as_str().unwrap().contains("schedules"), "{tested}");
+    }
+    let (ordered, text) = agent.call("test", json!({ "schedules": "all" }));
+    assert_eq!(ordered["report"]["summary"]["failed"], 1, "{ordered}");
+    assert!(text.contains("that write is lost"), "{text}");
+    // Once `model` wrote its test, nothing is left untried.
+    let (modeled, _) = agent.call("model", json!({ "function": "apply" }));
+    assert_eq!(modeled["report"]["written"], true, "{modeled}");
+    let (tested, _) = agent.call("test", json!({ "filter": "pays" }));
+    assert_eq!(tested["report"]["machines"], json!([]), "{tested}");
+    assert!(tested["next"].is_null(), "{tested}");
+    agent.stop();
+}
+
 const PROFILED: &str = "import std.console
 
 fn fib(n: Int): Int {

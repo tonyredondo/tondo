@@ -136,6 +136,9 @@ pub struct TestNodeInfo {
     pub fuzz: bool,
     /// A test whose body checks a model of `std.model` (testing 8.12).
     pub model: bool,
+    /// A test that starts tasks, itself or through what it calls: one run
+    /// of it is one order of them (testing 8.10).
+    pub tasks: bool,
     pub span: Span,
     /// All of it, with its body.
     pub whole: Span,

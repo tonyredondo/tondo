@@ -1472,7 +1472,7 @@ impl Server {
         let at = siblings.iter().position(|&i| i == here)?;
         let source = sources.file(here);
         Some(
-            crate::machine::machines(&parsed[at], &parsed)
+            crate::machine::machines(&parsed[at], &parsed.iter().collect::<Vec<_>>())
                 .into_iter()
                 .map(|(name, span)| {
                     let arguments = json!([uri, name]);

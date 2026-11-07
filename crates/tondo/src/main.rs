@@ -895,7 +895,8 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     }
     let Some(program) = &analysis.program else { return Ok(None) };
     let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
-    let tree = tondo::runner::Tree { nodes: program.tests.clone(), locations };
+    let machines = tondo::machine::unchecked(&analysis.sources);
+    let tree = tondo::runner::Tree { nodes: program.tests.clone(), locations, machines };
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     if build.list {
         tree.save(&tree_file)?;

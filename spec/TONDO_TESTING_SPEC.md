@@ -1794,14 +1794,22 @@ depura en local. `--record` es incompatible con `--bench`, `--fuzz`,
 
 ### 8.12 Modelos
 
-Un test que llama en su cuerpo a `model.check`, `model.machine`, `model.follows`
-o `model.watch` (biblioteca 14.43) comprueba un modelo, y `tondo test --models`
-ejecuta solo esos. Cada comprobación dice lo que encontró: el informe JSON lo da
+Un test que llama a `model.check`, `model.machine`, `model.follows` o
+`model.watch` (biblioteca 14.43), en su cuerpo o a través de las funciones que
+llama, comprueba un modelo, y `tondo test --models` ejecuta solo esos. Cada comprobación dice lo que encontró: el informe JSON lo da
 en `models` de cada intento, con `kind`, cuántos estados, pasos y profundidad,
 `never` y lo que se rompió, si algo se rompió. La salida humana nombra lo que un
 modelo nunca hizo: los eventos que ningún estado de una máquina toma, y los pasos
 del modelo que el código no dio. Con `--schedules all`, esto último en ningún
 orden.
+
+Una ejecución dice además lo que no probó. Un test que lanza tareas, él o lo que
+llama, lleva `tasks` en el informe; si pasó sin `--schedules`, la salida humana
+lo nota, porque pasó en un solo orden de ellas. Y `machines` en el informe da
+cada función del programa que da el siguiente estado de un evento, como
+`fn apply(state: S, event: E): S`, que ningún test pasa a `model.machine`, con
+dónde está; la salida humana lo nota con el `tondo model` que escribe su test.
+`tondo mcp` lo da en `next`.
 
 ## 9. Resultados, diagnósticos y salida
 

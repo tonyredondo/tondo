@@ -441,6 +441,18 @@ pub(super) fn report(
         count(&|a| matches!(a.status, Status::Blocked(_, false))),
         elapsed.as_secs_f64()
     );
+    // What one run did not try.
+    let ordered = options.schedules.is_some() || options.orders.is_some();
+    let one_order = count(&|a| tree.nodes[a.node as usize].tasks && a.status == Status::Passed);
+    if one_order > 0 && !ordered {
+        let tests = if one_order == 1 { "1 test starts" } else { "tests start" };
+        say!("note: {tests} tasks and ran in one order of them: `--schedules all` runs every order that differs");
+    }
+    for (name, at) in &tree.machines {
+        say!(
+            "note: `{name}` ({at}) gives the next state for an event, and no test checks it in every state: `tondo model {name}` writes one"
+        );
+    }
 }
 
 /// A call's search in a line: its test and name, how long, the inputs and

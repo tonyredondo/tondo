@@ -134,8 +134,8 @@ fn machine<'a>(f: &'a ast::FnDecl, declared: &Declared) -> Option<(&'a TypeExpr,
 
 /// The functions of a file that are state machines, by name and the span of
 /// their name, for an editor's lens.
-pub fn machines(file: &ast::Module, module: &[ast::Module]) -> Vec<(String, crate::source::Span)> {
-    let declared = Declared { files: module.iter().collect() };
+pub fn machines(file: &ast::Module, module: &[&ast::Module]) -> Vec<(String, crate::source::Span)> {
+    let declared = Declared { files: module.to_vec() };
     file.items
         .iter()
         .filter_map(|item| match item {
@@ -206,4 +206,59 @@ pub fn scaffold(sources: &SourceMap, function: &str) -> Result<Scaffold, String>
 fn test_file(path: &Path) -> PathBuf {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
     path.with_file_name(format!("{stem}_test.to"))
+}
+
+/// The state machines of a program that no test checks with
+/// `model.machine`: each function's name and where it is, as `tondo test`
+/// says of them, so that the tool `model` writes the test.
+pub fn unchecked(sources: &SourceMap) -> Vec<(String, String)> {
+    let mut diags = Diagnostics::default();
+    let own: Vec<usize> = (0..sources.len())
+        .filter(|&i| !sources.file(i).logical.starts_with("<std>/") && sources.file(i).path.is_absolute())
+        .collect();
+    let test = |i: usize| {
+        let logical = &sources.file(i).logical;
+        logical.ends_with("_test.to") || Path::new(logical).starts_with("tests")
+    };
+    // What the tests give `model.machine`.
+    let mut checked = String::new();
+    for &i in own.iter().filter(|&&i| test(i)) {
+        let text = &sources.file(i).text;
+        for (at, _) in text.match_indices("model.machine(") {
+            let mut depth = 0;
+            for c in text[at..].chars() {
+                checked.push(c);
+                match c {
+                    '(' => depth += 1,
+                    ')' if depth == 1 => break,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            checked.push('\n');
+        }
+    }
+    let called = |name: &str| {
+        checked.match_indices(name).any(|(at, _)| {
+            let before = checked[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let after = checked[at + name.len()..].chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            !before && !after
+        })
+    };
+    let parsed: Vec<(usize, ast::Module)> = own
+        .iter()
+        .filter(|&&i| !test(i))
+        .map(|&i| (i, crate::parser::parse_file(sources.file(i), &mut diags)))
+        .collect();
+    let mut found = Vec::new();
+    for (i, file) in &parsed {
+        let module: Vec<&ast::Module> =
+            parsed.iter().filter(|(j, _)| sources.file(*j).module == sources.file(*i).module).map(|(_, m)| m).collect();
+        for (name, span) in machines(file, &module) {
+            if !called(&name) {
+                found.push((name, sources.location(span)));
+            }
+        }
+    }
+    found
 }
