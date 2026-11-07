@@ -307,7 +307,13 @@ pub(crate) fn shown(label: bool) -> Vec<(String, String)> {
     thread_local! {
         static SHOWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
-    if SHOWING.with(|showing| showing.replace(true)) {
+    // A task says it shows them, not the thread: a `Display` that waits may
+    // resume it on another thread.
+    let showing = |now: bool| match unsafe { super::tasks::current().as_mut() } {
+        Some(task) => std::mem::replace(&mut task.showing, now),
+        None => SHOWING.with(|showing| showing.replace(now)),
+    };
+    if showing(true) {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -320,7 +326,7 @@ pub(crate) fn shown(label: bool) -> Vec<(String, String)> {
         }
         unsafe { super::tondo_rt_str_release(text) };
     }
-    SHOWING.with(|showing| showing.set(false));
+    showing(false);
     out
 }
 

@@ -285,6 +285,9 @@ pub(crate) struct Task {
     /// In those `defer`s, a wait ended at once because the task is
     /// cancelled: the code unwinds to the `defer` that runs.
     cut: bool,
+    /// It shows its contexts for a log: a `Display` of theirs that logs too
+    /// shows none. The task's, not the thread's, as one may wait meanwhile.
+    pub(crate) showing: bool,
     /// Set by a live build's reload: the wait ends, and the statement it is
     /// in starts again (toolchain 7.10).
     pub(crate) again: AtomicBool,
@@ -2806,6 +2809,7 @@ fn new_task(
         cancelled: AtomicBool::new(false),
         deferring: 0,
         cut: false,
+        showing: false,
         again: AtomicBool::new(false),
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),

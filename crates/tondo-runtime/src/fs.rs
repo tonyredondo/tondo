@@ -36,6 +36,14 @@ std::thread_local! {
     static HOST_ERROR: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
 }
 
+/// Notes the number of a `Host` error: never inlined, since the call that
+/// failed may have waited for the system and resumed on another thread,
+/// whose number the compiled code reads.
+#[inline(never)]
+fn note_host_error(number: i64) {
+    HOST_ERROR.set(number);
+}
+
 fn code(error: FsError) -> i64 {
     match error {
         FsError::NotFound => 1,
@@ -46,7 +54,7 @@ fn code(error: FsError) -> i64 {
         FsError::InvalidData => 6,
         FsError::InvalidName => 7,
         FsError::Host(number) => {
-            HOST_ERROR.set(number as i64);
+            note_host_error(number as i64);
             8
         }
     }

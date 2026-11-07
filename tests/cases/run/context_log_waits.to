@@ -1,0 +1,46 @@
+// A field marked `@log` whose `Display` waits shows in every event: the task
+// that shows its contexts may resume on another thread meanwhile, and that
+// thread's next events still show theirs.
+
+import std.console
+import std.io
+import std.log
+import std.time
+
+type Slow = {
+    name: String
+}
+
+impl Display for Slow {
+    fn display(self): String {
+        time.sleep(time.milliseconds(1))
+        self.name
+    }
+}
+
+context Job = {
+    @log
+    job: Slow = Slow { name: "" }
+}
+
+fn work(n: Int) {
+    with Job { job: Slow { name: "j{n}" } }
+    for _ in 0..5 {
+        log.info("step")
+    }
+}
+
+fn main() {
+    let written = io.Buffer()
+    with log.Context { logger: some(log.Logger(output: some(written.writer()), timestamps: false)) }
+    var group = Group[Unit]()
+    for n in 0..8 {
+        group.add(spawn work(n))
+    }
+    _ = group.wait()
+    let lines = written.text()?.lines()
+    let shown = lines.count((line) { line.contains(" job=j") })
+    console.println("{shown} of {lines.length()} events show their job")
+}
+
+// expect-stdout: 40 of 40 events show their job
