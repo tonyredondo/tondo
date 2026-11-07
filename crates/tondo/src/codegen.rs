@@ -5898,9 +5898,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Const::Bytes(_, of) => types.repr(*of) == element,
             Const::Unit => false,
         };
-        if values.is_empty() {
-            return None;
-        }
+        // An empty one too, as the notes of a derived encoder at every call:
+        // the first change copies it, as it would have allocated anyway.
         values
             .iter()
             .map(|value| match value {
