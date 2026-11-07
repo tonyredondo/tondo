@@ -200,5 +200,7 @@ does.
   the tool `model`.
 - `tondo test --models` runs the tests that check a model; `--schedules all`
   goes through every order of their tasks.
-- The report of `--test-format json` has each model in `models`: how many
-  states and steps, the events or steps never taken, and what broke.
+- The report of `--test-format json` has each model a test checked in
+  `tests[].attempts[].models`: how many states and steps, the events or steps
+  never taken, the properties that said nothing (`vacuous`), and what broke;
+  its `machines` names the state machines no test checks.
