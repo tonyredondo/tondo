@@ -1,0 +1,78 @@
+// Cycles that pass through the values a shared cell holds are collected
+// (language 16.7): maps, sets, recursive enums, optionals, tuples and the
+// closures they hold. The run checks that nothing leaks, and a cycle still
+// in use stays whole.
+import std.console
+import std.sync
+
+type Node = {
+    name: String
+    links: sync.Mutex[Map[String, Ref[Node]]]
+    seen: sync.Mutex[Set[Ref[Node]]]
+}
+
+enum Tree {
+    Leaf(Ref[Grove]?)
+    Branch(Tree, Tree)
+}
+
+type Grove = {
+    tree: sync.Mutex[Tree]
+    pairs: sync.Mutex[Array[(Int, fn(): Ref[Grove])]]
+}
+
+fn node(name: String): Ref[Node] {
+    Ref(Node { name: name, links: sync.Mutex([:]), seen: sync.Mutex(Set[]) })
+}
+
+// Two nodes in each other's map, and one in its own set.
+fn ring(i: Int): Ref[Node] {
+    let a = node("a{i}")
+    let b = node("b{i}")
+    a.value.links.update(
+        (links) {
+            links["b"] = b
+        },
+    )
+    b.value.links.update(
+        (links) {
+            links["a"] = a
+        },
+    )
+    a.value.seen.update((seen) { seen.insert(a) })
+    a
+}
+
+// A grove that a leaf deep in its tree refers to, and a closure in a tuple.
+fn grove(): Ref[Grove] {
+    let made = Ref(Grove { tree: sync.Mutex(Tree.Leaf(none)), pairs: sync.Mutex([]) })
+    made.value.tree.set(
+        Tree.Branch(Tree.Leaf(none), Tree.Branch(Tree.Leaf(some(made)), Tree.Leaf(none))),
+    )
+    made.value.pairs.update((pairs) { pairs.push((1, () { made })) })
+    made
+}
+
+fn depth(tree: Tree): Int {
+    match tree {
+        Tree.Leaf(_) => 0
+        Tree.Branch(left, right) => 1 + depth(left).max(depth(right))
+    }
+}
+
+fn main() {
+    let kept = ring(0)
+    let held = grove()
+    for i in 1..2000 {
+        _ = ring(i)
+        _ = grove()
+    }
+    let b = kept.value.links.get()["b"]
+    let back = b.map((other) { other.value.links.get()["a"] == some(kept) })
+    let pair = held.value.pairs.get()[0]
+    console.println(
+        "{back} {kept.value.seen.get().contains(kept)} {depth(held.value.tree.get())} {pair.1() == held}",
+    )
+}
+
+// expect-stdout: some(true) true 2 true
