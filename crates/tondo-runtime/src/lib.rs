@@ -2037,12 +2037,10 @@ pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
 pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ bytes.len() as u64;
-    let mut words = bytes.chunks_exact(8);
-    for word in &mut words {
-        let word = u64::from_le_bytes(word.try_into().unwrap_or_default());
-        hash = (hash ^ word).wrapping_mul(K).rotate_left(29);
+    let (words, rest) = bytes.as_chunks::<8>();
+    for &word in words {
+        hash = (hash ^ u64::from_le_bytes(word)).wrapping_mul(K).rotate_left(29);
     }
-    let rest = words.remainder();
     if !rest.is_empty() {
         let mut last = [0u8; 8];
         last[..rest.len()].copy_from_slice(rest);
