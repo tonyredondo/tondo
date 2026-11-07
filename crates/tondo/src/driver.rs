@@ -979,29 +979,36 @@ pub fn object(analysis: &Analysis, debug: bool, target: Option<Target>) -> Resul
     compile(analysis, debug, target, None)
 }
 
-/// The literals of the code the search of `--fuzz` counts, the project's
-/// and its dependencies': the texts without interpolation and the
-/// integers, each once, which mutations take values from (testing 10.6).
+/// The literals of the code the search of `--fuzz` counts: the texts
+/// without interpolation and the integers, each once, which mutations take
+/// values from (testing 10.6); the project's and its dependencies' first.
 pub fn literals(analysis: &Analysis) -> (Vec<String>, Vec<i64>) {
-    let (mut texts, mut ints) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
-    for file in analysis.sources.files().filter(|f| f.own || f.dependency) {
+    let (mut texts, mut ints) = (Vec::new(), Vec::new());
+    let mut seen = (std::collections::HashSet::new(), std::collections::HashSet::new());
+    let first = analysis.sources.files().filter(|f| f.own || f.dependency);
+    for file in first.chain(analysis.sources.files().filter(|f| !f.own && !f.dependency && f.searched())) {
         for token in crate::lexer::lex(file, None, &mut Diagnostics::default()) {
             match token.tok {
                 crate::lexer::Tok::Str(parts) => {
                     if let [crate::lexer::StrPart::Text(text)] = &parts[..]
                         && (1..=64).contains(&text.len())
+                        && seen.0.insert(text.clone())
                     {
-                        texts.insert(text.clone());
+                        texts.push(text.clone());
                     }
                 }
-                crate::lexer::Tok::Int { value, .. } if value > 1 && value <= i64::MAX as u128 => {
-                    ints.insert(value as i64);
+                crate::lexer::Tok::Int { value, .. }
+                    if value > 1 && value <= i64::MAX as u128 && seen.1.insert(value as i64) =>
+                {
+                    ints.push(value as i64);
                 }
                 _ => {}
             }
         }
     }
-    (texts.into_iter().take(4096).collect(), ints.into_iter().take(4096).collect())
+    texts.truncate(4096);
+    ints.truncate(4096);
+    (texts, ints)
 }
 
 /// The object of a test build that counts what runs of the project's code

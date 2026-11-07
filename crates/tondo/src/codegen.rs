@@ -6046,9 +6046,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     /// Whether coverage counts a file: the project's own code, and for the
-    /// search of `--fuzz` its dependencies' too.
+    /// search of `--fuzz` what it searches.
     fn counts(&self, file: &crate::source::SourceFile) -> bool {
-        file.own || (file.dependency && self.e.cg.fuzzing())
+        file.own || (self.e.cg.fuzzing() && file.searched())
     }
 
     /// With coverage, a run of the line a statement of the project's code

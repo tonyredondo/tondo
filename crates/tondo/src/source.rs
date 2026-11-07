@@ -39,6 +39,13 @@ pub struct SourceFile {
 }
 
 impl SourceFile {
+    /// The code the search of `--fuzz` counts (testing 10.6): the project's,
+    /// its dependencies' and the standard library's, but for the loop of
+    /// `testing.fuzz` itself.
+    pub fn searched(&self) -> bool {
+        self.own || self.dependency || (self.logical.starts_with("<std>/") && self.logical != "<std>/fuzz.to")
+    }
+
     /// Zero-based byte offset, line and column (in scalars) of a global
     /// offset within the file.
     pub fn position(&self, offset: u32) -> (u32, usize, usize) {

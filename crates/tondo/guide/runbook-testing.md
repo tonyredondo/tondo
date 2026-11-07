@@ -311,5 +311,6 @@ each night.
 - Do not write a model of code that is a state machine: `model.machine` checks
   the code itself, and cannot drift from it.
 - Do not compare printed text when a value can be compared.
-- Do not put the code a fuzz test tries in the test file: only the project's
-  code counts as new ground for the search.
+- Do not put the code a fuzz test tries in the test file: the search counts
+  as new ground the code of the project, of its dependencies and of the
+  standard library, not the tests'.

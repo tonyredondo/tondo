@@ -2547,7 +2547,8 @@ a `testing.fuzz` repite primero lo de sin `--fuzz`, y si pasa busca entradas
 que fallen:
 
 1. El build de tests cuenta lo que se ejecuta como `--coverage` (10.3), del
-   código del proyecto y de sus dependencias, no de la stdlib, y registra los
+   código del proyecto, de sus dependencias y de la stdlib, salvo el bucle de
+   `testing.fuzz`, y no el de los tests, y registra los
    operandos de cada comparación de enteros o de textos de ese código
    (`==`, `!=`, `<`, `<=`, `>`, `>=` y los patrones literales de `match`).
 2. Parte de las semillas, del store y del corpus (más abajo), o de valores

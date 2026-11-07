@@ -5519,3 +5519,14 @@ of a database would fail for its own rows rather than for a bug. Test builds alr
 runtime before each of those, for `--schedules all`, so a plain run notes it at the cost of a store;
 an order that reaches outside stops the search too. `tests/orders`, 25 tests of the standard
 library's tasks, went from 0.6 s to about 1.3 s. `--schedules 1` runs each test once.
+
+## The search of `--fuzz` counts the standard library too
+
+The search was guided by the counters of the project and its dependencies alone, so a test that
+fuzzed what the standard library parses, as `xml.parse`, `url.parse` or a template, searched blind:
+nothing it ran counted as new. It now counts the standard library as well, as Go's fuzzing counts
+every package, and takes its literals after the project's. In ten seconds, fuzz tests of
+`url.parse` and `xml.parse` kept 2 inputs each, as nothing counted; now they keep 119 and 169,
+which reach 35% and 43% of what their build counts, at fewer inputs a second, since each goes
+deeper. The loop of `testing.fuzz` itself is not counted, nor are the tests, whose code is not
+under test.
