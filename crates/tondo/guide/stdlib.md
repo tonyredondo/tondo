@@ -14,6 +14,7 @@ std.fs         read and write files, walk, glob, watch, metadata, links, tempora
 std.archive    zip, tar, tar.gz and tar.zst: read, write, extract
 std.image      PNG, JPEG, GIF, WebP: resize, fit, fill, crop, rotate, colors, pixels, write
 std.embed      files of the package kept in the executable, read when it compiles
+std.model      a design checked in every order of its steps, before any code
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
 std.process    run programs and pipelines, capture output, signals
@@ -384,6 +385,38 @@ The path is a literal, relative to the file that writes it, inside the
 package. `Site` is a tree of `std.fs` that only reads:
 `Site.readText("css/site.css")`, `Site.list()`, `Site.walk()`. A changed file rebuilds `tondo run` and
 reloads `--watch`; `tondo graph` shows what each module embeds.
+
+## A design, before the code
+
+`std.model` checks a design in every order of its steps: a state that is a
+`Key`, the steps that can follow each one, and what must always hold. It stops
+at the first state that breaks it, with the shortest way there.
+
+```tondo
+import std.console
+import std.model
+
+type Door = { open: Bool, locked: Bool }
+
+fn steps(door: Door): Array[model.Step[Door]] {
+    var next = [model.Step { name: "lock", state: door with { locked: true } }]
+    if not door.locked {
+        next.push(model.Step { name: "open", state: door with { open: true } })
+    }
+    next
+}
+
+fn main() {
+    let start = Door { open: false, locked: false }
+    match model.check(start, steps, (door) { not (door.open and door.locked) }) {
+        ok(checked) => console.println("{checked.states} states")
+        err(broken) => console.println("{broken}")
+    }
+}
+```
+
+This says `what must always hold does not, after: open, lock`. A model knows of
+the design, not of the code: `tondo test --schedules all` is what tries the code.
 
 ## The network
 

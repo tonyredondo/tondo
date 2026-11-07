@@ -6930,6 +6930,29 @@ pub fn Duplex.trailers(self): Map[String, String]
   `Health` el suyo.
 - **Fuera.** gRPC-Web y Connect y el balanceo entre servidores.
 
+### 14.43 `std.model`
+
+`std.model` comprueba un diseño antes de que haya código: un estado, los pasos
+que pueden seguir a cada uno y lo que debe cumplirse.
+
+~~~tondo
+pub type Step[S] = { name: String, state: S }
+pub type Checked = { states: Int }
+pub type Violation = { what: String, path: Array[String] }
+pub fn check[S: Key](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    always: fn(S): Bool,
+    ends: (fn(S): Bool)? = none,
+): Checked ! Violation
+~~~
+
+`check` recorre todos los estados que `steps` alcanza desde `start`, los más
+cercanos primero, una vez cada uno, y falla en el primero donde `always` no se
+cumple, o sin pasos donde `ends`, si se da, dice que no debe terminar. `Violation`
+da el camino más corto de nombres de pasos hasta allí. Un modelo solo dice de su
+diseño: lo que el programa hace lo dicen sus tests, y `--schedules all`.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:

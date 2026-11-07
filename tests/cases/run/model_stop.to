@@ -1,0 +1,60 @@
+// The stop of the world of the runtime (testing/models/Stop.tla) in `std.model`:
+// two that stop it at once let the threads go under each other, and one at a
+// time do not. A protocol of Tondo, checked in Tondo.
+import std.console
+import std.model
+
+type World = {
+    stopping: Bool
+    running: Int
+    first: Int
+    second: Int
+    owner: Int
+}
+
+fn stop(world: World, who: Int, exclusive: Bool): Array[model.Step[World]] {
+    let at = if who == 1 { world.first } else { world.second }
+    let moved = (next: Int) { if who == 1 { world with { first: next } } else { world with { second: next } } }
+    match at {
+        0 if not exclusive or world.owner == 0 => [model.Step {
+            name: "stop {who}"
+            state: moved(1) with { stopping: true, owner: if exclusive { who } else { 0 } }
+        }]
+        1 if world.running == 0 => [model.Step { name: "inside {who}", state: moved(2) }]
+        2 => [model.Step {
+            name: "resume {who}"
+            state: moved(3) with { stopping: false, owner: 0 }
+        }]
+        _ => []
+    }
+}
+
+fn steps(world: World, exclusive: Bool): Array[model.Step[World]] {
+    var next = stop(world, 1, exclusive).concat(stop(world, 2, exclusive))
+    if not world.stopping and world.running == 0 {
+        next.push(model.Step { name: "enter", state: world with { running: 1 } })
+    }
+    if world.running == 1 {
+        next.push(model.Step { name: "leave", state: world with { running: 0 } })
+    }
+    next
+}
+
+fn quiet(world: World): Bool {
+    not ((world.first == 2 or world.second == 2) and world.running > 0)
+}
+
+fn main() {
+    let start = World { stopping: false, running: 0, first: 0, second: 0, owner: 0 }
+    match model.check(start, (world) { steps(world, true) }, quiet) {
+        ok(checked) => console.println("one at a time holds, in {checked.states} states")
+        err(broken) => console.println("{broken}")
+    }
+    match model.check(start, (world) { steps(world, false) }, quiet) {
+        ok(_) => console.println("two at once hold")
+        err(broken) => console.println("{broken}")
+    }
+}
+
+// expect-stdout: one at a time holds, in 20 states
+// expect-stdout: what must always hold does not, after: stop 1, inside 1, stop 2, resume 1, inside 2, enter

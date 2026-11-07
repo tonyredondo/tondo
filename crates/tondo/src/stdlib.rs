@@ -66,6 +66,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("shapes", include_str!("../std/shapes.to")),
     ("cli", include_str!("../std/cli.to")),
     ("mcp", include_str!("../std/mcp.to")),
+    ("model", include_str!("../std/model.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
 

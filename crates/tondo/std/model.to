@@ -1,0 +1,147 @@
+// A model of a design, checked in every order of its steps: a state, the steps
+// that can follow each one, and what must hold. It finds the shortest way to a
+// state that breaks it, before there is any code to test, and runs in a test
+// as anything else does.
+//
+// ```tondo
+// import std.console
+// import std.model
+//
+// type Door = { open: Bool, locked: Bool }
+//
+// fn steps(door: Door): Array[model.Step[Door]] {
+//     var next = [model.Step { name: "lock", state: door with { locked: true } }]
+//     if not door.locked {
+//         next.push(model.Step { name: "open", state: door with { open: true } })
+//     }
+//     next
+// }
+//
+// let start = Door { open: false, locked: false }
+// match model.check(start, steps, (door) { not (door.open and door.locked) }) {
+//     ok(checked) => console.println("{checked.states} states")
+//     err(broken) => console.println("{broken}")
+// }
+// ```
+
+/// What can happen from a state: its name, for the path to a fault, and the
+/// state it leads to.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let step = model.Step { name: "add", state: 2 }
+/// console.println("{step.name} leads to {step.state}")
+/// ```
+pub type Step[S] = {
+    name: String
+    state: S
+}
+
+/// How much of a model was checked: every state it can reach.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let checked = model.Checked { states: 3 }
+/// console.println("{checked.states} states")
+/// ```
+pub type Checked = {
+    states: Int
+}
+
+/// What broke, and the shortest path of steps that gets there.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let broken = model.Violation { what: "it broke", path: ["start", "stop"] }
+/// console.println("{broken}")
+/// ```
+pub type Violation = {
+    what: String
+    path: Array[String]
+}
+
+impl Display for Violation {
+    fn display(self): String {
+        "{self.what}, after: {self.path.join(", ")}"
+    }
+}
+
+type Reached[S] = {
+    from: S?
+    name: String
+}
+
+fn pathTo[S: Key](reached: Map[S, Reached[S]], end: S): Array[String] {
+    var path: Array[String] = []
+    var at = some(end)
+    for {
+        match at {
+            some(state) => match reached.get(state) {
+                some(found) if found.from.isSome() => {
+                    path.push(found.name)
+                    at = found.from
+                }
+                _ => return path.reversed()
+            }
+            none => return path.reversed()
+        }
+    }
+}
+
+/// Goes through every state `steps` reaches from `start`, nearest first, and
+/// fails at the first where `always` does not hold, or with no step left where
+/// `ends` says it should not end, when it is given, with the shortest path
+/// there. A state is a `Key`, so that one reached twice is looked at once.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// fn steps(count: Int): Array[model.Step[Int]] {
+///     if count < 3 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+/// }
+///
+/// match model.check(0, steps, (count) { count < 3 }) {
+///     ok(checked) => console.println("{checked.states} states")
+///     err(broken) => console.println("{broken}")
+/// }
+/// ```
+pub fn check[S: Key](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    always: fn(S): Bool,
+    ends: (fn(S): Bool)? = none,
+): Checked ! Violation {
+    var reached: Map[S, Reached[S]] = [:]
+    _ = reached.insert(start, Reached[S] { from: none, name: "" })
+    var pending = Deque[S]()
+    pending.push(start)
+    for {
+        let state = match pending.popFront() {
+            some(state) => state
+            none => return Checked { states: reached.length() }
+        }
+        if not always(state) {
+            fail Violation { what: "what must always hold does not", path: pathTo(reached, state) }
+        }
+        let next = steps(state)
+        match ends {
+            some(allowed) if next.isEmpty() and not allowed(state) => {
+                fail Violation { what: "nothing can follow here", path: pathTo(reached, state) }
+            }
+            _ => {}
+        }
+        for step in next {
+            if not reached.contains(step.state) {
+                _ = reached.insert(step.state, Reached[S] { from: some(state), name: step.name })
+                pending.push(step.state)
+            }
+        }
+    }
+}
