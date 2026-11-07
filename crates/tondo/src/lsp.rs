@@ -392,6 +392,10 @@ struct Server {
     tokens: HashMap<String, (String, Vec<Value>)>,
     /// Ids of the answers that are told apart.
     answers: u64,
+    /// The request being answered, which the editor may still give up on.
+    current: Option<String>,
+    /// A test has the analysis of a request wait for it to be cancelled.
+    holds_analysis: bool,
     /// The editor reads the standard modules through the server, as
     /// `tondo-std:` documents, rather than from their copy on disk.
     virtual_std: bool,
@@ -491,6 +495,7 @@ impl Server {
             send(json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": token, "value": value } }));
         }
         let started = Instant::now();
+        self.current = id.as_ref().map(Value::to_string);
         // A bug in one request ends that request: what is open stays open.
         let asked =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.answer(&method, params, id.is_some())));
@@ -503,6 +508,11 @@ impl Server {
         }
         self.log_trace(&method, params, started);
         let result = result.map(|result| result.map(|answer| self.fit(&method, params, answer)));
+        let cancelled = self.current.take().is_some_and(|current| self.inbox().cancelled.remove(&current));
+        let result = match cancelled {
+            true => Some(Err((-32800, "the request was cancelled".to_string()))),
+            false => result.map(|result| result.map(|answer| in_parts(params, answer))),
+        };
         if let (Some(id), Some(result)) = (id, result) {
             send(match result {
                 Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -704,7 +714,10 @@ impl Server {
             "tondo/panic" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => panic!("as a test asks"),
             // A test has a change arrive before the next message is handled.
             "tondo/hold" if std::env::var_os("TONDO_TEST_LSP_PANIC").is_some() => {
-                while !self.inbox().changing.contains_key(params["uri"].as_str().unwrap_or_default()) {
+                self.holds_analysis = params["analysis"] == true;
+                while !self.holds_analysis
+                    && !self.inbox().changing.contains_key(params["uri"].as_str().unwrap_or_default())
+                {
                     std::thread::yield_now();
                 }
                 Some(Ok(Value::Null))
@@ -1080,13 +1093,21 @@ impl Server {
         };
         progress(json!({ "kind": "begin", "title": "Analyzing", "percentage": 0, "cancellable": true }));
         for (done, root) in roots.iter().enumerate() {
-            // What is left is analyzed when the editor asks about it.
+            // What is left of the first is analyzed when the editor asks
+            // about it, and of a request's, when the typing pauses.
             if starting && self.inbox().cancelled.remove(&json!(PROGRESS).to_string()) {
+                break;
+            }
+            if self.current.as_ref().is_some_and(|current| self.inbox().cancelled.contains(current)) {
+                self.dirty.extend(roots.iter().skip(done).cloned());
                 break;
             }
             let started = Instant::now();
             self.analyze(root);
             progress(json!({ "kind": "report", "percentage": (done + 1) * 100 / roots.len() }));
+            while self.holds_analysis && !self.current.as_ref().is_some_and(|c| self.inbox().cancelled.contains(c)) {
+                std::thread::yield_now();
+            }
             if !self.quiet {
                 let files = self.analyses.get(root).map_or(0, |analyzed| analyzed.analysis.sources.len());
                 let event =
@@ -4426,6 +4447,20 @@ fn annotated(answer: Value) -> Value {
         .collect();
     let label = format!("Rename in {files} file{}", if files == 1 { "" } else { "s" });
     json!({ "documentChanges": edits, "changeAnnotations": { "rename": { "label": label } } })
+}
+
+/// A long list goes out as it is sent, if the editor gave a token to send it
+/// under: what comes back is then empty.
+fn in_parts(params: &Value, answer: Value) -> Value {
+    const PART: usize = 100;
+    let (Some(token), Some(list)) = (params.get("partialResultToken"), answer.as_array()) else { return answer };
+    if list.len() <= PART {
+        return answer;
+    }
+    for part in list.chunks(PART) {
+        send(json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": token, "value": part } }));
+    }
+    json!([])
 }
 
 /// Has the editor apply an edit.

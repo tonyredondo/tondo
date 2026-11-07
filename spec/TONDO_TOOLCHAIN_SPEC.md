@@ -477,8 +477,9 @@ comandos, un tema cada vez para leer solo lo necesario.
 la salida estándar, que el editor arranca, salvo lo que el protocolo dice de los
 notebooks, que Tondo no tiene. Cada respuesta se ajusta a lo que el editor dijo en
 `initialize` que admite: texto sin marcado, sin snippets o símbolos planos. Una
-petición que el editor cancela antes de su turno no se hace, y una de un documento
-entero con un cambio detrás responde `ContentModified`. Los cambios llegan por partes,
+petición que el editor cancela antes de su turno no se hace, la que ya corre se corta
+entre proyecto y proyecto, y una de un documento entero con un cambio detrás responde
+`ContentModified`. Una lista larga va en partes si el editor dio `partialResultToken`. Los cambios llegan por partes,
 y las carpetas, los archivos que el editor crea, borra o renombra y la configuración
 (`tondo.lsp`: `inlayHints`, `codeLenses`, `formatOnSave`) se siguen mientras corre.
 El servidor aplica sus refactors con `workspace/applyEdit`, pide al editor que vuelva

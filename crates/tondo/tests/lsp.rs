@@ -2876,3 +2876,67 @@ fn an_impl_writes_what_it_lacks() {
     assert!(!diagnostics.to_string().contains("E1114"), "{diagnostics}");
     editor.stop();
 }
+
+/// A request can be given up on while it waits for an analysis, which then
+/// leaves the projects it did not reach for later.
+#[test]
+fn a_request_can_be_cancelled_while_it_runs() {
+    let file = ("src/main.to", "fn main() {\n    missing()\n}\n");
+    let toml = ("tondo.toml", "[package]\nname = \"app\"\n");
+    let (first, second) = (project("lsp-running-a", &[toml, file]), project("lsp-running-b", &[toml, file]));
+    let mut editor = Editor::launch_with(everything(), json!({}), Value::Null, "off");
+    let hold = json!({ "jsonrpc": "2.0", "id": "hold", "method": "tondo/hold", "params": { "analysis": true } });
+    editor.send(hold);
+    let (a, b) = (first.join("src/main.to"), second.join("src/main.to"));
+    let (a, b) = (format!("file://{}", a.display()), format!("file://{}", b.display()));
+    for uri in [&a, &b] {
+        let document = json!({ "uri": uri, "languageId": "tondo", "version": 1, "text": file.1 });
+        editor.notify("textDocument/didOpen", json!({ "textDocument": document }));
+    }
+    editor.send(json!({ "jsonrpc": "2.0", "id": 900, "method": "workspace/symbol", "params": { "query": "main" } }));
+    // The first project's diagnostics say the analysis has started.
+    let reached = loop {
+        let message = editor.receive_method("textDocument/publishDiagnostics");
+        if message["params"]["uri"] == a || message["params"]["uri"] == b {
+            break message["params"]["uri"].as_str().unwrap().to_string();
+        }
+    };
+    editor.notify("$/cancelRequest", json!({ "id": 900 }));
+    let answer = loop {
+        let message = editor.receive();
+        if message["id"] == 900 {
+            break message;
+        }
+    };
+    assert_eq!(answer["error"]["code"], -32800, "{answer}");
+    // The other project is analyzed all the same.
+    let other = if reached == a { b } else { a };
+    assert!(editor.receive_diagnostics(&other).to_string().contains("missing"));
+}
+
+/// A long list goes as it is sent, to an editor that gave a token for that.
+#[test]
+fn a_long_answer_comes_in_parts() {
+    let functions: String = (0..250).map(|n| format!("fn job{n}() {{}}\n\n")).collect();
+    let dir = project("lsp-parts", &[("main.to", &format!("{functions}fn main() {{}}\n"))]);
+    let mut editor = Editor::launch_with(everything(), json!({}), Value::Null, "off");
+    editor.open(&dir.join("main.to"));
+    editor.next += 1;
+    let id = editor.next;
+    editor.send(json!({ "jsonrpc": "2.0", "id": id, "method": "workspace/symbol",
+        "params": { "query": "job", "partialResultToken": "parts" } }));
+    let mut parts = Vec::new();
+    let answer = loop {
+        let message = editor.receive();
+        if message["method"] == "$/progress" && message["params"]["token"] == "parts" {
+            parts.push(message["params"]["value"].as_array().unwrap().len());
+        }
+        if message["id"] == id {
+            break message;
+        }
+    };
+    // Those of the program, and any of the standard library with that name.
+    assert!(parts[0] == 100 && parts.iter().sum::<usize>() >= 250, "{parts:?}");
+    assert_eq!(answer["result"], json!([]), "{answer}");
+    editor.stop();
+}

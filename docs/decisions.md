@@ -5424,7 +5424,9 @@ computes it, so this saves what goes over the wire, not the work, and making eac
 lazy was not worth that. And a cancelled request is only skipped before its turn: requests run in
 order on one thread, as an analysis holds state that a second thread would have to share. What
 the editor gives up on while it waits, which is nearly all of it, costs nothing; one already running
-finishes.
+stops between one project and the next, as the analysis of a project is what the next request needs
+anyway. Results in parts are there for the protocol more than for speed: `references` and
+`workspace/symbol` read an index in memory, so what takes long comes before them.
 
 The standard modules stay files by default, even with `workspace/textDocumentContent`: a virtual
 document is read-only to everything else the server offers, so it would lose hover and navigation
