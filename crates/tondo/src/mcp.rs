@@ -555,8 +555,17 @@ one state never left it; `guide` topic `models`",
             )
         }
         // What a run that passed did not try.
-        "test" if args.text("schedules").is_none() && tests.iter().filter(passed).any(|t| t["tasks"] == true) => {
-            Some("tests that start tasks ran in one order of them: `schedules: \"all\"` runs every order that differs")
+        "test"
+            if args.text("schedules").is_none()
+                && tests.iter().filter(passed).any(|t| {
+                    let last = t["attempts"].as_array().and_then(|a| a.last()).cloned().unwrap_or_default();
+                    t["tasks"] == true && (last["outside"] == true || last["orders"]["complete"] == false)
+                }) =>
+        {
+            Some(
+                "tests that start tasks and reach outside the program, or have many orders, ran in only some of them: \
+`schedules: \"all\"` tries all, if each test leaves the outside as it found it",
+            )
         }
         "test" if report["machines"].as_array().is_some_and(|machines| !machines.is_empty()) => Some(
             "each function of `machines` gives the next state for an event, and no test checks it in every state: the tool `model` writes one",

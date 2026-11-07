@@ -703,6 +703,11 @@ impl Session<'_> {
                     }
                 }
             }
+            "outside" => {
+                if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
+                    entry.0.outside = true;
+                }
+            }
             "model" => {
                 if let Ok(model) = serde_json::from_str(&text)
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)

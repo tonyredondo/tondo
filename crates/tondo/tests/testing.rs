@@ -2397,3 +2397,29 @@ fn a_model_that_says_nothing_is_told() {
     assert!(!stdout.contains("`one goes to three` says nothing"), "{stdout}");
     assert!(stdout.contains("model: it never leaves its start state"), "{stdout}");
 }
+
+/// A plain run tries by itself the orders of a test that starts tasks and
+/// stays in the program, and fails it in the order that loses an update;
+/// one that reaches files runs once, and says so; `--schedules 1` runs each
+/// once.
+#[test]
+fn a_plain_run_tries_the_orders_of_tasks() {
+    let code = "import std.fs\nimport std.sync\n\npub fn record(count: sync.Mutex[Int]) {\n    let now = count.get()\n    // tondo: allow W1016: the bug this test finds\n    count.set(now + 1)\n}\n\npub fn writes(count: sync.Mutex[Int], file: String) {\n    count.update((value) { value += 1 })\n    _ = fs.writeText(file, \"x\")\n}\n\nfn main() {}\n";
+    let tests = "import std.sync\n\ntest countsBoth {\n    let count = sync.Mutex(0)\n    let a = spawn record(count)\n    let b = spawn record(count)\n    a.wait()\n    b.wait()\n    assert(count.get() == 2)\n}\n\ntest writesFiles {\n    let count = sync.Mutex(0)\n    let a = spawn writes(count, \"a.txt\")\n    let b = spawn writes(count, \"b.txt\")\n    a.wait()\n    b.wait()\n    assert(count.get() == 2)\n}\n";
+    let dir = project("every-order-by-itself", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.contains("countsBoth: failed in order"), "{stdout}");
+    assert!(stdout.contains("--schedules at:"), "{stdout}");
+    assert!(stdout.contains("1 test that starts tasks and reached outside the program ran in one order"), "{stdout}");
+    let (stdout, _, _) = tondo(&dir, &["test", "--test-format", "json"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+    let test = |name: &str| report["tests"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap().clone();
+    assert_eq!(test("writesFiles")["attempts"][0]["outside"], true, "{report}");
+    assert_eq!(test("countsBoth")["attempts"][0]["outside"], false, "{report}");
+    assert!(test("countsBoth")["attempts"][0]["orders"]["failed_at"].as_str().unwrap().starts_with("at:"), "{report}");
+    // One order each, when asked.
+    let (stdout, _, _) = tondo(&dir, &["test", "--schedules", "1"]);
+    assert!(!stdout.contains("failed in order") && !stdout.contains("ran in one order"), "{stdout}");
+}

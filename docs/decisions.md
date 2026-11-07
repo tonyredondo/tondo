@@ -5503,3 +5503,17 @@ while the program runs, since it is written when the program falls; what a dump 
 program needs, as the events and the order of locks, still runs only with a `TONDO_DUMP` given, so
 that a build for production stays as fast. `TONDO_DUMP=off` leaves none, and the tests of the
 toolchain run their programs so.
+
+## `tondo test` tries the orders of tasks by itself
+
+A test of tasks passed in a plain run whatever order the machine gave, and only `--schedules all`
+found the order that loses an update, so a test protected nothing unless CI remembered the flag: a
+fresh agent, asked for a test that would have caught a lost visit, wrote one, saw it pass, and
+found no way for the test to ask for every order. A plain run now does it for the tests that start
+tasks, which the checker marks through what they call, up to 200 orders or 2 seconds each, and fails
+one in the order that breaks it. A test that reaches outside the program, files, the network,
+processes, a database or C, runs once: running it again would change what is outside, and a test
+of a database would fail for its own rows rather than for a bug. Test builds already call the
+runtime before each of those, for `--schedules all`, so a plain run notes it at the cost of a store;
+an order that reaches outside stops the search too. `tests/orders`, 25 tests of the standard
+library's tasks, went from 0.6 s to about 1.3 s. `--schedules 1` runs each test once.

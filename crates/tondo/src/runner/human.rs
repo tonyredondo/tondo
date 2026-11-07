@@ -63,6 +63,14 @@ struct Fuzzing {
 }
 
 impl<'a> Printer<'a> {
+    /// One that says nothing, for the orders `tondo test` tries by itself
+    /// after the run it printed.
+    pub(super) fn silent(tree: &'a Tree, plan: &[u32], options: &'a Options) -> Printer<'a> {
+        let mut printer = Printer::new(tree, plan, options);
+        (printer.quiet, printer.events) = (true, None);
+        printer
+    }
+
     pub(super) fn new(tree: &'a Tree, plan: &[u32], options: &'a Options) -> Printer<'a> {
         let mut plan = plan.to_vec();
         plan.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
@@ -448,12 +456,32 @@ pub(super) fn report(
         count(&|a| matches!(a.status, Status::Blocked(_, false))),
         elapsed.as_secs_f64()
     );
-    // What one run did not try.
-    let ordered = options.schedules.is_some() || options.orders.is_some();
-    let one_order = count(&|a| tree.nodes[a.node as usize].tasks && a.status == Status::Passed);
-    if one_order > 0 && !ordered {
-        let tests = if one_order == 1 { "1 test starts" } else { "tests start" };
-        say!("note: {tests} tasks and ran in one order of them: `--schedules all` runs every order that differs");
+    // The orders of the tests that start tasks: those tried by itself, and
+    // what it did not try.
+    let tasks = |a: &Aggregate| tree.nodes[a.node as usize].tasks && a.status == Status::Passed;
+    fn decisive(a: &Aggregate) -> &Attempt {
+        &a.attempts[a.decisive]
+    }
+    let explored = |a: &Aggregate| decisive(a).explored.clone().filter(|_| options.orders.is_none());
+    let tried = count(&|a| tasks(a) && explored(a).is_some_and(|e| e.complete));
+    let partly = count(&|a| tasks(a) && explored(a).is_some_and(|e| !e.complete) && !decisive(a).outside);
+    let outside = count(&|a| tasks(a) && decisive(a).outside);
+    // `1 test that starts`, `2 tests that start`.
+    let tests = |n: usize, verb: &str| match n {
+        1 => format!("1 test that {verb}s tasks"),
+        n => format!("{n} tests that {verb} tasks"),
+    };
+    if tried > 0 {
+        say!("note: {} passed in every order of them that differs", tests(tried, "start"));
+    }
+    if partly > 0 {
+        say!("note: {} had more orders than a run tries: `--schedules all` tries them all", tests(partly, "start"));
+    }
+    if outside > 0 && options.schedules.is_none() && options.orders.is_none() {
+        say!(
+            "note: {} and reached outside the program ran in one order: `--schedules all` tries the others, if each leaves the outside as it found it",
+            tests(outside, "start")
+        );
     }
     for (name, at) in &tree.machines {
         say!(

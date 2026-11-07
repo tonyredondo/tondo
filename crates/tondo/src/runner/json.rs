@@ -441,6 +441,7 @@ impl Context<'_> {
         let mut fields = vec![
             ("index", int(index)),
             ("orders", orders),
+            ("outside", Value::Bool(attempt.outside)),
             ("models", Value::Array(attempt.models.iter().map(converted).collect())),
             ("iteration", int(attempt.iteration as usize)),
             ("round", int(attempt.round as usize)),

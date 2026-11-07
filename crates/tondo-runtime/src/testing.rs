@@ -219,6 +219,7 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
         let Some(Some((member, node))) = next else { break };
         let test = !with(|r| r.suites[node as usize]).unwrap_or(true);
         let state = test.then(State::save);
+        crate::tasks::REACHED_OUTSIDE.store(false, Ordering::Relaxed);
         // A test is profiled while it runs, a benchmark while it measures.
         let profiled = test && crate::profiling::on() && !crate::bench::measures();
         if profiled {
@@ -237,6 +238,11 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
         let leaked = state.map(State::restore).unwrap_or_default();
         let dirty = !leaked.is_empty();
         with(|r| {
+            // What reached outside the program, which another order of it
+            // would change again.
+            if test && crate::tasks::REACHED_OUTSIDE.load(Ordering::Relaxed) {
+                r.frame("outside", node, b"");
+            }
             r.running.pop();
             // Tasks the test left running fail it, unless it failed already.
             if dirty && r.error.is_none() {

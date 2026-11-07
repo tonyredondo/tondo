@@ -86,9 +86,15 @@ suite slow {
   `orders.failed_at`, for `debug_start` to take as `schedule`. Nothing waits for the clock
   in these runs: time jumps to the next timer, and that it comes before an
   answer is one more order, so a test with a timeout is tried both ways.
-- A run says what it did not try: tests that start tasks and passed in one
-  order of them, which `--schedules all` tries in all, and functions that give
-  the next state for an event with no test of them in every state, for which
+- A test that starts tasks, itself or through what it calls, and passes
+  without reaching outside the program, `tondo test` runs again in every order
+  of its tasks that differs, up to 200 orders or 2 seconds: a lost update
+  shows in a plain run, with the order to repeat it. One that reaches files,
+  the network, processes, a database or C runs once, as running it again
+  would change them: `--schedules all` tries its orders when it leaves them as
+  it found them. `--schedules 1` runs each test in one order.
+- A run says what it did not try: those tests, and functions that give the
+  next state for an event with no test of them in every state, for which
   `tondo model <function>` writes one.
 - `tondo test --record target/recordings`, on Linux, records each test and
   keeps the runs of those that fail: `tondo debug --replay

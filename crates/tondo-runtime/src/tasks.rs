@@ -2287,6 +2287,7 @@ fn in_c() -> &'static InC {
 /// worker runs nothing else, so the monitor may start another in its place.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_enter() {
+    REACHED_OUTSIDE.store(true, Ordering::Relaxed);
     touch(OUTSIDE);
     // C follows no references of Tondo values.
     leave_tondo();
@@ -3434,9 +3435,14 @@ pub(crate) fn shared_used(object: usize) {
 /// orders of a test: what the program cannot see the identity of.
 const OUTSIDE: usize = 0;
 
+/// Whether the running test reached outside the program, which a run of it
+/// in another order would change again (testing 8.10).
+pub(crate) static REACHED_OUTSIDE: AtomicBool = AtomicBool::new(false);
+
 /// A test calls something that reaches outside the program.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_outside() {
+    REACHED_OUTSIDE.store(true, Ordering::Relaxed);
     touch(OUTSIDE);
 }
 

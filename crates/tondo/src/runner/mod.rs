@@ -302,6 +302,8 @@ pub struct Attempt {
     /// The suite or test a retry round runs again.
     pub unit: Option<u32>,
     pub explored: Option<Explored>,
+    /// It reached outside the program: files, the network, processes, C.
+    pub outside: bool,
     pub logs: Vec<String>,
     /// What looks wrong without failing it, as an update tasks can lose.
     pub warnings: Vec<String>,
@@ -440,6 +442,7 @@ impl Attempt {
             virtual_time: Vec::new(),
             benchmarks: Vec::new(),
             models: Vec::new(),
+            outside: false,
             fuzz: Vec::new(),
         }
     }
@@ -636,9 +639,13 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
         _ if let Some(searching) = &options.fuzz => (fuzz::campaign(&run, &plan, &mut printer, searching), Vec::new()),
-        _ if let Some(orders) = &options.orders => (explore(&run, &plan, &mut printer, orders), Vec::new()),
+        _ if let Some(orders) = &options.orders => (explore(&run, &plan, &mut printer, orders, None), Vec::new()),
         _ => campaign(&run, &plan, &mut printer),
     };
+    let mut attempts = attempts;
+    if by_itself(options) && options.baseline.is_none() && !interrupt::requested() {
+        every_order(&run, &mut attempts);
+    }
     let _ = std::fs::remove_file(&entries);
     let _ = std::fs::remove_file(&fuzzed);
     // Tests did not run, so there is no report, and snapshots stay (7.10).
@@ -1207,10 +1214,64 @@ pub enum Orders {
 /// The orders `--schedules all` tries of a test, unless it says.
 pub const ORDERS: usize = 20_000;
 
+/// What `tondo test` tries by itself of a test that starts tasks (8.10).
+const OWN_ORDERS: usize = 200;
+const OWN_TIME: Duration = Duration::from_secs(2);
+
+/// Whether `tondo test` tries the orders of tests that start tasks by
+/// itself: a plain run, with nothing that runs them otherwise.
+fn by_itself(options: &Options) -> bool {
+    options.schedules.is_none()
+        && options.orders.is_none()
+        && options.repeat == 1
+        && options.retry == 0
+        && options.bench.is_none()
+        && options.fuzz.is_none()
+        && options.record.is_none()
+        && !options.update_snapshots
+        && !options.list
+}
+
+/// The tests that start tasks, passed and stayed in the program, tried in
+/// the orders that differ within a budget: one that fails takes the place
+/// of the run that passed.
+fn every_order(run: &worker::Run, attempts: &mut [Attempt]) {
+    let tree = run.tree;
+    let tried: Vec<u32> = attempts
+        .iter()
+        .filter(|a| !tree.suite(a.node) && tree.nodes[a.node as usize].tasks)
+        .filter(|a| a.status == Status::Passed && !a.outside)
+        .map(|a| a.node)
+        .collect();
+    if tried.is_empty() {
+        return;
+    }
+    let mut silent = human::Printer::silent(tree, &tried, run.options);
+    for explored in explore(run, &tried, &mut silent, &Orders::All(OWN_ORDERS), Some(OWN_TIME)) {
+        let Some(at) = attempts.iter().position(|a| a.node == explored.node) else { continue };
+        match explored.status.failed() && !explored.outside {
+            true => attempts[at] = explored,
+            false => {
+                attempts[at].explored = explored.explored;
+                attempts[at].outside |= explored.outside;
+            }
+        }
+    }
+}
+
 /// `--schedules all` (8.10): each test runs in the order of its first choices,
 /// and then again for every other choice it could have made, those with fewer
 /// changes first, as most faults need few, until none is left or it fails.
-fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders: &Orders) -> Vec<Attempt> {
+/// With a `budget`, as `tondo test` tries by itself: no longer than that for
+/// a test, none of it said but a failure, and no order after one that reached
+/// outside the program, which running again would change.
+fn explore(
+    run: &worker::Run,
+    plan: &[u32],
+    printer: &mut human::Printer,
+    orders: &Orders,
+    budget: Option<Duration>,
+) -> Vec<Attempt> {
     let (tree, options) = (run.tree, run.options);
     printer.begin(1, 0, plan);
     let context = Context { round: 0, iteration: 1, unit: None, target: None };
@@ -1229,9 +1290,11 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
         let mut classes = std::collections::HashSet::new();
         let mut pending: std::collections::VecDeque<orders::Order> = [first].into();
         let (mut ran, mut last) = (0, Vec::new());
-        let (mut left_out, mut failed_at) = (false, None);
+        let (mut left_out, mut failed_at, mut outside) = (false, None, false);
+        let started = std::time::Instant::now();
         while let Some((given, next)) = pending.pop_front() {
-            if ran == limit || interrupt::requested() {
+            let spent = budget.is_some_and(|budget| started.elapsed() > budget);
+            if ran == limit || interrupt::requested() || spent {
                 left_out = true;
                 break;
             }
@@ -1245,6 +1308,13 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             let written = std::fs::read_to_string(&out).unwrap_or_default();
             // Another run of an order gives what the first did.
             let another = classes.insert(orders::class(&written));
+            // What reached outside is not run again by itself, nor taken
+            // for a failure: that outside changed.
+            if budget.is_some() && written.lines().any(|line| line == "t 0") {
+                outside = true;
+                pending.clear();
+                break;
+            }
             if last.iter().any(|attempt| attempt.status.failed()) {
                 let text = dotted(orders::path(&written).iter().map(u32::to_string).collect());
                 if !options.json {
@@ -1289,8 +1359,8 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 pending.truncate(limit);
             }
         }
-        // A failure said where it stopped.
-        if matches!(orders, Orders::All(_)) && failed_at.is_none() {
+        // A failure said where it stopped; by itself, only that.
+        if matches!(orders, Orders::All(_)) && failed_at.is_none() && budget.is_none() {
             let how = if left_out { "not all of them: `--schedules all:<n>` tries more" } else { "all that differ" };
             let count = match classes.len() {
                 1 => "1 order".to_string(),
@@ -1309,8 +1379,9 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
         }
         for mut attempt in last.drain(..) {
             let failed_at = failed_at.clone();
-            let complete = !left_out && failed_at.is_none();
+            let complete = !left_out && failed_at.is_none() && !outside;
             attempt.explored = Some(Explored { orders: classes.len(), complete, failed_at });
+            attempt.outside |= outside;
             printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
             attempts.push(attempt);
         }

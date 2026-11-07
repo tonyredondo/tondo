@@ -10,7 +10,7 @@ few of them together, cheapest first.
 | Do the errors say why? | the same test, comparing `err(...)` |
 | Is there an input that breaks it? | `testing.fuzz`, and `test` with `fuzz` to search |
 | Does a state machine keep its rules after any events, in any order? | `model.machine`, written by the tool `model` |
-| Do tasks that share a value get it right in every order? | `test` with `--schedules all` |
+| Do tasks that share a value get it right in every order? | `test`, which tries them by itself; `--schedules all` for those that reach outside |
 | Does a protocol or a design keep its properties? | `model.check`, `model.watch`, `model.follows` (`tondo guide models`) |
 | Does an output keep its shape? | `testing.snapshot` |
 | What did no test run? | `test` with `coverage` |
@@ -125,16 +125,18 @@ test payAndCancelAtOnce {
 ```
 
 `check` reads the tests too, once the code is right. Then `test` runs them all:
-the fuzz test with its seeds, the benchmark once, and each test in one order of
-its tasks, whichever the machine gives: `payAndCancelAtOnce` may pass or fail,
-and either proves little.
+the fuzz test with its seeds and the benchmark once. A test that starts tasks
+and stays in the program, as `payAndCancelAtOnce`, it also runs in every order
+of its tasks that differs, a few hundred at most, since one run proves only the
+order the machine gave: here one of them loses a write.
 
 ```mcp
 check {}
 => it compiles
 test {}
 => shipsOnlyWhatIsPaid ... ok
-=> readsWhatClientsWrite ... ok
+=> payAndCancelAtOnce: failed in order
+=> that write is lost
 ```
 
 `apply` gives the next state for an event: it is a state machine, and the
@@ -174,17 +176,9 @@ and a shipping after a cancel, or the next run gives the other.
 +        Event.Cancel => order with { cancelled: true }
 ```
 
-`--schedules all` runs `payAndCancelAtOnce` in every order of its two tasks
-that differs, and says which loses what.
-
-```mcp
-test {"schedules": "all"}
-=> payAndCancelAtOnce ... FAILED
-=> that write is lost
-```
-
-`handle` reads the order and writes it in two steps, and the other task's write
-falls between them. Read and write it in one step:
+Back to `payAndCancelAtOnce`: `handle` reads the order and writes it in two
+steps, and the other task's write falls between them. Read and write it in one
+step:
 
 ```edit src/order.to
 -    match apply(order.get(), event) {
@@ -206,9 +200,9 @@ falls between them. Read and write it in one step:
 ```
 
 ```mcp
-test {"schedules": "all"}
-=> payAndCancelAtOnce: 4 orders, all that differ
+test {}
 => 6 passed
+=> passed in every order of them that differs
 ```
 
 `coverage` says what no test ran: one line of `src/order.to` of 19, where
@@ -264,10 +258,12 @@ test {"bench": true, "bench_time": 1}
   checks with no model to write, and `model` writes the test of. Then each
   rule is a property in `holds`. Prefer this to many tests of single events.
 - **Every order**: a test where tasks share something, small, with two or
-  three tasks, run with `--schedules all`. A test that passes once proves
-  nothing about tasks; `--schedules all` says how many orders it tried and
-  whether that was all. A failure gives the order, to run again and to debug
-  with `debug_start` and `schedule`. `tondo guide runbook-flaky`.
+  three tasks. `test` runs it in every order of them that differs, up to a
+  few hundred, when it stays in the program; one that reaches files, the
+  network or a database runs once, as running it again would change them,
+  and `--schedules all` tries its orders when it leaves them as it found
+  them. A failure gives the order, to run again and to debug with
+  `debug_start` and `schedule`. `tondo guide runbook-flaky`.
 - **Models**: when the design itself is the risk, a protocol, a scheduler, a
   lock, before or beside the code. `model.watch` holds the real code to
   properties at each `model.mark`; `model.check` explores a model, and
@@ -292,22 +288,23 @@ test {"bench": true, "bench_time": 1}
 2. `test` after each change; with `affected` and a commit, only the tests that
    reach what changed, and with `--watch` again on each save.
 3. The tests that need more, when the code they test changes: `model` for a
-   state machine, `--schedules all` for tasks, `fuzz` for a parser, `bench`
-   for a hot path.
+   state machine, `--schedules all` for tasks that reach outside the program,
+   `fuzz` for a parser, `bench` for a hot path.
 4. `coverage`, then the tests it shows are missing.
 5. Before calling it done: `test` with no filter, all passing.
 
 When one fails, the runbooks say what to do: `runbook-flaky` for a test that
 fails sometimes, `runbook-regression` to keep a failure from coming back,
 `runbook-debug` for a value that is wrong. In CI, run `tondo test`, then
-`--schedules all` on the tests of tasks, `--models` for the models, `--bench
+`--schedules all` on the tests of tasks that reach outside the program and
+leave it as they found it, `--models` for the models, `--bench
 --against main --max-regression 5` for speed, and `--fuzz --fuzz-time 300`
 each night.
 
 ## What not to do
 
-- Do not run a test many times to show it passes: `--schedules all` tries the
-  orders that matter, and says when it tried them all.
+- Do not run a test many times to show it passes: `test` tries the orders
+  that matter, and says when it tried them all.
 - Do not make a test pass by weakening it: a failing `assert` is the finding.
 - Do not sleep in a test, nor mock the clock by hand: `withVirtualTime`.
 - Do not write a model of code that is a state machine: `model.machine` checks

@@ -1775,6 +1775,21 @@ archivos y los procesos siguen siendo los reales.
 de campaña de 8.8: cualquier intento que no pase da exit `1`. Sin seed, el
 runner elige una y la muestra.
 
+Sin `--schedules`, `tondo test` prueba por sí mismo los órdenes de los tests
+que lanzan tareas y no salen del programa. Un test que lanza tareas, él o lo que
+llama (`tasks` en el informe), y que pasó en su ejecución normal sin llegar
+fuera del programa, corre después como con `--schedules all`, con un
+presupuesto: hasta 200 órdenes o 2 segundos, lo que llegue antes. Si uno falla,
+el test falla con su camino, como en `--schedules all`; si el presupuesto no
+basta, lo dice y no es un fallo. Un test que llega fuera del programa (archivos,
+red, procesos, entorno, una base de datos, una llamada a C), en su ejecución
+normal o en uno de los órdenes, no se prueba más: correrlo de nuevo cambiaría
+lo de fuera, y la salida humana lo nota con `--schedules all`, que lo hace si el
+test deja lo de fuera como lo encontró. El informe da en `outside` de cada
+intento si llegó fuera, y en `orders` lo probado. No ocurre con `--schedules`,
+`--repeat`, `--retry`, `--bench`, `--fuzz`, `--record`, `--list` ni
+`--update-snapshots`; `--schedules 1` corre cada test en un solo orden.
+
 ### 8.11 Grabar los tests que fallan
 
 `--record <dir>`, en Linux, ejecuta cada test seleccionado solo, en su
