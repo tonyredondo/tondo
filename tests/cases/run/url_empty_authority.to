@@ -1,0 +1,17 @@
+// A path that starts with `//` writes an empty authority before it, so that
+// it does not read back as one (standard library 14.28, RFC 3986 3.3).
+import std.console
+import std.url
+
+fn main() {
+    for text in ["////a", "file:///etc/hosts", "//host/x"] {
+        let read = url.parse(text).expect("a URL")
+        console.println(
+            "{read} {read.host.isEmpty()} {read.path} {url.parse("{read}") == ok(read)}",
+        )
+    }
+}
+
+// expect-stdout: ////a true //a true
+// expect-stdout: file:///etc/hosts true /etc/hosts true
+// expect-stdout: //host/x false /x true

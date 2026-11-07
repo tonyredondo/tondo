@@ -354,7 +354,12 @@ impl Display for Url {
         if not self.scheme.isEmpty() {
             out.push("{self.scheme}:")
         }
-        if hasAuthority(self) or (not self.scheme.isEmpty() and self.path.startsWith("/")) {
+        // A path that starts with `//` would read as an authority: an empty
+        // one goes before it (RFC 3986, 3.3).
+        let path = self.escapedPath()
+        if hasAuthority(self) or
+            path.startsWith("//") or
+            (not self.scheme.isEmpty() and path.startsWith("/")) {
             out.push("//")
             if not self.user.isEmpty() or self.password.isSome() {
                 out.push(encoded(self.user, ""))
@@ -370,7 +375,7 @@ impl Display for Url {
                 none => {}
             }
         }
-        out.push(self.escapedPath())
+        out.push(path)
         if not self.query.isEmpty() {
             out.push("?{self.query}")
         }
