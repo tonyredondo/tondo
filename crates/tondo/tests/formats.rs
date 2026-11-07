@@ -112,11 +112,22 @@ fn a_panic_and_its_dump_keep_their_formats() {
     // The dump, whose samples of memory are taken by chance.
     let written: Value = serde_json::from_str(&std::fs::read_to_string(&dump).unwrap()).unwrap();
     recorded("dump.shape", &shape(&written, &[".heap.samples", ".events"]));
-    // What `tondo dump read` gives of it, as the tools read it.
-    for view in ["why", "tasks", "locals"] {
-        let (read, _) = tondo(&dir, &["dump", "read", dump.to_str().unwrap(), view, "--json"], &[]);
-        let read: Value = serde_json::from_str(&read).unwrap_or_else(|_| panic!("{view}: {read}"));
-        recorded(&format!("dump-{view}.shape"), &shape(&read, &[]));
+    // What `tondo dump read` gives of it, as the tools read it: the locals
+    // of the task that fell, whose binding has parts.
+    let fell = written["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["at"].as_str().is_some_and(|at| at.ends_with(" in total")))
+        .map(|value| value["task"].to_string())
+        .unwrap_or_else(|| panic!("no bindings in total: {written}"));
+    for view in [vec!["why"], vec!["tasks"], vec!["locals", fell.as_str()]] {
+        let mut args = vec!["dump", "read", dump.to_str().unwrap()];
+        args.extend(&view);
+        args.push("--json");
+        let (read, _) = tondo(&dir, &args, &[]);
+        let read: Value = serde_json::from_str(&read).unwrap_or_else(|_| panic!("{view:?}: {read}"));
+        recorded(&format!("dump-{}.shape", view[0]), &shape(&read, &[]));
     }
 }
 

@@ -3,6 +3,12 @@
 .locals.bindings[]
 .locals.bindings[].name: string
 .locals.bindings[].parts[]
+.locals.bindings[].parts[].name: string
+.locals.bindings[].parts[].parts[]
+.locals.bindings[].parts[].parts[].name: string
+.locals.bindings[].parts[].parts[].parts[]
+.locals.bindings[].parts[].parts[].value: string
+.locals.bindings[].parts[].value: string
 .locals.bindings[].type: string
 .locals.bindings[].value: string
 .locals.frame: number
