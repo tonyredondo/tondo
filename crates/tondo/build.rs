@@ -99,9 +99,18 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
     // runs as the real one but is not measured or shipped.
     println!("cargo:rerun-if-env-changed=TONDO_RUNTIME_FAST");
     let fast = env::var_os("TONDO_RUNTIME_FAST").is_some_and(|value| value == "1");
+    // `TONDO_RUNTIME_COVERAGE=1`, to measure what of the runtime the tests
+    // of the toolchain run: each program it links writes where its
+    // `LLVM_PROFILE_FILE` says (docs/refactor.md, phase 0.1).
+    println!("cargo:rerun-if-env-changed=TONDO_RUNTIME_COVERAGE");
+    let coverage = env::var_os("TONDO_RUNTIME_COVERAGE").is_some_and(|value| value == "1");
     // Its own build directory, so this build does not wait for the one
     // that runs it; and one for each way, so that neither undoes the other.
-    let target_dir = out_dir.join(if fast { "runtime-fast" } else { "runtime" });
+    let target_dir = out_dir.join(match (coverage, fast) {
+        (true, _) => "runtime-coverage",
+        (false, true) => "runtime-fast",
+        (false, false) => "runtime",
+    });
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut command = Command::new(&cargo);
     command
@@ -118,6 +127,7 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         .args(["-C", "llvm-args=-align-all-functions=6"])
         .env("CARGO_PROFILE_RELEASE_INCREMENTAL", fast.to_string())
         .args(["--cfg", "tondo_staticlib"])
+        .args(coverage.then_some(["-C", "instrument-coverage"]).into_iter().flatten())
         .args(["--print", "native-static-libs"])
         .current_dir(runtime)
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
@@ -144,11 +154,27 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
     if !output.status.success() {
         panic!("compiling the Tondo runtime for {target} failed:\n{stderr}");
     }
-    let link_args = stderr
+    let mut link_args = stderr
         .lines()
         .find_map(|line| line.split_once("native-static-libs: ").map(|(_, libs)| libs.trim()))
         .unwrap_or("")
         .to_string();
+    // What writes the counts as a program ends, which Rust links with a
+    // program of its own and a staticlib leaves out; with `TONDO_CC=cc`.
+    if coverage {
+        let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+        let sysroot = Command::new(rustc).args(["--print", "sysroot"]).output().expect("rustc's sysroot");
+        let lib = Path::new(String::from_utf8_lossy(&sysroot.stdout).trim()).join(format!("lib/rustlib/{target}/lib"));
+        let profiler = std::fs::read_dir(&lib)
+            .expect("the libraries of rustc's sysroot")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("libprofiler_builtins"))
+            })
+            .expect("profiler_builtins in rustc's sysroot");
+        link_args = format!("{} -Wl,-u,__llvm_profile_runtime {link_args}", profiler.display());
+    }
     (target_dir.join(target).join("release/libtondo_runtime.a"), link_args)
 }
 
