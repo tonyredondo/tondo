@@ -2540,8 +2540,9 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         command.env("TONDO_LIVE_HOLD", "1");
         command.args(program_args).spawn().map(Some).map_err(|e| format!("cannot start {}: {e}", executable.display()))
     };
-    let mut child = start()?;
+    // Read first: a change while it starts is a change.
     let mut seen = stamps();
+    let mut child = start()?;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
         if let Some(status) = child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
@@ -2555,6 +2556,9 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         seen = settled(now, &stamps);
         let Some(running) = child.as_mut() else {
             child = start()?;
+            if options.tests {
+                reached_tests(path);
+            }
             continue;
         };
         match tondo::live::reload_named(&running.id().to_string()) {
