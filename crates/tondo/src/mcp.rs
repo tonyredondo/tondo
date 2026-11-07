@@ -1127,6 +1127,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             argv.extend(files);
         }
         "compact" => push(&["fmt", "--compact", &args.need("file")?]),
+        "model" => push(&["model", &path, &args.need("function")?, "--json"]),
         "expand" => push(&["expand", &path, "--json"]),
         "api" => {
             push(&["api"]);
@@ -2140,6 +2141,18 @@ the lines, that take the most.",
             ("lines", "boolean", "By line, instead of by function."),
             ("sample", "string", "Which of the profile's samples to read, as `alloc_space`."),
             ("html", "string", "Also write it as a page here."),
+        ],
+    },
+    Tool {
+        name: "model",
+        description: "Check a state machine of the program with no model to write: given a function \
+`fn(state: S, event: E): S` (or `S ! X`), with `E` an enum, write the test that goes through every state it reaches \
+with every event, starting from a state built from its type, run it, and say what broke, step by step, with each \
+state, and which events no state takes. Then add properties to the test it wrote: `tondo guide models`.",
+        kind: Kind::Edits,
+        params: &[
+            ("path", "string", "The project: the current directory by default."),
+            ("function", "string!", "The function that gives the next state for an event."),
         ],
     },
     Tool {

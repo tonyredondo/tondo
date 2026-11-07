@@ -39,6 +39,7 @@ pub mod lints;
 pub mod live;
 pub mod lower;
 pub mod lsp;
+pub mod machine;
 pub mod manage;
 pub mod mcp;
 pub mod meta;

@@ -2940,3 +2940,26 @@ fn a_long_answer_comes_in_parts() {
     assert_eq!(answer["result"], json!([]), "{answer}");
     editor.stop();
 }
+
+/// Over a function that is a state machine, a lens checks it with no model to
+/// write, and says how it went.
+#[test]
+fn a_state_machine_has_a_lens() {
+    let program = "pub enum Event {\n    Open\n    Close\n}\n\npub fn apply(open: Bool, event: Event): Bool {\n    match event {\n        \
+Event.Open => true\n        Event.Close => false\n    }\n}\n\nfn main() {}\n";
+    let dir = project("lsp-machine", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", program)]);
+    let mut capabilities = everything();
+    capabilities["window"] = json!({ "showMessage": {} });
+    let mut editor = Editor::launch_with(capabilities, json!({}), Value::Null, "off");
+    let uri = editor.open(&dir.join("src/main.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lens = lenses.as_array().unwrap().iter().find(|lens| lens["command"]["command"] == "tondo.checkMachine");
+    let lens = lens.unwrap_or_else(|| panic!("{lenses}"));
+    assert_eq!(lens["command"]["arguments"][1], "apply", "{lens}");
+    let run = json!({ "command": "tondo.checkMachine", "arguments": lens["command"]["arguments"] });
+    editor.request("workspace/executeCommand", run);
+    let said = editor.receive_method("window/showMessage");
+    assert!(said["params"]["message"].to_string().contains("holds as a state machine in 2 states"), "{said}");
+    assert!(dir.join("src/main_test.to").exists());
+    editor.stop();
+}

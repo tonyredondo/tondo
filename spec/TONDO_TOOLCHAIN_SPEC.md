@@ -2048,6 +2048,18 @@ quien la llamó, cuyo título dice cuánto, y la tabla de funciones. Con
 labels, dice además cuánto tomó cada valor de cada uno, salvo `thread`. Con
 `--json`, `tondo-profile-show-0.1/1` (7.12).
 
+### 7.16 `tondo model`
+
+`tondo model [<proyecto>] <función>` comprueba una máquina de estados del programa
+sin modelo que escribir (biblioteca 14.43): una función `fn(estado: S, evento: E): S`,
+o `S ! X`, con `E` un enum de su módulo. Escribe en el archivo de tests de su
+archivo `test <función>IsAStateMachine`, que llama a `model.machine` con un estado
+inicial hecho a partir del tipo de `S` (el primer valor de cada parte: `false`, `0`,
+`""`, `none`, la primera variante), y lo ejecuta. Si el test ya está, lo ejecuta tal
+como lo dejó el programa. Con `--json` da el archivo, el test, su estado y sus
+modelos como el informe de `tondo test`. El editor lo ofrece como lente sobre cada
+función que es una máquina de estados, y `tondo mcp` como la herramienta `model`.
+
 ## 8. Determinismo
 
 Con las mismas fuentes, `tondo.toml`, `tondo.lock` y versión de compilador:

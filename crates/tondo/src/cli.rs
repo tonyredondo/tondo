@@ -93,6 +93,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["learn Tondo: the language, the library, the commands"],
     },
     Command {
+        name: "model",
+        usage: &["tondo model [<project>] <function> [--json]"],
+        summary: &["write and run the test of a state machine of the program, with no model to write"],
+    },
+    Command {
         name: "explain",
         usage: &["tondo explain [<code>] [--json]"],
         summary: &["what the code of an error, a warning or a panic means, with examples"],

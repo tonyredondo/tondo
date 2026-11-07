@@ -169,6 +169,11 @@ does.
 
 ## Running them
 
+- `tondo model apply` writes the test of the state machine `apply`, next to
+  its file, with a start state built from its type, and runs it; again, it
+  runs the test as the program left it. The editor offers it as a lens over
+  each function that is one, *Check as a state machine*, and `tondo mcp` as
+  the tool `model`.
 - `tondo test --models` runs the tests that check a model; `--schedules all`
   goes through every order of their tasks.
 - The report of `--test-format json` has each model in `models`: how many

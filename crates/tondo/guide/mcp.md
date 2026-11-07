@@ -30,7 +30,9 @@ source and stack, as data.
 5. `run` or `test`; `explain` says what a code of an error or a panic means.
 
 Tools: `check`, `fix`, `format`, `compact`, `expand`, `api`, `guide`,
-`graph` (modules, files and imports), `explain`.
+`graph` (modules, files and imports), `explain`, and `model`, which checks a
+state machine of the program, a function `fn(state: S, event: E): S`, with
+no model to write (`tondo guide models`).
 
 ## Navigating
 

@@ -678,6 +678,9 @@ export function registerTesting(
     vscode.commands.registerCommand('tondo.testsReached', () =>
       wholeRun(['test', '--affected', 'HEAD'], 'Running the tests the change reaches'),
     ),
+    vscode.commands.registerCommand('tondo.modelTests', () =>
+      wholeRun(['test', '--models', '--schedules', 'all'], 'Checking the models, in every order of their tasks'),
+    ),
     vscode.commands.registerCommand('tondo.lockOrderTests', () =>
       wholeRun(['test', '--lock-order'], 'Running the tests, looking at the order of locks'),
     ),

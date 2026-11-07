@@ -788,6 +788,7 @@ impl Server {
                 lenses.extend(self.test_lenses(params).unwrap_or_default());
                 lenses.extend(self.tested_by(params).unwrap_or_default());
                 lenses.extend(self.reference_lenses(params).unwrap_or_default());
+                lenses.extend(self.machine_lenses(params).unwrap_or_default());
                 Some(Ok(Value::Array(lenses)))
             }
             "textDocument/foldingRange" => Some(Ok(self.folding_ranges(params).unwrap_or(json!([])))),
@@ -953,7 +954,7 @@ impl Server {
                 "documentLinkProvider": { "resolveProvider": true },
                 "documentOnTypeFormattingProvider": { "firstTriggerCharacter": "}" },
                 "executeCommandProvider": { "commands": [
-                    "tondo.apply", "tondo.runTest", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
+                    "tondo.apply", "tondo.runTest", "tondo.checkMachine", "tondo.signature", "tondo.moveTo", "tondo.modules", "tondo.useDump", "tondo.group", "tondo.trait", "tondo.toMethod", "tondo.toFunction", "tondo.inlineAlias", "tondo.ifMatch",
                 ] },
                 "selectionRangeProvider": true,
                 "documentRangeFormattingProvider": { "rangesSupport": true },
@@ -1298,6 +1299,12 @@ impl Server {
         };
         match params["command"].as_str()? {
             "tondo.runTest" => {}
+            "tondo.checkMachine" => {
+                let path = uri_path(arguments[0].as_str()?)?;
+                let function = arguments[1].as_str()?.to_string();
+                check_machine(root_of(&path).0, function);
+                return Some(Value::Null);
+            }
             "tondo.apply" => {
                 apply_edit(&arguments[0]);
                 return Some(Value::Null);
@@ -1438,6 +1445,35 @@ impl Server {
     /// Over each function, method, type and trait of a file: how many
     /// places refer to it and, for a trait, how many types implement it,
     /// which open them as the editor shows references.
+    /// Over each function that is a state machine, the lens that checks it
+    /// with no model to write (`tondo model`).
+    fn machine_lenses(&mut self, params: &Value) -> Option<Vec<Value>> {
+        self.prepare(params)?;
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
+        let sources = &analyzed.analysis.sources;
+        let here = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let module = &sources.file(here).module;
+        let mut diags = crate::diag::Diagnostics::default();
+        let mut parse = |index: usize| crate::parser::parse_file(sources.file(index), &mut diags);
+        let siblings: Vec<usize> =
+            (0..sources.len()).filter(|&i| &sources.file(i).module == module && analyzed.paths[i].is_some()).collect();
+        let parsed: Vec<crate::ast::Module> = siblings.iter().map(|&i| parse(i)).collect();
+        let at = siblings.iter().position(|&i| i == here)?;
+        let source = sources.file(here);
+        Some(
+            crate::machine::machines(&parsed[at], &parsed)
+                .into_iter()
+                .map(|(name, span)| {
+                    let arguments = json!([uri, name]);
+                    let command = json!({ "title": "Check as a state machine", "command": "tondo.checkMachine", "arguments": arguments });
+                    json!({ "range": self.range(source, span), "command": command })
+                })
+                .collect(),
+        )
+    }
+
     fn reference_lenses(&mut self, params: &Value) -> Option<Vec<Value>> {
         self.prepare(params)?;
         let uri = params["textDocument"]["uri"].as_str()?;
@@ -4461,6 +4497,42 @@ fn in_parts(params: &Value, answer: Value) -> Value {
         send(json!({ "jsonrpc": "2.0", "method": "$/progress", "params": { "token": token, "value": part } }));
     }
     json!([])
+}
+
+/// Checks a state machine of the program as `tondo model` does, in the
+/// background, and tells the editor how it went.
+fn check_machine(root: PathBuf, function: String) {
+    let Ok(tondo) = std::env::current_exe() else { return };
+    std::thread::spawn(move || {
+        let ran =
+            std::process::Command::new(tondo).args(["model", ".", &function, "--json"]).current_dir(&root).output();
+        let said: Value =
+            ran.as_ref().ok().and_then(|ran| serde_json::from_slice(&ran.stdout).ok()).unwrap_or_default();
+        let model = &said["models"][0];
+        let (kind, message) = match (model.get("broken"), said["status"].as_str()) {
+            (Some(broken), _) if !broken.is_null() => {
+                let steps = broken["path"].as_array().map_or(0, Vec::len).saturating_sub(1);
+                (1, format!("`{function}` breaks after {steps} steps: {}", broken["what"].as_str().unwrap_or_default()))
+            }
+            (Some(_), Some("passed")) => {
+                let never: Vec<&str> =
+                    model["never"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let never =
+                    if never.is_empty() { String::new() } else { format!("; no state takes {}", never.join(", ")) };
+                (3, format!("`{function}` holds as a state machine in {} states{never}", model["states"]))
+            }
+            _ => (
+                1,
+                format!(
+                    "`{function}` could not be checked: {}",
+                    said["message"].as_str().unwrap_or("see `tondo model`")
+                ),
+            ),
+        };
+        send(
+            json!({ "jsonrpc": "2.0", "method": "window/showMessage", "params": { "type": kind, "message": message } }),
+        );
+    });
 }
 
 /// Has the editor apply an edit.

@@ -2326,3 +2326,37 @@ fn models_are_checked_and_reported() {
     assert_ne!(status, 0);
     assert!(format!("{stdout}{stderr}").contains("checks no models"), "{stdout}{stderr}");
 }
+
+/// `tondo model` writes the test of a state machine of the program, with a
+/// start state built from its type, runs it, and runs it again as the program
+/// leaves it; a function of another shape says what a state machine is.
+#[test]
+fn a_state_machine_is_checked_with_no_model_to_write() {
+    let dir = project("machine", "");
+    let program = "pub enum Event {\n    Insert\n    Turn\n    Kick(Bool)\n}\n\npub type Gate = {\n    paid: Bool\n    turns: Int\n}\n\n\
+pub fn apply(gate: Gate, event: Event): Gate ! String {\n    match event {\n        Event.Insert => gate with { paid: true }\n        \
+Event.Turn if gate.paid => gate with { paid: false, turns: (gate.turns + 1) % 3 }\n        Event.Turn => fail \"not paid\"\n        \
+Event.Kick(hard) => if hard and gate.turns == 2 { panic(\"broken\") } else { gate }\n    }\n}\n\npub fn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    std::fs::remove_file(dir.join("src/main_test.to")).unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["model", "apply"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.contains("wrote `test applyIsAStateMachine`"), "{stdout}");
+    assert!(stdout.contains("`Kick(true)` panics: broken"), "{stdout}");
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("let start = Gate { paid: false, turns: 0 }"), "{written}");
+    // The program fixes it; the test runs as it is, now with a property.
+    let fixed = written.replace(
+        "model.machine(start, apply)",
+        "model.machine(start, apply, events: (_) { [Event.Insert, Event.Turn] })",
+    );
+    std::fs::write(dir.join("src/main_test.to"), &fixed).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["model", "apply", "--json"]);
+    assert_eq!(status, 0, "{stdout}");
+    let said: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+    assert_eq!(said["written"], false, "{said}");
+    assert_eq!(said["models"][0]["states"], 6, "{said}");
+    let (_, stderr, status) = tondo(&dir, &["model", "twice"]);
+    assert_ne!(status, 0);
+    assert!(stderr.contains("`twice` is not a state machine"), "{stderr}");
+}

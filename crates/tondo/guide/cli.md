@@ -24,6 +24,7 @@ tondo fix [<path>]                apply the compiler's safe repairs, then check
 tondo fmt <file.to>...            canonical layout; --check changes nothing
 tondo fmt --compact <file.to>     the same code in about 15% fewer tokens
 tondo explain E1102               what an error, warning or panic code means
+tondo model apply                 write and run the test of a state machine, with no model to write
 tondo expand [<path>]             what each `derive` wrote
 tondo api std.http                a module's declarations, docs and examples
 tondo api std.http.Client         one type, its methods and example: also String

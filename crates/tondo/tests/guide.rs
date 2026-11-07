@@ -176,6 +176,7 @@ fn the_command_line_is_in_the_tools_and_the_editor() {
         ("graph", "graph", "tondo.exportGraph"),
         ("guide", "guide", "tondo.guide"),
         ("explain", "explain", "tondo.runCommand"),
+        ("model", "model", "tondo.modelTests"),
         ("update", "update", "tondo.updateDependencies"),
         ("new", "new_project", "tondo.newProject"),
         ("init", "new_project", "tondo.initProject"),

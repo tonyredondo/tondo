@@ -77,6 +77,7 @@ fn main() -> ExitCode {
         "remove" => remove_command(&args[1..]),
         "fix" => fix_command(&args[1..]),
         "explain" => explain_command(&args[1..]),
+        "model" => model_command(&args[1..]),
         "clean" => clean_command(&args[1..]),
         "test" => test_command(&args[1..]),
         "doc-test" => doc_test_command(&args[1..]),
@@ -1803,6 +1804,47 @@ fn explain_command(args: &[OsString]) -> Result<ExitCode, String> {
         _ => return Err(format!("explain takes one code, as `tondo explain E1102`\n{USAGE}")),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo model` (7.16): the test of a state machine of the program,
+/// written next to it and run, with no model to write.
+fn model_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let (project, function) = match args.as_slice() {
+        [function] => (PathBuf::from("."), function.to_string_lossy().to_string()),
+        [project, function] => (PathBuf::from(project), function.to_string_lossy().to_string()),
+        _ => return Err(format!("model takes a function, as `tondo model apply`\n{USAGE}")),
+    };
+    let analysis = tondo::driver::analyze(&project)?;
+    let scaffold = tondo::machine::scaffold(&analysis.sources, &function)?;
+    if !scaffold.existed {
+        std::fs::write(&scaffold.file, &scaffold.text)
+            .map_err(|e| format!("cannot write {}: {e}", scaffold.file.display()))?;
+    }
+    let tondo = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut run = std::process::Command::new(tondo);
+    run.args(["test", "--filter", &scaffold.test]).current_dir(&project);
+    if !json {
+        let did = if scaffold.existed { "runs" } else { "wrote" };
+        println!("{did} `test {}` in {}", scaffold.test, scaffold.file.display());
+        let status = run.status().map_err(|e| e.to_string())?;
+        return Ok(if status.success() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    }
+    let ran = run.args(["--test-format", "json"]).output().map_err(|e| e.to_string())?;
+    let report: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap_or(serde_json::Value::Null);
+    let test = report["tests"].as_array().and_then(|tests| tests.iter().find(|t| t["model"] == true)).cloned();
+    let attempt = test.as_ref().map(|t| t["attempts"][0].clone()).unwrap_or_default();
+    let data = serde_json::json!({
+        "file": scaffold.file,
+        "written": !scaffold.existed,
+        "test": test.as_ref().map(|t| t["id"].clone()),
+        "status": test.as_ref().map(|t| t["status"].clone()),
+        "models": attempt["models"],
+        "panic": attempt["panic"],
+    });
+    print_json("model", ran.status.success(), data);
+    Ok(if ran.status.success() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// `tondo clean` (7.14): the cache of builds emptied.

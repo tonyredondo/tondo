@@ -517,6 +517,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.modelTests",
+        "title": "Check the Models",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.lockOrderTests",
         "title": "Run the Tests Looking at the Order of Locks",
         "category": "Tondo"
