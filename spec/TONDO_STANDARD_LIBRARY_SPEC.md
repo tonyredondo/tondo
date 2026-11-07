@@ -6932,39 +6932,83 @@ pub fn Duplex.trailers(self): Map[String, String]
 
 ### 14.43 `std.model`
 
-`std.model` comprueba un diseño antes de que haya código: un estado, los pasos
-que pueden seguir a cada uno y lo que debe cumplirse.
+`std.model` recorre todos los estados que alcanza un diseño o una máquina de
+estados del programa, en todos los órdenes de sus pasos, y dice qué rompe lo que
+debe cumplirse, paso a paso y con cada estado del camino.
 
 ~~~tondo
 pub type Step[S] = { name: String, state: S }
-pub type Checked = { states: Int }
-pub type Violation = { what: String, path: Array[String], loop: Array[String] }
-pub fn check[S: Key](
+pub type Checked = { states: Int, steps: Int, depth: Int, never: Array[String] }
+pub type Visit = { step: String, state: String }
+pub type Violation = { what: String, path: Array[Visit], loop: Array[Visit] }
+pub fn check[S: Key + Reflect](
     start: S,
     steps: fn(S): Array[Step[S]],
-    always: fn(S): Bool,
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
     ends: (fn(S): Bool)? = none,
-    reaches: (fn(S): Bool)? = none,
-    eventually: (fn(S): Bool)? = none,
-    fair: Array[String] = [],
+    symmetry: (fn(S): S)? = none,
 ): Checked ! Violation
+pub fn machine[S: Key + Reflect, E: Reflect + Decode, X](
+    start: S,
+    apply: fn(S, E): S ! X,
+    events: (fn(S): Array[E])? = none,
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
+    ends: (fn(S): Bool)? = none,
+    symmetry: (fn(S): S)? = none,
+): Checked ! Violation
+pub fn follows[S: Key + Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation
+pub fn watch[S: Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation
+pub fn mark(step: String)
+pub fn expect(checked: Checked ! Violation)
+pub fn every[T: Reflect + Decode](): Array[T] ! String
 ~~~
 
-`check` recorre todos los estados que `steps` alcanza desde `start`, los más
-cercanos primero, una vez cada uno, y falla en el primero donde `always` no se
-cumple, o sin pasos donde `ends`, si se da, dice que no debe terminar. `Violation`
-da el camino más corto de nombres de pasos hasta allí.
+`check` recorre los estados que `steps` alcanza desde `start`, los más cercanos
+primero, una vez cada uno. Falla en el primero que rompe un invariante de
+`holds`, o sin pasos donde `ends`, si se da, dice que no debe terminar, con el
+camino más corto. Después comprueba lo que viene más tarde, y falla con un
+recorrido que lo rompe: el camino hasta un ciclo y el ciclo. Un recorrido da un
+paso siempre que hay alguno posible, y uno sin pasos se queda en su último
+estado. `symmetry` da el estado que representa a todos los que equivale, como el
+mismo con las tareas numeradas de otro modo, y solo se recorre ese.
 
-Lo anterior dice lo que nunca pasa; los otros dos, lo que acaba pasando. `reaches`
-exige que desde todo estado se pueda llegar aún a uno donde se cumple: encuentra
-una espera perdida o un callejón sin salida, y falla en el primero de esos estados.
-`eventually` exige más, que todo recorrido llegue. Un recorrido puede no hacerlo
-dando vueltas, y por eso `fair` nombra los pasos que no pueden quedar ignorados: el
-que sigue siendo posible acaba dándose (equidad débil). Falla en un estado sin
-pasos donde no se cumple, o en un ciclo de estados donde no se cumple que da a cada
-paso de `fair` lo suyo, y entonces `loop` dice la vuelta que `path` alcanza. Un
-modelo solo dice de su diseño: lo que el programa hace lo dicen sus tests, y
-`--schedules all`.
+Las propiedades son `always(p)`, que se cumple en todo estado alcanzado;
+`eventually(p)`, que todo recorrido llega a un estado donde se cumple;
+`leadsTo(p, q)`; `infinitelyOften(p)`; `eventuallyAlways(p)`; `reachable(p)`,
+que desde todo estado se puede llegar aún a uno donde se cumple; y
+`temporal(f)`, una fórmula de lógica temporal lineal hecha con `state(p)`,
+`next`, `always`, `eventually`, `until`, `implies`, `negated`, `allOf` y
+`anyOf`. Cada una lleva un `name`, que dice el fallo. `fair` nombra los pasos
+que no pueden quedar ignorados: `weak(paso)` se da si sigue siendo posible, y
+`strong(paso)` si vuelve a serlo una y otra vez.
+
+`machine` es `check` sobre la función que da el siguiente estado para un
+evento, la misma que llama el programa, sin modelo que mantener: prueba en cada
+estado cada valor de `E`, como los da `every`, salvo que `events` diga cuáles
+pueden ocurrir. Un evento para el que falla no puede ocurrir ahí; uno para el
+que entra en pánico rompe la máquina. `Checked.never` nombra los eventos que
+ningún estado toma.
+
+`every` da todos los valores de un tipo: de un enum cada variante con cada valor
+de lo que lleva, de un record cada valor de cada campo, de un opcional `none` y
+cada valor, y de un `Bool` los dos. Un número o un texto no tienen fin, y un tipo
+que lleva uno falla diciendo dónde.
+
+`mark(paso)` dice que el código da ese paso de su modelo. Fuera de la
+compilación de tests no hace nada y no cuesta nada. `follows` ejecuta `code` y
+exige que cada paso que marca, en el orden en que llegan, sea un paso que el
+modelo puede dar desde donde lo llevaron los anteriores; `Checked.never` nombra
+los pasos del modelo que no dio. `watch` ejecuta `code` y exige las propiedades
+al estado que da `observe` al empezar, en cada paso marcado y al terminar, como
+un recorrido que acaba. Bajo `tondo test --schedules all` las dos lo hacen en
+todos los órdenes de las tareas del código.
+
+Un estado es `Key`, y un `Array` no lo es: `Queue[T]` es una cola que un estado
+puede llevar, y `Bag[T]` una colección sin orden, igual sea cual sea el orden en
+que llegaron sus elementos. `expect` hace fallar el test que la llama con lo que
+se rompió. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
 
 ## 15. Contrato exigido a cada módulo
 

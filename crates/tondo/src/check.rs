@@ -110,6 +110,7 @@ fn check_with<'a>(
         datetime_module: None,
         pacing_module: None,
         unrepeatable: HashMap::new(),
+        checks_models: HashSet::new(),
         interpolating: false,
         script_bindings: Vec::new(),
         scripting: false,
@@ -288,6 +289,8 @@ enum StdModule {
     InternalNet,
     /// `std.internal.fuzz`: the runtime's side of `testing.fuzz`.
     InternalFuzz,
+    /// `std.internal.model`: whether `model.mark` records.
+    InternalModel,
     /// `std.internal.panic`: what a panic carries beyond its message.
     InternalPanic,
     InternalTime,
@@ -874,6 +877,9 @@ struct Checker<'a> {
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
+    /// The functions of `std.model` that make a test that calls them one
+    /// that checks a model.
+    checks_models: HashSet<FnId>,
     types: Types,
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
@@ -1326,6 +1332,10 @@ impl<'a> Checker<'a> {
                 f.owner.as_ref().map(|o| bare(&o.name)),
                 bare(&f.name.name),
             );
+            if matches!(&qualified, (m, None, n) if m == "std.model" && matches!(n.as_str(), "check" | "machine" | "follows" | "watch"))
+            {
+                self.checks_models.insert(id);
+            }
             let unrepeatable = match qualified {
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v4" => Some("`Uuid.v4`"),
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v7" => Some("`Uuid.v7`"),
@@ -1548,6 +1558,7 @@ impl<'a> Checker<'a> {
             suite: true,
             bench: false,
             fuzz: false,
+            model: false,
             span: Span::new(0, 0),
             whole: Span::new(0, 0),
         };
@@ -2671,7 +2682,16 @@ impl<'a> Checker<'a> {
             let index = self.test_nodes.len() as u32;
             let suite = matches!(node, ast::TestNode::Suite(_));
             let (span, whole) = (name.span, node.span());
-            let info = hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, fuzz: false, span, whole };
+            let info = hir::TestNodeInfo {
+                id: id.clone(),
+                parent,
+                suite,
+                bench: false,
+                fuzz: false,
+                model: false,
+                span,
+                whole,
+            };
             self.test_nodes.push(info);
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
@@ -3267,6 +3287,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
+            ["std", "internal", "model"] => StdModule::InternalModel,
             ["std", "internal", "panic"] => StdModule::InternalPanic,
             ["std", "internal", "time"] => StdModule::InternalTime,
             ["std", "internal", "fs"] => StdModule::InternalFs,
@@ -16052,6 +16073,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFuzz
+                    | StdModule::InternalModel
                     | StdModule::InternalPanic
                     | StdModule::InternalTime
                     | StdModule::InternalContext
@@ -16117,6 +16139,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalCbor => "cbor",
                     StdModule::InternalNet => "net",
                     StdModule::InternalFuzz => "fuzz",
+                    StdModule::InternalModel => "model",
                     StdModule::InternalPanic => "panic",
                     StdModule::InternalTime => "time",
                     StdModule::InternalContext => "context",
@@ -16389,6 +16412,13 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
+        if let Callee::Fn(id) = target.callee
+            && self.checks_models.contains(&id)
+            && cx.test_member
+            && let Some(test) = self.measuring
+        {
+            self.test_nodes[test as usize].model = true;
+        }
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
         if let Callee::Fn(id) = callee {
             self.repeatable(id, span);

@@ -183,6 +183,20 @@ impl<'a> Printer<'a> {
             for warning in &attempt.warnings {
                 say!("  warning: {warning}");
             }
+            // What a model never did: what the code never took of it, or
+            // the events no state of a machine takes.
+            for model in &attempt.models {
+                let never: Vec<String> = model["never"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|step| Some(format!("`{}`", step.as_str()?)))
+                    .collect();
+                if !never.is_empty() {
+                    let what = if model["kind"] == "follows" { "the code never took" } else { "no state took" };
+                    say!("  model: {what} {}", never.join(", "));
+                }
+            }
             // What its benchmarks measured, under `--bench`.
             if !attempt.benchmarks.is_empty() {
                 let lines = super::bench::lines(

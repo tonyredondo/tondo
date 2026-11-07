@@ -29,8 +29,17 @@ fn examples_compile() {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();
-            // A runbook's server takes its port when it runs.
-            std::fs::write(case.join("main.to"), code.replace("<port>", "8080")).unwrap();
+            // A runbook's server takes its port when it runs; tests go in a
+            // project's file of tests.
+            match info == "tondo test" {
+                true => {
+                    std::fs::create_dir_all(case.join("src")).unwrap();
+                    std::fs::write(case.join("tondo.toml"), "[package]\nname = \"guide\"\n").unwrap();
+                    std::fs::write(case.join("src/main.to"), "fn main() {}\n").unwrap();
+                    std::fs::write(case.join("src/main_test.to"), &code).unwrap();
+                }
+                false => std::fs::write(case.join("main.to"), code.replace("<port>", "8080")).unwrap(),
+            }
             jobs.push((format!("{topic} example {index} ({info})"), info, case, code));
         }
     }
@@ -41,8 +50,11 @@ fn examples_compile() {
                 scope.spawn(move || {
                     let mut failures = Vec::new();
                     for (name, info, case, code) in chunk {
+                        // `check` leaves out a project's tests, which `--list` builds.
+                        let checks: &[&str] =
+                            if info == "tondo test" { &["test", "--list"] } else { &["check", "main.to"] };
                         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-                            .args(["check", "main.to"])
+                            .args(checks)
                             .args(info.ends_with(" library").then_some("--library"))
                             .current_dir(case)
                             .output()

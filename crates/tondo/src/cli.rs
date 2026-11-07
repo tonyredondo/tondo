@@ -143,13 +143,15 @@ pub const COMMANDS: &[Command] = &[
             "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev>]",
             "                   [--max-regression <percent>]] [--profile cpu|memory]",
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
+            "          [--models]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
             "          [--static] [--debug] [--library] [--target <target>]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",
             "again as its files change; --bench measures its benchmarks,",
-            "and --fuzz searches for inputs that fail its fuzz tests",
+            "--fuzz searches for inputs that fail its fuzz tests, and",
+            "--models checks the models of `std.model` alone",
         ],
     },
     Command {

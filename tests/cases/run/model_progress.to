@@ -1,13 +1,24 @@
-// What must happen, in `std.model`: a wake that comes before the sleep is lost,
-// which `reaches` finds; and a task that can spin for ever need not go on, unless
-// the step that goes on is fair.
-//
-// expect-stdout: lost: what it must reach is out of reach from here, after: check
+// expect-stdout: lost: `done` is out of reach from here
+// expect-stdout:   start: Waiter { at: 0, flag: false }
+// expect-stdout:   check: Waiter { at: 1, flag: false }
 // expect-stdout: held: 7 states
-// expect-stdout: unfair: it need not come to what it must, and round for ever: spin
+// expect-stdout: unfair: `gone` does not hold
+// expect-stdout:   start: 0
+// expect-stdout:   and then round for ever:
+// expect-stdout:   spin: 0
 // expect-stdout: fair: 2 states
-// expect-stdout: two ways: it need not come to what it must, after: left, and round for ever: wait, back
-// expect-stdout: stops: it ends without what it must come to, after: stop
+// expect-stdout: two ways: `there` does not hold
+// expect-stdout:   start: 0
+// expect-stdout:   left: 1
+// expect-stdout:   and then round for ever:
+// expect-stdout:   wait: 2
+// expect-stdout:   back: 1
+// expect-stdout: strong: 4 states
+// expect-stdout: stops: `ended` does not hold
+// expect-stdout:   start: 0
+// expect-stdout:   stop: 1
+// expect-stdout:   and then round for ever:
+// expect-stdout:   (stays): 1
 import std.console
 import std.model
 
@@ -66,17 +77,17 @@ fn say(name: String, result: model.Checked ! model.Violation) {
 
 fn main() {
     let start = Waiter { at: 0, flag: false }
-    let done = (waiter: Waiter) { waiter.at == 3 }
-    let always = (_: Waiter) { true }
-    say("lost", model.check(start, (waiter) { wait(waiter, true) }, always, reaches: some(done)))
-    say("held", model.check(start, (waiter) { wait(waiter, false) }, always, reaches: some(done)))
-    let gone = (count: Int) { count == 1 }
-    let holds = (_: Int) { true }
-    say("unfair", model.check(0, spins, holds, eventually: some(gone)))
-    say("fair", model.check(0, spins, holds, eventually: some(gone), fair: ["go"]))
-    // `go` is not possible all the way round, so the loop is fair without it.
-    let there = (at: Int) { at == 3 }
-    say("two ways", model.check(0, turns, holds, eventually: some(there), fair: ["go"]))
-    let ended = (at: Int) { at == 2 }
-    say("stops", model.check(0, stops, holds, eventually: some(ended)))
+    let done = model.reachable((waiter: Waiter) { waiter.at == 3 }, name: "done")
+    say("lost", model.check(start, (waiter) { wait(waiter, true) }, holds: [done]))
+    say("held", model.check(start, (waiter) { wait(waiter, false) }, holds: [done]))
+    let gone = model.eventually((count: Int) { count == 1 }, name: "gone")
+    say("unfair", model.check(0, spins, holds: [gone]))
+    say("fair", model.check(0, spins, holds: [gone], fair: [model.weak("go")]))
+    // `go` is not possible all the way round, so the loop is fair without it,
+    // unless it is fair in the strong sense.
+    let there = model.eventually((at: Int) { at == 3 }, name: "there")
+    say("two ways", model.check(0, turns, holds: [there], fair: [model.weak("go")]))
+    say("strong", model.check(0, turns, holds: [there], fair: [model.strong("go")]))
+    let ended = model.eventually((at: Int) { at == 2 }, name: "ended")
+    say("stops", model.check(0, stops, holds: [ended]))
 }

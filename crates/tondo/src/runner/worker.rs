@@ -703,6 +703,13 @@ impl Session<'_> {
                     }
                 }
             }
+            "model" => {
+                if let Ok(model) = serde_json::from_str(&text)
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    entry.0.models.push(model);
+                }
+            }
             "fuzz" => {
                 let parts: Vec<&str> = text.split('\0').collect();
                 if let [name, inputs, json, file, seed, failed, searched, tried] = parts[..]

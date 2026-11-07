@@ -1,6 +1,15 @@
 // The stop of the world of the runtime (testing/models/Stop.tla) in `std.model`:
 // two that stop it at once let the threads go under each other, and one at a
 // time do not. A protocol of Tondo, checked in Tondo.
+// expect-stdout: one at a time holds, in 20 states
+// expect-stdout: `quiet` does not hold
+// expect-stdout:   start: World { stopping: false, running: 0, first: 0, second: 0, owner: 0 }
+// expect-stdout:   stop 1: World { stopping: true, running: 0, first: 1, second: 0, owner: 0 }
+// expect-stdout:   inside 1: World { stopping: true, running: 0, first: 2, second: 0, owner: 0 }
+// expect-stdout:   stop 2: World { stopping: true, running: 0, first: 2, second: 1, owner: 0 }
+// expect-stdout:   resume 1: World { stopping: false, running: 0, first: 3, second: 1, owner: 0 }
+// expect-stdout:   inside 2: World { stopping: false, running: 0, first: 3, second: 2, owner: 0 }
+// expect-stdout:   enter: World { stopping: false, running: 1, first: 3, second: 2, owner: 0 }
 import std.console
 import std.model
 
@@ -46,15 +55,13 @@ fn quiet(world: World): Bool {
 
 fn main() {
     let start = World { stopping: false, running: 0, first: 0, second: 0, owner: 0 }
-    match model.check(start, (world) { steps(world, true) }, quiet) {
+    match model.check(start, (world) { steps(world, true) }, holds: [model.always(quiet, name: "quiet")]) {
         ok(checked) => console.println("one at a time holds, in {checked.states} states")
         err(broken) => console.println("{broken}")
     }
-    match model.check(start, (world) { steps(world, false) }, quiet) {
+    match model.check(start, (world) { steps(world, false) }, holds: [model.always(quiet, name: "quiet")]) {
         ok(_) => console.println("two at once hold")
         err(broken) => console.println("{broken}")
     }
 }
 
-// expect-stdout: one at a time holds, in 20 states
-// expect-stdout: what must always hold does not, after: stop 1, inside 1, stop 2, resume 1, inside 2, enter

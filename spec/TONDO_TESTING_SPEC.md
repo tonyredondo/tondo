@@ -1792,6 +1792,17 @@ vez, igual, con lo que leyó entonces: un fallo intermitente de CI se
 depura en local. `--record` es incompatible con `--bench`, `--fuzz`,
 `--coverage`, `--list`, `--watch`, `--target` y `--profile`.
 
+### 8.12 Modelos
+
+Un test que llama en su cuerpo a `model.check`, `model.machine`, `model.follows`
+o `model.watch` (biblioteca 14.43) comprueba un modelo, y `tondo test --models`
+ejecuta solo esos. Cada comprobación dice lo que encontró: el informe JSON lo da
+en `models` de cada intento, con `kind`, cuántos estados, pasos y profundidad,
+`never` y lo que se rompió, si algo se rompió. La salida humana nombra lo que un
+modelo nunca hizo: los eventos que ningún estado de una máquina toma, y los pasos
+del modelo que el código no dio. Con `--schedules all`, esto último en ningún
+orden.
+
 ## 9. Resultados, diagnósticos y salida
 
 ### 9.1 Estados de test y suite

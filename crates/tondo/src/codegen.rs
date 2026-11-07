@@ -9019,6 +9019,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),
                     "tondo_rt_math_trunc" => Some(ins.trunc(values[0])),
                     "tondo_rt_math_round" => Some(ins.nearest(values[0])),
+                    // What a model's marks need, only in a build of tests.
+                    "tondo_rt_model_recording" => Some(ins.iconst(types::I8, self.e.cg.testing() as i64)),
                     _ => self.e.call_rt(Rt::Native(index), &values),
                 }
             }

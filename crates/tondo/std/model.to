@@ -1,7 +1,8 @@
 // A model of a design, checked in every order of its steps: a state, the steps
-// that can follow each one, and what must hold. It finds the shortest way to a
-// state that breaks it, before there is any code to test, and runs in a test
-// as anything else does.
+// that can follow each one, and what must hold, now, always, or in the end. It
+// finds the shortest way to a state that breaks it, or the loop that never gets
+// where it must, and says each state on the way. It runs in a test as anything
+// else does.
 //
 // ```tondo
 // import std.console
@@ -18,14 +19,21 @@
 // }
 //
 // let start = Door { open: false, locked: false }
-// match model.check(start, steps, (door) { not (door.open and door.locked) }) {
+// let safe = model.always((door: Door) { not (door.open and door.locked) })
+// match model.check(start, steps, holds: [safe]) {
 //     ok(checked) => console.println("{checked.states} states")
 //     err(broken) => console.println("{broken}")
 // }
 // ```
 
-/// What can happen from a state: its name, for the path to a fault, and the
-/// state it leads to.
+import std.internal.model as modelNative
+import std.json
+import std.reflect
+import std.serialization
+import std.sync
+
+/// What can happen from a state: its name, for the path to a fault and for
+/// fairness, and the state it leads to.
 ///
 /// ```tondo
 /// import std.console
@@ -39,53 +47,388 @@ pub type Step[S] = {
     state: S
 }
 
-/// How much of a model was checked: every state it can reach.
+/// How much of a model was checked: the states it reaches, the steps between
+/// them, the most steps from the start to any of them, and, of a `machine`,
+/// the events no state takes, which are often a mistake.
 ///
 /// ```tondo
 /// import std.console
 /// import std.model
 ///
-/// let checked = model.Checked { states: 3 }
-/// console.println("{checked.states} states")
+/// let checked = model.Checked { states: 3, steps: 2, depth: 2, never: ["Cancel"] }
+/// console.println("{checked.states} states, {checked.depth} steps deep, never {checked.never}")
 /// ```
 pub type Checked = {
     states: Int
+    steps: Int
+    depth: Int
+    never: Array[String]
 }
 
-/// What broke, and the shortest path of steps that gets there; `loop` is what
-/// then goes round for ever, when that is what broke.
+/// A state on the way to what broke: the step that led there, empty for the
+/// start, and the state as written.
 ///
 /// ```tondo
 /// import std.console
 /// import std.model
 ///
-/// let broken = model.Violation { what: "it broke", path: ["start", "stop"], loop: [] }
+/// let visit = model.Visit { step: "open", state: "Door {{ open: true }}" }
+/// console.println("{visit.step}: {visit.state}")
+/// ```
+pub type Visit = {
+    step: String
+    state: String
+}
+
+/// What broke, and how: the shortest way there, each step with the state it
+/// led to, and, when it is a loop that never gets where it must, the loop.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let start = model.Visit { step: "", state: "0" }
+/// let broken = model.Violation { what: "it broke", path: [start], loop: [] }
 /// console.println("{broken}")
 /// ```
 pub type Violation = {
     what: String
-    path: Array[String]
-    loop: Array[String]
+    path: Array[Visit]
+    loop: Array[Visit]
 }
 
 impl Display for Violation {
     fn display(self): String {
-        let here = if self.path.isEmpty() {
-            self.what
-        } else {
-            "{self.what}, after: {self.path.join(", ")}"
+        let line = (visit: Visit) {
+            if visit.step.isEmpty() { "  start: {visit.state}" } else { "  {visit.step}: {visit.state}" }
         }
-        if self.loop.isEmpty() {
-            here
-        } else {
-            "{here}, and round for ever: {self.loop.join(", ")}"
+        var lines = [self.what]
+        lines.extend(self.path.map(line))
+        if not self.loop.isEmpty() {
+            lines.push("  and then round for ever:")
+            lines.extend(self.loop.map(line))
+        }
+        lines.join("\n")
+    }
+}
+
+/// A queue a state can hold: what came first goes first. A state is a `Key`,
+/// and an `Array` is not one, so a model writes its queues with this.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let waiting = model.Queue([1, 2]).push(3)
+/// console.println("{waiting.first()} then {waiting.rest().length()} more")
+/// ```
+pub enum Queue[T] {
+    Empty
+    Item(T, Queue[T])
+}
+
+// Written as it is built, as `Queue([1, 2])`.
+impl[T: reflect.Reflect] reflect.Reflect for Queue[T] {
+    fn reflectShow(self, nested: Bool): String {
+        _ = nested
+        "Queue([{self.items().map((item) { item.reflectShow(true) }).join(", ")}])"
+    }
+
+    fn reflectElements(self): Array[reflect.Value]? {
+        some(self.items().map((item) { reflect.valueOf(item) }))
+    }
+}
+
+/// A queue of the items, the first first.
+pub fn Queue[T](items: Array[T]): Queue[T] {
+    var queue: Queue[T] = Queue.Empty
+    for item in items.reversed() {
+        queue = Queue.Item(item, queue)
+    }
+    queue
+}
+
+/// The queue with `item` last.
+pub fn Queue[T].push(self, item: T): Queue[T] {
+    var items = self.items()
+    items.push(item)
+    Queue(items)
+}
+
+/// What comes first, if anything does.
+pub fn Queue[T].first(self): T? {
+    match self {
+        Queue.Item(item, _) => some(item)
+        Queue.Empty => none
+    }
+}
+
+/// The queue without its first item.
+pub fn Queue[T].rest(self): Queue[T] {
+    match self {
+        Queue.Item(_, rest) => rest
+        Queue.Empty => Queue.Empty
+    }
+}
+
+/// Its items, the first first.
+pub fn Queue[T].items(self): Array[T] {
+    var items: Array[T] = []
+    var at = self
+    for {
+        match at {
+            Queue.Item(item, rest) => {
+                items.push(item)
+                at = rest
+            }
+            Queue.Empty => return items
         }
     }
 }
 
-type Reached = {
-    from: Int
-    name: String
+pub fn Queue[T].length(self): Int {
+    self.items().length()
+}
+
+pub fn Queue[T].isEmpty(self): Bool {
+    self.first().isNone()
+}
+
+pub fn Queue[T: Equatable].contains(self, item: T): Bool {
+    self.items().contains(item)
+}
+
+/// The queue without the first `item` in it.
+pub fn Queue[T: Equatable].without(self, item: T): Queue[T] {
+    var items = self.items()
+    match items.findIndex((other) { other == item }) {
+        some(at) => {
+            _ = items.removeAt(at)
+            Queue(items)
+        }
+        none => self
+    }
+}
+
+/// A collection whose order says nothing, which a state can hold: the same
+/// items make the same bag however they came.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// let held = model.Bag([2, 1]).add(2)
+/// console.println("{held.count(2)} of 2, {held == model.Bag([1, 2, 2])}")
+/// ```
+pub type Bag[T] = {
+    priv held: Queue[T]
+}
+
+impl[T: reflect.Reflect] reflect.Reflect for Bag[T] {
+    fn reflectShow(self, nested: Bool): String {
+        _ = nested
+        "Bag([{self.items().map((item) { item.reflectShow(true) }).join(", ")}])"
+    }
+
+    fn reflectElements(self): Array[reflect.Value]? {
+        some(self.items().map((item) { reflect.valueOf(item) }))
+    }
+}
+
+/// A bag of the items.
+pub fn Bag[T: reflect.Reflect](items: Array[T]): Bag[T] {
+    Bag { held: Queue(items.sortedBy((item) { "{reflect.valueOf(item)}" })) }
+}
+
+pub fn Bag[T: reflect.Reflect].add(self, item: T): Bag[T] {
+    var items = self.items()
+    items.push(item)
+    Bag(items)
+}
+
+/// The bag with one `item` fewer, if it held one.
+pub fn Bag[T: Equatable].remove(self, item: T): Bag[T] {
+    Bag { held: self.held.without(item) }
+}
+
+pub fn Bag[T].items(self): Array[T] {
+    self.held.items()
+}
+
+pub fn Bag[T: Equatable].count(self, item: T): Int {
+    self.items().count((other) { other == item })
+}
+
+pub fn Bag[T: Equatable].contains(self, item: T): Bool {
+    self.count(item) > 0
+}
+
+pub fn Bag[T].length(self): Int {
+    self.items().length()
+}
+
+pub fn Bag[T].isEmpty(self): Bool {
+    self.items().isEmpty()
+}
+
+/// A formula of linear temporal logic over the states of a run, for what a
+/// predicate of one state cannot say: `model.state(p).until(q)`, with `next`,
+/// `always`, `eventually`, `implies`, `negated`, `model.allOf` and
+/// `model.anyOf` nested as deep as it takes. `model.temporal` makes it a
+/// property.
+///
+/// ```tondo
+/// import std.model
+///
+/// let positive = model.state((n: Int) { n > 0 })
+/// let grows = positive.until(model.state((n: Int) { n > 9 })).always()
+/// _ = model.temporal(grows, name: "it keeps positive until it passes 9")
+/// ```
+pub type Formula[S] = {
+    priv term: Term[S]
+}
+
+enum Term[S] {
+    Atom(fn(S): Bool)
+    True
+    False
+    Not(Term[S])
+    And(Term[S], Term[S])
+    Or(Term[S], Term[S])
+    Next(Term[S])
+    Until(Term[S], Term[S])
+    Release(Term[S], Term[S])
+}
+
+/// The formula that holds of a run whose first state `predicate` holds of.
+pub fn state[S](predicate: fn(S): Bool): Formula[S] {
+    Formula { term: Term.Atom(predicate) }
+}
+
+/// It does not hold.
+pub fn Formula[S].negated(self): Formula[S] {
+    Formula { term: Term.Not(self.term) }
+}
+
+/// Each of them holds.
+pub fn allOf[S](first: Formula[S], rest: ...Formula[S]): Formula[S] {
+    var term = first.term
+    for other in rest {
+        term = Term.And(term, other.term)
+    }
+    Formula { term }
+}
+
+/// One of them holds, at least.
+pub fn anyOf[S](first: Formula[S], rest: ...Formula[S]): Formula[S] {
+    var term = first.term
+    for other in rest {
+        term = Term.Or(term, other.term)
+    }
+    Formula { term }
+}
+
+pub fn Formula[S].implies(self, other: Formula[S]): Formula[S] {
+    Formula { term: Term.Or(Term.Not(self.term), other.term) }
+}
+
+/// It holds from the next state on.
+pub fn Formula[S].next(self): Formula[S] {
+    Formula { term: Term.Next(self.term) }
+}
+
+/// It holds of every state from here on.
+pub fn Formula[S].always(self): Formula[S] {
+    Formula { term: Term.Release(Term.False, self.term) }
+}
+
+/// It holds of some state from here on.
+pub fn Formula[S].eventually(self): Formula[S] {
+    Formula { term: Term.Until(Term.True, self.term) }
+}
+
+/// It holds until `other` does, which comes.
+pub fn Formula[S].until(self, other: Formula[S]): Formula[S] {
+    Formula { term: Term.Until(self.term, other.term) }
+}
+
+/// What must hold of a model, which `check` takes in `holds`.
+///
+/// ```tondo
+/// import std.model
+///
+/// let positive = model.always((n: Int) { n >= 0 }, name: "never negative")
+/// let ends = model.eventually((n: Int) { n == 3 })
+/// _ = [positive, ends]
+/// ```
+pub type Property[S] = {
+    priv name: String
+    priv kind: Kind[S]
+}
+
+enum Kind[S] {
+    Invariant(fn(S): Bool)
+    Reachable(fn(S): Bool)
+    Temporal(Term[S])
+}
+
+/// Every state reached is one `predicate` holds of.
+pub fn always[S](predicate: fn(S): Bool, name: String = "what must always hold"): Property[S] {
+    Property { name, kind: Kind.Invariant(predicate) }
+}
+
+/// Every run gets to a state `predicate` holds of.
+pub fn eventually[S](predicate: fn(S): Bool, name: String = "what must come in the end"): Property[S] {
+    Property { name, kind: Kind.Temporal(state(predicate).eventually().term) }
+}
+
+/// Whenever `when` holds, `then` does later, or at once.
+pub fn leadsTo[S](when: fn(S): Bool, then: fn(S): Bool, name: String = "what must follow"): Property[S] {
+    Property { name, kind: Kind.Temporal(state(when).implies(state(then).eventually()).always().term) }
+}
+
+/// `predicate` holds again and again, for ever.
+pub fn infinitelyOften[S](predicate: fn(S): Bool, name: String = "what must keep coming"): Property[S] {
+    Property { name, kind: Kind.Temporal(state(predicate).eventually().always().term) }
+}
+
+/// From some state on, `predicate` always holds.
+pub fn eventuallyAlways[S](predicate: fn(S): Bool, name: String = "what must settle"): Property[S] {
+    Property { name, kind: Kind.Temporal(state(predicate).always().eventually().term) }
+}
+
+/// From every state, one `predicate` holds of can still be reached, whatever
+/// came before.
+pub fn reachable[S](predicate: fn(S): Bool, name: String = "what must stay within reach"): Property[S] {
+    Property { name, kind: Kind.Reachable(predicate) }
+}
+
+/// Every run is one `formula` holds of.
+pub fn temporal[S](formula: Formula[S], name: String = "the formula"): Property[S] {
+    Property { name, kind: Kind.Temporal(formula.term) }
+}
+
+/// A step that cannot be put off for ever, by its name: `weak` if it stays
+/// possible, `strong` if it is possible again and again.
+///
+/// ```tondo
+/// import std.model
+///
+/// _ = [model.weak("tick"), model.strong("grant")]
+/// ```
+pub type Fair = {
+    priv step: String
+    priv strong: Bool
+}
+
+/// A step that comes if it stays possible.
+pub fn weak(step: String): Fair {
+    Fair { step, strong: false }
+}
+
+/// A step that comes if it keeps becoming possible, even if not all the time.
+pub fn strong(step: String): Fair {
+    Fair { step, strong: true }
 }
 
 type Edge = {
@@ -93,18 +436,407 @@ type Edge = {
     to: Int
 }
 
-fn pathTo(reached: Array[Reached], end: Int): Array[String] {
-    var path: Array[String] = []
-    var at = end
-    for reached[at].from >= 0 {
-        path.push(reached[at].name)
-        at = reached[at].from
-    }
-    path.reversed()
+/// What came before each state: the state and the step, or -1 for the start.
+type Reached = {
+    from: Int
+    name: String
 }
 
-fn broken(what: String, reached: Array[Reached], at: Int): Violation {
-    Violation { what, path: pathTo(reached, at), loop: [] }
+/// The states of a model and its steps.
+type Graph[S] = {
+    states: Array[S]
+    edges: Array[Array[Edge]]
+    reached: Array[Reached]
+    depth: Int
+}
+
+fn shown[S: reflect.Reflect](value: S): String {
+    "{reflect.valueOf(value)}"
+}
+
+fn visits[S: reflect.Reflect](graph: Graph[S], end: Int): Array[Visit] {
+    var path: Array[Visit] = []
+    var at = end
+    for {
+        let came = graph.reached[at]
+        path.push(Visit { step: came.name, state: shown(graph.states[at]) })
+        if came.from < 0 {
+            return path.reversed()
+        }
+        at = came.from
+    }
+}
+
+/// Goes through every state `steps` reaches from `start`, nearest first, and
+/// fails at the first one that breaks what `holds` says, or that `ends` says
+/// should not end with no step left, with the shortest way there and each
+/// state on it; then at the first property of what comes later that a run
+/// breaks, with the loop that breaks it. A step in `fair` comes as it says
+/// rather than be put off for ever. `symmetry` gives the one state that
+/// stands for all those it equals, as the same with the tasks numbered
+/// otherwise, so that only it is gone through.
+///
+/// A run takes a step whenever one is possible; one that ends stays at its
+/// last state.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// fn steps(count: Int): Array[model.Step[Int]] {
+///     if count < 3 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+/// }
+///
+/// let holds = [model.always((count: Int) { count <= 3 }), model.eventually((count: Int) { count == 3 })]
+/// match model.check(0, steps, holds: holds) {
+///     ok(checked) => console.println("{checked.states} states")
+///     err(broken) => console.println("{broken}")
+/// }
+/// ```
+pub fn check[S: Key + reflect.Reflect](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
+    ends: (fn(S): Bool)? = none,
+    symmetry: (fn(S): S)? = none,
+): Checked ! Violation {
+    reported("check", checking(start, steps, holds, fair, ends, symmetry))
+}
+
+fn checking[S: Key + reflect.Reflect](
+    start: S,
+    steps: fn(S): Array[Step[S]],
+    holds: Array[Property[S]],
+    fair: Array[Fair],
+    ends: (fn(S): Bool)?,
+    symmetry: (fn(S): S)?,
+): Checked ! Violation {
+    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, holds, ends, symmetry)?
+    properties(graph, holds, fair)?
+    Checked { states: graph.states.length(), steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never: [] }
+}
+
+/// Tells `tondo test` what a model came to, in a build of tests, and gives it
+/// back.
+fn reported(kind: String, result: Checked ! Violation): Checked ! Violation {
+    if modelNative.recording() {
+        let listed = (list: Array[Visit]) {
+            let entries = list.map((visit) { "{{\"step\":{json.encode(visit.step)},\"state\":{json.encode(visit.state)}}}" })
+            "[{entries.join(",")}]"
+        }
+        let quoted = (list: Array[String]) { "[{list.map((name) { json.encode(name) }).join(",")}]" }
+        let text = match result {
+            ok(checked) => "{{\"kind\":{json.encode(kind)},\"states\":{checked.states},\"steps\":{checked.steps},\"depth\":{checked.depth},\"never\":{quoted(checked.never)},\"broken\":null}}"
+            err(broken) => "{{\"kind\":{json.encode(kind)},\"broken\":{{\"what\":{json.encode(broken.what)},\"path\":{listed(broken.path)},\"loop\":{listed(broken.loop)}}}}}"
+        }
+        modelNative.report(text)
+    }
+    result
+}
+
+/// What comes of the properties that are checked once every state is known.
+fn properties[S: reflect.Reflect](graph: Graph[S], holds: Array[Property[S]], fair: Array[Fair]): Unit ! Violation {
+    for property in holds {
+        match property.kind {
+            Kind.Invariant(_) => {}
+            Kind.Reachable(goal) => {
+                match stranded(graph.edges, graph.states.map(goal)) {
+                    some(at) => fail Violation {
+                        what: "`{property.name}` is out of reach from here"
+                        path: visits(graph, at)
+                        loop: []
+                    }
+                    none => {}
+                }
+            }
+            Kind.Temporal(term) => later(graph, term, property.name, fair)?
+        }
+    }
+}
+
+/// Goes through every state a state machine of the program reaches, as
+/// `check` does, with the function that gives the next state for an event,
+/// the same one the program calls: there is no model to keep in step with
+/// the code. An event it fails for is one that cannot happen there; one it
+/// panics for breaks the machine, and says how it got there.
+///
+/// Each event is tried in each state, every value of `E` that there is, as
+/// `model.every` gives them, unless `events` says which can happen in a
+/// state. `Checked.never` names those no state took.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// enum Event {
+///     Open
+///     Close
+/// }
+///
+/// fn apply(open: Bool, event: Event): Bool ! String {
+///     match event {
+///         Event.Open if open => fail "already open"
+///         Event.Open => true
+///         Event.Close => false
+///     }
+/// }
+///
+/// match model.machine(false, apply, holds: [model.infinitelyOften((open: Bool) { not open })]) {
+///     ok(checked) => console.println("{checked.states} states")
+///     err(broken) => console.println("{broken}")
+/// }
+/// ```
+pub fn machine[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode, X](
+    start: S,
+    apply: fn(S, E): S ! X,
+    events: (fn(S): Array[E])? = none,
+    holds: Array[Property[S]] = [],
+    fair: Array[Fair] = [],
+    ends: (fn(S): Bool)? = none,
+    symmetry: (fn(S): S)? = none,
+): Checked ! Violation {
+    reported("machine", machining(start, apply, events, holds, fair, ends, symmetry))
+}
+
+fn machining[S: Key + reflect.Reflect, E: reflect.Reflect + serialization.Decode, X](
+    start: S,
+    apply: fn(S, E): S ! X,
+    events: (fn(S): Array[E])?,
+    holds: Array[Property[S]],
+    fair: Array[Fair],
+    ends: (fn(S): Bool)?,
+    symmetry: (fn(S): S)?,
+): Checked ! Violation {
+    let all: Array[E] = match events {
+        some(_) => []
+        none => match every[E]() {
+            ok(all) => all
+            err(why) => fail Violation {
+                what: "{why}: give the events, as `events: (state) {{ [...] }}`"
+                path: [Visit { step: "", state: shown(start) }]
+                loop: []
+            }
+        }
+    }
+    var named = Set[String]()
+    let steps = (current: S): Array[Step[S]] ! String {
+        let tried = match events {
+            some(given) => given(current)
+            none => all
+        }
+        var next: Array[Step[S]] = []
+        for event in tried {
+            let name = shown(event)
+            match recover { apply(current, event) } {
+                ok(ok(after)) => next.push(Step { name, state: after }),
+                ok(err(_)) => {}
+                err(broke) => fail "`{name}` panics: {broke.message}"
+            }
+        }
+        next
+    }
+    let graph = explore(start, steps, holds, ends, symmetry)?
+    properties(graph, holds, fair)?
+    for out in graph.edges {
+        for edge in out {
+            _ = named.insert(edge.name)
+        }
+    }
+    let never = all.map((event) { shown(event) }).filter((name) { not named.contains(name) })
+    Checked { states: graph.states.length(), steps: graph.edges.map((out) { out.length() }).sum(), depth: graph.depth, never }
+}
+
+/// Every value of `T` there is: each variant of an enum with each value of
+/// what it holds, of a record each value of each field, of an option `none`
+/// and each value, and of a `Bool` both. A number or a string has no end, and
+/// a type that holds one fails with a message that says where.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+///
+/// enum Light {
+///     Off
+///     On(Bool)
+/// }
+///
+/// match model.every[Light]() {
+///     ok(all) => console.println("{all.length()} lights")
+///     err(why) => console.println(why)
+/// }
+/// ```
+pub fn every[T: reflect.Reflect + serialization.Decode](): Array[T] ! String {
+    var all: Array[T] = []
+    for text in written(reflect.typeInfo[T](), 0)? {
+        match json.decode[T](text) {
+            ok(value) => all.push(value)
+            err(error) => fail "`{reflect.typeInfo[T]().qualifiedName()}` cannot be built from {text}: {error}"
+        }
+    }
+    all
+}
+
+/// Each value of a type as JSON writes it, which `json.decode` builds.
+fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
+    let name = info.qualifiedName()
+    if depth > 8 {
+        fail "`{name}` holds itself, so its values have no end"
+    }
+    match info.kind() {
+        reflect.TypeKind.Primitive(reflect.PrimitiveKind.Bool) => ["true", "false"]
+        reflect.TypeKind.Enum => {
+            var all: Array[String] = []
+            for variant in info.variants() {
+                let label = json.encode(variant.externalName())
+                match variant.payloadKind() {
+                    reflect.VariantPayloadKind.Unit => all.push(label)
+                    reflect.VariantPayloadKind.Tuple => {
+                        let parts = variant.tupleElements()
+                        for values in combinations(each(parts, depth)?) {
+                            let held = if values.length() == 1 { values[0] } else { "[{values.join(",")}]" }
+                            all.push("{{{label}:{held}}}")
+                        }
+                    }
+                    reflect.VariantPayloadKind.Record => {
+                        for held in record(variant.fields(), depth)? {
+                            all.push("{{{label}:{held}}}")
+                        }
+                    }
+                }
+            }
+            all
+        }
+        reflect.TypeKind.Record => record(info.fields(), depth)?
+        reflect.TypeKind.Newtype => match info.underlying() {
+            some(underlying) => written(underlying, depth + 1)?
+            none => fail "`{name}` has no values to go through"
+        }
+        reflect.TypeKind.Tuple => {
+            combinations(each(info.tupleElements(), depth)?).map((values) { "[{values.join(",")}]" })
+        }
+        reflect.TypeKind.Applied(reflect.AppliedKind.Option) => {
+            var all = ["null"]
+            all.extend(written(info.genericArguments()[0], depth + 1)?)
+            all
+        }
+        _ => fail "`{name}` has no end, so its values cannot all be gone through"
+    }
+}
+
+fn record(fields: Array[reflect.FieldInfo], depth: Int): Array[String] ! String {
+    let parts = each(fields.map((field) { field.typeInfo() }), depth)?
+    let names = fields.map((field) { json.encode(field.externalName()) })
+    combinations(parts).map((values) {
+        let pairs = names.zip(values).map((pair) { "{pair.0}:{pair.1}" })
+        "{{{pairs.join(",")}}}"
+    })
+}
+
+/// The values of each type.
+fn each(types: Array[reflect.TypeInfo], depth: Int): Array[Array[String]] ! String {
+    var all: Array[Array[String]] = []
+    for info in types {
+        all.push(written(info, depth + 1)?)
+    }
+    all
+}
+
+/// Each way to take one of each list.
+fn combinations(lists: Array[Array[String]]): Array[Array[String]] {
+    var all: Array[Array[String]] = [[]]
+    for list in lists {
+        var grown: Array[Array[String]] = []
+        for before in all {
+            for value in list {
+                var more = before
+                more.push(value)
+                grown.push(more)
+            }
+        }
+        all = grown
+    }
+    all
+}
+
+/// Fails the test that calls it with what broke, step by step.
+///
+/// ```tondo
+/// import std.model
+///
+/// fn steps(count: Int): Array[model.Step[Int]] {
+///     if count < 2 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+/// }
+///
+/// model.expect(model.check(0, steps, holds: [model.always((count: Int) { count <= 2 })]))
+/// ```
+pub fn expect(checked: Checked ! Violation) {
+    match checked {
+        ok(_) => {}
+        err(broken) => panic("{broken}")
+    }
+}
+
+fn explore[S: Key + reflect.Reflect](
+    start: S,
+    steps: fn(S): Array[Step[S]] ! String,
+    holds: Array[Property[S]],
+    ends: (fn(S): Bool)?,
+    symmetry: (fn(S): S)?,
+): Graph[S] ! Violation {
+    let canonical = (raw: S) {
+        match symmetry {
+            some(stands) => stands(raw)
+            none => raw
+        }
+    }
+    let first = canonical(start)
+    var numbers: Map[S, Int] = [:]
+    _ = numbers.insert(first, 0)
+    var graph = Graph[S] { states: [first], edges: [], reached: [Reached { from: -1, name: "" }], depth: 0 }
+    var depths = [0]
+    var at = 0
+    for at < graph.states.length() {
+        let current = graph.states[at]
+        for property in holds {
+            match property.kind {
+                Kind.Invariant(predicate) if not predicate(current) => {
+                    fail Violation { what: "`{property.name}` does not hold", path: visits(graph, at), loop: [] }
+                }
+                _ => {}
+            }
+        }
+        let next = match steps(current) {
+            ok(next) => next
+            err(why) => fail Violation { what: why, path: visits(graph, at), loop: [] }
+        }
+        match ends {
+            some(allowed) if next.isEmpty() and not allowed(current) => {
+                fail Violation { what: "nothing can follow here", path: visits(graph, at), loop: [] }
+            }
+            _ => {}
+        }
+        var out: Array[Edge] = []
+        for step in next {
+            let reached = canonical(step.state)
+            let to = match numbers.get(reached) {
+                some(to) => to
+                none => {
+                    let to = graph.states.length()
+                    _ = numbers.insert(reached, to)
+                    graph.states.push(reached)
+                    graph.reached.push(Reached { from: at, name: step.name })
+                    depths.push(depths[at] + 1)
+                    graph.depth = graph.depth.max(depths[at] + 1)
+                    to
+                }
+            }
+            out.push(Edge { name: step.name, to })
+        }
+        graph.edges.push(out)
+        at += 1
+    }
+    graph
 }
 
 /// For each state, the states with a step to it.
@@ -149,254 +881,659 @@ fn stranded(edges: Array[Array[Edge]], goals: Array[Bool]): Int? {
     none
 }
 
-/// Which strongly connected component of the states out of `goals` each is
-/// in, by Kosaraju: -1 for those in `goals`.
-fn components(edges: Array[Array[Edge]], goals: Array[Bool]): Array[Int] {
-    let count = edges.length()
-    var seen = goals
-    var finished: Array[Int] = []
-    for root in 0..count {
-        if seen[root] {
-            continue
-        }
-        seen[root] = true
-        var stack = [root]
-        var next = [0].repeat(count)
-        for {
-            let at = match stack.last() {
-                some(at) => at
-                none => break
-            }
-            if next[at] == edges[at].length() {
-                finished.push(at)
-                _ = stack.pop()
-                continue
-            }
-            let to = edges[at][next[at]].to
-            next[at] += 1
-            if not seen[to] {
-                seen[to] = true
-                stack.push(to)
-            }
+// What comes later is checked as Gerth, Peled, Vardi and Wolper build it: the
+// formula's negation becomes an automaton of the runs that break it, which
+// goes along the model's states, and a loop of the two together that the
+// automaton accepts, and that gives each fair step its due, is a run that
+// breaks the formula.
+
+/// A part of a formula in negation normal form, numbered in `Formulas`.
+enum Op {
+    Atom(Int, Bool)
+    True
+    False
+    And(Int, Int)
+    Or(Int, Int)
+    Next(Int)
+    Until(Int, Int)
+    Release(Int, Int)
+}
+
+type Formulas[S] = {
+    ops: Array[Op]
+    numbers: Map[Op, Int]
+    atoms: Array[fn(S): Bool]
+}
+
+fn number[S](formulas: var Formulas[S], op: Op): Int {
+    match formulas.numbers.get(op) {
+        some(known) => known
+        none => {
+            let id = formulas.ops.length()
+            formulas.ops.push(op)
+            _ = formulas.numbers.insert(op, id)
+            id
         }
     }
-    let into = incoming(edges)
-    var component = [-1].repeat(count)
-    var number = 0
-    for root in finished.reversed() {
-        if component[root] >= 0 {
-            continue
+}
+
+/// The formula, or its negation, with negation only on atoms.
+fn normal[S](formulas: var Formulas[S], term: Term[S], negated: Bool): Int {
+    match term {
+        Term.Atom(predicate) => {
+            formulas.atoms.push(predicate)
+            number(var formulas, Op.Atom(formulas.atoms.length() - 1, not negated))
         }
-        component[root] = number
-        var pending = [root]
-        for {
-            let at = match pending.pop() {
-                some(at) => at
-                none => break
-            }
-            for from in into[at] {
-                if component[from] < 0 and not goals[from] {
-                    component[from] = number
-                    pending.push(from)
+        Term.True => number(var formulas, if negated { Op.False } else { Op.True })
+        Term.False => number(var formulas, if negated { Op.True } else { Op.False })
+        Term.Not(inner) => normal(var formulas, inner, not negated)
+        Term.And(left, right) => {
+            let (a, b) = (normal(var formulas, left, negated), normal(var formulas, right, negated))
+            number(var formulas, if negated { Op.Or(a, b) } else { Op.And(a, b) })
+        }
+        Term.Or(left, right) => {
+            let (a, b) = (normal(var formulas, left, negated), normal(var formulas, right, negated))
+            number(var formulas, if negated { Op.And(a, b) } else { Op.Or(a, b) })
+        }
+        Term.Next(after) => {
+            let a = normal(var formulas, after, negated)
+            number(var formulas, Op.Next(a))
+        }
+        Term.Until(left, right) => {
+            let (a, b) = (normal(var formulas, left, negated), normal(var formulas, right, negated))
+            number(var formulas, if negated { Op.Release(a, b) } else { Op.Until(a, b) })
+        }
+        Term.Release(left, right) => {
+            let (a, b) = (normal(var formulas, left, negated), normal(var formulas, right, negated))
+            number(var formulas, if negated { Op.Until(a, b) } else { Op.Release(a, b) })
+        }
+    }
+}
+
+/// A node of the automaton as it is built: what leads to it, what is left to
+/// split, what holds in it and what must hold next.
+type Tableau = {
+    incoming: Set[Int]
+    pending: Set[Int]
+    old: Set[Int]
+    next: Set[Int]
+}
+
+/// A node of the automaton: the nodes with a step to it, and what holds in
+/// it, which a state it goes along with must satisfy.
+type Node = {
+    incoming: Set[Int]
+    old: Set[Int]
+}
+
+fn sorted(set: Set[Int]): Array[Int] {
+    var values: Array[Int] = []
+    for value in set.values() {
+        values.push(value)
+    }
+    values.sorted()
+}
+
+fn setOf(values: Array[Int]): Set[Int] {
+    var set = Set[Int]()
+    for value in values {
+        _ = set.insert(value)
+    }
+    set
+}
+
+fn just(value: Int): Set[Int] {
+    plus(Set[Int](), value)
+}
+
+fn plus(set: Set[Int], value: Int): Set[Int] {
+    var more = set
+    _ = more.insert(value)
+    more
+}
+
+/// The automaton of the runs `root` holds of. The start leads to the nodes
+/// whose `incoming` holds -1.
+fn automaton[S](formulas: Formulas[S], root: Int): Array[Node] {
+    var done: Array[Tableau] = []
+    var known: Map[String, Int] = [:]
+    var pending = [Tableau { incoming: just(-1), pending: just(root), old: Set[Int](), next: Set[Int]() }]
+    for {
+        var node = match pending.pop() {
+            some(node) => node
+            none => break
+        }
+        if node.pending.length() == 0 {
+            let key = "{sorted(node.old).join(",")}|{sorted(node.next).join(",")}"
+            match known.get(key) {
+                some(at) => {
+                    for from in node.incoming.values() {
+                        _ = done[at].incoming.insert(from)
+                    }
+                }
+                none => {
+                    let at = done.length()
+                    _ = known.insert(key, at)
+                    done.push(node)
+                    pending.push(Tableau { incoming: just(at), pending: node.next, old: Set[Int](), next: Set[Int]() })
                 }
             }
+            continue
         }
-        number += 1
+        let formula = sorted(node.pending)[0]
+        _ = node.pending.remove(formula)
+        if node.old.contains(formula) {
+            pending.push(node)
+            continue
+        }
+        let old = plus(node.old, formula)
+        let more = (set: Set[Int], ids: Array[Int]) {
+            var grown = set
+            for id in ids {
+                if not old.contains(id) {
+                    _ = grown.insert(id)
+                }
+            }
+            grown
+        }
+        match formulas.ops[formula] {
+            Op.True => pending.push(node with { old: old })
+            Op.False => {}
+            Op.Atom(atom, positive) => {
+                let opposite = formulas.numbers.get(Op.Atom(atom, not positive))
+                if not opposite.map((id) { node.old.contains(id) }).unwrapOr(false) {
+                    pending.push(node with { old: old })
+                }
+            }
+            Op.And(a, b) => pending.push(node with { old: old, pending: more(node.pending, [a, b]) })
+            Op.Or(a, b) => {
+                pending.push(node with { old: old, pending: more(node.pending, [a]) })
+                pending.push(node with { old: old, pending: more(node.pending, [b]) })
+            }
+            Op.Next(a) => pending.push(node with { old: old, next: plus(node.next, a) })
+            Op.Until(a, b) => {
+                pending.push(node with { old: old, pending: more(node.pending, [a]), next: plus(node.next, formula) })
+                pending.push(node with { old: old, pending: more(node.pending, [b]) })
+            }
+            Op.Release(a, b) => {
+                pending.push(node with { old: old, pending: more(node.pending, [b]), next: plus(node.next, formula) })
+                pending.push(node with { old: old, pending: more(node.pending, [a, b]) })
+            }
+        }
     }
-    component
+    done.map((node) { Node { incoming: node.incoming, old: node.old } })
 }
 
-fn enabled(edges: Array[Edge], name: String): Bool {
-    edges.any((edge) { edge.name == name })
+/// The model and the automaton, gone along together: each node a state and a
+/// node of the automaton, each step a step of the model.
+type Product = {
+    states: Array[Int]
+    nodes: Array[Int]
+    edges: Array[Array[Edge]]
+    reached: Array[Reached]
 }
 
-/// The shortest way inside `number` from a state to the first for which
-/// `found` holds, as the steps and where it ends; none if no way.
-fn route(
-    edges: Array[Array[Edge]],
-    component: Array[Int],
-    number: Int,
-    start: Int,
-    found: fn(Edge): Bool,
-): (Array[String], Int)? {
-    var from: Map[Int, Reached] = [:]
+/// Checks a property of what comes later: fails with a run that breaks it.
+fn later[S: reflect.Reflect](graph: Graph[S], term: Term[S], name: String, fair: Array[Fair]): Unit ! Violation {
+    var formulas = Formulas[S] { ops: [], numbers: [:], atoms: [] }
+    let root = normal(var formulas, term, true)
+    let nodes = automaton(formulas, root)
+    // What each atom says of each state, once.
+    let values = graph.states.map((at) { formulas.atoms.map((predicate) { predicate(at) }) })
+    let fits = (at: Int, node: Int) {
+        sorted(nodes[node].old).all((id) {
+            match formulas.ops[id] {
+                Op.Atom(atom, positive) => values[at][atom] == positive
+                _ => true
+            }
+        })
+    }
+    let empty: Array[Int] = []
+    var after = [empty].repeat(nodes.length())
+    var first: Array[Int] = []
+    for at in 0..nodes.length() {
+        for from in nodes[at].incoming.values() {
+            if from < 0 { first.push(at) } else { after[from].push(at) }
+        }
+    }
+    // The model's steps, with a state that ends staying where it is.
+    let steps = (at: Int) {
+        if graph.edges[at].isEmpty() { [Edge { name: "", to: at }] } else { graph.edges[at] }
+    }
+    var product = Product { states: [], nodes: [], edges: [], reached: [] }
+    var numbers: Map[(Int, Int), Int] = [:]
+    for node in first {
+        if fits(0, node) {
+            _ = numbers.insert((0, node), product.states.length())
+            product.states.push(0)
+            product.nodes.push(node)
+            product.reached.push(Reached { from: -1, name: "" })
+        }
+    }
+    var at = 0
+    for at < product.states.length() {
+        var out: Array[Edge] = []
+        for step in steps(product.states[at]) {
+            for node in after[product.nodes[at]] {
+                if not fits(step.to, node) {
+                    continue
+                }
+                let to = match numbers.get((step.to, node)) {
+                    some(to) => to
+                    none => {
+                        let to = product.states.length()
+                        _ = numbers.insert((step.to, node), to)
+                        product.states.push(step.to)
+                        product.nodes.push(node)
+                        product.reached.push(Reached { from: at, name: step.name })
+                        to
+                    }
+                }
+                out.push(Edge { name: step.name, to })
+            }
+        }
+        product.edges.push(out)
+        at += 1
+    }
+    // A node of the automaton accepts an `until` it does not owe.
+    var accepting: Array[Array[Bool]] = []
+    for formula in 0..formulas.ops.length() {
+        match formulas.ops[formula] {
+            Op.Until(_, b) => accepting.push(product.nodes.map((node) {
+                not nodes[node].old.contains(formula) or nodes[node].old.contains(b)
+            }))
+            _ => {}
+        }
+    }
+    let enabled = (one: Fair, node: Int) { graph.edges[product.states[node]].any((edge) { edge.name == one.step }) }
+    match fairLoop(product, accepting, fair, enabled) {
+        some(loop) => {
+            let visit = (node: Int, step: String) {
+                Visit { step: if step.isEmpty() { "(stays)" } else { step }, state: shown(graph.states[product.states[node]]) }
+            }
+            var path: Array[Visit] = []
+            var back = loop[0].0
+            for {
+                let came = product.reached[back]
+                path.push(if came.from < 0 { Visit { step: "", state: shown(graph.states[product.states[back]]) } } else { visit(back, came.name) })
+                if came.from < 0 {
+                    break
+                }
+                back = came.from
+            }
+            fail Violation {
+                what: "`{name}` does not hold"
+                path: path.reversed()
+                loop: loop.drop(1).map((stop) { visit(stop.0, stop.1) })
+            }
+        }
+        none => {}
+    }
+}
+
+/// A loop of the product that the automaton accepts and that is fair: its
+/// nodes from the first, back to it, each with the step that led there.
+fn fairLoop(
+    product: Product,
+    accepting: Array[Array[Bool]],
+    fair: Array[Fair],
+    enabled: fn(Fair, Int): Bool,
+): Array[(Int, String)]? {
+    let all: Array[Int] = (0..product.states.length()).collect()
+    var pending = [all]
+    for {
+        let region = match pending.pop() {
+            some(region) => region
+            none => return none
+        }
+        for part in components(product.edges, region) {
+            let inside = setOf(part)
+            let looped = part.any((at) { product.edges[at].any((edge) { inside.contains(edge.to) }) })
+            if not looped {
+                continue
+            }
+            let taken = (one: Fair) {
+                part.any((at) { product.edges[at].any((edge) { edge.name == one.step and inside.contains(edge.to) }) })
+            }
+            // A strong step possible here and never taken: the loops left
+            // are those that avoid where it is possible.
+            match fair.find((one) { one.strong and not taken(one) and part.any((at) { enabled(one, at) }) }) {
+                some(owed) => {
+                    pending.push(part.filter((at) { not enabled(owed, at) }))
+                    continue
+                }
+                none => {}
+            }
+            let unfair = fair.any((one) { not one.strong and not taken(one) and part.all((at) { enabled(one, at) }) })
+            let accepted = accepting.all((set) { part.any((at) { set[at] }) })
+            if unfair or not accepted {
+                continue
+            }
+            // Round the loop: each accepting set, each fair step taken, and a
+            // node where each weak one is not possible, then back.
+            let start = part[0]
+            var targets: Array[fn(Int, Edge): Bool] = []
+            for set in accepting {
+                targets.push((_: Int, edge: Edge) { set[edge.to] })
+            }
+            for one in fair {
+                if taken(one) {
+                    targets.push((_: Int, edge: Edge) { edge.name == one.step })
+                } else {
+                    targets.push((_: Int, edge: Edge) { not enabled(one, edge.to) })
+                }
+            }
+            var loop = [(start, "")]
+            var here = start
+            for target in targets {
+                match route(product.edges, inside, here, target) {
+                    some(way) => {
+                        loop.extend(way)
+                        here = way.last().map((last) { last.0 }).unwrapOr(here)
+                    }
+                    none => {}
+                }
+            }
+            // Back to where it started, unless it is there already.
+            if here != start or loop.length() == 1 {
+                match route(product.edges, inside, here, (_: Int, edge: Edge) { edge.to == start }) {
+                    some(way) => loop.extend(way)
+                    none => {}
+                }
+            }
+            return some(loop)
+        }
+    }
+}
+
+/// The shortest way among `inside` from `start`, of at least one step, to a
+/// step that `found` holds of, as the nodes and the steps that reach them.
+fn route(edges: Array[Array[Edge]], inside: Set[Int], start: Int, found: fn(Int, Edge): Bool): Array[(Int, String)]? {
+    var from: Map[Int, (Int, String)] = [:]
     var pending = Deque[Int]()
     pending.push(start)
-    _ = from.insert(start, Reached { from: -1, name: "" })
+    var seen = just(start)
     for {
         let at = match pending.popFront() {
             some(at) => at
             none => return none
         }
         for edge in edges[at] {
-            if component[edge.to] != number {
+            if not inside.contains(edge.to) {
                 continue
             }
-            if found(edge) {
-                var names = [edge.name]
+            if found(at, edge) {
+                var way = [(edge.to, edge.name)]
                 var back = at
-                for {
-                    let came = from.get(back).unwrapOr(Reached { from: -1, name: "" })
-                    if came.from < 0 {
-                        return some((names.reversed(), edge.to))
-                    }
-                    names.push(came.name)
-                    back = came.from
+                for back != start {
+                    let came = from.get(back).unwrapOr((start, ""))
+                    way.push((back, came.1))
+                    back = came.0
                 }
+                return some(way.reversed())
             }
-            if not from.contains(edge.to) {
-                _ = from.insert(edge.to, Reached { from: at, name: edge.name })
+            if seen.insert(edge.to) {
+                _ = from.insert(edge.to, (at, edge.name))
                 pending.push(edge.to)
             }
         }
     }
 }
 
-/// A way round `number` from `start` back to it that gives every step of
-/// `fair` its due, or none if no way round does. A step that stays possible
-/// all the way round has to come; one that does not, the loop has to pass
-/// where it is not possible.
-fn fairLoop(
-    edges: Array[Array[Edge]],
-    component: Array[Int],
-    number: Int,
-    start: Int,
-    fair: Array[String],
-): Array[String]? {
-    let inside = (0..edges.length()).filter((at) { component[at] == number }).collect()
-    var loop: Array[String] = []
-    var at = start
-    for name in fair {
-        let always = inside.all((state) { enabled(edges[state], name) })
-        let found = (edge: Edge) {
-            if always { edge.name == name } else { not enabled(edges[edge.to], name) }
-        }
-        match route(edges, component, number, at, found) {
-            some((names, end)) => {
-                loop = loop.concat(names)
-                at = end
-            }
-            none => return none
-        }
-    }
-    let home = (edge: Edge) { edge.to == start }
-    match route(edges, component, number, at, home) {
-        some((names, _)) => some(loop.concat(names))
-        none => none
-    }
-}
-
-fn comesTo(
-    edges: Array[Array[Edge]],
-    reached: Array[Reached],
-    goals: Array[Bool],
-    fair: Array[String],
-): !Violation {
-    for at in 0..edges.length() {
-        if edges[at].isEmpty() and not goals[at] {
-            fail broken("it ends without what it must come to", reached, at)
-        }
-    }
-    let component = components(edges, goals)
-    var tried = Set[Int]()
-    for at in 0..edges.length() {
-        let number = component[at]
-        if number < 0 or tried.contains(number) {
+/// The strongly connected parts of the nodes of `region`, by Kosaraju.
+fn components(edges: Array[Array[Edge]], region: Array[Int]): Array[Array[Int]] {
+    let inside = setOf(region)
+    var seen = Set[Int]()
+    var finished: Array[Int] = []
+    for root in region {
+        if not seen.insert(root) {
             continue
         }
-        _ = tried.insert(number)
-        match fairLoop(edges, component, number, at, fair) {
-            some(loop) => fail Violation {
-                what: "it need not come to what it must"
-                path: pathTo(reached, at)
-                loop
+        var stack = [(root, 0)]
+        for {
+            let (at, next) = match stack.last() {
+                some(top) => top
+                none => break
             }
+            if next == edges[at].length() {
+                finished.push(at)
+                _ = stack.pop()
+                continue
+            }
+            stack[stack.length() - 1] = (at, next + 1)
+            let to = edges[at][next].to
+            if inside.contains(to) and seen.insert(to) {
+                stack.push((to, 0))
+            }
+        }
+    }
+    let empty: Array[Int] = []
+    var into: Map[Int, Array[Int]] = [:]
+    for from in region {
+        for edge in edges[from] {
+            if inside.contains(edge.to) {
+                var list = into.getOr(edge.to, empty)
+                list.push(from)
+                _ = into.insert(edge.to, list)
+            }
+        }
+    }
+    var assigned = Set[Int]()
+    var parts: Array[Array[Int]] = []
+    for root in finished.reversed() {
+        if not assigned.insert(root) {
+            continue
+        }
+        var part = [root]
+        var pending = [root]
+        for {
+            let at = match pending.pop() {
+                some(at) => at
+                none => break
+            }
+            for from in into.getOr(at, empty) {
+                if assigned.insert(from) {
+                    part.push(from)
+                    pending.push(from)
+                }
+            }
+        }
+        parts.push(part)
+    }
+    parts
+}
+
+// The code and its model, kept in step: the code marks the steps of the model
+// it takes, and a test holds what it marked, in every order of its tasks, to
+// what the model can do.
+
+context Marking = {
+    observe: (fn(String))? = none
+}
+
+/// Says that the code takes `step` of its model here, for `follows` and
+/// `watch` to see in a test. Outside the build of tests it does nothing and
+/// costs nothing.
+///
+/// ```tondo
+/// import std.model
+///
+/// fn grant(holder: Int): Int {
+///     model.mark("grant")
+///     holder
+/// }
+///
+/// _ = grant(1)
+/// ```
+pub fn mark(step: String) {
+    if modelNative.recording() {
+        match Marking.observe {
+            some(observe) => observe(step)
             none => {}
         }
     }
 }
 
-/// Goes through every state `steps` reaches from `start`, nearest first, and
-/// fails at the first where `always` does not hold, or with no step left where
-/// `ends` says it should not end, when it is given, with the shortest path
-/// there. A state is a `Key`, so that one reached twice is looked at once.
-///
-/// `reaches` says that from every state a state where it holds can still be
-/// reached, whatever came before. `eventually` says more: that every way
-/// through comes to one, given that a step named in `fair` comes if it stays
-/// possible; what breaks it is a loop that never gets there, or an end.
+/// Runs `code` with what it marks seen, by it and the tasks it starts.
+fn marked(code: fn(), observe: fn(String)) {
+    with Marking { observe: some(observe) }
+    code()
+}
+
+/// Runs `code` and holds the steps it marks with `model.mark`, in the order
+/// they came, to the model: each must be a step the model can take from where
+/// the ones before led it, starting at `start`. A test under
+/// `tondo test --schedules all` does so in every order of the code's tasks,
+/// so that the code cannot do what the model says it cannot, and a change to
+/// one that the other does not follow fails. `Checked.never` names the steps
+/// of the model this run did not take.
 ///
 /// ```tondo
 /// import std.console
 /// import std.model
 ///
-/// fn steps(count: Int): Array[model.Step[Int]] {
-///     if count < 3 { [model.Step { name: "add", state: count + 1 }] } else { [] }
+/// fn steps(open: Bool): Array[model.Step[Bool]] {
+///     if open { [model.Step { name: "close", state: false }] } else { [model.Step { name: "open", state: true }] }
 /// }
 ///
-/// match model.check(0, steps, (count) { count < 3 }) {
+/// fn door() {
+///     model.mark("open")
+///     model.mark("close")
+/// }
+///
+/// match model.follows(false, steps, door) {
+///     ok(checked) => console.println("followed in {checked.steps} steps")
+///     err(broken) => console.println("{broken}")
+/// }
+/// ```
+pub fn follows[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
+    reported("follows", following(start, steps, code))
+}
+
+fn following[S: Key + reflect.Reflect](start: S, steps: fn(S): Array[Step[S]], code: fn()): Checked ! Violation {
+    let taken = sync.Queue[String]()
+    marked(code, (step: String) { taken.push(step) })
+    var now: Map[S, Array[Visit]] = [:]
+    _ = now.insert(start, [Visit { step: "", state: shown(start) }])
+    var marks: Array[String] = []
+    for step in taken.snapshot() {
+        marks.push(step)
+        var next: Map[S, Array[Visit]] = [:]
+        for here in now.keys() {
+            let path = now.get(here).unwrapOr([])
+            for possible in steps(here) {
+                if possible.name == step and not next.contains(possible.state) {
+                    var longer = path
+                    longer.push(Visit { step, state: shown(possible.state) })
+                    _ = next.insert(possible.state, longer)
+                }
+            }
+        }
+        if next.length() == 0 {
+            var paths = now.values()
+            let path = paths.next().unwrapOr([])
+            fail Violation { what: "the code took `{step}` where the model cannot", path, loop: [] }
+        }
+        now = next
+    }
+    // The steps of the model that this run never took.
+    let graph = explore(start, (current: S): Array[Step[S]] ! String { steps(current) }, [], none, none)?
+    var named: Array[String] = []
+    for out in graph.edges {
+        for edge in out {
+            if not named.contains(edge.name) and not marks.contains(edge.name) {
+                named.push(edge.name)
+            }
+        }
+    }
+    Checked { states: graph.states.length(), steps: marks.length(), depth: marks.length(), never: named }
+}
+
+/// Runs `code` and holds what `holds` says to the state `observe` gives at the
+/// start, at each step the code marks with `model.mark`, and at the end, as a
+/// run of those states: the properties of a model, on the code itself. A test
+/// under `tondo test --schedules all` does so in every order of the code's
+/// tasks. What comes later is of this run, which ends: `eventually` must come
+/// before its end.
+///
+/// ```tondo
+/// import std.console
+/// import std.model
+/// import std.sync
+///
+/// let count = sync.Atomic(0)
+/// let add = () {
+///     _ = count.add(1)
+///     model.mark("add")
+/// }
+/// let holds = [model.always((n: Int) { n <= 1 }), model.eventually((n: Int) { n == 1 })]
+/// match model.watch(() { count.load() }, holds, add) {
 ///     ok(checked) => console.println("{checked.states} states")
 ///     err(broken) => console.println("{broken}")
 /// }
 /// ```
-pub fn check[S: Key](
-    start: S,
-    steps: fn(S): Array[Step[S]],
-    always: fn(S): Bool,
-    ends: (fn(S): Bool)? = none,
-    reaches: (fn(S): Bool)? = none,
-    eventually: (fn(S): Bool)? = none,
-    fair: Array[String] = [],
-): Checked ! Violation {
-    var numbers: Map[S, Int] = [:]
-    _ = numbers.insert(start, 0)
-    var states = [start]
-    var reached = [Reached { from: -1, name: "" }]
-    var edges: Array[Array[Edge]] = []
-    var at = 0
-    for at < states.length() {
-        let state = states[at]
-        if not always(state) {
-            fail broken("what must always hold does not", reached, at)
-        }
-        let next = steps(state)
-        match ends {
-            some(allowed) if next.isEmpty() and not allowed(state) => {
-                fail broken("nothing can follow here", reached, at)
-            }
-            _ => {}
-        }
-        var out: Array[Edge] = []
-        for step in next {
-            let to = match numbers.get(step.state) {
-                some(to) => to
-                none => {
-                    let to = states.length()
-                    _ = numbers.insert(step.state, to)
-                    states.push(step.state)
-                    reached.push(Reached { from: at, name: step.name })
-                    to
+pub fn watch[S: reflect.Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation {
+    reported("watch", watching(observe, holds, code))
+}
+
+fn watching[S: reflect.Reflect](observe: fn(): S, holds: Array[Property[S]], code: fn()): Checked ! Violation {
+    let first: Array[(String, S)] = [("", observe())]
+    let seen = sync.Mutex(first)
+    marked(code, (step: String) {
+        let now = observe()
+        seen.update((all) { all.push((step, now)) })
+    })
+    let run = seen.update((all) {
+        all.push(("(end)", observe()))
+        all
+    })
+    let trace = run.map((one) { one.1 })
+    let upTo = (end: Int) { run.take(end + 1).map((one) { Visit { step: one.0, state: shown(one.1) } }) }
+    for property in holds {
+        match property.kind {
+            Kind.Invariant(predicate) => {
+                match trace.findIndex((current) { not predicate(current) }) {
+                    some(at) => fail Violation { what: "`{property.name}` does not hold", path: upTo(at), loop: [] }
+                    none => {}
                 }
             }
-            out.push(Edge { name: step.name, to })
+            Kind.Reachable(predicate) => {
+                if not trace.any(predicate) {
+                    fail Violation { what: "`{property.name}` never came", path: upTo(trace.length() - 1), loop: [] }
+                }
+            }
+            Kind.Temporal(term) => {
+                if not finite(term, trace, 0) {
+                    fail Violation { what: "`{property.name}` does not hold of this run", path: upTo(trace.length() - 1), loop: [] }
+                }
+            }
         }
-        edges.push(out)
-        at += 1
     }
-    match reaches {
-        some(goal) => match stranded(edges, states.map(goal)) {
-            some(stuck) => fail broken(
-                "what it must reach is out of reach from here",
-                reached,
-                stuck,
-            )
-            none => {}
+    Checked { states: trace.length(), steps: trace.length() - 1, depth: trace.length() - 1, never: [] }
+}
+
+/// Whether a formula holds of a run that ends, from `at` on: nothing comes
+/// after its last state.
+fn finite[S](term: Term[S], trace: Array[S], at: Int): Bool {
+    match term {
+        Term.Atom(predicate) => predicate(trace[at])
+        Term.True => true
+        Term.False => false
+        Term.Not(inner) => not finite(inner, trace, at)
+        Term.And(a, b) => finite(a, trace, at) and finite(b, trace, at)
+        Term.Or(a, b) => finite(a, trace, at) or finite(b, trace, at)
+        Term.Next(inner) => at + 1 < trace.length() and finite(inner, trace, at + 1)
+        Term.Until(a, b) => {
+            for moment in at..trace.length() {
+                if finite(b, trace, moment) {
+                    return true
+                }
+                if not finite(a, trace, moment) {
+                    return false
+                }
+            }
+            false
         }
-        none => {}
+        Term.Release(a, b) => not finite(Term.Until(Term.Not(a), Term.Not(b)), trace, at)
     }
-    match eventually {
-        some(goal) => comesTo(edges, reached, states.map(goal), fair)?
-        none => {}
-    }
-    Checked { states: states.length() }
 }

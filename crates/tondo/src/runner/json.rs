@@ -259,6 +259,7 @@ impl Context<'_> {
         if !tree.suite(node) {
             fields.push(("bench", Value::Bool(tree.nodes[node as usize].bench)));
             fields.push(("fuzz", Value::Bool(tree.nodes[node as usize].fuzz)));
+            fields.push(("model", Value::Bool(tree.nodes[node as usize].model)));
         }
         fields
     }
@@ -432,6 +433,7 @@ impl Context<'_> {
         let mut fields = vec![
             ("index", int(index)),
             ("orders", orders),
+            ("models", Value::Array(attempt.models.iter().map(converted).collect())),
             ("iteration", int(attempt.iteration as usize)),
             ("round", int(attempt.round as usize)),
             ("unit", unit),

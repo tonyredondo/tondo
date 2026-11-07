@@ -388,42 +388,9 @@ reloads `--watch`; `tondo graph` shows what each module embeds.
 
 ## A design, before the code
 
-`std.model` checks a design in every order of its steps: a state that is a
-`Key`, the steps that can follow each one, and what must always hold. It stops
-at the first state that breaks it, with the shortest way there.
-
-```tondo
-import std.console
-import std.model
-
-type Door = { open: Bool, locked: Bool }
-
-fn steps(door: Door): Array[model.Step[Door]] {
-    var next = [model.Step { name: "lock", state: door with { locked: true } }]
-    if not door.locked {
-        next.push(model.Step { name: "open", state: door with { open: true } })
-    }
-    next
-}
-
-fn main() {
-    let start = Door { open: false, locked: false }
-    match model.check(start, steps, (door) { not (door.open and door.locked) }) {
-        ok(checked) => console.println("{checked.states} states")
-        err(broken) => console.println("{broken}")
-    }
-}
-```
-
-This says `what must always hold does not, after: open, lock`. That is what must
-never happen; two more arguments say what must. `reaches: some(done)` holds if
-every state can still get to one where `done` holds, which finds a wait nobody
-ends. `eventually: some(done)` holds if every way through gets there, and a loop
-that never does breaks it, shown as `..., and round for ever: spin`. A step that
-can only be put off for so long goes in `fair`, by name: `fair: ["go"]` says that
-`go` comes if it stays possible, as a scheduler that is fair gives. A model knows
-of the design, not of the code: `tondo test --schedules all` is what tries the
-code.
+`std.model` goes through every state of a design, or of a state machine of the
+program, in every order of its steps, and says what breaks what must hold, step
+by step: `tondo guide models`.
 
 ## The network
 

@@ -50,6 +50,8 @@ pub struct Options {
     pub shard: Option<(u64, u64)>,
     pub order: Order,
     pub list: bool,
+    /// `--models`: only the tests that check a model.
+    pub models: bool,
     pub jobs: usize,
     pub timeout: Duration,
     /// Additional rounds for failures (8.7).
@@ -170,7 +172,8 @@ impl Tree {
             .iter()
             .zip(&self.locations)
             .map(|(n, location)| {
-                format!("{}\t{}\t{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.bench as u8, n.fuzz as u8, n.id)
+                let flags = format!("{}\t{}\t{}", n.bench as u8, n.fuzz as u8, n.model as u8);
+                format!("{}\t{}\t{flags}\t{}\t{location}", n.parent, n.suite as u8, n.id)
             })
             .collect();
         let partial = path.with_extension(format!("partial-{}", std::process::id()));
@@ -183,14 +186,15 @@ impl Tree {
         let text = std::fs::read_to_string(path).ok()?;
         let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
         for line in text.lines() {
-            let mut parts = line.splitn(6, '\t');
+            let mut parts = line.splitn(7, '\t');
             let parent = parts.next()?.parse().ok()?;
             let suite = parts.next()? == "1";
             let bench = parts.next()? == "1";
             let fuzz = parts.next()? == "1";
+            let model = parts.next()? == "1";
             let id = parts.next()?.to_string();
             let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, span, whole: span });
+            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, model, span, whole: span });
             tree.locations.push(parts.next()?.to_string());
         }
         Some(tree)
@@ -302,6 +306,8 @@ pub struct Attempt {
     pub virtual_time: Vec<VirtualClock>,
     /// What its benchmarks measured, in order (10.4).
     pub benchmarks: Vec<Benchmark>,
+    /// What each model it checked came to, as `std.model` says it.
+    pub models: Vec<serde_json::Value>,
     /// What its calls of `testing.fuzz` did, in order (10.6).
     pub fuzz: Vec<Fuzzed>,
 }
@@ -423,6 +429,7 @@ impl Attempt {
             snapshots: Vec::new(),
             virtual_time: Vec::new(),
             benchmarks: Vec::new(),
+            models: Vec::new(),
             fuzz: Vec::new(),
         }
     }
@@ -476,6 +483,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if options.fuzz.is_some() {
         selected.retain(|&test| tree.nodes[test as usize].fuzz);
     }
+    if options.models {
+        selected.retain(|&test| tree.nodes[test as usize].model);
+    }
     // Each `--exact` names a suite or test.
     let missing: Vec<String> = match &options.selector {
         Selector::Exact(ids) => ids
@@ -489,6 +499,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         let message = match &options.selector {
             Selector::All if options.bench.is_some() => "the project has no benchmarks: a test that calls \
                 `testing.bench(\"name\", () { ... })` in its body is one"
+                .into(),
+            Selector::All if options.models => "the project checks no models: a test that calls \
+                `model.check`, `model.machine`, `model.follows` or `model.watch` in its body is one"
                 .into(),
             Selector::All if options.fuzz.is_some() => "the project has no fuzz tests: a test that calls \
                 `testing.fuzz(\"parse\", [\"[1]\"], (text: String) { _ = json.parse(text) })` in its body is one"
@@ -1200,6 +1213,8 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             Orders::All(limit) => (*limit, (Vec::new(), Vec::new())),
             Orders::At(path) => (1, (path.split('.').filter_map(|choice| choice.parse().ok()).collect(), Vec::new())),
         };
+        // What a model never did in any order: in none of them.
+        let mut never: Option<Vec<std::collections::BTreeSet<String>>> = None;
         let mut tried = std::collections::HashSet::from([first.clone()]);
         let mut classes = std::collections::HashSet::new();
         let mut pending: std::collections::VecDeque<orders::Order> = [first].into();
@@ -1229,6 +1244,19 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
                 pending.clear();
                 break;
             }
+            for (at, model) in last.iter().flat_map(|attempt| &attempt.models).enumerate() {
+                let here: std::collections::BTreeSet<String> = model["never"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect();
+                let all = never.get_or_insert_with(Vec::new);
+                match all.get_mut(at) {
+                    Some(before) => before.retain(|step| here.contains(step)),
+                    None => all.push(here),
+                }
+            }
             // Another run of an order gives what the first did.
             if !classes.insert(orders::class(&written)) && !every {
                 continue;
@@ -1255,6 +1283,11 @@ fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders
             match options.json {
                 true => eprintln!("tondo: {}: {count}, {how}", tree.id(test)),
                 false => say!("{}: {count}, {how}", tree.id(test)),
+            }
+        }
+        for attempt in &mut last {
+            for (model, all) in attempt.models.iter_mut().zip(never.iter().flatten()) {
+                model["never"] = serde_json::json!(all);
             }
         }
         for mut attempt in last.drain(..) {

@@ -1,0 +1,100 @@
+// What `std.model` says of a design besides what never happens: formulas of
+// what comes later, symmetry, the collections a state holds, and every value
+// of a type.
+// expect-stdout: turns: 16 states
+// expect-stdout: mirrored: 9 states
+// expect-stdout: until: 16 states
+// expect-stdout: next: `1 holds it next, always` does not hold
+// expect-stdout:   start: Turns { holder: none, waiting: Queue([]), done: Bag([]) }
+// expect-stdout:   ask 1: Turns { holder: none, waiting: Queue([1]), done: Bag([]) }
+// expect-stdout:   ask 2: Turns { holder: none, waiting: Queue([1, 2]), done: Bag([]) }
+// expect-stdout:   grant: Turns { holder: some(1), waiting: Queue([2]), done: Bag([]) }
+// expect-stdout:   release: Turns { holder: none, waiting: Queue([2]), done: Bag([1]) }
+// expect-stdout:   grant: Turns { holder: some(2), waiting: Queue([]), done: Bag([1]) }
+// expect-stdout:   release: Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
+// expect-stdout:   and then round for ever:
+// expect-stdout:   (stays): Turns { holder: none, waiting: Queue([]), done: Bag([1, 2]) }
+// expect-stdout: every light: 3
+// expect-stdout: `Int` has no end, so its values cannot all be gone through
+import std.console
+import std.model
+
+// Two tasks ask for a lock, in either order, and take turns at it: which
+// one is which does not matter, so symmetry counts each state and its mirror
+// once.
+type Turns = {
+    holder: Int?
+    waiting: model.Queue[Int]
+    done: model.Bag[Int]
+}
+
+fn steps(turns: Turns): Array[model.Step[Turns]] {
+    var next: Array[model.Step[Turns]] = []
+    for task in [1, 2] {
+        let idle = turns.holder != some(task) and not turns.waiting.contains(task) and not turns.done.contains(task)
+        if idle {
+            next.push(model.Step { name: "ask {task}", state: turns with { waiting: turns.waiting.push(task) } })
+        }
+    }
+    match turns.holder {
+        some(task) => next.push(model.Step {
+            name: "release"
+            state: turns with { holder: none, done: turns.done.add(task) }
+        })
+        none => match turns.waiting.first() {
+            some(task) => next.push(model.Step {
+                name: "grant"
+                state: turns with { holder: some(task), waiting: turns.waiting.rest() }
+            })
+            none => {}
+        }
+    }
+    next
+}
+
+// The one of a state and its mirror, with tasks 1 and 2 swapped, that comes
+// first as written.
+fn mirror(turns: Turns): Turns {
+    let swap = (task: Int) { if task == 1 { 2 } else { 1 } }
+    let mirrored = Turns {
+        holder: turns.holder.map(swap)
+        waiting: model.Queue(turns.waiting.items().map(swap))
+        done: model.Bag(turns.done.items().map(swap))
+    }
+    let written = (one: Turns) { "{one.holder} {one.waiting.items()} {one.done.items()}" }
+    if written(mirrored) < written(turns) { mirrored } else { turns }
+}
+
+fn say(name: String, result: model.Checked ! model.Violation) {
+    match result {
+        ok(checked) => console.println("{name}: {checked.states} states")
+        err(broken) => console.println("{name}: {broken}")
+    }
+}
+
+enum Light {
+    Off
+    On(Bool)
+}
+
+fn main() {
+    let start = Turns { holder: none, waiting: model.Queue([]), done: model.Bag([]) }
+    let both = model.eventually((turns: Turns) { turns.done.length() == 2 }, name: "both done")
+    say("turns", model.check(start, steps, holds: [both]))
+    say("mirrored", model.check(start, steps, holds: [both], symmetry: some(mirror)))
+    // 1 holds the lock until it is done with it, and then never again.
+    let holds = (turns: Turns) { turns.holder == some(1) }
+    let finished = (turns: Turns) { turns.done.contains(1) }
+    let once = model.state(holds).until(model.state(finished)).eventually()
+    say("until", model.check(start, steps, holds: [model.temporal(once, name: "1 holds it until done")]))
+    let never = model.state(holds).next().always()
+    say("next", model.check(start, steps, holds: [model.temporal(never, name: "1 holds it next, always")]))
+    match model.every[Light]() {
+        ok(all) => console.println("every light: {all.length()}")
+        err(why) => console.println(why)
+    }
+    match model.every[Int]() {
+        ok(_) => console.println("every Int")
+        err(why) => console.println(why)
+    }
+}

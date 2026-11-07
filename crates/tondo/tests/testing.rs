@@ -2285,3 +2285,44 @@ test holds {
     let (stdout, _, status) = tondo(&dir, &["test", "--filter", "loses", "--schedules", at]);
     assert_eq!(status, 1, "{stdout}");
 }
+
+/// A test that checks a model is one `--models` runs, and what the model came
+/// to is in the report: a machine's events no state takes, the steps of a
+/// model the code never took in any order, and the order in which the code
+/// did what its model cannot.
+#[test]
+fn models_are_checked_and_reported() {
+    let tests = "import std.model\nimport std.sync\n\ntype Lock = {\n    holder: Int?\n}\n\nfn steps(lock: Lock): Array[model.Step[Lock]] {\n    match lock.holder {\n        none => [model.Step { name: \"take\", state: Lock { holder: some(1) } }]\n        some(_) => [model.Step { name: \"give\", state: Lock { holder: none } }]\n    }\n}\n\nfn worker(lock: sync.Mutex[Int]) {\n    lock.update((value) {\n        model.mark(\"take\")\n        value += 1\n        model.mark(\"give\")\n    })\n}\n\n// Gives the lock up before it says so: another may take it in between.\nfn careless(lock: sync.Mutex[Int]) {\n    lock.update((value) {\n        model.mark(\"take\")\n        value += 1\n    })\n    model.mark(\"give\")\n}\n\nfn both(work: fn(sync.Mutex[Int])) {\n    let lock = sync.Mutex(0)\n    let a = spawn work(lock)\n    let b = spawn work(lock)\n    a.wait()\n    b.wait()\n}\n\ntest followsItsModel {\n    model.expect(model.follows(Lock { holder: none }, steps, () { both(worker) }))\n}\n\ntest strayFromItsModel {\n    model.expect(model.follows(Lock { holder: none }, steps, () { both(careless) }))\n}\n\nfn adds(count: sync.Atomic[Int]) {\n    let seen = count.load()\n    count.store(seen + 1)\n    model.mark(\"add\")\n}\n\ntest watchesTheCount {\n    let count = sync.Atomic(0)\n    let run = () {\n        let a = spawn adds(count)\n        let b = spawn adds(count)\n        a.wait()\n        b.wait()\n    }\n    model.expect(model.watch(() { count.load() }, [model.eventually((n: Int) { n == 2 }, name: \"both add\")], run))\n}\n\nfn timed(lock: Lock): Array[model.Step[Lock]] {\n    var next = steps(lock)\n    next.push(model.Step { name: \"timeout\", state: Lock { holder: none } })\n    next\n}\n\ntest neverTimesOut {\n    model.expect(model.follows(Lock { holder: none }, timed, () { both(worker) }))\n}\n\nenum Event {\n    Open\n    Close\n    Jam\n}\n\nfn apply(open: Bool, event: Event): Bool ! String {\n    match event {\n        Event.Open if open => fail \"already open\"\n        Event.Open => true\n        Event.Close => false\n        Event.Jam => fail \"it cannot jam\"\n    }\n}\n\ntest aDoor {\n    model.expect(model.machine(false, apply))\n}\n";
+    let dir = project("models", tests);
+    // In one order of their tasks, all of them hold.
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--models"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    for test in ["followsItsModel", "strayFromItsModel", "watchesTheCount", "neverTimesOut", "aDoor"] {
+        assert!(stdout.contains(test), "{test}: {stdout}");
+    }
+    assert!(stdout.contains("model: no state took `Jam`"), "{stdout}");
+    let (stdout, _, _) = tondo(&dir, &["test", "--exact", "app::unit::app::neverTimesOut", "--schedules", "all"]);
+    assert!(stdout.contains("model: the code never took `timeout`"), "{stdout}");
+    let (stdout, _, status) =
+        tondo(&dir, &["test", "--exact", "app::unit::app::followsItsModel", "--schedules", "all"]);
+    assert_eq!(status, 0, "{stdout}");
+    let (stdout, _, status) =
+        tondo(&dir, &["test", "--exact", "app::unit::app::strayFromItsModel", "--schedules", "all"]);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("the code took `take` where the model cannot"), "{stdout}");
+    let (stdout, _, status) =
+        tondo(&dir, &["test", "--exact", "app::unit::app::watchesTheCount", "--schedules", "all"]);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("`both add` does not hold of this run"), "{stdout}");
+    // The report says it as data.
+    let (stdout, _, _) = tondo(&dir, &["test", "--exact", "app::unit::app::aDoor", "--test-format", "json"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+    let test = report["tests"].as_array().unwrap().iter().find(|test| test["model"] == true).unwrap();
+    assert_eq!(test["attempts"][0]["models"][0]["never"], serde_json::json!(["Jam"]), "{test}");
+    assert_eq!(test["attempts"][0]["models"][0]["kind"], "machine", "{test}");
+    // A project with no models says how to write one.
+    let none = project("no-models", "test plain {\n    assert(1 == 1)\n}\n");
+    let (stdout, stderr, status) = tondo(&none, &["test", "--models"]);
+    assert_ne!(status, 0);
+    assert!(format!("{stdout}{stderr}").contains("checks no models"), "{stdout}{stderr}");
+}

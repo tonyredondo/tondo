@@ -598,3 +598,16 @@ pub(crate) fn terminal(code: u32, text: &str) -> bool {
     })
     .is_some()
 }
+
+/// Whether `model.mark` records, which compiled code knows without asking:
+/// in a build of tests it does, elsewhere it is not even called.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_model_recording() -> u8 {
+    1
+}
+
+/// What a model came to, as JSON, for `tondo test` to show and report.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_model_report(json: *const crate::Str) {
+    report("model", unsafe { crate::str_bytes(json) });
+}

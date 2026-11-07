@@ -83,6 +83,7 @@ impl Kind {
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
+            (Kind::Reflect, "model") => matches!(name, "Queue" | "Bag"),
             (Kind::Reflect, "sql") => matches!(name, "Database" | "SqlError"),
             (Kind::Reflect, "time") => {
                 matches!(name, "Duration" | "DateTime" | "ZonedDateTime" | "Zone" | "Weekday" | "IsoWeek")
@@ -585,9 +586,11 @@ impl Context<'_> {
                         let Some(import) = import else { return false };
                         let path: Vec<&str> = import.path.iter().map(|i| i.name.as_str()).collect();
                         if let ["std", standard] = path.as_slice() {
-                            // Reflection carries what `std.sync` shares as it is.
+                            // Reflection carries what `std.sync` shares as it is,
+                            // and the collections of `std.model` as their items.
                             let opaque = self.kind == Kind::Reflect && *standard == "sync";
-                            return (args.is_empty() || opaque) && self.kind.standard(standard, name);
+                            let holds = self.kind == Kind::Reflect && *standard == "model" && each(args);
+                            return (args.is_empty() || opaque || holds) && self.kind.standard(standard, name);
                         }
                         match self.paths.iter().position(|p| p.iter().map(String::as_str).eq(path.iter().copied())) {
                             Some(target) => declared(target, name) && each(args),

@@ -134,6 +134,8 @@ pub struct TestNodeInfo {
     pub bench: bool,
     /// A test whose body calls `testing.fuzz` (testing 10.6).
     pub fuzz: bool,
+    /// A test whose body checks a model of `std.model` (testing 8.12).
+    pub model: bool,
     pub span: Span,
     /// All of it, with its body.
     pub whole: Span,
@@ -1243,6 +1245,9 @@ pub const NATIVES: &[Native] = {
     const fn memory(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "memory", name, receiver: None, params, result, symbol }
     }
+    const fn model(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "model", name, receiver: None, params, result, symbol }
+    }
     const fn regex(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: None, params, result, symbol }
     }
@@ -1375,6 +1380,8 @@ pub const NATIVES: &[Native] = {
         memory("fromCString", &[BytePointer], String, "tondo_rt_memory_from_c_string"),
         memory("bytes", &[BytePointer, Int], Bytes, "tondo_rt_memory_bytes"),
         memory("fromCChars", &[Bytes], String, "tondo_rt_memory_from_c_chars"),
+        model("recording", &[], Bool, "tondo_rt_model_recording"),
+        model("report", &[String], Unit, "tondo_rt_model_report"),
         regex("compile", &[String, Int, Int, Int, Int, Int, Int, Int, Int, Int], Regex, "tondo_rt_regex_compile"),
         regex("errorKind", &[], Int, "tondo_rt_regex_error_kind"),
         regex("errorOffset", &[], Int, "tondo_rt_regex_error_offset"),

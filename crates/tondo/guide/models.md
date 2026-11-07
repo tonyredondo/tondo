@@ -1,0 +1,168 @@
+# Models
+
+`std.model` goes through every state a design or a piece of code can reach,
+in every order of its steps, and says what breaks what must hold, step by step,
+with each state on the way. It runs in a test, as anything else does.
+
+Try these in order: the first two need no model at all, so there is nothing to
+keep in step with the code.
+
+1. The code is a state machine: `model.machine` checks the production function.
+2. The code runs tasks: `model.watch` checks properties of the real code.
+3. Otherwise, write a model, and keep it honest with `model.mark` and
+   `model.follows`.
+
+## A state machine: no model to write
+
+A function that gives the next state for an event is the model already.
+`model.machine` tries every event in every state, every value of the event's
+type there is, and stops at the first that breaks what `holds` says. An event
+the function fails for is one that cannot happen there; one it panics for is a
+bug, shown with the way to it.
+
+```tondo test
+import std.model
+
+enum Event {
+    Insert
+    Turn
+    Push
+}
+
+type Gate = {
+    paid: Bool
+    open: Bool
+}
+
+fn apply(gate: Gate, event: Event): Gate ! String {
+    match event {
+        Event.Insert => gate with { paid: true }
+        Event.Turn if gate.paid => gate with { open: true, paid: false }
+        Event.Turn => fail "not paid"
+        Event.Push if gate.open => gate with { open: false }
+        Event.Push => fail "closed"
+    }
+}
+
+test theGateOpensOnlyWhenPaid {
+    let start = Gate { paid: false, open: false }
+    let paid = model.always((gate: Gate) { not (gate.open and gate.paid) }, name: "never open and paid")
+    model.expect(model.machine(start, apply, holds: [paid]))
+}
+```
+
+`model.expect` fails the test with what broke. `tondo test` also says which
+events no state took, which is often a mistake. An event that holds a number or
+a string has no end of values: then `events: (gate) { [...] }` says which can
+happen in a state.
+
+## What must hold
+
+`holds` takes properties, by what they say:
+
+- `model.always(p)`: every state reached is one `p` holds of.
+- `model.eventually(p)`: every run gets to such a state.
+- `model.leadsTo(p, q)`: whenever `p` holds, `q` does then or later.
+- `model.infinitelyOften(p)`, `model.eventuallyAlways(p)`: again and again,
+  and from some point on for ever.
+- `model.reachable(p)`: from every state such a state can still be reached,
+  which finds a wait nobody ends.
+- `model.temporal(formula)`: anything else, as a formula of linear temporal
+  logic built from `model.state(p)` with `next`, `always`, `eventually`,
+  `until`, `implies`, `negated`, `model.allOf` and `model.anyOf`.
+
+Each takes a `name`, which the failure says. A run takes a step whenever one is
+possible, and one with no step left stays where it is. A loop that never gets
+where it must breaks `eventually`, shown as `and then round for ever:`; a step
+that cannot be put off for ever goes in `fair`: `model.weak("grant")` if it
+comes when it stays possible, `model.strong("grant")` if it comes when it keeps
+becoming possible. `ends: (state) { ... }` says where a run may stop: anywhere
+else, stopping is a deadlock.
+
+## Concurrent code: properties of the real thing
+
+`model.watch` runs the code and holds the properties to the state it reads at
+the start, at each `model.mark`, and at the end. Under
+`tondo test --schedules all` it does so in every order of the code's tasks.
+
+```tondo test
+import std.model
+import std.sync
+
+fn adds(count: sync.Atomic[Int]) {
+    _ = count.add(1)
+    model.mark("add")
+}
+
+test bothAdd {
+    let count = sync.Atomic(0)
+    let run = () {
+        let a = spawn adds(count)
+        let b = spawn adds(count)
+        a.wait()
+        b.wait()
+    }
+    let both = model.eventually((n: Int) { n == 2 }, name: "both add")
+    model.expect(model.watch(() { count.load() }, [both], run))
+}
+```
+
+`model.mark` does nothing outside the build of tests, and costs nothing there.
+
+## A model, kept honest
+
+A model of a design before its code, or of code too big to go through, is a
+start state and the steps that can follow each one: `model.check`. The code
+marks the steps it takes with `model.mark`, and `model.follows` holds what it
+marked to the model, in every order under `--schedules all`. If one changes and
+the other does not, the test fails at the step where they part, and
+`tondo test` names the steps of the model the code never takes in any order.
+
+```tondo test
+import std.model
+import std.sync
+
+type Lock = {
+    holder: Int?
+}
+
+fn steps(lock: Lock): Array[model.Step[Lock]] {
+    match lock.holder {
+        none => [model.Step { name: "take", state: Lock { holder: some(1) } }]
+        some(_) => [model.Step { name: "give", state: Lock { holder: none } }]
+    }
+}
+
+fn worker(lock: sync.Mutex[Int]) {
+    lock.update((value) {
+        model.mark("take")
+        value += 1
+        model.mark("give")
+    })
+}
+
+test theLockFollowsItsModel {
+    model.expect(model.check(Lock { holder: none }, steps, holds: [model.reachable((lock: Lock) { lock.holder.isNone() })]))
+    let both = () {
+        let lock = sync.Mutex(0)
+        let a = spawn worker(lock)
+        let b = spawn worker(lock)
+        a.wait()
+        b.wait()
+    }
+    model.expect(model.follows(Lock { holder: none }, steps, both))
+}
+```
+
+A state is a `Key`: an `Array` is not one, so a queue in a state is a
+`model.Queue([1, 2])` and a collection whose order says nothing is a
+`model.Bag(...)`. `symmetry: (state) { ... }` gives the one state that stands
+for all those it equals, as the same with its tasks numbered otherwise, so that
+only it is gone through. `model.every[T]()` gives every value of a type.
+
+## Running them
+
+- `tondo test --models` runs the tests that check a model; `--schedules all`
+  goes through every order of their tasks.
+- The report of `--test-format json` has each model in `models`: how many
+  states and steps, the events or steps never taken, and what broke.

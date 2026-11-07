@@ -302,6 +302,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         shard: None,
         order: Order::Canonical,
         list: false,
+        models: false,
         jobs: 1,
         timeout: std::time::Duration::from_secs(60),
         retry: 0,
@@ -393,6 +394,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--list" => options.list = true,
             "--bench" => bench = true,
+            "--models" => options.models = true,
             "--fuzz" => fuzzing = true,
             "--fuzz-time" | "--fuzz-timeout" => {
                 let seconds = value()?

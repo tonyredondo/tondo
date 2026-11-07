@@ -13,6 +13,7 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("tasks", include_str!("../guide/tasks.md")),
     ("projects", include_str!("../guide/projects.md")),
     ("testing", include_str!("../guide/testing.md")),
+    ("models", include_str!("../guide/models.md")),
     ("stdlib", include_str!("../guide/stdlib.md")),
     ("http", include_str!("../guide/http.md")),
     ("templates", include_str!("../guide/templates.md")),

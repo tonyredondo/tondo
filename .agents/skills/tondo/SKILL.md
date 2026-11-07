@@ -157,6 +157,7 @@ text         strings, characters, bytes, formatting
 tasks        spawn, Group, channels, select, cancellation, std.sync, contexts
 projects     tondo.toml, modules, imports, dependencies, native libraries
 testing      test, suite, std.testing, snapshots, tondo test
+models       std.model: every state of a design or of the code, and what must hold
 stdlib       the standard modules and what each is for
 http         HTTP client and server, typed handlers, OpenAPI, WebSockets, GraphQL, gRPC
 templates    text and HTML templates checked against their data

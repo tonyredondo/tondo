@@ -5434,3 +5434,30 @@ protocol needs. It caught nothing yet, and is there so that "any editor" stays t
 The standard modules stay files by default, even with `workspace/textDocumentContent`: a virtual
 document is read-only to everything else the server offers, so it would lose hover and navigation
 inside them. `virtualStandardLibrary` is there for an editor that cannot read the cache.
+
+## `std.model` for what TLC did, and the code kept in step
+
+`std.model` is to do what we used TLA+ for, and what others may: every property TLC checks, not
+only the invariants our models use. Formulas of what comes later are checked as Gerth, Peled, Vardi
+and Wolper build them, as an automaton of the runs that break the formula, gone along with the
+model; a loop it accepts that gives each fair step its due breaks the formula, and strong fairness
+is checked by leaving out, part by part, the states where an owed step is possible. It is held to
+TLC itself on random graphs, formulas and fairness that TLA+ can write, and to a brute force over
+lassos on those with `until` and `next`, which it cannot: hundreds of cases, all the same. Cases
+where fairness changes nothing check nothing of it, so the generator builds rings with ways out,
+and dropping fairness must change verdicts for the comparison to count.
+
+A model written beside the code drifts from it, which is the weakness of TLA+. So the first answer
+is no model: `model.machine` goes through the production function that gives the next state, with
+every value of the event's type, which reflection gives, so that nothing is written but what must
+hold. The second is properties of the real code, `model.watch`, in every order `--schedules all`
+gives. Only then a model, and `model.mark` in the code with `model.follows` hold the two to each
+other in every order: a step one takes and the other cannot fails the test, and a step of the model
+the code never takes in any order is said. `mark` costs nothing outside a build of tests: the
+compiler writes `false` for whether it records.
+
+A state is a `Key`, and an `Array` is not, as `Key` implies `Copy`. Rather than change the language,
+`model.Queue` and `model.Bag` are enums a state can hold. The standard library's types got no
+reflection of their own, so the two are named where derivation accepts a standard type, with their
+arguments checked.
+
