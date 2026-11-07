@@ -3294,8 +3294,10 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
 fn exploring() -> Option<&'static AtomicU64> {
     static SEED: std::sync::OnceLock<Option<AtomicU64>> = std::sync::OnceLock::new();
     SEED.get_or_init(|| {
-        // A recorded run, and its replay, run in one order.
-        let text = std::env::var("TONDO_RT_SCHEDULE").ok().or_else(|| super::replay::on().then(|| "0".into()))?;
+        // A recorded run, and its replay, run in one order, and so does one
+        // whose choices are given.
+        let given = super::replay::on() || script().is_some();
+        let text = std::env::var("TONDO_RT_SCHEDULE").ok().or_else(|| given.then(|| "0".into()))?;
         let seed = u64::from_str_radix(&text, 16).ok()?;
         // Every call that may wait gives way.
         attend(true);
@@ -3304,12 +3306,49 @@ fn exploring() -> Option<&'static AtomicU64> {
     .as_ref()
 }
 
+/// `TONDO_RT_ORDER`, the choices to make, as `0.2.1`, for `tondo test
+/// --schedules all`: the rest are the first of each. `TONDO_RT_ORDER_OUT`
+/// names where each choice goes as it is made, with how many there were, so
+/// that the runner knows what else this run could have done.
+struct Script {
+    given: Vec<usize>,
+    made: usize,
+    out: Option<std::fs::File>,
+}
+
+fn script() -> Option<&'static Mutex<Script>> {
+    static SCRIPT: std::sync::OnceLock<Option<Mutex<Script>>> = std::sync::OnceLock::new();
+    SCRIPT
+        .get_or_init(|| {
+            let given = std::env::var("TONDO_RT_ORDER").ok()?;
+            let given = given.split('.').filter_map(|choice| choice.parse().ok()).collect();
+            let out = std::env::var_os("TONDO_RT_ORDER_OUT").and_then(|path| std::fs::File::create(path).ok());
+            Some(Mutex::new(Script { given, made: 0, out }))
+        })
+        .as_ref()
+}
+
+/// A choice among `count` things, when the run is given its choices.
+fn scripted(count: usize) -> Option<usize> {
+    let mut script = script()?.lock().unwrap_or_else(|e| e.into_inner());
+    if count < 2 {
+        return Some(0);
+    }
+    let choice = script.given.get(script.made).copied().unwrap_or(0) % count;
+    script.made += 1;
+    if let Some(out) = &mut script.out {
+        use std::io::Write;
+        let _ = writeln!(out, "{choice} {count}");
+    }
+    Some(choice)
+}
+
 /// After a task reads a cell of `std.sync`, while exploring orders: by the
 /// seed, it drops below the others and they run, so that a write of theirs
 /// comes before its own and a lost update does not depend on chance.
 pub(crate) fn may_lose_update() {
     let Some(seed) = exploring() else { return };
-    if seeded(seed).is_multiple_of(2) {
+    if scripted(2).map_or(seeded(seed).is_multiple_of(2), |choice| choice == 1) {
         if let Some(task) = unsafe { current().as_mut() } {
             task.priority = 1;
         }
@@ -3334,6 +3373,9 @@ pub(crate) fn may_switch() {
 /// steps comes with a probability that does not fall with the program's
 /// length.
 fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
+    if let Some(choice) = scripted(runnable.len()) {
+        return choice;
+    }
     static STEPS: AtomicU64 = AtomicU64::new(0);
     static CHANGES: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
     let changes = CHANGES.get_or_init(|| {
@@ -4686,7 +4728,7 @@ impl Case {
 /// seed's, while exploring orders.
 fn random(bound: usize) -> usize {
     if let Some(seed) = exploring() {
-        return (seeded(seed) % bound as u64) as usize;
+        return scripted(bound).unwrap_or_else(|| (seeded(seed) % bound as u64) as usize);
     }
     static STATE: AtomicUsize = AtomicUsize::new(0x9e37_79b9_7f4a_7c15);
     let mut x = STATE.load(Ordering::Relaxed);

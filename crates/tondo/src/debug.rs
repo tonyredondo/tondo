@@ -22,7 +22,7 @@ pub enum Debugged {
     /// A test of a project: its tests' executable, the test's node, which
     /// runs alone, the variables that give it the project's stores, and the
     /// seed of the order of its tasks (`--schedule`).
-    Test(PathBuf, u32, Vec<(&'static str, PathBuf)>, Option<u64>),
+    Test(PathBuf, u32, Vec<(&'static str, PathBuf)>, Option<String>),
     /// A run `tondo run --record` recorded in this directory, replayed.
     Replayed(PathBuf),
 }
@@ -286,7 +286,10 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .env("TONDO_LIVE_HOLD", "1")
                 .env("TONDO_TEST_PLAN", &plan)
                 .envs(environment)
-                .envs(schedule.map(|seed| ("TONDO_RT_SCHEDULE", format!("{seed:x}"))))
+                .envs(schedule.map(|order| match order.strip_prefix("at:") {
+                    Some(choices) => ("TONDO_RT_ORDER", choices.to_string()),
+                    None => ("TONDO_RT_SCHEDULE", order.clone()),
+                }))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())

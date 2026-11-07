@@ -59,6 +59,9 @@ pub struct Options {
     /// tasks in another order (8.10), from a seed, and whether `tondo test`
     /// chose it.
     pub schedules: Option<(u32, u64, bool)>,
+    /// `--schedules all`: every order of the tasks of each test, up to as
+    /// many, and `--schedules at:0.2.1`, one given by its choices (8.10).
+    pub orders: Option<Orders>,
     /// `--record dir`: each test runs alone, recorded (toolchain 7.6), and
     /// the recordings of those that fail stay in the directory.
     pub record: Option<PathBuf>,
@@ -509,7 +512,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if let (Order::Random(seed, _), false) = (&options.order, options.json) {
         say!("seed {seed:016x}");
     }
-    if let (Some((count, seed, _)), false) = (options.schedules, options.json) {
+    if let (Some((count, seed, _)), false, None) = (options.schedules, options.json, &options.orders) {
         say!("{count} orders of the tasks from seed {seed:016x}");
     }
     let none = bench::Baselines::default();
@@ -591,11 +594,13 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         targets: &[],
         until: 0,
         replay: None,
+        order: None,
     };
     interrupt::listen();
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
         _ if let Some(searching) = &options.fuzz => (fuzz::campaign(&run, &plan, &mut printer, searching), Vec::new()),
+        _ if let Some(orders) = &options.orders => (explore(&run, &plan, &mut printer, orders), Vec::new()),
         _ => campaign(&run, &plan, &mut printer),
     };
     let _ = std::fs::remove_file(&entries);
@@ -1031,6 +1036,7 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
         targets: &[],
         until: 0,
         replay: None,
+        order: None,
     };
     let node = |id: &str| (1..revision.tree.nodes.len() as u32).find(|&n| revision.tree.id(n) == id);
     printer.begin(1, 0, plan);
@@ -1151,8 +1157,90 @@ impl Options {
 
     /// The seed of the order of tasks an iteration runs with (8.10).
     pub(super) fn schedule(&self, iteration: u32) -> Option<u64> {
-        self.schedules.map(|(_, seed, _)| schedule_seed(seed, iteration))
+        self.schedules.filter(|_| self.orders.is_none()).map(|(_, seed, _)| schedule_seed(seed, iteration))
     }
+}
+
+/// Which orders of the tasks a test runs in, by their choices (8.10).
+#[derive(Clone, Debug)]
+pub enum Orders {
+    All(usize),
+    At(String),
+}
+
+/// The orders `--schedules all` tries of a test, unless it says.
+pub const ORDERS: usize = 20_000;
+
+/// `--schedules all` (8.10): each test runs in the order of its first choices,
+/// and then again for every other choice it could have made, those with fewer
+/// changes first, as most faults need few, until none is left or it fails.
+fn explore(run: &worker::Run, plan: &[u32], printer: &mut human::Printer, orders: &Orders) -> Vec<Attempt> {
+    let (tree, options) = (run.tree, run.options);
+    printer.begin(1, 0, plan);
+    let context = Context { round: 0, iteration: 1, unit: None, target: None };
+    let out = std::env::temp_dir().join(format!("tondo-orders-{}", std::process::id()));
+    let mut attempts = Vec::new();
+    for &test in plan.iter().filter(|&&test| !tree.suite(test)) {
+        let (limit, first) = match orders {
+            Orders::All(limit) => (*limit, Vec::new()),
+            Orders::At(path) => (1, path.split('.').filter_map(|choice| choice.parse().ok()).collect()),
+        };
+        let mut pending: std::collections::VecDeque<Vec<u32>> = [first].into();
+        let (mut ran, mut last) = (0, Vec::new());
+        let mut left_out = false;
+        while let Some(given) = pending.pop_front() {
+            if ran == limit || interrupt::requested() {
+                left_out = true;
+                break;
+            }
+            let text: Vec<String> = given.iter().map(u32::to_string).collect();
+            let text = text.join(".");
+            let order = (text.clone(), out.clone());
+            let one = worker::Run { stores: worker::Stores { ..run.stores }, order: Some(&order), ..*run };
+            last = worker::execute(&one, vec![(vec![test], context)], |_| {});
+            ran += 1;
+            let written = std::fs::read_to_string(&out).unwrap_or_default();
+            let made: Vec<(u32, u32)> = written
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .filter_map(|(choice, count)| Some((choice.parse().ok()?, count.parse().ok()?)))
+                .collect();
+            if last.iter().any(|attempt| attempt.status.failed()) {
+                if !options.json {
+                    say!("{}: failed in order {ran}", tree.id(test));
+                    say!("again in that order: tondo test --exact {} --schedules at:{text}", tree.id(test));
+                    say!("debug it in that order: tondo debug --test {} --schedule at:{text}", tree.id(test));
+                }
+                pending.clear();
+                break;
+            }
+            // Past what was given, each other choice is an order to try.
+            for at in given.len()..made.len() {
+                for other in 1..made[at].1 {
+                    if pending.len() >= limit {
+                        left_out = true;
+                        break;
+                    }
+                    let mut next: Vec<u32> = made[..at].iter().map(|(choice, _)| *choice).collect();
+                    next.push(other);
+                    pending.push_back(next);
+                }
+            }
+        }
+        if matches!(orders, Orders::All(_)) {
+            let how = if left_out { "not all of them: `--schedules all:<n>` tries more" } else { "all of them" };
+            match options.json {
+                true => eprintln!("tondo: {}: {ran} orders, {how}", tree.id(test)),
+                false => say!("{}: {ran} orders, {how}", tree.id(test)),
+            }
+        }
+        for attempt in last.drain(..) {
+            printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
+            attempts.push(attempt);
+        }
+    }
+    let _ = std::fs::remove_file(&out);
+    attempts
 }
 
 /// The recordings of the runs that failed, and where a test that passed and

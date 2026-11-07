@@ -40,6 +40,9 @@ check {}
 => W1016
 ```
 
+`--schedules all` tries every order of a small test, not only some, and says
+if it got through them all.
+
 `flags` takes `--schedules`: each order has a seed, and the result says which
 tasks wrote what, and where. `debug_start` with `test` and `schedule` runs that
 same order again under the debugger, as many times as it takes.

@@ -69,7 +69,7 @@ impl<'a> Printer<'a> {
         let timeout = options.timeout;
         let quiet = options.json;
         let events = options.events.then_some(options);
-        let schedules = options.schedules.map(|(_, seed, _)| seed);
+        let schedules = options.schedules.filter(|_| options.orders.is_none()).map(|(_, seed, _)| seed);
         let (expected, known) = (Vec::new(), HashMap::new());
         let (baselines, max_regression) = (Default::default(), options.max_regression);
         Printer {

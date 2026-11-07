@@ -2029,3 +2029,52 @@ test orders {
         assert!(stdout.contains(order), "{order} never came: {stdout}");
     }
 }
+
+/// `--schedules all` tries every order of a test, and one that fails is
+/// repeated by its choices, every time.
+#[test]
+fn explores_every_order_of_a_test() {
+    let tests = "import std.sync
+
+fn add(total: sync.Mutex[Int]) {
+    total.update((value) { value += 1 })
+}
+
+fn raced(flag: sync.Atomic[Int]) {
+    if flag.load() == 0 {
+        flag.store(1)
+    }
+}
+
+test counts {
+    let total = sync.Mutex(0)
+    let job = spawn add(total)
+    add(total)
+    job.wait()
+    total.update((value) { assert(value == 2) })
+}
+
+test loses {
+    let flag = sync.Atomic(0)
+    let job = spawn raced(flag)
+    flag.store(2)
+    job.wait()
+    assert(flag.load() == 2)
+}
+";
+    let dir = project("every-order", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "counts", "--schedules", "all"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains(" orders, all of them"), "{stdout}");
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "counts", "--schedules", "all:2"]);
+    assert_eq!(status, 0, "{stdout}");
+    assert!(stdout.contains("2 orders, not all of them"), "{stdout}");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "loses", "--schedules", "all"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    let again = stdout.lines().find_map(|line| line.strip_prefix("again in that order: tondo ")).expect(&stdout);
+    let args: Vec<&str> = again.split(' ').collect();
+    for _ in 0..3 {
+        let (stdout, _, status) = tondo(&dir, &args);
+        assert_eq!(status, 1, "{stdout}");
+    }
+}

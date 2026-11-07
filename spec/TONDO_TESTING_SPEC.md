@@ -1739,6 +1739,17 @@ ese orden, `tondo debug --test <id> --schedule <seed>`. Una seed reproduce el
 mismo orden mientras el test solo espere a sus propias tareas; el reloj, la red,
 los archivos y los procesos siguen siendo los reales.
 
+`--schedules all` no elige al azar: recorre las elecciones. Cada test corre en el
+orden de sus primeras elecciones y luego una vez por cada otra elección que pudo
+hacer, las de menos cambios primero, hasta agotarlas o hasta que falla, y dice
+cuántos órdenes probó y si fueron todos. Las elecciones son las de esta sección:
+qué tarea corre, y qué operación lista toma un `select`. Prueba hasta 20 000
+órdenes por test, o los de `--schedules all:<n>`; si quedan más lo dice, y eso no
+es un fallo, pero tampoco prueba nada de los que faltan. Un fallo da su camino:
+`tondo test --exact <id> --schedules at:<elecciones>` lo repite y
+`tondo debug --test <id> --schedule at:<elecciones>` lo depura. Las mismas reservas
+valen aquí: el reloj, la red, los archivos y los procesos siguen siendo los reales.
+
 `--schedules` es incompatible con `--repeat`, `--retry`, `--allow-flaky`,
 `--list` y `--update-snapshots`, y con más de una iteración sigue la política
 de campaña de 8.8: cualquier intento que no pase da exit `1`. Sin seed, el

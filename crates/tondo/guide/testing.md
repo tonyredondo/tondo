@@ -71,6 +71,11 @@ suite slow {
   find one that depends on which task runs first; a failure prints the
   command that runs that order again, `--schedules 1 --seed hex`, and the
   one that debugs the test in it, `tondo debug --test <id> --schedule hex`.
+- `tondo test --schedules all` tries every order instead of some, fewest changes
+  first, and says how many and whether they were all, up to 20 000 for each test,
+  or `all:<n>`. A failure gives `--schedules at:0.2.1`, which repeats it, and
+  `tondo debug --test <id> --schedule at:0.2.1`. It suits a small test of what
+  tasks share; the orders grow fast with the steps.
 - `tondo test --record target/recordings`, on Linux, records each test and
   keeps the runs of those that fail: `tondo debug --replay
   target/recordings/<id>` debugs one again, the same, with what it read

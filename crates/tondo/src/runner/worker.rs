@@ -47,6 +47,9 @@ pub(super) struct Run<'a> {
     pub until: u64,
     /// While reducing an input that failed: the inputs to try instead.
     pub replay: Option<&'a Replay>,
+    /// Under `--schedules all`: the choices of this order, and where the
+    /// run says those it made.
+    pub order: Option<&'a (String, std::path::PathBuf)>,
 }
 
 /// The inputs a worker tries in a call, as `tondo test` reduces one that
@@ -259,6 +262,9 @@ fn worker(
     let seed = run.options.schedule(context.iteration);
     if let Some(seed) = seed {
         command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));
+    }
+    if let Some((choices, out)) = run.order {
+        command.env("TONDO_RT_ORDER", choices).env("TONDO_RT_ORDER_OUT", out);
     }
     if let Some((recording, test)) = &recorded {
         command.env("TONDO_RT_RECORD", recording.join("calls"));

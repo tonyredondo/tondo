@@ -307,6 +307,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         retry: 0,
         repeat: 1,
         schedules: None,
+        orders: None,
         record: None,
         codeowners: Codeowners::Auto,
         show_output: false,
@@ -460,13 +461,27 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--record" => options.record = Some(PathBuf::from(value()?)),
             "--schedules" => {
-                schedules = Some(
-                    count(&value()?, "--schedules")?
+                let given = value()?;
+                schedules = Some(match given.as_str() {
+                    "all" => {
+                        options.orders = Some(runner::Orders::All(runner::ORDERS));
+                        1
+                    }
+                    _ if let Some(limit) = given.strip_prefix("all:") => {
+                        let limit = count(limit, "--schedules all:")?;
+                        options.orders = Some(runner::Orders::All(limit.max(1) as usize));
+                        1
+                    }
+                    _ if let Some(path) = given.strip_prefix("at:") => {
+                        options.orders = Some(runner::Orders::At(path.to_string()));
+                        1
+                    }
+                    _ => count(&given, "--schedules")?
                         .try_into()
                         .ok()
                         .filter(|&n: &u32| n > 0)
-                        .ok_or_else(|| usage("--schedules takes a positive number".into()))?,
-                )
+                        .ok_or_else(|| usage("--schedules takes a positive number, `all` or `at:0.2.1`".into()))?,
+                })
             }
             "--codeowners" => {
                 options.codeowners = match value()?.as_str() {
@@ -1122,11 +1137,12 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
                 compare = Some((PathBuf::from(first), PathBuf::from(second)));
             }
             "--schedule" => {
-                let seed = rest.next().and_then(|s| u64::from_str_radix(s.to_str()?, 16).ok());
-                let seed = seed.ok_or_else(|| {
-                    usage("--schedule takes the seed in hex of an order, as `tondo test --schedules` names it")
-                })?;
-                schedule = Some(seed);
+                let given = rest.next().and_then(|s| s.to_str().map(String::from));
+                let order =
+                    given.filter(|given| given.strip_prefix("at:").is_some() || u64::from_str_radix(given, 16).is_ok());
+                schedule = Some(order.ok_or_else(|| {
+                    usage("--schedule takes what `tondo test --schedules` says: a seed in hex, or `at:0.2.1`".into())
+                })?);
             }
             "--test" => {
                 test = Some(
