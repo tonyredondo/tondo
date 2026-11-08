@@ -1,0 +1,804 @@
+// An application: its routes and middleware, CORS, files, uploads,
+// compression, gRPC services and the client that calls it in process.
+
+import std.encoding as __encoding
+import std.fs as __fs
+import std.gzip as __gzip
+import std.hash as __hash
+import std.internal.http as httpNative
+import std.io as __io
+import std.net as __net
+import std.serialization as __serialization
+import std.time as __time
+import std.zstd as __zstd
+
+type Route = {
+    method: String
+    pattern: Array[String]
+    handler: fn(Request): Reply ! Problem
+}
+
+/// The routes, middleware and documentation of a server. Routes match a
+/// method and a path whose `:name` segments are parameters and whose last
+/// may be `*name`, the rest of the path; a route with fixed segments wins
+/// over one with parameters.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// pub type Todo = { id: Int, title: String }
+///
+/// var api = http.App()
+/// api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
+/// api.post("/todos", (request) { http.Reply.json(request.json[Todo]()?, status: 201) })
+///
+/// var app = http.App()
+/// app.cors(["https://example.com"])
+/// app.compress()
+/// app.mount("/api", api)
+/// app.get("/health", (_) { http.Reply.text("ok") })
+/// console.println(app.client().get("/api/todos/1")?.text()?)
+/// ```
+pub type App = {
+    priv routes: Array[Route]
+    priv layers: Array[fn(Request, fn(Request): Reply ! Problem): Reply ! Problem]
+    priv operations: Array[(String, String, String)]
+    priv schemas: Map[String, String]
+    priv docs: (String, String, String)?
+    priv proxies: Array[__net.Network]
+}
+
+/// An app without routes.
+pub fn App(): App {
+    App { routes: [], layers: [], operations: [], schemas: [:], docs: none, proxies: [] }
+}
+
+/// Routes `GET` and `HEAD` requests of `path`, whose `:name` segments are
+/// parameters and whose last may be `*name`, the rest of the path.
+pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("GET", path, handler)
+}
+
+/// Routes `POST` requests of `path`, whose `:name` segments are parameters.
+pub fn App.post(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("POST", path, handler)
+}
+
+/// Routes `PUT` requests of `path`, whose `:name` segments are parameters.
+pub fn App.put(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("PUT", path, handler)
+}
+
+/// Routes `PATCH` requests of `path`, whose `:name` segments are
+/// parameters.
+pub fn App.patch(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("PATCH", path, handler)
+}
+
+/// Routes `DELETE` requests of `path`, whose `:name` segments are
+/// parameters.
+pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("DELETE", path, handler)
+}
+
+/// A route of a method, or of any with `"*"`; `operation` is its OpenAPI
+/// operation object and
+/// `schemas` the JSON Schemas it refers to by name. The compiler writes both
+/// for a route with a literal path.
+pub fn App.route(
+    mut self,
+    method: String,
+    path: String,
+    handler: fn(Request): Reply ! Problem,
+    operation: String = "",
+    schemas: Map[String, String] = [:],
+) {
+    let verb = method.toUpper()
+    let pattern = routeSegments(path)
+    match self.routes.find((route) { route.method == verb and route.pattern == pattern }) {
+        some(_) => panic(
+            "the route `{verb} /{pattern.join("/")}` is added twice, and only the first would answer: remove one; a path answers with its trailing `/` or without it",
+        )
+        none => {}
+    }
+    self.routes.push(Route { method: verb, pattern, handler })
+    // OpenAPI describes each method: a route of any is not described.
+    if not operation.isEmpty() and method != "*" {
+        self.operations.push((method.toLower(), path, operation))
+    }
+    for (name, schema) in schemas {
+        self.schemas[name] = schema
+    }
+}
+
+/// Middleware, around every route of this app and its answers to paths
+/// with no route: it can answer by itself or call `next`. The first added
+/// is the outermost.
+///
+/// ```tondo
+/// import std.http
+/// import std.log
+/// import std.time
+///
+/// var app = http.App()
+/// // Each request through it: timed, and its status logged.
+/// app.use((request, next) {
+///     let started = time.now()
+///     let reply = next(request)?
+///     log.info("served", ["path": request.path(), "status": "{reply.status()}", "took": "{started.elapsed()}"])
+///     reply
+/// })
+/// app.get("/", (_) { http.Reply.text("hello") })
+/// ```
+pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem) {
+    self.layers.push(middleware)
+}
+
+/// Lets pages of other origins call the app, as browsers ask it (CORS): it
+/// answers their preflight `OPTIONS` and lets them read its replies.
+/// `origins` are the origins it lets in, as `https://example.com`, or `*`
+/// for any; `headers` those the pages may send, all they ask for when
+/// empty; `exposed` those of a reply they may read; `credentials` whether
+/// they send cookies; and `maxAge` how long a browser keeps a preflight's
+/// answer.
+pub fn App.cors(
+    mut self,
+    origins: Array[String],
+    headers: Array[String] = [],
+    exposed: Array[String] = [],
+    credentials: Bool = false,
+    maxAge: __time.Duration = __time.seconds(600),
+) {
+    let policy = Cors { origins, headers, exposed, credentials, maxAge }
+    self.use((request, next) { policy.answer(request, next)? })
+}
+
+/// What `App.cors` lets other origins do.
+type Cors = {
+    origins: Array[String]
+    headers: Array[String]
+    exposed: Array[String]
+    credentials: Bool
+    maxAge: __time.Duration
+}
+
+/// The value of `Access-Control-Allow-Origin` for a page of `origin`, if
+/// it may call: `*`, or the origin itself when it sends cookies.
+fn Cors.allowed(self, origin: String): String? {
+    if self.origins.contains("*") {
+        return some(if self.credentials { origin } else { "*" })
+    }
+    if self.origins.contains(origin) { some(origin) } else { none }
+}
+
+/// A preflight is answered here; another request is answered by the app,
+/// with what lets the page read the reply, a problem's too, and with
+/// `Vary: Origin` always, so that a cache does not give a reply to a page
+/// it was not for.
+fn Cors.answer(self, request: Request, next: fn(Request): Reply ! Problem): Reply ! Problem {
+    let allowed = match request.header("origin") {
+        some(origin) => self.allowed(origin)
+        none => none
+    }
+    let asked = request.header("access-control-request-method")
+    if request.method() == "OPTIONS" and asked.isSome() {
+        var reply = Reply
+            .empty()
+            .addHeader(
+                "vary",
+                "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+            )
+        match allowed {
+            some(value) => {
+                reply = reply
+                    .header("access-control-allow-origin", value)
+                    .header("access-control-allow-methods", asked.unwrapOr(""))
+                    .header("access-control-max-age", "{self.maxAge.nanoseconds() / 1_000_000_000}")
+                let headers = if self.headers.isEmpty() {
+                    request.header("access-control-request-headers").unwrapOr("")
+                } else {
+                    self.headers.join(", ")
+                }
+                if not headers.isEmpty() {
+                    reply = reply.header("access-control-allow-headers", headers)
+                }
+                if self.credentials {
+                    reply = reply.header("access-control-allow-credentials", "true")
+                }
+            }
+            none => {}
+        }
+        return reply
+    }
+    var reply = match next(request) {
+        ok(reply) => reply
+        err(problem) => Reply.problem(problem)
+    }
+    reply = reply.addHeader("vary", "Origin")
+    match allowed {
+        some(value) => {
+            reply = reply.header("access-control-allow-origin", value)
+            if not self.exposed.isEmpty() {
+                reply = reply.header("access-control-expose-headers", self.exposed.join(", "))
+            }
+            if self.credentials {
+                reply = reply.header("access-control-allow-credentials", "true")
+            }
+        }
+        none => {}
+    }
+    reply
+}
+
+/// The routes of another app under a prefix, with its middleware around
+/// them.
+pub fn App.mount(mut self, prefix: String, other: App) {
+    for route in other.routes {
+        var handler = route.handler
+        for layer in other.layers.reversed() {
+            handler = wrapped(layer, handler)
+        }
+        var pattern = segments(prefix)
+        pattern.extend(route.pattern)
+        self.routes.push(Route { method: route.method, pattern, handler })
+    }
+    for (method, path, operation) in other.operations {
+        self.operations.push((method, "{prefix.removeSuffix("/")}{path}", operation))
+    }
+    for (name, schema) in other.schemas {
+        self.schemas[name] = schema
+    }
+}
+
+/// Serves a gRPC service, which `std.grpc` makes from a service of a
+/// `.proto` file: `app.grpc(users.userService(Users { db }))`.
+pub fn App.grpc[S: GrpcService](mut self, service: S) {
+    service.serveOn(mut self)
+}
+
+/// What `App.grpc` serves, which `std.grpc` implements.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// // A service of a `.proto` file, or one of std.grpc, is served by an app.
+/// let health = grpc.Health()
+/// var app = http.App()
+/// app.grpc(health.service())
+/// app.listen(port: 50051)?
+/// ```
+pub trait GrpcService {
+    fn serveOn(self, app: mut App)
+}
+
+/// Serves the files of a tree at `{prefix}/...`: `GET` and `HEAD`, with
+/// ranges, so downloads resume, the content type of each file's extension
+/// and an `ETag`. A folder's path answers with its `index.html`, or, with
+/// `listing`, with a page of its entries, to open them or download the
+/// files. Paths cannot leave the tree. `fs.disk("public")` serves a
+/// directory, and `embed.files("public")` the files kept in the executable.
+pub fn App.files(mut self, prefix: String, files: __fs.FileSystem, listing: Bool = false) {
+    let base = prefix.removeSuffix("/")
+    self.route(
+        "GET",
+        "{base}/*path",
+        (request) {
+            let relative = request.param("path")
+            _ = inside("", relative)?
+            let at = relative.removePrefix("/").removeSuffix("/")
+            let folder = match files.metadata(at) {
+                ok(found) => found.kind == __fs.FileKind.Directory
+                err(_) => false
+            }
+            if folder and listing {
+                return listingPage(base, relative, files, at)?
+            }
+            if folder {
+                return served(files, if at.isEmpty() { "index.html" } else { "{at}/index.html" })?
+            }
+            served(files, at)?
+        },
+    )
+}
+
+/// A file of a tree: the disk's from its path, so the runtime sends it with
+/// ranges and its time, and another's from memory, with its digest.
+fn served(files: __fs.FileSystem, at: String): Reply ! Problem {
+    match files.directory() {
+        some(root) => Reply.file(inside(root, at)?)
+        none => match files.readBytes(at) {
+            ok(contents) => {
+                let tag = match files.tag(at) {
+                    some(tag) => tag
+                    none => __hash.sha256(contents).hex().slice(0, 16).unwrapOr("")
+                }
+                Reply { code: 200, headerList: [], payload: Payload.Embedded(at, contents, tag) }
+            }
+            err(_) => fail Problem.notFound()
+        }
+    }
+}
+
+/// The page of a directory's entries, folders first: a link to open each,
+/// and one to download each file.
+fn listingPage(base: String, relative: String, tree: __fs.FileSystem, at: String): Reply ! Problem {
+    let names = match tree.list(at) {
+        ok(names) => names
+        err(_) => fail Problem.notFound()
+    }
+    let parts = segments(relative)
+    let encoded = parts.map((part) { __encoding.urlEncode(part) })
+    let here = if encoded.isEmpty() { base } else { "{base}/{encoded.join("/")}" }
+    var rows: Array[String] = []
+    if not parts.isEmpty() {
+        let up = encoded.take(encoded.length() - 1).join("/")
+        rows.push("<tr><td><a href=\"{base}/{up}\">../</a></td><td></td><td></td></tr>")
+    }
+    var files: Array[String] = []
+    for name in names {
+        let href = "{here}/{__encoding.urlEncode(name)}"
+        let shown = escaped(name)
+        let child = if at.isEmpty() { name } else { "{at}/{name}" }
+        let found = tree.metadata(child)
+        if found.map((entry) { entry.kind == __fs.FileKind.Directory }).unwrapOr(false) {
+            rows.push("<tr><td><a href=\"{href}\">{shown}/</a></td><td></td><td></td></tr>")
+        } else {
+            let size = match found {
+                ok(entry) => sizeText(entry.size)
+                err(_) => ""
+            }
+            let link = "<a href=\"{href}\">{shown}</a>"
+            let download = "<a href=\"{href}\" download>download</a>"
+            files.push("<tr><td>{link}</td><td class=\"size\">{size}</td><td>{download}</td></tr>")
+        }
+    }
+    rows.extend(files)
+    let title = escaped("{base}/{parts.join("/")}")
+    let style = [
+        "body {{ font: 15px system-ui, sans-serif; margin: 2em auto; max-width: 50em; padding: 0 1em }}",
+        "table {{ border-collapse: collapse; width: 100% }}",
+        "td {{ padding: .4em .6em; border-bottom: 1px solid #8884 }}",
+        "td.size {{ text-align: right; color: #888 }}",
+        "a {{ text-decoration: none }}",
+    ]
+    var page = [
+        "<!doctype html>",
+        "<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">",
+        "<title>{title}</title><style>{style.join(" ")}</style></head>",
+        "<body><h1>{title}</h1><table>",
+    ]
+    page.extend(rows)
+    page.push("</table></body></html>\n")
+    Reply.html(page.join("\n"))
+}
+
+fn sizeText(size: Int): String {
+    if size < 1024 {
+        return "{size} B"
+    }
+    var tenths = size * 10 / 1024
+    for unit in ["KB", "MB", "GB"] {
+        if tenths < 10240 or unit == "GB" {
+            return "{tenths / 10}.{tenths % 10} {unit}"
+        }
+        tenths = tenths / 1024
+    }
+    "{size} B"
+}
+
+fn escaped(text: String): String {
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+}
+
+/// Takes uploads into a directory at `{prefix}/...`: `PUT` writes its body
+/// to that file, from the byte a `Content-Range: bytes start-end/total`
+/// says, so an upload resumes after a `HEAD` of the files' route tells how
+/// much arrived; `POST` with a multipart form saves each file part under
+/// that folder by its file name. Both answer with the JSON of what they
+/// wrote, `201` for a new file.
+pub fn App.uploads(mut self, prefix: String, directory: String) {
+    let pattern = "{prefix.removeSuffix("/")}/*path"
+    self.route(
+        "PUT",
+        pattern,
+        (request) {
+            let relative = request.param("path")
+            let path = inside(directory, relative)?
+            let offset = match request.header("content-range") {
+                some(range) => rangeStart(range)?
+                none => 0
+            }
+            let size = httpNative.saveBody(request.native, path, offset)
+            if size < 0 {
+                fail Problem.conflict(httpNative.failure(request.native).removePrefix("body\t"))
+            }
+            Reply.json(
+                [Saved { path: relative, size }],
+                status: if offset == 0 { 201 } else { 200 },
+            )
+        },
+    )
+    self.route(
+        "POST",
+        pattern,
+        (request) {
+            let folder = request.param("path")
+            var saved: Array[Saved] = []
+            for part in request.uploads() {
+                let upload = part?
+                if upload.fileName().isEmpty() {
+                    continue
+                }
+                let relative = if folder.isEmpty() {
+                    upload.fileName()
+                } else {
+                    "{folder.removeSuffix("/")}/{upload.fileName()}"
+                }
+                let size = upload.saveTo(inside(directory, relative)?)?
+                saved.push(Saved { path: relative, size })
+            }
+            Reply.json(saved, status: 201)
+        },
+    )
+}
+
+/// A file an upload wrote: its path under the directory and its size, as
+/// the JSON of the reply gives it to a client.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.http
+///
+/// var app = http.App()
+/// app.uploads("/files", fs.createTemporaryDirectory()?)
+/// let client = app.client()
+/// let saved = client.put("/files/notes/today.txt", body: some(http.Body.text("buy tea")))?.json[Array[http.Saved]]()?
+/// for file in saved {
+///     console.println("{file.path}: {file.size} bytes")
+/// }
+/// ```
+pub type Saved = {
+    path: String
+    size: Int
+}
+
+impl __serialization.Encode for Saved {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.beginMap(2)
+        out.key("path")
+        out.text(self.path)
+        out.key("size")
+        out.int(self.size)
+        out.endMap()
+    }
+}
+
+impl __serialization.Decode for Saved {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Saved ! __serialization.Error {
+        input.beginMap(first, "Saved")?
+        var saved = Saved { path: "", size: 0 }
+        for {
+            match input.nextKey()? {
+                some("path") => saved.path =
+                    __serialization.Decode.decode[String](input, input.value()?)?
+                some("size") => saved.size =
+                    __serialization.Decode.decode[Int](input, input.value()?)?
+                some(key) => input.unknownField(key, input.value()?)?
+                none => break
+            }
+        }
+        saved
+    }
+}
+
+/// Compresses the replies a client takes compressed, with zstd or gzip as
+/// its `Accept-Encoding` prefers: text, JSON, JavaScript, XML and SVG of
+/// `minimum` bytes or more, and streams of those. A reply already encoded,
+/// a file, events and WebSockets go as they are. Add it before the
+/// middleware whose replies it compresses.
+pub fn App.compress(mut self, minimum: Int = 1024) {
+    self.use(
+        (request, next) {
+            compressed(next(request)?, request.header("accept-encoding").unwrapOr(""), minimum)
+        },
+    )
+}
+
+/// The encoding a client takes best of those this server writes: `zstd`,
+/// `gzip`, or none.
+fn encodingFor(accepted: String): String? {
+    var best: String? = none
+    var bestWeight = 0.0
+    for offer in accepted.split(",") {
+        let parts = offer.split(";")
+        let name = parts[0].trim().toLowerAscii()
+        let weight = parts
+            .slice(1, parts.length())
+            .unwrapOr([])
+            .map((p) { p.trim() })
+            .find((p) { p.startsWith("q=") })
+            .andThen((p) { Float.parse(p.removePrefix("q=")).ok() })
+            .unwrapOr(1.0)
+        // zstd before gzip when the client weighs them the same.
+        let known = name == "zstd" or name == "gzip"
+        if known and
+            weight > 0.0 and
+            (weight > bestWeight or (weight == bestWeight and name == "zstd")) {
+            best = some(name)
+            bestWeight = weight
+        }
+    }
+    best
+}
+
+fn compressible(contentType: String): Bool {
+    let kind = contentType.toLowerAscii()
+    kind.startsWith("text/") or
+        kind.contains("json") or
+        kind.contains("javascript") or
+        kind.contains("xml") or
+        kind.contains("svg")
+}
+
+fn compressed(reply: Reply, accepted: String, minimum: Int): Reply {
+    let headers = reply.headers()
+    let encoding = match encodingFor(accepted) {
+        some(found) => found
+        none => return reply
+    }
+    if headers.contains("content-encoding") or
+        not compressible(headers.get("content-type").unwrapOr("")) or
+        reply.code < 200 or
+        reply.code == 204 or
+        reply.code == 304 {
+        return reply
+    }
+    let payload = match reply.payload {
+        Payload.Data(bytes) if bytes.length() >= minimum => Payload.Data(
+            if encoding == "zstd" { __zstd.compress(bytes) } else { __gzip.compress(bytes) },
+        )
+        Payload.Stream(input) => {
+            let (writer, reader) = __io.pipe()
+            spawn detached pump(
+                input,
+                if encoding == "zstd" { __zstd.writer(writer) } else { __gzip.writer(writer) },
+            )
+            Payload.Stream(reader)
+        }
+        _ => return reply
+    }
+    let vary = match headers.get("vary") {
+        some(before) => "{before}, accept-encoding"
+        none => "accept-encoding"
+    }
+    var kept: Array[String] = []
+    var index = 0
+    for index + 1 < reply.headerList.length() {
+        let name = reply.headerList[index].toLower()
+        if name != "content-length" and name != "vary" {
+            kept.push(reply.headerList[index])
+            kept.push(reply.headerList[index + 1])
+        }
+        index += 2
+    }
+    kept.extend(["content-encoding", encoding, "vary", vary])
+    Reply { code: reply.code, headerList: kept, payload }
+}
+
+/// Copies a stream into a compressing one, and ends it.
+fn pump(input: __io.Reader, output: __io.Writer) {
+    _ = __io.copy(input, output)
+    _ = output.close()
+}
+
+/// A client whose requests this app answers in this process: the app
+/// serves on a Unix socket of its own, with no port, and the client sends
+/// there. A test makes its requests with it as it would to a server:
+/// `app.client().get("/users/1")?.json[User]()?`.
+pub fn App.client(self): Client {
+    let directory = match __fs.createTemporaryDirectory() {
+        ok(made) => made
+        err(error) => panic("`App.client` needs a temporary directory for its socket: {error}")
+    }
+    let socket = "{directory}/app.socket"
+    let standard = Limits.standard()
+    let listening = httpNative.listenUnix(
+        socket,
+        standard.body,
+        standard.head,
+        standard.headTimeout.milliseconds(),
+        standard.bodyTimeout.milliseconds(),
+        standard.replyTimeout.milliseconds(),
+    )
+    match failed(listening) {
+        ok(_) => {}
+        err(error) => panic("`App.client` could not serve the app: {error}")
+    }
+    spawn detached serve(listening, self.pipeline())
+    Client(baseUrl: "http://app", socket: socket)
+}
+
+/// The handler a server runs: the routes, inside the middleware.
+fn App.pipeline(self): fn(Request): Reply ! Problem {
+    var app = self
+    match self.docs {
+        some((path, title, version)) => {
+            let document = openApiDocument(title, version, self.operations, self.schemas)
+            app.routes.push(
+                Route {
+                    method: "GET"
+                    pattern: segments(path)
+                    handler: (_request) {
+                        Reply.bytes(document.bytes(), contentType: "application/json")
+                    }
+                },
+            )
+        }
+        none => {}
+    }
+    let routes = app.routes
+    var handler: fn(Request): Reply ! Problem = (request) { dispatch(request)? }
+    for layer in self.layers.reversed() {
+        handler = wrapped(layer, handler)
+    }
+    // The route is chosen first, so that the middleware sees it.
+    let (layered, proxies) = (handler, self.proxies)
+    (request) {
+        var routed = choose(routes, request)
+        routed.trusted = proxies
+        layered(routed)?
+    }
+}
+
+/// Trusts the proxies of these networks, such as the app's load balancer,
+/// for the client's address they write: see `Request.clientIp`.
+pub fn App.trustProxies(mut self, networks: ...__net.Network) {
+    self.proxies.extend(networks)
+}
+
+fn wrapped(
+    layer: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem,
+    next: fn(Request): Reply ! Problem,
+): fn(Request): Reply ! Problem {
+    (request) { layer(request, next)? }
+}
+
+/// The request with the route that answers it: of its method, or `GET` for
+/// `HEAD`, the one with the most fixed segments, and its parameters; or
+/// without one, the methods of the routes its path has.
+fn choose(routes: Array[Route], request: Request): Request {
+    let path = segments(request.target)
+    var best: Route? = none
+    var bestScore = -1
+    var bestParams: Map[String, String] = [:]
+    var allowed: Array[String] = []
+    for route in routes {
+        match matching(route.pattern, path) {
+            some((params, matched)) => {
+                let exact =
+                    route.method == request.verb or
+                        (route.method == "GET" and request.verb == "HEAD")
+                if exact or route.method == "*" {
+                    // A route of the request's own method goes before one of any.
+                    let score = matched * 2 + (if exact { 1 } else { 0 })
+                    if score > bestScore {
+                        best = some(route)
+                        bestScore = score
+                        bestParams = params
+                    }
+                } else if not (route.method in allowed) {
+                    allowed.push(route.method)
+                }
+            }
+            none => {}
+        }
+    }
+    var routed = request
+    routed.chosen = best
+    routed.params = bestParams
+    routed.allowed = allowed
+    routed
+}
+
+/// The answer of the route a request goes to; `405` when only other methods
+/// match its path, `404` when none does.
+fn dispatch(request: Request): Reply ! Problem {
+    let allowed = request.allowed
+    match request.chosen {
+        some(route) => route.handler(request)?
+        none if allowed.length() > 0 => {
+            Reply
+                .text("the method {request.verb} is not allowed here", status: 405)
+                .header("allow", allowed.join(", "))
+        }
+        none => fail Problem.notFound("there is no route for {request.verb} {request.target}")
+    }
+}
+
+/// The parameters a pattern takes from a path and how fixed the match is:
+/// two for a fixed segment, one for a parameter.
+fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], Int)? {
+    var params: Map[String, String] = [:]
+    var score = 0
+    for (index, part) in pattern.enumerate() {
+        if part.startsWith("*") {
+            let name = part.slice(1, part.length()).unwrapOr("")
+            params[name] = path
+                .drop(index)
+                .map((segment) { __encoding.urlDecode(segment).unwrapOr(segment) })
+                .join("/")
+            return some((params, score))
+        }
+        if index >= path.length() {
+            return none
+        }
+        if part.startsWith(":") {
+            params[part.slice(1, part.length()).unwrapOr("")] = __encoding
+                .urlDecode(path[index])
+                .unwrapOr(path[index])
+            score += 1
+        } else if part == path[index] {
+            score += 2
+        } else {
+            return none
+        }
+    }
+    if pattern.length() != path.length() {
+        return none
+    }
+    some((params, score))
+}
+
+fn segments(path: String): Array[String] {
+    path.split("/").filter((segment) { not segment.isEmpty() })
+}
+
+/// The segments of a route's path: a parameter, `:name`, or the rest of
+/// it, a last `*name`, takes a whole segment and is named like a binding.
+fn routeSegments(path: String): Array[String] {
+    let parts = segments(path)
+    for (index, part) in parts.enumerate() {
+        if not (part.startsWith(":") or part.startsWith("*")) {
+            continue
+        }
+        let name = part.slice(1, part.length()).unwrapOr("")
+        let named = name.chars().all((c) { c.isLetter() or c.isDigit() or c == '_' })
+        if name.isEmpty() or not named or name.chars().collect()[0].isDigit() {
+            panic(
+                "the segment `{part}` of the route `{path}`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler",
+            )
+        }
+        if part.startsWith("*") and index != parts.length() - 1 {
+            panic(
+                "`{part}` takes the rest of the path, so it is the last segment of the route `{path}`",
+            )
+        }
+    }
+    parts
+}
+
+/// A path inside a directory, or `403` for one that would leave it.
+fn inside(directory: String, relative: String): String ! Problem {
+    for segment in relative.split("/") {
+        if segment == ".." or segment.contains("\\") or segment.contains("\u{0}") {
+            fail Problem.forbidden("the path `{relative}` leaves the directory")
+        }
+    }
+    "{directory.removeSuffix("/")}/{relative.removePrefix("/")}"
+}
+
+/// The first byte of `Content-Range: bytes start-end/total`.
+fn rangeStart(range: String): Int ! Problem {
+    let spec = range.removePrefix("bytes ")
+    let dash = spec.find("-").unwrapOr(0)
+    match Int.parse(spec.slice(0, dash).unwrapOr("")) {
+        ok(start) => start
+        err(_) => fail Problem.badRequest("`Content-Range: {range}` is not `bytes start-end/total`")
+    }
+}

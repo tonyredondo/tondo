@@ -1,0 +1,197 @@
+// std.http (standard library 14.24): an HTTP client and server for
+// HTTP/1.1 and HTTP/2 over TLS, with bodies that stream both ways,
+// multipart forms, Server-Sent Events and WebSockets, on the runtime's
+// transport.
+//
+// ```tondo
+// import std.http
+//
+// var app = http.App()
+// app.get("/hello/:name", (request) { http.Reply.text("Hello, {request.param("name")}!") })
+// app.listen(port: 8080)?
+// ```
+
+import std.encoding as __encoding
+import std.io as __io
+import std.json as __json
+import std.serialization as __serialization
+
+/// Why a request has no response a program can use.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/missing", (_) { fail http.Problem.notFound("no such page") })
+/// match app.client().get("/missing") {
+///     ok(response) => console.println("{response.status()}")
+///     err(http.HttpError.Status(response)) => console.println("{response.status()}: {response.text()?}")
+///     err(http.HttpError.Timeout) => console.println("no answer in time")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub enum HttpError {
+    /// A URL that does not parse, or whose scheme is not `http` or `https`.
+    InvalidUrl(String)
+    /// The name did not resolve, the server refused, or TLS failed.
+    Connect(String)
+    /// The server cannot take the address, as one that is in use.
+    Listen(String)
+    /// The request took longer than its timeout.
+    Timeout
+    /// The server answered with a status of 400 or more: the response, to
+    /// read its body.
+    Status(Response)
+    /// The request's or the response's body failed, or is not what was
+    /// asked for: not UTF-8, not the JSON of the type.
+    Body(String)
+    /// Anything else of HTTP: too many redirects, a broken connection.
+    Protocol(String)
+}
+
+impl Display for HttpError {
+    fn display(self): String {
+        match self {
+            HttpError.InvalidUrl(why) => "invalid URL: {why}"
+            HttpError.Connect(why) => "cannot connect: {why}"
+            HttpError.Listen(why) => "cannot listen: {why}"
+            HttpError.Timeout => "the request timed out"
+            HttpError.Status(response) =>
+                "{response.verb} {response.finalUrl} answered {response.code} {response.phrase}"
+            HttpError.Body(why) => "the body: {why}"
+            HttpError.Protocol(why) => "HTTP: {why}"
+        }
+    }
+}
+
+enum Content {
+    Data(Array[Byte], String)
+    Stream(__io.Reader, Int, String)
+    Form(Array[Part])
+}
+
+/// What a request sends.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.post("/echo", (request) {
+///     http.Reply.text("{request.header("Content-Type").unwrapOr("")}: {request.text()?}")
+/// })
+/// let client = app.client()
+/// for body in [http.Body.text("hi"), http.Body.json(["a": 1]), http.Body.form(["q": "tea & cake"])] {
+///     console.println(client.post("/echo", body: some(body))?.text()?)
+/// }
+/// ```
+pub type Body = {
+    priv content: Content
+}
+
+/// A body of text, sent as UTF-8 with its content type.
+pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body {
+    Body { content: Content.Data(text.bytes(), contentType) }
+}
+
+/// A body of bytes, sent with its content type.
+pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body {
+    Body { content: Content.Data(bytes, contentType) }
+}
+
+/// The value as JSON (`std.json`).
+pub fn Body.json[T: __serialization.Encode](value: T): Body {
+    Body { content: Content.Data(__json.encode(value).bytes(), "application/json") }
+}
+
+/// The fields as a URL-encoded form, as an HTML form posts them.
+pub fn Body.form(fields: Map[String, String]): Body {
+    var pairs: Array[String] = []
+    for (name, value) in fields {
+        pairs.push("{__encoding.urlEncode(name)}={__encoding.urlEncode(value)}")
+    }
+    Body { content: Content.Data(pairs.join("&").bytes(), "application/x-www-form-urlencoded") }
+}
+
+/// A `multipart/form-data` form: fields and files, as uploads send them.
+pub fn Body.multipart(parts: Array[Part]): Body {
+    Body { content: Content.Form(parts) }
+}
+
+/// What a stream gives, read as it is sent; `length` is its size in bytes
+/// when known. A stream is read once.
+pub fn Body.stream(
+    input: __io.Reader,
+    length: Int? = none,
+    contentType: String = "application/octet-stream",
+): Body {
+    Body { content: Content.Stream(input, length.unwrapOr(-1), contentType) }
+}
+
+enum Source {
+    Field(String)
+    Data(Array[Byte])
+    File(String)
+    Stream(__io.Reader, Int)
+}
+
+/// A part of a multipart form.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.post("/albums", (request) {
+///     var parts: Array[String] = []
+///     for upload in request.uploads() {
+///         let part = upload?
+///         parts.push("{part.name()} ({part.fileName()}, {part.bytes()?.length()} bytes)")
+///     }
+///     http.Reply.text(parts.join(", "))
+/// })
+/// let form = http.Body.multipart([
+///     http.Part.field("title", "Holidays"),
+///     http.Part.bytes("photo", [1, 2, 3], fileName: "beach.jpg", contentType: "image/jpeg"),
+/// ])
+/// console.println(app.client().post("/albums", body: some(form))?.text()?)
+/// ```
+pub type Part = {
+    priv name: String
+    priv source: Source
+    priv fileName: String
+    priv contentType: String
+}
+
+/// A field of a multipart form: its name and its text.
+pub fn Part.field(name: String, value: String): Part {
+    Part { name, source: Source.Field(value), fileName: "", contentType: "" }
+}
+
+/// A file's bytes, sent under `fileName`.
+pub fn Part.bytes(
+    name: String,
+    bytes: Array[Byte],
+    fileName: String,
+    contentType: String = "",
+): Part {
+    Part { name, source: Source.Data(bytes), fileName, contentType }
+}
+
+/// A file on disk, read as it is sent, under its own name and with the
+/// content type of its extension unless one is given.
+pub fn Part.file(name: String, path: String, contentType: String = ""): Part {
+    Part { name, source: Source.File(path), fileName: "", contentType }
+}
+
+/// What a stream gives, read as it is sent, under `fileName`.
+pub fn Part.stream(
+    name: String,
+    input: __io.Reader,
+    fileName: String,
+    contentType: String = "",
+    length: Int? = none,
+): Part {
+    Part { name, source: Source.Stream(input, length.unwrapOr(-1)), fileName, contentType }
+}

@@ -1,0 +1,306 @@
+// WebSockets: a client's connection, and an application's handoff of a
+// request to one.
+
+import std.encoding as __encoding
+import std.internal.http as httpNative
+import std.sync as __sync
+import std.time as __time
+
+/// A message of a WebSocket.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn echo(_: http.Request, socket: http.WebSocket): !http.HttpError {
+///     for {
+///         match socket.receive()? {
+///             some(http.Message.Text(text)) => socket.send(http.Message.Text("echo: {text}"))?
+///             some(http.Message.Binary(bytes)) => socket.send(http.Message.Binary(bytes.reversed()))?
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App()
+/// app.websocket("/echo", echo)
+/// let server = app.start()?
+/// let socket = http.WebSocket.connect("ws://{server.address()}/echo")?
+/// socket.sendBytes([1, 2, 3])?
+/// match socket.receive()? {
+///     some(http.Message.Binary(bytes)) => console.println("{bytes}")
+///     other => console.println("unexpected {other.isSome()}")
+/// }
+/// socket.close()?
+/// server.stop()
+/// ```
+pub enum Message {
+    Text(String)
+    Binary(Array[Byte])
+}
+
+/// A text message as its text, a binary one as `3 bytes`.
+impl Display for Message {
+    fn display(self): String {
+        match self {
+            Message.Text(text) => text
+            Message.Binary(bytes) => "{bytes.length()} bytes"
+        }
+    }
+}
+
+/// A WebSocket connection (RFC 6455), over TLS for `wss://`. One task can
+/// send while another receives; pings are answered on their own. Iterating
+/// it receives messages until the connection closes.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn chat(_: http.Request, socket: http.WebSocket): !http.HttpError {
+///     socket.sendText("welcome")?
+///     for {
+///         match socket.receive()? {
+///             some(http.Message.Text(text)) => socket.sendText("you said {text}")?
+///             some(_) => {}
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App()
+/// app.websocket("/chat", chat)
+/// let server = app.start()?
+/// let socket = http.WebSocket.connect("ws://{server.address()}/chat")?
+/// socket.sendText("hello")?
+/// for _ in 0..2 {
+///     match socket.receive()? {
+///         some(http.Message.Text(text)) => console.println(text)
+///         _ => {}
+///     }
+/// }
+/// socket.close()?
+/// server.stop()
+/// ```
+pub type WebSocket = {
+    priv native: httpNative.Native
+    priv closed: Bool
+}
+
+/// Opens a WebSocket (RFC 6455), over TLS for `wss://`; `timeout` limits
+/// its handshake.
+pub fn WebSocket.connect(
+    url: String,
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): WebSocket ! HttpError {
+    var pairs: Array[String] = []
+    for (name, value) in headers {
+        pairs.push(name)
+        pairs.push(value)
+    }
+    let limit = match timeout {
+        some(limit) => limit.milliseconds()
+        none => 0
+    }
+    let socket = httpNative.wsConnect(url, pairs, limit)
+    failed(socket)?
+    WebSocket { native: socket, closed: false }
+}
+
+/// Sends a message, of text or bytes.
+pub fn WebSocket.send(self, message: Message): !HttpError {
+    let problem = match message {
+        Message.Text(text) => httpNative.wsSend(self.native, false, text, [])
+        Message.Binary(bytes) => httpNative.wsSend(self.native, true, "", bytes)
+    }
+    if not problem.isEmpty() {
+        fail HttpError.Protocol(problem)
+    }
+}
+
+/// Sends a text message.
+pub fn WebSocket.sendText(self, text: String): !HttpError {
+    self.send(Message.Text(text))?
+}
+
+/// Sends a binary message.
+pub fn WebSocket.sendBytes(self, bytes: Array[Byte]): !HttpError {
+    self.send(Message.Binary(bytes))?
+}
+
+/// The next message, or `none` once the connection closed.
+pub fn WebSocket.receive(self): Message? ! HttpError {
+    let received = httpNative.wsReceive(self.native)
+    failed(received)?
+    let kind = httpNative.wsKind(received)
+    if kind == 0 {
+        return some(Message.Text(httpNative.wsText(received)))
+    }
+    if kind == 1 {
+        return some(Message.Binary(httpNative.wsData(received)))
+    }
+    none
+}
+
+/// Closes the connection, telling the server.
+pub fn WebSocket.close(self): !HttpError {
+    let problem = httpNative.wsClose(self.native)
+    if not problem.isEmpty() {
+        fail HttpError.Protocol(problem)
+    }
+}
+
+impl Iterator[Message ! HttpError] for WebSocket {
+    fn next(mut self): (Message ! HttpError)? {
+        if self.closed {
+            return none
+        }
+        match self.receive() {
+            ok(some(message)) => some(ok(message))
+            ok(none) => {
+                self.closed = true
+                none
+            }
+            err(error) => {
+                self.closed = true
+                some(err(error))
+            }
+        }
+    }
+}
+
+fn joined(base: String, url: String): String {
+    if base.isEmpty() or url.startsWith("http://") or url.startsWith("https://") {
+        return url
+    }
+    if url.isEmpty() {
+        return base
+    }
+    "{base.removeSuffix("/")}/{url.removePrefix("/")}"
+}
+
+fn withQuery(url: String, query: Map[String, String]): String {
+    if query.length() == 0 {
+        return url
+    }
+    var pairs: Array[String] = []
+    for (name, value) in query {
+        pairs.push("{__encoding.urlEncode(name)}={__encoding.urlEncode(value)}")
+    }
+    let separator = if url.contains("?") { "&" } else { "?" }
+    "{url}{separator}{pairs.join("&")}"
+}
+
+/// The runtime's body for a request.
+fn native(body: Body?): httpNative.Native ! HttpError {
+    let content = match body {
+        some(given) => given.content
+        none => return httpNative.bodyEmpty()
+    }
+    match content {
+        Content.Data(bytes, contentType) => httpNative.bodyBytes(bytes, contentType)
+        Content.Stream(input, length, contentType) => httpNative.bodyStream(
+            input,
+            length,
+            contentType,
+        )
+        Content.Form(parts) => {
+            let form = httpNative.form()
+            for part in parts {
+                match part.source {
+                    Source.Field(value) => httpNative.formText(form, part.name, value)
+                    Source.Data(bytes) => httpNative.formBytes(
+                        form,
+                        part.name,
+                        bytes,
+                        part.fileName,
+                        part.contentType,
+                    )
+                    Source.File(path) => {
+                        let problem = httpNative.formFile(form, part.name, path, part.contentType)
+                        if not problem.isEmpty() {
+                            fail HttpError.Body("cannot read `{path}`: {problem}")
+                        }
+                    }
+                    Source.Stream(input, length) => {
+                        httpNative.formStream(
+                            form,
+                            part.name,
+                            input,
+                            part.fileName,
+                            part.contentType,
+                            length,
+                        )
+                    }
+                }
+            }
+            httpNative.bodyForm(form)
+        }
+    }
+}
+
+/// The failure the runtime recorded for a request or its body.
+fn failed(sent: httpNative.Native): !HttpError {
+    let failure = httpNative.failure(sent)
+    if failure.isEmpty() {
+        return
+    }
+    let tab = failure.find("\t").unwrapOr(0)
+    let kind = failure.slice(0, tab).unwrapOr("")
+    let why = failure.slice(tab + 1, failure.length()).unwrapOr("")
+    if kind == "url" {
+        fail HttpError.InvalidUrl(why)
+    } else if kind == "timeout" {
+        fail HttpError.Timeout
+    } else if kind == "connect" {
+        fail HttpError.Connect(why)
+    } else if kind == "listen" {
+        fail HttpError.Listen(why)
+    } else if kind == "body" {
+        fail HttpError.Body(why)
+    }
+    fail HttpError.Protocol(why)
+}
+
+/// Answers WebSockets at a path: the handler talks to each until it
+/// returns, with the request that opened it, and inside the contexts the
+/// middleware set, as a route's handler is.
+pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): !HttpError) {
+    self.route(
+        "GET",
+        path,
+        (request) {
+            // Started here, inside the middleware, it keeps their contexts,
+            // and talks once the connection is upgraded.
+            let handoff = __sync.Mutex(Handoff { socket: none, given: false })
+            spawn detached talk(request, handoff, handler)
+            Reply { code: 101, headerList: [], payload: Payload.Socket(handoff) }
+        },
+    )
+}
+
+/// The socket of an upgrade, once the reply went out.
+type Handoff = {
+    socket: WebSocket?
+    given: Bool
+}
+
+fn talk(
+    request: Request,
+    handoff: __sync.Mutex[Handoff],
+    handler: fn(Request, WebSocket): !HttpError,
+) {
+    // A middleware that answered instead never upgrades: the wait ends.
+    let upgraded =
+        within __time.seconds(30) {
+            handoff.updateWhen((pending) { pending.given }, (pending) { pending.socket })
+        }
+    match upgraded {
+        ok(some(socket)) => {
+            _ = handler(request, socket)
+            _ = socket.close()
+        }
+        _ => {}
+    }
+}

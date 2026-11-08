@@ -1,0 +1,51 @@
+// The OpenAPI document of an application's routes.
+
+import std.json as __json
+
+/// Serves the OpenAPI document of the routes the compiler described, at
+/// `path`.
+pub fn App.openApi(
+    mut self,
+    path: String = "/openapi.json",
+    title: String = "API",
+    version: String = "1.0",
+) {
+    self.docs = some((path, title, version))
+}
+
+/// The OpenAPI 3.1 document of the described operations.
+fn openApiDocument(
+    title: String,
+    version: String,
+    operations: Array[(String, String, String)],
+    schemas: Map[String, String],
+): String {
+    var paths: Map[String, Array[String]] = [:]
+    for (method, route, operation) in operations {
+        let parts = segments(route).map(
+            (part) {
+                if part.startsWith(":") or part.startsWith("*") {
+                    "{{{part.slice(1, part.length()).unwrapOr("")}}}"
+                } else {
+                    part
+                }
+            },
+        )
+        let path = "/{parts.join("/")}"
+        var entries = paths.getOr(path, [])
+        entries.push("{__json.encode(method)}:{operation}")
+        paths[path] = entries
+    }
+    var items: Array[String] = []
+    for (path, entries) in paths {
+        items.push("{__json.encode(path)}:{{{entries.join(",")}}}")
+    }
+    let info = "{{\"title\":{__json.encode(title)},\"version\":{__json.encode(version)}}}"
+    var components: Array[String] = []
+    for (name, schema) in schemas {
+        components.push("{__json.encode(name)}:{schema}")
+    }
+    let documented =
+        "\"paths\":{{{items.join(",")}}},\"components\":{{\"schemas\":{{{components.join(",")}}}}}"
+    "{{\"openapi\":\"3.1.0\",\"info\":{info},{documented}}}"
+}

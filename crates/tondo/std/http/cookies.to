@@ -1,0 +1,127 @@
+// Cookies, both ways: a response's and a request's, and a reply's
+// attributes.
+
+import std.encoding as __encoding
+import std.time as __time
+
+/// The value of a cookie the response sets, decoded as `Request.cookie`
+/// does, or `none`.
+pub fn Response.cookie(self, name: String): String? {
+    self.cookies().get(name)
+}
+
+/// The cookies the response sets, by name, their values decoded.
+pub fn Response.cookies(self): Map[String, String] {
+    var found: Map[String, String] = [:]
+    for header in self.headerValues("set-cookie") {
+        match nameAndValue(header.split(";")[0]) {
+            some((name, value)) => found[name] = value
+            none => {}
+        }
+    }
+    found
+}
+
+/// A cookie's `name=value`, its value without quotes and decoded with
+/// `encoding.urlDecode`, as `Reply.cookie` writes it.
+fn nameAndValue(pair: String): (String, String)? {
+    let text = pair.trim()
+    let at = text.find("=")?
+    let name = text.slice(0, at).unwrapOr("").trim()
+    var value = text.slice(at + 1, text.length()).unwrapOr("").trim()
+    if value.length() >= 2 and value.startsWith("\"") and value.endsWith("\"") {
+        value = value.slice(1, value.length() - 1).unwrapOr(value)
+    }
+    if name.isEmpty() {
+        return none
+    }
+    some((name, __encoding.urlDecode(value).unwrapOr(value)))
+}
+
+/// The value of the cookie the client sent under `name`, decoded with
+/// `encoding.urlDecode`, or `none`.
+pub fn Request.cookie(self, name: String): String? {
+    self.cookies().get(name)
+}
+
+/// The cookies the client sent, by name, their values decoded.
+pub fn Request.cookies(self): Map[String, String] {
+    var found: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == "cookie" {
+            for pair in self.headerList[index + 1].split(";") {
+                match nameAndValue(pair) {
+                    some((name, value)) => found[name] = value
+                    none => {}
+                }
+            }
+        }
+        index += 2
+    }
+    found
+}
+
+/// When a browser sends a cookie from another site's page: `Lax` with the
+/// links that lead to this one, `Strict` never, `None` always, which takes
+/// `Secure`.
+///
+/// ```tondo
+/// import std.http
+/// import std.time
+///
+/// var app = http.App()
+/// app.post("/login", (_) {
+///     http.Reply.redirect("/").cookie(
+///         "session",
+///         "token",
+///         maxAge: some(time.hours(8)),
+///         secure: true,
+///         sameSite: http.SameSite.Strict,
+///     )
+/// })
+/// app.listen(port: 8080)?
+/// ```
+pub enum SameSite {
+    Lax
+    Strict
+    None
+}
+
+/// The reply with a cookie, its value written with `encoding.urlEncode` so
+/// any text fits. A `maxAge` of zero removes it, and without one it lasts
+/// the browser's session; `httpOnly` hides it from the page's JavaScript and
+/// `secure` sends it over HTTPS only.
+pub fn Reply.cookie(
+    self,
+    name: String,
+    value: String,
+    maxAge: __time.Duration? = none,
+    path: String = "/",
+    domain: String = "",
+    secure: Bool = false,
+    httpOnly: Bool = true,
+    sameSite: SameSite = SameSite.Lax,
+): Reply {
+    var parts = ["{name}={__encoding.urlEncode(value)}", "Path={path}"]
+    if not domain.isEmpty() {
+        parts.push("Domain={domain}")
+    }
+    match maxAge {
+        some(age) => parts.push("Max-Age={age.seconds().max(0)}")
+        none => {}
+    }
+    if secure or sameSite == SameSite.None {
+        parts.push("Secure")
+    }
+    if httpOnly {
+        parts.push("HttpOnly")
+    }
+    let site = match sameSite {
+        SameSite.Lax => "Lax"
+        SameSite.Strict => "Strict"
+        SameSite.None => "None"
+    }
+    parts.push("SameSite={site}")
+    self.addHeader("set-cookie", parts.join("; "))
+}

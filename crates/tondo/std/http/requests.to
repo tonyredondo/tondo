@@ -1,0 +1,1013 @@
+// What a server is asked: problems, requests, their queries, forms and
+// uploads.
+
+import std.crypto as __crypto
+import std.encoding as __encoding
+import std.fs as __fs
+import std.internal.http as httpNative
+import std.io as __io
+import std.json as __json
+import std.net as __net
+import std.serialization as __serialization
+import std.sync as __sync
+import std.url as __url
+
+/// Why a handler cannot answer: a status of 400 or more and a message for
+/// the client, which receives it as `application/problem+json` (RFC 9457).
+/// For a status of 500 or more the client sees only `internal server
+/// error`, and the message goes to standard error.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// fn order(request: http.Request): http.Reply ! http.Problem {
+///     let id = request.intParam("id")?
+///     if id > 100 {
+///         fail http.Problem.notFound("there is no order {id}")
+///     }
+///     http.Reply.json(["id": id])
+/// }
+///
+/// var app = http.App()
+/// app.get("/orders/:id", order)
+/// for path in ["/orders/7", "/orders/500", "/orders/x"] {
+///     match app.client().get(path) {
+///         ok(response) => console.println("{response.status()} {response.text()?}")
+///         err(http.HttpError.Status(response)) => console.println("{response.status()} {response.text()?}")
+///         err(error) => console.println("{error}")
+///     }
+/// }
+/// ```
+pub type Problem = {
+    status: Int
+    message: String
+    /// The rules of its type a value breaks, which a `422` lists in
+    /// `errors`.
+    violations: Array[__serialization.Violation]
+}
+
+impl Display for Problem {
+    fn display(self): String {
+        "{self.status} {self.message}"
+    }
+}
+
+/// A problem with an HTTP status and a message, which the server sends as
+/// `application/problem+json`.
+pub fn Problem(status: Int, message: String): Problem {
+    Problem { status, message, violations: [] }
+}
+
+/// A `400 Bad Request` problem.
+pub fn Problem.badRequest(message: String): Problem {
+    Problem { status: 400, message, violations: [] }
+}
+
+/// A `401 Unauthorized` problem.
+pub fn Problem.unauthorized(message: String = "authentication is required"): Problem {
+    Problem { status: 401, message, violations: [] }
+}
+
+/// A `403 Forbidden` problem.
+pub fn Problem.forbidden(message: String = "this is not allowed"): Problem {
+    Problem { status: 403, message, violations: [] }
+}
+
+/// A `404 Not Found` problem.
+pub fn Problem.notFound(message: String = "not found"): Problem {
+    Problem { status: 404, message, violations: [] }
+}
+
+/// A `422 Unprocessable Content` problem: a value that breaks the rules of
+/// its type, each violation in the `errors` of the reply.
+pub fn Problem.invalid(violations: Array[__serialization.Violation]): Problem {
+    let shown = violations.map((violation) { "{violation}" }).join("; ")
+    Problem { status: 422, message: "the value breaks the rules of its type: {shown}", violations }
+}
+
+/// A `409 Conflict` problem.
+pub fn Problem.conflict(message: String): Problem {
+    Problem { status: 409, message, violations: [] }
+}
+
+/// A failure of the server's own, for `result.mapErr(http.Problem.from)?`.
+pub fn Problem.from[E: Display](error: E): Problem {
+    Problem { status: 500, message: "{error}", violations: [] }
+}
+
+/// A request a server received.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/users/:id", (request) {
+///     let id = request.intParam("id")?
+///     let fields = request.query("fields").unwrapOr("all")
+///     let route = request.route().unwrapOr("")
+///     http.Reply.text("{request.method()} {route} {request.path()}: user {id}, fields {fields}")
+/// })
+/// console.println(app.client().get("/users/42", query: ["fields": "name"])?.text()?)
+/// ```
+pub type Request = {
+    priv native: httpNative.Native
+    priv verb: String
+    priv target: String
+    priv queryText: String
+    priv protocol: String
+    priv peer: String
+    /// The host it was for, from `:authority` or `Host`, and whether it came
+    /// over TLS.
+    priv authority: String
+    priv secure: Bool
+    priv headerList: Array[String]
+    priv params: Map[String, String]
+    /// The route that answers it, chosen before the middleware runs, and
+    /// without one the methods of the routes of its path, for `405`.
+    priv chosen: Route?
+    priv allowed: Array[String]
+    /// The networks of the proxies the app trusts (`App.trustProxies`).
+    priv trusted: Array[__net.Network]
+    /// The body a middleware that read it gave on (`withBody`).
+    priv given: Array[Byte]?
+}
+
+/// The method: `GET`, `POST`.
+pub fn Request.method(self): String {
+    self.verb
+}
+
+/// The template of the route that answers the request, as it was added and
+/// with the prefix of `mount`: `/users/:id` for `GET /users/42`; `none` when
+/// no route does. The middleware sees it before `next`: it names the request
+/// for a tracer or a metric without growing with each value of a parameter,
+/// as the path does.
+pub fn Request.route(self): String? {
+    self.chosen.map((route) { "/{route.pattern.join("/")}" })
+}
+
+/// The path, without the query.
+pub fn Request.path(self): String {
+    self.target
+}
+
+/// The query as it arrived, without `?` and not decoded.
+pub fn Request.rawQuery(self): String {
+    self.queryText
+}
+
+/// The host the request was for, with its port if it gave one: `Host`, or
+/// `:authority` in HTTP/2. Behind a proxy of a network the app trusts
+/// (`App.trustProxies`), the one `X-Forwarded-Host` gives.
+pub fn Request.host(self): String {
+    match self.forwarded("x-forwarded-host") {
+        some(host) => host
+        none => self.authority
+    }
+}
+
+/// `https` when the server listens with TLS, and `http` if not. Behind a
+/// proxy of a network the app trusts, the one `X-Forwarded-Proto` gives.
+pub fn Request.scheme(self): String {
+    match self.forwarded("x-forwarded-proto") {
+        some(scheme) => scheme.toLower()
+        none => if self.secure { "https" } else { "http" }
+    }
+}
+
+/// The URL the request was for: its scheme, host, path and query.
+pub fn Request.url(self): __url.Url {
+    let query = if self.queryText.isEmpty() { "" } else { "?{self.queryText}" }
+    match __url.parse("{self.scheme()}://{self.host()}{self.target}{query}") {
+        ok(whole) => whole
+        // A host no URL can hold: the path and the query alone.
+        err(_) => match __url.parse("{self.target}{query}") {
+            ok(part) => part
+            err(_) => match __url.parse("/") {
+                ok(root) => root
+                err(_) => panic("`/` is a URL")
+            }
+        }
+    }
+}
+
+/// The first value of a header a trusted proxy wrote, or `none`.
+fn Request.forwarded(self, name: String): String? {
+    if not trusts(self.trusted, hostOf(self.peer)) {
+        return none
+    }
+    self
+        .header(name)
+        .map((value) { value.split(",")[0].trim() })
+        .filter((value) { not value.isEmpty() })
+}
+
+/// The protocol: `HTTP/1.1` or `HTTP/2`.
+pub fn Request.version(self): String {
+    self.protocol
+}
+
+/// The certificate the client showed, when the server requires one of
+/// its clients (`Tls.files(..., clients: "ca.pem")`): who it is.
+pub fn Request.clientCertificate(self): __crypto.Certificate? {
+    let der = httpNative.requestCertificate(self.native)
+    if der.isEmpty() {
+        return none
+    }
+    __crypto.Certificate.fromDer(der).ok()
+}
+
+/// The client's address and port.
+pub fn Request.remoteAddress(self): String {
+    self.peer
+}
+
+/// The client's IP address, without its port. A connection from a proxy of
+/// a network the app trusts (`App.trustProxies`) gives the address the
+/// proxies wrote: the last of `X-Forwarded-For` that is not of those
+/// networks, or `X-Real-Ip`, as Gin's `ClientIP`. Without trusted proxies
+/// no header is believed, since any client can write one.
+pub fn Request.clientIp(self): String {
+    let remote = hostOf(self.peer)
+    if not trusts(self.trusted, remote) {
+        return remote
+    }
+    match self.header("x-forwarded-for") {
+        some(forwarded) => {
+            // Each proxy adds the address it was connected from, so the
+            // nearest come last.
+            var last = remote
+            for hop in forwarded.split(",").reversed() {
+                match __net.ip(hop.trim()) {
+                    ok(address) => {
+                        last = "{address}"
+                        if not trusts(self.trusted, last) {
+                            return last
+                        }
+                    }
+                    err(_) => return remote
+                }
+            }
+            last
+        }
+        none => match self.header("x-real-ip") {
+            some(real) => __net.ip(real.trim()).map((address) { "{address}" }).unwrapOr(remote)
+            none => remote
+        }
+    }
+}
+
+/// The address of `1.2.3.4:5678` or `[::1]:5678`, without its port.
+fn hostOf(peer: String): String {
+    if peer.startsWith("[") {
+        return peer.slice(1, peer.find("]").unwrapOr(1)).unwrapOr(peer)
+    }
+    match peer.findLast(":") {
+        some(at) => peer.slice(0, at).unwrapOr(peer)
+        none => peer
+    }
+}
+
+/// Whether the address is of one of the networks.
+fn trusts(networks: Array[__net.Network], address: String): Bool {
+    match __net.ip(address) {
+        ok(ip) => {
+            for network in networks {
+                if network.contains(ip) {
+                    return true
+                }
+            }
+            false
+        }
+        err(_) => false
+    }
+}
+
+/// A parameter of the route, decoded: `id` in `/users/:id`.
+pub fn Request.param(self, name: String): String {
+    self.params.getOr(name, "")
+}
+
+/// A parameter of the route that must be an integer.
+pub fn Request.intParam(self, name: String): Int ! Problem {
+    let text = self.param(name)
+    match Int.parse(text) {
+        ok(value) => value
+        err(_) => fail Problem.badRequest("the parameter `{name}` must be an integer, not `{text}`")
+    }
+}
+
+/// The first value of a query parameter, decoded.
+pub fn Request.query(self, name: String): String? {
+    self.queryValues(name).first()
+}
+
+/// Every value of a query parameter, decoded.
+pub fn Request.queryValues(self, name: String): Array[String] {
+    pairsOf(self.queryText).filter((pair) { pair.0 == name }).map((pair) { pair.1 })
+}
+
+/// The query string read into a `T`: each field from the parameter of its
+/// name, without case, `_` or `-`, so `page_size` fills `pageSize`; a list
+/// from a name that repeats or one value; each value as text, which any
+/// scalar reads. A parameter that does not read is a `400` problem, and a
+/// value that breaks the rules of its type a `422`.
+pub fn Request.queryAs[T: __serialization.Decode](self): T ! Problem {
+    readInto[T](pairsOf(self.queryText), "the query")?
+}
+
+/// The fields of a form body read into a `T`, as `queryAs` reads the
+/// query: a URL-encoded one, or a multipart one, whose files go to fields
+/// of type `UploadedFile`, in memory.
+pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
+    let kind = self.header("content-type").unwrapOr("").toLower()
+    if not kind.startsWith("multipart/") {
+        return readInto[T](pairsOf(self.formText()?), "the form")?
+    }
+    var given: Array[(String, Given)] = []
+    for read in self.uploads() {
+        let part = read?
+        if part.fileName().isEmpty() {
+            given.push((part.name(), Given.Text(part.text()?)))
+        } else {
+            let file = UploadedFile {
+                name: part.name()
+                fileName: part.fileName()
+                contentType: part.contentType()
+                bytes: part.bytes()?
+            }
+            given.push((part.name(), Given.File(file)))
+        }
+    }
+    readGiven[T](given, "the form")?
+}
+
+/// A file of a multipart form, in memory, as `Request.formAs` gives it to
+/// a field of its type: its field's name, the file's name and content type
+/// the client gave, and its bytes.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// pub type Avatar = { user: String, picture: http.UploadedFile }
+///
+/// var app = http.App()
+/// app.post("/avatar", (request) {
+///     let form = request.formAs[Avatar]()?
+///     let picture = form.picture
+///     http.Reply.text("{form.user}: {picture.fileName}, {picture.bytes.length()} bytes of {picture.contentType}")
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.field("user", "ada"),
+///     http.Part.bytes("picture", [137, 80, 78, 71], fileName: "ada.png", contentType: "image/png"),
+/// ])
+/// console.println(app.client().post("/avatar", body: some(body))?.text()?)
+/// ```
+pub type UploadedFile = {
+    name: String
+    fileName: String
+    contentType: String
+    bytes: Array[Byte]
+}
+
+impl __serialization.Encode for UploadedFile {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.beginMap(4)
+        out.key("name")
+        out.text(self.name)
+        out.key("fileName")
+        out.text(self.fileName)
+        out.key("contentType")
+        out.text(self.contentType)
+        out.key("bytes")
+        __serialization.Bytes(self.bytes).encode(out)
+        out.endMap()
+    }
+}
+
+impl __serialization.Decode for UploadedFile {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): UploadedFile ! __serialization.Error {
+        input.beginMap(first, "UploadedFile")?
+        var file = UploadedFile { name: "", fileName: "", contentType: "", bytes: [] }
+        for {
+            match input.nextKey()? {
+                some("bytes") => {
+                    let bytes =
+                        __serialization.Decode.decode[__serialization.Bytes](input, input.value()?)?
+                    file.bytes = bytes.value
+                }
+                some(key) => {
+                    let text = __serialization.Decode.decode[String](input, input.value()?)?
+                    match key {
+                        "name" => file.name = text
+                        "fileName" => file.fileName = text
+                        "contentType" => file.contentType = text
+                        _ => {}
+                    }
+                }
+                none => break
+            }
+        }
+        file
+    }
+}
+
+/// The text of a URL-encoded form; a multipart one is read by its parts.
+fn Request.formText(self): String ! Problem {
+    let kind = self.header("content-type").unwrapOr("").toLower()
+    if kind.startsWith("multipart/") {
+        fail Problem(
+            415,
+            "the body is {kind.split(";")[0]}, which is read by its parts with `request.uploads()`, not as a URL-encoded form",
+        )
+    }
+    self.text()?
+}
+
+/// The names and values of a query string or a URL-encoded form, decoded,
+/// in order.
+fn pairsOf(text: String): Array[(String, String)] {
+    var pairs: Array[(String, String)] = []
+    for pair in text.split("&") {
+        if pair.isEmpty() {
+            continue
+        }
+        let equals = pair.find("=").unwrapOr(pair.length())
+        let name = formDecoded(pair.slice(0, equals).unwrapOr(""))
+        pairs.push((name, formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr(""))))
+    }
+    pairs
+}
+
+fn readInto[T: __serialization.Decode](pairs: Array[(String, String)], what: String): T ! Problem {
+    readGiven[T](pairs.map((pair) { (pair.0, Given.Text(pair.1)) }), what)?
+}
+
+/// A value of a form: a text, or a file of a multipart one.
+enum Given {
+    Text(String)
+    File(UploadedFile)
+}
+
+fn readGiven[T: __serialization.Decode](pairs: Array[(String, Given)], what: String): T ! Problem {
+    match __serialization.Decode.decode[T](Fields.of(pairs), __serialization.Event.BeginMap) {
+        ok(value) => value
+        err(error) if error.kind == __serialization.ErrorKind.Invalid => fail Problem.invalid(
+            error.violations,
+        )
+        err(error) => fail Problem.badRequest("{what}: {error}")
+    }
+}
+
+/// The events of names and values as a record reads them: each name a key,
+/// its values one untyped text or a list of them; served from the end.
+type Fields = {
+    events: __sync.Mutex[Array[__serialization.Event]]
+    /// The parameter being read, which an error names.
+    current: __sync.Mutex[String]
+}
+
+fn Fields.of(pairs: Array[(String, Given)]): Fields {
+    var names: Array[String] = []
+    var values: Map[String, Array[Given]] = [:]
+    for (name, value) in pairs {
+        match values.get(name) {
+            some(found) => values[name] = found.concat([value])
+            none => {
+                names.push(name)
+                values[name] = [value]
+            }
+        }
+    }
+    var events: Array[__serialization.Event] = []
+    for name in names {
+        events.push(__serialization.Event.Key(name))
+        let given = values.get(name).unwrapOr([])
+        if given.length() == 1 {
+            events.extend(eventsOf(given[0]))
+        } else {
+            events.push(__serialization.Event.BeginList)
+            for value in given {
+                events.extend(eventsOf(value))
+            }
+            events.push(__serialization.Event.EndList)
+        }
+    }
+    events.push(__serialization.Event.EndMap)
+    events.reverse()
+    Fields { events: __sync.Mutex(events), current: __sync.Mutex("") }
+}
+
+/// A value as events: an untyped text, or a file as a map of its parts.
+fn eventsOf(value: Given): Array[__serialization.Event] {
+    match value {
+        Given.Text(text) => [__serialization.Event.Untyped(text)]
+        Given.File(file) => [
+            __serialization.Event.BeginMap,
+            __serialization.Event.Key("name"),
+            __serialization.Event.Untyped(file.name),
+            __serialization.Event.Key("fileName"),
+            __serialization.Event.Untyped(file.fileName),
+            __serialization.Event.Key("contentType"),
+            __serialization.Event.Untyped(file.contentType),
+            __serialization.Event.Key("bytes"),
+            __serialization.Event.Bytes(file.bytes),
+            __serialization.Event.EndMap,
+        ]
+    }
+}
+
+/// A name as a parameter and a field compare: without case, `_` or `-`.
+fn foldedName(name: String): String {
+    name.replace("_", "").replace("-", "").toLowerAscii()
+}
+
+impl __serialization.Source for Fields {
+    fn next(self): __serialization.Event? ! __serialization.Error {
+        self.events.update((events) { events.pop() })
+    }
+
+    fn skip(self, first: __serialization.Event): !__serialization.Error {
+        var depth = if first == __serialization.Event.BeginList or
+            first == __serialization.Event.BeginMap {
+            1
+        } else {
+            0
+        }
+        for depth > 0 {
+            match self.next()? {
+                some(__serialization.Event.BeginList) => depth += 1
+                some(__serialization.Event.BeginMap) => depth += 1
+                some(__serialization.Event.EndList) => depth -= 1
+                some(__serialization.Event.EndMap) => depth -= 1
+                none => return
+                _ => {}
+            }
+        }
+    }
+
+    fn failure(self, kind: __serialization.ErrorKind, message: String): __serialization.Error {
+        let at = self.current.get()
+        __serialization.Error {
+            kind
+            message
+            path: if at.isEmpty() { "$" } else { at }
+            line: 0
+            column: 0
+            violations: []
+        }
+    }
+
+    /// The field a parameter is, by its name without case, `_` or `-`.
+    fn nextField(self, names: Array[String]): Int? ! __serialization.Error {
+        let wanted = names.map((name) { foldedName(name) })
+        for {
+            match self.next()? {
+                some(__serialization.Event.Key(key)) => {
+                    let given = foldedName(key)
+                    match wanted.findIndex((name) { name == given }) {
+                        some(index) => {
+                            self.current.set(key)
+                            return some(index)
+                        }
+                        none => {
+                            let first = self.value()?
+                            self.skip(first)?
+                        }
+                    }
+                }
+                _ => {
+                    self.current.set("")
+                    return none
+                }
+            }
+        }
+    }
+
+    /// A list: the values of a name that repeats, or its one value, a text
+    /// or a file's map, which the list's end then follows.
+    fn beginList(self, first: __serialization.Event, name: String): !__serialization.Error {
+        match first {
+            __serialization.Event.BeginList => {}
+            __serialization.Event.Untyped(_) => self.events.update(
+                (events) {
+                    events.push(__serialization.Event.EndList)
+                    events.push(first)
+                },
+            )
+            __serialization.Event.BeginMap => self.events.update(
+                (events) {
+                    // The map's end, among the events served from the end.
+                    var at = events.length() - 1
+                    var depth = 1
+                    for at >= 0 {
+                        if events[at] == __serialization.Event.BeginMap {
+                            depth += 1
+                        } else if events[at] == __serialization.Event.EndMap {
+                            depth -= 1
+                            if depth == 0 {
+                                break
+                            }
+                        }
+                        at -= 1
+                    }
+                    events.insert(at.max(0), __serialization.Event.EndList)
+                    events.push(first)
+                },
+            )
+            _ => fail self.mismatch(first, name)
+        }
+    }
+}
+
+/// A query parameter that must be there.
+pub fn Request.requiredQuery(self, name: String): String ! Problem {
+    match self.query(name) {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
+/// A query parameter that must be there and be an integer.
+pub fn Request.requiredIntQuery(self, name: String): Int ! Problem {
+    match self.intQuery(name)? {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
+/// A query parameter that must be an integer when it is there.
+pub fn Request.intQuery(self, name: String): Int? ! Problem {
+    match self.query(name) {
+        none => none
+        some(text) => match Int.parse(text) {
+            ok(value) => some(value)
+            err(_) => fail Problem.badRequest(
+                "the query parameter `{name}` must be an integer, not `{text}`",
+            )
+        }
+    }
+}
+
+/// The first value of a header, by its name in any case.
+pub fn Request.header(self, name: String): String? {
+    let wanted = name.toLower()
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == wanted {
+            return some(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    none
+}
+
+/// Every value of a header, by its name in any case, in order.
+pub fn Request.headerValues(self, name: String): Array[String] {
+    let wanted = name.toLower()
+    var values: Array[String] = []
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == wanted {
+            values.push(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    values
+}
+
+/// The headers, lowercase, with the values of a repeated one joined by
+/// `, `.
+pub fn Request.headers(self): Map[String, String] {
+    var out: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        let (name, value) = (self.headerList[index], self.headerList[index + 1])
+        out[name] = match out.get(name) {
+            some(before) => "{before}, {value}"
+            none => value
+        }
+        index += 2
+    }
+    out
+}
+
+/// The request with a body of up to `bytes`, more or fewer than the
+/// server's `Limits.body`, as a route of uploads needs: before the body is
+/// read, by the handler or a middleware.
+pub fn Request.limitBody(self, bytes: Int): Request {
+    httpNative.requestLimit(self.native, bytes)
+    self
+}
+
+/// The problem of a body, or a part of one, that could not be read: `413`
+/// past its limit, else `400`.
+fn bodyProblem(request: httpNative.Native, what: String, failure: String): Problem {
+    if httpNative.requestStalled(request) {
+        return Problem(
+            408,
+            "{what} stopped arriving for longer than this server waits, `Limits.bodyTimeout`",
+        )
+    }
+    if httpNative.requestExceeded(request) {
+        return Problem(
+            413,
+            "{what} is larger than this server takes: raise the limit of the route with `request.limitBody(bytes)`, or the server's with `Limits.body`",
+        )
+    }
+    Problem.badRequest("{what}: {failure.removePrefix("body\t")}")
+}
+
+/// The request with `body` for its body: what a middleware that read the
+/// body gives on, as `next(request.withBody(bytes))`, for the handler to
+/// read again.
+pub fn Request.withBody(self, body: Array[Byte]): Request {
+    self with { given: some(body) }
+}
+
+/// A body is read once, as it arrives: after that, a panic that says how to
+/// give it on.
+fn Request.unread(self) {
+    if httpNative.requestTaken(self.native) {
+        panic(
+            "the body of this request was read already: a middleware that reads it gives it on with `next(request.withBody(bytes))`",
+        )
+    }
+}
+
+/// The whole body; one that cannot be read is a `400` problem, and one
+/// larger than its limit `413`.
+pub fn Request.bytes(self): Array[Byte] ! Problem {
+    match self.given {
+        some(bytes) => return bytes
+        none => {}
+    }
+    self.unread()
+    let bytes = httpNative.requestRead(self.native)
+    let failure = httpNative.failure(self.native)
+    if not failure.isEmpty() {
+        fail bodyProblem(self.native, "the body", failure)
+    }
+    bytes
+}
+
+/// The body as text, in the charset its content type names, as
+/// `Response.text()` reads it.
+pub fn Request.text(self): String ! Problem {
+    let windows = match windows1252(self.header("content-type").unwrapOr("")) {
+        ok(windows) => windows
+        err(why) => fail Problem.badRequest("the body: {why}")
+    }
+    let bytes = self.bytes()?
+    if windows {
+        return httpNative.windows1252(bytes)
+    }
+    match String.fromBytes(bytes) {
+        ok(text) => text
+        err(_) => fail Problem.badRequest("the body is not UTF-8 text")
+    }
+}
+
+/// The body as the JSON of a `T` (`std.json`), decoded as it arrives; a
+/// body that is not one is `400` with the reason.
+///
+/// ```tondo
+/// import std.http
+///
+/// type Signup = { name: String, email: String }
+///
+/// var app = http.App()
+/// app.post("/signups", (request) {
+///     let signup = request.json[Signup]()?
+///     http.Reply.json(signup, status: 201)
+/// })
+/// ```
+pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
+    match __json.decodeFrom[T](self.body()) {
+        ok(value) => value
+        err(error) if error.kind == __serialization.ErrorKind.Invalid => {
+            fail Problem.invalid(error.violations)
+        }
+        err(error) if httpNative.requestExceeded(self.native) => fail bodyProblem(
+            self.native,
+            "the body",
+            "{error}",
+        )
+        err(error) => fail Problem.badRequest("the body is not the JSON expected: {error}")
+    }
+}
+
+/// The fields of a URL-encoded form body.
+pub fn Request.form(self): Map[String, String] ! Problem {
+    var fields: Map[String, String] = [:]
+    for (name, value) in pairsOf(self.formText()?) {
+        fields[name] = value
+    }
+    fields
+}
+
+/// The parts of a `multipart/form-data` body, in order, as they arrive.
+pub fn Request.uploads(self): Uploads {
+    let form = match self.given {
+        some(bytes) => httpNative.requestFormOf(self.native, bytes)
+        none => {
+            self.unread()
+            httpNative.requestForm(self.native)
+        }
+    }
+    Uploads { form, request: self.native, done: false }
+}
+
+/// The body as a stream, read as the program asks for it.
+pub fn Request.body(self): __io.Reader {
+    match self.given {
+        some(bytes) => {
+            let buffer = __io.Buffer()
+            _ = buffer.writer().writeBytes(bytes)
+            buffer.reader()
+        }
+        none => {
+            self.unread()
+            httpNative.requestBody(self.native)
+        }
+    }
+}
+
+/// Writes the body to a file as it arrives; how many bytes.
+pub fn Request.saveTo(self, path: String): Int ! Problem {
+    match self.given {
+        some(bytes) => {
+            match __fs.writeBytes(path, bytes) {
+                ok(_) => return bytes.length()
+                err(error) => fail Problem.from("{error}")
+            }
+        }
+        none => self.unread()
+    }
+    let size = httpNative.saveBody(self.native, path, 0)
+    if size < 0 {
+        let failure = httpNative.failure(self.native)
+        if httpNative.requestExceeded(self.native) {
+            fail bodyProblem(self.native, "the body", failure)
+        }
+        fail Problem.from(failure.removePrefix("body\t"))
+    }
+    size
+}
+
+/// A query or form value as it was meant: `+` is a space.
+fn formDecoded(text: String): String {
+    __encoding.urlDecode(text.replace("+", " ")).unwrapOr(text)
+}
+
+/// A part of a multipart body. Parts arrive in order: reading one skips
+/// what the ones before left unread.
+///
+/// ```tondo
+/// import std.console
+/// import std.fs
+/// import std.http
+/// import std.path
+///
+/// let directory = fs.createTemporaryDirectory()?
+/// var app = http.App()
+/// app.post("/documents", (request) {
+///     var saved: Array[String] = []
+///     for received in request.uploads() {
+///         let upload = received?
+///         if upload.fileName().isEmpty() {
+///             saved.push("{upload.name()}={upload.text()?}")
+///         } else {
+///             let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()).unwrapOr("upload")))?
+///             saved.push("{upload.fileName()} ({upload.contentType()}, {size} bytes)")
+///         }
+///     }
+///     http.Reply.text(saved.join("; "))
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.field("owner", "ada"),
+///     http.Part.bytes("file", "report".bytes(), fileName: "report.txt", contentType: "text/plain"),
+/// ])
+/// console.println(app.client().post("/documents", body: some(body))?.text()?)
+/// ```
+pub type Upload = {
+    priv native: httpNative.Native
+    priv request: httpNative.Native
+    priv field: String
+    priv file: String
+    priv kind: String
+}
+
+/// The form field's name.
+pub fn Upload.name(self): String {
+    self.field
+}
+
+/// The file's name the client gave, or an empty string for a field.
+pub fn Upload.fileName(self): String {
+    self.file
+}
+
+/// The content type the client gave the file.
+pub fn Upload.contentType(self): String {
+    self.kind
+}
+
+/// The whole file; one that cannot be read is a `400` problem.
+pub fn Upload.bytes(self): Array[Byte] ! Problem {
+    let bytes = httpNative.uploadRead(self.native)
+    let failure = httpNative.failure(self.native)
+    if not failure.isEmpty() {
+        fail bodyProblem(self.request, "the part `{self.field}`", failure)
+    }
+    bytes
+}
+
+/// The file as UTF-8 text; one that is not is a `400` problem.
+pub fn Upload.text(self): String ! Problem {
+    match String.fromBytes(self.bytes()?) {
+        ok(text) => text
+        err(_) => fail Problem.badRequest("the part `{self.field}` is not UTF-8 text")
+    }
+}
+
+/// Writes the part to a file as it arrives; how many bytes.
+pub fn Upload.saveTo(self, path: String): Int ! Problem {
+    let size = httpNative.uploadSave(self.native, path)
+    if size < 0 {
+        let failure = httpNative.failure(self.native)
+        if httpNative.requestExceeded(self.request) {
+            fail bodyProblem(self.request, "the part `{self.field}`", failure)
+        }
+        fail Problem.from(failure.removePrefix("body\t"))
+    }
+    size
+}
+
+/// The parts of a multipart body, as `Request.uploads()` gives them.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// // The parts of a multipart body, read one at a time as they arrive.
+/// app.post("/count", (request) {
+///     var files = 0
+///     var bytes = 0
+///     for received in request.uploads() {
+///         let upload = received?
+///         files += 1
+///         bytes += upload.bytes()?.length()
+///     }
+///     http.Reply.text("{files} parts, {bytes} bytes")
+/// })
+/// let body = http.Body.multipart([
+///     http.Part.bytes("a", [1, 2], fileName: "a.bin"),
+///     http.Part.bytes("b", [3, 4, 5], fileName: "b.bin"),
+/// ])
+/// console.println(app.client().post("/count", body: some(body))?.text()?)
+/// ```
+pub type Uploads = {
+    priv form: httpNative.Native
+    priv request: httpNative.Native
+    priv done: Bool
+}
+
+impl Iterator[Upload ! Problem] for Uploads {
+    fn next(mut self): (Upload ! Problem)? {
+        if self.done {
+            return none
+        }
+        let failure = httpNative.failure(self.form)
+        if not failure.isEmpty() {
+            self.done = true
+            return some(err(bodyProblem(self.request, "the body", failure)))
+        }
+        let part = httpNative.formNext(self.form)
+        let problem = httpNative.failure(part)
+        if not problem.isEmpty() {
+            self.done = true
+            return some(err(bodyProblem(self.request, "the body", problem)))
+        }
+        let described = httpNative.uploadHead(part)
+        if described.isEmpty() {
+            self.done = true
+            return none
+        }
+        let parts = described.split("\t")
+        some(ok(Upload {
+            native: part
+            request: self.request
+            field: parts[0]
+            file: parts[1]
+            kind: parts[2]
+        }))
+    }
+}

@@ -1,0 +1,271 @@
+// What a server answers: replies, their bodies, headers and trailers.
+
+import std.console as __console
+import std.internal.http as httpNative
+import std.io as __io
+import std.json as __json
+import std.serialization as __serialization
+import std.sync as __sync
+
+enum Payload {
+    Data(Array[Byte])
+    Stream(__io.Reader)
+    /// A stream whose trailers follow its last bytes.
+    Trailed(__io.Reader, Trailers)
+    File(String, String)
+    /// An embedded file: its path, its bytes and the digest of its `ETag`.
+    Embedded(String, Array[Byte], String)
+    Events(Receiver[Event])
+    /// Where the socket goes once it is upgraded, for the task that talks.
+    Socket(__sync.Mutex[Handoff])
+}
+
+/// What a handler answers.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/", (_) { http.Reply.html("<h1>Home</h1>") })
+/// app.get("/old", (_) { http.Reply.redirect("/", status: 301) })
+/// app.get("/data", (_) { http.Reply.json(["ok": true]).header("Cache-Control", "no-store") })
+/// app.delete("/items/:id", (_) { http.Reply.empty() })
+/// let client = app.client()
+/// console.println(client.get("/old")?.text()?)
+/// let data = client.get("/data")?
+/// console.println("{data.text()?} {data.header("cache-control")}")
+/// console.println("{client.delete("/items/1")?.status()}")
+/// ```
+pub type Reply = {
+    priv code: Int
+    priv headerList: Array[String]
+    priv payload: Payload
+}
+
+/// A reply of text, as `text/plain; charset=utf-8`.
+pub fn Reply.text(text: String, status: Int = 200): Reply {
+    Reply {
+        code: status
+        headerList: ["content-type", "text/plain; charset=utf-8"]
+        payload: Payload.Data(text.bytes())
+    }
+}
+
+/// A reply of HTML, as `text/html; charset=utf-8`.
+pub fn Reply.html(html: String, status: Int = 200): Reply {
+    Reply {
+        code: status
+        headerList: ["content-type", "text/html; charset=utf-8"]
+        payload: Payload.Data(html.bytes())
+    }
+}
+
+/// The value as JSON (`std.json`).
+pub fn Reply.json[T: __serialization.Encode](value: T, status: Int = 200): Reply {
+    let data = __json.encode(value).bytes()
+    Reply {
+        code: status
+        headerList: ["content-type", "application/json"]
+        payload: Payload.Data(data)
+    }
+}
+
+/// A reply of bytes, with their content type.
+pub fn Reply.bytes(
+    bytes: Array[Byte],
+    contentType: String = "application/octet-stream",
+    status: Int = 200,
+): Reply {
+    Reply { code: status, headerList: ["content-type", contentType], payload: Payload.Data(bytes) }
+}
+
+/// What a stream gives, sent as it gives it, and after it the `trailers`
+/// set by the time it ends.
+pub fn Reply.stream(
+    input: __io.Reader,
+    contentType: String = "application/octet-stream",
+    status: Int = 200,
+    trailers: Trailers? = none,
+): Reply {
+    Reply {
+        code: status
+        headerList: ["content-type", contentType]
+        payload: match trailers {
+            some(after) => Payload.Trailed(input, after)
+            none => Payload.Stream(input)
+        }
+    }
+}
+
+/// The headers that follow the last bytes of a streamed reply, as gRPC's
+/// status does, which its handler sets before the stream ends.
+///
+/// ```tondo
+/// import std.http
+/// import std.io
+///
+/// var app = http.App()
+/// // Headers after the body, as a checksum known only once it is written.
+/// app.get("/report", (_) {
+///     let trailers = http.Trailers()
+///     trailers.set("X-Checksum", "9a0364b9")
+///     http.Reply.stream(io.reader("line 1\nline 2\n"), contentType: "text/plain", trailers: some(trailers))
+/// })
+/// app.listen(port: 8080)?
+/// ```
+pub type Trailers = {
+    priv native: httpNative.Native
+}
+
+/// Trailers to set.
+pub fn Trailers(): Trailers {
+    Trailers { native: httpNative.trailers() }
+}
+
+/// Sets a trailer, replacing one of that name.
+pub fn Trailers.set(self, name: String, value: String) {
+    httpNative.trailersSet(self.native, name, value)
+}
+
+/// The trailers set, by name.
+pub fn Trailers.all(self): Map[String, String] {
+    let list = httpNative.trailersList(self.native)
+    var all: Map[String, String] = [:]
+    var at = 0
+    for at + 1 < list.length() {
+        all[list[at]] = list[at + 1]
+        at += 2
+    }
+    all
+}
+
+/// A file, with the content type of its extension. It answers `Range`
+/// requests with the part asked for, so downloads resume, and
+/// `If-None-Match` and `If-Modified-Since` with `304`. With `download`,
+/// the browser saves it under that name. A missing file is `404`.
+pub fn Reply.file(path: String, download: String? = none): Reply {
+    Reply { code: 200, headerList: [], payload: Payload.File(path, download.unwrapOr("")) }
+}
+
+/// Server-Sent Events: each event the channel receives, until it closes.
+pub fn Reply.events(events: Receiver[Event]): Reply {
+    Reply { code: 200, headerList: ["cache-control", "no-cache"], payload: Payload.Events(events) }
+}
+
+/// A reply that sends the client to `url`: `302 Found` unless another
+/// status.
+pub fn Reply.redirect(url: String, status: Int = 302): Reply {
+    Reply { code: status, headerList: ["location", url], payload: Payload.Data([]) }
+}
+
+/// A reply without a body: `204 No Content` unless another status.
+pub fn Reply.empty(status: Int = 204): Reply {
+    Reply { code: status, headerList: [], payload: Payload.Data([]) }
+}
+
+/// A `404 Not Found` reply, as a problem.
+pub fn Reply.notFound(): Reply {
+    problemReply(Problem.notFound())
+}
+
+/// The same reply with the header `name` set to `value`, in place of the
+/// values it had, whatever their case.
+pub fn Reply.header(self, name: String, value: String): Reply {
+    let lower = name.toLower()
+    var headers: Array[String] = []
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index].toLower() != lower {
+            headers.push(self.headerList[index])
+            headers.push(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    headers.push(name)
+    headers.push(value)
+    self with { headerList: headers }
+}
+
+/// The same reply with one more value of the header `name`, after the ones
+/// it has: what `Set-Cookie`, `Vary` and `Link` take.
+pub fn Reply.addHeader(self, name: String, value: String): Reply {
+    var headers = self.headerList
+    headers.push(name)
+    headers.push(value)
+    self with { headerList: headers }
+}
+
+/// The same reply with another status code.
+pub fn Reply.withStatus(self, status: Int): Reply {
+    self with { code: status }
+}
+
+/// The body, when the reply holds it: that of text, HTML, JSON, bytes, a
+/// redirect or a problem; `none` for a stream, a file, events or a
+/// WebSocket, which are sent as they come.
+pub fn Reply.body(self): Array[Byte]? {
+    match self.payload {
+        Payload.Data(bytes) => some(bytes)
+        _ => none
+    }
+}
+
+/// The same reply with this body in place of the one it had; its status
+/// and headers stay, its content type too.
+pub fn Reply.withBody(self, bytes: Array[Byte]): Reply {
+    self with { payload: Payload.Data(bytes) }
+}
+
+/// The reply the server gives for a problem, `application/problem+json`
+/// (RFC 9457): for a middleware that adds its headers to a handler's
+/// failure, `Reply.problem(problem).header(...)`.
+pub fn Reply.problem(problem: Problem): Reply {
+    problemReply(problem)
+}
+
+/// The reply's status code.
+pub fn Reply.status(self): Int {
+    self.code
+}
+
+/// The headers set so far, lowercase, with the values of a repeated one
+/// joined by `, `, as a middleware reads them.
+pub fn Reply.headers(self): Map[String, String] {
+    var out: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        let (name, value) = (self.headerList[index].toLower(), self.headerList[index + 1])
+        out[name] = match out.get(name) {
+            some(before) => "{before}, {value}"
+            none => value
+        }
+        index += 2
+    }
+    out
+}
+
+/// A problem as `application/problem+json`.
+fn problemReply(problem: Problem): Reply {
+    let detail = if problem.status >= 500 {
+        _ = __console.stderr().writeLine("http: {problem.status} {problem.message}")
+        "internal server error"
+    } else {
+        problem.message
+    }
+    var errors = ""
+    if not problem.violations.isEmpty() {
+        let each = problem.violations.map(
+            (violation) {
+                "{{\"path\":{__json.encode(violation.path)},\"message\":{__json.encode(violation.message)}}}"
+            },
+        )
+        errors = ",\"errors\":[{each.join(",")}]"
+    }
+    let body = "{{\"status\":{problem.status},\"detail\":{__json.encode(detail)}{errors}}}"
+    Reply {
+        code: problem.status
+        headerList: ["content-type", "application/problem+json"]
+        payload: Payload.Data(body.bytes())
+    }
+}

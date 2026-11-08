@@ -1,0 +1,469 @@
+// Serving an application: listening, limits, TLS, proxies and each
+// request's answer.
+
+import std.internal.codec as codecNative
+import std.internal.http as httpNative
+import std.net as __net
+import std.panics as __panics
+import std.process as __process
+import std.time as __time
+
+/// Serves until the task is cancelled or the server stops; `port` 0 takes
+/// any free port. With `socket`, it serves on that Unix socket instead,
+/// which it makes and removes when it stops. `limits` bounds what each
+/// client sends, `Limits.standard()` without it. A client that goes away
+/// before its reply cancels the task that answers it: the handler stops at
+/// its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
+/// first drains the server, as `Server.stop(grace)` does, and then ends
+/// the program as it would have; a second one ends it at once.
+pub fn App.listen(
+    self,
+    port: Int = 8080,
+    host: String = "0.0.0.0",
+    tls: Tls? = none,
+    socket: String? = none,
+    limits: Limits? = none,
+    grace: __time.Duration = __time.seconds(30),
+): !HttpError {
+    let listening = bound(host, port, tls, socket, limits)?
+    let (heard, asked) = channel[__process.Signal](1)
+    // Before the task starts: a signal that comes first finds who hears it.
+    let signals = __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate)
+    spawn detached drainWhenAsked(listening, grace, heard, signals)
+    serve(listening, self.pipeline())
+    match asked.receive(timeout: __time.seconds(0)) {
+        some(signal) => {
+            httpNative.signalEnd(if signal == __process.Signal.Interrupt { 0 } else { 1 })
+            // Cancelled now, it unwinds here.
+            __time.sleep(__time.seconds(1))
+        }
+        none => {}
+    }
+}
+
+/// Drains a server that listens once the program is asked to end.
+fn drainWhenAsked(
+    listening: httpNative.Native,
+    grace: __time.Duration,
+    heard: Sender[__process.Signal],
+    signals: Receiver[__process.Signal],
+) {
+    // The first `Interrupt` or `Terminate`: the channel goes with this call,
+    // so that the next ends the program at once.
+    match signals.receive() {
+        some(signal) => {
+            heard.send(signal)
+            httpNative.serverStop(listening, grace.milliseconds())
+        }
+        none => {}
+    }
+}
+
+/// Starts serving in a task of its own, for a program that goes on, such
+/// as a test; `Server.stop()` ends it.
+pub fn App.start(
+    self,
+    port: Int = 0,
+    host: String = "127.0.0.1",
+    tls: Tls? = none,
+    socket: String? = none,
+    limits: Limits? = none,
+): Server ! HttpError {
+    let listening = bound(host, port, tls, socket, limits)?
+    let (finished, ended) = channel[Unit](1)
+    spawn detached serveThenSignal(listening, self.pipeline(), finished)
+    Server { native: listening, secure: tls.isSome(), ended }
+}
+
+/// What a server allows each client, so that a large or slow one cannot
+/// exhaust it: the bytes of a request's body, more of which is `413`; the
+/// bytes of its head, its line and headers, more of which is `431`; the
+/// time to send a head, or a TLS handshake, which also ends a connection
+/// kept open without a request; the longest a body may stop arriving,
+/// after which it is `408`; and the longest a client may stop taking a
+/// reply, after which the connection closes and the handler is cancelled.
+/// `Limits.standard() with { body: 100_000_000 }` changes one;
+/// `Request.limitBody` changes the body's for a route.
+///
+/// ```tondo
+/// import std.http
+/// import std.time
+///
+/// var app = http.App()
+/// // Videos up to 1 GB on this route; 10 MiB on the others.
+/// app.post("/videos", (request) { http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes") })
+/// let limits = http.Limits.standard() with { headTimeout: time.seconds(10) }
+/// app.listen(port: 8080, limits: some(limits))?
+/// ```
+pub type Limits = {
+    body: Int
+    head: Int
+    headTimeout: __time.Duration
+    bodyTimeout: __time.Duration
+    replyTimeout: __time.Duration
+}
+
+/// 10 MiB of body, 64 KiB of head, 30 seconds to send a head, and 30
+/// seconds that a body may stop arriving or a reply stop being taken.
+pub fn Limits.standard(): Limits {
+    Limits {
+        body: 10 * 1024 * 1024
+        head: 64 * 1024
+        headTimeout: __time.seconds(30)
+        bodyTimeout: __time.seconds(30)
+        replyTimeout: __time.seconds(30)
+    }
+}
+
+/// A server that `App.start` started.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+/// import std.time
+///
+/// var app = http.App()
+/// app.get("/health", (_) { http.Reply.text("ok") })
+/// // A server that runs while the program goes on, as a test's.
+/// let server = app.start()?
+/// console.println("{server.url()}: {http.get("{server.url()}/health")?.text()?}")
+/// server.stop(grace: time.seconds(5))
+/// ```
+pub type Server = {
+    priv native: httpNative.Native
+    priv secure: Bool
+    priv ended: Receiver[Unit]
+}
+
+/// The address it listens on, with its port: `127.0.0.1:43017`.
+pub fn Server.address(self): String {
+    httpNative.serverAddress(self.native)
+}
+
+/// Its URL for a client on the same machine: `http://127.0.0.1:43017`; for
+/// one on a Unix socket, `http://localhost`, with the socket given to the
+/// client.
+pub fn Server.url(self): String {
+    if self.address().startsWith("/") {
+        return "http://localhost"
+    }
+    let address = self.address().replace("0.0.0.0", "127.0.0.1")
+    if self.secure { "https://{address}" } else { "http://{address}" }
+}
+
+/// Stops taking connections and waits until the server stopped: each
+/// connection open ends the requests it has, those that arrived too, and
+/// closes, with a GOAWAY on HTTP/2; after `grace`, those left close as
+/// they are.
+pub fn Server.stop(self, grace: __time.Duration = __time.seconds(30)) {
+    httpNative.serverStop(self.native, grace.milliseconds())
+    _ = self.ended.receive()
+}
+
+/// The media type a file's name says, as `text/css` for `site.css`, which
+/// `App.files` sends; `application/octet-stream` when it says none.
+pub fn mediaType(path: String): String {
+    httpNative.mediaType(path)
+}
+
+/// A handler that sends each request on to `target`, as a reverse proxy
+/// does, and its response back: the method, the path and query, the headers
+/// and the body, each body streamed as it arrives. The path loses `strip`
+/// first; `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` tell
+/// the target who asked; and a target that does not answer is `502`.
+/// `client` sends the requests, with its hooks, so what a proxy sends is
+/// observed as any other request: `app.route("*", "/api/*", http.proxy(
+/// "http://backend:8080", strip: "/api"))`.
+pub fn proxy(
+    target: String,
+    strip: String = "",
+    client: Client? = none,
+): fn(Request): Reply ! Problem {
+    let sender = client.unwrapOr(Client(redirects: 0))
+    let base = target.removeSuffix("/")
+    (request): Reply ! Problem {
+        var path = request.path().removePrefix(strip)
+        if not path.startsWith("/") {
+            path = "/{path}"
+        }
+        let query = if request.rawQuery().isEmpty() { "" } else { "?{request.rawQuery()}" }
+        var headers: Map[String, String] = [:]
+        for (name, value) in request.headers() {
+            if not (name in HopByHop) and name != "content-type" and name != "content-length" {
+                headers[name] = value
+            }
+        }
+        let peer = peerIp(request.remoteAddress())
+        if not peer.isEmpty() {
+            headers["x-forwarded-for"] = match request.header("x-forwarded-for") {
+                some(before) => "{before}, {peer}"
+                none => peer
+            }
+        }
+        headers["x-forwarded-host"] = request.host()
+        headers["x-forwarded-proto"] = request.scheme()
+        let length = request.header("content-length").andThen((text) { Int.parse(text).ok() })
+        let contentType = request.header("content-type").unwrapOr("application/octet-stream")
+        let body: Body? = if request.method() == "GET" or request.method() == "HEAD" {
+            none
+        } else {
+            some(Body.stream(request.body(), length: length, contentType: contentType))
+        }
+        let answered = sender.request(
+            request.method(),
+            "{base}{path}{query}",
+            body: body,
+            headers: headers,
+        )
+        let response = match answered {
+            ok(response) => response
+            err(HttpError.Status(response)) => response
+            err(error) => fail Problem(502, "the proxy's target {base} did not answer: {error}")
+        }
+        var reply = Reply.stream(
+            response.body(),
+            contentType: response.header("content-type").unwrapOr("application/octet-stream"),
+            status: response.status(),
+        )
+        for (name, value) in response.headers() {
+            if name in HopByHop or name == "content-type" or name == "content-length" {
+                continue
+            }
+            if name == "set-cookie" {
+                for cookie in response.headerValues(name) {
+                    reply = reply.addHeader(name, cookie)
+                }
+            } else {
+                reply = reply.header(name, value)
+            }
+        }
+        reply
+    }
+}
+
+/// The headers of one connection, which a proxy does not pass on.
+const HopByHop: Array[String] = [
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+]
+
+/// The IP address of `address:port` or `[address]:port`.
+fn peerIp(address: String): String {
+    if address.startsWith("[") {
+        return address.removePrefix("[").splitOnce("]").map((parts) { parts.0 }).unwrapOr("")
+    }
+    match address.findLast(":") {
+        some(at) => address.slice(0, at).unwrapOr("")
+        none => address
+    }
+}
+
+/// What a server shows and asks of TLS: `net.Tls`.
+///
+/// ```tondo
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/", (_) { http.Reply.text("hello over HTTPS") })
+/// app.listen(port: 8443, tls: some(http.Tls.files("cert.pem", "key.pem")))?
+/// ```
+pub alias Tls = __net.Tls
+
+/// A version of TLS: `net.TlsVersion`.
+///
+/// ```tondo
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/", (_) { http.Reply.text("TLS 1.3 only") })
+/// let tls = http.Tls.files("cert.pem", "key.pem", minimumVersion: http.TlsVersion.Tls13)
+/// app.listen(port: 8443, tls: some(tls))?
+/// ```
+pub alias TlsVersion = __net.TlsVersion
+
+/// What the runtime takes of a `Tls`: certificate, key, the clients'
+/// authorities and the lowest version; empty without one.
+fn tlsParts(tls: Tls?): (String, String, String, Int) {
+    match tls {
+        some(given) => {
+            let minimum = match given.minimumVersion {
+                __net.TlsVersion.Tls12 => 12
+                __net.TlsVersion.Tls13 => 13
+            }
+            (given.certificate, given.privateKey, given.clients.unwrapOr(""), minimum)
+        }
+        none => ("", "", "", 12)
+    }
+}
+
+fn bound(
+    host: String,
+    port: Int,
+    tls: Tls?,
+    socket: String?,
+    limits: Limits?,
+): httpNative.Native ! HttpError {
+    let (certificate, key, clients, minimum) = tlsParts(tls)
+    let allowed = limits.unwrapOr(Limits.standard())
+    let (heads, bodies, replies) = (
+        allowed.headTimeout.milliseconds(),
+        allowed.bodyTimeout.milliseconds(),
+        allowed.replyTimeout.milliseconds(),
+    )
+    let listening = match socket {
+        some(path) => httpNative.listenUnix(
+            path,
+            allowed.body,
+            allowed.head,
+            heads,
+            bodies,
+            replies,
+        )
+        none => httpNative.listen(
+            host,
+            port,
+            certificate,
+            key,
+            clients,
+            minimum,
+            allowed.body,
+            allowed.head,
+            heads,
+            bodies,
+            replies,
+        )
+    }
+    failed(listening)?
+    listening
+}
+
+fn serveThenSignal(
+    server: httpNative.Native,
+    handler: fn(Request): Reply ! Problem,
+    finished: Sender[Unit],
+) {
+    serve(server, handler)
+    finished.send(())
+}
+
+fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    for {
+        let incoming = httpNative.next(server)
+        if not httpNative.requestOpen(incoming) {
+            return
+        }
+        spawn detached answer(incoming, handler)
+    }
+}
+
+fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    // A client that goes away before the reply cancels this task: the
+    // handler stops at its next wait and runs its `defer`s.
+    httpNative.requestAnswering(incoming)
+    let fields = httpNative.requestHead(incoming).split("\t")
+    let request = Request {
+        native: incoming
+        verb: fields[0]
+        target: fields[1]
+        queryText: fields[2]
+        protocol: fields[3]
+        peer: fields[4]
+        authority: fields[5]
+        secure: fields[6] == "1"
+        headerList: httpNative.requestHeaders(incoming)
+        params: [:]
+        chosen: none
+        allowed: []
+        trusted: []
+        given: none
+    }
+    // A handler that panics answers `500`, and the server goes on
+    // (14.24.1); the report says which request it was.
+    let reply = match recover { handler(request) } {
+        ok(ok(reply)) => reply
+        ok(err(problem)) => problemReply(problem)
+        err(stopped) => {
+            __panics.report(stopped, ["method": request.verb, "path": request.target])
+            let body = "{{\"status\":500,\"detail\":\"internal server error\"}}"
+            Reply {
+                code: 500
+                headerList: ["content-type", "application/problem+json"]
+                payload: Payload.Data(body.bytes())
+            }
+        }
+    }
+    send(incoming, reply)
+}
+
+fn send(incoming: httpNative.Native, reply: Reply) {
+    match reply.payload {
+        Payload.Data(bytes) => httpNative.respond(incoming, reply.code, reply.headerList, bytes)
+        Payload.Stream(input) => httpNative.respondStream(
+            incoming,
+            reply.code,
+            reply.headerList,
+            input,
+        )
+        Payload.Trailed(input, trailers) => httpNative.respondTrailed(
+            incoming,
+            reply.code,
+            reply.headerList,
+            input,
+            trailers.native,
+        )
+        Payload.File(path, download) => {
+            let problem = httpNative.respondFile(incoming, reply.headerList, path, download)
+            if not problem.isEmpty() {
+                send(incoming, problemReply(Problem.notFound()))
+            }
+        }
+        Payload.Embedded(name, contents, tag) => httpNative.respondBytes(
+            incoming,
+            reply.headerList,
+            name,
+            contents,
+            tag,
+        )
+        Payload.Events(events) => {
+            let pipe = codecNative.pipe(65536)
+            let output = codecNative.pipeWriter(pipe)
+            var headers = reply.headerList
+            headers.extend(["content-type", "text/event-stream"])
+            httpNative.respondStream(incoming, 200, headers, codecNative.pipeReader(pipe))
+            for event in events {
+                var lines: Array[String] = []
+                if event.event != "message" {
+                    lines.push("event: {event.event}")
+                }
+                match event.id {
+                    some(id) => lines.push("id: {id}")
+                    none => {}
+                }
+                for line in event.data.split("\n") {
+                    lines.push("data: {line}")
+                }
+                if output.write("{lines.join("\n")}\n\n").isErr() {
+                    break
+                }
+            }
+            _ = output.close()
+        }
+        Payload.Socket(handoff) => {
+            let socket = WebSocket { native: httpNative.acceptWebSocket(incoming), closed: false }
+            let accepted = httpNative.failure(socket.native).isEmpty()
+            handoff.update(
+                (pending) {
+                    pending.socket = if accepted { some(socket) } else { none }
+                    pending.given = true
+                },
+            )
+        }
+    }
+}
