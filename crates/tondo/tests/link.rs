@@ -196,3 +196,33 @@ fn sections_are_bounded_by_start_and_stop() {
     let run = Command::new(dir.join("entries")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "2 42\n");
 }
+
+/// A C library may call `atexit`, which glibc's shared library leaves to
+/// `libc_nonshared.a`, as it does to `pthread_atfork`.
+#[test]
+fn a_c_library_may_call_atexit() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link_atexit");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let source = "#include <stdio.h>\n#include <stdlib.h>\n\nstatic void bye(void) { puts(\"bye\"); }\n\n\
+                  int farewell(void) { return atexit(bye); }\n";
+    std::fs::write(dir.join("farewell.c"), source).unwrap();
+    let compiled =
+        Command::new("cc").args(["-c", "-fPIC", "farewell.c", "-o", "farewell.o"]).current_dir(&dir).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let archived = Command::new("ar").args(["rcs", "libfarewell.a", "farewell.o"]).current_dir(&dir).status();
+    assert!(archived.unwrap().success());
+    let library = dir.join("libfarewell.a");
+    let manifest = format!("[package]\nname = \"farewell\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
+    std::fs::write(dir.join("tondo.toml"), manifest).unwrap();
+    let program = "import std.console\nimport std.ffi\n\nextern fn farewell(): ffi.CInt\n\n\
+                   fn main() {\n    let registered = unsafe { farewell() }\n    console.println(\"registered {registered}\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", ".", "--output", "farewell"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let run = Command::new(dir.join("farewell")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "registered 0\nbye\n");
+}

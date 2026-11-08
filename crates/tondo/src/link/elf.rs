@@ -455,6 +455,10 @@ fn synthetic(name: &[u8]) -> Option<Synthetic> {
         b"_GLOBAL_OFFSET_TABLE_" => Synthetic::GlobalOffsetTable,
         b"_DYNAMIC" => Synthetic::Dynamic,
         b"__ehdr_start" => Synthetic::HeaderStart,
+        // What `atexit` hands `__cxa_atexit` to say whose the handler is:
+        // an address in this executable or library, which C's start files
+        // define.
+        b"__dso_handle" => Synthetic::HeaderStart,
         _ => return None,
     })
 }

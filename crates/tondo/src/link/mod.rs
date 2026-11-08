@@ -140,6 +140,13 @@ pub fn link(
     }
     // The C library first: the entry needs it.
     let mut system: Vec<PathBuf> = if statically { Vec::new() } else { vec![find_shared(arch, &dirs, "c")?] };
+    // And what glibc's `libc.so` adds to it, as `atexit`, which its shared
+    // library does not have: installed with C's development files, and only
+    // C code that calls them needs it.
+    let nonshared = dirs.iter().map(|d| d.join("libc_nonshared.a")).find(|p| archive_of(p, arch));
+    if !statically && let Some(nonshared) = nonshared {
+        archive_paths.push(nonshared);
+    }
     for argument in runtime {
         match argument.strip_prefix("-l") {
             Some(name) => {
@@ -326,15 +333,26 @@ fn is_elf(path: &Path, arch: elf::Arch) -> bool {
     use std::io::Read;
     let mut header = [0u8; 20];
     let Ok(mut file) = std::fs::File::open(path) else { return false };
-    if file.read_exact(&mut header).is_err() {
-        return false;
-    }
-    let machine = u16::from_le_bytes([header[18], header[19]]);
+    file.read_exact(&mut header).is_ok() && elf_of(&header, arch)
+}
+
+/// Whether an archive's objects are of `arch`, as its first says.
+fn archive_of(path: &Path, arch: elf::Arch) -> bool {
+    let Ok(data) = std::fs::read(path) else { return false };
+    let Ok(archive) = object::read::archive::ArchiveFile::parse(&*data) else { return false };
+    let first = archive.members().flatten().next().and_then(|member| member.data(&*data).ok());
+    first.is_some_and(|object| elf_of(object, arch))
+}
+
+fn elf_of(header: &[u8], arch: elf::Arch) -> bool {
     let wanted = match arch {
         elf::Arch::X86_64 => object::elf::EM_X86_64,
         elf::Arch::Aarch64 => object::elf::EM_AARCH64,
     };
-    header.starts_with(b"\x7fELF") && header[4] == 2 && machine == wanted.0
+    header.len() >= 20
+        && header.starts_with(b"\x7fELF")
+        && header[4] == 2
+        && u16::from_le_bytes([header[18], header[19]]) == wanted.0
 }
 
 /// Links a Mach-O executable. The system's libraries are not on disk, so
