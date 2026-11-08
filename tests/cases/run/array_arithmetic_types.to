@@ -1,0 +1,39 @@
+// Arithmetic lifted over arrays (language 10.6) for every type of number,
+// on nested arrays and with a number on either side; and what panics: a
+// division by zero among the elements, and an array repeated more times
+// than an array can hold.
+import std.console
+
+fn main() {
+    let tiny: Array[Int8] = [1, -2]
+    let short: Array[Int16] = [300, -400]
+    let middle: Array[Int32] = [70000, 5]
+    let long = [7, 2]
+    let byte: Array[UInt8] = [200, 5]
+    let word: Array[UInt16] = [60000, 7]
+    let double: Array[UInt32] = [4000000000, 9]
+    let unsigned: Array[UInt] = [10000000000000000000, 3]
+    let wide: Array[Int128] = [170141183460469231731687303715884105727, -5]
+    let wideUnsigned: Array[UInt128] = [340282366920938463463374607431768211455, 8]
+    let single: Array[Float32] = [1.5, -0.25]
+    let float = [1.5, 2.0]
+    console.println("{tiny + tiny} {short * 2} {middle - 1} {long % 3} {byte / 5} {word + 1}")
+    console.println("{double - 9} {unsigned / 3} {wide - 1} {wideUnsigned / 2}")
+    console.println("{single * 2.0} {3.0 / float} {100 - long}")
+    console.println("{[[1, 2], [3, 4]] * [10, 100]} {[[1, 2], [3, 4]] + [[5, 6], [7, 8]]}")
+    match recover { [6, 3] / [2, 0] } {
+        ok(quotients) => console.println("{quotients}")
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { [1, 2].repeat(5000000000000000000) } {
+        ok(repeated) => console.println("{repeated.length()}")
+        err(stopped) => console.println(stopped.message)
+    }
+}
+
+// expect-stdout: [2, -4] [600, -800] [69999, 4] [1, 2] [40, 1] [60001, 8]
+// expect-stdout: [3999999991, 0] [3333333333333333333, 1] [170141183460469231731687303715884105726, -6] [170141183460469231731687303715884105727, 4]
+// expect-stdout: [3.0, -0.5] [2.0, 1.5] [93, 98]
+// expect-stdout: [[10, 20], [300, 400]] [[6, 8], [10, 12]]
+// expect-stdout: 3 / 0 in arithmetic on arrays
+// expect-stdout: an array of length 2 repeated 5000000000000000000 times is longer than an array can be
