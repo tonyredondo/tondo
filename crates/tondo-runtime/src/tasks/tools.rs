@@ -6,9 +6,9 @@
 //! no tool watches pays a load where a task runs, starts, waits or hands a
 //! value over.
 //!
-//! A recorded run's replay and the exploration of orders do not listen:
-//! they change how workers wait and which task runs next, where the
-//! scheduler does those.
+//! A recorded run's replay, the exploration of orders and a live build's
+//! reloads do not listen: they change how workers wait, which task runs
+//! next and when no task can run, where the scheduler does those.
 
 use super::*;
 

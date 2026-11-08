@@ -123,11 +123,17 @@ the bindings of the tasks that waited, and an outermost frame broke the copy tha
 workers of `tondo test` ran one at a time; `run` of `tondo mcp` counted the build in a program's
 time; a string built while the tools count memory was copied whole at each append; and the fuzz
 tests of 0.6 found five bugs in `std.xml`, `std.yaml` and `std.url`, and writing them a misnamed
-protobuf encoding that the compiler blamed on the field's type.
+protobuf encoding that the compiler blamed on the field's type. Then the Nightly's: a walk of the
+stack, for a sample of the heap, read address 0 at a frame pointer near the top of memory; a test
+whose task spun, or whose `select` kept finding a closed channel, stayed in its first order until
+its time ran out; and the script of the models took a broken invariant for an output it did not
+know. The baseline found an empty array literal allocated at every call of a derived encoder.
 
 ## Status
 
 | Phase | State |
 | --- | --- |
 | 0 | started 2026-11-07: 0.3 to 0.7 and 0.9 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 running a slice a night, `.github/scripts/mutants.sh` |
-| 1–8 | not started |
+| 1 | done 2026-11-08: `Worker`, lent to a closure by `worker`, which never inlines; `crates/tondo/tests/workers.rs` |
+| 2 | done 2026-11-08: `tasks/` in 19 modules; the tools hear the scheduler through `tasks/tools.rs`, one word of bits; the replay, the exploration of orders and live builds' reloads, which change how it waits and what runs next, stay where they act |
+| 3–8 | not started |
