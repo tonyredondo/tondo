@@ -3,6 +3,7 @@
 //! the toolchain names, and stops at the budgets the toolchain sets. Steps
 //! are counted, so a budget ends a run at the same point on every machine.
 
+use super::config::config;
 use super::{Str, str_bytes, str_new};
 #[cfg(tondo_staticlib)]
 use std::alloc::{GlobalAlloc, Layout};
@@ -27,7 +28,7 @@ fn over(what: &str) -> ! {
 pub extern "C" fn tondo_rt_meta_step() {
     let mut left = STEPS.load(Ordering::Relaxed);
     if left < 0 {
-        left = std::env::var("TONDO_META_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(i64::MAX - 1);
+        left = config().meta_steps.as_deref().and_then(|s| s.parse().ok()).unwrap_or(i64::MAX - 1);
     }
     if left == 0 {
         over("step");
@@ -38,14 +39,14 @@ pub extern "C" fn tondo_rt_meta_step() {
 /// The request the toolchain wrote.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_meta_request() -> *mut Str {
-    let text = std::env::var_os("TONDO_META_REQUEST").and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+    let text = config().meta_request.as_ref().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
     str_new(&text)
 }
 
 /// Writes the response for the toolchain.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_meta_respond(text: *const Str) {
-    if let Some(path) = std::env::var_os("TONDO_META_RESPONSE") {
+    if let Some(path) = &config().meta_response {
         let _ = std::fs::write(path, unsafe { str_bytes(text) });
     }
 }
@@ -113,7 +114,7 @@ static HELD: AtomicUsize = AtomicUsize::new(0);
 /// Reads the memory budget, before the program starts.
 #[cfg(tondo_staticlib)]
 pub fn start() {
-    if let Some(limit) = std::env::var("TONDO_META_MEMORY").ok().and_then(|s| s.parse().ok()) {
+    if let Some(limit) = config().meta_memory.as_deref().and_then(|s| s.parse().ok()) {
         LIMIT.store(limit, Ordering::Relaxed);
         super::diagnostics::hook(super::diagnostics::BUDGET);
     }

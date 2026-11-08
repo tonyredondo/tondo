@@ -2071,6 +2071,55 @@ como lo dejó el programa. Con `--json` da el archivo, el test, su estado y sus
 modelos como el informe de `tondo test`. El editor lo ofrece como lente sobre cada
 función que es una máquina de estados, y `tondo mcp` como la herramienta `model`.
 
+### 7.17 Variables del entorno
+
+Un programa de Tondo lee del entorno estas variables una sola vez, al arrancar, antes
+de que corra nada suyo: cambiarlas después, con `env.set`, no cambia lo que hace el
+runtime. Las primeras las pone quien ejecuta el programa; las demás las pone `tondo`
+para los programas que lanza, y el runtime saca algunas del entorno al leerlas, para
+que no las hereden sus hijos. `TZ`, `HOME` y `XDG_CACHE_HOME` son las del sistema y
+significan lo de siempre.
+
+| Variable | La pone | Qué hace |
+| --- | --- | --- |
+| `TONDO_DIAGNOSTICS` | Quien lo ejecuta | `1` atiende a las herramientas en un socket y cuenta para ellas (7.5); `0` no, ni en un build vivo. |
+| `TONDO_DUMP` | Quien lo ejecuta | El directorio de los volcados, y con ella un volcado con `kill -QUIT` y los eventos que guarda; `off` o `0`, ningún volcado de un fallo; sin ella, el de un fallo en la caché del usuario. |
+| `TONDO_DUMP_WHEN` | Quien lo ejecuta | Con `TONDO_DUMP`, cuándo se vuelca solo y sigue, como `every=5m` o `memory=90%`. |
+| `TONDO_DUMP_VALUES` | Quien lo ejecuta | `off`, o lo que no sea `on`, deja los valores fuera de un volcado. |
+| `TONDO_DUMP_COMMAND` | Quien lo ejecuta | Un comando de `sh` que recibe cada volcado escrito, con su ruta en `TONDO_DUMP_FILE`. |
+| `TONDO_PANIC_FORMAT` | Quien lo ejecuta | `json` da en stderr un fallo como JSON. |
+| `TONDO_HEAP_RATE` | Quien lo ejecuta | Los bytes entre dos muestras del heap. |
+| `TONDO_LOCK_ORDER` | Quien lo ejecuta | Si mira en qué orden toman las tareas los locks: `fail` falla donde se cierra un ciclo, `off` no mira, otro valor lo dice en stderr. |
+| `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
+| `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
+| `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |
+| `TONDO_RACE` | `tondo test` y `tondo debug` de un test | `1` busca actualizaciones perdidas. |
+| `TONDO_LIVE_HOLD` | `tondo run --watch` y las sesiones de las herramientas | `1` retiene un pánico hasta que cambia el código. |
+| `TONDO_RT_CHECK_LEAKS` | Los tests del toolchain | Cuenta los objetos vivos al terminar el programa. |
+| `TONDO_RT_RECORD` | `tondo run --record` y `tondo test --record` | El archivo donde graba la ejecución. |
+| `TONDO_RT_RECORD_CHILDREN` | Un programa grabado | El directorio de la grabación del padre, entre la que un hijo graba la suya. |
+| `TONDO_RT_RECORD_LAST` | `tondo run --record` | Los milisegundos de la ejecución que guarda la grabación, los últimos. |
+| `TONDO_RT_RECORD_HOLD` | `tondo run --record` | Cuánto espera a un depurador una ejecución grabada. |
+| `TONDO_RT_REPLAY` | `tondo debug --replay` | La grabación que reproduce. |
+| `TONDO_RT_SHOWN_FROM` | `tondo debug --replay` | La sonda desde la que una reproducción muestra lo que escribe el programa. |
+| `TONDO_RT_SCHEDULE` | `tondo test --schedules`, `tondo run --record` y su reproducción | La semilla, en hexadecimal, del orden en que corren las tareas. |
+| `TONDO_RT_ORDER` | `tondo test --schedules all` | Las elecciones de la ejecución. |
+| `TONDO_RT_ORDER_OUT` | `tondo test --schedules all` | Dónde dice la ejecución lo que hizo, para la siguiente. |
+| `TONDO_TEST_PLAN` | `tondo test` | El archivo de los tests que corre. |
+| `TONDO_TEST_NONCE` | `tondo test` | Lo que marca las líneas del informe de los tests. |
+| `TONDO_TEST_SNAPSHOTS` | `tondo test` | El archivo de las instantáneas. |
+| `TONDO_TEST_UPDATE` | `tondo test --update-snapshots` | Graba de nuevo las instantáneas. |
+| `TONDO_TEST_COVERAGE` | `tondo test --coverage` | El directorio de las cuentas de cobertura. |
+| `TONDO_TEST_BENCH` | `tondo test --bench` | Los segundos que mide cada benchmark. |
+| `TONDO_TEST_PROFILE` | `tondo test --profile` | `cpu:` o `memory:` y el directorio de los perfiles de los tests. |
+| `TONDO_TEST_FUZZ` | `tondo test` | El archivo de las entradas que prueban los tests de fuzzing. |
+| `TONDO_FUZZ` | `tondo test --fuzz` | El test de fuzzing que busca y sus límites. |
+| `TONDO_FUZZ_REPLAY` | `tondo test --fuzz` | Las entradas que prueba al reducir una que falla. |
+| `TONDO_META_STEPS` | El compilador, para un programa que corre al compilar | Sus pasos. |
+| `TONDO_META_MEMORY` | El compilador | Sus bytes. |
+| `TONDO_META_REQUEST` | El compilador | El archivo de su petición. |
+| `TONDO_META_RESPONSE` | El compilador | El archivo de su respuesta. |
+
 ## 8. Determinismo
 
 Con las mismas fuentes, `tondo.toml`, `tondo.lock` y versión de compilador:

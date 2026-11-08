@@ -10,6 +10,7 @@
 //! stdout, so that `tondo test` gives each entry the output written before
 //! it.
 
+use crate::config::config;
 use crate::{ArrayHeader, MapObject, Str, str_bytes};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -111,7 +112,7 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
     let parents: Vec<u32> = nodes.iter().map(|n| n.parent as u32).collect();
     let suites: Vec<bool> = nodes.iter().map(|n| n.suite != 0).collect();
     // The plan, or every test when the executable runs on its own.
-    let plan = match std::env::var_os("TONDO_TEST_PLAN") {
+    let plan = match &config().test_plan {
         Some(path) => std::fs::read_to_string(path)
             .unwrap_or_default()
             .split_whitespace()
@@ -120,15 +121,15 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
             .collect(),
         None => (1..count as u32).filter(|&n| !suites[n as usize]).collect(),
     };
-    let nonce = std::env::var("TONDO_TEST_NONCE").unwrap_or_else(|_| "tondo".into());
+    let nonce = config().test_nonce.clone().unwrap_or_else(|| "tondo".into());
     let ids = nodes.iter().map(|n| String::from_utf8_lossy(unsafe { str_bytes(n.id) }).into_owned()).collect();
-    let snapshots = std::env::var_os("TONDO_TEST_SNAPSHOTS").map(|p| read_store(&p)).unwrap_or_default();
+    let snapshots = config().test_snapshots.as_ref().map(|p| read_store(p)).unwrap_or_default();
     let runner = Runner {
         ids,
         attached: HashSet::new(),
         checked: HashSet::new(),
         snapshots,
-        update: std::env::var_os("TONDO_TEST_UPDATE").is_some(),
+        update: config().test_update.is_some(),
         reached: vec![false; count],
         parents,
         suites,
@@ -158,12 +159,12 @@ pub unsafe extern "C" fn tondo_rt_coverage_start(counters: *mut u64, count: usiz
     // The search of `tondo test --fuzz` reads them too.
     COUNTERS.store(counters, Ordering::SeqCst);
     COUNTED.store(count, Ordering::SeqCst);
-    if std::env::var_os("TONDO_TEST_COVERAGE").is_none() {
+    if config().test_coverage.is_none() {
         return;
     }
     extern "C" fn written(_: *mut u8) {
         let (counters, count) = (COUNTERS.load(Ordering::SeqCst), COUNTED.load(Ordering::SeqCst));
-        let Some(dir) = std::env::var_os("TONDO_TEST_COVERAGE") else { return };
+        let Some(dir) = &config().test_coverage else { return };
         let counts = unsafe { std::slice::from_raw_parts(counters, count) };
         let bytes: Vec<u8> = counts.iter().flat_map(|count| count.to_le_bytes()).collect();
         let _ = std::fs::write(std::path::Path::new(&dir).join(std::process::id().to_string()), bytes);

@@ -255,8 +255,7 @@ pub(crate) fn source(location: &str) -> String {
 
 /// Whether the program reports its failures as JSON, for tools.
 pub(crate) fn json_reports() -> bool {
-    static JSON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *JSON.get_or_init(|| std::env::var_os("TONDO_PANIC_FORMAT").is_some_and(|v| v == "json"))
+    super::config::config().panic_format.as_ref().is_some_and(|v| v == "json")
 }
 
 // ---------------------------------------------------------------------------

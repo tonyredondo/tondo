@@ -29,12 +29,12 @@ static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
 /// Starts looking, as the environment says; `watched` is a program that
 /// dumps or is debugged, which only keeps what it finds.
 pub(crate) fn start(watched: bool) {
-    let mode = match std::env::var("TONDO_LOCK_ORDER").as_deref() {
-        Ok("fail") => FAILS,
-        Ok("off") => OFF,
-        Ok(_) => SAYS,
-        Err(_) if watched => SAYS,
-        Err(_) => OFF,
+    let mode = match super::config::config().lock_order.as_deref() {
+        Some("fail") => FAILS,
+        Some("off") => OFF,
+        Some(_) => SAYS,
+        None if watched => SAYS,
+        None => OFF,
     };
     MODE.store(mode, Ordering::Relaxed);
 }

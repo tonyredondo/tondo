@@ -12,6 +12,7 @@ mod shape;
 mod value;
 
 use crate::Str;
+use crate::config::config;
 use search::Search;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -50,7 +51,7 @@ struct Call {
 /// `TONDO_FUZZ_REPLAY`: the test's identity, the call's directory, and a
 /// file of one input a line, separated by tabs.
 fn tried(test: &str, call: &str) -> Option<Vec<String>> {
-    let text = std::env::var("TONDO_FUZZ_REPLAY").ok()?;
+    let text = config().fuzz_replay.as_deref()?;
     let mut parts = text.splitn(3, '\t');
     let (Some(for_test), Some(for_call), Some(file)) = (parts.next(), parts.next(), parts.next()) else { return None };
     if for_test != test || for_call != call {
@@ -95,7 +96,7 @@ pub(crate) fn directory(name: &str) -> String {
 /// lengths on a line, then the test's id, the call's directory, the file
 /// and the JSON.
 fn read_store() -> Store {
-    let bytes = std::env::var_os("TONDO_TEST_FUZZ").and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+    let bytes = config().test_fuzz.as_ref().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
     let mut store = Store::new();
     let mut rest = &bytes[..];
     while let Some(end) = rest.iter().position(|&b| b == b'\n') {

@@ -5,6 +5,7 @@
 //! program whose workers are all busy or stuck still answers.
 
 use super::Str;
+use super::config::config;
 use std::cell::Cell;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -743,24 +744,25 @@ pub(crate) fn start() {
     std::hint::black_box(tondo_rt_dump_to as *const ());
     std::hint::black_box(super::debugger::tondo_rt_debug_to as *const ());
     super::recorder::thread();
-    if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
+    let config = config();
+    if config.check_leaks.is_some() {
         hook(EXACT);
     }
-    let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
-    let debugged = on("TONDO_DEBUG");
+    let on = super::config::on;
+    let debugged = on(&config.debug);
     super::lockorder::start(debugged || asked_dump().is_some());
-    if on("TONDO_RACE") {
+    if on(&config.race) {
         super::race::start();
     }
-    let live = super::live::on() && std::env::var_os("TONDO_DIAGNOSTICS").is_none_or(|value| value != "0");
+    let live = super::live::on() && config.diagnostics.as_ref().is_none_or(|value| value != "0");
     // `cpu`: a profile of processor time, which counting the memory would
     // change.
-    let processor = std::env::var_os("TONDO_TRACE").is_some_and(|value| value == "cpu");
-    let traced = on("TONDO_TRACE") || processor;
-    if !on("TONDO_DIAGNOSTICS") && !traced && !debugged && !live && asked_dump().is_none() {
+    let processor = config.trace.as_ref().is_some_and(|value| value == "cpu");
+    let traced = on(&config.trace) || processor;
+    if !on(&config.diagnostics) && !traced && !debugged && !live && asked_dump().is_none() {
         return;
     }
-    if !processor || on("TONDO_DIAGNOSTICS") {
+    if !processor || on(&config.diagnostics) {
         super::heap::prepare();
         hook(WATCHED);
     }
@@ -1209,7 +1211,7 @@ fn contexts_json(described: Vec<super::contexts::Described>) -> String {
 /// Whether a dump holds values: not with `TONDO_DUMP_VALUES=off`. A value
 /// it does not know also turns them off, as a mistake must not show them.
 pub(crate) fn values_shown() -> bool {
-    std::env::var_os("TONDO_DUMP_VALUES").is_none_or(|value| value == "on")
+    config().dump_values.as_ref().is_none_or(|value| value == "on")
 }
 
 /// A dump of the program, as JSON: its counters, every task and where it
@@ -1354,7 +1356,7 @@ fn here_now() -> (Option<usize>, usize, (usize, usize)) {
 /// dumps in, which also has it record what a dump of a running program
 /// shows; none with `off`.
 pub(crate) fn asked_dump() -> Option<std::ffi::OsString> {
-    std::env::var_os("TONDO_DUMP").filter(|dir| dir != "off" && dir != "0")
+    config().dump.clone().filter(|dir| dir != "off" && dir != "0")
 }
 
 /// How many dumps of crashes the cache keeps, the latest.
@@ -1367,7 +1369,7 @@ fn crash_dir() -> Option<(PathBuf, bool)> {
     if let Some(dir) = asked_dump() {
         return Some((PathBuf::from(dir), false));
     }
-    if std::env::var_os("TONDO_DUMP").is_some() {
+    if config().dump.is_some() {
         return None;
     }
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
@@ -1451,7 +1453,7 @@ const COMMAND_TIME: std::time::Duration = std::time::Duration::from_secs(60);
 /// `TONDO_DUMP_COMMAND`: a shell command that takes a dump just written
 /// elsewhere, with its path in `TONDO_DUMP_FILE`.
 fn dumped(path: &std::path::Path) {
-    let Some(command) = std::env::var_os("TONDO_DUMP_COMMAND") else { return };
+    let Some(command) = &config().dump_command else { return };
     let _outside = super::replay::Outside::enter();
     let started = std::process::Command::new("/bin/sh")
         .arg("-c")
@@ -1663,7 +1665,7 @@ pub(crate) fn dump_on_signal() {
 
 /// Starts the thread of `TONDO_DUMP_WHEN`, when it is set with `TONDO_DUMP`.
 fn schedule_dumps() {
-    let (Some(when), Some(dir)) = (std::env::var("TONDO_DUMP_WHEN").ok(), asked_dump()) else {
+    let (Some(when), Some(dir)) = (config().dump_when.clone(), asked_dump()) else {
         return;
     };
     let schedule = match Schedule::parse(&when) {

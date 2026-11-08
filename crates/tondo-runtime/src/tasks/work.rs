@@ -56,8 +56,7 @@ pub(super) fn work(main: bool) -> i32 {
 /// leaks are checked, which other workers would have run by then.
 pub(super) fn program_ended(queue: &Queue) -> bool {
     let done = MAIN_DONE.load(Ordering::SeqCst);
-    let ending =
-        ENDING.load(Ordering::SeqCst) != usize::MAX || (done && std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some());
+    let ending = ENDING.load(Ordering::SeqCst) != usize::MAX || (done && crate::config::config().check_leaks.is_some());
     done && !(exploring().is_some() && ending && !queue.runnable.is_empty())
 }
 

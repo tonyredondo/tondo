@@ -401,7 +401,8 @@ impl Drop for Outside {
 /// Reads the settings, before the program's first call: the file to record
 /// to, or the recording to replay. Gives whether either is on.
 pub(crate) fn start() -> bool {
-    let asked = std::env::var_os("TONDO_RT_RECORD").is_some() || std::env::var_os("TONDO_RT_REPLAY").is_some();
+    let config = super::config::config();
+    let asked = config.record.is_some() || config.replay.is_some();
     if asked && !cfg!(all(tondo_staticlib, any(target_os = "linux", target_os = "macos"))) {
         super::runtime_fault("a run is recorded and replayed on Linux and macOS");
     }
@@ -411,7 +412,7 @@ pub(crate) fn start() -> bool {
     }
     // A child of a recorded run records its own, when it can, among its
     // parent's recording.
-    let parent = std::env::var_os("TONDO_RT_RECORD_CHILDREN");
+    let parent = config.record_children.clone();
     if parent.is_some() {
         unsafe { std::env::remove_var("TONDO_RT_RECORD_CHILDREN") };
     }
@@ -422,7 +423,7 @@ pub(crate) fn start() -> bool {
     if asked || child.is_some() {
         let _ = std::fs::metadata("/");
     }
-    if let Some(path) = std::env::var_os("TONDO_RT_RECORD").map(PathBuf::from).or(child) {
+    if let Some(path) = config.record.clone().map(PathBuf::from).or(child) {
         unsafe { std::env::remove_var("TONDO_RT_RECORD") };
         directory_of(&path);
         let cannot = |e: std::io::Error| -> ! {
@@ -433,10 +434,10 @@ pub(crate) fn start() -> bool {
         let mut log = log();
         log.file = Some(file);
         MODE.store(RECORD, Ordering::Relaxed);
-        let last = std::env::var("TONDO_RT_RECORD_LAST").ok().and_then(|ms| ms.parse().ok()).unwrap_or(0);
+        let last = config.record_last.as_deref().and_then(|ms| ms.parse().ok()).unwrap_or(0);
         unsafe { std::env::remove_var("TONDO_RT_RECORD_LAST") };
         LAST.store(last, Ordering::Relaxed);
-        let hold = std::env::var("TONDO_RT_RECORD_HOLD").ok().and_then(|ms| ms.parse().ok());
+        let hold = config.record_hold.as_deref().and_then(|ms| ms.parse().ok());
         unsafe { std::env::remove_var("TONDO_RT_RECORD_HOLD") };
         HOLD_FOR.store(hold.unwrap_or(HOUR), Ordering::Relaxed);
         unsafe extern "C" {
@@ -446,7 +447,7 @@ pub(crate) fn start() -> bool {
             store(true);
         }
         unsafe { __cxa_atexit(flushed, std::ptr::null_mut(), std::ptr::null_mut()) };
-    } else if let Some(path) = std::env::var_os("TONDO_RT_REPLAY").map(PathBuf::from) {
+    } else if let Some(path) = config.replay.clone().map(PathBuf::from) {
         unsafe { std::env::remove_var("TONDO_RT_REPLAY") };
         directory_of(&path);
         let recorded = calls_from(&path, 0).unwrap_or_else(|message| super::runtime_fault(&message));
@@ -454,7 +455,7 @@ pub(crate) fn start() -> bool {
         log.recorded = recorded;
         log.at = 0;
         MODE.store(REPLAY, Ordering::Relaxed);
-        let from = std::env::var("TONDO_RT_SHOWN_FROM").ok().and_then(|t| t.parse().ok()).unwrap_or(0);
+        let from = config.shown_from.as_deref().and_then(|t| t.parse().ok()).unwrap_or(0);
         SHOWN_FROM.store(from, Ordering::Relaxed);
         unsafe { std::env::remove_var("TONDO_RT_SHOWN_FROM") };
         DEBUGGER.store(unsafe { libc::getppid() }, Ordering::Relaxed);
@@ -497,7 +498,7 @@ fn recording_of_child(children: &Path) -> Option<PathBuf> {
     let arguments: Vec<String> = arguments.iter().map(|a| quoted(a)).collect();
     let environment: Vec<String> =
         std::env::vars_os().map(|(name, value)| format!("{}:{}", quoted(&name), quoted(&value))).collect();
-    let seed = std::env::var("TONDO_RT_SCHEDULE").unwrap_or_else(|_| "0".into());
+    let seed = super::config::config().schedule.clone().unwrap_or_else(|| "0".into());
     let run = format!(
         "{{\"source\":{},\"arguments\":[{}],\"environment\":{{{}}},\"directory\":{},\"seed\":{},\"tondo\":{}}}",
         quoted(invoked),

@@ -28,7 +28,7 @@ fn ints_of(array: *mut ArrayHeader) -> Vec<i64> {
 // ---------------------------------------------------------------------------
 
 /// Whether every zone comes from the copy bundled with the program.
-static BUILTIN: LazyLock<bool> = LazyLock::new(|| std::env::var("TONDO_ZONES").is_ok_and(|v| v == "builtin"));
+static BUILTIN: LazyLock<bool> = LazyLock::new(|| super::config::config().zones.as_deref() == Some("builtin"));
 static SYSTEM: LazyLock<TimeZoneDatabase> = LazyLock::new(TimeZoneDatabase::from_env);
 static BUNDLED: LazyLock<TimeZoneDatabase> = LazyLock::new(TimeZoneDatabase::bundled);
 /// The zones found, by their names.

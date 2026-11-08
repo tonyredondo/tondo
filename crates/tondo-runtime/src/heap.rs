@@ -68,7 +68,7 @@ static UNSTACKED: AtomicU64 = AtomicU64::new(0);
 /// Makes the samples' tables, before any sample is taken.
 pub(crate) fn prepare() {
     // `TONDO_HEAP_RATE`: bytes between two samples, for a closer count.
-    let asked = std::env::var("TONDO_HEAP_RATE").ok().and_then(|rate| rate.parse::<u64>().ok());
+    let asked = super::config::config().heap_rate.as_deref().and_then(|rate| rate.parse::<u64>().ok());
     if let Some(rate) = asked.filter(|&rate| rate > 0) {
         RATE.store(rate, Ordering::Relaxed);
     }

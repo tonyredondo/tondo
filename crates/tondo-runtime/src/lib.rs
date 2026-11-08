@@ -18,6 +18,7 @@ mod civil;
 mod clock;
 mod codec;
 mod compress;
+mod config;
 mod contexts;
 mod crypto;
 mod cycles;
@@ -2888,7 +2889,7 @@ fn runtime_fault(message: &str) -> ! {
 pub const LEAK_EXIT_CODE: i32 = 99;
 
 pub fn check_leaks() -> Option<usize> {
-    std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
+    config::config().check_leaks.as_ref()?;
     // How long these waits take is no part of a recording.
     let _outside = replay::Outside::enter();
     tasks::wait_foreign_calls();
@@ -2942,6 +2943,7 @@ pub(crate) fn start_library(start: unsafe extern "C" fn()) {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         LIBRARY.store(true, Ordering::Relaxed);
+        config::config();
         #[cfg(tondo_staticlib)]
         meta::start();
         diagnostics::start();
@@ -2967,6 +2969,7 @@ pub unsafe extern "C" fn tondo_rt_main(
     argv: *const *const u8,
 ) -> i32 {
     unsafe { env::keep_arguments(argc, argv) };
+    config::config();
     replay::start();
     meta::start();
     diagnostics::start();

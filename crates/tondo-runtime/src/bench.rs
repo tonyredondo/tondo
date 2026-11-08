@@ -67,7 +67,7 @@ pub(crate) fn measures() -> bool {
 fn measuring() -> Option<Duration> {
     static TIME: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
     *TIME.get_or_init(|| {
-        let seconds: f64 = std::env::var("TONDO_TEST_BENCH").ok()?.parse().ok()?;
+        let seconds: f64 = super::config::config().test_bench.as_deref()?.parse().ok()?;
         (seconds > 0.0).then(|| Duration::from_secs_f64(seconds))
     })
 }

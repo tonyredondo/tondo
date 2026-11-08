@@ -22,7 +22,7 @@ fn settings() -> Option<&'static Settings> {
     static SETTINGS: std::sync::OnceLock<Option<Settings>> = std::sync::OnceLock::new();
     SETTINGS
         .get_or_init(|| {
-            let value = std::env::var("TONDO_TEST_PROFILE").ok()?;
+            let value = super::config::config().test_profile.as_deref()?;
             let (kind, dir) = value.split_once(':')?;
             Some(Settings { memory: kind == "memory", dir: PathBuf::from(dir) })
         })

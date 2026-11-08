@@ -3,6 +3,7 @@
 //! with the virtual clock of those runs (docs/refactor.md, phase 2).
 
 use super::*;
+use crate::config::config;
 
 /// `TONDO_RT_SCHEDULE`, a seed in hex (`tondo test --schedules`): the
 /// tasks run on one worker, the next one is the seed's choice among those
@@ -15,7 +16,7 @@ pub(super) fn exploring() -> Option<&'static AtomicU64> {
         // A recorded run, and its replay, run in one order, and so does one
         // whose choices are given.
         let given = crate::replay::on() || script().is_some();
-        let text = std::env::var("TONDO_RT_SCHEDULE").ok().or_else(|| given.then(|| "0".into()))?;
+        let text = config().schedule.clone().or_else(|| given.then(|| "0".into()))?;
         let seed = u64::from_str_radix(&text, 16).ok()?;
         // Every call that may wait gives way.
         attend(true);
@@ -57,7 +58,7 @@ pub(super) fn script() -> Option<&'static Mutex<Script>> {
     static SCRIPT: std::sync::OnceLock<Option<Mutex<Script>>> = std::sync::OnceLock::new();
     SCRIPT
         .get_or_init(|| {
-            let text = std::env::var("TONDO_RT_ORDER").ok()?;
+            let text = config().order.clone()?;
             let (given, next) = text.split_once('/').unwrap_or((&text, ""));
             // `2*5` is five choices of 2.
             let given = given
@@ -69,7 +70,7 @@ pub(super) fn script() -> Option<&'static Mutex<Script>> {
                 })
                 .collect();
             let next = next.split('.').filter_map(|task| task.parse().ok()).collect();
-            let out = std::env::var_os("TONDO_RT_ORDER_OUT").and_then(|path| std::fs::File::create(path).ok());
+            let out = config().order_out.as_ref().and_then(|path| std::fs::File::create(path).ok());
             Some(Mutex::new(Script { given, made: 0, next, following: false, out, last: None, streak: 0 }))
         })
         .as_ref()

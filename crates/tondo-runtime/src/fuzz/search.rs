@@ -31,7 +31,7 @@ pub(crate) struct Target {
 }
 
 pub(crate) fn target() -> Option<Target> {
-    let text = std::env::var("TONDO_FUZZ").ok()?;
+    let text = crate::config::config().fuzz.as_deref()?;
     let parts: Vec<&str> = text.split('\t').collect();
     let [test, call, corpus, stop, deadline, literals, timeout, memory] = parts[..] else { return None };
     let deadline = deadline.parse::<u64>().ok().filter(|&ms| ms > 0);

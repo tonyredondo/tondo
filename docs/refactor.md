@@ -136,4 +136,5 @@ know. The baseline found an empty array literal allocated at every call of a der
 | 0 | started 2026-11-07: 0.3 to 0.7 and 0.9 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 running a slice a night, `.github/scripts/mutants.sh` |
 | 1 | done 2026-11-08: `Worker`, lent to a closure by `worker`, which never inlines; `crates/tondo/tests/workers.rs` |
 | 2 | done 2026-11-08: `tasks/` in 19 modules; the tools hear the scheduler through `tasks/tools.rs`, one word of bits; the replay, the exploration of orders and live builds' reloads, which change how it waits and what runs next, stay where they act |
-| 3–8 | not started |
+| 3 | done 2026-11-08: `config.rs`, 37 variables read once as a program starts; the table of the toolchain's specification, 7.17, held to it by `crates/tondo/tests/environment.rs` |
+| 4–8 | not started |

@@ -48,8 +48,7 @@ pub(crate) fn on() -> bool {
 /// Whether a panic waits for the code to change (`tondo run --watch`, and a
 /// tool's sessions) instead of ending the program.
 pub(crate) fn holds_panics() -> bool {
-    static HOLDS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    on() && *HOLDS.get_or_init(|| std::env::var_os("TONDO_LIVE_HOLD").is_some_and(|value| value == "1"))
+    on() && super::config::on(&super::config::config().live_hold)
 }
 
 /// A task a panic holds until a patch: what wakes it, where it is, what the

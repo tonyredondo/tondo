@@ -5540,3 +5540,17 @@ error to return, and a panic for a user's data would end a program for its input
 each character that cannot be in it, and a `_` before an `x`, as `_xHHHH_`, the convention of
 .NET's `XmlConvert.EncodeName`, and an empty key as `_x_`; `decode` undoes it. Names that were
 valid do not change, and every map reads back as it was written.
+
+## The runtime reads its variables once, as a program starts
+
+Thirty-seven variables of the environment told the runtime what to do, read in 46 places across
+16 files: some once, some each time they were needed, as `TONDO_DUMP` at a crash, and a reader had
+no one place to learn what a program could be told (docs/refactor.md, phase 3). They are now the
+fields of one structure, `Config` in config.rs, read before anything else as the program or the
+library starts, and the table of the toolchain's specification (7.17) lists them, which a test
+holds to config.rs, as it holds the runtime to reading the environment nowhere else. A program
+that changed one of them with `env.set` before it crashed used to see the change; the runtime now
+does what it was started with, as a program that sets `TONDO_DUMP` for itself means it for its
+children. Those the runtime takes out of the environment for its children not to inherit leave it
+where they did. `TZ`, `HOME` and `XDG_CACHE_HOME` are the system's and are still read where they
+are used.
