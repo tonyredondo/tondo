@@ -63,9 +63,66 @@ impl Drop for Source {
 /// stream reader keeps before it lets it go.
 const CHUNK: usize = 64 * 1024;
 
+/// What a reader reads: the bytes a stream gave it, or the string of
+/// Tondo it was given, which it holds and reads where it is. `at` and
+/// `len` say where they are, so that reading a byte takes no branch.
+struct Input {
+    at: *const u8,
+    len: usize,
+    owned: Vec<u8>,
+    held: *mut Str,
+}
+
+impl Input {
+    fn owned(bytes: Vec<u8>) -> Input {
+        let mut input = Input { at: std::ptr::null(), len: 0, owned: bytes, held: std::ptr::null_mut() };
+        input.point();
+        input
+    }
+
+    /// A string, held, not copied: one shared is never changed in place.
+    fn held(text: *mut Str) -> Input {
+        unsafe { super::tondo_rt_str_retain(text) };
+        let bytes = unsafe { str_bytes(text) };
+        Input { at: bytes.as_ptr(), len: bytes.len(), owned: Vec::new(), held: text }
+    }
+
+    fn point(&mut self) {
+        (self.at, self.len) = (self.owned.as_ptr(), self.owned.len());
+    }
+
+    /// More of a stream.
+    fn extend(&mut self, chunk: &[u8]) {
+        self.owned.extend_from_slice(chunk);
+        self.point();
+    }
+
+    /// The first `count` bytes of a stream, consumed.
+    fn drop_first(&mut self, count: usize) {
+        self.owned.drain(..count);
+        self.point();
+    }
+}
+
+impl std::ops::Deref for Input {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.at, self.len) }
+    }
+}
+
+impl Drop for Input {
+    fn drop(&mut self) {
+        if !self.held.is_null() {
+            unsafe { super::tondo_rt_str_release(self.held) };
+        }
+    }
+}
+
 struct Reader {
     /// The input not let go yet; `offset` is where it starts in the whole.
-    input: Vec<u8>,
+    input: Input,
     offset: usize,
     position: usize,
     /// More input, read as parsing needs it, and whether it ended.
@@ -104,7 +161,7 @@ pub struct ReaderObject {
 }
 
 impl Reader {
-    fn new(input: Vec<u8>, source: Option<Source>, duplicates: bool) -> Reader {
+    fn new(input: Input, source: Option<Source>, duplicates: bool) -> Reader {
         Reader {
             input,
             offset: 0,
@@ -159,7 +216,7 @@ impl Reader {
                 break;
             };
             match run(source.0, |s| s.read(CHUNK)) {
-                Ok(Some(chunk)) => self.input.extend_from_slice(&chunk),
+                Ok(Some(chunk)) => self.input.extend(&chunk),
                 Ok(None) => self.exhausted = true,
                 Err(error) => {
                     self.exhausted = true;
@@ -184,7 +241,7 @@ impl Reader {
             }
             None => self.column_carry += String::from_utf8_lossy(dropped).chars().count(),
         }
-        self.input.drain(..keep);
+        self.input.drop_first(keep);
         self.offset += keep;
         self.position -= keep;
     }
@@ -558,7 +615,7 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
 /// `jsonnative.reader(text, duplicates)`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
-    let reader = Reader::new(unsafe { str_bytes(text) }.to_vec(), None, duplicates != 0);
+    let reader = Reader::new(Input::held(text as *mut Str), None, duplicates != 0);
     reader_object(reader)
 }
 
@@ -566,7 +623,7 @@ pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) 
 /// document needs it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, duplicates: u8) -> *mut ReaderObject {
-    reader_object(Reader::new(Vec::new(), Some(Source(retain(stream))), duplicates != 0))
+    reader_object(Reader::new(Input::owned(Vec::new()), Some(Source(retain(stream))), duplicates != 0))
 }
 
 /// Lets values follow the first one, with or without space between them.
@@ -1166,7 +1223,7 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
         return;
     }
     // Replayed event by event, so that keys sort and numbers normalize.
-    let mut r = Reader::new(bytes, None, true);
+    let mut r = Reader::new(Input::owned(bytes), None, true);
     loop {
         match r.next() {
             NULL => w.leaf("null".into()),
