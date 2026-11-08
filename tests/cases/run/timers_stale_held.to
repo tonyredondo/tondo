@@ -1,6 +1,7 @@
-// Thousands of timeouts of `select` that lose to their channel leave behind
-// no more memory than a few: their timers are dropped once they are most of
-// those waiting, and each one kept would hold about a hundred bytes.
+// Thousands of timeouts of `select` that lose to their channel, three at a
+// time, leave behind no more memory than a few: their timers are dropped
+// once they are most of those waiting, and each one kept would hold about a
+// hundred bytes.
 import std.console
 import std.diagnostics
 import std.time
@@ -33,6 +34,8 @@ fn main() {
         let got = select {
             let value = input.receive() => value.isSome()
             time.sleep(time.seconds(60)) => false
+            time.sleep(time.seconds(61)) => false
+            time.sleep(time.seconds(62)) => false
         }
         if got {
             answered += 1
