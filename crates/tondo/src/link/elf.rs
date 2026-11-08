@@ -85,6 +85,9 @@ pub struct Inputs<'a> {
     /// The dynamic loader; none for a static executable.
     pub interpreter: Option<String>,
     pub entry: String,
+    /// Symbols that must be defined, as `-u` asks of a linker: an archive's
+    /// member that defines one comes in.
+    pub undefined: Vec<String>,
     /// A shared library instead of an executable: the name it is loaded by
     /// and the symbols it publishes, which keep the rest.
     pub library: Option<(String, Vec<String>)>,
@@ -620,6 +623,10 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
     };
     for &root in &roots {
         linker.globals[root].required = true;
+    }
+    for name in &inputs.undefined {
+        let id = linker.intern(name.as_bytes());
+        linker.globals[id].required = true;
     }
     // The shared libraries first: a weak reference to a function one of
     // them has is to its wrapper in an executable that records.

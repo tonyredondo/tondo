@@ -170,7 +170,7 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         .unwrap_or("")
         .to_string();
     // What writes the counts as a program ends, which Rust links with a
-    // program of its own and a staticlib leaves out; with `TONDO_CC=cc`.
+    // program of its own and a staticlib leaves out.
     if coverage {
         let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
         let sysroot = Command::new(rustc).args(["--print", "sysroot"]).output().expect("rustc's sysroot");

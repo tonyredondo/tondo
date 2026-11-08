@@ -148,15 +148,17 @@ pub fn link(
     {
         archive_paths.push(nonshared);
     }
+    let mut undefined = Vec::new();
     for argument in runtime {
-        match argument.strip_prefix("-l") {
-            Some(name) => {
-                let found = find_shared(arch, &dirs, name)?;
-                if !system.contains(&found) {
-                    system.push(found);
-                }
+        if let Some(name) = argument.strip_prefix("-l") {
+            let found = find_shared(arch, &dirs, name)?;
+            if !system.contains(&found) {
+                system.push(found);
             }
-            None => archive_paths.push(PathBuf::from(argument)),
+        } else if let Some(symbol) = argument.strip_prefix("-Wl,-u,") {
+            undefined.push(symbol.to_string());
+        } else {
+            archive_paths.push(PathBuf::from(argument));
         }
     }
     // glibc's dynamic loader defines some of what C code uses, such as
@@ -187,6 +189,7 @@ pub fn link(
         interpreter: (!statically && exports.is_none()).then(|| interpreter(arch).into()),
         // musl's start file relocates a static executable before `main`.
         entry: if statically { "_start" } else { "tondo_rt_start" }.into(),
+        undefined,
         library: exports.map(|exports| (name, exports)),
         strip,
         recordable,
