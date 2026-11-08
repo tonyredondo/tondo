@@ -168,7 +168,7 @@ pub(crate) struct Task {
     /// The `std.sync` locks it holds, whether exclusively, and where it
     /// took them.
     pub(crate) held: Vec<(usize, bool, *const Str)>,
-    /// When it blocked there, in milliseconds of `WAITS_FROM`.
+    /// When it blocked there, in milliseconds of `inspect::millis`.
     blocked_since: AtomicU64,
     finished: bool,
     /// For a task that runs a callback for a thread of C, the call.

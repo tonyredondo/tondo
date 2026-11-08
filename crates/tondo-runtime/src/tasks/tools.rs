@@ -142,9 +142,23 @@ pub(super) fn blocking() -> Option<Instant> {
     listens(BLOCKING).then(Instant::now)
 }
 
+/// When the running task starts to wait on an object, for the tools that
+/// time its waits.
+#[inline]
+pub(super) fn waiting() -> Option<Instant> {
+    if LISTENING.load(Ordering::Relaxed) != 0 { started() } else { None }
+}
+
+#[cold]
+#[inline(never)]
+fn started() -> Option<Instant> {
+    let _outside = crate::replay::Outside::enter();
+    Some(Instant::now())
+}
+
 /// The running task waited on an object since `since`.
 #[inline]
-pub(super) fn waited(task: u64, since: Instant) {
+pub(super) fn waited(task: u64, since: Option<Instant>) {
     if LISTENING.load(Ordering::Relaxed) != 0 {
         told_waited(task, since);
     }
@@ -152,11 +166,13 @@ pub(super) fn waited(task: u64, since: Instant) {
 
 #[cold]
 #[inline(never)]
-fn told_waited(task: u64, since: Instant) {
-    // The tools' reading of the clock, which a recording may not have.
+fn told_waited(task: u64, since: Option<Instant>) {
+    // The tools' reading of the clock, which a recording may not have; a
+    // wait that began before they listened counts from when the task
+    // blocked, to the system's tick.
     let took = {
         let _outside = crate::replay::Outside::enter();
-        since.elapsed()
+        since.map_or_else(|| Duration::from_millis(super::blocked_for(task)), |since| since.elapsed())
     };
     // A debugger that stops long waits stops this one, as it ends.
     if listens(DEBUGGER) {

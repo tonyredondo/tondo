@@ -267,10 +267,9 @@ pub(crate) const JOIN: u8 = 4;
 /// `kind`, which the debugger shows while it waits.
 pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize) -> usize {
     let task = current();
-    let since = Instant::now();
+    let since = tools::waiting();
     if let Some(task) = unsafe { task.as_ref() } {
-        let from = *WAITS_FROM.get_or_init(|| since);
-        task.blocked_since.store(since.duration_since(from).as_millis() as u64, Ordering::Relaxed);
+        task.blocked_since.store(millis(), Ordering::Relaxed);
         task.blocked.store(object, Ordering::Relaxed);
         task.blocked_kind.store(kind, Ordering::Release);
     }
@@ -285,14 +284,23 @@ pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize)
 /// The milliseconds from which a dump's events keep a wait.
 pub(super) const LONG_WAIT: u128 = 100;
 
-/// What `blocked_since` counts from.
-pub(super) static WAITS_FROM: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+/// Milliseconds of a clock the system advances a tick at a time, which
+/// costs less to read than the exact one: enough to say how long a task has
+/// been blocked, read at every wait.
+fn millis() -> u64 {
+    #[cfg(target_os = "macos")]
+    const CLOCK: libc::clockid_t = libc::CLOCK_UPTIME_RAW_APPROX;
+    #[cfg(not(target_os = "macos"))]
+    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC_COARSE;
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(CLOCK, &mut time) };
+    time.tv_sec as u64 * 1000 + time.tv_nsec as u64 / 1_000_000
+}
 
 /// How long the task `id` has been blocked, in milliseconds.
 pub(crate) fn blocked_for(id: u64) -> u64 {
     let Some(task) = (unsafe { by_id(id).and_then(|task| task.as_ref()) }) else { return 0 };
-    let now = WAITS_FROM.get().map_or(0, |from| from.elapsed().as_millis() as u64);
-    now.saturating_sub(task.blocked_since.load(Ordering::Relaxed))
+    millis().saturating_sub(task.blocked_since.load(Ordering::Relaxed))
 }
 
 /// What the task `id` is blocked on: its kind and the object.
