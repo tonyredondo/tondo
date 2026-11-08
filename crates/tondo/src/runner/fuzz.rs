@@ -33,7 +33,10 @@ pub(super) fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Pri
     let units = super::units(tree, plan);
     let context = Context { round: 0, iteration: 1, unit: None, target: None };
     let first = worker::execute(run, units.into_iter().map(|u| (u, context)).collect(), |_| {});
+    // The test runs in the project's directory, where a path from here,
+    // as `tondo test app` or `--fuzz-corpus corpus` gives it, is another.
     let corpus = fuzz.corpus.clone().unwrap_or_else(|| run.dir.join("target/fuzz"));
+    let corpus = std::path::absolute(&corpus).unwrap_or(corpus);
     let stops = std::env::temp_dir().join(format!("tondo-fuzz-stop-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&stops);
     let _ = std::fs::create_dir_all(&stops);

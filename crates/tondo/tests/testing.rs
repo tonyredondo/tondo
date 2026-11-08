@@ -403,6 +403,30 @@ test readsHeaders {
     assert_eq!(std::fs::read_to_string(&saved[0]).unwrap(), "[255,128]", "{stdout}");
 }
 
+/// A project named from another directory keeps its corpus in its own
+/// target, as one tested from its directory does.
+#[test]
+fn fuzz_search_keeps_its_corpus_where_the_project_is() {
+    let tests = "\
+import std.testing
+
+test grows {
+    testing.fuzz(\"sizes\", [0], (n: Int) {
+        if n > 10 {
+            assert(n > 0)
+        } else if n < -10 {
+            assert(n < 0)
+        }
+    })
+}
+";
+    let dir = project("fuzz-elsewhere", tests);
+    let (stdout, _, status) = tondo(dir.parent().unwrap(), &["test", "fuzz-elsewhere", "--fuzz", "--fuzz-time", "1"]);
+    assert_eq!(status, 0, "{stdout}");
+    assert!(dir.join("target/fuzz").is_dir(), "{stdout}");
+    assert!(!dir.join("fuzz-elsewhere").exists(), "the corpus went to fuzz-elsewhere/fuzz-elsewhere: {stdout}");
+}
+
 #[test]
 fn fuzz_search_finds_inputs_that_fail() {
     // The code it tries is the project's, whose runs count.
