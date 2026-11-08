@@ -143,8 +143,9 @@ pub fn link(
     // And what glibc's `libc.so` adds to it, as `atexit`, which its shared
     // library does not have: installed with C's development files, and only
     // C code that calls them needs it.
-    let nonshared = dirs.iter().map(|d| d.join("libc_nonshared.a")).find(|p| archive_of(p, arch));
-    if !statically && let Some(nonshared) = nonshared {
+    if !statically
+        && let Some(nonshared) = dirs.iter().map(|d| d.join("libc_nonshared.a")).find(|p| archive_of(p, arch))
+    {
         archive_paths.push(nonshared);
     }
     for argument in runtime {
