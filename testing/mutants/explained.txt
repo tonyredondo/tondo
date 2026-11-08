@@ -1,4 +1,41 @@
 # Mutants of .github/scripts/mutants.sh that change nothing anyone can see: a line each,
-# the mutant as cargo mutants names it without its place, a tab, and why.
-replace && with || in work_until	it wakes another worker when none waits as well: one more idle worker, nothing a program sees
-replace < with == in steal	takes the tasks another worker started as soon as they wait, not after NEXT_WAIT: they run elsewhere sooner, away from their caches, which only timing shows
+# the mutant as cargo mutants names it without its place, a tab, the line it changes as it
+# was, a tab, and why.
+replace > with == in Builder::finish	if cap - self.len > self.len.max(16) {	keeps the spare room of a text it built unless that is exactly as large as the text: memory, not the text
+replace > with >= in Builder::extend	if self.len + bytes.len() > self.room() {	grows the text one append early, when what comes just fits: more room, the same text
+replace > with >= in Builder::finish	if cap - self.len > self.len.max(16) {	gives back the spare room also when it is as large as the text: memory, not the text
+replace < with <= in ending	while live_tasks() > 0 && Instant::now() < cleaned_by(from) {	waits for the other tasks' cleanups until a nanosecond past their time, not until it: timing only
+replace && with || in new_task	let name = match unsafe { current().as_mut() }.filter(|_| tools::listens(tools::RACES) && noting()) {	names tasks by their parent's count also while races are detected without exploring orders, and only the runner of orders reads the names
+replace += with -= in new_task	parent.started += 1;	counts a parent's tasks down instead of up: their names stay distinct and the same in every run
+replace << with >> in first_priority	seeded(seed) | 1 << 63	leaves the top bit to chance: priorities stay random, and above the changes' but for three seeds in 2^64
+replace | with ^ in first_priority	seeded(seed) | 1 << 63	flips the top bit of a random priority, which stays random and above the changes' but for three seeds in 2^64
+replace == with != in notify_with	} else if current == PINNED {	notifies the thread of a pinned task when the task ran, which wakes it for nothing, and not when it was pinned, which then sees it was woken at its next RECHECK: timing only
+replace && with || in timers_ended	if queue.stale > 64 && queue.stale * 2 > queue.timers.len() {	drops the ended timers when more than 64 are or when they are most, not only both: more often, the same timers
+replace += with -= in timers_ended	queue.stale += count;	counts the timers that ended down, which wraps at once: the queue drops the ended ones at every chance, more work for the same timers
+replace > with >= in timers_ended	if queue.stale > 64 && queue.stale * 2 > queue.timers.len() {	drops the ended timers from 64 on, or once they are half of those waiting: a little sooner, the same timers
+replace > with >= in Wait::parked	if fired == CANCELLED && task.deferring > 0 {	marks a cancelled wait's task as ending its cleanup also outside one, where its next waits end at once anyway, and the mark is cleared as a cleanup starts
+delete ! in work_until	&& !queue.runnable.is_empty()	looks at the network every 61 picks only when no task waits, not when some do: its events wait for the queue to empty, timing only
+delete ! in work_until	if !runs.is_multiple_of(61) {	runs the task waiting next, or one its tasks started, only one turn in 61, and puts it in the shared queue otherwise: the order of tasks that can all run, not whether they run
+delete ! in work_until	if !waited.timed_out() || until() {	looks at the queue again at every RECHECK of a recorded run's thread, not only when woken: timing only
+replace && with || in work_until	if exploring().is_none() && own_next().is_none() {	gives a worker a new queue of its own also when it has one, or while orders are explored, where nothing puts tasks in it: the others still take what the old one holds
+replace && with || in work_until	waited = (young && woken) || (stealing && seeker);	looks at the others' next again in a moment also when it was woken or found tasks too young, not only both: more looks, timing only
+replace + with - in work_until	Stalled::MaybeC => next = Some(Instant::now() + RECHECK),	looks again at once, not RECHECK later, whether threads of C may end: the worker spins meanwhile, timing only
+replace + with - in work_until	let soon = Instant::now() + NEXT_WAIT;	waits for the tasks too young to take until a moment before now, which is at once: the worker looks again sooner, timing only
+replace < with <= in work_until	if index < NEXTS.len() {	lets a 1025th worker ask for a slot past the last, which it then goes without, as the slot's lookup already allows
+replace < with == in work_until	if index < NEXTS.len() {	gives no worker but the 1025th a queue of its own: every task waits in the queue all take from, where it waits, not whether it runs
+replace < with > in work_until	if index < NEXTS.len() {	gives no worker a queue of its own: every task waits in the queue all take from, where it waits, not whether it runs
+replace > with < in work_until	if !main && queue.surplus > 0 {	never retires a worker started in place of one blocked in C: one more thread, not other results
+replace || with && in work_until	more = more || waiting_somewhere() || !queue().runnable.is_empty();	wakes the next worker after finding a task in fewer of the cases where tasks wait elsewhere or in the queue: fewer wakes, which enqueue and wake_idle make up for
+delete ! in enqueue	if !current().is_null()	puts a task made runnable by a running task in the queue every worker takes from, and one made runnable outside a task in a worker's own: where it waits, not whether it runs
+replace * with + in schedule	if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {	throttles those wakes over NEXT_WAIT and 5 ns, not five NEXT_WAIT: more wakes, timing only
+replace * with / in schedule	if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {	throttles those wakes over a fifth of NEXT_WAIT: more wakes, timing only
+replace < with <= in schedule	if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {	wakes an idle worker for a task waiting next a nanosecond sooner: timing only
+replace < with <= in steal	if now.saturating_sub(since) < NEXT_WAIT.as_nanos() as u64 {	takes another worker's tasks once they waited NEXT_WAIT, not a nanosecond after: timing only
+replace < with == in schedule	if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {	wakes an idle worker for a task waiting next at every handoff but one in a nanosecond, not once in five NEXT_WAIT: more wakes, timing only
+replace < with == in steal	if now.saturating_sub(since) < NEXT_WAIT.as_nanos() as u64 {	takes the tasks another worker started as soon as they wait, not after NEXT_WAIT: they run elsewhere sooner, away from their caches, which only timing shows
+replace > with < in enqueue	if queue.idle > 0 {	wakes a worker without marking that one looks for tasks, so the next task wakes another too: more wakes, timing only
+replace > with < in steal	let more = theirs.0.len() > 1;	says tasks are left when none is: one more worker wakes and finds nothing, timing only
+replace > with == in steal	let more = theirs.0.len() > 1;	says no tasks are left when exactly one is, and some when none is: whether one more worker wakes, timing only
+replace > with >= in steal	let more = theirs.0.len() > 1;	says tasks are left when only the one taken was: one more worker wakes and finds nothing, timing only
+replace || with && in enqueue	if looks_next() || SEEKING.load(Ordering::SeqCst) {	wakes a worker though this one looks at the queue next or another already looks for tasks: more wakes, timing only
+replace || with && in wake_idle	if IDLE.load(Ordering::SeqCst) == 0 || SEEKING.load(Ordering::SeqCst) {	takes the queue's lock to wake a worker though none sleeps or one already looks, and the check under the lock finds so: timing only
