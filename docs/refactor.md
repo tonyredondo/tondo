@@ -131,12 +131,20 @@ stack, for a sample of the heap, read address 0 at a frame pointer near the top 
 whose task spun, or whose `select` kept finding a closed channel, stayed in its first order until
 its time ran out; and the script of the models took a broken invariant for an output it did not
 know. The baseline found an empty array literal allocated at every call of a derived encoder.
+Measuring the runtime's coverage under replay found that Tondo's linker could not link a C library
+that gathers entries in a section and walks them from `__start_` to `__stop_` of its name, nor one
+that calls `atexit`, which glibc keeps in `libc_nonshared.a`. Mutation testing found what no test
+held: that a text built by appending doubles its room, which could turn quadratic unseen, and that
+a seeded order starts every task above the priorities of PCT's changes. One of the cases written
+for them found a lost wake in the scheduler: a worker woken for a task, which found nothing, counted
+the next wake as none, and a task woken next to one that then computed without waiting could wait
+until it stopped, once in twenty runs on Linux and in a hundred on the M2.
 
 ## Status
 
 | Phase | State |
 | --- | --- |
-| 0 | started 2026-11-07: 0.3 to 0.7 and 0.9 done, the baseline in bench/baselines; 0.1 measured, 83% of the runtime's lines, without replay or the standard library's Tondo code; 0.2 under way; 0.8 running a slice a night, `.github/scripts/mutants.sh` |
+| 0 | done 2026-11-08: 0.3 to 0.7 and 0.9 on 2026-11-07, the baseline in bench/baselines. 0.1: `.github/scripts/coverage.sh` measures what the tests run of the runtime, 88.4% of its lines, the cases under replay included now that Tondo's linker links the runtime that counts, and with `TONDO_COVERAGE_STD` what the cases run of the standard library's Tondo code, 74.8% of the lines they build; PostgreSQL's and MySQL's drivers and OpenAPI run only in the tests with servers, which it does not count. 0.2: cases where it showed gaps, among them a context's value that other tasks wait for, an actor's mailbox, `group.next()` in a `select`, semaphores, barriers and readers that starve, arithmetic on arrays of every type of number, a task's panic that reaches a waiter's cleanup, a cycle through a `reflect.Value` and a `within` that never waits. 0.8: all 168 mutants once; the cases caught 64, 8 did not build, and of the 96 left 19 are caught by tests of the toolchain the script did not run, which it runs now, 26 by new tests, 41 change nothing anyone can see, as 38 lines of testing/mutants/explained.txt say, and one went with the line the fix of a lost wake changed. Nine stay open, with neither a test nor an explanation: two that may leave a worker marked as looking while every worker sleeps, three in the count of the workers started in place of those blocked in C, one in a recorded run's wait on a thread of C, and three that end a program that panicked without waiting for a detached task's cleanups, which no test could see while the main thread runs them |
 | 1 | done 2026-11-08: `Worker`, lent to a closure by `worker`, which never inlines; `crates/tondo/tests/workers.rs` |
 | 2 | done 2026-11-08: `tasks/` in 19 modules; the tools hear the scheduler through `tasks/tools.rs`, one word of bits; the replay, the exploration of orders and live builds' reloads, which change how it waits and what runs next, stay where they act |
 | 3 | done 2026-11-08: `config.rs`, 37 variables read once as a program starts; the table of the toolchain's specification, 7.17, held to it by `crates/tondo/tests/environment.rs` |
