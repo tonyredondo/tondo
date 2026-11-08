@@ -1,28 +1,37 @@
+// Detached tasks: one whose result nobody takes, and two that run until the
+// program ends, whose cleanups run then. Each says it started, so that
+// `main` ends after them however slow the machine.
 import std.console
 import std.time
 
-fn quick(n: Int): Int {
+fn quick(n: Int, ran: Sender[Int]): Int {
     console.println("quick {n}")
+    ran.send(n)
     n
 }
 
-fn forever(name: String) {
+fn forever(name: String, started: Sender[Int]) {
     defer console.println("{name} cleaned up")
+    started.send(1)
     for {
         time.sleep(time.milliseconds(5))
     }
 }
 
-fn spawner() {
-    spawn detached forever("grandchild")
+fn spawner(started: Sender[Int]) {
+    spawn detached forever("grandchild", started)
 }
 
 fn main() {
-    spawn detached quick(1)
-    let job = spawn forever("background")
+    let (ran, quickRan) = channel[Int](1)
+    spawn detached quick(1, ran)
+    _ = quickRan.receive()
+    let (started, allStarted) = channel[Int](2)
+    let job = spawn forever("background", started.copy())
     job.detach()
-    (spawn spawner()).detach()
-    time.sleep(time.milliseconds(30))
+    _ = allStarted.receive()
+    (spawn spawner(started)).detach()
+    _ = allStarted.receive()
     console.println("main ends")
 }
 
