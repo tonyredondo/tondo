@@ -167,7 +167,8 @@ pub(super) fn schedule(task: *mut Task) {
         && exploring().is_none()
         && let Some(next) = own_next()
     {
-        next.since.store(nanos(), Ordering::Relaxed);
+        let now = nanos();
+        next.since.store(now, Ordering::Relaxed);
         let replaced = next.task.swap(task, Ordering::AcqRel);
         if !replaced.is_null() {
             enqueue(replaced);
@@ -176,7 +177,6 @@ pub(super) fn schedule(task: *mut Task) {
         // An idle worker takes it if this one runs on for long, as Go's
         // scheduler steals `runnext` from a processor busy for a while: one
         // woken now and then, not at every task two tasks hand each other.
-        let now = nanos();
         if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {
             return;
         }
