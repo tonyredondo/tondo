@@ -1,5 +1,6 @@
 ---- MODULE Park ----
-\* How a task waits (crates/tondo-runtime/src/tasks/mod.rs: park, run, notify_with).
+\* How a task waits (crates/tondo-runtime/src/tasks/park.rs: park, notify_with;
+\* run in tasks/work.rs).
 \* It looks at what it waits for, parks, and a worker finishes parking it once
 \* it is off its stack, while another task may notify it at any of those steps.
 EXTENDS Naturals
