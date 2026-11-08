@@ -12,7 +12,9 @@ test templateReadsAnySource {
                 // A range, a width or a precision asks for as much work as
                 // its numbers say, which is no bug: what has one or a
                 // number of seven digits is read but not rendered.
-                if set.add("page", source).isOk() and not source.contains("..") and not large(source) {
+                if set.add("page", source).isOk() and
+                    not source.contains("..") and
+                    not large(source) {
                     _ = set.render("page", sample())
                 }
             }
