@@ -26,7 +26,16 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("yaml", &[file!("yaml")]),
     ("messagepack", &[file!("messagepack")]),
     ("cbor", &[file!("cbor")]),
-    ("protobuf", &[file!("protobuf")]),
+    (
+        "protobuf",
+        &[
+            file!("protobuf/protobuf"),
+            file!("protobuf/wire"),
+            file!("protobuf/wellknown"),
+            file!("protobuf/reflection"),
+            file!("protobuf/json"),
+        ],
+    ),
     (
         "grpc",
         &[

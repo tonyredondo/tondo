@@ -1,0 +1,381 @@
+// The messages of google.protobuf, as the wire format and the other
+// formats of std.serialization have them.
+
+import std.json as __json
+import std.serialization
+
+/// `google.protobuf.Empty`, the message with no fields.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// // The message of a call that takes or gives nothing.
+/// let bytes = protobuf.encode(protobuf.Empty {})
+/// console.println("{bytes.length()} bytes, JSON {protobuf.toJson(protobuf.Empty {})?}")
+/// ```
+pub type Empty = {}
+
+impl Message for Empty {
+    fn writeTo(self, _out: Writer) {}
+
+    fn readFrom(input: Reader): Empty ! ProtobufError {
+        for input.next()? != 0 {
+            input.skip()?
+        }
+        Empty {}
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.Empty"
+    }
+
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        out.begin()
+        out.end()
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): Empty ! ProtobufError {
+        for (key, _) in input.fields(value, "$")? {
+            input.unknown(key, "$")?
+        }
+        Empty {}
+    }
+}
+
+/// `google.protobuf.Any`: a message of any type, as its bytes and the URL
+/// of its type's name.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// @protobuf.Name("errors.v1.RetryInfo")
+/// pub type RetryInfo = {
+///     @protobuf.Field(1)
+///     seconds: Int = 0
+/// }
+///
+/// // A message of any type, with the name that says which.
+/// let detail = protobuf.pack(RetryInfo { seconds: 30 })
+/// console.println(detail.typeUrl)
+/// let retry = detail.unpack[RetryInfo]()?
+/// console.println("retry in {retry.seconds}s")
+/// ```
+pub type Any = {
+    typeUrl: String = ""
+    value: Array[Byte] = []
+}
+
+impl Message for Any {
+    fn writeTo(self, out: Writer) {
+        if not self.typeUrl.isEmpty() {
+            out.string(1, self.typeUrl)
+        }
+        if not self.value.isEmpty() {
+            out.bytes(2, self.value)
+        }
+    }
+
+    fn readFrom(input: Reader): Any ! ProtobufError {
+        var typeUrl = ""
+        var value: Array[Byte] = []
+        for {
+            match input.next()? {
+                0 => break
+                1 => typeUrl = input.string("typeUrl")?
+                2 => value = input.bytes("value")?
+                _ => input.skip()?
+            }
+        }
+        Any { typeUrl, value }
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.Any"
+    }
+
+    /// `{"@type": url, ...}` with the fields of the message it holds, or its
+    /// form under `value` for a type of `google.protobuf` that has one.
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        if self.typeUrl.isEmpty() {
+            out.begin()
+            out.end()
+            return
+        }
+        let name = self.typeUrl.split("/").last().unwrapOr(self.typeUrl)
+        let inner = JsonWriter { json: __json.writer(), protoNames: out.protoNames }
+        if not wellKnownToJson(name, self.value, inner)? {
+            let known = match knownMessage(name) {
+                some(known) => known
+                none => fail jsonError(
+                    serialization.ErrorKind.Unsupported,
+                    "$",
+                    "the `Any` holds `{name}`, which is no message of this program",
+                )
+            }
+            let write = known.toJson
+            write(self.value, inner)?
+        }
+        let held = match __json.parse(inner.json.finish()) {
+            ok(held) => held
+            err(error) => fail jsonError(serialization.ErrorKind.Syntax, "$", "{error}")
+        }
+        out.begin()
+        out.key("@type")
+        out.string(self.typeUrl)
+        match (held, specialJson(name)) {
+            (__json.Value.Object(fields), false) => {
+                for (key, field) in fields {
+                    out.key(key)
+                    out.jsonValue(field)
+                }
+            }
+            (other, _) => {
+                out.key("value")
+                out.jsonValue(other)
+            }
+        }
+        out.end()
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): Any ! ProtobufError {
+        let fields = input.fields(value, "$")?
+        let typeUrl = match fields.find((field) { field.0 == "@type" }) {
+            some((_, __json.Value.Text(url))) => url
+            _ => fail jsonError(
+                serialization.ErrorKind.Missing,
+                "$.@type",
+                "an `Any` in JSON says its type in `@type`",
+            )
+        }
+        let name = typeUrl.split("/").last().unwrapOr(typeUrl)
+        let held = if specialJson(name) {
+            match fields.find((field) { field.0 == "value" }) {
+                some((_, inner)) => inner
+                none => __json.Value.Null
+            }
+        } else {
+            var rest: Map[String, __json.Value] = [:]
+            for (key, field) in fields {
+                if key != "@type" {
+                    rest[key] = field
+                }
+            }
+            __json.Value.Object(rest)
+        }
+        match wellKnownFromJson(name, held, input)? {
+            some(bytes) => return Any { typeUrl, value: bytes }
+            none => {}
+        }
+        let known = match knownMessage(name) {
+            some(known) => known
+            none => fail jsonError(
+                serialization.ErrorKind.Unsupported,
+                "$.@type",
+                "`{name}` is no message of this program",
+            )
+        }
+        let read = known.fromJson
+        Any { typeUrl, value: read(held, input)? }
+    }
+}
+
+/// `google.protobuf.FieldMask`: the paths of the fields an update sets,
+/// as `user.display_name`.
+///
+/// ```tondo
+/// import std.console
+/// import std.protobuf
+///
+/// /// An update that says which fields it changes, as APIs of Google do.
+/// pub type UpdateUser = {
+///     @protobuf.Field(1)
+///     name: String = ""
+///     @protobuf.Field(2)
+///     email: String = ""
+///     @protobuf.Field(3)
+///     mask: protobuf.FieldMask = protobuf.FieldMask {}
+/// }
+///
+/// let update = UpdateUser { email: "ada@example.com", mask: protobuf.FieldMask { paths: ["email"] } }
+/// console.println(protobuf.toJson(update)?)
+/// let read = protobuf.fromJson[UpdateUser](r"""{"email": "x@example.com", "mask": "email,name"}""")?
+/// console.println("{read.mask.paths}")
+/// ```
+pub type FieldMask = {
+    paths: Array[String] = []
+}
+
+impl Message for FieldMask {
+    fn writeTo(self, out: Writer) {
+        for path in self.paths {
+            out.string(1, path)
+        }
+    }
+
+    fn readFrom(input: Reader): FieldMask ! ProtobufError {
+        var paths: Array[String] = []
+        for {
+            match input.next()? {
+                0 => break
+                1 => paths.push(input.string("paths")?)
+                _ => input.skip()?
+            }
+        }
+        FieldMask { paths }
+    }
+
+    fn protobufName(): String {
+        "google.protobuf.FieldMask"
+    }
+
+    /// Its paths joined by `,`, each in lowerCamel: `user.displayName`.
+    fn writeJson(self, out: JsonWriter): !ProtobufError {
+        out.string(
+            self.paths
+                .map((path) { path.split(".").map((part) { lowerCamel(part) }).join(".") })
+                .join(","),
+        )
+    }
+
+    fn readJson(input: JsonReader, value: __json.Value): FieldMask ! ProtobufError {
+        let text = input.string(value, "$")?
+        if text.isEmpty() {
+            return FieldMask {}
+        }
+        FieldMask {
+            paths: text
+                .split(",")
+                .map((path) { path.split(".").map((part) { snakeCase(part) }).join(".") })
+        }
+    }
+}
+
+/// A message in an `Any`, named `type.googleapis.com/` and its full name.
+pub fn pack[T: Message](message: T): Any {
+    Any { typeUrl: "type.googleapis.com/{Message.protobufName[T]()}", value: encode(message) }
+}
+
+/// The message an `Any` holds, which must be a `T`.
+pub fn Any.unpack[T: Message](self): T ! ProtobufError {
+    let name = Message.protobufName[T]()
+    if not self.typeUrl.endsWith("/{name}") and self.typeUrl != name {
+        fail serialization.Error {
+            kind: serialization.ErrorKind.Type
+            message: "the `Any` holds `{self.typeUrl}`, not `{name}`"
+            path: "$"
+            line: 0
+            column: 0
+            violations: []
+        }
+    }
+    decode[T](self.value)?
+}
+
+/// In other formats, the message's fields: none.
+impl serialization.Encode for Empty {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(0)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for Empty {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): Empty ! serialization.Error {
+        input.beginMap(first, "Empty")?
+        for {
+            match input.nextKey()? {
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        Empty {}
+    }
+}
+
+/// In other formats, its `typeUrl` and its `value` as bytes.
+impl serialization.Encode for Any {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(2)
+        out.key("typeUrl")
+        out.text(self.typeUrl)
+        out.key("value")
+        serialization.Bytes(self.value).encode(out)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for Any {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): Any ! serialization.Error {
+        input.beginMap(first, "Any")?
+        var any = Any {}
+        for {
+            match input.nextKey()? {
+                some("typeUrl") => any.typeUrl =
+                    serialization.Decode.decode[String](input, input.value()?)?
+                some("value") => {
+                    any.value =
+                        serialization.Decode.decode[serialization.Bytes](input, input.value()?)?.value
+                }
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        any
+    }
+}
+
+/// In other formats, its paths.
+impl serialization.Encode for FieldMask {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginMap(1)
+        out.key("paths")
+        self.paths.encode(out)
+        out.endMap()
+    }
+}
+
+impl serialization.Decode for FieldMask {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): FieldMask ! serialization.Error {
+        input.beginMap(first, "FieldMask")?
+        var mask = FieldMask {}
+        for {
+            match input.nextKey()? {
+                some("paths") => mask.paths =
+                    serialization.Decode.decode[Array[String]](input, input.value()?)?
+                some(_) => input.skip(input.value()?)?
+                none => break
+            }
+        }
+        mask
+    }
+}
+
+/// In other formats, the bytes of the fields, which `@ignore` usually
+/// leaves out.
+impl serialization.Encode for UnknownFields {
+    fn encode[S: serialization.Sink](self, out: S) {
+        serialization.Bytes(self.bytes).encode(out)
+    }
+}
+
+impl serialization.Decode for UnknownFields {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): UnknownFields ! serialization.Error {
+        UnknownFields {
+            bytes: serialization.Decode.decode[serialization.Bytes](input, first)?.value
+        }
+    }
+}
