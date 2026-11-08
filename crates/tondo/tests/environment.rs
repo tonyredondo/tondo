@@ -9,8 +9,8 @@ use std::path::Path;
 /// The reads of the environment outside config.rs, by file, with why.
 const KNOWN: &[(&str, &str, &str)] = &[
     ("zones.rs", "\"TZ\"", "the system's zone, read once as the program first asks"),
-    ("diagnostics.rs", "\"XDG_CACHE_HOME\"", "the user's cache, where a crash's dump goes"),
-    ("diagnostics.rs", "\"HOME\"", "the user's cache, where a crash's dump goes"),
+    ("diagnostics/dumps.rs", "\"XDG_CACHE_HOME\"", "the user's cache, where a crash's dump goes"),
+    ("diagnostics/dumps.rs", "\"HOME\"", "the user's cache, where a crash's dump goes"),
     ("testing.rs", "(name)", "the environment a test changed, given back before the next"),
 ];
 
