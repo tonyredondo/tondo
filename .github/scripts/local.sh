@@ -66,6 +66,9 @@ musl() {
     -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git" rust:alpine sh -c \
     "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
      (rustup show active-toolchain || rustup toolchain install) &&
+     # What the tests left, which the last run gave this machine's user: as
+     # root's again, a directory of dumps is private to who runs them.
+     (chown -R 0:0 /alpine-target/tmp 2>/dev/null; true) &&
      cargo test --workspace && TONDO_CASES_STATIC=1 cargo test -p tondo --test cases cases;
      status=\$?; chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git; exit \$status"
 }
