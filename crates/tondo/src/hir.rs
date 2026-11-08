@@ -1632,6 +1632,7 @@ pub const NATIVES: &[Native] = {
         toml("int", &[Object], Int, "tondo_rt_toml_int"),
         toml("float", &[Object], Float, "tondo_rt_toml_float"),
         toml("skip", &[Object, Int], Int, "tondo_rt_toml_skip"),
+        toml("field", &[Object, Strings, Bool], Int, "tondo_rt_toml_field"),
         toml("fail", &[Object, String], Unit, "tondo_rt_toml_fail"),
         toml("where", &[Object, Int], String, "tondo_rt_toml_where"),
         toml("writer", &[], Object, "tondo_rt_toml_writer"),

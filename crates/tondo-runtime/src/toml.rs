@@ -190,14 +190,41 @@ pub extern "C" fn tondo_rt_toml_skip(object: *mut NativeObject, code: i64) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_fail(object: *mut NativeObject, message: *const Str) {
     let Some(reader) = reader(object) else { return };
-    let mut reader = reader.lock().unwrap_or_else(|e| e.into_inner());
+    fail(&mut reader.lock().unwrap_or_else(|e| e.into_inner()), unsafe { str_text(message) }.to_owned());
+}
+
+/// A failure at the event just read, which `where` says.
+fn fail(reader: &mut Reader, message: String) {
     let (at, path) = match reader.read.checked_sub(1) {
         Some(index) if index < reader.events.len() => {
             (reader.events[index].at, crate::msgpack::path_of(&reader.events, |e| e.code, |e| &e.text, index, false))
         }
         _ => (0, "$".to_string()),
     };
-    reader.error = Some((unsafe { str_text(message) }.to_owned(), at, path));
+    reader.error = Some((message, at, path));
+}
+
+/// `field(names, reject)`: the next member of a table read up to its value,
+/// as MessagePack's reader gives it, with its key compared in place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_toml_field(
+    object: *mut NativeObject,
+    names: *mut crate::ArrayHeader,
+    reject: u8,
+) -> i64 {
+    let Some(reader) = reader(object) else { return ERROR };
+    let mut reader = reader.lock().unwrap_or_else(|e| e.into_inner());
+    if reader.error.is_some() {
+        return ERROR;
+    }
+    let names = unsafe { crate::array_items::<*const Str>(names) };
+    let reader = &mut *reader;
+    let (found, failed) =
+        crate::msgpack::next_field(&reader.events, &mut reader.read, |e| e.code, |e| &e.text, names, reject != 0);
+    if let Some(message) = failed {
+        fail(reader, message);
+    }
+    found
 }
 
 /// Where the failure is: its message (0), path (1), line (2) or column (3).
