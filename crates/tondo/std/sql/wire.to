@@ -1,0 +1,204 @@
+// The bytes of a connection, which the PostgreSQL and MySQL drivers read
+// and write.
+
+import std.net as __net
+import std.sync as __sync
+import std.time as __time
+import std.url as __url
+
+/// A connection to a server and the bytes read from it that no message
+/// took yet.
+type Wire = {
+    stream: __net.Stream
+    inbox: __sync.Mutex[Inbox]
+}
+
+type Inbox = {
+    bytes: Array[Byte]
+    at: Int
+}
+
+fn Wire.of(stream: __net.Stream): Wire {
+    Wire { stream, inbox: __sync.Mutex(Inbox { bytes: [], at: 0 }) }
+}
+
+/// The next `count` bytes, as soon as they arrive.
+fn Wire.take(self, count: Int): Array[Byte] ! SqlError {
+    for {
+        let taken = self.inbox.update(
+            (inbox): Array[Byte]? {
+                if inbox.bytes.length() - inbox.at < count {
+                    none
+                } else {
+                    let piece = inbox.bytes.slice(inbox.at, inbox.at + count).unwrapOr([])
+                    inbox.at += count
+                    some(piece)
+                }
+            },
+        )
+        match taken {
+            some(piece) => return piece
+            none => {}
+        }
+        let chunk = match self.stream.read() {
+            ok(some(bytes)) => bytes
+            ok(none) => fail lost("the server closed the connection")
+            err(error) => fail lost("{error}")
+        }
+        self.inbox.update(
+            (inbox) {
+                if inbox.at > 0 {
+                    inbox.bytes = inbox.bytes.slice(inbox.at, inbox.bytes.length()).unwrapOr([])
+                    inbox.at = 0
+                }
+                inbox.bytes.extend(chunk)
+            },
+        )
+    }
+}
+
+fn Wire.send(self, bytes: Array[Byte]): !SqlError {
+    match self.stream.writeBytes(bytes) {
+        ok(_) => {}
+        err(error) => fail lost("{error}")
+    }
+}
+
+fn Wire.close(self) {
+    _ = self.stream.close()
+}
+
+fn lost(why: String): SqlError {
+    SqlError.of(ErrorKind.Connection, why)
+}
+
+/// The integer of `count` bytes at `at`, the most significant first, with
+/// its sign: a length of -1 is a null.
+fn bigEndian(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value: UInt = 0
+    for index in 0..count {
+        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+    }
+    let spread = 64 - count * 8
+    Int.wrapping(value << spread) >> spread
+}
+
+/// `value` in `count` bytes, the most significant first.
+fn bigEndianBytes(value: Int, count: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var shift = (count - 1) * 8
+    for shift >= 0 {
+        out.push(Byte(UInt8.wrapping(value >> shift)))
+        shift -= 8
+    }
+    out
+}
+
+fn cstring(text: String): Array[Byte] {
+    text.bytes().concat([Byte(0u8)])
+}
+
+/// The text up to the next zero byte at `at`, which moves past it.
+fn cstringAt(bytes: Array[Byte], at: var Int): String {
+    var end = at
+    for end < bytes.length() and bytes[end] != Byte(0u8) {
+        end += 1
+    }
+    let found = String.fromBytes(bytes.slice(at, end).unwrapOr([])).unwrapOr("")
+    at = end + 1
+    found
+}
+
+fn cstringOf(bytes: Array[Byte]): String {
+    var at = 0
+    cstringAt(bytes, var at)
+}
+
+/// The settings a URL gives: `scheme://user:secret@host:port/name?options`.
+type Settings = {
+    host: String
+    port: Int
+    user: String
+    password: String
+    database: String
+    /// `disable`, `prefer` or `require`.
+    tls: String
+    trust: String?
+    options: __url.Url
+}
+
+fn settingsOf(url: String, port: Int): Settings ! SqlError {
+    let parsed = match __url.parse(url) {
+        ok(found) => found
+        err(error) => fail lost("the URL of the database: {error}")
+    }
+    let tls = match parsed
+        .param("sslmode")
+        .unwrapOr(parsed.param("ssl-mode").unwrapOr("prefer"))
+        .toLowerAscii() {
+        "disable" => "disable"
+        "disabled" => "disable"
+        "allow" => "prefer"
+        "prefer" => "prefer"
+        "preferred" => "prefer"
+        mode if mode == "require" or mode == "required" or mode.startsWith("verify") => "require"
+        other => fail lost("the TLS mode `{other}`: write `disable`, `prefer` or `require`")
+    }
+    Settings {
+        host: if parsed.host.isEmpty() { "localhost" } else { parsed.host }
+        port: parsed.port.unwrapOr(port)
+        user: parsed.user
+        password: parsed.password.unwrapOr("")
+        database: parsed.path.removePrefix("/")
+        tls
+        trust: parsed.param("sslrootcert").orElse(parsed.param("ssl-ca"))
+        options: parsed
+    }
+}
+
+/// The database's name and host in a URL.
+fn placeOf(url: String): (String, String?) {
+    match __url.parse(url) {
+        ok(parsed) => (parsed.path.removePrefix("/"), some(parsed.host))
+        err(_) => ("", none)
+    }
+}
+
+/// A plain connection to the server of the settings.
+fn reached(settings: Settings): __net.Stream ! SqlError {
+    match __net.connect(settings.host, settings.port, timeout: __time.seconds(10)) {
+        ok(stream) => stream
+        err(error) => fail lost("{settings.host}:{settings.port}: {error}")
+    }
+}
+
+/// Whether to ask for TLS: unless the URL says `disable`, and for a server
+/// on this machine, which no network reaches, only when it says `require`.
+fn tlsWanted(settings: Settings): Bool {
+    let local =
+        settings.host == "localhost" or
+            __net.ip(settings.host).map((ip) { ip.isLoopback() }).unwrapOr(false)
+    settings.tls == "require" or (settings.tls == "prefer" and not local)
+}
+
+/// The connection over TLS, always verified, against `sslrootcert` and the
+/// system's authorities, once the server agreed to it.
+fn upgraded(plain: __net.Stream, settings: Settings): __net.Stream ! SqlError {
+    match plain.startTls(settings.host, trust: settings.trust, timeout: __time.seconds(10)) {
+        ok(stream) => stream
+        err(__net.NetError.Tls(why)) => {
+            let reason = match why.splitOnce("; ") {
+                some((first, _)) => first
+                none => why
+            }
+            fail lost(
+                "TLS: {reason}: give the authority that signed the server's certificate as `sslrootcert=path` in the URL, or `sslmode=disable` for a server that no network reaches",
+            )
+        }
+        err(error) => fail lost("{error}")
+    }
+}
+
+fn unoffered(): SqlError {
+    lost("the server does not offer TLS, which the URL asks for with `sslmode=require`")
+}

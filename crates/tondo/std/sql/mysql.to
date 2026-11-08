@@ -1,0 +1,782 @@
+// The MySQL driver: its protocol, authentication and types.
+
+import std.encoding as __encoding
+import std.hash as __hash
+import std.math as __math
+import std.random as __random
+import std.sync as __sync
+import std.time as __time
+
+/// MySQL, and MariaDB, over its protocol: `mysql://user:secret@host/name`,
+/// with `ssl-mode` (`disabled`, `preferred`, the default, or `required`)
+/// and `ssl-ca`. Its statements are prepared once per connection and kept,
+/// and run in the binary protocol.
+fn mysql(): Driver {
+    Driver {
+        system: "mysql"
+        placeholder: (_) { "?" }
+        identifier: (name) { "`{name.replace("`", "``")}`" }
+        connect: (url): Connection ! SqlError { connectMySql(url)? }
+        place: (url) { placeOf(url) }
+    }
+}
+
+/// A connection to MySQL: its wire, the sequence number of the next packet
+/// it sends, its prepared statements by their text, and whether results end
+/// with an OK packet rather than an EOF one.
+type MySql = {
+    wire: Wire
+    sequence: __sync.Mutex[Int]
+    kept: __sync.Map[String, Kept]
+    okEnds: Bool
+}
+
+/// A statement the server prepared: its id and how many parameters it has.
+type Kept = {
+    id: Int
+    parameters: Int
+}
+
+/// A column of a result: its name, its type, its flags and its character
+/// set, 63 for bytes.
+type Field = {
+    name: String
+    kind: Int
+    flags: Int
+    charset: Int
+}
+
+/// The capabilities a connection asks for: long passwords and flags, the
+/// protocol 4.1, transactions, statements by several, results of several,
+/// plugins of authentication with long answers, and results that end with
+/// an OK packet.
+const MysqlCapabilities: Int = 0x1 |
+    0x4 |
+    0x200 |
+    0x2000 |
+    0x8000 |
+    0x10000 |
+    0x20000 |
+    0x40000 |
+    0x80000 |
+    0x200000 |
+    0x1000000
+
+const MysqlConnectWithDb: Int = 0x8
+
+const MysqlSsl: Int = 0x800
+
+const MysqlDeprecateEof: Int = 0x1000000
+
+const MysqlMoreResults: Int = 0x8
+
+/// utf8mb4_general_ci, which MySQL and MariaDB both know.
+const MysqlCharset: Int = 45
+
+fn connectMySql(url: String): Connection ! SqlError {
+    let settings = settingsOf(url, 3306)?
+    let plain = reached(settings)?
+    let first = MySql {
+        wire: Wire.of(plain)
+        sequence: __sync.Mutex(0)
+        kept: __sync.Map[String, Kept]()
+        okEnds: false
+    }
+    let greeting = first.packet()?
+    if greeting.get(0) == some(Byte(255u8)) {
+        fail mysqlError(greeting, connecting: true)
+    }
+    // The greeting: its version, the connection's id, the first part of the
+    // nonce, the server's capabilities, and the rest of the nonce and the
+    // plugin it expects.
+    var at = 1
+    _ = cstringAt(greeting, var at)
+    at += 4
+    var nonce = greeting.slice(at, at + 8).unwrapOr([])
+    at += 9
+    var capabilities = unsigned(greeting, at, 2)
+    at += 2
+    var plugin = "mysql_native_password"
+    if at < greeting.length() {
+        capabilities = capabilities | (unsigned(greeting, at + 3, 2) << 16)
+        let length = Int(greeting[at + 5])
+        at += 16
+        let rest = (length - 8).max(13)
+        nonce.extend(greeting.slice(at, at + rest - 1).unwrapOr([]))
+        at += rest
+        plugin = cstringAt(greeting, var at)
+    }
+    var asked = MysqlCapabilities & capabilities
+    if not settings.database.isEmpty() {
+        asked = asked | MysqlConnectWithDb
+    }
+    var session = first with { okEnds: asked & MysqlDeprecateEof != 0 }
+    var secure = false
+    if tlsWanted(settings) {
+        if capabilities & MysqlSsl != 0 {
+            asked = asked | MysqlSsl
+            session.send(mysqlHeader(asked))?
+            let sequence = session.sequence.get()
+            session = session with {
+                wire: Wire.of(upgraded(plain, settings)?)
+                sequence: __sync.Mutex(sequence)
+            }
+            secure = true
+        } else if settings.tls == "require" {
+            fail unoffered()
+        }
+    }
+    var response = mysqlHeader(asked)
+    response.extend(cstring(settings.user))
+    let answer = mysqlAnswer(plugin, settings.password, nonce)
+    response.extend(lengthEncoded(answer.length()))
+    response.extend(answer)
+    if not settings.database.isEmpty() {
+        response.extend(cstring(settings.database))
+    }
+    response.extend(cstring(plugin))
+    session.send(response)?
+    match session.authenticate(settings.password, plugin, nonce, secure) {
+        ok(_) => {}
+        err(error) => {
+            session.wire.close()
+            fail error
+        }
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { session.run(statement)? }
+        close: () {
+            // COM_QUIT.
+            _ = session.command(1, [])
+            session.wire.close()
+        }
+    }
+}
+
+/// What starts the answer to the greeting, and is all of the request for
+/// TLS: the capabilities, the largest packet, the character set and 23
+/// zeros.
+fn mysqlHeader(capabilities: Int): Array[Byte] {
+    var out = littleEndianBytes(capabilities, 4)
+    out.extend(littleEndianBytes(16777215, 4))
+    out.push(Byte(UInt8.wrapping(MysqlCharset)))
+    out.extend([Byte(0u8)].repeat(23))
+    out
+}
+
+/// The password as a plugin proves it: scrambled with the nonce.
+fn mysqlAnswer(plugin: String, password: String, nonce: Array[Byte]): Array[Byte] {
+    if password.isEmpty() {
+        return []
+    }
+    match plugin {
+        "caching_sha2_password" => {
+            // SHA256(password) XOR SHA256(SHA256(SHA256(password)), nonce).
+            let once = __hash.sha256(password.bytes()).bytes()
+            let twice = __hash.sha256(once).bytes()
+            xored(once, __hash.sha256(twice.concat(nonce)).bytes())
+        }
+        "mysql_clear_password" => cstring(password)
+        _ => {
+            // SHA1(password) XOR SHA1(nonce, SHA1(SHA1(password))).
+            let once = __hash.sha1(password.bytes()).bytes()
+            let twice = __hash.sha1(once).bytes()
+            xored(once, __hash.sha1(nonce.concat(twice)).bytes())
+        }
+    }
+}
+
+fn xored(bytes: Array[Byte], mask: Array[Byte]): Array[Byte] {
+    var out: Array[Byte] = []
+    for (index, byte) in bytes.iter().enumerate() {
+        out.push(Byte(UInt8.wrapping(Int(byte) ^ Int(mask[index % mask.length()]))))
+    }
+    out
+}
+
+/// Ends the authentication: an OK; a switch to another plugin; or, for
+/// `caching_sha2_password` the first time, the password itself, over TLS,
+/// or sealed with the server's RSA key.
+fn MySql.authenticate(
+    self,
+    password: String,
+    plugin: String,
+    nonce: Array[Byte],
+    secure: Bool,
+): !SqlError {
+    var current = plugin
+    var scramble = nonce
+    for {
+        let packet = self.packet()?
+        match Int(packet.get(0).unwrapOr(Byte(255u8))) {
+            0 => return
+            255 => fail mysqlError(packet, connecting: true)
+            254 => {
+                var at = 1
+                current = cstringAt(packet, var at)
+                scramble = packet.slice(at, packet.length() - 1).unwrapOr([])
+                self.send(mysqlAnswer(current, password, scramble))?
+            }
+            1 if packet.get(1) == some(Byte(3u8)) => {}
+            1 if packet.get(1) == some(Byte(4u8)) => {
+                if secure {
+                    self.send(cstring(password))?
+                } else {
+                    // The server's public key, then the password sealed.
+                    self.send([Byte(2u8)])?
+                    let key = self.packet()?
+                    let pem = String.fromBytes(key.slice(1, key.length()).unwrapOr([])).unwrapOr("")
+                    self.send(rsaSealed(pem, xored(cstring(password), scramble))?)?
+                }
+            }
+            _ => fail lost(
+                "the server answered the authentication with a packet tondo does not read",
+            )
+        }
+    }
+}
+
+/// The next packet's payload, joined across packets of 16 MiB.
+fn MySql.packet(self): Array[Byte] ! SqlError {
+    var payload: Array[Byte] = []
+    for {
+        let head = self.wire.take(4)?
+        let length = unsigned(head, 0, 3)
+        self.sequence.set((Int(head[3]) + 1) % 256)
+        payload.extend(self.wire.take(length)?)
+        if length < 0xffffff {
+            return payload
+        }
+    }
+}
+
+/// Sends a payload as packets of at most 16 MiB, numbered from the
+/// sequence's next.
+fn MySql.send(self, payload: Array[Byte]): !SqlError {
+    var at = 0
+    var out: Array[Byte] = []
+    for {
+        let length = (payload.length() - at).min(0xffffff)
+        let sequence = self.sequence.update(
+            (next) {
+                let current = next
+                next = (next + 1) % 256
+                current
+            },
+        )
+        out.extend(littleEndianBytes(length, 3))
+        out.push(Byte(UInt8.wrapping(sequence)))
+        out.extend(payload.slice(at, at + length).unwrapOr([]))
+        at += length
+        if length < 0xffffff {
+            break
+        }
+    }
+    self.wire.send(out)
+}
+
+/// A command, which starts a new sequence.
+fn MySql.command(self, code: Int, body: Array[Byte]): !SqlError {
+    self.sequence.set(0)
+    self.send([Byte(UInt8.wrapping(code))].concat(body))
+}
+
+fn MySql.run(self, statement: Statement): Outcome ! SqlError {
+    // Without parameters, a statement that writes may be several, as a
+    // migration is: COM_QUERY runs them.
+    if statement.parameters.isEmpty() and statement.operation != Operation.Query {
+        self.command(3, statement.text.bytes())?
+        var outcome = Outcome { columns: [], rows: [], affected: 0, lastId: none }
+        for {
+            let (more, done) = self.result(none)?
+            outcome = outcome with {
+                affected: outcome.affected + done.affected
+                lastId: done.lastId.orElse(outcome.lastId)
+            }
+            if not more {
+                return outcome
+            }
+        }
+    }
+    let kept = match self.kept.get(statement.text) {
+        some(found) => found
+        none => self.prepare(statement.text)?
+    }
+    if kept.parameters != statement.parameters.length() {
+        fail SqlError.of(
+            ErrorKind.Other,
+            "the statement has {kept.parameters} parameters and the query gives {statement.parameters.length()}: a `?` written in its text is not one of its values",
+        )
+    }
+    let executed = self.execute(kept, statement)
+    if self.kept.get(statement.text).isNone() {
+        // COM_STMT_CLOSE, for one that is not kept; it has no answer.
+        _ = self.command(25, littleEndianBytes(kept.id, 4))
+    }
+    executed?
+}
+
+/// Prepares a statement, which the server answers with its id, its
+/// parameters and its columns.
+fn MySql.prepare(self, text: String): Kept ! SqlError {
+    self.command(22, text.bytes())?
+    let answer = self.packet()?
+    if answer.get(0) == some(Byte(255u8)) {
+        fail mysqlError(answer, connecting: false)
+    }
+    let kept = Kept { id: unsigned(answer, 1, 4), parameters: unsigned(answer, 7, 2) }
+    let columns = unsigned(answer, 5, 2)
+    for count in [kept.parameters, columns] {
+        if count > 0 {
+            for _ in 0..count {
+                _ = self.packet()?
+            }
+            if not self.okEnds {
+                _ = self.packet()?
+            }
+        }
+    }
+    if self.kept.length() < KeptStatements {
+        _ = self.kept.insert(text, kept)
+    }
+    kept
+}
+
+/// Runs a prepared statement with its parameters in binary.
+fn MySql.execute(self, kept: Kept, statement: Statement): Outcome ! SqlError {
+    var body = littleEndianBytes(kept.id, 4)
+    body.push(Byte(0u8))
+    body.extend(littleEndianBytes(1, 4))
+    let values = statement.parameters
+    if not values.isEmpty() {
+        var nulls = [Byte(0u8)].repeat((values.length() + 7) / 8)
+        var types: Array[Byte] = []
+        var data: Array[Byte] = []
+        for (index, value) in values.iter().enumerate() {
+            let (code, bytes) = mysqlParameter(value)?
+            types.push(Byte(UInt8.wrapping(code)))
+            types.push(Byte(0u8))
+            match bytes {
+                some(found) => data.extend(found)
+                none => nulls[index / 8] = Byte(
+                    UInt8.wrapping(Int(nulls[index / 8]) | (1 << (index % 8))),
+                )
+            }
+        }
+        body.extend(nulls)
+        body.push(Byte(1u8))
+        body.extend(types)
+        body.extend(data)
+    }
+    self.command(23, body)?
+    let (first, outcome) = self.result(some(statement.operation))?
+    var more = first
+    // The results after the first, as a procedure gives, are read and left.
+    for more {
+        let (after, _) = self.result(none)?
+        more = after
+    }
+    outcome
+}
+
+/// Reads a result: an OK, an error, or columns and rows, in binary when it
+/// answers a prepared statement, `binary` being what it does then. Gives
+/// whether more results follow.
+fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
+    let first = self.packet()?
+    match Int(first.get(0).unwrapOr(Byte(255u8))) {
+        0 => {
+            var at = 1
+            let affected = lengthEncodedAt(first, var at)
+            let lastId = lengthEncodedAt(first, var at)
+            let status = unsigned(first, at, 2)
+            let reads = binary == some(Operation.Query)
+            return (
+                status & MysqlMoreResults != 0,
+                Outcome {
+                    columns: []
+                    rows: []
+                    affected: if reads { 0 } else { affected }
+                    lastId: if reads or lastId == 0 { none } else { some(lastId) }
+                },
+            )
+        }
+        255 => fail mysqlError(first, connecting: false)
+        _ => {}
+    }
+    var at = 0
+    let count = lengthEncodedAt(first, var at)
+    var fields: Array[Field] = []
+    for _ in 0..count {
+        fields.push(fieldOf(self.packet()?))
+    }
+    if not self.okEnds {
+        _ = self.packet()?
+    }
+    var rows: Array[Array[Value]] = []
+    for {
+        let packet = self.packet()?
+        if packet.get(0) == some(Byte(254u8)) and packet.length() < 0xffffff {
+            // The end: an OK, or an EOF with the warnings before the status.
+            var end = 1
+            if self.okEnds {
+                _ = lengthEncodedAt(packet, var end)
+                _ = lengthEncodedAt(packet, var end)
+            } else {
+                end += 2
+            }
+            let status = unsigned(packet, end, 2)
+            return (
+                status & MysqlMoreResults != 0,
+                Outcome {
+                    columns: fields.map((field) { field.name })
+                    rows
+                    affected: 0
+                    lastId: none
+                },
+            )
+        }
+        if packet.get(0) == some(Byte(255u8)) {
+            fail mysqlError(packet, connecting: false)
+        }
+        if binary.isSome() {
+            rows.push(binaryRow(packet, fields))
+        }
+    }
+}
+
+/// A column definition: its name and, after the lengths of its fixed
+/// fields, its character set, length, type and flags.
+fn fieldOf(packet: Array[Byte]): Field {
+    var at = 0
+    for _ in 0..4 {
+        let length = lengthEncodedAt(packet, var at)
+        at += length
+    }
+    let nameLength = lengthEncodedAt(packet, var at)
+    let name = String.fromBytes(packet.slice(at, at + nameLength).unwrapOr([])).unwrapOr("")
+    at += nameLength
+    let original = lengthEncodedAt(packet, var at)
+    at += original
+    _ = lengthEncodedAt(packet, var at)
+    Field {
+        name
+        charset: unsigned(packet, at, 2)
+        kind: Int(packet.get(at + 6).unwrapOr(Byte(0u8)))
+        flags: unsigned(packet, at + 7, 2)
+    }
+}
+
+/// A row of the binary protocol: a header, a bitmap of nulls from its third
+/// bit, and the values that are not null.
+fn binaryRow(packet: Array[Byte], fields: Array[Field]): Array[Value] {
+    var at = 1 + (fields.length() + 9) / 8
+    var row: Array[Value] = []
+    for (index, field) in fields.iter().enumerate() {
+        let bit = index + 2
+        if Int(packet[1 + bit / 8]) & (1 << (bit % 8)) != 0 {
+            row.push(Value.Null)
+        } else {
+            row.push(mysqlValue(field, packet, var at))
+        }
+    }
+    row
+}
+
+/// A value of the binary protocol, by its column's type.
+fn mysqlValue(field: Field, packet: Array[Byte], at: var Int): Value {
+    let unsignedColumn = field.flags & 0x20 != 0
+    match field.kind {
+        1 => Value.Int(integerAt(packet, var at, 1, unsignedColumn))
+        2 => Value.Int(integerAt(packet, var at, 2, unsignedColumn))
+        13 => Value.Int(integerAt(packet, var at, 2, unsignedColumn))
+        3 => Value.Int(integerAt(packet, var at, 4, unsignedColumn))
+        9 => Value.Int(integerAt(packet, var at, 4, unsignedColumn))
+        8 => {
+            let value = unsigned(packet, at, 8)
+            at += 8
+            if unsignedColumn and value < 0 {
+                Value.Number("{UInt.wrapping(value)}")
+            } else {
+                Value.Int(value)
+            }
+        }
+        4 => {
+            let narrow: Float = Float32.fromBits(UInt32.wrapping(unsigned(packet, at, 4)))
+            at += 4
+            Value.Float(narrow)
+        }
+        5 => {
+            let value = Float.fromBits(UInt.wrapping(unsigned(packet, at, 8)))
+            at += 8
+            Value.Float(value)
+        }
+        kind if kind == 7 or kind == 12 or kind == 10 => {
+            let length = Int(packet[at])
+            let start = at + 1
+            let part = (offset: Int, size: Int): Int { unsigned(packet, start + offset, size) }
+            let (year, month, day) = (part(0, 2), part(2, 1), part(3, 1))
+            let (hour, minute, second) = if length >= 7 {
+                (part(4, 1), part(5, 1), part(6, 1))
+            } else {
+                (0, 0, 0)
+            }
+            let micros = if length >= 11 { part(7, 4) } else { 0 }
+            at += 1 + length
+            if kind == 10 {
+                Value.Text("{year:04}-{month:02}-{day:02}")
+            } else if length == 0 {
+                Value.Text("0000-00-00 00:00:00")
+            } else {
+                Value.DateTime(
+                    __time.DateTime {
+                        year
+                        month
+                        day
+                        hour
+                        minute
+                        second
+                        nanosecond: micros * 1000
+                    },
+                )
+            }
+        }
+        11 => {
+            let length = Int(packet[at])
+            let start = at + 1
+            let part = (offset: Int, size: Int): Int { unsigned(packet, start + offset, size) }
+            let sign = if length > 0 and part(0, 1) == 1 { "-" } else { "" }
+            let hours = if length > 0 { part(1, 4) * 24 + part(5, 1) } else { 0 }
+            let (minutes, seconds) = if length > 0 { (part(6, 1), part(7, 1)) } else { (0, 0) }
+            let fraction = if length > 8 { ".{part(8, 4):06}" } else { "" }
+            at += 1 + length
+            Value.Text("{sign}{hours:02}:{minutes:02}:{seconds:02}{fraction}")
+        }
+        _ => {
+            let length = lengthEncodedAt(packet, var at)
+            let bytes = packet.slice(at, at + length).unwrapOr([])
+            at += length
+            match field.kind {
+                0 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+                246 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+                16 => Value.Bytes(bytes)
+                _ if field.charset == 63 and field.kind != 245 => Value.Bytes(bytes)
+                _ => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+            }
+        }
+    }
+}
+
+/// The integer of `size` bytes at `at`, which moves past it.
+fn integerAt(packet: Array[Byte], at: var Int, size: Int, unsignedColumn: Bool): Int {
+    let value = if unsignedColumn {
+        unsigned(packet, at, size)
+    } else {
+        signedLittle(packet, at, size)
+    }
+    at += size
+    value
+}
+
+/// A parameter of the binary protocol: its type and its value, `none` for a
+/// null.
+fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
+    match value {
+        Value.Null => (6, none)
+        Value.Bool(flag) => (1, some([Byte(if flag { 1u8 } else { 0u8 })]))
+        Value.Int(number) => (8, some(littleEndianBytes(number, 8)))
+        Value.Float(number) => (5, some(littleEndianBytes(Int.wrapping(number.bits()), 8)))
+        Value.Number(digits) => (246, some(lengthEncodedBytes(digits.bytes())))
+        Value.Text(text) => (254, some(lengthEncodedBytes(text.bytes())))
+        Value.Bytes(bytes) => (252, some(lengthEncodedBytes(bytes)))
+        Value.DateTime(moment) => {
+            var out = [Byte(11u8)]
+            out.extend(littleEndianBytes(moment.year, 2))
+            for part in [moment.month, moment.day, moment.hour, moment.minute, moment.second] {
+                out.push(Byte(UInt8.wrapping(part)))
+            }
+            out.extend(littleEndianBytes(moment.nanosecond / 1000, 4))
+            (12, some(out))
+        }
+        Value.List(_) => fail SqlError.of(
+            ErrorKind.Other,
+            "MySQL has no arrays: interpolate the array itself, as `IN {{ids}}`, for the list of its values",
+        )
+    }
+}
+
+/// An ERR packet as a `SqlError`, by its number, with the constraint or
+/// column its message names.
+fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
+    let number = unsigned(packet, 1, 2)
+    let start = if packet.get(3) == some(Byte(UInt8.wrapping('#'.code()))) { 9 } else { 3 }
+    let said = String.fromBytes(packet.slice(start, packet.length()).unwrapOr([])).unwrapOr("")
+    let quoted = (after: String, close: String): String? {
+        match said.splitOnce(after) {
+            some((_, rest)) => rest.splitOnce(close).map((found) { found.0 })
+            none => none
+        }
+    }
+    let (kind, constraint) = match number {
+        1062 => (ErrorKind.Unique, quoted("for key '", "'"))
+        1451 => (ErrorKind.ForeignKey, quoted("CONSTRAINT `", "`"))
+        1452 => (ErrorKind.ForeignKey, quoted("CONSTRAINT `", "`"))
+        1048 => (ErrorKind.NotNull, quoted("Column '", "'"))
+        1364 => (ErrorKind.NotNull, quoted("Field '", "'"))
+        3819 => (ErrorKind.Check, quoted("constraint '", "'"))
+        1205 => (ErrorKind.Conflict, none)
+        1213 => (ErrorKind.Conflict, none)
+        1064 => (ErrorKind.Syntax, none)
+        1146 => (ErrorKind.Syntax, none)
+        1054 => (ErrorKind.Syntax, none)
+        1317 => (ErrorKind.Timeout, none)
+        3024 => (ErrorKind.Timeout, none)
+        _ if connecting or number == 1045 or number == 1049 or number == 2006 or number == 2013 => (
+            ErrorKind.Connection,
+            none,
+        )
+        _ => (ErrorKind.Other, none)
+    }
+    SqlError { kind, message: said, code: some("{number}"), constraint }
+}
+
+/// An integer of the protocol, in one byte below 251 or after a byte that
+/// says its size; `at` moves past it.
+fn lengthEncodedAt(bytes: Array[Byte], at: var Int): Int {
+    let first = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    at += 1
+    let size = match first {
+        252 => 2
+        253 => 3
+        254 => 8
+        _ => 0
+    }
+    if size == 0 {
+        return if first == 251 { 0 } else { first }
+    }
+    let value = unsigned(bytes, at, size)
+    at += size
+    value
+}
+
+fn lengthEncoded(value: Int): Array[Byte] {
+    if value < 251 {
+        [Byte(UInt8.wrapping(value))]
+    } else if value < 0x10000 {
+        [Byte(252u8)].concat(littleEndianBytes(value, 2))
+    } else if value < 0x1000000 {
+        [Byte(253u8)].concat(littleEndianBytes(value, 3))
+    } else {
+        [Byte(254u8)].concat(littleEndianBytes(value, 8))
+    }
+}
+
+fn lengthEncodedBytes(bytes: Array[Byte]): Array[Byte] {
+    lengthEncoded(bytes.length()).concat(bytes)
+}
+
+/// `value` in `count` bytes, the least significant first.
+fn littleEndianBytes(value: Int, count: Int): Array[Byte] {
+    littleEndian(value).slice(0, count).unwrapOr([])
+}
+
+/// The integer of `count` bytes at `at`, the least significant first, with
+/// its sign.
+fn signedLittle(bytes: Array[Byte], at: Int, count: Int): Int {
+    let spread = 64 - count * 8
+    (unsigned(bytes, at, count) << spread) >> spread
+}
+
+/// The bytes sealed with RSA-OAEP and SHA-1 for the public key of a PEM, as
+/// MySQL takes a password without TLS.
+fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
+    let body = pem.lines().filter((line) { not line.startsWith("-----") }).join("")
+    let der = __encoding.base64Decode(body).unwrapOr([])
+    // SubjectPublicKeyInfo: a sequence of the algorithm and a bit string
+    // that holds the sequence of the modulus and the exponent.
+    var at = 0
+    let unreadable = lost("the server's public key does not read")
+    if derEntered(der, var at, 0x30) < 0 {
+        fail unreadable
+    }
+    let algorithm = derEntered(der, var at, 0x30)
+    if algorithm < 0 {
+        fail unreadable
+    }
+    at += algorithm
+    if derEntered(der, var at, 0x03) < 0 {
+        fail unreadable
+    }
+    at += 1
+    if derEntered(der, var at, 0x30) < 0 {
+        fail unreadable
+    }
+    let modulusLength = derEntered(der, var at, 0x02)
+    let modulusBytes = der.slice(at, at + modulusLength).unwrapOr([])
+    at += modulusLength
+    let exponentLength = derEntered(der, var at, 0x02)
+    let exponentBytes = der.slice(at, at + exponentLength).unwrapOr([])
+    let (modulus, exponent) = match (bigIntOf(modulusBytes), bigIntOf(exponentBytes)) {
+        (some(n), some(e)) => (n, e)
+        _ => fail unreadable
+    }
+    // The modulus without the zero that keeps it positive.
+    var size = modulusBytes.length()
+    if modulusBytes.get(0) == some(Byte(0u8)) {
+        size -= 1
+    }
+    let hashLength = 20
+    if message.length() > size - 2 * hashLength - 2 {
+        fail lost("the password is too long for the server's key")
+    }
+    // EME-OAEP: the hash of the empty label, zeros, 1 and the message,
+    // masked with a seed that is masked in turn.
+    var block = __hash.sha1([]).bytes()
+    block.extend([Byte(0u8)].repeat(size - message.length() - 2 * hashLength - 2))
+    block.push(Byte(1u8))
+    block.extend(message)
+    let seed = __random.entropy(hashLength)
+    let maskedBlock = xored(block, generatedMask(seed, block.length()))
+    let maskedSeed = xored(seed, generatedMask(maskedBlock, hashLength))
+    let encoded = [Byte(0u8)].concat(maskedSeed).concat(maskedBlock)
+    let number = bigIntOf(encoded).unwrapOr(modulus)
+    var hex = number.modPow(exponent, modulus).toString(radix: 16)
+    hex = "{"0".repeat(size * 2 - hex.length())}{hex}"
+    __encoding.hexDecode(hex).unwrapOr([])
+}
+
+/// The unsigned number of big-endian bytes.
+fn bigIntOf(bytes: Array[Byte]): __math.BigInt? {
+    match __math.BigInt.parse("0{__encoding.hexEncode(bytes)}", radix: 16) {
+        ok(number) => some(number)
+        err(_) => none
+    }
+}
+
+/// MGF1 with SHA-1: the hashes of the seed and a counter, to `length`.
+fn generatedMask(seed: Array[Byte], length: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var counter = 0
+    for out.length() < length {
+        out.extend(__hash.sha1(seed.concat(bigEndianBytes(counter, 4))).bytes())
+        counter += 1
+    }
+    out.slice(0, length).unwrapOr([])
+}
+
+/// Enters a DER value of `tag` at `at`: moves past its tag and length and
+/// gives the length, or -1 for another tag.
+fn derEntered(der: Array[Byte], at: var Int, tag: Int): Int {
+    if der.get(at) != some(Byte(UInt8.wrapping(tag))) {
+        return -1
+    }
+    let first = Int(der.get(at + 1).unwrapOr(Byte(0u8)))
+    at += 2
+    if first < 128 {
+        return first
+    }
+    let count = first - 128
+    let length = bigEndian(der, at, count) & 0xffffffff
+    at += count
+    length
+}

@@ -1,0 +1,573 @@
+// std.sql (standard library 14.37): databases through one API, whose
+// queries are literals with their values as parameters, so they cannot be
+// injected; rows read into the program's types; transactions, migrations,
+// a pool of connections, and `use` around each statement, as `App.use`
+// and `Client.use` do, for traces and metrics. The drivers of SQLite,
+// PostgreSQL and MySQL are std's; a package gives another.
+//
+// ```tondo
+// import std.console
+// import std.sql
+//
+// type User = { id: Int, name: String }
+//
+// let db = sql.open("sqlite::memory:")?
+// _ = db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?
+// let name = "Ada"
+// _ = db.execute("INSERT INTO users (name) VALUES ({name})")?
+// for user in db.query[User]("SELECT id, name FROM users")? {
+//     console.println("{user.id} {user.name}")
+// }
+// ```
+
+import std.reflect as __reflect
+import std.serialization as __serialization
+import std.sync as __sync
+import std.time as __time
+
+/// What kind of failure a database met.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE users (email TEXT PRIMARY KEY, name TEXT NOT NULL)")?
+/// for email in ["ada@example.com", "ada@example.com"] {
+///     match db.execute("INSERT INTO users (email, name) VALUES ({email}, {"Ada"})") {
+///         ok(_) => console.println("added {email}")
+///         err(error) if error.kind == sql.ErrorKind.Unique => console.println("{email} is taken")
+///         err(error) => console.println("{error}")
+///     }
+/// }
+/// ```
+pub enum ErrorKind {
+    /// It could not connect, or lost the connection.
+    Connection
+    /// `queryOne` found no row, for a type that is not optional.
+    NoRows
+    /// A unique key would repeat.
+    Unique
+    /// A foreign key names a row that does not exist, or is still named.
+    ForeignKey
+    /// A column that cannot be null would be.
+    NotNull
+    /// A check constraint would not hold.
+    Check
+    /// The transaction met another and has to be tried again.
+    Conflict
+    /// The SQL does not read.
+    Syntax
+    /// The statement took longer than allowed.
+    Timeout
+    /// A row could not be read into the type.
+    Decode
+    /// Anything else the database says.
+    Other
+}
+
+/// The kind's name, as `Unique`.
+impl Display for ErrorKind {
+    fn display(self): String {
+        match self {
+            ErrorKind.Connection => "Connection"
+            ErrorKind.NoRows => "NoRows"
+            ErrorKind.Unique => "Unique"
+            ErrorKind.ForeignKey => "ForeignKey"
+            ErrorKind.NotNull => "NotNull"
+            ErrorKind.Check => "Check"
+            ErrorKind.Conflict => "Conflict"
+            ErrorKind.Syntax => "Syntax"
+            ErrorKind.Timeout => "Timeout"
+            ErrorKind.Decode => "Decode"
+            ErrorKind.Other => "Other"
+        }
+    }
+}
+
+/// A failure of a database: its kind, its message, the database's code
+/// (PostgreSQL's SQLSTATE, MySQL's number, SQLite's extended code) and the
+/// constraint or column it names.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, price INTEGER CHECK (price > 0))")?
+/// match db.execute("INSERT INTO items (price) VALUES ({-5})") {
+///     ok(_) => console.println("added")
+///     err(error) => console.println("{error.kind}: {error.message} (code {error.code}, constraint {error.constraint})")
+/// }
+/// ```
+pub type SqlError = {
+    kind: ErrorKind
+    message: String
+    code: String?
+    constraint: String?
+}
+
+impl Display for SqlError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for SqlError {
+    fn reflectShow(self, _inner: Bool): String {
+        self.message
+    }
+}
+
+/// An error of a kind and message.
+pub fn SqlError.of(kind: ErrorKind, message: String): SqlError {
+    SqlError { kind, message, code: none, constraint: none }
+}
+
+/// A value of a database: a parameter or a column of a row.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // The parameters of each statement, as the driver receives them.
+/// db.use((statement, next) {
+///     let shown = statement.parameters.map((parameter) {
+///         match parameter {
+///             sql.Value.Null => "NULL"
+///             sql.Value.Int(number) => "int {number}"
+///             sql.Value.Text(text) => "text {text}"
+///             _ => "other"
+///         }
+///     })
+///     console.println("{shown}")
+///     let outcome = next(statement)
+///     outcome?
+/// })
+/// let name: String? = none
+/// _ = db.queryOne[Int]("SELECT {42} + length({"tea"}) + coalesce({name}, 0)")?
+/// ```
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    /// An exact number, as its digits: a `math.Decimal`, a `NUMERIC`.
+    Number(String)
+    Text(String)
+    Bytes(Array[Byte])
+    DateTime(__time.DateTime)
+    /// An array as one parameter, which `sql.array` makes.
+    List(Array[Value])
+}
+
+impl Display for Value {
+    fn display(self): String {
+        match self {
+            Value.Null => "null"
+            Value.Bool(value) => "{value}"
+            Value.Int(value) => "{value}"
+            Value.Float(value) => "{value}"
+            Value.Number(digits) => digits
+            Value.Text(text) => text
+            Value.Bytes(bytes) => "{bytes.length()} bytes"
+            Value.DateTime(moment) => "{moment}"
+            Value.List(values) => "[{values.map((value) { "{value}" }).join(", ")}]"
+        }
+    }
+}
+
+/// A statement of SQL, written as a string literal where one is expected:
+/// each `{value}` it interpolates is a parameter, never text, so it cannot
+/// be injected; a `{query}` is spliced in, and an `{array}` is the list
+/// `($1, $2, …)` of its elements, for `IN`.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// pub type User = { id: Int, name: String }
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?
+/// for name in ["Ada", "Bo", "Cy"] {
+///     _ = db.execute("INSERT INTO users (name) VALUES ({name})")?
+/// }
+/// // Pieces made apart and joined, each `{value}` still a parameter.
+/// let table = sql.identifier("users")
+/// var conditions: Array[sql.Query] = ["id > {0}"]
+/// conditions.push("name IN {["Ada", "Cy"]}")
+/// let order = sql.raw("ORDER BY name DESC")
+/// for user in db.query[User]("SELECT id, name FROM {table} WHERE {sql.join(conditions, " AND ")} {order}")? {
+///     console.println("{user.id} {user.name}")
+/// }
+/// ```
+pub type Query = {
+    priv pieces: Array[Piece]
+}
+
+enum Piece {
+    Text(String)
+    Name(String)
+    Bound(Value)
+    Listed(Array[Value])
+    Nested(Query)
+}
+
+/// SQL made while the program runs, as it is: it holds no parameters, and
+/// whatever made the text decides what it does. Values go in a literal.
+pub fn raw(text: String): Query {
+    Query { pieces: [Piece.Text(text)] }
+}
+
+/// A name of a table or a column, quoted as the database quotes names, for
+/// one chosen while the program runs: `"SELECT * FROM {sql.identifier(table)}"`.
+pub fn identifier(name: String): Query {
+    Query { pieces: [Piece.Name(name)] }
+}
+
+/// The queries one after another with `separator` between them:
+/// `sql.join(conditions, " AND ")`.
+pub fn join(parts: Array[Query], separator: String = ", "): Query {
+    var pieces: Array[Piece] = []
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            pieces.push(Piece.Text(separator))
+        }
+        pieces.push(Piece.Nested(part))
+    }
+    Query { pieces }
+}
+
+/// The array as one parameter, for a database with arrays:
+/// `"WHERE id = ANY({sql.array(ids)})"` in PostgreSQL.
+pub fn array[T: __serialization.Encode](values: Array[T]): Query {
+    let listed = match bound(values) {
+        Piece.Listed(found) => found
+        Piece.Bound(found) => [found]
+        _ => []
+    }
+    Query { pieces: [Piece.Bound(Value.List(listed))] }
+}
+
+/// The pieces of a literal, which the compiler writes.
+fn made(pieces: Array[Piece]): Query {
+    Query { pieces }
+}
+
+fn literalText(written: String): Piece {
+    Piece.Text(written)
+}
+
+fn nested(query: Query): Piece {
+    Piece.Nested(query)
+}
+
+/// A value interpolated in a literal: a parameter, or the list of an
+/// array's.
+fn bound[T: __serialization.Encode](value: T): Piece {
+    let sink = Capture { values: __sync.Mutex([]), listed: __sync.Mutex(false) }
+    value.encode(sink)
+    let values = sink.values.get()
+    if sink.listed.get() {
+        Piece.Listed(values)
+    } else {
+        Piece.Bound(values.get(0).unwrapOr(Value.Null))
+    }
+}
+
+/// Bytes interpolated in a literal: one parameter, not a list of numbers.
+fn boundBytes(bytes: Array[Byte]): Piece {
+    Piece.Bound(Value.Bytes(bytes))
+}
+
+fn boundOptionalBytes(bytes: Array[Byte]?): Piece {
+    match bytes {
+        some(found) => Piece.Bound(Value.Bytes(found))
+        none => Piece.Bound(Value.Null)
+    }
+}
+
+/// The values a value encodes to: one scalar, or a list's.
+type Capture = {
+    values: __sync.Mutex[Array[Value]]
+    listed: __sync.Mutex[Bool]
+}
+
+fn Capture.put(self, value: Value) {
+    self.values.update((values) { values.push(value) })
+}
+
+impl __serialization.Sink for Capture {
+    fn null(self) {
+        self.put(Value.Null)
+    }
+
+    fn bool(self, value: Bool) {
+        self.put(Value.Bool(value))
+    }
+
+    fn int(self, value: Int) {
+        self.put(Value.Int(value))
+    }
+
+    fn float(self, value: Float) {
+        self.put(Value.Float(value))
+    }
+
+    fn number(self, digits: String) {
+        self.put(Value.Number(digits))
+    }
+
+    fn text(self, value: String) {
+        self.put(Value.Text(value))
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        self.put(Value.Bytes(value))
+    }
+
+    fn dateTime(self, text: String) {
+        match __time.parseDateTime(text) {
+            ok(moment) => self.put(Value.DateTime(moment))
+            err(_) => self.put(Value.Text(text))
+        }
+    }
+
+    fn beginList(self, _count: Int) {
+        self.listed.set(true)
+    }
+
+    fn endList(self) {}
+
+    fn beginMap(self, _count: Int) {
+        panic(
+            "a record or a map is not a parameter of SQL: interpolate its fields, or its JSON as text",
+        )
+    }
+
+    fn key(self, _name: String) {}
+
+    fn endMap(self) {}
+}
+
+/// The text of a query with the placeholders and the quoted names a driver
+/// writes, and its parameters in order.
+fn rendered(query: Query, driver: Driver): (String, Array[Value]) {
+    var out = ""
+    var parameters: Array[Value] = []
+    write(query, driver, var out, var parameters)
+    (out, parameters)
+}
+
+fn write(query: Query, driver: Driver, out: var String, parameters: var Array[Value]) {
+    let placeholder = driver.placeholder
+    for piece in query.pieces {
+        match piece {
+            Piece.Text(text) => out = "{out}{text}"
+            Piece.Name(name) => out = "{out}{(driver.identifier)(name)}"
+            Piece.Bound(value) => {
+                parameters.push(value)
+                out = "{out}{placeholder(parameters.length())}"
+            }
+            Piece.Listed(values) => {
+                if values.isEmpty() {
+                    out = "{out}(NULL)"
+                } else {
+                    var marks: Array[String] = []
+                    for value in values {
+                        parameters.push(value)
+                        marks.push(placeholder(parameters.length()))
+                    }
+                    out = "{out}({marks.join(", ")})"
+                }
+            }
+            Piece.Nested(inner) => write(inner, driver, var out, var parameters)
+        }
+    }
+}
+
+/// What a statement does: reads, writes, or begins, commits or rolls back a
+/// transaction.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// db.use((statement, next) {
+///     let what = match statement.operation {
+///         sql.Operation.Query => "query"
+///         sql.Operation.Execute => "execute"
+///         sql.Operation.Begin => "begin"
+///         sql.Operation.Commit => "commit"
+///         sql.Operation.Rollback => "rollback"
+///     }
+///     console.println(what)
+///     let outcome = next(statement)
+///     outcome?
+/// })
+/// db.transaction((tx): Unit ! sql.SqlError {
+///     _ = tx.execute("CREATE TABLE notes (text TEXT)")?
+///     _ = tx.query[String]("SELECT text FROM notes")?
+/// })?
+/// ```
+pub enum Operation {
+    Query
+    Execute
+    Begin
+    Commit
+    Rollback
+}
+
+impl Display for Operation {
+    fn display(self): String {
+        match self {
+            Operation.Query => "query"
+            Operation.Execute => "execute"
+            Operation.Begin => "begin"
+            Operation.Commit => "commit"
+            Operation.Rollback => "rollback"
+        }
+    }
+}
+
+/// A statement as the driver runs it, which `use` sees and may change, as
+/// to add a comment with the trace's context: its text with the driver's
+/// placeholders, its parameters, what it does, and the database's system as
+/// OpenTelemetry names it (`postgresql`, `mysql`, `sqlite`), name and host.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+/// import std.time
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // Each statement, timed, with where it went.
+/// db.use((statement, next) {
+///     let started = time.now()
+///     let outcome = next(statement)
+///     console.println("{statement.system} {statement.database}: {statement.text} {statement.parameters.length()} parameters in {started.elapsed()}")
+///     outcome?
+/// })
+/// _ = db.queryOne[Int]("SELECT {1} + {2}")?
+/// ```
+pub type Statement = {
+    text: String
+    parameters: Array[Value]
+    operation: Operation
+    system: String
+    database: String
+    host: String?
+}
+
+/// What a statement gave: the names of its columns and its rows, or the
+/// rows it changed and the id of the last one it added.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// var db = sql.open("sqlite::memory:")?
+/// // What a statement gave, as a middleware sees it before the rows are read.
+/// db.use((statement, next) {
+///     let outcome = next(statement)?
+///     console.println("{outcome.columns} {outcome.rows.length()} rows, {outcome.affected} changed")
+///     outcome
+/// })
+/// _ = db.query[Int]("SELECT 1 AS one UNION SELECT 2")?
+/// ```
+pub type Outcome = {
+    columns: Array[String]
+    rows: Array[Array[Value]]
+    affected: Int
+    lastId: Int?
+}
+
+/// What `execute` did: how many rows it changed, and the id of the last one
+/// it added, where the database tells it.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// let db = sql.open("sqlite::memory:")?
+/// _ = db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, done INTEGER DEFAULT 0)")?
+/// let added = db.execute("INSERT INTO tasks (done) VALUES ({0}), ({0})")?
+/// console.println("{added.affected} added, last id {added.lastId}")
+/// let finished = db.execute("UPDATE tasks SET done = 1 WHERE id = {1}")?
+/// console.println("{finished.affected} finished")
+/// ```
+pub type Done = {
+    affected: Int
+    lastId: Int?
+}
+
+/// A connection a driver opened: what runs a statement on it, and what ends
+/// it.
+///
+/// ```tondo
+/// import std.console
+/// import std.sql
+///
+/// /// A connection that answers every statement with its own text, as a
+/// /// test double of a database does.
+/// fn echoing(_: String): sql.Connection ! sql.SqlError {
+///     sql.Connection {
+///         run: (statement) {
+///             sql.Outcome { columns: ["text"], rows: [[sql.Value.Text(statement.text)]], affected: 0, lastId: none }
+///         }
+///         close: () {}
+///     }
+/// }
+///
+/// let driver = sql.Driver {
+///     system: "echo"
+///     placeholder: (index) { "${index}" }
+///     identifier: (name) { "\"{name}\"" }
+///     connect: echoing
+///     place: (_) { ("echo", none) }
+/// }
+/// let db = sql.open("echo:", driver: some(driver))?
+/// console.println(db.queryOne[String]("SELECT * FROM {sql.identifier("users")} WHERE id = {7}")?)
+/// ```
+pub type Connection = {
+    run: fn(Statement): Outcome ! SqlError
+    close: fn()
+}
+
+/// What speaks to a kind of database, as a package gives one for another:
+/// `sql.open(url, driver: oracle.driver())`. `connect` opens a connection
+/// to a URL; `placeholder` writes the parameter at a position from 1, as
+/// `$1` or `?`; `identifier` quotes a name; `system` names the database for
+/// `use`.
+///
+/// ```tondo
+/// import std.sql
+///
+/// /// A driver for another database, as a package gives one: how it writes
+/// /// parameters and names, how it connects, and where a URL points.
+/// fn oracle(): sql.Driver {
+///     sql.Driver {
+///         system: "oracle"
+///         placeholder: (index) { ":{index}" }
+///         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+///         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
+///         place: (url) { (url.split("/").last().unwrapOr(""), none) }
+///     }
+/// }
+///
+/// let db = sql.open("oracle://scott@db.example.com/orders", driver: some(oracle()))?
+/// db.close()
+/// ```
+pub type Driver = {
+    system: String
+    placeholder: fn(Int): String
+    identifier: fn(String): String
+    connect: fn(String): Connection ! SqlError
+    /// The database's name and host in a URL, for `Statement`.
+    place: fn(String): (String, String?)
+}

@@ -1,0 +1,170 @@
+// The SQLite driver, on the C library the runtime carries.
+
+import std.internal.sql as sqlNative
+
+/// SQLite, which the runtime holds: `sqlite:app.db`, `sqlite::memory:`.
+fn sqlite(): Driver {
+    Driver {
+        system: "sqlite"
+        placeholder: (_) { "?" }
+        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        connect: (url): Connection ! SqlError { connectSqlite(url)? }
+        place: (url) { (url.removePrefix("sqlite:"), none) }
+    }
+}
+
+fn connectSqlite(url: String): Connection ! SqlError {
+    let path = url.removePrefix("sqlite:").removePrefix("//")
+    let opened = sqlNative.open(path)
+    let why = sqlNative.failure(opened)
+    if not why.isEmpty() {
+        fail SqlError.of(ErrorKind.Connection, "the SQLite database `{path}`: {why}")
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { runSqlite(opened, statement)? }
+        close: () {}
+    }
+}
+
+fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError {
+    var encoded: Array[Byte] = []
+    for value in statement.parameters {
+        encoded.extend(encodedValue(value)?)
+    }
+    // Without parameters, a statement that writes may be several.
+    let batch = statement.parameters.isEmpty() and statement.operation != Operation.Query
+    let reply = sqlNative.run(opened, statement.text, encoded, batch)
+    var at = 1
+    if reply.get(0) != some(Byte(0u8)) {
+        let kind = kindOf(Int(reply.get(1).unwrapOr(Byte(10u8))))
+        at = 2
+        let message = readValue(reply, var at)
+        let code = readValue(reply, var at)
+        let constraint = readValue(reply, var at)
+        let text = (value: Value): String { if value == Value.Null { "" } else { "{value}" } }
+        fail SqlError {
+            kind
+            message: text(message)
+            code: if text(code).isEmpty() { none } else { some(text(code)) }
+            constraint: if text(constraint).isEmpty() { none } else { some(text(constraint)) }
+        }
+    }
+    let affected = unsigned(reply, at, 8)
+    let lastId = unsigned(reply, at + 8, 8)
+    at += 16
+    let count = unsigned(reply, at, 4)
+    at += 4
+    var columns: Array[String] = []
+    for _ in 0..count {
+        columns.push("{readValue(reply, var at)}")
+    }
+    let rowCount = unsigned(reply, at, 4)
+    at += 4
+    var rows: Array[Array[Value]] = []
+    for _ in 0..rowCount {
+        var row: Array[Value] = []
+        for _ in 0..count {
+            row.push(readValue(reply, var at))
+        }
+        rows.push(row)
+    }
+    let query = statement.operation == Operation.Query
+    Outcome {
+        columns
+        rows
+        affected: if query { 0 } else { affected }
+        lastId: if query or lastId == 0 { none } else { some(lastId) }
+    }
+}
+
+/// A parameter as SQLite's bytes: its tag and its value.
+fn encodedValue(value: Value): Array[Byte] ! SqlError {
+    match value {
+        Value.Null => [Byte(0u8)]
+        Value.Bool(flag) => [Byte(1u8)].concat(littleEndian(if flag { 1 } else { 0 }))
+        Value.Int(number) => [Byte(1u8)].concat(littleEndian(number))
+        Value.Float(number) => [Byte(2u8)].concat(littleEndian(Int.wrapping(number.bits())))
+        Value.Number(digits) => sized(3, digits.bytes())
+        Value.Text(text) => sized(3, text.bytes())
+        Value.Bytes(bytes) => sized(4, bytes)
+        Value.DateTime(moment) => sized(3, "{moment}".bytes())
+        Value.List(_) => fail SqlError.of(
+            ErrorKind.Other,
+            "SQLite has no arrays: interpolate the array, for `IN ({{ids}})`",
+        )
+    }
+}
+
+fn sized(tag: Int, bytes: Array[Byte]): Array[Byte] {
+    var length = bytes.length()
+    var head = [Byte(UInt8.wrapping(tag))]
+    for _ in 0..4 {
+        head.push(Byte(UInt8.wrapping(length & 0xff)))
+        length = length / 256
+    }
+    head.concat(bytes)
+}
+
+fn littleEndian(value: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var rest = UInt.wrapping(value)
+    for _ in 0..8 {
+        out.push(Byte(UInt8.wrapping(rest & 0xff)))
+        rest = rest >> 8
+    }
+    out
+}
+
+/// The unsigned little-endian number of `count` bytes at `at`, as an `Int`.
+fn unsigned(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value: UInt = 0
+    var index = count - 1
+    for index >= 0 {
+        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        index -= 1
+    }
+    Int.wrapping(value)
+}
+
+/// The value encoded at `at`, which moves past it.
+fn readValue(bytes: Array[Byte], at: var Int): Value {
+    let tag = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    at += 1
+    match tag {
+        1 => {
+            at += 8
+            Value.Int(unsigned(bytes, at - 8, 8))
+        }
+        2 => {
+            at += 8
+            Value.Float(Float.fromBits(UInt.wrapping(unsigned(bytes, at - 8, 8))))
+        }
+        kind if kind == 3 or kind == 4 => {
+            let length = unsigned(bytes, at, 4)
+            let body = bytes.slice(at + 4, at + 4 + length).unwrapOr([])
+            at += 4 + length
+            if tag == 3 {
+                Value.Text(String.fromBytes(body).unwrapOr(""))
+            } else {
+                Value.Bytes(body)
+            }
+        }
+        _ => Value.Null
+    }
+}
+
+fn kindOf(code: Int): ErrorKind {
+    match code {
+        0 => ErrorKind.Connection
+        1 => ErrorKind.NoRows
+        2 => ErrorKind.Unique
+        3 => ErrorKind.ForeignKey
+        4 => ErrorKind.NotNull
+        5 => ErrorKind.Check
+        6 => ErrorKind.Conflict
+        7 => ErrorKind.Syntax
+        8 => ErrorKind.Timeout
+        9 => ErrorKind.Decode
+        _ => ErrorKind.Other
+    }
+}

@@ -1,0 +1,652 @@
+// The PostgreSQL driver: its protocol, authentication and types.
+
+import std.crypto as __crypto
+import std.encoding as __encoding
+import std.hash as __hash
+import std.random as __random
+import std.sync as __sync
+import std.time as __time
+
+/// PostgreSQL, over its protocol: `postgres://user:secret@host/name`, with
+/// `sslmode` (`disable`, `prefer`, the default, or `require`) and
+/// `sslrootcert`. Its statements are prepared once per connection and kept.
+fn postgres(): Driver {
+    Driver {
+        system: "postgresql"
+        placeholder: (position) { "${position}" }
+        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        connect: (url): Connection ! SqlError { connectPostgres(url)? }
+        place: (url) { placeOf(url) }
+    }
+}
+
+/// A connection to PostgreSQL: its wire, its prepared statements by their
+/// text, and the state of its transaction, from the last `ReadyForQuery`.
+type Postgres = {
+    wire: Wire
+    prepared: __sync.Map[String, Prepared]
+    idle: __sync.Mutex[Bool]
+}
+
+/// A statement the server prepared: its name, the types of its parameters
+/// and its columns.
+type Prepared = {
+    name: String
+    parameters: Array[Int]
+    columns: Array[Column]
+}
+
+type Column = {
+    name: String
+    oid: Int
+}
+
+/// At most this many statements are kept per connection; others are
+/// prepared each time.
+const KeptStatements: Int = 512
+
+fn connectPostgres(url: String): Connection ! SqlError {
+    let settings = settingsOf(url, 5432)?
+    let plain = reached(settings)?
+    var stream = plain
+    if tlsWanted(settings) {
+        // SSLRequest, 1234 5679, which the server answers with `S` or `N`.
+        let asking = Wire.of(plain)
+        asking.send(bigEndianBytes(8, 4).concat(bigEndianBytes(80877103, 4)))?
+        if asking.take(1)? == [Byte(UInt8.wrapping('S'.code()))] {
+            stream = upgraded(plain, settings)?
+        } else if settings.tls == "require" {
+            fail unoffered()
+        }
+    }
+    let session = Postgres {
+        wire: Wire.of(stream)
+        prepared: __sync.Map[String, Prepared]()
+        idle: __sync.Mutex(true)
+    }
+    match session.start(settings) {
+        ok(_) => {}
+        err(error) => {
+            session.wire.close()
+            fail error
+        }
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { session.run(statement)? }
+        close: () {
+            _ = session.wire.send(framed('X', []))
+            session.wire.close()
+        }
+    }
+}
+
+/// A message: its kind, its length and its body.
+fn framed(kind: Char, body: Array[Byte]): Array[Byte] {
+    [Byte(UInt8.wrapping(kind.code()))].concat(bigEndianBytes(body.length() + 4, 4)).concat(body)
+}
+
+fn Postgres.next(self): (Char, Array[Byte]) ! SqlError {
+    let head = self.wire.take(5)?
+    let body = self.wire.take(bigEndian(head, 1, 4) - 4)?
+    (Char.from(Int(head[0])).unwrapOr(' '), body)
+}
+
+/// The startup and the authentication, by password, MD5 or SCRAM-SHA-256.
+fn Postgres.start(self, settings: Settings): !SqlError {
+    var startup = bigEndianBytes(196608, 4)
+    var named = [
+        ("user", settings.user),
+        ("database", settings.database),
+        ("client_encoding", "UTF8"),
+        ("DateStyle", "ISO"),
+    ]
+    match settings.options.param("application_name") {
+        some(application) => named.push(("application_name", application))
+        none => {}
+    }
+    for (name, value) in named {
+        if not value.isEmpty() {
+            startup.extend(cstring(name))
+            startup.extend(cstring(value))
+        }
+    }
+    startup.push(Byte(0u8))
+    self.wire.send(bigEndianBytes(startup.length() + 4, 4).concat(startup))?
+    var scram: Scram? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'R' => match bigEndian(body, 0, 4) {
+                0 => {}
+                3 => self.wire.send(framed('p', cstring(settings.password)))?
+                5 => {
+                    let inner = __hash.md5("{settings.password}{settings.user}".bytes()).hex()
+                    let salted = inner.bytes().concat(body.slice(4, 8).unwrapOr([]))
+                    self.wire.send(framed('p', cstring("md5{__hash.md5(salted).hex()}")))?
+                }
+                10 => {
+                    var at = 4
+                    var offered: Array[String] = []
+                    for at < body.length() - 1 {
+                        offered.push(cstringAt(body, var at))
+                    }
+                    if not offered.any((mechanism) { mechanism == "SCRAM-SHA-256" }) {
+                        fail lost(
+                            "the server asks for {offered.join(", ")}: tondo speaks SCRAM-SHA-256",
+                        )
+                    }
+                    let started = Scram.start()
+                    let first = "n,,{started.first}".bytes()
+                    let sent = cstring("SCRAM-SHA-256")
+                        .concat(bigEndianBytes(first.length(), 4))
+                        .concat(first)
+                    self.wire.send(framed('p', sent))?
+                    scram = some(started)
+                }
+                11 => {
+                    let started = match scram {
+                        some(found) => found
+                        none => fail lost(
+                            "the server continued an authentication that did not start",
+                        )
+                    }
+                    let challenge = String
+                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
+                        .unwrapOr("")
+                    let answered = started.answer(challenge, settings.password)?
+                    self.wire.send(framed('p', answered.final.bytes()))?
+                    scram = some(answered)
+                }
+                12 => {
+                    let proof = String
+                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
+                        .unwrapOr("")
+                    match scram {
+                        some(answered) if answered.verifies(proof) => {}
+                        _ => fail lost("the server did not prove that it knows the password")
+                    }
+                }
+                other => fail lost(
+                    "the server asks for an authentication tondo does not speak ({other})",
+                )
+            }
+            'E' => fail postgresError(body, connecting: true)
+            'Z' => return
+            _ => {}
+        }
+    }
+}
+
+/// SCRAM-SHA-256 (RFC 7677) as a client: the message it began with, and
+/// once the server answered, its final message and the signature the server
+/// has to show.
+type Scram = {
+    nonce: String
+    first: String
+    final: String
+    expected: String
+}
+
+fn Scram.start(): Scram {
+    let nonce = __encoding.base64Encode(__random.entropy(18))
+    Scram { nonce, first: "n=,r={nonce}", final: "", expected: "" }
+}
+
+fn Scram.answer(self, challenge: String, password: String): Scram ! SqlError {
+    var nonce = ""
+    var salt: Array[Byte] = []
+    var iterations = 0
+    for part in challenge.split(",") {
+        match part.splitOnce("=") {
+            some(("r", value)) => nonce = value
+            some(("s", value)) => salt = __encoding.base64Decode(value).unwrapOr([])
+            some(("i", value)) => iterations = Int.parse(value).unwrapOr(0)
+            _ => {}
+        }
+    }
+    if not nonce.startsWith(self.nonce) or salt.isEmpty() or iterations < 1 {
+        fail lost("the server's SCRAM challenge does not read")
+    }
+    let salted = __crypto.pbkdf2(password.bytes(), salt, iterations, 32)
+    let clientKey = __hash.hmacSha256(salted, "Client Key".bytes()).bytes()
+    let storedKey = __hash.sha256(clientKey).bytes()
+    let withoutProof = "c=biws,r={nonce}"
+    let signed = "{self.first},{challenge},{withoutProof}".bytes()
+    let signature = __hash.hmacSha256(storedKey, signed).bytes()
+    var proof: Array[Byte] = []
+    for (index, byte) in clientKey.iter().enumerate() {
+        proof.push(Byte(UInt8.wrapping(Int(byte) ^ Int(signature[index]))))
+    }
+    let serverKey = __hash.hmacSha256(salted, "Server Key".bytes()).bytes()
+    self with {
+        final: "{withoutProof},p={__encoding.base64Encode(proof)}"
+        expected: "v={__encoding.base64Encode(__hash.hmacSha256(serverKey, signed).bytes())}"
+    }
+}
+
+fn Scram.verifies(self, proof: String): Bool {
+    not self.expected.isEmpty() and __crypto.equalSecrets(proof.bytes(), self.expected.bytes())
+}
+
+fn Postgres.run(self, statement: Statement): Outcome ! SqlError {
+    // Without parameters, a statement that writes may be several, as a
+    // migration is: the simple protocol runs them.
+    if statement.parameters.isEmpty() and statement.operation != Operation.Query {
+        return self.simple(statement.text)?
+    }
+    let kept = self.prepared.get(statement.text)
+    let prepared = match kept {
+        some(found) => found
+        none => self.prepare(statement.text)?
+    }
+    match self.bound(prepared, statement) {
+        ok(outcome) => outcome
+        // A table changed under a kept statement: prepared again, once,
+        // outside a transaction, which the failure ended.
+        err(error) if kept.isSome() and error.code == some("0A000") and self.idle.get() => {
+            _ = self.prepared.remove(statement.text)
+            self.wire.send(
+                framed('C', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(prepared.name))).concat(
+                    framed('S', []),
+                ),
+            )?
+            self.settle()?
+            self.bound(self.prepare(statement.text)?, statement)?
+        }
+        err(error) => fail error
+    }
+}
+
+/// Reads up to `ReadyForQuery`, keeping the state of the transaction it
+/// gives, and fails with the first error before it.
+fn Postgres.settle(self): !SqlError {
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => return
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn Postgres.simple(self, text: String): Outcome ! SqlError {
+    self.wire.send(framed('Q', cstring(text)))?
+    var affected = 0
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'C' => affected += affectedBy(cstringOf(body))
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => return Outcome { columns: [], rows: [], affected, lastId: none }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The rows a command's tag counts: `INSERT 0 3`, `UPDATE 2`, `SELECT 5`.
+fn affectedBy(tag: String): Int {
+    match tag.split(" ").last() {
+        some(last) => Int.parse(last).unwrapOr(0)
+        none => 0
+    }
+}
+
+/// Prepares a statement and asks for its parameters' types and columns.
+fn Postgres.prepare(self, text: String): Prepared ! SqlError {
+    let count = self.prepared.length()
+    let name = if count < KeptStatements { "tondo_{count + 1}" } else { "" }
+    var out = framed('P', cstring(name).concat(cstring(text)).concat(bigEndianBytes(0, 2)))
+    out.extend(framed('D', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(name))))
+    out.extend(framed('S', []))
+    self.wire.send(out)?
+    var parameters: Array[Int] = []
+    var columns: Array[Column] = []
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            't' => {
+                for index in 0..bigEndian(body, 0, 2) {
+                    parameters.push(bigEndian(body, 2 + index * 4, 4))
+                }
+            }
+            'T' => {
+                var at = 2
+                for _ in 0..bigEndian(body, 0, 2) {
+                    let column = cstringAt(body, var at)
+                    columns.push(Column { name: column, oid: bigEndian(body, at + 6, 4) })
+                    at += 18
+                }
+            }
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => {}
+                }
+                let prepared = Prepared { name, parameters, columns }
+                if not name.isEmpty() {
+                    _ = self.prepared.insert(text, prepared)
+                }
+                return prepared
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Runs a prepared statement with its parameters, as text but for bytes,
+/// and reads its rows, in binary for the types it knows.
+fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! SqlError {
+    let values = statement.parameters
+    var body = cstring("").concat(cstring(prepared.name))
+    body.extend(bigEndianBytes(values.length(), 2))
+    for value in values {
+        let format = match value {
+            Value.Bytes(_) => 1
+            _ => 0
+        }
+        body.extend(bigEndianBytes(format, 2))
+    }
+    body.extend(bigEndianBytes(values.length(), 2))
+    for value in values {
+        match postgresParameter(value) {
+            some(bytes) => {
+                body.extend(bigEndianBytes(bytes.length(), 4))
+                body.extend(bytes)
+            }
+            none => body.extend(bigEndianBytes(-1, 4))
+        }
+    }
+    body.extend(bigEndianBytes(prepared.columns.length(), 2))
+    for column in prepared.columns {
+        body.extend(bigEndianBytes(if binaryOid(column.oid) { 1 } else { 0 }, 2))
+    }
+    var out = framed('B', body)
+    out.extend(framed('E', cstring("").concat(bigEndianBytes(0, 4))))
+    out.extend(framed('S', []))
+    self.wire.send(out)?
+    var rows: Array[Array[Value]] = []
+    var affected = 0
+    var failure: SqlError? = none
+    for {
+        let (kind, row) = self.next()?
+        match kind {
+            'D' => {
+                var cells: Array[Value] = []
+                var at = 2
+                for column in prepared.columns {
+                    let length = bigEndian(row, at, 4)
+                    at += 4
+                    if length < 0 {
+                        cells.push(Value.Null)
+                    } else {
+                        cells.push(
+                            postgresValue(column.oid, row.slice(at, at + length).unwrapOr([])),
+                        )
+                        at += length
+                    }
+                }
+                rows.push(cells)
+            }
+            'C' => affected = affectedBy(cstringOf(row))
+            'E' => if failure.isNone() {
+                failure = some(postgresError(row, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(row.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => {}
+                }
+                let query = statement.operation == Operation.Query
+                return Outcome {
+                    columns: prepared.columns.map((column) { column.name })
+                    rows
+                    affected: if query { 0 } else { affected }
+                    lastId: none
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A parameter as PostgreSQL reads it: text the server converts to the
+/// parameter's type, or bytes; `none` is null.
+fn postgresParameter(value: Value): Array[Byte]? {
+    match value {
+        Value.Null => none
+        Value.Bytes(bytes) => some(bytes)
+        other => some(postgresText(other).bytes())
+    }
+}
+
+fn postgresText(value: Value): String {
+    match value {
+        Value.Null => "NULL"
+        Value.Bool(flag) => if flag { "true" } else { "false" }
+        Value.Float(number) => {
+            if number.isNaN() {
+                "NaN"
+            } else if number.isInfinite() {
+                if number > 0.0 { "Infinity" } else { "-Infinity" }
+            } else {
+                "{number}"
+            }
+        }
+        Value.Bytes(bytes) => "\\x{__encoding.hexEncode(bytes)}"
+        Value.List(values) => {
+            let elements = values.map(
+                (element) {
+                    match element {
+                        Value.Null => "NULL"
+                        Value.List(_) => postgresText(element)
+                        _ => {
+                            let text = postgresText(element)
+                                .replace("\\", "\\\\")
+                                .replace("\"", "\\\"")
+                            "\"{text}\""
+                        }
+                    }
+                },
+            )
+            "{{{elements.join(",")}}}"
+        }
+        other => "{other}"
+    }
+}
+
+/// The types whose values come in binary: what `postgresValue` reads.
+fn binaryOid(oid: Int): Bool {
+    match oid {
+        16 => true
+        17 => true
+        19 => true
+        20 => true
+        21 => true
+        23 => true
+        25 => true
+        26 => true
+        114 => true
+        700 => true
+        701 => true
+        1042 => true
+        1043 => true
+        1114 => true
+        1184 => true
+        2950 => true
+        3802 => true
+        _ => elementOid(oid).isSome()
+    }
+}
+
+/// The type of the elements of an array type whose values come in binary.
+fn elementOid(oid: Int): Int? {
+    match oid {
+        1000 => some(16)
+        1001 => some(17)
+        1003 => some(19)
+        1005 => some(21)
+        1007 => some(23)
+        1009 => some(25)
+        1014 => some(1042)
+        1015 => some(1043)
+        1016 => some(20)
+        1021 => some(700)
+        1022 => some(701)
+        1028 => some(26)
+        1115 => some(1114)
+        1185 => some(1184)
+        199 => some(114)
+        2951 => some(2950)
+        3807 => some(3802)
+        _ => none
+    }
+}
+
+/// The microseconds from the Unix epoch to PostgreSQL's, 2000-01-01.
+const PostgresEpoch: Int = 946684800000000
+
+/// A value of a column of type `oid`: in binary for the types
+/// `binaryOid` names, as text for the others, and `NUMERIC` as digits.
+fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
+    match oid {
+        16 => Value.Bool(bytes.get(0) == some(Byte(1u8)))
+        17 => Value.Bytes(bytes)
+        20 => Value.Int(bigEndian(bytes, 0, 8))
+        21 => Value.Int(bigEndian(bytes, 0, 2))
+        23 => Value.Int(bigEndian(bytes, 0, 4))
+        26 => Value.Int(bigEndian(bytes, 0, 4) & 0xffffffff)
+        700 => {
+            let narrow: Float = Float32.fromBits(UInt32.wrapping(bigEndian(bytes, 0, 4)))
+            Value.Float(narrow)
+        }
+        701 => Value.Float(Float.fromBits(UInt.wrapping(bigEndian(bytes, 0, 8))))
+        1114 => timestampOf(bigEndian(bytes, 0, 8))
+        1184 => timestampOf(bigEndian(bytes, 0, 8))
+        1700 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+        2950 => {
+            let hex = __encoding.hexEncode(bytes)
+            let parts = [
+                hex.slice(0, 8),
+                hex.slice(8, 12),
+                hex.slice(12, 16),
+                hex.slice(16, 20),
+                hex.slice(20, 32),
+            ]
+            Value.Text(parts.map((part) { part.unwrapOr("") }).join("-"))
+        }
+        // jsonb in binary: a version, 1, and its text.
+        3802 => Value.Text(
+            String.fromBytes(bytes.slice(1, bytes.length()).unwrapOr([])).unwrapOr(""),
+        )
+        _ => match elementOid(oid) {
+            some(element) => {
+                let dimensions = bigEndian(bytes, 0, 4)
+                var sizes: Array[Int] = []
+                for index in 0..dimensions {
+                    sizes.push(bigEndian(bytes, 12 + index * 8, 4))
+                }
+                var at = 12 + dimensions * 8
+                if dimensions == 0 {
+                    Value.List([])
+                } else {
+                    arrayOf(bytes, var at, sizes, 0, element)
+                }
+            }
+            none => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+        }
+    }
+}
+
+/// The values of a dimension of an array, from `at`.
+fn arrayOf(bytes: Array[Byte], at: var Int, sizes: Array[Int], dimension: Int, oid: Int): Value {
+    var found: Array[Value] = []
+    for _ in 0..sizes[dimension] {
+        if dimension + 1 < sizes.length() {
+            found.push(arrayOf(bytes, var at, sizes, dimension + 1, oid))
+        } else {
+            let length = bigEndian(bytes, at, 4)
+            at += 4
+            if length < 0 {
+                found.push(Value.Null)
+            } else {
+                found.push(postgresValue(oid, bytes.slice(at, at + length).unwrapOr([])))
+                at += length
+            }
+        }
+    }
+    Value.List(found)
+}
+
+/// A timestamp: microseconds from 2000-01-01, or infinite.
+fn timestampOf(micros: Int): Value {
+    if micros == Int.max {
+        return Value.Text("infinity")
+    }
+    if micros == Int.min {
+        return Value.Text("-infinity")
+    }
+    Value.DateTime(__time.utc(__time.microseconds(micros + PostgresEpoch)))
+}
+
+/// An `ErrorResponse` as a `SqlError`, by its SQLSTATE.
+fn postgresError(body: Array[Byte], connecting: Bool): SqlError {
+    var fields: Map[String, String] = [:]
+    var at = 0
+    for at < body.length() and body[at] != Byte(0u8) {
+        let field = Char.from(Int(body[at])).unwrapOr(' ')
+        at += 1
+        _ = fields.insert("{field}", cstringAt(body, var at))
+    }
+    let state = fields.get("C").unwrapOr("")
+    let kind = match state {
+        "23505" => ErrorKind.Unique
+        "23503" => ErrorKind.ForeignKey
+        "23502" => ErrorKind.NotNull
+        "23514" => ErrorKind.Check
+        "40001" => ErrorKind.Conflict
+        "40P01" => ErrorKind.Conflict
+        "57014" => ErrorKind.Timeout
+        "42601" => ErrorKind.Syntax
+        "42P01" => ErrorKind.Syntax
+        "42703" => ErrorKind.Syntax
+        "42883" => ErrorKind.Syntax
+        _ if connecting or state.startsWith("08") or state.startsWith("28") or state == "3D000" =>
+            ErrorKind.Connection
+        _ => ErrorKind.Other
+    }
+    let said = fields.get("M").unwrapOr("the server failed")
+    SqlError {
+        kind
+        message: match fields.get("D") {
+            some(detail) => "{said}: {detail}"
+            none => said
+        }
+        code: if state.isEmpty() { none } else { some(state) }
+        constraint: fields.get("n")
+    }
+}

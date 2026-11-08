@@ -77,7 +77,17 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("rules", &[file!("rules")]),
     ("validate", &[file!("validate")]),
     ("archive", &[file!("archive")]),
-    ("sql", &[file!("sql")]),
+    (
+        "sql",
+        &[
+            file!("sql/sql"),
+            file!("sql/databases"),
+            file!("sql/sqlite"),
+            file!("sql/wire"),
+            file!("sql/postgres"),
+            file!("sql/mysql"),
+        ],
+    ),
     ("image", &[file!("image")]),
     ("acme", &[file!("acme")]),
     ("graphql", &[file!("graphql")]),
