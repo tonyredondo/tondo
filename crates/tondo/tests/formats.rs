@@ -127,7 +127,9 @@ fn a_panic_and_its_dump_keep_their_formats() {
         args.push("--json");
         let (read, _) = tondo(&dir, &args, &[]);
         let read: Value = serde_json::from_str(&read).unwrap_or_else(|_| panic!("{view:?}: {read}"));
-        recorded(&format!("dump-{}.shape", view[0]), &shape(&read, &[]));
+        // What `why` says of memory comes from those samples.
+        let vary: &[&str] = if view[0] == "why" { &[".why.memory"] } else { &[] };
+        recorded(&format!("dump-{}.shape", view[0]), &shape(&read, vary));
     }
 }
 

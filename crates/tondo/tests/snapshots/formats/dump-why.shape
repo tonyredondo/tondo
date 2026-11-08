@@ -22,7 +22,7 @@
 .why.longest.for: string
 .why.longest.ms: number
 .why.longest.task: number
-.why.memory[]
+.why.memory (varies)
 .why.message: string
 .why.reason: string
 .why.requests[]
