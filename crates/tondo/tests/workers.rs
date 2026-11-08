@@ -72,7 +72,9 @@ fn a_thread_keeps_nothing_but_what_is_known() {
             rest = &rest[at..];
             let end = rest.find("\n}").unwrap_or(rest.len());
             for line in rest[..end].lines() {
+                // With its visibility, if any, as `pub(super) static`.
                 let line = line.trim_start();
+                let line = line.strip_prefix("pub").map_or(line, |l| l.split_once(' ').map_or(l, |(_, l)| l));
                 if let Some(name) = line.strip_prefix("static ").and_then(|l| l.split(':').next()) {
                     found.push((file.clone(), name.trim().to_string()));
                 }
