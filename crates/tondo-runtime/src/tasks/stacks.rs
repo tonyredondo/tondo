@@ -208,3 +208,27 @@ pub(super) fn recycle(stack: Stack) {
         spare.extend(own.drain(at..).take(room));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A thread keeps two batches of spare stacks, and with one more gives
+    /// a batch to those every thread shares.
+    #[test]
+    fn a_thread_keeps_two_batches_of_stacks_and_shares_the_rest() {
+        // A thread of its own, whose stacks no other test takes.
+        std::thread::spawn(|| {
+            let shared = || SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner()).len();
+            let before = shared();
+            for _ in 0..2 * BATCH {
+                recycle(Stack::new(TASK_STACK));
+            }
+            assert_eq!((own_stacks().len(), shared()), (2 * BATCH, before));
+            recycle(Stack::new(TASK_STACK));
+            assert_eq!((own_stacks().len(), shared()), (BATCH + 1, before + BATCH));
+        })
+        .join()
+        .unwrap();
+    }
+}

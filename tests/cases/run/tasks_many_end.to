@@ -1,0 +1,32 @@
+// Thousands of tasks that wait together and end together, twice: the
+// stacks of those that end go back to their worker, and those a worker
+// gathers past a few dozen to the pool every worker takes from, where the
+// next ones find them.
+import std.console
+
+fn wait(inbox: Receiver[Int]): Int {
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    total
+}
+
+fn round(): Int {
+    let (sender, inbox) = channel[Int]()
+    var group = Group[Int]()
+    for _ in 0..2000 {
+        group.add(spawn wait(inbox))
+    }
+    for value in 0..2000 {
+        sender.send(value)
+    }
+    sender.close()
+    group.wait().sum()
+}
+
+fn main() {
+    console.println("{round()} {round()}")
+}
+
+// expect-stdout: 1999000 1999000
