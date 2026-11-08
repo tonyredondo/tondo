@@ -40,7 +40,7 @@ impl Kind {
     /// module that imports it, as `std.http` imports `std.json`, which
     /// imports `std.serialization`.
     fn brought(self, file: &ast::Module) -> bool {
-        file.imports.iter().any(|i| source(&i.path).is_some_and(|(name, _)| crate::stdlib::brings(name, self.module())))
+        file.imports.iter().any(|i| source(&i.path).is_some_and(|name| crate::stdlib::brings(name, self.module())))
     }
 
     /// Whether an intrinsic type with these arguments has the

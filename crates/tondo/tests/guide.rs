@@ -142,15 +142,14 @@ fn every_code_is_explained_and_tested() {
 /// would not compile otherwise.
 #[test]
 fn an_alias_of_the_standard_library_names_one_module() {
-    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
     let mut aliases = std::collections::HashMap::new();
-    for file in std::fs::read_dir(std).unwrap().flatten().filter(|file| file.path().is_file()) {
-        for line in std::fs::read_to_string(file.path()).unwrap().lines() {
+    for (file, text) in tondo::stdlib::sources() {
+        for line in text.lines() {
             let Some((module, alias)) = line.strip_prefix("import ").and_then(|rest| rest.split_once(" as ")) else {
                 continue;
             };
             let held = aliases.entry(alias.to_string()).or_insert_with(|| module.to_string());
-            assert_eq!(held, module, "`{alias}` names two modules: {:?} has the second", file.path());
+            assert_eq!(held, module, "`{alias}` names two modules: std/{file}.to has the second");
         }
     }
 }

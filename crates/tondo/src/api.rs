@@ -154,7 +154,7 @@ pub fn standard_modules() -> Vec<String> {
 pub fn summary(module: &str) -> Option<String> {
     let name = module.strip_prefix("std.")?;
     let source = match INTRINSIC.iter().find(|(n, _)| *n == name) {
-        Some((_, text)) => text,
+        Some((_, text)) => std::borrow::Cow::Borrowed(*text),
         None => crate::stdlib::text(name).filter(|_| !hidden(name))?,
     };
     let lines: Vec<&str> = source.lines().map_while(|line| line.strip_prefix("// ")).collect();
@@ -173,7 +173,7 @@ pub fn summary(module: &str) -> Option<String> {
 pub fn example(module: &str) -> Option<String> {
     let name = module.strip_prefix("std.")?;
     let source = match INTRINSIC.iter().find(|(n, _)| *n == name) {
-        Some((_, text)) => text,
+        Some((_, text)) => std::borrow::Cow::Borrowed(*text),
         None => crate::stdlib::text(name).filter(|_| !hidden(name))?,
     };
     let header: Vec<&str> =
@@ -292,7 +292,7 @@ pub fn standard(name: &str) -> Option<String> {
         let source = crate::stdlib::text("prelude")?;
         // `Panic` is the prelude's, from a module of the toolchain: its
         // type, its method and its `Display`, in place of the alias.
-        let panics = render(crate::stdlib::text("panics")?, false);
+        let panics = render(&crate::stdlib::text("panics")?, false);
         let panic: Vec<&str> = panics
             .trim_end()
             .split("\n\n")
@@ -302,7 +302,7 @@ pub fn standard(name: &str) -> Option<String> {
                 })
             })
             .collect();
-        let prelude: Vec<String> = render(source, false)
+        let prelude: Vec<String> = render(&source, false)
             .trim_end()
             .split("\n\n")
             .map(|part| match part.lines().any(|line| line.starts_with("pub alias Panic ")) {
@@ -334,7 +334,7 @@ pub fn standard(name: &str) -> Option<String> {
         return Some(text);
     }
     let source = crate::stdlib::text(name).filter(|_| !hidden(name))?;
-    Some(format!("{}{}", heading(&format!("std.{name}")), render(source, false)))
+    Some(format!("{}{}", heading(&format!("std.{name}")), render(&source, false)))
 }
 
 /// The declarations of a module's source: the public ones, or every one

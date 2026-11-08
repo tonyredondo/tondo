@@ -1647,14 +1647,8 @@ mod tests {
     /// The standard modules written in Tondo are formatted.
     #[test]
     fn standard_modules() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-        for entry in std::fs::read_dir(root).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).unwrap();
-            assert_eq!(format(&source), source, "{} is not formatted: run `tondo fmt` on it", path.display());
+        for (path, source) in crate::stdlib::sources() {
+            assert_eq!(format(source), source, "std/{path}.to is not formatted: run `tondo fmt` on it");
         }
     }
 

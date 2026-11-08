@@ -8,66 +8,76 @@ use crate::source::SourceMap;
 use crate::{ast, parser};
 use std::path::Path;
 
-/// Each module, by its path after `std`, and its source.
-const SOURCES: &[(&str, &str)] = &[
-    ("serialization", include_str!("../std/serialization.to")),
-    ("json", include_str!("../std/json.to")),
-    ("toml", include_str!("../std/toml.to")),
-    ("yaml", include_str!("../std/yaml.to")),
-    ("messagepack", include_str!("../std/messagepack.to")),
-    ("cbor", include_str!("../std/cbor.to")),
-    ("protobuf", include_str!("../std/protobuf.to")),
-    ("grpc", include_str!("../std/grpc.to")),
-    ("net", include_str!("../std/net.to")),
-    ("ffi", include_str!("../std/ffi.to")),
-    ("regex", include_str!("../std/regex.to")),
-    ("reflect", include_str!("../std/reflect.to")),
-    ("prelude", include_str!("../std/prelude.to")),
-    ("panics", include_str!("../std/panics.to")),
-    ("math", include_str!("../std/math.to")),
-    ("meta", include_str!("../std/meta.to")),
-    ("debug", include_str!("../std/debug.to")),
-    ("encoding", include_str!("../std/encoding.to")),
-    ("hash", include_str!("../std/hash.to")),
-    ("crypto", include_str!("../std/crypto.to")),
-    ("random", include_str!("../std/random.to")),
-    ("format", include_str!("../std/format.to")),
-    ("uuid", include_str!("../std/uuid.to")),
-    ("datetime", include_str!("../std/datetime.to")),
-    ("csv", include_str!("../std/csv.to")),
-    ("log", include_str!("../std/log.to")),
-    ("http", include_str!("../std/http.to")),
-    ("executor", include_str!("../std/executor.to")),
-    ("diagnostics", include_str!("../std/diagnostics.to")),
-    ("profile", include_str!("../std/profile.to")),
-    ("embed", include_str!("../std/embed.to")),
-    ("url", include_str!("../std/url.to")),
-    ("zoned", include_str!("../std/zoned.to")),
-    ("timetext", include_str!("../std/timetext.to")),
-    ("files", include_str!("../std/files.to")),
-    ("streams", include_str!("../std/streams.to")),
-    ("paths", include_str!("../std/paths.to")),
-    ("texts", include_str!("../std/texts.to")),
-    ("environment", include_str!("../std/environment.to")),
-    ("processes", include_str!("../std/processes.to")),
-    ("pacing", include_str!("../std/pacing.to")),
-    ("rules", include_str!("../std/rules.to")),
-    ("validate", include_str!("../std/validate.to")),
-    ("archive", include_str!("../std/archive.to")),
-    ("sql", include_str!("../std/sql.to")),
-    ("image", include_str!("../std/image.to")),
-    ("acme", include_str!("../std/acme.to")),
-    ("graphql", include_str!("../std/graphql.to")),
-    ("gzip", include_str!("../std/gzip.to")),
-    ("zstd", include_str!("../std/zstd.to")),
-    ("xml", include_str!("../std/xml.to")),
-    ("template", include_str!("../std/template.to")),
-    ("formats", include_str!("../std/formats.to")),
-    ("shapes", include_str!("../std/shapes.to")),
-    ("cli", include_str!("../std/cli.to")),
-    ("mcp", include_str!("../std/mcp.to")),
-    ("model", include_str!("../std/model.to")),
-    ("fuzz", include_str!("../std/fuzz.to")),
+/// A file of the standard library, by its path in `std/` without `.to`.
+macro_rules! file {
+    ($path:literal) => {
+        ($path, include_str!(concat!("../std/", $path, ".to")))
+    };
+}
+
+/// Each module, by its path after `std`, and its files, by their path in
+/// `std/` and their source: one file of its name, or the files of its
+/// directory, which form one module as a package's do (language 6.1), the
+/// one of its name first, with what the module is for.
+const SOURCES: &[(&str, &[(&str, &str)])] = &[
+    ("serialization", &[file!("serialization")]),
+    ("json", &[file!("json")]),
+    ("toml", &[file!("toml")]),
+    ("yaml", &[file!("yaml")]),
+    ("messagepack", &[file!("messagepack")]),
+    ("cbor", &[file!("cbor")]),
+    ("protobuf", &[file!("protobuf")]),
+    ("grpc", &[file!("grpc")]),
+    ("net", &[file!("net")]),
+    ("ffi", &[file!("ffi")]),
+    ("regex", &[file!("regex")]),
+    ("reflect", &[file!("reflect")]),
+    ("prelude", &[file!("prelude")]),
+    ("panics", &[file!("panics")]),
+    ("math", &[file!("math")]),
+    ("meta", &[file!("meta")]),
+    ("debug", &[file!("debug")]),
+    ("encoding", &[file!("encoding")]),
+    ("hash", &[file!("hash")]),
+    ("crypto", &[file!("crypto")]),
+    ("random", &[file!("random")]),
+    ("format", &[file!("format")]),
+    ("uuid", &[file!("uuid")]),
+    ("datetime", &[file!("datetime")]),
+    ("csv", &[file!("csv")]),
+    ("log", &[file!("log")]),
+    ("http", &[file!("http")]),
+    ("executor", &[file!("executor")]),
+    ("diagnostics", &[file!("diagnostics")]),
+    ("profile", &[file!("profile")]),
+    ("embed", &[file!("embed")]),
+    ("url", &[file!("url")]),
+    ("zoned", &[file!("zoned")]),
+    ("timetext", &[file!("timetext")]),
+    ("files", &[file!("files")]),
+    ("streams", &[file!("streams")]),
+    ("paths", &[file!("paths")]),
+    ("texts", &[file!("texts")]),
+    ("environment", &[file!("environment")]),
+    ("processes", &[file!("processes")]),
+    ("pacing", &[file!("pacing")]),
+    ("rules", &[file!("rules")]),
+    ("validate", &[file!("validate")]),
+    ("archive", &[file!("archive")]),
+    ("sql", &[file!("sql")]),
+    ("image", &[file!("image")]),
+    ("acme", &[file!("acme")]),
+    ("graphql", &[file!("graphql")]),
+    ("gzip", &[file!("gzip")]),
+    ("zstd", &[file!("zstd")]),
+    ("xml", &[file!("xml")]),
+    ("template", &[file!("template")]),
+    ("formats", &[file!("formats")]),
+    ("shapes", &[file!("shapes")]),
+    ("cli", &[file!("cli")]),
+    ("mcp", &[file!("mcp")]),
+    ("model", &[file!("model")]),
+    ("fuzz", &[file!("fuzz")]),
 ];
 
 /// The modules the compiler implements whose rest is written in Tondo,
@@ -94,9 +104,21 @@ pub(crate) fn companions(module: &str) -> &'static [&'static str] {
     COMPANIONS.iter().find(|(m, _)| *m == module).map_or(&[], |(_, c)| c)
 }
 
-/// Each standard module's name and source.
-pub fn sources() -> &'static [(&'static str, &'static str)] {
-    SOURCES
+/// Each file of the standard library, by its path in `std/` without
+/// `.to`, and its source.
+pub fn sources() -> impl Iterator<Item = (&'static str, &'static str)> {
+    SOURCES.iter().flat_map(|(_, files)| files.iter().copied())
+}
+
+/// The files of a standard module written in Tondo.
+pub fn files(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    SOURCES.iter().find(|(n, _)| *n == name).map(|(_, files)| *files)
+}
+
+/// The source of a file of the standard library, by its path in `std/`
+/// without `.to`.
+pub fn file(path: &str) -> Option<&'static str> {
+    sources().find(|(p, _)| *p == path).map(|(_, text)| text)
 }
 
 /// The names of the standard modules written in Tondo.
@@ -104,13 +126,17 @@ pub fn names() -> impl Iterator<Item = &'static str> {
     SOURCES.iter().map(|(name, _)| *name)
 }
 
-/// The source of a standard module written in Tondo.
-pub fn text(name: &str) -> Option<&'static str> {
-    SOURCES.iter().find(|(n, _)| *n == name).map(|(_, text)| *text)
+/// The source of a standard module written in Tondo, its files one after
+/// another.
+pub fn text(name: &str) -> Option<std::borrow::Cow<'static, str>> {
+    match files(name)? {
+        [(_, text)] => Some(std::borrow::Cow::Borrowed(text)),
+        files => Some(files.iter().map(|(_, text)| *text).collect::<Vec<_>>().join("\n").into()),
+    }
 }
 
 /// The module written in Tondo an import brings.
-pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
+pub(crate) fn source(path: &[ast::Ident]) -> Option<&'static str> {
     match path {
         [std, name] if std.name == "std" => {
             // `std.testing` brings the loop of `testing.fuzz`, and with
@@ -120,7 +146,7 @@ pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)
                 "testing" => "fuzz",
                 name => companions(name).first().copied().unwrap_or(name),
             };
-            SOURCES.iter().find(|(n, _)| *n == name).copied()
+            SOURCES.iter().find(|(n, _)| *n == name).map(|(name, _)| *name)
         }
         _ => None,
     }
@@ -143,8 +169,8 @@ pub(crate) fn brings(name: &str, target: &str) -> bool {
             continue;
         }
         seen.push(next);
-        let Some(text) = text(next) else { continue };
-        for line in text.lines() {
+        let Some(files) = files(next) else { continue };
+        for line in files.iter().flat_map(|(_, text)| text.lines()) {
             let Some(path) = line.strip_prefix("import std.") else { continue };
             let module = path.split([' ', '.']).next().unwrap_or_default();
             if module == "reflect" && OWN_REFLECTION.contains(&next) {
@@ -186,7 +212,7 @@ pub fn add_except(
     let mut pending: Vec<&str> = vec!["prelude"];
     let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
         for import in &module.imports {
-            let Some((name, _)) = source(&import.path) else { continue };
+            let Some(name) = source(&import.path) else { continue };
             // A module replaced comes without its parts in Tondo.
             if completed(name).is_some_and(|module| replaced.contains(&module)) {
                 continue;
@@ -215,23 +241,30 @@ pub fn add_except(
     while done < pending.len() {
         let round: Vec<&str> = pending[done..].to_vec();
         done = pending.len();
-        let files: Vec<usize> = round
+        // Each file with its own identity, `<std>/http/server.to`.
+        let files: Vec<(&str, usize)> = round
             .iter()
-            .map(|name| {
-                let text = SOURCES.iter().find(|(n, _)| n == name).unwrap().1;
-                let file = sources.add(Path::new(&format!("{name}.to")), text.to_string());
-                sources.set_identity(file, format!("<std>/{name}.to"), format!("std.{name}"));
-                file
+            .flat_map(|name| files(name).unwrap_or_default().iter().map(move |file| (*name, file)))
+            .map(|(name, (path, text))| {
+                let file = sources.add(Path::new(&format!("{path}.to")), text.to_string());
+                sources.set_identity(file, format!("<std>/{path}.to"), format!("std.{name}"));
+                (name, file)
             })
             .collect();
-        let parsed = crate::parallel::map(&files, 1, |&file| {
+        let parsed = crate::parallel::map(&files, 1, |&(_, file)| {
             let mut found = Diagnostics::default();
             (parser::parse_file(sources.file(file), &mut found), found)
         });
-        for (name, (parsed, mut found)) in round.into_iter().zip(parsed) {
+        let mut parts: Vec<(&str, Vec<(ast::Module, bool)>)> = round.iter().map(|name| (*name, Vec::new())).collect();
+        for ((name, _), (parsed, mut found)) in files.into_iter().zip(parsed) {
             diags.list.append(&mut found.list);
             wanted(&parsed, &mut pending);
-            modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files: vec![(parsed, false)] });
+            if let Some((_, part)) = parts.iter_mut().find(|(n, _)| *n == name) {
+                part.push((parsed, false));
+            }
+        }
+        for (name, files) in parts {
+            modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files });
         }
     }
     // Their enums of plain variants show their names, as the program's do.

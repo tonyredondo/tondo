@@ -290,8 +290,8 @@ impl Roots {
 
 /// A file of the standard library, as this `tondo` has it.
 fn standard(name: &str) -> Result<PathBuf, String> {
-    let module = name.strip_suffix(".to").unwrap_or(name);
-    let text = crate::stdlib::text(module).ok_or_else(|| format!("the standard library has no {name}"))?;
+    let path = name.strip_suffix(".to").unwrap_or(name);
+    let text = crate::stdlib::file(path).ok_or_else(|| format!("the standard library has no {name}"))?;
     let kept = crate::driver::cache_dir().join("sources").join(crate::driver::VERSION).join(name);
     let parent = kept.parent().expect("a file in the cache");
     std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;

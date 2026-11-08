@@ -1639,8 +1639,12 @@ impl Server {
                 // api` shows of them.
                 let _ = std::fs::create_dir_all(dir.join("api"));
                 let intrinsic = crate::api::intrinsic_files().map(|(name, text)| (format!("api/{name}"), text));
-                for (name, text) in crate::stdlib::sources().iter().map(|&(n, t)| (n.to_string(), t)).chain(intrinsic) {
+                for (name, text) in crate::stdlib::sources().map(|(n, t)| (n.to_string(), t)).chain(intrinsic) {
                     let path = dir.join(format!("{name}.to"));
+                    // A module of several files has a directory.
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
                     if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
                         let _ = std::fs::write(&path, text);
                     }
@@ -2217,8 +2221,8 @@ impl Server {
         let mut found = Vec::new();
         for module in crate::api::standard_modules() {
             let name = module.strip_prefix("std.").unwrap_or(&module).to_string();
-            let mut files: Vec<String> = match crate::stdlib::text(&name) {
-                Some(_) => vec![name.clone()],
+            let mut files: Vec<String> = match crate::stdlib::files(&name) {
+                Some(files) => files.iter().map(|(path, _)| path.to_string()).collect(),
                 None => vec![format!("api/{name}")],
             };
             files.extend(crate::stdlib::companions(&name).iter().map(|c| c.to_string()));

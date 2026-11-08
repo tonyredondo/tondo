@@ -177,7 +177,7 @@ fn comment(line: &str) -> Option<&str> {
 /// a module's header or a declaration's `///`: each, with its file and
 /// the line it starts at.
 fn standard_examples() -> Vec<(String, usize, String)> {
-    let files = tondo::stdlib::sources().iter().copied().chain(tondo::api::intrinsic_files());
+    let files = tondo::stdlib::sources().chain(tondo::api::intrinsic_files());
     let mut found = Vec::new();
     for (name, text) in files {
         let lines: Vec<&str> = text.lines().collect();
