@@ -20,7 +20,7 @@ tasks='in (work_until|steal|enqueue|wake_idle|new_task|recycle|Wait::parked|Wait
 strings='in (Builder::(extend|grow|finish)|append|tondo_rt_str_[a-z_]+|tondo_rt_array_[a-z_]+|tondo_rt_sb_[a-z_]+)$'
 cd "$root"
 cargo mutants --list --json --diff -p tondo-runtime \
-  --file crates/tondo-runtime/src/tasks.rs --file crates/tondo-runtime/src/lib.rs \
+  --file 'crates/tondo-runtime/src/tasks/*.rs' --file crates/tondo-runtime/src/lib.rs \
   --re "$tasks" --re "$strings" > "$work/mutants.json"
 cd "$work"
 python3 - "$slice" "$budget" "$work/mutants.json" "$root/testing/mutants/explained.txt" <<'EOF'
