@@ -319,9 +319,11 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                 };
                 queue.idle -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
-                // Woken for a task, or after waiting a moment for one. The
-                // first to look after a wake looks for what it was for.
-                woken = queue.waking && !woken;
+                // Woken for a task: the first to look after a wake looks for
+                // what it was for, and one that waited a moment for a task
+                // looks again as `waited` says. A wake that found nothing
+                // must not make the next one count for nothing.
+                woken = queue.waking;
                 seeker |= std::mem::take(&mut queue.waking);
                 looked = false;
             }
