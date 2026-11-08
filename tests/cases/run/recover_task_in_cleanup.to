@@ -1,0 +1,34 @@
+// A task's panic that reaches the task waiting for it while that task runs
+// the cleanups of another panic is reported as suppressed, as a panic in a
+// cleanup is: the cleanup goes on, and `recover` gives the first panic.
+import std.console
+import std.time
+
+fn failing() {
+    time.sleep(time.milliseconds(10))
+    panic("the task's own")
+}
+
+fn main() {
+    let caught = recover {
+        let job = spawn failing()
+        {
+            defer {
+                job.wait()
+                console.println("the cleanup went on")
+            }
+            panic("first")
+        }
+    }
+    match caught {
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+}
+
+// expect-stdout: the cleanup went on
+// expect-stdout: recovered first
+// expect-stderr: suppressed while unwinding: panic[P0008]: explicit-panic: the task's own
+// expect-stderr:  --> recover_task_in_cleanup.to:9:5
+// expect-stderr:   failing  recover_task_in_cleanup.to:9:5
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  recover_task_in_cleanup.to:14:19
