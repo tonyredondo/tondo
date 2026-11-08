@@ -1,0 +1,22 @@
+// A `within` ends its block at the block's next wait once its deadline
+// passes (language 11.17): a block that computes past it without waiting
+// ends as ever, and a wait after the block is not cut short.
+import std.console
+import std.time
+
+fn main() {
+    let result = within time.milliseconds(5) {
+        let started = time.now()
+        var spins = 0
+        for started.elapsed() < time.milliseconds(30) {
+            spins += 1
+        }
+        spins > 0
+    }
+    console.println("{result}")
+    time.sleep(time.milliseconds(10))
+    console.println("the wait after it was not cut short")
+}
+
+// expect-stdout: ok(true)
+// expect-stdout: the wait after it was not cut short
