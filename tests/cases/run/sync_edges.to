@@ -1,0 +1,45 @@
+// The edges of std.sync's coordinators: a semaphore needs a permit and a
+// barrier a party, and asking for none panics; a task cancelled while it
+// waits at a barrier leaves it, and the barrier still waits for as many as
+// it needs.
+import std.console
+import std.sync
+import std.time
+
+fn leave(barrier: sync.Barrier, arrived: sync.Atomic[Int]) {
+    defer console.println("the cancelled task left the barrier")
+    _ = arrived.add(1)
+    _ = barrier.wait()
+}
+
+fn pass(barrier: sync.Barrier): Bool {
+    barrier.wait()
+}
+
+fn main() {
+    match recover { sync.Semaphore(0) } {
+        ok(_) => console.println("a semaphore without permits")
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { sync.Barrier(0) } {
+        ok(_) => console.println("a barrier without parties")
+        err(stopped) => console.println(stopped.message)
+    }
+    let barrier = sync.Barrier(2)
+    let arrived = sync.Atomic(0)
+    let leaving = spawn leave(barrier, arrived)
+    for arrived.load() < 1 {
+        time.sleep(time.milliseconds(1))
+    }
+    // Time for it to wait at the barrier.
+    time.sleep(time.milliseconds(20))
+    leaving.cancel()
+    let other = spawn pass(barrier)
+    let mine = barrier.wait()
+    console.println("both passed, one of them last: {mine != other.wait()}")
+}
+
+// expect-stdout: a semaphore needs at least 1 permit, and this one has 0
+// expect-stdout: a barrier needs at least 1 party, and this one has 0
+// expect-stdout: the cancelled task left the barrier
+// expect-stdout: both passed, one of them last: true
