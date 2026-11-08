@@ -1,0 +1,55 @@
+// Tasks that read a context's computed initial value while another task
+// computes it wait for that value, and all get the one computed; a reader
+// cancelled while it waits stops waiting, runs its `defer`s, and the value
+// is still computed once.
+
+import std.console
+import std.sync
+import std.time
+
+context Gate = {
+    started: sync.Mutex[Bool] = sync.Mutex(false)
+    open: sync.Mutex[Bool] = sync.Mutex(false)
+    computed: sync.Atomic[Int] = sync.Atomic(0)
+    readers: sync.Atomic[Int] = sync.Atomic(0)
+}
+
+context Slow = {
+    value: Int = slowly()
+}
+
+fn slowly(): Int {
+    _ = Gate.computed.add(1)
+    Gate.started.update((started) { started = true })
+    Gate.open.updateWhen((open) { open }, (_) {})
+    42
+}
+
+fn reader(): Int {
+    _ = Gate.readers.add(1)
+    Slow.value
+}
+
+fn cancelled() {
+    defer console.println("the cancelled reader stopped waiting")
+    _ = Gate.readers.add(1)
+    _ = Slow.value
+}
+
+fn main() {
+    let first = spawn reader()
+    Gate.started.updateWhen((started) { started }, (_) {})
+    let second = spawn reader()
+    let third = spawn cancelled()
+    for Gate.readers.load() < 3 {
+        time.sleep(time.milliseconds(1))
+    }
+    // Time for the two readers to wait for the value.
+    time.sleep(time.milliseconds(20))
+    third.cancel()
+    Gate.open.update((open) { open = true })
+    console.println("{first.wait()} {second.wait()} {Slow.value}, computed {Gate.computed.load()} times")
+}
+
+// expect-stdout: the cancelled reader stopped waiting
+// expect-stdout: 42 42 42, computed 1 times
