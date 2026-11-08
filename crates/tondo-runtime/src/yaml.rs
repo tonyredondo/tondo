@@ -42,8 +42,6 @@ struct Event {
     text: String,
     int: i64,
     float: f64,
-    /// Where in the document, after `$`, as `.users[2]`.
-    path: String,
     line: usize,
     column: usize,
     /// On the first event of a value, the tag of its own it has, as
@@ -88,10 +86,10 @@ struct Builder {
     documents: Vec<Vec<Event>>,
     events: Vec<Event>,
     frames: Vec<Frame>,
-    /// The events of each anchored node, with paths from the node, and the
-    /// anchored collections still open: their anchor, first event and path.
+    /// The events of each anchored node, and the anchored collections still
+    /// open: their anchor, first event and depth.
     anchors: HashMap<usize, Vec<Event>>,
-    open: Vec<(usize, usize, String, usize)>,
+    open: Vec<(usize, usize, usize)>,
 }
 
 type Failure = (String, String, usize, usize);
@@ -133,9 +131,7 @@ impl Builder {
         };
         let Some(start) = start else { return Ok(()) };
         let value = self.events.split_off(start);
-        let path = self.path();
-        let map = path.strip_suffix(".<<").unwrap_or(&path).to_string();
-        let Some(entries) = merged(&value, &map) else {
+        let Some(entries) = merged(&value) else {
             return Err(self.failure("a merge key `<<` takes a map, or a list of maps", line, column));
         };
         if let Some(Frame::Map { merged, .. }) = self.frames.last_mut() {
@@ -152,17 +148,7 @@ impl Builder {
         if self.events.len() >= LIMIT {
             return Err(self.failure(format!("the document holds more than {LIMIT} values"), line, column));
         }
-        let path = self.path();
-        self.events.push(Event {
-            code,
-            text: String::new(),
-            int: 0,
-            float: 0.0,
-            path,
-            line,
-            column,
-            tag: String::new(),
-        });
+        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, line, column, tag: String::new() });
         Ok(self.events.last_mut().unwrap())
     }
 
@@ -207,9 +193,7 @@ impl Builder {
                 let first = self.events.len();
                 self.scalar(&value, style, tag.as_deref(), line, column)?;
                 if anchor > 0 {
-                    let base = self.path().len();
-                    let recorded = self.events[first..].iter().map(|e| relative(e, base)).collect();
-                    self.anchors.insert(anchor, recorded);
+                    self.anchors.insert(anchor, self.events[first..].to_vec());
                 }
                 self.done(line, column)?;
             }
@@ -231,11 +215,7 @@ impl Builder {
                         column,
                     ));
                 }
-                let base = self.path();
-                self.events.extend(recorded.into_iter().map(|mut e| {
-                    e.path = format!("{base}{}", e.path);
-                    e
-                }));
+                self.events.extend(recorded);
                 self.done(line, column)?;
             }
             Parsed::SequenceStart(anchor, tag) => self.open(false, anchor, tag, line, column)?,
@@ -245,7 +225,6 @@ impl Builder {
                 let map = matches!(closed, Some(Frame::Map { .. }));
                 // The merged entries whose keys the map does not have.
                 if let Some(Frame::Map { keys, merged, .. }) = closed {
-                    let path = self.path();
                     for (key, value) in merged.into_iter().filter(|(key, _)| !keys.contains(key)) {
                         if self.events.len() + value.len() >= LIMIT {
                             return Err(self.failure(
@@ -255,19 +234,17 @@ impl Builder {
                             ));
                         }
                         let mut named = value[0].clone();
-                        (named.code, named.text, named.path) = (KEY, key.clone(), format!("{path}.{key}"));
+                        (named.code, named.text) = (KEY, key.clone());
                         named.tag.clear();
                         self.events.push(named);
                         self.events.extend(value);
                     }
                 }
                 self.push(if map { END_MAP } else { END_LIST }, line, column)?;
-                if let Some(&(anchor, first, ref path, depth)) = self.open.last()
+                if let Some(&(anchor, first, depth)) = self.open.last()
                     && depth == self.frames.len()
                 {
-                    let base = path.len();
-                    let recorded = self.events[first..].iter().map(|e| relative(e, base)).collect();
-                    self.anchors.insert(anchor, recorded);
+                    self.anchors.insert(anchor, self.events[first..].to_vec());
                     self.open.pop();
                 }
                 self.done(line, column)?;
@@ -298,7 +275,7 @@ impl Builder {
         let first = self.events.len();
         self.push(if map { BEGIN_MAP } else { BEGIN_LIST }, line, column)?.tag = own(tag.as_deref());
         if anchor > 0 {
-            self.open.push((anchor, first, self.path(), self.frames.len()));
+            self.open.push((anchor, first, self.frames.len()));
         }
         self.frames.push(if map {
             Frame::Map { key: true, keys: Vec::new(), current: String::new(), merge: None, merged: Vec::new() }
@@ -368,9 +345,8 @@ impl Builder {
 }
 
 /// The entries a merge key's value gives: those of its map, or of each map
-/// of its list, the first map's taking over; each value's events with
-/// paths of the map `map` merges into. `None` for another value.
-fn merged(value: &[Event], map: &str) -> Option<Vec<(String, Vec<Event>)>> {
+/// of its list, the first map's taking over. `None` for another value.
+fn merged(value: &[Event]) -> Option<Vec<(String, Vec<Event>)>> {
     let maps: Vec<&[Event]> = match value.first()?.code {
         BEGIN_MAP => vec![value],
         BEGIN_LIST => {
@@ -405,8 +381,6 @@ fn merged(value: &[Event], map: &str) -> Option<Vec<(String, Vec<Event>)>> {
         if one.first()?.code != BEGIN_MAP {
             return None;
         }
-        // The path of the merged map, which its events start with.
-        let base = one[0].path.len();
         let mut index = 1;
         while index < one.len() - 1 {
             let key = &one[index];
@@ -425,15 +399,7 @@ fn merged(value: &[Event], map: &str) -> Option<Vec<(String, Vec<Event>)>> {
                 }
             }
             if !entries.iter().any(|(k, _)| *k == key.text) {
-                let events = one[start..end]
-                    .iter()
-                    .map(|event| {
-                        let mut event = event.clone();
-                        event.path = format!("{map}{}", event.path.get(base..).unwrap_or_default());
-                        event
-                    })
-                    .collect();
-                entries.push((key.text.clone(), events));
+                entries.push((key.text.clone(), one[start..end].to_vec()));
             }
             index = end;
         }
@@ -451,13 +417,6 @@ fn own(tag: Option<&saphyr_parser::Tag>) -> String {
         Some(tag) => format!("!<{}{}>", tag.handle, tag.suffix),
         None => String::new(),
     }
-}
-
-/// An event with its path from the node at `base` bytes of path on.
-fn relative(event: &Event, base: usize) -> Event {
-    let mut event = event.clone();
-    event.path = event.path.get(base..).unwrap_or_default().to_string();
-    event
 }
 
 fn is_integer(text: &str) -> bool {
@@ -495,7 +454,14 @@ fn is_number(text: &str) -> bool {
 /// The documents of `text` as events, or the first failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_parse(source: *const Str) -> *mut NativeObject {
-    let source = text(source);
+    let (documents, error) = documents(&text(source));
+    let reader = Reader { documents, document: 0, read: 0, error };
+    native::new(Mutex::new(reader))
+}
+
+/// The events of each document of `source`, as far as it reads, and the
+/// failure that stopped it.
+fn documents(source: &str) -> (Vec<Vec<Event>>, Option<Failure>) {
     let mut builder = Builder {
         documents: Vec::new(),
         events: Vec::new(),
@@ -504,7 +470,7 @@ pub unsafe extern "C" fn tondo_rt_yaml_parse(source: *const Str) -> *mut NativeO
         open: Vec::new(),
     };
     let mut error = None;
-    for result in Parser::new_from_str(&source) {
+    for result in Parser::new_from_str(source) {
         let outcome = match result {
             Ok((parsed, span)) => builder.event(parsed, span.start.line(), span.start.col() + 1),
             Err(failure) => {
@@ -517,8 +483,7 @@ pub unsafe extern "C" fn tondo_rt_yaml_parse(source: *const Str) -> *mut NativeO
             break;
         }
     }
-    let reader = Reader { documents: builder.documents, document: 0, read: 0, error };
-    native::new(Mutex::new(reader))
+    (builder.documents, error)
 }
 
 /// How many documents the text holds.
@@ -608,8 +573,12 @@ pub extern "C" fn tondo_rt_yaml_skip(object: *mut NativeObject, code: i64) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_fail(object: *mut NativeObject, message: *const Str) {
     let message = text(message);
-    let at = current(object, |e| Some((format!("${}", e.path), e.line, e.column)), None);
     let Some(mut reader) = reader(object) else { return };
+    // The path, found from the events before it, as only a failure asks.
+    let at = reader.documents.get(reader.document).zip(reader.read.checked_sub(1)).and_then(|(events, index)| {
+        let event = events.get(index)?;
+        Some((crate::msgpack::path_of(events, |e| e.code, |e| &e.text, index, false), event.line, event.column))
+    });
     let (path, line, column) = at.unwrap_or(("$".into(), 0, 0));
     reader.error = Some((message, path, line, column));
 }
@@ -1112,4 +1081,118 @@ pub extern "C" fn tondo_rt_yaml_outline_properties(object: *mut NativeObject) ->
 pub extern "C" fn tondo_rt_yaml_outline_error(object: *mut NativeObject) -> *mut Str {
     let error = native::get::<Outline>(object).map_or(String::new(), |o| o.error.clone());
     str_new(error.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The path of each event is where the events before it place it,
+    /// anchors, aliases and merges included: as the builder wrote it into
+    /// each event, before it found it only for a failure, which these were.
+    #[test]
+    fn each_path_is_where_the_events_place_it() {
+        let expected: [(&str, &[&str]); 3] = [
+            (
+                "base: &b {x: 1, y: [2, 3]}\ncopy: *b\nlist: [*b]\n",
+                &[
+                    "$",
+                    "$.base",
+                    "$.base",
+                    "$.base.x",
+                    "$.base.x",
+                    "$.base.y",
+                    "$.base.y",
+                    "$.base.y[0]",
+                    "$.base.y[1]",
+                    "$.base.y",
+                    "$.base",
+                    "$.copy",
+                    "$.copy",
+                    "$.copy.x",
+                    "$.copy.x",
+                    "$.copy.y",
+                    "$.copy.y",
+                    "$.copy.y[0]",
+                    "$.copy.y[1]",
+                    "$.copy.y",
+                    "$.copy",
+                    "$.list",
+                    "$.list",
+                    "$.list[0]",
+                    "$.list[0].x",
+                    "$.list[0].x",
+                    "$.list[0].y",
+                    "$.list[0].y",
+                    "$.list[0].y[0]",
+                    "$.list[0].y[1]",
+                    "$.list[0].y",
+                    "$.list[0]",
+                    "$.list",
+                    "$",
+                ],
+            ),
+            (
+                "one: &o {a: 1}\ntwo: &t {b: 2, c: [1]}\nboth:\n  <<: [*o, *t]\n  d: 5\n",
+                &[
+                    "$",
+                    "$.one",
+                    "$.one",
+                    "$.one.a",
+                    "$.one.a",
+                    "$.one",
+                    "$.two",
+                    "$.two",
+                    "$.two.b",
+                    "$.two.b",
+                    "$.two.c",
+                    "$.two.c",
+                    "$.two.c[0]",
+                    "$.two.c",
+                    "$.two",
+                    "$.both",
+                    "$.both",
+                    "$.both.d",
+                    "$.both.d",
+                    "$.both.a",
+                    "$.both.a",
+                    "$.both.b",
+                    "$.both.b",
+                    "$.both.c",
+                    "$.both.c",
+                    "$.both.c[0]",
+                    "$.both.c",
+                    "$.both",
+                    "$",
+                ],
+            ),
+            (
+                "- [1, {a: [x]}]\n- {b: 2}\n",
+                &[
+                    "$",
+                    "$[0]",
+                    "$[0][0]",
+                    "$[0][1]",
+                    "$[0][1].a",
+                    "$[0][1].a",
+                    "$[0][1].a[0]",
+                    "$[0][1].a",
+                    "$[0][1]",
+                    "$[0]",
+                    "$[1]",
+                    "$[1].b",
+                    "$[1].b",
+                    "$[1]",
+                    "$",
+                ],
+            ),
+        ];
+        for (source, paths) in expected {
+            let (documents, _) = documents(source);
+            let events = &documents[0];
+            let found: Vec<String> =
+                (0..events.len()).map(|i| crate::msgpack::path_of(events, |e| e.code, |e| &e.text, i, false)).collect();
+            assert_eq!(found, paths, "{source:?}");
+        }
+    }
 }
