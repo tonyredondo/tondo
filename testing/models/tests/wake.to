@@ -1,7 +1,8 @@
 // How workers find tasks and go to sleep (crates/tondo-runtime/src/tasks/mod.rs:
-// work_until, enqueue, wake_idle, wake_one, step_back), as Wake.tla says it,
-// with three workers, the first of them `main`'s. A step here is what the code
-// does with the queue's lock held, or one atomic operation.
+// work_until, enqueue, wake_idle, wake_one; step_back in tasks/foreign.rs), as
+// Wake.tla says it, with three workers, the first of them `main`'s. A step
+// here is what the code does with the queue's lock held, or one atomic
+// operation.
 import std.model
 
 enum Task {

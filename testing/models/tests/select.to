@@ -2,8 +2,8 @@
 // that cancels it (crates/tondo-runtime/src/tasks/channels.rs: select,
 // try_case, claim_first; Wait::claim in tasks/waits.rs), as Select.tla says
 // it. The selecting task registers one waiter in each queue under the locks of
-// both, and one `claim` decides which operation won. A sender that loses the claim goes on to the
-// next waiter, or to the buffer.
+// both, and one `claim` decides which operation won. A sender that loses the
+// claim goes on to the next waiter, or to the buffer.
 import std.model
 
 enum Sender {

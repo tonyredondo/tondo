@@ -1,7 +1,8 @@
 ---- MODULE Wake ----
 \* How workers find tasks and go to sleep (crates/tondo-runtime/src/tasks/mod.rs:
-\* work_until, enqueue, wake_idle, wake_one, step_back). A step here is what the
-\* code does with the queue's lock held, or one atomic operation.
+\* work_until, enqueue, wake_idle, wake_one; step_back in tasks/foreign.rs). A
+\* step here is what the code does with the queue's lock held, or one atomic
+\* operation.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Workers, Main, First, Started, Waits, CEnds
 
