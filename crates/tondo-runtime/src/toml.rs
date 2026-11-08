@@ -29,7 +29,6 @@ struct Event {
     text: String,
     int: i64,
     float: f64,
-    path: String,
     /// Its byte in the input.
     at: usize,
 }
@@ -54,7 +53,7 @@ pub unsafe extern "C" fn tondo_rt_toml_parse(source: *const Str) -> *mut NativeO
     let mut events = Vec::new();
     let mut error = None;
     match toml_edit::Document::parse(source) {
-        Ok(document) => table(document.as_table(), "$", 0, &mut events),
+        Ok(document) => table(document.as_table(), 0, &mut events),
         Err(failure) => {
             let at = failure.span().map_or(0, |span| span.start);
             error = Some((failure.message().trim_end().to_string(), at, "$".to_string()));
@@ -63,65 +62,63 @@ pub unsafe extern "C" fn tondo_rt_toml_parse(source: *const Str) -> *mut NativeO
     native::new(Mutex::new(Reader { source: source.to_owned(), events, read: 0, error }))
 }
 
-fn push<'a>(events: &'a mut Vec<Event>, code: i64, path: &str, at: usize) -> &'a mut Event {
-    events.push(Event { code, text: String::new(), int: 0, float: 0.0, path: path.to_string(), at });
+fn push(events: &mut Vec<Event>, code: i64, at: usize) -> &mut Event {
+    events.push(Event { code, text: String::new(), int: 0, float: 0.0, at });
     events.last_mut().unwrap()
 }
 
 /// A table's events: its start, each key and value, its end.
-fn table(table: &Table, path: &str, at: usize, events: &mut Vec<Event>) {
+fn table(table: &Table, at: usize, events: &mut Vec<Event>) {
     let at = table.span().map_or(at, |span| span.start);
-    push(events, BEGIN_MAP, path, at);
+    push(events, BEGIN_MAP, at);
     for (key, item) in table.iter() {
-        let inner = format!("{path}.{key}");
         let start = item.span().map_or(at, |span| span.start);
-        push(events, KEY, &inner, start).text = key.to_string();
-        self::item(item, &inner, start, events);
+        push(events, KEY, start).text = key.to_string();
+        self::item(item, start, events);
     }
-    push(events, END_MAP, path, at);
+    push(events, END_MAP, at);
 }
 
-fn item(item: &Item, path: &str, at: usize, events: &mut Vec<Event>) {
+fn item(item: &Item, at: usize, events: &mut Vec<Event>) {
     match item {
         Item::None => {}
-        Item::Value(value) => self::value(value, path, at, events),
-        Item::Table(inner) => table(inner, path, at, events),
+        Item::Value(value) => self::value(value, at, events),
+        Item::Table(inner) => table(inner, at, events),
         Item::ArrayOfTables(tables) => {
-            push(events, BEGIN_LIST, path, at);
-            for (index, inner) in tables.iter().enumerate() {
-                table(inner, &format!("{path}[{index}]"), at, events);
+            push(events, BEGIN_LIST, at);
+            for inner in tables.iter() {
+                table(inner, at, events);
             }
-            push(events, END_LIST, path, at);
+            push(events, END_LIST, at);
         }
     }
 }
 
-fn value(value: &Value, path: &str, at: usize, events: &mut Vec<Event>) {
+fn value(value: &Value, at: usize, events: &mut Vec<Event>) {
     let at = value.span().map_or(at, |span| span.start);
     match value {
-        Value::String(text) => push(events, TEXT, path, at).text = text.value().clone(),
-        Value::Integer(int) => push(events, INT, path, at).int = *int.value(),
-        Value::Float(float) => push(events, FLOAT, path, at).float = *float.value(),
+        Value::String(text) => push(events, TEXT, at).text = text.value().clone(),
+        Value::Integer(int) => push(events, INT, at).int = *int.value(),
+        Value::Float(float) => push(events, FLOAT, at).float = *float.value(),
         Value::Boolean(flag) => {
-            push(events, if *flag.value() { TRUE } else { FALSE }, path, at);
+            push(events, if *flag.value() { TRUE } else { FALSE }, at);
         }
-        Value::Datetime(datetime) => push(events, DATETIME, path, at).text = datetime.value().to_string(),
+        Value::Datetime(datetime) => push(events, DATETIME, at).text = datetime.value().to_string(),
         Value::Array(items) => {
-            push(events, BEGIN_LIST, path, at);
-            for (index, item) in items.iter().enumerate() {
-                self::value(item, &format!("{path}[{index}]"), at, events);
+            push(events, BEGIN_LIST, at);
+            for item in items.iter() {
+                self::value(item, at, events);
             }
-            push(events, END_LIST, path, at);
+            push(events, END_LIST, at);
         }
         Value::InlineTable(inline) => {
-            push(events, BEGIN_MAP, path, at);
+            push(events, BEGIN_MAP, at);
             for (key, item) in inline.iter() {
-                let inner = format!("{path}.{key}");
                 let start = item.span().map_or(at, |span| span.start);
-                push(events, KEY, &inner, start).text = key.to_string();
-                self::value(item, &inner, start, events);
+                push(events, KEY, start).text = key.to_string();
+                self::value(item, start, events);
             }
-            push(events, END_MAP, path, at);
+            push(events, END_MAP, at);
         }
     }
 }
@@ -153,7 +150,10 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 /// The text of the event just read: a string, a key or a date-time.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_toml_text(object: *mut NativeObject) -> *mut Str {
-    str_new(current(object, |event| event.text.clone(), String::new()).as_bytes())
+    let Some(reader) = reader(object) else { return str_new(b"") };
+    let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
+    let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
+    str_new(event.map_or(&b""[..], |event| event.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -191,9 +191,11 @@ pub extern "C" fn tondo_rt_toml_skip(object: *mut NativeObject, code: i64) -> i6
 pub unsafe extern "C" fn tondo_rt_toml_fail(object: *mut NativeObject, message: *const Str) {
     let Some(reader) = reader(object) else { return };
     let mut reader = reader.lock().unwrap_or_else(|e| e.into_inner());
-    let (at, path) = match reader.read.checked_sub(1).and_then(|index| reader.events.get(index)) {
-        Some(event) => (event.at, event.path.clone()),
-        None => (0, "$".to_string()),
+    let (at, path) = match reader.read.checked_sub(1) {
+        Some(index) if index < reader.events.len() => {
+            (reader.events[index].at, crate::msgpack::path_of(&reader.events, |e| e.code, |e| &e.text, index, false))
+        }
+        _ => (0, "$".to_string()),
     };
     reader.error = Some((unsafe { str_text(message) }.to_owned(), at, path));
 }
