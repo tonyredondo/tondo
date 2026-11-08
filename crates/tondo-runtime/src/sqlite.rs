@@ -4,21 +4,15 @@
 //! tag and a value each: 0 null, 1 an integer, 2 a float, 3 text, 4 bytes.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, element, str_bytes, str_new};
-use crate::io::byte_array;
+use super::{ArrayHeader, Str, str_new};
+use crate::array_items;
+use crate::byte_array;
 use rusqlite::types::ValueRef;
 use std::sync::Mutex;
 use std::time::Duration;
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
-}
-
-fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { std::slice::from_raw_parts(element(array, 1, 0), (*array).len).to_vec() }
+    unsafe { crate::str_text(s) }.to_owned()
 }
 
 /// A connection, or why there is none.
@@ -71,7 +65,7 @@ pub unsafe extern "C" fn tondo_rt_sqlite_run(
     let Some(Database::Open(connection)) = native::get::<Database>(object) else {
         return byte_array(&failed(0, "the database is not open", "", ""));
     };
-    let (sql, parameters) = (text(sql), bytes(parameters));
+    let (sql, parameters) = (text(sql), unsafe { array_items::<u8>(parameters) }.to_vec());
     // The connection outlives the work, which the program waits for.
     let connection: &'static Mutex<rusqlite::Connection> = unsafe { &*(connection as *const _) };
     let out = crate::io::host(true, move || {

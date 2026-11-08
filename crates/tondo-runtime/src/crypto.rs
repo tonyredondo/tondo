@@ -3,17 +3,11 @@
 //! with Argon2id and the checking of bcrypt's. Keys come and go as bytes:
 //! PKCS #8 for private keys and each kind's raw form for public ones.
 
-use super::{ArrayHeader, Str, element, str_bytes, str_new};
-use crate::io::byte_array;
+use super::{ArrayHeader, Str, str_bytes, str_new};
+use crate::array_items;
+use crate::byte_array;
 use ring::{aead, hkdf, pbkdf2, rand, signature};
 use std::num::NonZeroU32;
-
-fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { (0..(*array).len).map(|i| *element(array, 1, i)).collect() }
-}
 
 fn text(s: *const Str) -> String {
     String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
@@ -36,10 +30,14 @@ pub unsafe extern "C" fn tondo_rt_crypto_seal(
     data: *mut ArrayHeader,
     context: *mut ArrayHeader,
 ) -> *mut ArrayHeader {
-    let key = aead::LessSafeKey::new(aead::UnboundKey::new(cipher(code), &bytes(key)).expect("a key of 32 bytes"));
-    let nonce = aead::Nonce::try_assume_unique_for_key(&bytes(nonce)).expect("a nonce of 12 bytes");
-    let mut sealed = bytes(data);
-    key.seal_in_place_append_tag(nonce, aead::Aad::from(bytes(context)), &mut sealed).expect("data it can seal");
+    let key = aead::LessSafeKey::new(
+        aead::UnboundKey::new(cipher(code), unsafe { array_items::<u8>(key) }).expect("a key of 32 bytes"),
+    );
+    let nonce =
+        aead::Nonce::try_assume_unique_for_key(unsafe { array_items::<u8>(nonce) }).expect("a nonce of 12 bytes");
+    let mut sealed = unsafe { array_items::<u8>(data) }.to_vec();
+    key.seal_in_place_append_tag(nonce, aead::Aad::from(unsafe { array_items::<u8>(context) }), &mut sealed)
+        .expect("data it can seal");
     byte_array(&sealed)
 }
 
@@ -52,10 +50,14 @@ pub unsafe extern "C" fn tondo_rt_crypto_open(
     sealed: *mut ArrayHeader,
     context: *mut ArrayHeader,
 ) -> *mut ArrayHeader {
-    let key = aead::LessSafeKey::new(aead::UnboundKey::new(cipher(code), &bytes(key)).expect("a key of 32 bytes"));
-    let Ok(nonce) = aead::Nonce::try_assume_unique_for_key(&bytes(nonce)) else { return byte_array(&[0]) };
-    let mut data = bytes(sealed);
-    match key.open_in_place(nonce, aead::Aad::from(bytes(context)), &mut data) {
+    let key = aead::LessSafeKey::new(
+        aead::UnboundKey::new(cipher(code), unsafe { array_items::<u8>(key) }).expect("a key of 32 bytes"),
+    );
+    let Ok(nonce) = aead::Nonce::try_assume_unique_for_key(unsafe { array_items::<u8>(nonce) }) else {
+        return byte_array(&[0]);
+    };
+    let mut data = unsafe { array_items::<u8>(sealed) }.to_vec();
+    match key.open_in_place(nonce, aead::Aad::from(unsafe { array_items::<u8>(context) }), &mut data) {
         Ok(opened) => byte_array(&[&[1], &opened[..]].concat()),
         Err(_) => byte_array(&[0]),
     }
@@ -76,10 +78,11 @@ pub unsafe extern "C" fn tondo_rt_crypto_hkdf(
         }
     }
     let length = (length as usize).min(255 * 32);
-    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &bytes(salt)).extract(&bytes(secret));
-    let info = bytes(info);
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, unsafe { array_items::<u8>(salt) })
+        .extract(unsafe { array_items::<u8>(secret) });
+    let info = unsafe { array_items::<u8>(info) };
     let mut out = vec![0; length];
-    prk.expand(&[&info], Length(length)).and_then(|okm| okm.fill(&mut out)).expect("a length HKDF gives");
+    prk.expand(&[info], Length(length)).and_then(|okm| okm.fill(&mut out)).expect("a length HKDF gives");
     byte_array(&out)
 }
 
@@ -93,7 +96,13 @@ pub unsafe extern "C" fn tondo_rt_crypto_pbkdf2(
 ) -> *mut ArrayHeader {
     let iterations = NonZeroU32::new(iterations.clamp(1, u32::MAX as i64) as u32).expect("at least one");
     let mut out = vec![0; length.max(0) as usize];
-    pbkdf2::derive(pbkdf2::PBKDF2_HMAC_SHA256, iterations, &bytes(salt), &bytes(password), &mut out);
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        iterations,
+        unsafe { array_items::<u8>(salt) },
+        unsafe { array_items::<u8>(password) },
+        &mut out,
+    );
     byte_array(&out)
 }
 
@@ -135,7 +144,7 @@ fn signer(kind: i64, pkcs8: &[u8]) -> Option<Signer> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_crypto_public(kind: i64, pkcs8: *mut ArrayHeader) -> *mut ArrayHeader {
     use signature::KeyPair;
-    match signer(kind, &bytes(pkcs8)) {
+    match signer(kind, unsafe { array_items::<u8>(pkcs8) }) {
         Some(Signer::Ed25519(pair)) => byte_array(pair.public_key().as_ref()),
         Some(Signer::Ecdsa(pair)) => byte_array(pair.public_key().as_ref()),
         Some(Signer::Rsa(pair)) => byte_array(pair.public_key().as_ref()),
@@ -151,13 +160,13 @@ pub unsafe extern "C" fn tondo_rt_crypto_sign(
     data: *mut ArrayHeader,
 ) -> *mut ArrayHeader {
     let random = rand::SystemRandom::new();
-    let data = bytes(data);
-    match signer(kind, &bytes(pkcs8)) {
-        Some(Signer::Ed25519(pair)) => byte_array(pair.sign(&data).as_ref()),
-        Some(Signer::Ecdsa(pair)) => byte_array(pair.sign(&random, &data).expect("the system's entropy").as_ref()),
+    let data = unsafe { array_items::<u8>(data) };
+    match signer(kind, unsafe { array_items::<u8>(pkcs8) }) {
+        Some(Signer::Ed25519(pair)) => byte_array(pair.sign(data).as_ref()),
+        Some(Signer::Ecdsa(pair)) => byte_array(pair.sign(&random, data).expect("the system's entropy").as_ref()),
         Some(Signer::Rsa(pair)) => {
             let mut out = vec![0; pair.public().modulus_len()];
-            pair.sign(&signature::RSA_PKCS1_SHA256, &random, &data, &mut out).expect("a key that signs");
+            pair.sign(&signature::RSA_PKCS1_SHA256, &random, data, &mut out).expect("a key that signs");
             byte_array(&out)
         }
         None => byte_array(&[]),
@@ -178,8 +187,8 @@ pub unsafe extern "C" fn tondo_rt_crypto_verify(
         2 => &signature::ECDSA_P384_SHA384_FIXED,
         _ => &signature::RSA_PKCS1_2048_8192_SHA256,
     };
-    let key = signature::UnparsedPublicKey::new(algorithm, bytes(public));
-    key.verify(&bytes(data), &bytes(signed)).is_ok() as u8
+    let key = signature::UnparsedPublicKey::new(algorithm, unsafe { array_items::<u8>(public) });
+    key.verify(unsafe { array_items::<u8>(data) }, unsafe { array_items::<u8>(signed) }).is_ok() as u8
 }
 
 /// The password hashed with Argon2id, OWASP's parameters and a random salt

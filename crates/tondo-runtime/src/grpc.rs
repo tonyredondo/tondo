@@ -4,7 +4,9 @@
 //! frames them, as they are given, and receives the server's messages,
 //! headers and status, which its task waits for without holding a worker.
 
-use crate::io::{array_bytes, byte_array, wait_for};
+use crate::array_items;
+use crate::byte_array;
+use crate::io::wait_for;
 use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_bytes, str_new};
 use bytes::{Buf, Bytes, BytesMut};
@@ -689,7 +691,7 @@ fn begin(
         true => Prepared {
             path: text(path),
             headers,
-            one: Some(framed(&unsafe { array_bytes(message) }, compressed)),
+            one: Some(framed(unsafe { array_items::<u8>(message) }, compressed)),
             stream: None,
         },
         false => {
@@ -794,10 +796,10 @@ fn call<'a>(object: *mut NativeObject) -> Option<&'a Call> {
 /// Sends a message; false once the call ended.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_grpc_send(object: *mut NativeObject, message: *mut ArrayHeader) -> u8 {
-    let message = unsafe { array_bytes(message) };
+    let message = unsafe { array_items::<u8>(message) };
     let Some(call) = call(object) else { return 0 };
     let Some(sender) = lock(&call.outgoing).clone() else { return 0 };
-    matches!(wait_for(sender.send(framed(&message, call.compressed))), Some(Ok(()))) as u8
+    matches!(wait_for(sender.send(framed(message, call.compressed))), Some(Ok(()))) as u8
 }
 
 /// Says the client sent all its messages.
@@ -853,12 +855,12 @@ pub extern "C" fn tondo_rt_grpc_detail(object: *mut NativeObject) -> *mut Str {
 /// The headers the server answered with, as names and values.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_headers(object: *mut NativeObject) -> *mut ArrayHeader {
-    crate::http::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.headers).clone()))
+    crate::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.headers).clone()))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_trailers(object: *mut NativeObject) -> *mut ArrayHeader {
-    crate::http::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.status).2.clone()))
+    crate::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.status).2.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -925,7 +927,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_open(
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_ended(object: *mut NativeObject) -> *mut ArrayHeader {
     let Some(ended) = native::get::<Arc<Ended>>(object).cloned() else {
-        return crate::http::string_array(&[]);
+        return crate::string_array(&[]);
     };
     let status = wait_for(async move {
         loop {
@@ -939,7 +941,7 @@ pub extern "C" fn tondo_rt_grpc_ended(object: *mut NativeObject) -> *mut ArrayHe
     let (code, message, trailers) = status.unwrap_or((CANCELLED, "the call was cancelled".into(), Vec::new()));
     let mut list = vec![code.to_string(), message];
     list.extend(trailers);
-    crate::http::string_array(&list)
+    crate::string_array(&list)
 }
 
 /// The call the interceptors made, once `next` made it; or one that ended
@@ -1058,7 +1060,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
 /// unary call of Connect.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_grpc_frames_of(bytes: *mut ArrayHeader, encoding: *const Str) -> *mut NativeObject {
-    let frames = Frames::new(None, BytesMut::from(&unsafe { array_bytes(bytes) }[..]), text(encoding), None);
+    let frames = Frames::new(None, BytesMut::from(unsafe { array_items::<u8>(bytes) }), text(encoding), None);
     native::new(Mutex::new(frames))
 }
 

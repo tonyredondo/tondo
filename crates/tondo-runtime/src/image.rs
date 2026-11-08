@@ -4,8 +4,10 @@
 //! gives a new one.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, element, str_new};
-use crate::io::byte_array;
+use super::{ArrayHeader, Str, str_new};
+use crate::array_items;
+use crate::byte_array;
+use crate::int_array;
 use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader, Rgba, RgbaImage, imageops::FilterType};
 use std::io::Cursor;
 
@@ -20,21 +22,6 @@ const FORMATS: [ImageFormat; 4] = [ImageFormat::Png, ImageFormat::Jpeg, ImageFor
 
 fn code(format: Option<ImageFormat>) -> i64 {
     format.and_then(|f| FORMATS.iter().position(|&known| known == f)).map_or(-1, |i| i as i64)
-}
-
-fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { std::slice::from_raw_parts(element(array, 1, 0), (*array).len).to_vec() }
-}
-
-fn ints(values: &[i64]) -> *mut ArrayHeader {
-    let array = super::tondo_rt_array_new(8, values.len());
-    for (index, &value) in values.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut i64) = value };
-    }
-    array
 }
 
 fn picture<'a>(object: *mut NativeObject) -> Option<&'a DynamicImage> {
@@ -64,7 +51,7 @@ fn made(image: Option<DynamicImage>, format: i64) -> *mut NativeObject {
 /// `read`: the image of the bytes, turned as its EXIF orientation says.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_image_read(data: *mut ArrayHeader) -> *mut NativeObject {
-    let data = bytes(data);
+    let data = unsafe { array_items::<u8>(data) }.to_vec();
     let read = crate::io::host(true, move || {
         let reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
         let format = code(reader.format());
@@ -95,7 +82,7 @@ pub extern "C" fn tondo_rt_image_failure(object: *mut NativeObject) -> *mut Str 
 pub unsafe extern "C" fn tondo_rt_image_info(data: *mut ArrayHeader) -> *mut ArrayHeader {
     use image::{ImageDecoder, metadata::Orientation};
     let read = || {
-        let reader = ImageReader::new(Cursor::new(bytes(data))).with_guessed_format().ok()?;
+        let reader = ImageReader::new(Cursor::new(unsafe { array_items::<u8>(data) })).with_guessed_format().ok()?;
         let format = code(reader.format());
         let mut decoder = reader.into_decoder().ok()?;
         let (width, height) = decoder.dimensions();
@@ -107,8 +94,8 @@ pub unsafe extern "C" fn tondo_rt_image_info(data: *mut ArrayHeader) -> *mut Arr
         (format >= 0).then_some([format, width as i64, height as i64])
     };
     match read() {
-        Some(found) => ints(&found),
-        None => ints(&[]),
+        Some(found) => int_array(&found),
+        None => int_array(&[]),
     }
 }
 
@@ -116,8 +103,8 @@ pub unsafe extern "C" fn tondo_rt_image_info(data: *mut ArrayHeader) -> *mut Arr
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_image_size(object: *mut NativeObject) -> *mut ArrayHeader {
     match native::get::<Picture>(object) {
-        Some(Picture::Ready(image, format)) => ints(&[image.width() as i64, image.height() as i64, *format]),
-        _ => ints(&[0, 0, -1]),
+        Some(Picture::Ready(image, format)) => int_array(&[image.width() as i64, image.height() as i64, *format]),
+        _ => int_array(&[0, 0, -1]),
     }
 }
 
@@ -237,9 +224,9 @@ fn lossy_webp(image: &DynamicImage, quality: i64) -> Option<Vec<u8>> {
 /// when it has no EXIF.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_image_exif(data: *mut ArrayHeader) -> *mut ArrayHeader {
-    let data = bytes(data);
+    let data = unsafe { array_items::<u8>(data) }.to_vec();
     let texts = crate::io::host(true, move || exif_texts(&data)).unwrap_or_default();
-    crate::http::string_array(&texts)
+    crate::string_array(&texts)
 }
 
 fn exif_texts(data: &[u8]) -> Option<Vec<String>> {
@@ -312,7 +299,7 @@ pub unsafe extern "C" fn tondo_rt_image_from_pixels(
     height: i64,
     data: *mut ArrayHeader,
 ) -> *mut NativeObject {
-    let data = bytes(data);
+    let data = unsafe { array_items::<u8>(data) }.to_vec();
     let (wide, high) = (width.max(0) as u32, height.max(0) as u32);
     match RgbaImage::from_raw(wide, high, data) {
         Some(image) if width >= 0 && height >= 0 => native::new(Picture::Ready(DynamicImage::ImageRgba8(image), -1)),
@@ -528,5 +515,5 @@ pub extern "C" fn tondo_rt_image_colors(object: *mut NativeObject, count: i64) -
             .map(|&[r, g, b]| (r as i64) << 24 | (g as i64) << 16 | (b as i64) << 8 | 255)
             .collect::<Vec<i64>>()
     });
-    ints(&found.unwrap_or_default())
+    int_array(&found.unwrap_or_default())
 }

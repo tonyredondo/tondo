@@ -7,10 +7,10 @@
 //! extension is a date and time. Map keys are text, or integers read as
 //! their digits.
 
-use crate::http::bytes_of;
-use crate::io::byte_array;
+use crate::array_items;
+use crate::byte_array;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_bytes, str_new};
+use crate::{ArrayHeader, Str, str_new, str_text};
 use std::sync::Mutex;
 
 const END: i64 = 0;
@@ -48,10 +48,6 @@ struct Reader {
     read: usize,
     /// A failure: its message and path.
     error: Option<(String, String)>,
-}
-
-fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
 }
 
 /// A list or map being read: how many items are left, and for a map
@@ -298,8 +294,7 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 /// The events of one value in `input`, or the first failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_parse(input: *mut ArrayHeader) -> *mut NativeObject {
-    let input = bytes_of(input);
-    let input = input.as_slice();
+    let input = unsafe { array_items::<u8>(input) };
     let mut decoder = Decoder { input, at: 0, frames: Vec::new(), events: Vec::new() };
     let mut error = None;
     if input.is_empty() {
@@ -379,7 +374,7 @@ pub extern "C" fn tondo_rt_msgpack_skip(object: *mut NativeObject, code: i64) ->
 pub unsafe extern "C" fn tondo_rt_msgpack_fail(object: *mut NativeObject, message: *const Str) {
     let path = current(object, |e| e.path.clone(), "$".to_string());
     if let Some(mut reader) = reader(object) {
-        reader.error = Some((text(message), path));
+        reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
     }
 }
 
@@ -557,25 +552,25 @@ pub extern "C" fn tondo_rt_msgpack_write_float(object: *mut NativeObject, value:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_text(object: *mut NativeObject, value: *const Str) {
-    let value = text(value);
+    let value = unsafe { str_text(value) };
     write(object, |out| {
-        let _ = rmp::encode::write_str(out, &value);
+        let _ = rmp::encode::write_str(out, value);
     });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_write_bytes(object: *mut NativeObject, value: *mut ArrayHeader) {
-    let value = bytes_of(value);
+    let value = unsafe { array_items::<u8>(value) };
     write(object, |out| {
-        let _ = rmp::encode::write_bin(out, &value);
+        let _ = rmp::encode::write_bin(out, value);
     });
 }
 
 /// A date and time as a timestamp extension, in its shortest form.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let value = text(value);
-    let Some((seconds, nanos)) = crate::civil::parse(&value) else {
+    let value = unsafe { str_text(value) };
+    let Some((seconds, nanos)) = crate::civil::parse(value) else {
         if let Some(mut writer) = writer(object) {
             writer.fail(format!("`{value}` is not a date and time"));
         }
@@ -598,13 +593,13 @@ pub unsafe extern "C" fn tondo_rt_msgpack_write_datetime(object: *mut NativeObje
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_key(object: *mut NativeObject, key: *const Str) {
-    let key = text(key);
+    let key = unsafe { str_text(key) };
     let Some(mut writer) = writer(object) else { return };
     match writer.open.last_mut() {
         Some(open) if open.map && !open.keyed => open.keyed = true,
         _ => return writer.fail(format!("the key `{key}` is outside a map, or follows another key")),
     }
-    let _ = rmp::encode::write_str(&mut writer.out, &key);
+    let _ = rmp::encode::write_str(&mut writer.out, key);
 }
 
 /// Opens a map (`map`) or a list of `count` items.

@@ -707,7 +707,7 @@ pub extern "C" fn tondo_rt_profile_waits(kind: i64) -> *mut super::native::Nativ
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_pprof(profile: *mut super::native::NativeObject) -> *mut crate::ArrayHeader {
     let bytes = super::native::get::<Made>(profile).map_or(&[][..], |made| &made.pprof[..]);
-    super::io::byte_array(bytes)
+    crate::byte_array(bytes)
 }
 
 /// `Profile.folded()`.

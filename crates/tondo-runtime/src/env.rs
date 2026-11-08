@@ -252,7 +252,7 @@ pub extern "C" fn tondo_rt_env_user() -> *mut ArrayHeader {
         true => (String::new(), String::new()),
         false => (field(account.pw_name), field(account.pw_dir)),
     };
-    crate::http::string_array(&[id.to_string(), group.to_string(), name, home])
+    crate::string_array(&[id.to_string(), group.to_string(), name, home])
 }
 
 /// The system the program runs on, as `uname` says: its name, release and
@@ -263,7 +263,7 @@ pub extern "C" fn tondo_rt_env_system() -> *mut ArrayHeader {
     unsafe { libc::uname(&mut named) };
     let field =
         |text: &[libc::c_char]| unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) }.to_string_lossy().into_owned();
-    crate::http::string_array(&[field(&named.sysname), field(&named.release), field(&named.machine)])
+    crate::string_array(&[field(&named.sysname), field(&named.release), field(&named.machine)])
 }
 
 /// The target the program was built for, as tondo names it:

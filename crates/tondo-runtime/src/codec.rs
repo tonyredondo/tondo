@@ -5,17 +5,11 @@
 
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, element, str_bytes, str_new};
-use crate::io::byte_array;
+use crate::array_items;
+use crate::byte_array;
 use hmac::{HmacReset, KeyInit};
 use sha2::digest::DynDigest;
 use std::sync::Mutex;
-
-fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { (0..(*array).len).map(|i| *element(array, 1, i)).collect() }
-}
 
 fn text<'a>(s: *const Str) -> &'a [u8] {
     unsafe { str_bytes(s) }
@@ -29,7 +23,7 @@ const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8) -> *mut Str {
     let (alphabet, pad) = if url != 0 { (URL, false) } else { (STANDARD, true) };
-    let data = bytes(data);
+    let data = unsafe { array_items::<u8>(data) };
     let mut out = Vec::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
@@ -84,7 +78,7 @@ pub unsafe extern "C" fn tondo_rt_base64_decode(input: *const Str, url: u8) -> *
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_hex_encode(data: *mut ArrayHeader) -> *mut Str {
-    let out: String = bytes(data).iter().map(|b| format!("{b:02x}")).collect();
+    let out: String = unsafe { array_items::<u8>(data) }.iter().map(|b| format!("{b:02x}")).collect();
     str_new(out.as_bytes())
 }
 
@@ -215,24 +209,24 @@ pub unsafe extern "C" fn tondo_rt_hash_digest(
     data: *mut ArrayHeader,
     keyed: u8,
 ) -> *mut ArrayHeader {
-    let key = bytes(key);
-    let mut hasher = hasher(kind, (keyed != 0).then_some(&key[..]));
-    hasher.update(&bytes(data));
+    let key = unsafe { array_items::<u8>(key) };
+    let mut hasher = hasher(kind, (keyed != 0).then_some(key));
+    hasher.update(unsafe { array_items::<u8>(data) });
     byte_array(&hasher.finalize_reset())
 }
 
 /// A hasher that takes its data in parts (`hasher`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_hasher(kind: i64, key: *mut ArrayHeader, keyed: u8) -> *mut NativeObject {
-    let key = bytes(key);
-    native::new(Mutex::new(hasher(kind, (keyed != 0).then_some(&key[..]))))
+    let key = unsafe { array_items::<u8>(key) };
+    native::new(Mutex::new(hasher(kind, (keyed != 0).then_some(key))))
 }
 
 /// Gives a hasher the next part of its data.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_hasher_update(object: *mut NativeObject, data: *mut ArrayHeader) {
     if let Some(hasher) = native::get::<Mutex<Box<dyn DynDigest + Send>>>(object) {
-        hasher.lock().unwrap_or_else(|e| e.into_inner()).update(&bytes(data));
+        hasher.lock().unwrap_or_else(|e| e.into_inner()).update(unsafe { array_items::<u8>(data) });
     }
 }
 
@@ -445,7 +439,7 @@ pub unsafe extern "C" fn tondo_rt_path_steps(path: *const Str) -> *mut ArrayHead
             .collect(),
         None => vec!["!".to_string()],
     };
-    crate::http::string_array(&steps)
+    crate::string_array(&steps)
 }
 
 #[unsafe(no_mangle)]

@@ -834,6 +834,53 @@ pub(crate) unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> 
     unsafe { position(a, size, (*a).head + index) }
 }
 
+/// The items of an array of `T`, where they lie, with no check and no copy;
+/// none for a null array. The caller keeps the array alive.
+pub(crate) unsafe fn array_items<'a, T>(a: *mut ArrayHeader) -> &'a [T] {
+    if a.is_null() {
+        return &[];
+    }
+    unsafe { std::slice::from_raw_parts(element(a, std::mem::size_of::<T>(), 0) as *const T, (*a).len) }
+}
+
+/// How a native gives a `Result` to the compiled code: 0, with the value
+/// stored where `store` puts it, or the code of the error, which says its
+/// variant plus one.
+pub(crate) fn status<T, E>(result: Result<T, E>, code: impl FnOnce(E) -> i64, store: impl FnOnce(T)) -> i64 {
+    match result {
+        Ok(value) => {
+            store(value);
+            0
+        }
+        Err(error) => code(error),
+    }
+}
+
+/// An `Array[Byte]` of `bytes`.
+pub(crate) fn byte_array(bytes: &[u8]) -> *mut ArrayHeader {
+    let array = tondo_rt_array_new(1, bytes.len());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), element(array, 1, 0), bytes.len()) };
+    array
+}
+
+/// An `Array[Int]` of `values`.
+pub(crate) fn int_array(values: &[i64]) -> *mut ArrayHeader {
+    let array = tondo_rt_array_new(8, values.len());
+    for (index, &value) in values.iter().enumerate() {
+        unsafe { *(element(array, 8, index) as *mut i64) = value };
+    }
+    array
+}
+
+/// An `Array[String]` of `items`.
+pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
+    let array = tondo_rt_array_new(8, items.len());
+    for (index, item) in items.iter().enumerate() {
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(item.as_bytes()) };
+    }
+    array
+}
+
 /// Whether no other value shares the array, so that a change of an item in
 /// place changes it alone.
 pub(crate) unsafe fn unique(a: *mut ArrayHeader) -> bool {

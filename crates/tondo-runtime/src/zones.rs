@@ -5,7 +5,7 @@
 //! `TONDO_ZONES=builtin` takes them all from that copy. A zone is known to
 //! Tondo by its name, which the runtime keeps compiled.
 
-use super::{ArrayHeader, Str, element, str_bytes, str_new};
+use super::{ArrayHeader, Str, element, str_new};
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 fn text<'a>(s: *const Str) -> &'a str {
-    std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
+    unsafe { crate::str_text(s) }
 }
 
 fn ints_of(array: *mut ArrayHeader) -> Vec<i64> {
@@ -179,7 +179,7 @@ fn names(locale: &str) -> &'static Names {
 /// The names of a locale, as `std/timetext.to` reads them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_time_names(locale: *const Str) -> *mut ArrayHeader {
-    crate::http::string_array(&names(text(locale)).0)
+    crate::string_array(&names(text(locale)).0)
 }
 
 /// The abbreviation of a zone at a time in seconds since 1970, as `CET`.

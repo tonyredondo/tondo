@@ -10,6 +10,7 @@
 //! stdout, so that `tondo test` gives each entry the output written before
 //! it.
 
+use crate::array_items;
 use crate::config::config;
 use crate::{ArrayHeader, MapObject, Str, str_bytes};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -432,7 +433,7 @@ fn valid_media(media: &str) -> bool {
 }
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    unsafe { crate::str_text(s) }.to_owned()
 }
 
 /// The entries of a `Map[String, String]`, in order.
@@ -480,7 +481,7 @@ pub unsafe extern "C" fn tondo_rt_test_attach(
     if !valid_media(&media) {
         fail(2006, format!("{media:?} is not a media type such as \"application/json\""), location);
     }
-    let bytes = if data.is_null() { Vec::new() } else { unsafe { crate::io::array_bytes(data) } };
+    let bytes = unsafe { array_items::<u8>(data) }.to_vec();
     let repeated = with(|r| {
         let node = r.current();
         if !r.attached.insert((node, name.clone())) {

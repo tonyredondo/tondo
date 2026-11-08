@@ -114,7 +114,10 @@ API held by the snapshot of phase 0.5. Independent of the runtime's phases.
 
 Profiles of the benchmarks and of allocations, and only changes that measure better: the global
 lock of the scheduler's queue, allocations in JSON and serialization, the fingerprints of
-`std.model`, the pairs of retain and release the optimizer leaves.
+`std.model`, the pairs of retain and release the optimizer leaves. Phase 4 measured where those
+allocations are: decoding a record of four fields from MessagePack or CBOR takes 93 of them, from
+JSON 12, nearly all an event of `std.serialization` with its own string for each key and value;
+and the reader of JSON copies its whole input, where it could hold the string.
 
 ## Found on the way
 
@@ -137,4 +140,5 @@ know. The baseline found an empty array literal allocated at every call of a der
 | 1 | done 2026-11-08: `Worker`, lent to a closure by `worker`, which never inlines; `crates/tondo/tests/workers.rs` |
 | 2 | done 2026-11-08: `tasks/` in 19 modules; the tools hear the scheduler through `tasks/tools.rs`, one word of bits; the replay, the exploration of orders and live builds' reloads, which change how it waits and what runs next, stay where they act |
 | 3 | done 2026-11-08: `config.rs`, 37 variables read once as a program starts; the table of the toolchain's specification, 7.17, held to it by `crates/tondo/tests/environment.rs` |
-| 4–8 | not started |
+| 4 | done 2026-11-08: one view of a string, `str_text`, and of an array's items, `array_items`, which seven helpers that copied bytes, some a byte at a time, gave way to; MessagePack and CBOR write their texts and read their input in place (encoding that record, 19 allocations to 10 and 33 to 28); one way back, `byte_array`, `int_array` and `string_array` in lib.rs, of which `ints` had three copies; and `status`, how a native gives a `Result` with its value out, which `fs` and `io` each had and `process` wrote by hand. What `fs`, `net`, `http` and `sql` keep of a failure in their objects differs, a code with the system's number, one for each direction, a kind and its text, a text, and stays as it is |
+| 5–8 | not started |

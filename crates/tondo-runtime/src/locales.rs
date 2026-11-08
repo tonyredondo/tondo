@@ -70,7 +70,7 @@ fn entry<T>(table: &HashMap<String, T>, locale: *const Str) -> &T {
 /// decimals, percents and currencies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_number_symbols(locale: *const Str) -> *mut ArrayHeader {
-    crate::http::string_array(&entry(&NUMBERS.locales, locale).0)
+    crate::string_array(&entry(&NUMBERS.locales, locale).0)
 }
 
 /// The symbol a locale writes for a currency, or its code.
@@ -95,5 +95,5 @@ pub unsafe extern "C" fn tondo_rt_text_currency_digits(code: *const Str) -> i64 
 /// order they are tried; a count that meets none is `other`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_plural_rules(locale: *const Str) -> *mut ArrayHeader {
-    crate::http::string_array(entry(&NUMBERS.plurals, locale))
+    crate::string_array(entry(&NUMBERS.plurals, locale))
 }

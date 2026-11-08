@@ -12,7 +12,9 @@ use super::http::{runtime, text};
 use super::native::{self, NativeObject};
 use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Str, str_new};
-use crate::io::{Host, Mode, Ready, StreamObject, byte_array, retain, run, run_until, wait_for};
+use crate::array_items;
+use crate::byte_array;
+use crate::io::{Host, Mode, Ready, StreamObject, retain, run, run_until, wait_for};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -968,7 +970,7 @@ pub unsafe extern "C" fn tondo_rt_net_write_bytes(
     data: *mut ArrayHeader,
     timeout_ms: i64,
 ) -> i64 {
-    write(object, unsafe { crate::io::array_bytes(data) }, timeout_ms)
+    write(object, unsafe { array_items::<u8>(data) }.to_vec(), timeout_ms)
 }
 
 /// `close` (`both` 1) and `closeWrite`: sends what is pending, then ends
@@ -1273,7 +1275,7 @@ pub unsafe extern "C" fn tondo_rt_net_send_to(
     port_number: i64,
 ) -> i64 {
     let Some(Net::Socket(socket)) = native::get::<Net>(object) else { return CLOSED };
-    let data = unsafe { crate::io::array_bytes(data) };
+    let data = unsafe { array_items::<u8>(data) }.to_vec();
     let (sending, ip) = (lock(&socket.socket).clone(), text(ip));
     let sent = port(port_number).and_then(|port| {
         let address = ip
@@ -1298,7 +1300,7 @@ pub unsafe extern "C" fn tondo_rt_net_send_to_path(
     path: *const Str,
 ) -> i64 {
     let Some(Net::Socket(socket)) = native::get::<Net>(object) else { return CLOSED };
-    let (data, path) = (unsafe { crate::io::array_bytes(data) }, text(path));
+    let (data, path) = (unsafe { array_items::<u8>(data) }.to_vec(), text(path));
     let sent = match lock(&socket.socket).clone() {
         None => Err(failure(CLOSED, "closed")),
         Some(Datagrams::Unix(sending)) => send_datagram(sending, data, move |socket, data| socket.send_to(data, &path)),
@@ -1432,8 +1434,8 @@ pub unsafe extern "C" fn tondo_rt_net_resolve(host: *const Str, timeout_ms: i64)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_names(object: *mut NativeObject) -> *mut ArrayHeader {
     match native::get::<Net>(object) {
-        Some(Net::Names(names)) => super::http::string_array(names),
-        _ => super::http::string_array(&[]),
+        Some(Net::Names(names)) => crate::string_array(names),
+        _ => crate::string_array(&[]),
     }
 }
 

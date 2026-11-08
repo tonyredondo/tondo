@@ -4,10 +4,13 @@
 //! Files go out with ranges, so a download can resume, and uploads go to
 //! disk as they arrive.
 
-use super::http::{Failure, Source, blocking, bytes_of, runtime, socket, stream_of, string_array, strings, text, wait};
+use super::http::{Failure, Source, blocking, runtime, socket, stream_of, strings, text, wait};
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, str_new};
-use crate::io::{Host, Mode, StreamObject, byte_array};
+use crate::array_items;
+use crate::byte_array;
+use crate::io::{Host, Mode, StreamObject};
+use crate::string_array;
 use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -1068,7 +1071,7 @@ pub extern "C" fn tondo_rt_http_respond(
     headers: *mut ArrayHeader,
     data: *mut ArrayHeader,
 ) {
-    request(object).send(response(status, &strings(headers), full(bytes_of(data))));
+    request(object).send(response(status, &strings(headers), full(unsafe { array_items::<u8>(data) }.to_vec())));
 }
 
 /// Responds with what a stream gives, as it gives it.
@@ -1445,7 +1448,7 @@ pub unsafe extern "C" fn tondo_rt_http_request_form_of(
     data: *mut ArrayHeader,
 ) -> *mut NativeObject {
     let r = request(object);
-    let data = Bytes::from(bytes_of(data));
+    let data = Bytes::copy_from_slice(unsafe { array_items::<u8>(data) });
     match r.header("content-type").map(multer::parse_boundary) {
         Some(Ok(boundary)) => {
             let stream = futures_util::stream::once(async move { Ok::<Bytes, std::convert::Infallible>(data) });

@@ -4,7 +4,8 @@
 //! worker.
 
 use super::tasks::{HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, LIVE_OBJECTS, Str, element, str_bytes, str_new, tondo_rt_array_new};
+use super::{ArrayHeader, LIVE_OBJECTS, Str, byte_array, str_bytes, str_new};
+use crate::array_items;
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -779,27 +780,11 @@ fn io_status(error: &std::io::Error) -> i64 {
 }
 
 fn status<T>(result: std::io::Result<T>, store: impl FnOnce(T)) -> i64 {
-    match result {
-        Ok(value) => {
-            store(value);
-            0
-        }
-        Err(error) => io_status(&error),
-    }
+    crate::status(result, |error| io_status(&error), store)
 }
 
 pub(crate) fn utf8(bytes: Vec<u8>) -> std::io::Result<String> {
     String::from_utf8(bytes).map_err(|_| ErrorKind::InvalidData.into())
-}
-
-pub(crate) fn byte_array(bytes: &[u8]) -> *mut ArrayHeader {
-    let array = tondo_rt_array_new(1, bytes.len());
-    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), element(array, 1, 0), bytes.len()) };
-    array
-}
-
-pub(crate) unsafe fn array_bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    unsafe { (0..(*array).len).map(|i| *element(array, 1, i)).collect() }
 }
 
 #[unsafe(no_mangle)]
@@ -819,7 +804,7 @@ pub unsafe extern "C" fn tondo_rt_io_write_line(stream: *mut StreamObject, text:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write_bytes(stream: *mut StreamObject, data: *mut ArrayHeader) -> i64 {
-    let data = unsafe { array_bytes(data) };
+    let data = unsafe { array_items::<u8>(data) }.to_vec();
     let count = data.len();
     status(run_ready(stream, |s| s.has_room(count), move |s| s.write(&data)), |_| ())
 }

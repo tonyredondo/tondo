@@ -3,8 +3,10 @@
 //! worker. Each operation returns 0, or 1 plus the index of the `FsError`
 //! variant, and writes its value to `out`.
 
-use super::io::{Mode, StreamObject, StreamState, array_bytes, byte_array, run, run_ready, stream};
+use super::io::{Mode, StreamObject, StreamState, run, run_ready, stream};
 use super::{ArrayHeader, Str, element, str_bytes, str_new, tondo_rt_array_new};
+use crate::array_items;
+use crate::byte_array;
 use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -115,13 +117,7 @@ fn text(bytes: Vec<u8>) -> Outcome<String> {
 
 /// Stores a result: the value through `store`, or the error's code.
 fn finish<T>(outcome: Outcome<T>, store: impl FnOnce(T)) -> i64 {
-    match outcome {
-        Ok(value) => {
-            store(value);
-            0
-        }
-        Err(error) => code(error),
-    }
+    crate::status(outcome, code, store)
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +180,7 @@ pub unsafe extern "C" fn tondo_rt_fs_write_text(path_text: *const Str, contents:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_bytes(path_text: *const Str, contents: *mut ArrayHeader) -> i64 {
-    let (path, data) = unsafe { (path(path_text), array_bytes(contents)) };
+    let (path, data) = unsafe { (path(path_text), array_items::<u8>(contents).to_vec()) };
     finish(host(move || write_atomically(&path?, &data)), |_| ())
 }
 
@@ -317,7 +313,7 @@ pub unsafe extern "C" fn tondo_rt_fs_write(file: *mut StreamObject, contents: *c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_bytes_to(file: *mut StreamObject, contents: *mut ArrayHeader) -> i64 {
-    let data = unsafe { array_bytes(contents) };
+    let data = unsafe { array_items::<u8>(contents) }.to_vec();
     let count = data.len();
     finish(run_ready(file, |s| s.has_room(count), move |s| io(s.write(&data))), |_| ())
 }
@@ -351,7 +347,7 @@ pub unsafe extern "C" fn tondo_rt_fs_close(file: *mut StreamObject) -> i64 {
 // ---------------------------------------------------------------------------
 
 unsafe fn lexical(text: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned()
+    unsafe { super::str_text(text) }.to_owned()
 }
 
 fn string_or_null(text: Option<&str>) -> *mut Str {
@@ -396,6 +392,6 @@ pub unsafe extern "C" fn tondo_rt_str_to_bytes(text: *const Str) -> *mut ArrayHe
 /// `String.fromBytes(bytes)`: null when the bytes are not UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_from_bytes(bytes: *mut ArrayHeader) -> *mut Str {
-    let bytes = unsafe { array_bytes(bytes) };
-    if std::str::from_utf8(&bytes).is_ok() { str_new(&bytes) } else { std::ptr::null_mut() }
+    let bytes = unsafe { array_items::<u8>(bytes) };
+    if std::str::from_utf8(bytes).is_ok() { str_new(bytes) } else { std::ptr::null_mut() }
 }

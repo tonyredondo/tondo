@@ -4,8 +4,10 @@
 //! gives a `Done`: its texts and numbers, or the code of its `FsError`.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_bytes};
-use crate::http::{string_array, strings};
+use super::{ArrayHeader, Str};
+use crate::http::strings;
+use crate::int_array;
+use crate::string_array;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -13,15 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 fn text<'a>(s: *const Str) -> &'a str {
-    std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
-}
-
-pub(crate) fn ints(values: &[i64]) -> *mut ArrayHeader {
-    let array = super::tondo_rt_array_new(8, values.len());
-    for (index, &value) in values.iter().enumerate() {
-        unsafe { *(super::element(array, 8, index) as *mut i64) = value };
-    }
-    array
+    unsafe { crate::str_text(s) }
 }
 
 /// The shortest path that names the same lexically, as `path.clean`.
@@ -131,7 +125,7 @@ pub extern "C" fn tondo_rt_files_texts(done: *mut NativeObject) -> *mut ArrayHea
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_files_numbers(done: *mut NativeObject) -> *mut ArrayHeader {
-    ints(native::get::<Done>(done).map_or(&[][..], |d| &d.numbers))
+    int_array(native::get::<Done>(done).map_or(&[][..], |d| &d.numbers))
 }
 
 /// The `FileKind` index of a type.

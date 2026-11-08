@@ -1080,7 +1080,7 @@ pub unsafe extern "C" fn tondo_rt_yaml_outline(source: *const Str) -> *mut Nativ
 pub extern "C" fn tondo_rt_yaml_outline_paths(object: *mut NativeObject) -> *mut crate::ArrayHeader {
     let paths: Vec<String> =
         native::get::<Outline>(object).map_or(Vec::new(), |o| o.nodes.iter().map(|n| n.path.clone()).collect());
-    crate::http::string_array(&paths)
+    crate::string_array(&paths)
 }
 
 /// Eight numbers a node: its kind, start, end, line, column, the end of its
@@ -1096,7 +1096,7 @@ pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *m
             })
             .collect()
     });
-    crate::files::ints(&numbers)
+    crate::int_array(&numbers)
 }
 
 /// Two texts a node: its tag and its anchor, or empty.
@@ -1104,7 +1104,7 @@ pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *m
 pub extern "C" fn tondo_rt_yaml_outline_properties(object: *mut NativeObject) -> *mut crate::ArrayHeader {
     let texts: Vec<String> = native::get::<Outline>(object)
         .map_or(Vec::new(), |o| o.nodes.iter().flat_map(|n| [n.tag.clone(), n.anchor.clone()]).collect());
-    crate::http::string_array(&texts)
+    crate::string_array(&texts)
 }
 
 /// Why the text is not a document, or empty.

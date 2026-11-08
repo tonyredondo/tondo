@@ -4,7 +4,8 @@
 //! how deep messages nest. The code the compiler writes for each message
 //! calls them field by field.
 
-use crate::io::{array_bytes, byte_array};
+use crate::array_items;
+use crate::byte_array;
 use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_bytes, str_new};
 use std::sync::Mutex;
@@ -124,7 +125,7 @@ fn write_length(object: *mut NativeObject, number: i64, bytes: &[u8]) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_write_bytes(object: *mut NativeObject, number: i64, bytes: *mut ArrayHeader) {
-    write_length(object, number, &unsafe { array_bytes(bytes) });
+    write_length(object, number, unsafe { array_items::<u8>(bytes) });
 }
 
 #[unsafe(no_mangle)]
@@ -159,9 +160,9 @@ pub extern "C" fn tondo_rt_pb_write_group(object: *mut NativeObject, number: i64
 /// Fields as they were read, which a message did not know.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_write_raw(object: *mut NativeObject, bytes: *mut ArrayHeader) {
-    let bytes = unsafe { array_bytes(bytes) };
+    let bytes = unsafe { array_items::<u8>(bytes) };
     if let Some(mut w) = writer(object) {
-        w.buffer().extend_from_slice(&bytes);
+        w.buffer().extend_from_slice(bytes);
     }
 }
 
@@ -349,7 +350,7 @@ impl Reader {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_reader(bytes: *mut ArrayHeader) -> *mut NativeObject {
-    let input = unsafe { array_bytes(bytes) };
+    let input = unsafe { array_items::<u8>(bytes) }.to_vec();
     native::new(Mutex::new(Reader {
         input,
         position: 0,

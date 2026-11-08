@@ -5,8 +5,10 @@
 
 use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, Str, element, str_bytes, str_new, tondo_rt_array_new};
-use crate::io::{Host, Mode, StreamObject, byte_array};
+use super::{ArrayHeader, Str, element, str_new, string_array};
+use crate::array_items;
+use crate::byte_array;
+use crate::io::{Host, Mode, StreamObject};
 use bytes::{Buf, Bytes};
 use std::future::Future;
 use std::sync::atomic::Ordering;
@@ -185,7 +187,7 @@ pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + '
 }
 
 pub(crate) fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    unsafe { crate::str_text(s) }.to_owned()
 }
 
 pub(crate) fn strings(array: *mut ArrayHeader) -> Vec<String> {
@@ -194,21 +196,6 @@ pub(crate) fn strings(array: *mut ArrayHeader) -> Vec<String> {
     }
     let count = unsafe { (*array).len };
     (0..count).map(|i| text(unsafe { *(element(array, 8, i) as *const *const Str) })).collect()
-}
-
-pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
-    let array = tondo_rt_array_new(8, items.len());
-    for (index, item) in items.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(item.as_bytes()) };
-    }
-    array
-}
-
-pub(crate) fn bytes_of(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { (0..(*array).len).map(|i| *element(array, 1, i)).collect() }
 }
 
 /// The roots TLS trusts: the system's, or Mozilla's when the system has
@@ -374,7 +361,7 @@ pub unsafe extern "C" fn tondo_rt_http_body_bytes(
     data: *mut ArrayHeader,
     content_type: *const Str,
 ) -> *mut NativeObject {
-    native::new(Body::Bytes(Bytes::from(bytes_of(data)), text(content_type)))
+    native::new(Body::Bytes(Bytes::copy_from_slice(unsafe { array_items::<u8>(data) }), text(content_type)))
 }
 
 /// A body read from a stream as it is sent; `length` is its size when
@@ -431,7 +418,7 @@ pub unsafe extern "C" fn tondo_rt_http_form_bytes(
     file_name: *const Str,
     content_type: *const Str,
 ) {
-    let part = reqwest::multipart::Part::bytes(bytes_of(data));
+    let part = reqwest::multipart::Part::bytes(unsafe { array_items::<u8>(data) }.to_vec());
     add_part(form, text(name), part, text(file_name), text(content_type));
 }
 
@@ -737,7 +724,7 @@ fn windows_1252(bytes: &[u8]) -> String {
 /// Bytes of Windows-1252 as text.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_windows_1252(data: *mut ArrayHeader) -> *mut Str {
-    str_new(windows_1252(&bytes_of(data)).as_bytes())
+    str_new(windows_1252(unsafe { array_items::<u8>(data) }).as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +875,11 @@ pub unsafe extern "C" fn tondo_rt_http_ws_send(
     let Some(sink) = native::get::<Socket>(socket).and_then(|s| s.sink.clone()) else {
         return str_new(b"not an open WebSocket");
     };
-    let frame = if binary != 0 { Frame::Binary(bytes_of(data).into()) } else { Frame::Text(text(message).into()) };
+    let frame = if binary != 0 {
+        Frame::Binary(unsafe { array_items::<u8>(data) }.to_vec().into())
+    } else {
+        Frame::Text(text(message).into())
+    };
     match wait(async move { sink.lock().await.send(frame).await }) {
         Some(Ok(())) => str_new(b""),
         Some(Err(error)) => str_new(error.to_string().as_bytes()),

@@ -2,8 +2,10 @@
 //! the processes they start, and how their streams connect. A plan is an
 //! immutable shared object, so `Command` and `Pipeline` copy by reference.
 
-use super::io::{Mode, StreamObject, byte_array, host_cancellable, replaced_console, retain, run, stream};
+use super::io::{Mode, StreamObject, host_cancellable, replaced_console, retain, run, stream};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, element, str_bytes, tondo_rt_array_new};
+use crate::array_items;
+use crate::byte_array;
 use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
@@ -183,7 +185,7 @@ unsafe fn input(tag: i64, payload: *const u8) -> Input {
         0 => Input::Inherit,
         1 => Input::Null,
         2 => Input::Bytes(Arc::new(unsafe { str_bytes(payload as *const Str) }.to_vec())),
-        3 => Input::Bytes(Arc::new(unsafe { super::io::array_bytes(payload as *mut ArrayHeader) })),
+        3 => Input::Bytes(Arc::new(unsafe { array_items::<u8>(payload as *mut ArrayHeader) }.to_vec())),
         4 => Input::File(PathBuf::from(os(payload as *const Str))),
         5 => Input::Reader(Held(retain(payload as *mut StreamObject))),
         _ => Input::Pipe,
@@ -892,15 +894,15 @@ impl Process {
 /// `start()`: the process into `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_start(plan: *mut PlanObject, out: *mut *mut ProcessObject) -> i64 {
-    match spawn(plan_ref(plan), Defaults::Inherit) {
-        Ok(running) => {
+    crate::status(
+        spawn(plan_ref(plan), Defaults::Inherit),
+        |error| error_status(&error),
+        |running| {
             LIVE_OBJECTS.made();
             let process = ProcessObject { rc: AtomicUsize::new(1), running: Mutex::new(running) };
             unsafe { *out = Box::into_raw(Box::new(process)) };
-            0
-        }
-        Err(error) => error_status(&error),
-    }
+        },
+    )
 }
 
 /// `stdin()`, `stdout()` and `stderr()` (0, 1, 2): the piped stream, or a
@@ -1100,13 +1102,8 @@ pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
 /// `ProcessOutput.text()`: the stdout as UTF-8 into `out`, or `InvalidData`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_text(bytes: *mut ArrayHeader, out: *mut *mut Str) -> i64 {
-    match String::from_utf8(unsafe { super::io::array_bytes(bytes) }) {
-        Ok(text) => {
-            unsafe { *out = super::str_new(text.as_bytes()) };
-            0
-        }
-        Err(_) => INVALID_DATA,
-    }
+    let text = std::str::from_utf8(unsafe { array_items::<u8>(bytes) });
+    crate::status(text, |_| INVALID_DATA, |text| unsafe { *out = super::str_new(text.as_bytes()) })
 }
 
 /// `process.exit(code)`: delivers the console's output and ends the program.

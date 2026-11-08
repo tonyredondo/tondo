@@ -521,7 +521,7 @@ pub extern "C" fn tondo_rt_metric_value(id: i64) -> i64 {
 pub extern "C" fn tondo_rt_metrics() -> *mut crate::ArrayHeader {
     let lines: Vec<String> =
         sample().iter().map(|s| format!("{}\t{}\t{}\t{}", s.name, s.unit, s.gauge as u8, s.value)).collect();
-    super::http::string_array(&lines)
+    crate::string_array(&lines)
 }
 
 /// Counts for the tools from the start: the `main` of a program that reads
@@ -542,7 +542,7 @@ pub extern "C" fn tondo_rt_diagnostics_stack() -> *mut crate::ArrayHeader {
         .skip_while(|(_, file, ..)| *file == "<std>/diagnostics.to")
         .map(|(function, file, line, column)| format!("{function}\t{file}\t{line}\t{column}"))
         .collect();
-    super::http::string_array(&frames)
+    crate::string_array(&frames)
 }
 
 // ---------------------------------------------------------------------------

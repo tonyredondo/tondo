@@ -3,7 +3,7 @@
 //! before it panics, and the forms its report takes, the text of 15.7 and
 //! the JSON of `TONDO_PANIC_FORMAT=json` (toolchain 7.5).
 
-use super::{Str, str_bytes};
+use super::Str;
 use crate::tasks::Task;
 use std::cell::RefCell;
 use std::fmt::Write;
@@ -71,7 +71,7 @@ thread_local! {
 }
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    unsafe { crate::str_text(s) }.to_owned()
 }
 
 #[unsafe(no_mangle)]

@@ -4,7 +4,7 @@
 //! choosing tables, arrays of tables and inline tables as TOML needs.
 
 use crate::native::{self, NativeObject};
-use crate::{Str, str_bytes, str_new};
+use crate::{Str, str_new, str_text};
 use std::sync::Mutex;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
@@ -43,10 +43,6 @@ struct Reader {
     error: Option<(String, usize, String)>,
 }
 
-fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
-}
-
 fn reader(object: *mut NativeObject) -> Option<&'static Mutex<Reader>> {
     native::get::<Mutex<Reader>>(object)
 }
@@ -54,17 +50,17 @@ fn reader(object: *mut NativeObject) -> Option<&'static Mutex<Reader>> {
 /// The events of a document of `text`, or the failure to parse it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_parse(source: *const Str) -> *mut NativeObject {
-    let source = text(source);
+    let source = unsafe { str_text(source) };
     let mut events = Vec::new();
     let mut error = None;
-    match toml_edit::Document::parse(source.as_str()) {
+    match toml_edit::Document::parse(source) {
         Ok(document) => table(document.as_table(), "$", 0, &mut events),
         Err(failure) => {
             let at = failure.span().map_or(0, |span| span.start);
             error = Some((failure.message().trim_end().to_string(), at, "$".to_string()));
         }
     }
-    native::new(Mutex::new(Reader { source, events, read: 0, error }))
+    native::new(Mutex::new(Reader { source: source.to_owned(), events, read: 0, error }))
 }
 
 fn push<'a>(events: &'a mut Vec<Event>, code: i64, path: &str, at: usize) -> &'a mut Event {
@@ -199,7 +195,7 @@ pub unsafe extern "C" fn tondo_rt_toml_fail(object: *mut NativeObject, message: 
         Some(event) => (event.at, event.path.clone()),
         None => (0, "$".to_string()),
     };
-    reader.error = Some((text(message), at, path));
+    reader.error = Some((unsafe { str_text(message) }.to_owned(), at, path));
 }
 
 /// Where the failure is: its message (0), path (1), line (2) or column (3).
@@ -336,15 +332,15 @@ pub extern "C" fn tondo_rt_toml_write_int(object: *mut NativeObject, value: i64)
 /// and one past them cannot be written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_number(object: *mut NativeObject, digits: *const Str) {
-    let text = text(digits);
-    match (text.parse::<i64>(), crate::numbers::integer_digits(&text)) {
+    let text = unsafe { str_text(digits) };
+    match (text.parse::<i64>(), crate::numbers::integer_digits(text)) {
         (Ok(value), _) => scalar(object, Value::from(value)),
         (Err(_), Some(_)) => {
             if let Some(mut writer) = writer(object) {
                 writer.fail(format!("{text} does not fit in TOML, whose integers have 64 bits with a sign"));
             }
         }
-        (Err(_), None) => scalar(object, Value::from(crate::text::parse_float(&text).unwrap_or(0.0))),
+        (Err(_), None) => scalar(object, Value::from(crate::text::parse_float(text).unwrap_or(0.0))),
     }
 }
 
@@ -355,12 +351,12 @@ pub extern "C" fn tondo_rt_toml_write_float(object: *mut NativeObject, value: f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_text(object: *mut NativeObject, value: *const Str) {
-    scalar(object, Value::from(text(value)));
+    scalar(object, Value::from(unsafe { str_text(value) }));
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let written = text(value);
+    let written = unsafe { str_text(value) };
     match written.parse::<toml_edit::Datetime>() {
         Ok(datetime) => scalar(object, Value::from(datetime)),
         Err(_) => {
@@ -376,7 +372,7 @@ pub unsafe extern "C" fn tondo_rt_toml_write_key(object: *mut NativeObject, key:
     if let Some(mut writer) = writer(object)
         && let Some(Frame::Table(_, pending)) = writer.stack.last_mut()
     {
-        *pending = Some(text(key));
+        *pending = Some(unsafe { str_text(key) }.to_owned());
     }
 }
 

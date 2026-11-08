@@ -10,6 +10,7 @@
 
 use super::regex_dialect::{Kind, check};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, str_bytes, str_new};
+use crate::int_array;
 use std::cell::Cell;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -236,10 +237,10 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
 ) -> *mut ArrayHeader {
     clear();
     let r = object(r);
-    let Some(text) = input(r, text) else { return ints(&[]) };
+    let Some(text) = input(r, text) else { return int_array(&[]) };
     let mut at = last.max(0) as usize;
     let captures = loop {
-        let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else { return ints(&[]) };
+        let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else { return int_array(&[]) };
         let whole = captures.get(0).expect("a match has its whole");
         if !whole.is_empty() || whole.end() as i64 != last {
             break captures;
@@ -249,11 +250,11 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     let start = captures.get(0).expect("a match has its whole").start();
     if found as usize >= r.max_matches {
         fail(Kind::MatchLimitExceeded, start);
-        return ints(&[]);
+        return int_array(&[]);
     }
     let spans: Vec<i64> =
         captures.iter().flat_map(|group| group.map_or([-1, -1], |m| [m.start() as i64, m.end() as i64])).collect();
-    ints(&spans)
+    int_array(&spans)
 }
 
 /// The text between two byte offsets, which must fall between scalars.
@@ -370,15 +371,6 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
         return str_new(b"");
     }
     str_new(out.as_bytes())
-}
-
-/// An `Array[Int]` of the values.
-fn ints(values: &[i64]) -> *mut ArrayHeader {
-    let array = super::tondo_rt_array_new(8, values.len());
-    for (index, &value) in values.iter().enumerate() {
-        unsafe { *(super::element(array, 8, index) as *mut i64) = value };
-    }
-    array
 }
 
 /// Whether all of `text` matches `pattern`, 1 or 0, or -1 when the pattern

@@ -1,8 +1,9 @@
 //! `std.internal.memory`, on which `std.ffi` is written: memory from C's
 //! allocator, C strings, and the calls of C functions that take `...`.
 
-use super::io::{array_bytes, byte_array};
 use super::{ArrayHeader, Str, str_bytes, str_new};
+use crate::array_items;
+use crate::byte_array;
 
 unsafe extern "C" {
     fn calloc(count: usize, size: usize) -> *mut u8;
@@ -61,7 +62,7 @@ pub unsafe extern "C" fn tondo_rt_memory_from_c_string(text: *const u8) -> *mut 
 /// The text of a C array of characters, up to its first zero byte.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_memory_from_c_chars(chars: *mut ArrayHeader) -> *mut Str {
-    let bytes = unsafe { array_bytes(chars) };
+    let bytes = unsafe { array_items::<u8>(chars) };
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     str_new(String::from_utf8_lossy(&bytes[..end]).as_bytes())
 }

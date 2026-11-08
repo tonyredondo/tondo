@@ -2,21 +2,16 @@
 //! and Zstandard with ruzstd, whole or as streams of `std.io` over other
 //! streams. Data that is not of the format fails as `InvalidData`.
 
-use super::io::{Host, Mode, StreamObject, byte_array, retain, run, stream, tondo_rt_stream_release};
+use super::ArrayHeader;
+use super::io::{Host, Mode, StreamObject, retain, run, stream, tondo_rt_stream_release};
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, element};
+use crate::array_items;
+use crate::byte_array;
 use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use ruzstd::encoding::CompressionLevel;
 use std::io::{ErrorKind, Read, Write};
-
-fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
-    if array.is_null() {
-        return Vec::new();
-    }
-    unsafe { std::slice::from_raw_parts(element(array, 1, 0), (*array).len).to_vec() }
-}
 
 fn invalid(_: impl std::fmt::Debug) -> std::io::Error {
     ErrorKind::InvalidData.into()
@@ -43,26 +38,26 @@ fn zstd_frames(mut data: &[u8]) -> std::io::Result<Vec<u8>> {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_gzip(data: *mut ArrayHeader, compression: i64) -> *mut ArrayHeader {
     let mut encoder = GzEncoder::new(Vec::new(), level(compression));
-    let _ = encoder.write_all(&bytes(data));
+    let _ = encoder.write_all(unsafe { array_items::<u8>(data) });
     byte_array(&encoder.finish().unwrap_or_default())
 }
 
 /// `zstd.compress`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_zstd(data: *mut ArrayHeader) -> *mut ArrayHeader {
-    byte_array(&ruzstd::encoding::compress_to_vec(&bytes(data)[..], CompressionLevel::Fastest))
+    byte_array(&ruzstd::encoding::compress_to_vec(unsafe { array_items::<u8>(data) }, CompressionLevel::Fastest))
 }
 
 /// `gzip.decompress` (`zstd` 0) or `zstd.decompress` (1): the data, or
 /// nothing when it is not of the format.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut NativeObject {
-    let data = bytes(data);
+    let data = unsafe { array_items::<u8>(data) };
     let unpacked = if zstd != 0 {
-        zstd_frames(&data).ok()
+        zstd_frames(data).ok()
     } else {
         let mut out = Vec::new();
-        MultiGzDecoder::new(&data[..]).read_to_end(&mut out).ok().map(|_| out)
+        MultiGzDecoder::new(data).read_to_end(&mut out).ok().map(|_| out)
     };
     native::new(unpacked)
 }
@@ -71,7 +66,7 @@ pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut Nati
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_deflate(data: *mut ArrayHeader, compression: i64) -> *mut ArrayHeader {
     let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), level(compression));
-    let _ = encoder.write_all(&bytes(data));
+    let _ = encoder.write_all(unsafe { array_items::<u8>(data) });
     byte_array(&encoder.finish().unwrap_or_default())
 }
 
@@ -79,7 +74,8 @@ pub extern "C" fn tondo_rt_deflate(data: *mut ArrayHeader, compression: i64) -> 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader) -> *mut NativeObject {
     let mut out = Vec::new();
-    let inflated = flate2::read::DeflateDecoder::new(&bytes(data)[..]).read_to_end(&mut out).ok().map(|_| out);
+    let inflated =
+        flate2::read::DeflateDecoder::new(unsafe { array_items::<u8>(data) }).read_to_end(&mut out).ok().map(|_| out);
     native::new(inflated)
 }
 
@@ -87,7 +83,7 @@ pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader) -> *mut NativeObject 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_crc32(data: *mut ArrayHeader) -> i64 {
     let mut crc = flate2::Crc::new();
-    crc.update(&bytes(data));
+    crc.update(unsafe { array_items::<u8>(data) });
     crc.sum() as i64
 }
 

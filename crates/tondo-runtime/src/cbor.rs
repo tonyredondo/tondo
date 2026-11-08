@@ -9,10 +9,10 @@
 //! read as the item they hold. Map keys are text, or integers read as their
 //! digits.
 
-use crate::http::bytes_of;
-use crate::io::byte_array;
+use crate::array_items;
+use crate::byte_array;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_bytes, str_new};
+use crate::{ArrayHeader, Str, str_bytes, str_new, str_text};
 use std::sync::Mutex;
 
 const END: i64 = 0;
@@ -50,10 +50,6 @@ struct Reader {
     events: Vec<Event>,
     read: usize,
     error: Option<(String, String)>,
-}
-
-fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
 }
 
 /// A container being read: how many items are left (`None` until a break
@@ -367,8 +363,8 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 /// The events of one data item in `input`, or the first failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_parse(input: *mut ArrayHeader) -> *mut NativeObject {
-    let input = bytes_of(input);
-    let mut decoder = Decoder { input: &input, at: 0, frames: Vec::new(), events: Vec::new() };
+    let input = unsafe { array_items::<u8>(input) };
+    let mut decoder = Decoder { input, at: 0, frames: Vec::new(), events: Vec::new() };
     let mut error = if input.is_empty() { Some(("the input is empty".to_string(), "$".to_string())) } else { None };
     if error.is_none()
         && let Err(failure) = decoder.value()
@@ -441,7 +437,7 @@ pub extern "C" fn tondo_rt_cbor_skip(object: *mut NativeObject, code: i64) -> i6
 pub unsafe extern "C" fn tondo_rt_cbor_fail(object: *mut NativeObject, message: *const Str) {
     let path = current(object, |e| e.path.clone(), "$".to_string());
     if let Some(mut reader) = reader(object) {
-        reader.error = Some((text(message), path));
+        reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
     }
 }
 
@@ -641,27 +637,27 @@ pub extern "C" fn tondo_rt_cbor_write_float(object: *mut NativeObject, value: f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_text(object: *mut NativeObject, value: *const Str) {
-    let value = unsafe { str_bytes(value) }.to_vec();
+    let value = unsafe { str_bytes(value) };
     write(object, |out| {
         head(out, 3, value.len() as u64);
-        out.extend(value);
+        out.extend_from_slice(value);
     });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_write_bytes(object: *mut NativeObject, value: *mut ArrayHeader) {
-    let value = bytes_of(value);
+    let value = unsafe { array_items::<u8>(value) };
     write(object, |out| {
         head(out, 2, value.len() as u64);
-        out.extend(value);
+        out.extend_from_slice(value);
     });
 }
 
 /// A date and time as tag 0 and its RFC 3339 text.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let value = text(value);
-    let Some((seconds, nanos)) = crate::civil::parse(&value) else {
+    let value = unsafe { str_text(value) };
+    let Some((seconds, nanos)) = crate::civil::parse(value) else {
         if let Some(mut writer) = writer(object) {
             writer.fail(format!("`{value}` is not a date and time"));
         }
