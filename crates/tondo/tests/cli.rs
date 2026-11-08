@@ -535,14 +535,17 @@ fn a_server_says_why_it_cannot_listen() {
     assert!(said.contains("cannot listen"), "{said}");
 }
 
-/// A program with nothing left to do lets out what it wrote, even to a pipe.
+/// A program with nothing left to do lets out what it wrote, even to a pipe,
+/// when its last worker runs out of work: tasks keep several busy first.
 #[test]
 fn output_goes_out_when_a_program_has_nothing_to_do() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("idle-output");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\nimport std.time\n\nfn main() {\n    console.println(\"waiting\")\n    \
-        time.sleep(time.seconds(30))\n}\n";
+    let program = "import std.console\nimport std.time\n\nfn busy(n: Int): Int {\n    var total = 0\n    \
+        for i in 0..1000000 {\n        total += i % (n + 1)\n    }\n    total\n}\n\nfn main() {\n    \
+        var group = Group[Int]()\n    for n in 0..8 {\n        group.add(spawn busy(n))\n    }\n    \
+        _ = group.wait()\n    console.println(\"waiting\")\n    time.sleep(time.seconds(30))\n}\n";
     std::fs::write(dir.join("idle.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let built = Command::new(tondo).args(["build", "idle.to", "--output", "idle"]).current_dir(&dir).output().unwrap();
