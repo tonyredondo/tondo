@@ -18,6 +18,13 @@ to the next, as the tasks it starts run on its worker or on others; eight rounds
 compares with the `tondo` it starts from too: c100d90, in phase 0, changed what the compiler writes,
 which moved `loops/collatz 10000` 8% in a test's build though not in a program's.
 
+Time is not the last word on a benchmark of nanoseconds. Phase 1 changed nothing that interpolating
+a string runs, and `strings/interpolate` came out 64% slower in a test, which runs with
+`TONDO_DIAGNOSTICS=1`: the same work in a program ran the same 4,903 million instructions before and
+after, in 8% more cycles, as the runtime's code and data moved. A benchmark beyond the threshold is
+measured again as a program with `perf stat -e instructions:u` against the old `tondo`; one whose
+instructions do not change moved, and did not regress.
+
 and against Go with `TONDO=$(which tondo) tondo run bench/compare.to -- --time 1`, which gave:
 
 | Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go |

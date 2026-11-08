@@ -201,14 +201,14 @@ fn own_stacks() -> &'static mut Vec<Stack> {
     thread_local! {
         static GIVE_BACK: GiveBack = const { GiveBack(Cell::new(std::ptr::null_mut())) };
     }
-    let worker = worker();
-    if worker.stacks.get().is_null() {
-        let stacks = Box::into_raw(Box::new(Vec::new()));
+    let mut stacks = worker(|w| w.stacks.get());
+    if stacks.is_null() {
+        stacks = Box::into_raw(Box::new(Vec::new()));
         GIVE_BACK.with(|give_back| give_back.0.set(stacks));
-        worker.stacks.set(stacks);
+        worker(|w| w.stacks.set(stacks));
     }
     // Neither caller is entered again while it holds them.
-    unsafe { &mut *worker.stacks.get() }
+    unsafe { &mut *stacks }
 }
 
 fn task_stack() -> Stack {
@@ -485,7 +485,7 @@ pub(crate) static HOST_WORK: AtomicUsize = AtomicUsize::new(0);
 
 /// What a thread that runs tasks keeps for itself (docs/refactor.md, phase
 /// 1). A task may resume on another thread, so this is reached through
-/// `worker()` alone, which never inlines, and asked for again after anything
+/// `worker`, which never inlines, and asked for again after anything
 /// a task may switch at: no caller keeps its address, or that of a field.
 /// Nothing in it drops, so that reading it costs a load, as the old
 /// `CURRENT` did.
@@ -524,19 +524,19 @@ thread_local! {
     };
 }
 
-/// This thread's `Worker`. Never inlined, so that the compiler cannot keep
-/// the address of a thread-local across a switch of a task between threads;
-/// and opaque, or the compiler, seeing a function that reads no memory,
-/// takes its result never to change and merges its calls across a switch.
+/// This thread's `Worker`, lent to `f`, which reads or writes it. Never
+/// inlined, so that the compiler cannot keep the thread-local's address
+/// across a switch of a task between threads; and nothing hands that address
+/// out, or a function that only computed it would read no memory, which the
+/// compiler takes for one whose result never changes, merging its calls
+/// across a switch.
 #[inline(never)]
-fn worker() -> &'static Worker {
-    let worker = WORKER.with(|worker| worker as *const Worker);
-    // A worker's thread lives as long as the program.
-    unsafe { &*std::hint::black_box(worker) }
+fn worker<R>(f: impl FnOnce(&Worker) -> R) -> R {
+    WORKER.with(f)
 }
 
 pub(crate) fn current() -> *mut Task {
-    worker().current.get()
+    worker(|w| w.current.get())
 }
 
 /// The labels of the running task, which a signal handler may read.
@@ -632,7 +632,8 @@ pub(crate) unsafe fn is_main(task: *mut Task) -> bool {
 }
 
 fn home() -> *mut *mut u8 {
-    worker().home.as_ptr()
+    // An address alone reads no memory: opaque, as `worker` says.
+    worker(|w| std::hint::black_box(w.home.as_ptr()))
 }
 
 fn queue() -> MutexGuard<'static, Queue> {
@@ -739,10 +740,10 @@ static NEXTS: [AtomicPtr<Next>; 1024] = [const { AtomicPtr::new(std::ptr::null_m
 static NEXT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// This worker's next, read by tasks as they wake others: through
-/// `worker()`, or a task that resumes on another thread writes the next of
+/// `worker`, or a task that resumes on another thread writes the next of
 /// the worker it ran on before, which may sleep.
 fn own_next() -> Option<&'static Next> {
-    worker().own_next.get()
+    worker(|w| w.own_next.get())
 }
 
 /// How long a task waits next to a worker that runs another before an idle
@@ -877,7 +878,7 @@ fn wake_idle() {
 
 /// Whether this worker looks at the queue next, once.
 fn looks_next() -> bool {
-    worker().looks_next.replace(false)
+    worker(|w| w.looks_next.replace(false))
 }
 
 /// Wakes a worker to look at the queue, as for a signal that came.
@@ -931,9 +932,9 @@ fn poll(
     {
         watcher.unpark();
     }
-    worker().looks_next.set(alone);
+    worker(|w| w.looks_next.set(alone));
     events.wake();
-    worker().looks_next.set(false);
+    worker(|w| w.looks_next.set(false));
     self::queue()
 }
 
@@ -1140,7 +1141,7 @@ static IN_TONDO: Mutex<Vec<&'static Runner>> = Mutex::new(Vec::new());
 
 /// This thread's state, registered the first time it runs Tondo code.
 fn running_here() -> &'static Runner {
-    if let Some(runner) = worker().runner.get() {
+    if let Some(runner) = worker(|w| w.runner.get()) {
         return runner;
     }
     let runner: &'static Runner = Box::leak(Box::new(Runner {
@@ -1153,7 +1154,7 @@ fn running_here() -> &'static Runner {
         answered: AtomicUsize::new(0),
     }));
     IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
-    worker().runner.set(Some(runner));
+    worker(|w| w.runner.set(Some(runner)));
     runner
 }
 
@@ -1186,7 +1187,7 @@ fn leave_tondo() {
 /// Allocates nothing.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn pause_here() -> bool {
-    worker().runner.get().is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
+    worker(|w| w.runner.get()).is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
 }
 
 /// Where a running task lets a collection run: between two steps.
@@ -1479,7 +1480,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
             let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
             if let Some(slot) = NEXTS.get(index) {
                 slot.store(next as *const Next as *mut Next, Ordering::Release);
-                worker().own_next.set(Some(next));
+                worker(|w| w.own_next.set(Some(next)));
             }
         }
     }
@@ -1495,8 +1496,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
         // the queue first, so that two tasks that wake each other do not
         // keep the others waiting.
         if let Some(next) = own_next() {
-            let turns = &worker().next_turns;
-            let runs = turns.replace(turns.get().wrapping_add(1));
+            let runs = worker(|w| w.next_turns.replace(w.next_turns.get().wrapping_add(1)));
             let task = next.task.swap(std::ptr::null_mut(), Ordering::AcqRel);
             if !task.is_null() {
                 if !runs.is_multiple_of(61) {
@@ -1747,7 +1747,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// Runs a task on this thread until it waits, yields or ends; a task that
 /// ends is freed.
 fn run(task: *mut Task) {
-    worker().current.set(task);
+    worker(|w| w.current.set(task));
     if super::race::on() && noting() {
         noted(format!("s {}\n", unsafe { (*task).name }));
     }
@@ -1765,7 +1765,7 @@ fn run(task: *mut Task) {
     enter_tondo();
     unsafe { switch(home(), (*task).sp) };
     leave_tondo();
-    worker().current.set(std::ptr::null_mut());
+    worker(|w| w.current.set(std::ptr::null_mut()));
     if traced {
         // Nothing runs the task until it is parked or scheduled again.
         let why = unsafe {
@@ -1915,7 +1915,7 @@ pub(crate) struct Shot {
 /// In the handler of `SIGPROF`: answers a dump that asked this thread where
 /// it is, from the instruction and frame the signal interrupted.
 pub(crate) fn answer_where(pc: usize, fp: usize) {
-    let Some(runner) = worker().runner.get() else { return };
+    let Some(runner) = worker(|w| w.runner.get()) else { return };
     if !runner.asked.load(Ordering::Acquire) {
         return;
     }
@@ -1970,7 +1970,7 @@ fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
 /// any, is where `here` says.
 pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
     let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let me_runner = worker().runner.get();
+    let me_runner = worker(|w| w.runner.get());
     let others: Vec<&Runner> = runners
         .iter()
         .copied()
@@ -2296,7 +2296,7 @@ const MONITOR_PERIOD: Duration = Duration::from_millis(1);
 
 /// This worker's calls of C, if it made any.
 fn in_c_here() -> *const InC {
-    worker().in_c.get()
+    worker(|w| w.in_c.get())
 }
 
 fn in_c() -> &'static InC {
@@ -2314,7 +2314,7 @@ fn in_c() -> &'static InC {
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
-    worker().in_c.set(new);
+    worker(|w| w.in_c.set(new));
     new
 }
 
