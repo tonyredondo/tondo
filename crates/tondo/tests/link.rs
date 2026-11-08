@@ -148,3 +148,51 @@ fn gdb_stops_at_a_line_and_shows_the_tasks() {
     assert!(shown.contains("n: Int = 3"), "{shown}");
     assert!(shown.contains("3 * 2 = 6"), "{shown}");
 }
+
+/// A C library whose objects each add an entry to a section, as C code
+/// registers what it has, and walks them from `__start_` to `__stop_` of
+/// the section: the linker keeps the entries, though nothing names them,
+/// together, between the two.
+#[test]
+fn sections_are_bounded_by_start_and_stop() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link_bounds");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let entry = "struct entry { const char *name; int value; };\n";
+    let first = format!(
+        "{entry}__attribute__((used, section(\"tondo_entries\"))) static const struct entry first = {{ \"first\", 1 }};\n\
+         extern const struct entry __start_tondo_entries[], __stop_tondo_entries[];\n\
+         int second_marker(void);\n\
+         int entries_count(void) {{ return second_marker() + (int)(__stop_tondo_entries - __start_tondo_entries); }}\n\
+         int entries_sum(void) {{\n    int sum = 0;\n    for (const struct entry *e = __start_tondo_entries; e < __stop_tondo_entries; e++) sum += e->value;\n    return sum;\n}}\n"
+    );
+    let second = format!(
+        "{entry}static int unrelated = 7;\n\
+         __attribute__((used, section(\"tondo_entries\"))) static const struct entry second = {{ \"second\", 41 }};\n\
+         int second_marker(void) {{ return unrelated - 7; }}\n"
+    );
+    for (name, source) in [("first", first), ("second", second)] {
+        std::fs::write(dir.join(format!("{name}.c")), source).unwrap();
+        let compiled = Command::new("cc")
+            .args(["-c", "-fPIC", &format!("{name}.c"), "-o", &format!("{name}.o")])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    }
+    let archived = Command::new("ar").args(["rcs", "libentries.a", "first.o", "second.o"]).current_dir(&dir).status();
+    assert!(archived.unwrap().success());
+    let library = dir.join("libentries.a");
+    let manifest = format!("[package]\nname = \"entries\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
+    std::fs::write(dir.join("tondo.toml"), manifest).unwrap();
+    let program = "import std.console\nimport std.ffi\n\nextern fn entries_count(): ffi.CInt\nextern fn entries_sum(): ffi.CInt\n\n\
+                   fn main() {\n    let (count, sum) = unsafe { (entries_count(), entries_sum()) }\n    console.println(\"{count} {sum}\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", ".", "--output", "entries"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let run = Command::new(dir.join("entries")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "2 42\n");
+}

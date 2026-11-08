@@ -428,6 +428,22 @@ enum Synthetic {
     Dynamic,
     /// The ELF header, where the executable is loaded.
     HeaderStart,
+    /// `__start_X` or `__stop_X`: where the sections named X begin or end
+    /// (`bound`).
+    Bound,
+}
+
+/// Whether a symbol is `__start_X` or `__stop_X`, for sections whose name X
+/// is a name of C, which a linker places together and bounds so, as GNU's
+/// and LLVM's do: whether the start, and X.
+fn bound(name: &[u8]) -> Option<(bool, &[u8])> {
+    let (start, section) = match name.strip_prefix(b"__start_") {
+        Some(section) => (true, section),
+        None => (false, name.strip_prefix(b"__stop_")?),
+    };
+    let c = section.first().is_some_and(|b| !b.is_ascii_digit())
+        && section.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_');
+    c.then_some((start, section))
 }
 
 fn synthetic(name: &[u8]) -> Option<Synthetic> {
@@ -530,6 +546,10 @@ struct Linker<'a> {
     globals: Vec<Global<'a>>,
     names: FastMap<&'a [u8], usize>,
     groups: FastSet<&'a [u8]>,
+    /// The names of the sections a `__start_` or `__stop_` symbol bounds,
+    /// and where they are once laid out: their output and their offsets.
+    bounded: FastSet<&'a [u8]>,
+    bounds: FastMap<&'a [u8], (Out, u64, u64)>,
     libraries: Vec<Library<'a>>,
     got: Vec<Slot>,
     slots: HashMap<Slot, u32>,
@@ -569,6 +589,8 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         globals: Vec::new(),
         names: FastMap::default(),
         groups: FastSet::default(),
+        bounded: FastSet::default(),
+        bounds: FastMap::default(),
         libraries: Vec::new(),
         got: Vec::new(),
         slots: HashMap::new(),
@@ -820,6 +842,13 @@ impl<'a> Linker<'a> {
                 self.globals[id].def = Def::Linker(synthetic);
                 continue;
             }
+            if let Some((_, section)) = bound(name)
+                && self.inputs.iter().any(|i| i.file.sections().any(|s| s.name_bytes() == Ok(section)))
+            {
+                self.globals[id].def = Def::Linker(Synthetic::Bound);
+                self.bounded.insert(section);
+                continue;
+            }
             let found = self.libraries.iter().position(|l| l.exports.contains_key(name));
             match found {
                 Some(library) => {
@@ -859,7 +888,8 @@ impl<'a> Linker<'a> {
                     let (kind, flags) = (header.sh_type(endian), header.sh_flags(endian));
                     let name = section.name_bytes().unwrap_or_default();
                     let root = matches!(output_of(name, kind, flags), Some(Out::InitArray | Out::FiniArray))
-                        || flags.0 & SHF_GNU_RETAIN.0 != 0;
+                        || flags.0 & SHF_GNU_RETAIN.0 != 0
+                        || self.bounded.contains(name);
                     root && !input.dropped[section.index().0]
                 })
                 .map(|section| (i as u32, section.index().0 as u32))
@@ -1114,7 +1144,7 @@ impl<'a> Linker<'a> {
         let mut sizes = [0u64; OUTS.len()];
         // Constructors run in the order of their priority, those without
         // one last.
-        let mut placed: Vec<(Out, u64, usize, usize)> = Vec::new();
+        let mut placed: Vec<(Out, u64, &[u8], usize, usize)> = Vec::new();
         for (i, input) in self.inputs.iter().enumerate() {
             let endian = input.file.endian();
             for section in input.file.sections() {
@@ -1136,17 +1166,22 @@ impl<'a> Linker<'a> {
                         .unwrap_or(u64::MAX),
                     _ => 0,
                 };
-                placed.push((out, priority, i, s));
+                // The sections a symbol bounds go together, after the others.
+                let bounded = if self.bounded.contains(name) { name } else { &[] };
+                placed.push((out, priority, bounded, i, s));
             }
         }
-        placed.sort_by_key(|&(out, priority, ..)| (out, priority));
-        for (out, _, i, s) in placed {
+        placed.sort_by_key(|&(out, priority, bounded, ..)| (out, priority, bounded));
+        for (out, _, bounded, i, s) in placed {
             let section = self.inputs[i].file.section_by_index(object::SectionIndex(s)).unwrap();
-            let align = section.align().max(1);
+            let (align, size) = (section.align().max(1), section.size());
             let at = sizes[out as usize].next_multiple_of(align);
-            sizes[out as usize] = at + section.size();
+            sizes[out as usize] = at + size;
             self.align[out as usize] = self.align[out as usize].max(align);
             self.inputs[i].place[s] = Some((out, at));
+            if !bounded.is_empty() {
+                self.bounds.entry(bounded).or_insert((out, at, at)).2 = at + size;
+            }
         }
         // Tentative definitions of C.
         for id in 0..self.globals.len() {
@@ -1346,6 +1381,12 @@ impl<'a> Linker<'a> {
                     Synthetic::GlobalOffsetTable => self.addr[Out::Got as usize],
                     Synthetic::Dynamic => self.addr[Out::Dynamic as usize],
                     Synthetic::HeaderStart => BASE,
+                    Synthetic::Bound => bound(global.name)
+                        .and_then(|(start, section)| {
+                            let &(out, from, to) = self.bounds.get(section)?;
+                            Some(self.addr[out as usize] + if start { from } else { to })
+                        })
+                        .unwrap_or(0),
                 }
             }
             Def::Undefined => 0,
