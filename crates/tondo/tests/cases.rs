@@ -29,7 +29,10 @@
 //! `TONDO_CASES_SCHEDULE`, a seed, the tasks of each case run in the order it
 //! gives (testing 8.10): what a case says of its output holds in any order.
 //! With `TONDO_CASES_REPEAT`, a number, each case that starts tasks runs that
-//! many times, each checked.
+//! many times, each checked. With `TONDO_CASES_COVERAGE`, a directory, each
+//! build counts the lines it runs, the standard library's too, and each case
+//! leaves in a directory of its own what its counters count and their counts
+//! (docs/refactor.md, 0.1).
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -117,6 +120,12 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
         .env("XDG_CACHE_HOME", scratch.join("cache"));
+    let coverage = std::env::var_os("TONDO_CASES_COVERAGE")
+        .map(|dir| Path::new(&dir).join(scratch.file_name().unwrap()).join(path.file_stem().unwrap()));
+    if let Some(dir) = &coverage {
+        std::fs::create_dir_all(dir.join("counts")).unwrap();
+        build.env("TONDO_COVERAGE_STD", dir.join("counted"));
+    }
     // Long enough for a debug build of `tondo` under an emulator, where a
     // case that uses much of the standard library takes minutes: a build
     // that hangs names its case.
@@ -172,6 +181,9 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         command.env("TONDO_DUMP", "off");
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
+        if let Some(dir) = &coverage {
+            command.env("TONDO_TEST_COVERAGE", dir.join("counts"));
+        }
         if let Some(seed) = std::env::var_os("TONDO_CASES_SCHEDULE").filter(|_| !expect.no_schedule) {
             command.env("TONDO_RT_SCHEDULE", seed).env("TONDO_RACE", "1");
         }

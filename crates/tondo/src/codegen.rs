@@ -6047,7 +6047,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// Whether coverage counts a file: the project's own code, and for the
     /// search of `--fuzz` what it searches.
     fn counts(&self, file: &crate::source::SourceFile) -> bool {
-        file.own || (self.e.cg.fuzzing() && file.searched())
+        file.own || ((self.e.cg.fuzzing() || std_counted()) && file.searched())
     }
 
     /// With coverage, a run of the line a statement of the project's code
@@ -10033,4 +10033,12 @@ fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir:
         }
         _ => None,
     }
+}
+
+/// `TONDO_COVERAGE_STD`, internal: coverage counts the lines of the
+/// standard library too, to measure what of it the toolchain's tests run
+/// (docs/refactor.md, 0.1).
+fn std_counted() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TONDO_COVERAGE_STD").is_some())
 }

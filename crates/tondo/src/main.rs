@@ -2351,7 +2351,17 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::FAILURE);
     }
-    let object = object(&analysis, &path, &options)?;
+    let object = match std::env::var_os("TONDO_COVERAGE_STD") {
+        // Internal, to measure what of the standard library the toolchain's
+        // tests run (docs/refactor.md, 0.1): the build counts the lines it
+        // runs and keeps what each counter counts in the file named.
+        Some(table) if !options.live => {
+            let (object, counted) = driver::object_counting(&analysis, options.debug, options.target, false)?;
+            tondo::runner::save_counted(Path::new(&table), &counted)?;
+            object
+        }
+        _ => object(&analysis, &path, &options)?,
+    };
     let libraries = [analysis.libraries.clone(), options.libraries].concat();
     let linking =
         driver::Linking { strip, statically: options.statically, target: options.target, debug: options.debug };
