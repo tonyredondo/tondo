@@ -1,0 +1,65 @@
+// `group.next()` as an arm of `select` (language 11.14): it gives the
+// result of a task that ended and takes it out of the group, `none` once
+// the group is empty, and when another arm is chosen the group keeps its
+// tasks. A `select` that waits to send on a full channel that another
+// sender then closes panics as a send on a closed channel does.
+
+import std.console
+import std.time
+
+fn worker(gate: Receiver[Int]): Int {
+    gate.receive().unwrapOr(-1) * 10
+}
+
+fn closeSoon(other: Sender[Int]) {
+    time.sleep(time.milliseconds(20))
+    other.close()
+}
+
+fn main() {
+    var gates: Array[Sender[Int]] = []
+    var group = Group[Int]()
+    for _ in 0..3 {
+        let (sender, receiver) = channel[Int](1)
+        gates.push(sender)
+        group.add(spawn worker(receiver))
+    }
+    let idle = select {
+        let ended = group.next() => "ended {ended}"
+        else => "none ended yet"
+    }
+    console.println("{idle}, {group.length()} in the group")
+    for n in [2, 1, 3] {
+        gates[n - 1].send(n)
+        let got = select {
+            let ended = group.next() => "next {ended}, {group.length()} left"
+            time.sleep(time.seconds(30)) => "too slow"
+        }
+        console.println(got)
+    }
+    let empty = select {
+        let ended = group.next() => "then {ended}"
+        time.sleep(time.seconds(30)) => "too slow"
+    }
+    console.println(empty)
+
+    let (full, _) = channel[Int](1)
+    full.send(1)
+    spawn closeSoon(full.copy())
+    match recover {
+        select {
+            full.send(2) => "sent"
+            time.sleep(time.seconds(30)) => "too slow"
+        }
+    } {
+        ok(said) => console.println(said)
+        err(stopped) => console.println("{stopped.message}")
+    }
+}
+
+// expect-stdout: none ended yet, 3 in the group
+// expect-stdout: next some(20), 2 left
+// expect-stdout: next some(10), 1 left
+// expect-stdout: next some(30), 0 left
+// expect-stdout: then none
+// expect-stdout: cannot send on this channel: it was closed
