@@ -181,38 +181,58 @@ static SPARE_STACKS: Mutex<Vec<Stack>> = Mutex::new(Vec::new());
 const SPARE_LIMIT: usize = 256;
 const BATCH: usize = 16;
 
-thread_local! {
-    static OWN_STACKS: std::cell::RefCell<Vec<Stack>> = const { std::cell::RefCell::new(Vec::new()) };
+/// This worker's spare stacks, made when it first keeps one. They are not a
+/// field that drops with the thread, which would make every read of `Worker`
+/// check whether the thread ends: a thread-local of their own gives them
+/// back then.
+fn own_stacks() -> &'static mut Vec<Stack> {
+    struct GiveBack(Cell<*mut Vec<Stack>>);
+    impl Drop for GiveBack {
+        fn drop(&mut self) {
+            let stacks = self.0.get();
+            if !stacks.is_null() {
+                let stacks = unsafe { Box::from_raw(stacks) };
+                let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+                let room = SPARE_LIMIT.saturating_sub(spare.len());
+                spare.extend(stacks.into_iter().take(room));
+            }
+        }
+    }
+    thread_local! {
+        static GIVE_BACK: GiveBack = const { GiveBack(Cell::new(std::ptr::null_mut())) };
+    }
+    let worker = worker();
+    if worker.stacks.get().is_null() {
+        let stacks = Box::into_raw(Box::new(Vec::new()));
+        GIVE_BACK.with(|give_back| give_back.0.set(stacks));
+        worker.stacks.set(stacks);
+    }
+    // Neither caller is entered again while it holds them.
+    unsafe { &mut *worker.stacks.get() }
 }
 
 fn task_stack() -> Stack {
-    OWN_STACKS
-        .with(|own| {
-            let mut own = own.borrow_mut();
-            if own.is_empty() {
-                let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
-                let at = spare.len().saturating_sub(BATCH);
-                own.extend(spare.drain(at..));
-            }
-            own.pop()
-        })
-        .unwrap_or_else(|| Stack::new(TASK_STACK))
+    let own = own_stacks();
+    if own.is_empty() {
+        let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+        let at = spare.len().saturating_sub(BATCH);
+        own.extend(spare.drain(at..));
+    }
+    own.pop().unwrap_or_else(|| Stack::new(TASK_STACK))
 }
 
 fn recycle(stack: Stack) {
     if stack.size != TASK_STACK {
         return;
     }
-    OWN_STACKS.with(|own| {
-        let mut own = own.borrow_mut();
-        own.push(stack);
-        if own.len() > 2 * BATCH {
-            let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
-            let room = SPARE_LIMIT.saturating_sub(spare.len()).min(BATCH);
-            let at = own.len() - BATCH;
-            spare.extend(own.drain(at..).take(room));
-        }
-    });
+    let own = own_stacks();
+    own.push(stack);
+    if own.len() > 2 * BATCH {
+        let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+        let room = SPARE_LIMIT.saturating_sub(spare.len()).min(BATCH);
+        let at = own.len() - BATCH;
+        spare.extend(own.drain(at..).take(room));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -463,19 +483,57 @@ static MAIN_DONE: AtomicBool = AtomicBool::new(false);
 /// workers are not a deadlock.
 pub(crate) static HOST_WORK: AtomicUsize = AtomicUsize::new(0);
 
-thread_local! {
-    static CURRENT: Cell<*mut Task> = const { Cell::new(std::ptr::null_mut()) };
-    /// Where the worker's own stack pointer is saved while a task runs.
-    static HOME: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
-    /// Cleanups registered outside any task, as in unit tests.
-    static LOOSE_CLEANUPS: std::cell::RefCell<Vec<(Cleanup, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+/// What a thread that runs tasks keeps for itself (docs/refactor.md, phase
+/// 1). A task may resume on another thread, so this is reached through
+/// `worker()` alone, which never inlines, and asked for again after anything
+/// a task may switch at: no caller keeps its address, or that of a field.
+/// Nothing in it drops, so that reading it costs a load, as the old
+/// `CURRENT` did.
+struct Worker {
+    /// The task it runs.
+    current: Cell<*mut Task>,
+    /// Where its own stack pointer is saved while a task runs.
+    home: Cell<*mut u8>,
+    /// The tasks it started, which wait next to it; and how many turns it
+    /// gave them since it last looked at the shared queue.
+    own_next: Cell<Option<&'static Next>>,
+    next_turns: Cell<u32>,
+    /// It looks at the queue next and finds nothing before the first task
+    /// it schedules, which wakes no other worker.
+    looks_next: Cell<bool>,
+    /// Task stacks kept for reuse, made when first needed (`own_stacks`).
+    stacks: Cell<*mut Vec<Stack>>,
+    /// Its state for stopping the world, once it ran Tondo code.
+    runner: Cell<Option<&'static Runner>>,
+    /// Its calls of C, once it made one.
+    in_c: Cell<*const InC>,
 }
 
-// A task may resume on another thread, so these never inline: a caller
-// must not keep a thread-local address across a switch.
+thread_local! {
+    static WORKER: Worker = const {
+        Worker {
+            current: Cell::new(std::ptr::null_mut()),
+            home: Cell::new(std::ptr::null_mut()),
+            own_next: Cell::new(None),
+            next_turns: Cell::new(0),
+            looks_next: Cell::new(false),
+            stacks: Cell::new(std::ptr::null_mut()),
+            runner: Cell::new(None),
+            in_c: Cell::new(std::ptr::null()),
+        }
+    };
+}
+
+/// This thread's `Worker`. Never inlined, so that the compiler cannot keep
+/// the address of a thread-local across a switch of a task between threads.
 #[inline(never)]
+fn worker() -> &'static Worker {
+    // A worker's thread lives as long as the program.
+    WORKER.with(|worker| unsafe { &*(worker as *const Worker) })
+}
+
 pub(crate) fn current() -> *mut Task {
-    CURRENT.with(|c| c.get())
+    worker().current.get()
 }
 
 /// The labels of the running task, which a signal handler may read.
@@ -570,9 +628,8 @@ pub(crate) unsafe fn is_main(task: *mut Task) -> bool {
     unsafe { (*task).main }
 }
 
-#[inline(never)]
 fn home() -> *mut *mut u8 {
-    HOME.with(|h| h.as_ptr())
+    worker().home.as_ptr()
 }
 
 fn queue() -> MutexGuard<'static, Queue> {
@@ -614,7 +671,7 @@ impl Next {
 /// in the caches where they were made, and the others are shared out as
 /// soon.
 fn steal() -> Result<(*mut Task, bool), bool> {
-    let Some(own) = OWN_NEXT.with(Cell::get) else { return Err(false) };
+    let Some(own) = own_next() else { return Err(false) };
     let now = nanos();
     let mut young = false;
     for other in nexts().filter(|other| !std::ptr::eq(*other, own)) {
@@ -658,7 +715,7 @@ fn waiting_somewhere() -> bool {
 
 /// The first of the tasks this worker's tasks started.
 fn own_started() -> Option<*mut Task> {
-    let own = OWN_NEXT.with(Cell::get)?;
+    let own = own_next()?;
     if own.count.load(Ordering::Relaxed) == 0 {
         return None;
     }
@@ -678,17 +735,11 @@ fn waiting_local() -> Vec<*mut Task> {
 static NEXTS: [AtomicPtr<Next>; 1024] = [const { AtomicPtr::new(std::ptr::null_mut()) }; 1024];
 static NEXT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-thread_local! {
-    static OWN_NEXT: Cell<Option<&'static Next>> = const { Cell::new(None) };
-    static NEXT_TURNS: Cell<u32> = const { Cell::new(0) };
-}
-
-/// This worker's next, read by tasks as they wake others: never inlined, as
-/// `current`, or a task that resumes on another thread writes the next of
+/// This worker's next, read by tasks as they wake others: through
+/// `worker()`, or a task that resumes on another thread writes the next of
 /// the worker it ran on before, which may sleep.
-#[inline(never)]
 fn own_next() -> Option<&'static Next> {
-    OWN_NEXT.with(Cell::get)
+    worker().own_next.get()
 }
 
 /// How long a task waits next to a worker that runs another before an idle
@@ -723,7 +774,7 @@ fn waiting_next() -> Vec<*mut Task> {
 /// A task another worker has had next for longer than `NEXT_WAIT`, taken
 /// from it; and whether one waits there for less.
 fn take_next() -> (Option<*mut Task>, bool) {
-    let mine = OWN_NEXT.with(Cell::get).map(|next| next as *const Next);
+    let mine = own_next().map(|next| next as *const Next);
     let now = nanos();
     let mut young = false;
     for next in nexts().filter(|next| Some(*next as *const Next) != mine) {
@@ -821,17 +872,9 @@ fn wake_idle() {
     }
 }
 
-thread_local! {
-    /// This worker looks at the queue next and finds nothing before the
-    /// first task it schedules, which wakes no other worker.
-    static LOOKS_NEXT: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether this worker looks at the queue next, once: never inlined, as
-/// `own_next`.
-#[inline(never)]
+/// Whether this worker looks at the queue next, once.
 fn looks_next() -> bool {
-    LOOKS_NEXT.with(|next| next.replace(false))
+    worker().looks_next.replace(false)
 }
 
 /// Wakes a worker to look at the queue, as for a signal that came.
@@ -885,9 +928,9 @@ fn poll(
     {
         watcher.unpark();
     }
-    LOOKS_NEXT.with(|next| next.set(alone));
+    worker().looks_next.set(alone);
     events.wake();
-    LOOKS_NEXT.with(|next| next.set(false));
+    worker().looks_next.set(false);
     self::queue()
 }
 
@@ -1092,29 +1135,23 @@ unsafe impl Sync for Runner {}
 
 static IN_TONDO: Mutex<Vec<&'static Runner>> = Mutex::new(Vec::new());
 
-thread_local! {
-    static IN_TONDO_HERE: Cell<Option<&'static Runner>> = const { Cell::new(None) };
-}
-
 /// This thread's state, registered the first time it runs Tondo code.
 fn running_here() -> &'static Runner {
-    IN_TONDO_HERE.with(|here| {
-        if let Some(runner) = here.get() {
-            return runner;
-        }
-        let runner: &'static Runner = Box::leak(Box::new(Runner {
-            running: AtomicBool::new(false),
-            task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
-            frame: AtomicUsize::new(0),
-            thread: unsafe { libc::pthread_self() },
-            asked: AtomicBool::new(false),
-            answer: [const { AtomicUsize::new(0) }; ANSWER],
-            answered: AtomicUsize::new(0),
-        }));
-        IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
-        here.set(Some(runner));
-        runner
-    })
+    if let Some(runner) = worker().runner.get() {
+        return runner;
+    }
+    let runner: &'static Runner = Box::leak(Box::new(Runner {
+        running: AtomicBool::new(false),
+        task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+        frame: AtomicUsize::new(0),
+        thread: unsafe { libc::pthread_self() },
+        asked: AtomicBool::new(false),
+        answer: [const { AtomicUsize::new(0) }; ANSWER],
+        answered: AtomicUsize::new(0),
+    }));
+    IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
+    worker().runner.set(Some(runner));
+    runner
 }
 
 /// From now on this thread runs Tondo code, once no collection runs.
@@ -1146,7 +1183,7 @@ fn leave_tondo() {
 /// Allocates nothing.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn pause_here() -> bool {
-    IN_TONDO_HERE.with(|here| here.get()).is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
+    worker().runner.get().is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
 }
 
 /// Where a running task lets a collection run: between two steps.
@@ -1426,7 +1463,7 @@ fn program_ended(queue: &Queue) -> bool {
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     super::trace::guard_thread(true);
-    if exploring().is_none() && OWN_NEXT.with(Cell::get).is_none() {
+    if exploring().is_none() && own_next().is_none() {
         let index = NEXT_COUNT.load(Ordering::Acquire);
         if index < NEXTS.len() {
             let next: &'static Next = Box::leak(Box::new(Next {
@@ -1439,7 +1476,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
             let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
             if let Some(slot) = NEXTS.get(index) {
                 slot.store(next as *const Next as *mut Next, Ordering::Release);
-                OWN_NEXT.with(|mine| mine.set(Some(next)));
+                worker().own_next.set(Some(next));
             }
         }
     }
@@ -1454,8 +1491,9 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
         // The task made runnable by the one that ran here, but now and then
         // the queue first, so that two tasks that wake each other do not
         // keep the others waiting.
-        if let Some(next) = OWN_NEXT.with(Cell::get) {
-            let runs = NEXT_TURNS.with(|runs| runs.replace(runs.get().wrapping_add(1)));
+        if let Some(next) = own_next() {
+            let turns = &worker().next_turns;
+            let runs = turns.replace(turns.get().wrapping_add(1));
             let task = next.task.swap(std::ptr::null_mut(), Ordering::AcqRel);
             if !task.is_null() {
                 if !runs.is_multiple_of(61) {
@@ -1489,7 +1527,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     }
                     queue.surplus -= 1;
                     queue.workers -= 1;
-                    if let Some(next) = OWN_NEXT.with(Cell::get) {
+                    if let Some(next) = own_next() {
                         let task = next.task.swap(std::ptr::null_mut(), Ordering::AcqRel);
                         queue.runnable.extend(Some(task).filter(|task| !task.is_null()));
                         queue.runnable.extend(next.tasks().0.drain(..));
@@ -1706,7 +1744,7 @@ fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// Runs a task on this thread until it waits, yields or ends; a task that
 /// ends is freed.
 fn run(task: *mut Task) {
-    CURRENT.with(|c| c.set(task));
+    worker().current.set(task);
     if super::race::on() && noting() {
         noted(format!("s {}\n", unsafe { (*task).name }));
     }
@@ -1724,7 +1762,7 @@ fn run(task: *mut Task) {
     enter_tondo();
     unsafe { switch(home(), (*task).sp) };
     leave_tondo();
-    CURRENT.with(|c| c.set(std::ptr::null_mut()));
+    worker().current.set(std::ptr::null_mut());
     if traced {
         // Nothing runs the task until it is parked or scheduled again.
         let why = unsafe {
@@ -1874,7 +1912,7 @@ pub(crate) struct Shot {
 /// In the handler of `SIGPROF`: answers a dump that asked this thread where
 /// it is, from the instruction and frame the signal interrupted.
 pub(crate) fn answer_where(pc: usize, fp: usize) {
-    let Some(runner) = IN_TONDO_HERE.with(|here| here.get()) else { return };
+    let Some(runner) = worker().runner.get() else { return };
     if !runner.asked.load(Ordering::Acquire) {
         return;
     }
@@ -1929,7 +1967,7 @@ fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
 /// any, is where `here` says.
 pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
     let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let me_runner = IN_TONDO_HERE.with(|here| here.get());
+    let me_runner = worker().runner.get();
     let others: Vec<&Runner> = runners
         .iter()
         .copied()
@@ -2245,10 +2283,6 @@ struct InC {
     replaced: AtomicBool,
 }
 
-thread_local! {
-    static IN_C: Cell<*const InC> = const { Cell::new(std::ptr::null()) };
-}
-
 /// Every worker that has called C, which the monitor watches.
 static CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
 static MONITOR: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
@@ -2257,15 +2291,13 @@ static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
 /// next is long, and blocks its worker.
 const MONITOR_PERIOD: Duration = Duration::from_millis(1);
 
-/// This worker's calls of C, if it made any: never inlined, as `current`.
-#[inline(never)]
+/// This worker's calls of C, if it made any.
 fn in_c_here() -> *const InC {
-    IN_C.with(|c| c.get())
+    worker().in_c.get()
 }
 
-#[inline(never)]
 fn in_c() -> &'static InC {
-    let current = IN_C.with(|c| c.get());
+    let current = in_c_here();
     if !current.is_null() {
         return unsafe { &*current };
     }
@@ -2279,7 +2311,7 @@ fn in_c() -> &'static InC {
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
-    IN_C.with(|c| c.set(new));
+    worker().in_c.set(new);
     new
 }
 
@@ -2320,7 +2352,7 @@ pub extern "C" fn tondo_rt_foreign_enter() {
 /// Where a fault inside C goes back to: the frame of the code that made the
 /// running worker's innermost call of C, and the address it called from.
 pub(crate) fn c_frame() -> Option<(usize, usize)> {
-    let state = unsafe { IN_C.with(|c| c.get()).as_ref()? };
+    let state = unsafe { in_c_here().as_ref()? };
     let depth = state.depth.load(Ordering::Relaxed).checked_sub(1)?;
     let frame = state.frames.get(depth)?.load(Ordering::Relaxed);
     let address = state.returns.get(depth)?.load(Ordering::Relaxed);
@@ -2955,6 +2987,10 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
 
 fn with_cleanups<R>(f: impl FnOnce(&mut Vec<(Cleanup, usize)>) -> R) -> R {
     let task = current();
+    thread_local! {
+        /// Cleanups registered outside any task, as in unit tests.
+        static LOOSE_CLEANUPS: std::cell::RefCell<Vec<(Cleanup, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
     if task.is_null() { LOOSE_CLEANUPS.with(|c| f(&mut c.borrow_mut())) } else { f(unsafe { &mut (*task).cleanups }) }
 }
 
