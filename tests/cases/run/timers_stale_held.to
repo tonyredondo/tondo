@@ -1,7 +1,7 @@
 // Thousands of timeouts of `select` that lose to their channel, three at a
-// time, leave behind no more memory than a few: their timers are dropped
-// once they are most of those waiting, and each one kept would hold about a
-// hundred bytes.
+// time, beside a hundred timers that wait on, leave behind no more memory
+// than a few: their timers are dropped once they are most of those waiting,
+// and each one kept would hold about a hundred bytes.
 import std.console
 import std.diagnostics
 import std.time
@@ -24,7 +24,16 @@ fn held(): Int {
     bytes
 }
 
+fn nap() {
+    time.sleep(time.seconds(60))
+}
+
 fn main() {
+    // Timers that do not end meanwhile, which the stale ones must outnumber.
+    var sleepers = Group[Unit]()
+    for _ in 0..100 {
+        sleepers.add(spawn nap())
+    }
     let (out, input) = channel[Int](1)
     let rounds = 5000
     let feeding = spawn feeder(out, rounds)
@@ -43,6 +52,7 @@ fn main() {
     }
     feeding.wait()
     console.println("{answered} {held() - before < 200_000}")
+    sleepers.cancel()
 }
 
 // expect-stdout: 5000 true
