@@ -1,8 +1,8 @@
 ---- MODULE Join ----
 \* A task and its join (crates/tondo-runtime/src/tasks/join.rs: complete, finish,
 \* take, cancel_join, tondo_rt_join_detach, end_detached, free_join; Wait::parked
-\* in tasks/mod.rs). A
-\* step is what the code does with the join's lock held, or an atomic operation.
+\* in tasks/waits.rs). A step is what the code does with the join's lock held,
+\* or an atomic operation.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Detaches, Cancels
 

@@ -1,8 +1,7 @@
 // A task and its join (crates/tondo-runtime/src/tasks/join.rs: complete, finish,
 // take, cancel_join, tondo_rt_join_detach, end_detached, free_join; Wait::parked
-// in tasks/mod.rs), as
-// Join.tla says it. A step is what the code does with the join's lock held, or
-// an atomic operation.
+// in tasks/waits.rs), as Join.tla says it. A step is what the code does with
+// the join's lock held, or an atomic operation.
 import std.model
 
 enum Task {
