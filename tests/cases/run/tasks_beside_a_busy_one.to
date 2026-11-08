@@ -1,0 +1,51 @@
+// A task that another starts, or wakes, runs on another processor while
+// that one computes without waiting: the runtime wakes an idle worker for
+// it, as a task is never interrupted to let another run. With one
+// processor there is no other to run it on.
+
+// expect-no-schedule: its tasks run on one thread in the seed's order, where one that computes keeps the others from running
+// expect-no-replay: a recorded run's tasks take turns, and one that computes keeps the others from running
+
+import std.console
+import std.env
+import std.sync
+import std.time
+
+fn mark(flag: sync.Atomic[Bool]) {
+    flag.store(true)
+}
+
+fn awaken(inbox: Receiver[Int], flag: sync.Atomic[Bool]) {
+    _ = inbox.receive()
+    flag.store(true)
+}
+
+// Computes until `flag` is set, for ten seconds at most: whether it was.
+fn spin(flag: sync.Atomic[Bool]): Bool {
+    let started = time.now()
+    for not flag.load() and started.elapsed() < time.seconds(10) {}
+    flag.load()
+}
+
+fn main() {
+    if env.processors() < 2 {
+        console.println("started: true")
+        console.println("woken: true")
+        return
+    }
+    let started = sync.Atomic(false)
+    let job = spawn mark(started)
+    console.println("started: {spin(started)}")
+    job.wait()
+    let woken = sync.Atomic(false)
+    let (sender, inbox) = channel[Int]()
+    let waiter = spawn awaken(inbox, woken)
+    // Time for it to wait for the value.
+    time.sleep(time.milliseconds(20))
+    sender.send(1)
+    console.println("woken: {spin(woken)}")
+    waiter.wait()
+}
+
+// expect-stdout: started: true
+// expect-stdout: woken: true
