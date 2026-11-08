@@ -1,0 +1,442 @@
+// std.grpc (standard library 14.41): gRPC over HTTP/2. A service of a
+// `.proto` file gives a trait whose methods are its calls, a function that
+// makes a server's `Service` of a value that implements it, which
+// `App.grpc` serves, and a client. Messages are `std.protobuf`'s, a call's
+// failure is a `Status`, and what a call carries besides, its metadata, its
+// peer and its deadline, `call()` gives in the method.
+//
+// ```tondo
+// import std.grpc
+// import std.http
+//
+// // A service of a `.proto` file is served the same way:
+// // `app.grpc(users.userService(value))`.
+// let health = grpc.Health()
+// var app = http.App()
+// app.grpc(health.service())
+// app.grpc(grpc.reflection([health.service()]))
+// app.listen(port: 50051)?
+// ```
+
+import std.encoding as __encoding
+import std.http as __http
+import std.protobuf as __protobuf
+import std.reflect as __reflect
+import std.time as __time
+
+/// The code of a call's status, as gRPC numbers them from 0.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     if request.name.isEmpty() {
+///         fail grpc.Status { code: grpc.Code.InvalidArgument, message: "a name is needed" }
+///     }
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest {}) {
+///     ok(reply) => console.println(reply.message)
+///     err(status) if status.code == grpc.Code.InvalidArgument => console.println("fix the request ({status.code.number()}): {status.message}")
+///     err(status) => console.println("{status}")
+/// }
+/// console.println("{grpc.Code.of(5)}")
+/// server.stop()
+/// ```
+pub enum Code {
+    Ok
+    Cancelled
+    Unknown
+    InvalidArgument
+    DeadlineExceeded
+    NotFound
+    AlreadyExists
+    PermissionDenied
+    ResourceExhausted
+    FailedPrecondition
+    Aborted
+    OutOfRange
+    Unimplemented
+    Internal
+    Unavailable
+    DataLoss
+    Unauthenticated
+}
+
+/// The code's name in Connect, as `not_found`.
+fn Code.connectName(self): String {
+    if self == Code.Cancelled {
+        return "canceled"
+    }
+    var name = ""
+    for letter in "{self}".chars() {
+        if letter.isUpper() and not name.isEmpty() {
+            name = "{name}_"
+        }
+        name = "{name}{letter.toLower()}"
+    }
+    name
+}
+
+/// The HTTP status of a failed unary call of Connect with the code.
+fn Code.httpStatus(self): Int {
+    match self {
+        Code.Cancelled => 499
+        Code.InvalidArgument => 400
+        Code.DeadlineExceeded => 504
+        Code.NotFound => 404
+        Code.AlreadyExists => 409
+        Code.PermissionDenied => 403
+        Code.ResourceExhausted => 429
+        Code.FailedPrecondition => 400
+        Code.Aborted => 409
+        Code.OutOfRange => 400
+        Code.Unimplemented => 501
+        Code.Unavailable => 503
+        Code.Unauthenticated => 401
+        _ => 500
+    }
+}
+
+/// The code's number.
+pub fn Code.number(self): Int {
+    match self {
+        Code.Ok => 0
+        Code.Cancelled => 1
+        Code.Unknown => 2
+        Code.InvalidArgument => 3
+        Code.DeadlineExceeded => 4
+        Code.NotFound => 5
+        Code.AlreadyExists => 6
+        Code.PermissionDenied => 7
+        Code.ResourceExhausted => 8
+        Code.FailedPrecondition => 9
+        Code.Aborted => 10
+        Code.OutOfRange => 11
+        Code.Unimplemented => 12
+        Code.Internal => 13
+        Code.Unavailable => 14
+        Code.DataLoss => 15
+        Code.Unauthenticated => 16
+    }
+}
+
+/// The code of a number, `Unknown` for one gRPC does not have.
+pub fn Code.of(number: Int): Code {
+    match number {
+        0 => Code.Ok
+        1 => Code.Cancelled
+        3 => Code.InvalidArgument
+        4 => Code.DeadlineExceeded
+        5 => Code.NotFound
+        6 => Code.AlreadyExists
+        7 => Code.PermissionDenied
+        8 => Code.ResourceExhausted
+        9 => Code.FailedPrecondition
+        10 => Code.Aborted
+        11 => Code.OutOfRange
+        12 => Code.Unimplemented
+        13 => Code.Internal
+        14 => Code.Unavailable
+        15 => Code.DataLoss
+        16 => Code.Unauthenticated
+        _ => Code.Unknown
+    }
+}
+
+/// The code's name, as `NotFound`.
+impl Display for Code {
+    fn display(self): String {
+        match self {
+            Code.Ok => "Ok"
+            Code.Cancelled => "Cancelled"
+            Code.Unknown => "Unknown"
+            Code.InvalidArgument => "InvalidArgument"
+            Code.DeadlineExceeded => "DeadlineExceeded"
+            Code.NotFound => "NotFound"
+            Code.AlreadyExists => "AlreadyExists"
+            Code.PermissionDenied => "PermissionDenied"
+            Code.ResourceExhausted => "ResourceExhausted"
+            Code.FailedPrecondition => "FailedPrecondition"
+            Code.Aborted => "Aborted"
+            Code.OutOfRange => "OutOfRange"
+            Code.Unimplemented => "Unimplemented"
+            Code.Internal => "Internal"
+            Code.Unavailable => "Unavailable"
+            Code.DataLoss => "DataLoss"
+            Code.Unauthenticated => "Unauthenticated"
+        }
+    }
+}
+
+/// How a call failed: its code, a message for people and details for
+/// programs, as `google.rpc.Status` carries them.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     match Int.parse(request.name) {
+///         ok(_) => fail grpc.Status { code: grpc.Code.InvalidArgument, message: "a name is not a number" }
+///         err(_) => HelloReply { message: "Hello, {request.name}!" }
+///     }
+/// }
+///
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// for name in ["Ada", "42"] {
+///     match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name }) {
+///         ok(reply) => console.println(reply.message)
+///         err(status) => console.println("{status.code}: {status.message}")
+///     }
+/// }
+/// server.stop()
+/// ```
+pub type Status = {
+    code: Code
+    message: String = ""
+    details: Array[__protobuf.Any] = []
+}
+
+/// `NotFound: no user 7`.
+impl Display for Status {
+    fn display(self): String {
+        if self.message.isEmpty() { "{self.code}" } else { "{self.code}: {self.message}" }
+    }
+}
+
+/// A failure of the server's own, for `result.mapErr(grpc.Status.from)?`:
+/// `Internal`, with the error's text.
+pub fn Status.from[E: Display](error: E): Status {
+    Status { code: Code.Internal, message: "{error}" }
+}
+
+/// `google.rpc.Status`, which `grpc-status-details-bin` carries.
+type RpcStatus = {
+    code: Int32 = 0
+    message: String = ""
+    details: Array[__protobuf.Any] = []
+}
+
+impl __protobuf.Message for RpcStatus {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if self.code != 0 {
+            out.int32(1, self.code)
+        }
+        if not self.message.isEmpty() {
+            out.string(2, self.message)
+        }
+        for detail in self.details {
+            out.message(3, detail)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): RpcStatus ! __protobuf.ProtobufError {
+        var status = RpcStatus {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => status.code = input.int32("code")?
+                2 => status.message = input.string("message")?
+                3 => status.details.push(input.message[__protobuf.Any]("details")?)
+                _ => input.skip()?
+            }
+        }
+        status
+    }
+
+    fn protobufName(): String {
+        "google.rpc.Status"
+    }
+}
+
+/// The status a call ended with, from its code, message and trailers.
+fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
+    var details: Array[__protobuf.Any] = []
+    var at = 0
+    for at + 1 < trailers.length() {
+        if trailers[at] == "grpc-status-details-bin" {
+            let decoded = __encoding
+                .base64Decode(trailers[at + 1])
+                .ok()
+                .andThen((bytes) { __protobuf.decode[RpcStatus](bytes).ok() })
+            match decoded {
+                some(rpc) => details = rpc.details
+                none => {}
+            }
+        }
+        at += 2
+    }
+    Status { code: Code.of(code), message, details }
+}
+
+/// What a call carries besides its messages: the method, as
+/// `/users.v1.UserService/Get`, its metadata, the peer's address and the
+/// time left before its deadline.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     // What the call carries besides its message.
+///     let call = grpc.call()
+///     if call.metadata.get("authorization") != some("Bearer secret") {
+///         fail grpc.Status { code: grpc.Code.Unauthenticated, message: "who are you?" }
+///     }
+///     HelloReply { message: "Hello, {request.name}, through {call.method}" }
+/// }
+///
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// let server = app.start()?
+/// let client = grpc.connect(server.url())?
+/// let metadata = ["authorization": "Bearer secret"]
+/// console.println(client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" }, metadata: metadata)?.message)
+/// server.stop()
+/// ```
+pub type Call = {
+    method: String = ""
+    metadata: Map[String, String] = [:]
+    peer: String = ""
+    timeout: __time.Duration? = none
+}
+
+context Incoming = {
+    call: Call = Call {}
+    headers: __http.Trailers? = none
+    trailers: __http.Trailers? = none
+}
+
+/// The call the running method serves; an empty one outside a method.
+pub fn call(): Call {
+    Incoming.call
+}
+
+/// Sets metadata the server answers with, before its first message.
+pub fn setHeader(name: String, value: String) {
+    match Incoming.headers {
+        some(headers) => headers.set(name, value)
+        none => {}
+    }
+}
+
+/// Sets metadata that follows the server's last message, with the status.
+pub fn setTrailer(name: String, value: String) {
+    match Incoming.trailers {
+        some(trailers) => trailers.set(name, value)
+        none => {}
+    }
+}
+
+enum Source {
+    Server(ServerCall)
+    Client(Outgoing)
+}
+
+/// The messages of a stream, each as it arrives: `for each in stream { let
+/// message = each? }`. A failure ends it.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn countdown(request: HelloRequest, replies: Sender[HelloReply]): !grpc.Status {
+///     for n in [3, 2, 1] {
+///         replies.send(HelloReply { message: "{request.name} in {n}" })
+///     }
+/// }
+///
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: (call) { grpc.serverStream(call, countdown)? } }] })
+/// let server = app.start()?
+/// let replies = grpc.connect(server.url())?.serverStream[HelloRequest, HelloReply]("/demo.Launch/Countdown", HelloRequest { name: "lift-off" })
+/// for reply in replies {
+///     console.println(reply?.message)
+/// }
+/// server.stop()
+/// ```
+pub type Stream[T] = {
+    priv source: Source
+    priv ended: Bool = false
+}
+
+impl[T: __protobuf.Message + __reflect.Reflect] Iterator[T ! Status] for Stream[T] {
+    fn next(mut self): (T ! Status)? {
+        if self.ended {
+            return none
+        }
+        let outcome = match self.source {
+            Source.Server(exchange) => exchange.receive[T]()
+            Source.Client(outgoing) => outgoing.received[T]()
+        }
+        match outcome {
+            ok(some(message)) => some(ok(message))
+            ok(none) => {
+                self.ended = true
+                none
+            }
+            err(status) => {
+                self.ended = true
+                some(err(status))
+            }
+        }
+    }
+}

@@ -1,0 +1,620 @@
+// A gRPC server: services, their methods and interceptors, and how a
+// call is answered over HTTP/2.
+
+import std.encoding as __encoding
+import std.gzip as __gzip
+import std.http as __http
+import std.internal.grpc as grpcNative
+import std.io as __io
+import std.json as __json
+import std.protobuf as __protobuf
+import std.reflect as __reflect
+import std.time as __time
+
+/// A service a server serves: its full name and its methods, which a
+/// `.proto` file's service gives as `users.userService(value)`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// // A service written by hand; a `.proto` file under `src` makes one too.
+/// let greeter = grpc.Service {
+///     name: "demo.Greeter"
+///     methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }]
+/// }
+/// var app = http.App()
+/// app.grpc(greeter.onCall((call, next) {
+///     console.println("serving {call.method}")
+///     next()?
+/// }))
+/// let server = app.start()?
+/// console.println(grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
+/// server.stop()
+/// ```
+pub type Service = {
+    name: String
+    methods: Array[Method]
+    /// The `.proto` file that declares it, which reflection gives.
+    files: Array[__protobuf.FileDescriptor] = []
+    /// Other names it answers to.
+    priv also: Array[String] = []
+    priv compressing: Bool = false
+    priv layers: Array[fn(Call, fn(): !Status): !Status] = []
+    priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
+}
+
+/// A method of a service: its name, what serves it, and whether it has no
+/// side effects, which lets Connect call it with a `GET`.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// // With no side effects, Connect clients may call it with a `GET`, which caches.
+/// let method = grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? }, noSideEffects: true }
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [method] })
+/// let server = app.start()?
+/// console.println(grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?.message)
+/// server.stop()
+/// ```
+pub type Method = {
+    name: String
+    handler: fn(ServerCall): !Status
+    noSideEffects: Bool = false
+}
+
+/// Whether a message was received or sent by the side that sees it.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// fn hello(request: HelloRequest): HelloReply ! grpc.Status {
+///     HelloReply { message: "Hello, {request.name}!" }
+/// }
+///
+/// let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] }
+/// var app = http.App()
+/// // Each message of each call, as the service receives or sends it.
+/// app.grpc(greeter.onMessage((call, direction, message) {
+///     let arrow = match direction {
+///         grpc.Direction.Received => "<-"
+///         grpc.Direction.Sent => "->"
+///     }
+///     console.println("{call.method} {arrow} {message}")
+/// }))
+/// let server = app.start()?
+/// _ = grpc.connect(server.url())?.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest { name: "Ada" })?
+/// server.stop()
+/// ```
+pub enum Direction {
+    Received
+    Sent
+}
+
+/// `Received` or `Sent`.
+impl Display for Direction {
+    fn display(self): String {
+        match self {
+            Direction.Received => "Received"
+            Direction.Sent => "Sent"
+        }
+    }
+}
+
+/// Wraps each call of the service: `interceptor` gets the call and `next`,
+/// which runs the method in the call's task, so it can refuse the call
+/// with `fail`, give the method contexts with `with`, time it or change
+/// its status; a panic of the method reaches it as `Internal`. The first
+/// added is the outermost.
+///
+/// ```tondo
+/// import std.diagnostics
+/// import std.grpc
+/// import std.http
+/// import std.log
+///
+/// let failed = diagnostics.counter("health.failed")
+/// let health = grpc.Health()
+/// var app = http.App()
+/// // Every call of the service: logged, and its failures counted.
+/// app.grpc(health.service().onCall((call, next) {
+///     match next() {
+///         ok(_) => log.info("served", ["method": call.method])
+///         err(status) => {
+///             failed.add()
+///             log.warn("failed", ["method": call.method, "status": "{status}"])
+///             fail status
+///         }
+///     }
+/// }))
+/// ```
+pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service {
+    self with { layers: self.layers.concat([interceptor]) }
+}
+
+/// Shows `observer` each message of each call, as it is received or sent.
+pub fn Service.onMessage(self, observer: fn(Call, Direction, __reflect.Value)): Service {
+    self with { watchers: self.watchers.concat([observer]) }
+}
+
+/// Compresses the messages the service sends with gzip, to each client
+/// that says it reads gzip. Every server reads compressed messages.
+pub fn Service.compress(self): Service {
+    self with { compressing: true }
+}
+
+impl __http.GrpcService for Service {
+    fn serveOn(self, app: mut __http.App) {
+        for name in [self.name].concat(self.also) {
+            for method in self.methods {
+                let path = "/{name}/{method.name}"
+                let handler = method.handler
+                let layers = self.layers
+                let watchers = self.watchers
+                let compressing = self.compressing
+                app.post(
+                    path,
+                    (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                )
+                if method.noSideEffects {
+                    app.get(
+                        path,
+                        (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// A call being served: the messages it receives and sends.
+///
+/// ```tondo
+/// import std.console
+/// import std.grpc
+/// import std.http
+/// import std.protobuf
+///
+/// pub type HelloRequest = {
+///     @protobuf.Field(1)
+///     name: String = ""
+/// }
+///
+/// pub type HelloReply = {
+///     @protobuf.Field(1)
+///     message: String = ""
+/// }
+///
+/// // A handler that reads and writes the call's messages itself: here, an
+/// // answer to every request until the client stops sending.
+/// fn chat(call: grpc.ServerCall): !grpc.Status {
+///     for {
+///         match call.receive[HelloRequest]()? {
+///             some(request) => call.send(HelloReply { message: "Hi, {request.name}" })?
+///             none => break
+///         }
+///     }
+/// }
+///
+/// var app = http.App()
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Chat", handler: chat }] })
+/// let server = app.start()?
+/// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Greeter/Chat")
+/// talk.send(HelloRequest { name: "Ada" })?
+/// talk.send(HelloRequest { name: "Bo" })?
+/// talk.closeSend()
+/// for reply in talk.replies() {
+///     console.println(reply?.message)
+/// }
+/// server.stop()
+/// ```
+pub type ServerCall = {
+    priv frames: grpcNative.Native
+    priv output: __io.Writer
+    /// Set once the server's headers are to be sent.
+    priv ready: grpcNative.Native
+    priv watchers: Array[fn(Call, Direction, __reflect.Value)]
+    /// Whether it sends its messages compressed with gzip.
+    priv compressed: Bool
+    priv wire: Wire
+    /// Whether its messages are proto3's JSON, as Connect may send them.
+    priv json: Bool
+}
+
+/// How a call travels: as gRPC, whose status goes in HTTP trailers; as
+/// gRPC-Web, which browsers send and whose status ends the body, in bytes
+/// or in Base64 text; or as Connect, whose unary calls are a request and a
+/// reply of plain HTTP and whose streams end with a message of JSON.
+enum Wire {
+    Grpc
+    Web
+    WebText
+    Connect
+    ConnectStream
+}
+
+/// The wire of a request, by its content type; a `GET` is Connect's.
+fn Wire.of(method: String, contentType: String): Wire {
+    if method == "GET" or
+        contentType.startsWith("application/proto") or
+        contentType.startsWith("application/json") {
+        Wire.Connect
+    } else if contentType.startsWith("application/connect+") {
+        Wire.ConnectStream
+    } else if contentType.startsWith("application/grpc-web-text") {
+        Wire.WebText
+    } else if contentType.startsWith("application/grpc-web") {
+        Wire.Web
+    } else {
+        Wire.Grpc
+    }
+}
+
+/// The content type of a reply.
+fn Wire.contentType(self, json: Bool): String {
+    let codec = if json { "json" } else { "proto" }
+    match self {
+        Wire.Grpc => "application/grpc"
+        Wire.Web => "application/grpc-web+proto"
+        Wire.WebText => "application/grpc-web-text+proto"
+        Wire.Connect => "application/{codec}"
+        Wire.ConnectStream => "application/connect+{codec}"
+    }
+}
+
+/// The headers that say how the messages are compressed and how the
+/// other side reads them.
+fn Wire.encodings(self): (String, String) {
+    match self {
+        Wire.Connect => ("content-encoding", "accept-encoding")
+        Wire.ConnectStream => ("connect-content-encoding", "connect-accept-encoding")
+        _ => ("grpc-encoding", "grpc-accept-encoding")
+    }
+}
+
+/// Bytes of the reply as the wire sends them: Base64 text for `WebText`,
+/// each piece padded, as gRPC-Web's clients read it.
+fn Wire.written(self, bytes: Array[Byte]): Array[Byte] {
+    match self {
+        Wire.WebText => __encoding.base64Encode(bytes).bytes()
+        _ => bytes
+    }
+}
+
+/// Serves a call: runs its method in a task of its own, whose messages go
+/// out as it sends them and whose status follows as trailers; a unary call
+/// of Connect is answered once the method ends.
+fn serve(
+    request: __http.Request,
+    path: String,
+    handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    watchers: Array[fn(Call, Direction, __reflect.Value)],
+    compressing: Bool,
+): __http.Reply ! __http.Problem {
+    let (output, reader) = __io.pipe()
+    let headers = __http.Trailers()
+    let trailers = __http.Trailers()
+    let ready = grpcNative.signal()
+    var metadata = request.headers()
+    let contentType = metadata.get("content-type").unwrapOr("")
+    let asked = request.method() == "GET"
+    let wire = Wire.of(request.method(), contentType)
+    let json = if asked {
+        request.query("encoding") == some("json")
+    } else {
+        contentType.startsWith("application/json") or
+            contentType.startsWith("application/connect+json")
+    }
+    let timeout = match wire {
+        Wire.Connect => connectTimeout(metadata.get("connect-timeout-ms"))
+        Wire.ConnectStream => connectTimeout(metadata.get("connect-timeout-ms"))
+        _ => timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
+    }
+    let (encodingHeader, acceptHeader) = wire.encodings()
+    let encoding = if asked {
+        request.query("compression").unwrapOr("identity")
+    } else {
+        metadata.get(encodingHeader).unwrapOr("identity")
+    }
+    let accepted = metadata.get(acceptHeader).unwrapOr("").split(",").map((name) { name.trim() })
+    let compressed = compressing and accepted.contains("gzip")
+    // A unary reply of Connect says how it is compressed when it is sent.
+    if wire != Wire.Connect {
+        headers.set(acceptHeader, "gzip")
+        if compressed {
+            headers.set(encodingHeader, "gzip")
+        }
+    }
+    for name in [
+        "content-type",
+        "content-length",
+        "te",
+        "user-agent",
+        "grpc-timeout",
+        "grpc-encoding",
+        "grpc-accept-encoding",
+        "x-grpc-web",
+        "x-user-agent",
+        "content-encoding",
+        "accept-encoding",
+        "connect-protocol-version",
+        "connect-timeout-ms",
+        "connect-content-encoding",
+        "connect-accept-encoding",
+    ] {
+        _ = metadata.remove(name)
+    }
+    let incoming = Call { method: path, metadata, peer: request.remoteAddress(), timeout }
+    let frames = if wire == Wire.Connect {
+        // Connect's unary request is the message alone.
+        let body = if asked { connectQuery(request)? } else { request.bytes()? }
+        let flags: Byte = if encoding == "identity" { 0 } else { 1 }
+        grpcNative.framesOf(enveloped(flags, body), encoding)
+    } else {
+        grpcNative.frames(request.body(), encoding, wire == Wire.WebText)
+    }
+    let server = ServerCall { frames, output, ready, watchers, compressed, wire, json }
+    let (done, outcome) = channel[Status](capacity: 1, discardWhenAbandoned: true)
+    with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
+    spawn detached run(server, handler, layers, timeout, trailers, done)
+    if wire == Wire.Connect {
+        let body = reader.readBytes().unwrapOr([])
+        let status = outcome
+            .receive()
+            .unwrapOr(Status { code: Code.Internal, message: "the method ended without a status" })
+        return connectReply(body, status, json, headers, trailers)
+    }
+    // The headers go once the method sends its first message, or ends.
+    _ = grpcNative.signalWait(ready)
+    var reply = __http.Reply.stream(
+        reader,
+        contentType: wire.contentType(json),
+        trailers: if wire == Wire.Grpc { some(trailers) } else { none },
+    )
+    for (name, value) in headers.all() {
+        reply = reply.header(name, value)
+    }
+    reply
+}
+
+fn run(
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    timeout: __time.Duration?,
+    trailers: __http.Trailers,
+    done: Sender[Status],
+) {
+    // A client that goes cancels the method, as it would a handler.
+    grpcNative.follow(server.output)
+    // With interceptors, a panic of the method is a status inside them,
+    // so one that reaches here is theirs.
+    let who = if layers.isEmpty() { "the method" } else { "an interceptor" }
+    let outcome = match recover { served(server, handler, layers, timeout) } {
+        ok(status) => status
+        err(failure) => panicked(who, failure.message)
+    }
+    grpcNative.served(server.frames, outcome.code.number())
+    server.start()
+    match server.wire {
+        Wire.Connect => done.send(outcome)
+        Wire.ConnectStream => {
+            // Connect's stream ends with a message of JSON flagged 0x02,
+            // with the failure and the trailers.
+            let end = __json.encode(connectEnd(outcome, trailers)).bytes()
+            _ = server.output.writeBytes(enveloped(2, end))
+        }
+        _ => {
+            trailers.set("grpc-status", "{outcome.code.number()}")
+            if not outcome.message.isEmpty() {
+                trailers.set("grpc-message", percentEncoded(outcome.message))
+            }
+            if not outcome.details.isEmpty() {
+                let rpc = RpcStatus {
+                    code: Int32.wrapping(outcome.code.number())
+                    message: outcome.message
+                    details: outcome.details
+                }
+                trailers.set(
+                    "grpc-status-details-bin",
+                    __encoding.base64Encode(__protobuf.encode(rpc)).trimEnd("="),
+                )
+            }
+            if server.wire != Wire.Grpc {
+                // gRPC-Web's trailers are a frame of their own at the end
+                // of the body, flagged 0x80, as HTTP/1 writes headers.
+                var block = ""
+                for (name, value) in trailers.all() {
+                    block = "{block}{name.toLower()}: {value}\r\n"
+                }
+                _ = server.output.writeBytes(server.wire.written(enveloped(0x80, block.bytes())))
+            }
+        }
+    }
+    _ = server.output.close()
+}
+
+/// The status of a call whose code panicked.
+fn panicked(who: String, message: String): Status {
+    Status { code: Code.Internal, message: "{who} panicked: {message}" }
+}
+
+/// What a method gave through the interceptors, within the call's deadline.
+fn served(
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    timeout: __time.Duration?,
+): Status {
+    let outcome: !Status = match timeout {
+        some(limit) => match within limit { intercepted(layers, 0, server, handler) } {
+            ok(_) => ok(())
+            err(failure) => match failure {
+                Status(status) => err(status)
+                _ =>
+                    err(Status {
+                        code: Code.DeadlineExceeded
+                        message: "the call's deadline passed"
+                    })
+            }
+        }
+        none => intercepted(layers, 0, server, handler)
+    }
+    match outcome {
+        ok(_) => Status { code: Code.Ok }
+        err(status) => status
+    }
+}
+
+/// The method through the interceptors from the one at `at` on.
+fn intercepted(
+    layers: Array[fn(Call, fn(): !Status): !Status],
+    at: Int,
+    server: ServerCall,
+    handler: fn(ServerCall): !Status,
+): !Status {
+    if at == layers.length() {
+        if at == 0 {
+            handler(server)?
+            return
+        }
+        // The interceptors see a panic of the method as its status.
+        match recover { handler(server) } {
+            ok(outcome) => outcome?
+            err(failure) => fail panicked("the method", failure.message)
+        }
+        return
+    }
+    let layer = layers[at]
+    layer(Incoming.call, () { intercepted(layers, at + 1, server, handler)? })?
+}
+
+/// Lets the server's headers go.
+fn ServerCall.start(self) {
+    grpcNative.signalSet(self.ready)
+}
+
+/// Shows a message to those who watch the call's messages.
+fn watched[T: __reflect.Reflect](
+    watchers: Array[fn(Call, Direction, __reflect.Value)],
+    rpc: Call,
+    direction: Direction,
+    message: T,
+) {
+    if not watchers.isEmpty() {
+        let value = __reflect.valueOf(message)
+        for watcher in watchers {
+            watcher(rpc, direction, value)
+        }
+    }
+}
+
+/// The next message of the call, or `none` after the client's last.
+pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? ! Status {
+    match grpcNative.readFrame(self.frames) {
+        1 => match messageOf[T](grpcNative.frame(self.frames), self.json) {
+            ok(message) => {
+                watched(self.watchers, Incoming.call, Direction.Received, message)
+                some(message)
+            }
+            err(error) => fail Status {
+                code: Code.InvalidArgument
+                message: "the request is not a `{__protobuf.Message.protobufName[T]()}`: {error}"
+            }
+        }
+        0 => none
+        -2 => fail Status { code: Code.Unimplemented, message: grpcNative.frameError(self.frames) }
+        -3 => fail Status {
+            code: Code.ResourceExhausted
+            message: grpcNative.frameError(self.frames)
+        }
+        _ => fail Status { code: Code.InvalidArgument, message: grpcNative.frameError(self.frames) }
+    }
+}
+
+/// Sends a message to the client.
+pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message: T): !Status {
+    self.start()
+    watched(self.watchers, Incoming.call, Direction.Sent, message)
+    let bytes = if self.json {
+        match __protobuf.toJson(message) {
+            ok(text) => text.bytes()
+            err(error) => fail Status { code: Code.Internal, message: "{error}" }
+        }
+    } else {
+        __protobuf.encode(message)
+    }
+    let frame = if self.compressed {
+        enveloped(1, __gzip.compress(bytes))
+    } else {
+        enveloped(0, bytes)
+    }
+    match self.output.writeBytes(self.wire.written(frame)) {
+        ok(_) => {}
+        err(error) => fail Status { code: Code.Cancelled, message: "the client is gone: {error}" }
+    }
+}
+
+/// A message of a request, from its bytes or its JSON, or what is wrong.
+fn messageOf[T: __protobuf.Message](bytes: Array[Byte], json: Bool): T ! String {
+    if not json {
+        return __protobuf.decode[T](bytes).mapErr((error) { "{error}" })?
+    }
+    let text = String.fromBytes(bytes).mapErr((error) { "{error}" })?
+    __protobuf.fromJson[T](text, ignoreUnknown: true).mapErr((error) { "{error}" })?
+}
+
+/// A frame as gRPC, gRPC-Web and Connect write them: its flags, its
+/// length and its bytes.
+fn enveloped(flags: Byte, bytes: Array[Byte]): Array[Byte] {
+    let head: Array[Byte] = [flags]
+    head.concat(UInt32.wrapping(bytes.length()).toBytes()).concat(bytes)
+}

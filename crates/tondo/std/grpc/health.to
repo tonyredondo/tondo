@@ -1,0 +1,463 @@
+// The health service, grpc.health.v1, and its checks.
+
+import std.encoding as __encoding
+import std.json as __json
+import std.protobuf as __protobuf
+import std.reflect as __reflect
+import std.sync as __sync
+
+/// Whether a server serves a service, as `grpc.health.v1` tells it.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+/// import std.time
+///
+/// let health = grpc.Health()
+/// health.set("demo.Greeter", grpc.ServingStatus.Serving)
+/// var app = http.App()
+/// app.grpc(health.service())
+/// let server = app.start(port: 50051)?
+/// // While it drains for a stop, load balancers stop sending it calls.
+/// health.set("demo.Greeter", grpc.ServingStatus.NotServing)
+/// server.stop(grace: time.seconds(10))
+/// ```
+pub enum ServingStatus {
+    Unknown
+    Serving
+    NotServing
+    /// A service the server does not know, which only a watch gives.
+    ServiceUnknown
+}
+
+/// The status's name, as `NotServing`.
+impl Display for ServingStatus {
+    fn display(self): String {
+        match self {
+            ServingStatus.Unknown => "Unknown"
+            ServingStatus.Serving => "Serving"
+            ServingStatus.NotServing => "NotServing"
+            ServingStatus.ServiceUnknown => "ServiceUnknown"
+        }
+    }
+}
+
+/// The health a server tells of itself and its services, as
+/// `grpc.health.v1` asks it, which load balancers and orchestrators read:
+/// `app.grpc(health.service())`, then `health.set("users.v1.UserService",
+/// grpc.ServingStatus.NotServing)` as it changes. The server, `""`,
+/// starts `Serving`.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// // The standard health service, which load balancers and Kubernetes ask;
+/// // the empty name is the whole server.
+/// let health = grpc.Health()
+/// health.set("", grpc.ServingStatus.Serving)
+/// var app = http.App()
+/// app.grpc(health.service())
+/// app.grpc(grpc.reflection([health.service()]))
+/// app.listen(port: 50051)?
+/// ```
+pub type Health = {
+    priv statuses: __sync.Mutex[Map[String, ServingStatus]]
+}
+
+/// Health whose server serves, and no service yet.
+pub fn Health(): Health {
+    var statuses: Map[String, ServingStatus] = [:]
+    statuses[""] = ServingStatus.Serving
+    Health { statuses: __sync.Mutex(statuses) }
+}
+
+/// Sets a service's status, by its full name, or the server's, `""`;
+/// those who watch it get the new one.
+pub fn Health.set(self, service: String, status: ServingStatus) {
+    self.statuses.update(
+        (all) {
+            all[service] = status
+        },
+    )
+}
+
+/// The service `grpc.health.v1.Health`: `Check` gives a status, or
+/// `NotFound` for a service it does not know, `List` gives them all, and
+/// `Watch` gives one, then each change.
+pub fn Health.service(self): Service {
+    let statuses = self.statuses
+    Service {
+        name: "grpc.health.v1.Health"
+        methods: [
+            Method {
+                name: "Check"
+                handler: (exchange) {
+                    unary[HealthRequest, HealthReply](
+                        exchange,
+                        (request) { checked(statuses, request.service)? },
+                    )?
+                }
+            },
+            Method {
+                name: "List"
+                handler: (exchange) {
+                    unary[HealthListRequest, HealthList](
+                        exchange,
+                        (_) { HealthList { statuses: statuses.get() } },
+                    )?
+                }
+            },
+            Method {
+                name: "Watch"
+                handler: (exchange) {
+                    serverStream[HealthRequest, HealthReply](
+                        exchange,
+                        (request, out) { followed(statuses, request.service, out) },
+                    )?
+                }
+            },
+        ]
+        files: [healthFile()]
+    }
+}
+
+fn checked(
+    statuses: __sync.Mutex[Map[String, ServingStatus]],
+    service: String,
+): HealthReply ! Status {
+    match statuses.get().get(service) {
+        some(status) => HealthReply { status }
+        none => fail Status {
+            code: Code.NotFound
+            message: "the server has no service `{service}`"
+        }
+    }
+}
+
+/// Sends a service's status, then each change, until the client goes.
+fn followed(
+    statuses: __sync.Mutex[Map[String, ServingStatus]],
+    service: String,
+    out: Sender[HealthReply],
+) {
+    var last: ServingStatus? = none
+    for {
+        let before = last
+        let now = statuses.updateWhen(
+            (all) { some(all.get(service).unwrapOr(ServingStatus.ServiceUnknown)) != before },
+            (all) { all.get(service).unwrapOr(ServingStatus.ServiceUnknown) },
+        )
+        out.send(HealthReply { status: now })
+        last = some(now)
+    }
+}
+
+/// `grpc.health.v1.HealthCheckRequest`.
+type HealthRequest = {
+    service: String = ""
+}
+
+impl __protobuf.Message for HealthRequest {
+    fn writeTo(self, out: __protobuf.Writer) {
+        if not self.service.isEmpty() {
+            out.string(1, self.service)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthRequest ! __protobuf.ProtobufError {
+        var request = HealthRequest {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => request.service = input.string("service")?
+                _ => input.skip()?
+            }
+        }
+        request
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthCheckRequest"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        if not self.service.isEmpty() {
+            out.field("service", "service")
+            out.string(self.service)
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthRequest ! __protobuf.ProtobufError {
+        var request = HealthRequest {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "service" => request.service = input.string(field, "$.service")?
+                _ => input.unknown(key, "$")?
+            }
+        }
+        request
+    }
+}
+
+impl __reflect.Reflect for HealthRequest {
+    fn reflectShow(self, _nested: Bool): String {
+        "HealthCheckRequest {{ service: \"{self.service}\" }}"
+    }
+}
+
+/// `grpc.health.v1.HealthCheckResponse`.
+type HealthReply = {
+    status: ServingStatus = ServingStatus.Unknown
+}
+
+impl __protobuf.Message for HealthReply {
+    fn writeTo(self, out: __protobuf.Writer) {
+        let number: Int32 = match self.status {
+            ServingStatus.Unknown => 0
+            ServingStatus.Serving => 1
+            ServingStatus.NotServing => 2
+            ServingStatus.ServiceUnknown => 3
+        }
+        if number != 0 {
+            out.int32(1, number)
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthReply ! __protobuf.ProtobufError {
+        var reply = HealthReply {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => reply.status = match input.int32("status")? {
+                    1 => ServingStatus.Serving
+                    2 => ServingStatus.NotServing
+                    3 => ServingStatus.ServiceUnknown
+                    _ => ServingStatus.Unknown
+                }
+                _ => input.skip()?
+            }
+        }
+        reply
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthCheckResponse"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        let name = match self.status {
+            ServingStatus.Unknown => ""
+            ServingStatus.Serving => "SERVING"
+            ServingStatus.NotServing => "NOT_SERVING"
+            ServingStatus.ServiceUnknown => "SERVICE_UNKNOWN"
+        }
+        if not name.isEmpty() {
+            out.field("status", "status")
+            out.string(name)
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthReply ! __protobuf.ProtobufError {
+        var reply = HealthReply {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "status" => reply.status = match field {
+                    __json.Value.Text(name) => match name {
+                        "SERVING" => ServingStatus.Serving
+                        "NOT_SERVING" => ServingStatus.NotServing
+                        "SERVICE_UNKNOWN" => ServingStatus.ServiceUnknown
+                        _ => ServingStatus.Unknown
+                    }
+                    _ => match input.int32(field, "$.status")? {
+                        1 => ServingStatus.Serving
+                        2 => ServingStatus.NotServing
+                        3 => ServingStatus.ServiceUnknown
+                        _ => ServingStatus.Unknown
+                    }
+                }
+                _ => input.unknown(key, "$")?
+            }
+        }
+        reply
+    }
+}
+
+impl __reflect.Reflect for HealthReply {
+    fn reflectShow(self, _nested: Bool): String {
+        "HealthCheckResponse {{ status: {self.status} }}"
+    }
+}
+
+/// `grpc.health.v1.HealthListRequest`, which asks for nothing.
+type HealthListRequest = {}
+
+impl __protobuf.Message for HealthListRequest {
+    fn writeTo(self, _out: __protobuf.Writer) {}
+
+    fn readFrom(input: __protobuf.Reader): HealthListRequest ! __protobuf.ProtobufError {
+        for input.next()? != 0 {
+            input.skip()?
+        }
+        HealthListRequest {}
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListRequest"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthListRequest ! __protobuf.ProtobufError {
+        for (key, _) in input.fields(document, "$")? {
+            input.unknown(key, "$")?
+        }
+        HealthListRequest {}
+    }
+}
+
+impl __reflect.Reflect for HealthListRequest {
+    fn reflectShow(self, _nested: Bool): String {
+        "HealthListRequest {{}}"
+    }
+}
+
+/// `grpc.health.v1.HealthListResponse`: each service's status.
+type HealthList = {
+    statuses: Map[String, ServingStatus] = [:]
+}
+
+impl __protobuf.Message for HealthList {
+    fn writeTo(self, out: __protobuf.Writer) {
+        for (service, status) in self.statuses {
+            out.message(1, HealthEntry { service, status })
+        }
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthList ! __protobuf.ProtobufError {
+        var list = HealthList {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => {
+                    let entry = input.message[HealthEntry]("statuses")?
+                    list.statuses[entry.service] = entry.status
+                }
+                _ => input.skip()?
+            }
+        }
+        list
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListResponse"
+    }
+
+    fn writeJson(self, out: __protobuf.JsonWriter): !__protobuf.ProtobufError {
+        out.begin()
+        if not self.statuses.isEmpty() {
+            out.field("statuses", "statuses")
+            out.begin()
+            for (service, status) in self.statuses {
+                out.key(service)
+                out.message(HealthReply { status })?
+            }
+            out.end()
+        }
+        out.end()
+    }
+
+    fn readJson(
+        input: __protobuf.JsonReader,
+        document: __protobuf.JsonValue,
+    ): HealthList ! __protobuf.ProtobufError {
+        var list = HealthList {}
+        for (key, field) in input.fields(document, "$")? {
+            match key {
+                "statuses" => {
+                    for (service, status) in input.entries(field, "$.statuses")? {
+                        list.statuses[service] =
+                            input.message[HealthReply](status, "$.statuses.{service}")?.status
+                    }
+                }
+                _ => input.unknown(key, "$")?
+            }
+        }
+        list
+    }
+}
+
+impl __reflect.Reflect for HealthList {
+    fn reflectShow(self, _nested: Bool): String {
+        "HealthListResponse {{ {self.statuses.length()} statuses }}"
+    }
+}
+
+/// An entry of `HealthListResponse.statuses`: a service and its status.
+type HealthEntry = {
+    service: String = ""
+    status: ServingStatus = ServingStatus.Unknown
+}
+
+impl __protobuf.Message for HealthEntry {
+    fn writeTo(self, out: __protobuf.Writer) {
+        out.string(1, self.service)
+        out.message(2, HealthReply { status: self.status })
+    }
+
+    fn readFrom(input: __protobuf.Reader): HealthEntry ! __protobuf.ProtobufError {
+        var entry = HealthEntry {}
+        for {
+            match input.next()? {
+                0 => break
+                1 => entry.service = input.string("key")?
+                2 => entry.status = input.message[HealthReply]("value")?.status
+                _ => input.skip()?
+            }
+        }
+        entry
+    }
+
+    fn protobufName(): String {
+        "grpc.health.v1.HealthListResponse.StatusesEntry"
+    }
+}
+
+/// `grpc/health/v1/health.proto`, as protoc describes it.
+fn healthFile(): __protobuf.FileDescriptor {
+    __protobuf.FileDescriptor {
+        name: "grpc/health/v1/health.proto"
+        symbols: [
+            "grpc.health.v1.HealthCheckRequest",
+            "grpc.health.v1.HealthCheckResponse",
+            "grpc.health.v1.HealthCheckResponse.ServingStatus",
+            "grpc.health.v1.HealthListRequest",
+            "grpc.health.v1.HealthListResponse",
+            "grpc.health.v1.Health",
+            "grpc.health.v1.Health.Check",
+            "grpc.health.v1.Health.List",
+            "grpc.health.v1.Health.Watch",
+        ]
+        bytes: __encoding
+            .base64Decode(
+                "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADIhMKEUhlYWx0aExpc3RSZXF1ZXN0IsQBChJIZWFsdGhMaXN0UmVzcG9uc2USTAoIc3RhdHVzZXMYASADKAsyMC5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2UuU3RhdHVzZXNFbnRyeVIIc3RhdHVzZXMaYAoNU3RhdHVzZXNFbnRyeRIQCgNrZXkYASABKAlSA2tleRI5CgV2YWx1ZRgCIAEoCzIjLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2VSBXZhbHVlOgI4ATL9AQoGSGVhbHRoElAKBUNoZWNrEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZRJNCgRMaXN0EiEuZ3JwYy5oZWFsdGgudjEuSGVhbHRoTGlzdFJlcXVlc3QaIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2USUgoFV2F0Y2gSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlMAFiBnByb3RvMw==",
+            )
+            .unwrapOr([])
+    }
+}

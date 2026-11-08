@@ -1,0 +1,218 @@
+// Connect and gRPC-Web: the same services, answered over HTTP/1.1 and
+// from browsers.
+
+import std.encoding as __encoding
+import std.http as __http
+import std.json as __json
+import std.protobuf as __protobuf
+import std.reflect as __reflect
+import std.time as __time
+
+/// The message of a `GET`, in its query: `message`, in Base64 for the URL
+/// with `base64=1`.
+fn connectQuery(request: __http.Request): Array[Byte] ! __http.Problem {
+    let message = request.query("message").unwrapOr("")
+    if request.query("base64") != some("1") {
+        return message.bytes()
+    }
+    match __encoding.base64Decode(message, alphabet: __encoding.Base64Alphabet.Url) {
+        ok(bytes) => bytes
+        err(error) => fail __http.Problem.badRequest("the query's message is not Base64: {error}")
+    }
+}
+
+/// The time `Connect-Timeout-Ms` gives.
+fn connectTimeout(text: String?): __time.Duration? {
+    let milliseconds = Int.parse(text?).ok()?
+    some(__time.milliseconds(milliseconds))
+}
+
+/// A unary call's reply: the method's message, or its failure as JSON with
+/// the HTTP status of its code, with its metadata as headers and its
+/// trailers as headers named `trailer-`.
+fn connectReply(
+    body: Array[Byte],
+    status: Status,
+    json: Bool,
+    headers: __http.Trailers,
+    trailers: __http.Trailers,
+): __http.Reply {
+    let length = if body.length() >= 5 { Int(UInt32.fromBytes(body, at: 1)) } else { -1 }
+    let failure = if status.code != Code.Ok {
+        some(status)
+    } else if length < 0 or body.length() != 5 + length {
+        some(Status { code: Code.Internal, message: "a unary call answers one message" })
+    } else {
+        none
+    }
+    var reply = match failure {
+        some(failed) => __http.Reply.bytes(
+            __json.encode(connectError(failed)).bytes(),
+            contentType: "application/json",
+            status: failed.code.httpStatus(),
+        )
+        none => {
+            let message = __http.Reply.bytes(
+                body.drop(5),
+                contentType: Wire.Connect.contentType(json),
+            )
+            if body[0] == 1 { message.header("content-encoding", "gzip") } else { message }
+        }
+    }
+    for (name, value) in headers.all() {
+        reply = reply.header(name, value)
+    }
+    for (name, value) in trailers.all() {
+        reply = reply.header("trailer-{name}", value)
+    }
+    reply
+}
+
+/// A failure as Connect writes it: its code's name, its message and its
+/// details, each with its type's name and its bytes in Base64.
+fn connectError(status: Status): __json.Value {
+    var error: Map[String, __json.Value] = ["code": __json.Value.Text(status.code.connectName())]
+    if not status.message.isEmpty() {
+        error["message"] = __json.Value.Text(status.message)
+    }
+    if not status.details.isEmpty() {
+        error["details"] = __json.Value.Array(
+            status.details.map(
+                (detail) {
+                    let fields: Map[String, __json.Value] = [
+                        "type": __json.Value.Text(detail.typeUrl.split("/").last().unwrapOr("")),
+                        "value": __json.Value.Text(
+                            __encoding.base64Encode(detail.value).trimEnd("="),
+                        ),
+                    ]
+                    __json.Value.Object(fields)
+                },
+            ),
+        )
+    }
+    __json.Value.Object(error)
+}
+
+/// The JSON that ends a stream: its failure, if it failed, and its
+/// trailers, each name with its values.
+fn connectEnd(status: Status, trailers: __http.Trailers): __json.Value {
+    var end: Map[String, __json.Value] = [:]
+    if status.code != Code.Ok {
+        end["error"] = connectError(status)
+    }
+    let all = trailers.all()
+    if not all.isEmpty() {
+        var metadata: Map[String, __json.Value] = [:]
+        for (name, value) in all {
+            metadata[name] = __json.Value.Array([__json.Value.Text(value)])
+        }
+        end["metadata"] = __json.Value.Object(metadata)
+    }
+    __json.Value.Object(end)
+}
+
+/// A unary method: one request, one reply.
+pub fn unary[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(In): Out ! Status): !Status {
+    let request = match exchange.receive[In]()? {
+        some(request) => request
+        none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
+    }
+    exchange.send(method(request)?)?
+}
+
+/// A method that sends a stream: one request, and replies as it sends them.
+pub fn serverStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(In, Sender[Out]): !Status): !Status {
+    let request = match exchange.receive[In]()? {
+        some(request) => request
+        none => fail Status { code: Code.InvalidArgument, message: "the call has no request" }
+    }
+    let (sender, replies) = channel[Out](capacity: 16, discardWhenAbandoned: true)
+    forward(exchange, replies, spawn method(request, sender))?
+}
+
+/// A method that receives a stream: the requests, and one reply.
+pub fn clientStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In]): Out ! Status): !Status {
+    exchange.send(method(Stream[In] { source: Source.Server(exchange) })?)?
+}
+
+/// A method that receives a stream and sends one.
+pub fn bidiStream[
+    In: __protobuf.Message + __reflect.Reflect,
+    Out: __protobuf.Message + __reflect.Reflect,
+](exchange: ServerCall, method: fn(Stream[In], Sender[Out]): !Status): !Status {
+    let (sender, replies) = channel[Out](capacity: 16, discardWhenAbandoned: true)
+    forward(exchange, replies, spawn method(Stream[In] { source: Source.Server(exchange) }, sender))?
+}
+
+/// Sends the replies a method gives as it gives them; when the client is
+/// gone, the method is cancelled.
+fn forward[Out: __protobuf.Message + __reflect.Reflect](
+    exchange: ServerCall,
+    replies: Receiver[Out],
+    sending: Join[!Status],
+): !Status {
+    for reply in replies {
+        match exchange.send(reply) {
+            ok(_) => {}
+            err(status) => {
+                sending.cancel()
+                fail status
+            }
+        }
+    }
+    sending.wait()?
+}
+
+/// The duration of `grpc-timeout`: digits and a unit, `100m`.
+fn timeoutOf(text: String): __time.Duration? {
+    if text.length() < 2 {
+        return none
+    }
+    let amount = Int.parse(text.slice(0, text.length() - 1).unwrapOr("")).ok()?
+    match text.slice(text.length() - 1, text.length()).unwrapOr("") {
+        "H" => some(__time.seconds(amount * 3600))
+        "M" => some(__time.seconds(amount * 60))
+        "S" => some(__time.seconds(amount))
+        "m" => some(__time.milliseconds(amount))
+        "u" => some(__time.microseconds(amount))
+        "n" => some(__time.nanoseconds(amount))
+        _ => none
+    }
+}
+
+/// `grpc-timeout` for the time left: at most eight digits of the finest
+/// unit that holds it, rounded up, so that the server's deadline is not
+/// before the client's.
+fn timeoutText(left: __time.Duration): String {
+    var amount = left.nanoseconds().max(1)
+    for (unit, next) in [("n", 1000), ("u", 1000), ("m", 1000), ("S", 60), ("M", 60)] {
+        if amount < 100_000_000 {
+            return "{amount}{unit}"
+        }
+        amount = (amount + next - 1) / next
+    }
+    "{amount.min(99_999_999)}H"
+}
+
+/// `grpc-message`, percent-encoded as gRPC writes it.
+fn percentEncoded(text: String): String {
+    var out = ""
+    for byte in text.bytes() {
+        let value = Int(byte)
+        out = if value >= 0x20 and value <= 0x7e and value != 0x25 {
+            "{out}{Char.from(value).unwrapOr('?')}"
+        } else {
+            "{out}%{value.toString(16).padStart(2, "0").toUpper()}"
+        }
+    }
+    out
+}

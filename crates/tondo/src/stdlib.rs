@@ -27,7 +27,17 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("messagepack", &[file!("messagepack")]),
     ("cbor", &[file!("cbor")]),
     ("protobuf", &[file!("protobuf")]),
-    ("grpc", &[file!("grpc")]),
+    (
+        "grpc",
+        &[
+            file!("grpc/grpc"),
+            file!("grpc/server"),
+            file!("grpc/connect"),
+            file!("grpc/client"),
+            file!("grpc/health"),
+            file!("grpc/reflection"),
+        ],
+    ),
     ("net", &[file!("net")]),
     ("ffi", &[file!("ffi")]),
     ("regex", &[file!("regex")]),
