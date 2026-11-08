@@ -1,0 +1,31 @@
+// When a task's panic ends the program, the other tasks run their cleanups
+// before it exits, those of a detached task that takes a while included,
+// though `main` ended before it (language 11.11).
+import std.console
+import std.time
+
+fn slow(inbox: Receiver[Int]) {
+    defer {
+        let started = time.now()
+        for started.elapsed() < time.milliseconds(200) {}
+        console.println("the slow cleanup ran")
+    }
+    _ = inbox.receive()
+}
+
+fn boom() {
+    time.sleep(time.milliseconds(20))
+    panic("in a task")
+}
+
+fn main() {
+    let (sender, inbox) = channel[Int]()
+    spawn detached slow(inbox)
+    let failing = spawn boom()
+    failing.wait()
+    sender.send(1)
+}
+
+// expect-panic: P0008
+// expect-stdout: the slow cleanup ran
+// expect-stderr: panic[P0008]: explicit-panic: in a task
