@@ -412,10 +412,15 @@ pub extern "C" fn tondo_rt_msgpack_bytes(object: *mut NativeObject) -> *mut Arra
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_skip(object: *mut NativeObject, code: i64) -> i64 {
+    let Some(mut reader) = reader(object) else { return ERROR };
+    skip(&mut reader, code)
+}
+
+/// Skips the rest of a value that started with `code`; 0, or `ERROR`.
+fn skip(reader: &mut Reader, code: i64) -> i64 {
     if code != BEGIN_LIST && code != BEGIN_MAP {
         return 0;
     }
-    let Some(mut reader) = reader(object) else { return ERROR };
     let mut depth = 1;
     while depth > 0 && reader.read < reader.events.len() {
         match reader.events[reader.read].code {
@@ -428,14 +433,83 @@ pub extern "C" fn tondo_rt_msgpack_skip(object: *mut NativeObject, code: i64) ->
     if depth == 0 { 0 } else { ERROR }
 }
 
+/// A failure at the event just read, which `where` says.
+fn fail(reader: &mut Reader, message: String) {
+    let path = reader
+        .read
+        .checked_sub(1)
+        .map_or_else(|| "$".to_string(), |index| path_of(&reader.events, |e| e.code, |e| &e.text, index, false));
+    reader.error = Some((message, path));
+}
+
+/// `field(names, reject)`: the next member of a map, read up to its value,
+/// as a derived decoder numbers its fields: the index of its key among
+/// `names`, compared in place, with no string made for it; the number of
+/// names for another, skipped whole, or, when `reject`, -3 for it, failed
+/// at its value as `unknownField` fails; -2 at the map's end; and `ERROR`
+/// for another failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_msgpack_field(object: *mut NativeObject, names: *mut ArrayHeader, reject: u8) -> i64 {
+    let Some(mut reader) = reader(object) else { return ERROR };
+    if reader.error.is_some() {
+        return ERROR;
+    }
+    let names = unsafe { array_items::<*const Str>(names) };
+    let reader = &mut *reader;
+    let (found, failed) = next_field(&reader.events, &mut reader.read, |e| e.code, |e| &e.text, names, reject != 0);
+    if let Some(message) = failed {
+        fail(reader, message);
+    }
+    found
+}
+
+/// `field` of a reader of events, for MessagePack, CBOR and TOML: what it
+/// gives, and the failure to note at the event read last, if any.
+pub(crate) fn next_field<E>(
+    events: &[E],
+    read: &mut usize,
+    code: impl Fn(&E) -> i64,
+    text: impl Fn(&E) -> &str,
+    names: &[*const Str],
+    reject: bool,
+) -> (i64, Option<String>) {
+    let ended = || (ERROR, Some("unexpected end of input".to_string()));
+    let Some(event) = events.get(*read) else { return ended() };
+    *read += 1;
+    match code(event) {
+        KEY => {}
+        END_MAP => return (-2, None),
+        _ => return (ERROR, Some("expected a key".into())),
+    }
+    let key = text(event);
+    if let Some(index) = names.iter().position(|&name| unsafe { str_text(name) } == key) {
+        return (index as i64, None);
+    }
+    let Some(first) = events.get(*read).map(&code) else { return ended() };
+    *read += 1;
+    if reject {
+        return (-3, Some(format!("unknown field `{key}`")));
+    }
+    // The rest of a list or map, to its end.
+    if first == BEGIN_LIST || first == BEGIN_MAP {
+        let mut depth = 1;
+        while depth > 0 {
+            let Some(event) = events.get(*read) else { return (ERROR, None) };
+            match code(event) {
+                BEGIN_LIST | BEGIN_MAP => depth += 1,
+                END_LIST | END_MAP => depth -= 1,
+                _ => {}
+            }
+            *read += 1;
+        }
+    }
+    (names.len() as i64, None)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_fail(object: *mut NativeObject, message: *const Str) {
     if let Some(mut reader) = reader(object) {
-        let path = reader
-            .read
-            .checked_sub(1)
-            .map_or_else(|| "$".to_string(), |index| path_of(&reader.events, |e| e.code, |e| &e.text, index, false));
-        reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
+        fail(&mut reader, unsafe { str_text(message) }.to_owned());
     }
 }
 

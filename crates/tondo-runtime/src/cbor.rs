@@ -440,12 +440,35 @@ pub extern "C" fn tondo_rt_cbor_skip(object: *mut NativeObject, code: i64) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_fail(object: *mut NativeObject, message: *const Str) {
     if let Some(mut reader) = reader(object) {
-        let path = reader.read.checked_sub(1).map_or_else(
-            || "$".to_string(),
-            |index| crate::msgpack::path_of(&reader.events, |e| e.code, |e| &e.text, index, true),
-        );
-        reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
+        fail(&mut reader, unsafe { str_text(message) }.to_owned());
     }
+}
+
+/// A failure at the event just read, which `where` says.
+fn fail(reader: &mut Reader, message: String) {
+    let path = reader.read.checked_sub(1).map_or_else(
+        || "$".to_string(),
+        |index| crate::msgpack::path_of(&reader.events, |e| e.code, |e| &e.text, index, true),
+    );
+    reader.error = Some((message, path));
+}
+
+/// `field(names, reject)`: the next member of a map read up to its value,
+/// as MessagePack's reader gives it, with its key compared in place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_cbor_field(object: *mut NativeObject, names: *mut ArrayHeader, reject: u8) -> i64 {
+    let Some(mut reader) = reader(object) else { return ERROR };
+    if reader.error.is_some() {
+        return ERROR;
+    }
+    let names = unsafe { array_items::<*const Str>(names) };
+    let reader = &mut *reader;
+    let (found, failed) =
+        crate::msgpack::next_field(&reader.events, &mut reader.read, |e| e.code, |e| &e.text, names, reject != 0);
+    if let Some(message) = failed {
+        fail(reader, message);
+    }
+    found
 }
 
 /// The failure's message (0) or path (1).

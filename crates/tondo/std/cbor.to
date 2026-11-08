@@ -287,6 +287,22 @@ impl serialization.Source for Reader {
         self.rejectUnknown
     }
 
+    fn nextField(self, names: Array[String]): Int? ! CborError {
+        // The index, or -2 at the end, -3 for a field rejected, -1 for
+        // another failure.
+        let found = cbornative.field(self.native, names, self.rejectUnknown)
+        if found >= 0 {
+            return some(found)
+        }
+        if found == -2 {
+            return none
+        }
+        if found == -3 {
+            fail self.error(serialization.ErrorKind.Unknown)
+        }
+        fail self.error(serialization.ErrorKind.Syntax)
+    }
+
     fn listName(self): String {
         "an array"
     }
