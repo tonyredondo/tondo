@@ -11,7 +11,7 @@ use std::path::Path;
 /// The thread-locals besides the worker's, by file and name, with why.
 const KNOWN: &[(&str, &str, &str)] = &[
     ("tasks/mod.rs", "WORKER", "what a worker keeps: lent by `worker` alone"),
-    ("tasks/mod.rs", "GIVE_BACK", "gives the worker's spare stacks back as its thread ends"),
+    ("tasks/stacks.rs", "GIVE_BACK", "gives the worker's spare stacks back as its thread ends"),
     ("tasks/mod.rs", "LOOSE_CLEANUPS", "cleanups registered outside any task, as in unit tests"),
     ("contexts.rs", "SHOWING", "outside any task; a task keeps its own"),
     ("cycles.rs", "OWES", "the thread owes the collector until its next safe point, which it reaches as it runs"),
