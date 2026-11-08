@@ -574,13 +574,41 @@ pub extern "C" fn tondo_rt_yaml_skip(object: *mut NativeObject, code: i64) -> i6
 pub unsafe extern "C" fn tondo_rt_yaml_fail(object: *mut NativeObject, message: *const Str) {
     let message = text(message);
     let Some(mut reader) = reader(object) else { return };
-    // The path, found from the events before it, as only a failure asks.
+    fail(&mut reader, message);
+}
+
+/// A failure at the event just read, which `where` says: its path, found
+/// from the events before it, as only a failure asks.
+fn fail(reader: &mut Reader, message: String) {
     let at = reader.documents.get(reader.document).zip(reader.read.checked_sub(1)).and_then(|(events, index)| {
         let event = events.get(index)?;
         Some((crate::msgpack::path_of(events, |e| e.code, |e| &e.text, index, false), event.line, event.column))
     });
     let (path, line, column) = at.unwrap_or(("$".into(), 0, 0));
     reader.error = Some((message, path, line, column));
+}
+
+/// `field(names, reject)`: the next member of a map read up to its value,
+/// as MessagePack's reader gives it, with its key compared in place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_yaml_field(
+    object: *mut NativeObject,
+    names: *mut crate::ArrayHeader,
+    reject: u8,
+) -> i64 {
+    let Some(mut reader) = reader(object) else { return ERROR };
+    if reader.error.is_some() {
+        return ERROR;
+    }
+    let names = unsafe { crate::array_items::<*const Str>(names) };
+    let reader = &mut *reader;
+    let events = reader.documents.get(reader.document).map_or(&[][..], Vec::as_slice);
+    let (found, failed) =
+        crate::msgpack::next_field(events, &mut reader.read, |e| e.code, |e| &e.text, names, reject != 0);
+    if let Some(message) = failed {
+        fail(reader, message);
+    }
+    found
 }
 
 /// Where the failure is: its message (0), path (1), line (2) or column (3).

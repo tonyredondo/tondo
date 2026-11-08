@@ -1657,6 +1657,7 @@ pub const NATIVES: &[Native] = {
         yaml("float", &[Object], Float, "tondo_rt_yaml_float"),
         yaml("tag", &[Object], String, "tondo_rt_yaml_tag"),
         yaml("skip", &[Object, Int], Int, "tondo_rt_yaml_skip"),
+        yaml("field", &[Object, Strings, Bool], Int, "tondo_rt_yaml_field"),
         yaml("fail", &[Object, String], Unit, "tondo_rt_yaml_fail"),
         yaml("where", &[Object, Int], String, "tondo_rt_yaml_where"),
         yaml("writer", &[], Object, "tondo_rt_yaml_writer"),
