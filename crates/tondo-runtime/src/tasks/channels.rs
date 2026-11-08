@@ -203,11 +203,11 @@ pub(super) unsafe fn try_send(c: &mut ChannelObject, value: *mut u8) -> Option<O
             std::ptr::copy_nonoverlapping(value, (*receiver).value, c.size);
             (*receiver).state = MOVED;
             let task = (*(*receiver).wait).task;
-            crate::debugger::handed(current_id(), (*task).id);
+            tools::handed(current_id(), (*task).id);
             return Some(Some(task));
         }
         if c.count < c.capacity {
-            crate::debugger::sent(c as *const ChannelObject as usize, c.count, current_id());
+            tools::sent(c as *const ChannelObject as usize, c.count, current_id());
             c.buffer.extend(std::slice::from_raw_parts(value, c.size));
             c.count += 1;
             return Some(None);
@@ -223,12 +223,12 @@ pub(super) unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<
     unsafe {
         if c.count > 0 {
             let channel = c as *const ChannelObject as usize;
-            crate::debugger::taken(channel, c.count, current_id());
+            tools::taken(channel, c.count, current_id());
             pop_bytes(&mut c.buffer, out, c.size);
             c.count -= 1;
             // A sender waiting for room moves its value in.
             let woken = claim_first(&mut c.sending).map(|sender| {
-                crate::debugger::sent(channel, c.count, (*(*(*sender).wait).task).id);
+                tools::sent(channel, c.count, (*(*(*sender).wait).task).id);
                 c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
                 c.count += 1;
                 (*sender).state = MOVED;
@@ -241,7 +241,7 @@ pub(super) unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<
             std::ptr::copy_nonoverlapping((*sender).value, out, c.size);
             (*sender).state = MOVED;
             let task = (*(*sender).wait).task;
-            crate::debugger::handed((*task).id, current_id());
+            tools::handed((*task).id, current_id());
             return Some((true, Some(task)));
         }
         if c.closed {
@@ -257,7 +257,7 @@ pub(super) unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<
 pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value: *mut u8, location: *const Str) {
     unsafe {
         let c = &mut *(*sender).channel;
-        crate::debugger::channel_used(SENDING, c as *const ChannelObject as usize);
+        tools::channel_used(SENDING, c as *const ChannelObject as usize);
         if stops() {
             drop_unsent(c, value);
             return;
@@ -400,7 +400,7 @@ pub(super) unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, out: *mut u8) -> u8 {
     unsafe {
-        crate::debugger::channel_used(RECEIVING, channel as usize);
+        tools::channel_used(RECEIVING, channel as usize);
         let c = &mut *channel;
         if stops() {
             return 0;

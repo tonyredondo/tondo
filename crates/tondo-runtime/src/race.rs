@@ -6,9 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static ON: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct Seen {
@@ -32,12 +29,12 @@ static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
 const FRAMES: usize = 12;
 
 pub(crate) fn start() {
-    ON.store(true, Ordering::Relaxed);
+    super::tasks::tools::listen(super::tasks::tools::RACES, true);
 }
 
 #[inline]
 pub(crate) fn on() -> bool {
-    ON.load(Ordering::Relaxed)
+    super::tasks::tools::listens(super::tasks::tools::RACES)
 }
 
 fn here() -> Vec<usize> {

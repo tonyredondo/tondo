@@ -7,7 +7,6 @@ use std::cell::{Cell, UnsafeCell};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-static ON: AtomicBool = AtomicBool::new(false);
 /// Whether threads are sampled: while a tool traces the program, or while
 /// a test build profiles its tests.
 static SAMPLING: AtomicBool = AtomicBool::new(false);
@@ -15,7 +14,7 @@ static SAMPLING: AtomicBool = AtomicBool::new(false);
 /// Whether a tool traces the program now.
 #[inline]
 pub(crate) fn on() -> bool {
-    ON.load(Ordering::Relaxed)
+    super::tasks::tools::listens(super::tasks::tools::RECORDER)
 }
 
 /// Nanoseconds of the monotonic clock, which a signal handler may read.
@@ -296,13 +295,13 @@ pub(crate) fn install() {
 }
 
 pub(crate) fn start() {
-    ON.store(true, Ordering::SeqCst);
+    super::tasks::tools::listen(super::tasks::tools::RECORDER, true);
     sample_threads();
 }
 
 pub(crate) fn stop() {
     stop_sampling();
-    ON.store(false, Ordering::SeqCst);
+    super::tasks::tools::listen(super::tasks::tools::RECORDER, false);
 }
 
 /// Microseconds of processor time between two samples of the threads,

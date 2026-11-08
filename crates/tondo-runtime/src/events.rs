@@ -5,10 +5,8 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-static ON: AtomicBool = AtomicBool::new(false);
 static LAST: Mutex<VecDeque<(Instant, u64, What)>> = Mutex::new(VecDeque::new());
 /// How many it keeps.
 const KEPT: usize = 256;
@@ -66,11 +64,11 @@ pub(crate) enum What {
 
 #[inline]
 pub(crate) fn on() -> bool {
-    ON.load(Ordering::Relaxed)
+    super::tasks::tools::listens(super::tasks::tools::EVENTS)
 }
 
 pub(crate) fn start() {
-    ON.store(true, Ordering::Relaxed);
+    super::tasks::tools::listen(super::tasks::tools::EVENTS, true);
 }
 
 /// Keeps what the running task did.

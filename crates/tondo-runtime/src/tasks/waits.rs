@@ -45,7 +45,7 @@ impl Wait {
     /// `block`, for a wait on another task, as for a channel, a join or a
     /// lock, which `profile.startBlocking` samples.
     pub(crate) fn block_on_task(&self) -> usize {
-        let since = crate::profiling::blocking_since();
+        let since = tools::blocking();
         let fired = self.block();
         crate::profiling::blocked(since);
         fired
@@ -77,9 +77,7 @@ impl Wait {
 
     fn parked(&self) -> usize {
         let task = unsafe { &mut *self.task };
-        if crate::race::on() && noting() {
-            noted("b\n".to_string());
-        }
+        tools::note(|| "b\n".to_string());
         // The deadline of a `within` ends the wait when it passes, as a
         // cancellation would, and the task unwinds to it (11.17).
         if let Some(&(at, _)) = task.withins.last() {

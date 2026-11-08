@@ -6,6 +6,7 @@
 //! the task that stopped. When one task stops every task stops at its next
 //! probe, and they all go on together.
 
+use super::tasks::tools;
 use super::{Builder, Str, str_bytes};
 use expression::{Evaluator, Expr};
 use std::collections::HashMap;
@@ -247,7 +248,10 @@ pub(crate) fn has_probes() -> bool {
 }
 
 /// A debugger is attached: probes look at what it asked for.
-static ATTACHED: AtomicBool = AtomicBool::new(false);
+fn attached() -> bool {
+    tools::listens(tools::DEBUGGER)
+}
+
 /// Every task stops at its next probe: one stopped, or the debugger asked.
 static HOLD: AtomicBool = AtomicBool::new(false);
 /// A frame watches an expression: every probe looks.
@@ -861,7 +865,7 @@ pub(crate) fn start_stopped() {
         return;
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !ATTACHED.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+    while !attached() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     // The debugger's `attach` made the stop at the start; it may have gone
@@ -1168,7 +1172,7 @@ pub(crate) fn following() -> bool {
 
 /// The debugger asked to debug the children the program starts too.
 pub(crate) fn follows_children() -> bool {
-    ATTACHED.load(Ordering::Relaxed) && FOLLOW.load(Ordering::Relaxed)
+    attached() && FOLLOW.load(Ordering::Relaxed)
 }
 
 /// What gdb or lldb asks of the frame they show, of the program's function
@@ -1265,7 +1269,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         let (site, addresses, alive) = (site as usize, addresses as usize, alive as usize);
         super::tasks::note_probe(super::tasks::Probe { frame, site, addresses, alive });
     }
-    if !ATTACHED.load(Ordering::Relaxed) {
+    if !attached() {
         return super::live::moving(site);
     }
     // A call the debugger makes runs to its end, as a view's code does.
@@ -2234,7 +2238,7 @@ fn kept(table: &Table) -> i32 {
     use std::io::Write;
     COMMANDING.store(false, Ordering::SeqCst);
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    ATTACHED.store(false, Ordering::Relaxed);
+    tools::listen(tools::DEBUGGER, false);
     {
         let mut state = state();
         state.breakpoints.clear();
@@ -2381,9 +2385,6 @@ struct Tracked {
 /// A line of a task: its probe, its site and the task.
 type Origin = (u64, usize, u64);
 
-/// A scan follows where values a task receives come from.
-static FOLLOWING: AtomicBool = AtomicBool::new(false);
-
 /// What a scan keeps of a value that changes hands: `from` is the task
 /// whose line it comes from, `to` the one whose line takes it; `None` when
 /// what was sent before the scan began.
@@ -2405,9 +2406,6 @@ fn origin_of(tracked: &Tracked, task: u64) -> Option<Origin> {
 
 /// The task `from` sent a value into the channel, which held `held`.
 pub(crate) fn sent(channel: usize, held: usize, from: u64) {
-    if !FOLLOWING.load(Ordering::Relaxed) {
-        return;
-    }
     let _outside = super::replay::Outside::enter();
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     let Some(tracked) = tracked.as_mut() else { return };
@@ -2417,9 +2415,6 @@ pub(crate) fn sent(channel: usize, held: usize, from: u64) {
 
 /// A task ended, and its stack goes: a scan follows its frames no longer.
 pub(crate) fn task_ended(task: u64) {
-    if !FOLLOWING.load(Ordering::Relaxed) {
-        return;
-    }
     let _outside = super::replay::Outside::enter();
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     for followed in tracked.iter_mut().flat_map(|t| &mut t.followed).filter(|f| f.anchor.task == task) {
@@ -2429,25 +2424,17 @@ pub(crate) fn task_ended(task: u64) {
 
 /// The task `by` took the oldest value of the channel, which held `held`.
 pub(crate) fn taken(channel: usize, held: usize, by: u64) {
-    if FOLLOWING.load(Ordering::Relaxed) {
-        let take =
-            |t: &mut Tracked| t.messages.entry(channel).or_insert_with(|| vec![None; held].into()).pop_front()?;
-        handed_over(take, by);
-    }
+    let take = |t: &mut Tracked| t.messages.entry(channel).or_insert_with(|| vec![None; held].into()).pop_front()?;
+    handed_over(take, by);
 }
 
 /// The task `from` gave a value to `to`, which waited for it.
 pub(crate) fn handed(from: u64, to: u64) {
-    if FOLLOWING.load(Ordering::Relaxed) {
-        handed_over(|t| origin_of(t, from), to);
-    }
+    handed_over(|t| origin_of(t, from), to);
 }
 
 /// The current task ends, its result in `join`.
 pub(crate) fn ended(join: usize) {
-    if !FOLLOWING.load(Ordering::Relaxed) {
-        return;
-    }
     let _outside = super::replay::Outside::enter();
     let mut tracked = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(tracked) = tracked.as_mut()
@@ -2459,9 +2446,7 @@ pub(crate) fn ended(join: usize) {
 
 /// The current task takes the result in `join`.
 pub(crate) fn joined(join: usize) {
-    if FOLLOWING.load(Ordering::Relaxed) {
-        handed_over(|t| t.ends.get(&join).copied(), super::tasks::current_id());
-    }
+    handed_over(|t| t.ends.get(&join).copied(), super::tasks::current_id());
 }
 
 /// A frame as another replay of the same run finds it, where addresses
@@ -2632,7 +2617,7 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
     match word {
         // Where the values tasks receive come from, as the next scan goes.
         "track" if rest.trim().is_empty() => {
-            FOLLOWING.store(true, Ordering::Relaxed);
+            tools::listen(tools::FOLLOWING, true);
             tracked.get_or_insert_with(Tracked::default);
             Ok("{\"tracking\":true}".into())
         }
@@ -2641,7 +2626,7 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
                 rest.split_once(' ').ok_or("track takes a frame, as `anchor` gives it, and an expression")?;
             let anchor = Anchor::parse(anchor).ok_or("track takes a frame first, as `anchor` gives it")?;
             let expr = expression::parse(text.trim()).map_err(|m| format!("the expression: {m}"))?;
-            FOLLOWING.store(true, Ordering::Relaxed);
+            tools::listen(tools::FOLLOWING, true);
             tracked.get_or_insert_with(Tracked::default).followed.push(Followed {
                 anchor,
                 expr,
@@ -2667,7 +2652,7 @@ fn track(table: &Table, word: &str, rest: &str) -> Result<String, String> {
             Ok("{\"counting\":true}".into())
         }
         _ => {
-            FOLLOWING.store(false, Ordering::Relaxed);
+            tools::listen(tools::FOLLOWING, false);
             let mut found = tracked.take().unwrap_or_default();
             if let Some(mut trail) = found.trail.take() {
                 let _outside = super::replay::Outside::enter();
@@ -2941,7 +2926,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     error: *const u8,
     ty: *const Str,
 ) {
-    if !ATTACHED.load(Ordering::Relaxed) || !CATCH_ERRORS.load(Ordering::Relaxed) {
+    if !attached() || !CATCH_ERRORS.load(Ordering::Relaxed) {
         return;
     }
     if calling_here() {
@@ -2967,7 +2952,7 @@ pub(crate) fn panicked(message: &str) {
     if calling_here() {
         return;
     }
-    if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
+    if !attached() || !CATCH.load(Ordering::Relaxed) || !caught_panic(message) {
         return;
     }
     stop_here(message.to_string());
@@ -2976,7 +2961,7 @@ pub(crate) fn panicked(message: &str) {
 /// A panic a `recover` will stop, which ends nothing: a breakpoint on that
 /// stops where the program's code panicked.
 pub(crate) fn recovering(message: &str) {
-    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_RECOVER != 0 && !calling_here() {
+    if attached() && EVENTS.load(Ordering::Relaxed) & ON_RECOVER != 0 && !calling_here() {
         stop_here(message.to_string());
     }
 }
@@ -3014,7 +2999,7 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// A task starts.
 pub(crate) fn began(task: u64) {
-    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_SPAWN != 0 {
+    if EVENTS.load(Ordering::Relaxed) & ON_SPAWN != 0 {
         STARTING.lock().unwrap_or_else(|e| e.into_inner()).push((task, None));
         STARTED.store(true, Ordering::Relaxed);
     }
@@ -3024,7 +3009,7 @@ pub(crate) fn began(task: u64) {
 /// stops it there, before.
 pub(crate) fn channel_used(kind: u8, channel: usize) {
     let event = if kind == super::tasks::SENDING { ON_SEND } else { ON_RECEIVE };
-    if !ATTACHED.load(Ordering::Relaxed) || EVENTS.load(Ordering::Relaxed) & event == 0 || calling_here() {
+    if EVENTS.load(Ordering::Relaxed) & event == 0 || calling_here() {
         return;
     }
     let (count, capacity) = super::tasks::channel_fill(channel);
@@ -3035,7 +3020,7 @@ pub(crate) fn channel_used(kind: u8, channel: usize) {
 
 /// A task finds a lock taken: a breakpoint on that stops it, before it waits.
 pub(crate) fn lock_taken(object: usize) {
-    if !ATTACHED.load(Ordering::Relaxed) || EVENTS.load(Ordering::Relaxed) & ON_LOCK == 0 || calling_here() {
+    if !attached() || EVENTS.load(Ordering::Relaxed) & ON_LOCK == 0 || calling_here() {
         return;
     }
     let held: Vec<String> =
@@ -3046,7 +3031,7 @@ pub(crate) fn lock_taken(object: usize) {
 /// A task takes a request to answer: a breakpoint on that stops it where
 /// the program's handler starts.
 pub(crate) fn serving(method: &str, path: &str) {
-    if ATTACHED.load(Ordering::Relaxed) && EVENTS.load(Ordering::Relaxed) & ON_REQUEST != 0 {
+    if attached() && EVENTS.load(Ordering::Relaxed) & ON_REQUEST != 0 {
         let told = Some(format!("serves {method} {path}"));
         STARTING.lock().unwrap_or_else(|e| e.into_inner()).push((super::tasks::current_id(), told));
         STARTED.store(true, Ordering::Relaxed);
@@ -3057,7 +3042,7 @@ pub(crate) fn serving(method: &str, path: &str) {
 /// it there.
 pub(crate) fn waited(task: u64, waited: std::time::Duration) {
     let longest = LONGEST.load(Ordering::Relaxed);
-    if !ATTACHED.load(Ordering::Relaxed) || waited.as_millis() < u128::from(longest) || calling_here() {
+    if waited.as_millis() < u128::from(longest) || calling_here() {
         return;
     }
     use super::tasks::{JOIN, LOCK, RECEIVING, SENDING};
@@ -3086,7 +3071,7 @@ fn calling_here() -> bool {
 pub(crate) fn stop_for_good(why: String) -> ! {
     // Each stop holds the task until the debugger lets it go.
     loop {
-        if !ATTACHED.load(Ordering::Relaxed) || !stop_here(why.clone()) {
+        if !attached() || !stop_here(why.clone()) {
             break;
         }
     }
@@ -3193,7 +3178,7 @@ pub(crate) fn cycle(tasks: &[u64]) -> Option<String> {
 /// main task waits, so that `tasks`, `stack` and `locals` show what each
 /// one waits for; it ends when the debugger goes on.
 pub(crate) fn deadlocked(headline: &str) {
-    if !ATTACHED.load(Ordering::Relaxed) || !CATCH.load(Ordering::Relaxed) || !caught_panic(headline) {
+    if !attached() || !CATCH.load(Ordering::Relaxed) || !caught_panic(headline) {
         return;
     }
     let Some(table) = table() else { return };
@@ -3553,7 +3538,7 @@ pub(crate) fn attach(client: &UnixStream) -> String {
         tell(&stopped_event(&stop));
         state().stopped = Some(stop);
     }
-    ATTACHED.store(true, Ordering::Relaxed);
+    tools::listen(tools::DEBUGGER, true);
     format!("{{\"debugging\":true,\"lines\":{}}}", table.sites.len())
 }
 
@@ -3565,7 +3550,7 @@ pub(crate) fn detach() {
     FOLLOW.store(false, Ordering::Relaxed);
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CLIENT_FD.store(-1, Ordering::Relaxed);
-    ATTACHED.store(false, Ordering::Relaxed);
+    tools::listen(tools::DEBUGGER, false);
     let mut state = state();
     state.breakpoints.clear();
     state.frozen.clear();

@@ -123,15 +123,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     unsafe {
         (*join).task = task;
         let spawned = crate::trace::spawned(origin());
-        if recorder::on() {
-            let parent = current().as_ref().map_or(0, |parent| parent.id);
-            let at = recorder::frames(spawned.frames().iter().copied());
-            recorder::record(recorder::Event::Spawn { task: (*task).id, parent, code: code as usize, at });
-        }
-        if crate::events::on() {
-            let at = spawned.frames().first().copied().unwrap_or(0);
-            crate::events::add(crate::events::What::Spawned((*task).id, at));
-        }
+        tools::spawned(task, code, spawned);
         if let Some(parent) = current().as_ref().filter(|parent| parent.flight != 0) {
             (*task).flight = parent.flight;
             let did = crate::diagnostics::Did::Spawned((*task).id);
@@ -149,7 +141,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
 /// group, before that. True when the task was detached.
 pub(super) unsafe fn complete(join: *mut JoinObject) -> bool {
     unsafe {
-        crate::debugger::ended(join as usize);
+        tools::ended(join as usize);
         let j = &mut *join;
         lock(&j.lock);
         j.done = true;
@@ -233,9 +225,7 @@ pub(super) unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
     unsafe {
         let j = &mut *join;
         // It comes after the task whenever it asks, which makes no difference.
-        if crate::race::on() && noting() {
-            noted(format!("h {}\n", &raw const j.lock as usize));
-        }
+        tools::note(|| format!("h {}\n", &raw const j.lock as usize));
         lock_unseen(&j.lock);
         if j.done {
             unlock(&j.lock);
@@ -293,7 +283,7 @@ pub unsafe extern "C" fn tondo_rt_join_wait(join: *mut JoinObject, out: *mut u8)
                 crate::panics::rethrow(panic);
                 return;
             }
-            crate::debugger::joined(join as usize);
+            tools::joined(join as usize);
             take(join, out);
         } else {
             std::ptr::write_bytes(out, 0, (*join).size);

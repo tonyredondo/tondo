@@ -346,13 +346,7 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// ends is freed.
 pub(super) fn run(task: *mut Task) {
     worker(|w| w.current.set(task));
-    if crate::race::on() && noting() {
-        noted(format!("s {}\n", unsafe { (*task).name }));
-    }
-    let traced = recorder::on();
-    if traced {
-        recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
-    }
+    let traced = tools::running(task);
     unsafe {
         if (*task).stack.is_none() {
             let stack = task_stack();
@@ -364,26 +358,10 @@ pub(super) fn run(task: *mut Task) {
     unsafe { switch(home(), (*task).sp) };
     leave_tondo();
     worker(|w| w.current.set(std::ptr::null_mut()));
-    if traced {
-        // Nothing runs the task until it is parked or scheduled again.
-        let why = unsafe {
-            match (*task).finished {
-                true => recorder::Stop::Done,
-                false if (*task).state.load(Ordering::Acquire) == PARKING => {
-                    recorder::Stop::Waits(recorder::frames(parked_walk(task)))
-                }
-                false => recorder::Stop::Yields,
-            }
-        };
-        recorder::record(recorder::Event::Stop { task: unsafe { (*task).id }, why });
-    }
+    tools::stopped(task, traced);
     unsafe {
         let in_domain = (*task).in_domain;
-        if (*task).finished && crate::events::on() {
-            crate::events::add_of((*task).id, crate::events::What::Ended);
-        }
         if (*task).finished {
-            crate::debugger::task_ended((*task).id);
             let (was_main, join) = ((*task).main, (*task).join);
             for asked in [&(*task).cancelled, &(*task).again] {
                 if asked.load(Ordering::SeqCst) {

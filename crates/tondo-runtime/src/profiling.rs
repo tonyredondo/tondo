@@ -613,9 +613,8 @@ pub extern "C" fn tondo_rt_profile_tasks() -> *mut super::native::NativeObject {
 // Waits
 // ---------------------------------------------------------------------------
 
-/// Whether `profile.startBlocking` and `profile.startContention` asked for
-/// their samples.
-static BLOCKING: AtomicBool = AtomicBool::new(false);
+/// Whether `profile.startContention` asked for its samples; the profile of
+/// blocking listens to the scheduler (`tasks::tools::BLOCKING`).
 static CONTENTION: AtomicBool = AtomicBool::new(false);
 /// The waits sampled, by stack: how many they stand for, and their time in
 /// nanoseconds.
@@ -625,11 +624,6 @@ static WAITED: [Mutex<Option<Waits>>; 2] = [Mutex::new(None), Mutex::new(None)];
 /// The nanoseconds waited that one sample stands for, on average, of
 /// blocking and of contention, as `f64` bits.
 static WAIT_RATES: [AtomicU64; 2] = [AtomicU64::new(100_000f64.to_bits()), AtomicU64::new(100_000f64.to_bits())];
-
-/// When a wait for another task starts, if waits are sampled.
-pub(crate) fn blocking_since() -> Option<std::time::Instant> {
-    BLOCKING.load(Ordering::Relaxed).then(std::time::Instant::now)
-}
 
 /// A wait for another task that ended, sampled from where it waited.
 pub(crate) fn blocked(since: Option<std::time::Instant>) {
@@ -681,10 +675,12 @@ fn chance_roll() -> f64 {
 /// (1): one sample for each `every` nanoseconds waited, on average.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_waits_start(kind: i64, every: i64) {
-    let flag = if kind == 0 { &BLOCKING } else { &CONTENTION };
     WAIT_RATES[kind.clamp(0, 1) as usize].store((every.max(1) as f64).to_bits(), Ordering::Relaxed);
     WAITED[kind.clamp(0, 1) as usize].lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new);
-    flag.store(true, Ordering::Relaxed);
+    match kind {
+        0 => super::tasks::tools::listen(super::tasks::tools::BLOCKING, true),
+        _ => CONTENTION.store(true, Ordering::Relaxed),
+    }
 }
 
 /// Whether the waits of `kind` are sampled.

@@ -276,11 +276,7 @@ pub(crate) fn blocked_in(kind: u8, object: usize, block: impl FnOnce() -> usize)
     }
     let fired = block();
     if let Some(task) = unsafe { task.as_ref() } {
-        // A debugger that stops long waits stops this one, as it ends.
-        crate::debugger::waited(task.id, since.elapsed());
-        if crate::events::on() && since.elapsed().as_millis() >= LONG_WAIT {
-            crate::events::add(crate::events::What::Waited(since.elapsed().as_millis() as u64));
-        }
+        tools::waited(task.id, since);
         task.blocked_kind.store(0, Ordering::Release);
     }
     fired

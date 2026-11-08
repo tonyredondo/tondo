@@ -79,6 +79,8 @@ pub(crate) use group::*;
 mod channels;
 pub(crate) use channels::*;
 
+pub(crate) mod tools;
+
 // ---------------------------------------------------------------------------
 // Tasks and the scheduler
 // ---------------------------------------------------------------------------
@@ -569,7 +571,7 @@ fn new_task(
     // `spawn detached` said so just before (11.11).
     let detached = unsafe { current().as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
     let id = IDS.fetch_add(1, Ordering::Relaxed);
-    let name = match unsafe { current().as_mut() }.filter(|_| super::race::on() && noting()) {
+    let name = match unsafe { current().as_mut() }.filter(|_| tools::listens(tools::RACES) && noting()) {
         Some(parent) => {
             parent.started += 1;
             let name = parent.name.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(parent.started);
@@ -581,7 +583,7 @@ fn new_task(
     // A debugger that stops tasks as they start stops this one, but the
     // main task.
     if !join.is_null() {
-        super::debugger::began(id);
+        tools::began(id);
     }
     let task = Task {
         mark: TASK_MARK,
