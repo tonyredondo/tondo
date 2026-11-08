@@ -3,7 +3,7 @@
 //! root value, no trailing data, no duplicate keys, bounded depth.
 
 use super::io::{StreamObject, retain, run, tondo_rt_stream_release};
-use super::{LIVE_OBJECTS, Str, str_bytes, str_new};
+use super::{LIVE_OBJECTS, Str, str_bytes, str_new, str_text};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -805,15 +805,43 @@ pub struct WriterObject {
     writer: Mutex<Writer>,
 }
 
+/// The bytes `quote` looks at: control characters, `"` and `\`, and with
+/// `html` the first bytes of what it escapes for a page.
+const ESCAPED: [[bool; 256]; 2] = {
+    let mut table = [[false; 256]; 2];
+    let mut byte = 0;
+    while byte < 0x20 {
+        table[0][byte] = true;
+        table[1][byte] = true;
+        byte += 1;
+    }
+    let mut each = 0;
+    while each < 2 {
+        table[each][b'"' as usize] = true;
+        table[each][b'\\' as usize] = true;
+        each += 1;
+    }
+    table[1][b'<' as usize] = true;
+    table[1][b'>' as usize] = true;
+    table[1][b'&' as usize] = true;
+    table[1][0xe2] = true;
+    table
+};
+
 /// A text as a JSON string; with `html`, also safe inside an HTML page.
 fn quote(out: &mut String, text: &str, html: bool) {
     out.push('"');
     // The runs that need no escape go in whole.
     let mut run = 0;
     let bytes = text.as_bytes();
+    let escaped = &ESCAPED[html as usize];
     let mut at = 0;
     while at < bytes.len() {
         let byte = bytes[at];
+        if !escaped[byte as usize] {
+            at += 1;
+            continue;
+        }
         let (escape, length) = match byte {
             b'"' => ("\\\"", 1),
             b'\\' => ("\\\\", 1),
@@ -959,7 +987,14 @@ impl Writer {
     }
 
     /// Passes the output to the sink once enough gathers, or `all` of it.
+    #[inline]
     fn deliver(&mut self, all: bool) {
+        if self.sink.is_some() {
+            self.deliver_now(all);
+        }
+    }
+
+    fn deliver_now(&mut self, all: bool) {
         let Some(sink) = &self.sink else { return };
         if self.out.is_empty() || (!all && self.out.len() < CHUNK) {
             return;
@@ -1049,7 +1084,8 @@ fn writer<'a>(object: *mut WriterObject) -> Guard<'a> {
 fn writer_object(pretty: u8, canonical: u8, html: u8, sink: Option<Source>) -> *mut WriterObject {
     LIVE_OBJECTS.made();
     let writer = Writer {
-        out: String::new(),
+        // Room for a small document, which then never grows.
+        out: String::with_capacity(128),
         pretty: pretty != 0 && canonical == 0,
         canonical: canonical != 0,
         // Canonical output has one way to write each text.
@@ -1117,7 +1153,8 @@ fn decimal(value: i64, buffer: &mut [u8; 20]) -> &str {
         at -= 1;
         buffer[at] = b'-';
     }
-    std::str::from_utf8(&buffer[at..]).unwrap_or("0")
+    // Digits and a sign, which are ASCII.
+    unsafe { std::str::from_utf8_unchecked(&buffer[at..]) }
 }
 
 #[unsafe(no_mangle)]
@@ -1159,31 +1196,29 @@ impl std::fmt::Write for Short {
 /// a double, as RFC 8785 requires.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_number(object: *mut WriterObject, text: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
+    let text = unsafe { str_text(text) };
     let mut w = writer(object);
-    let text = if w.canonical { float_text(text.parse().unwrap_or(f64::NAN)) } else { text };
-    w.leaf(text);
+    if w.canonical { w.leaf(float_text(text.parse().unwrap_or(f64::NAN))) } else { w.leaf_text(text) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_string(object: *mut WriterObject, text: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) });
+    let text = unsafe { str_text(text) };
     let mut w = writer(object);
     if w.canonical {
         let mut quoted = String::new();
-        quote(&mut quoted, &text, false);
+        quote(&mut quoted, text, false);
         return w.leaf(quoted);
     }
     // Quoted straight into the output.
     w.separator();
     let html = w.html;
-    quote(&mut w.out, &text, html);
+    quote(&mut w.out, text, html);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_key(object: *mut WriterObject, text: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) });
-    writer(object).key(&text);
+    writer(object).key(unsafe { str_text(text) });
 }
 
 /// Opens (`begin` 1) or closes an object (`object` 1) or an array.
@@ -1216,14 +1251,12 @@ pub unsafe extern "C" fn tondo_rt_json_writer_release(object: *mut WriterObject)
 /// A JSON text validated before: as it is, or as its canonical form.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text: *const Str) {
-    let bytes = unsafe { str_bytes(text) }.to_vec();
     let mut w = writer(object);
     if !w.canonical {
-        w.leaf(String::from_utf8_lossy(&bytes).into_owned());
-        return;
+        return w.leaf_text(unsafe { str_text(text) });
     }
     // Replayed event by event, so that keys sort and numbers normalize.
-    let mut r = Reader::new(Input::owned(bytes), None, true);
+    let mut r = Reader::new(Input::held(text as *mut Str), None, true);
     loop {
         match r.next() {
             NULL => w.leaf("null".into()),
@@ -1254,17 +1287,17 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
 /// `jsonnative.isInt(text)`: whether a JSON number is an `Int`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_is_int(text: *const Str) -> u8 {
-    String::from_utf8_lossy(unsafe { str_bytes(text) }).parse::<i64>().is_ok() as u8
+    unsafe { str_text(text) }.parse::<i64>().is_ok() as u8
 }
 
 /// `jsonnative.parseInt(text)`, of a number `isInt` accepts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_parse_int(text: *const Str) -> i64 {
-    String::from_utf8_lossy(unsafe { str_bytes(text) }).parse().unwrap_or(0)
+    unsafe { str_text(text) }.parse().unwrap_or(0)
 }
 
 /// `jsonnative.parseFloat(text)`: the nearest `Float`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_parse_float(text: *const Str) -> f64 {
-    String::from_utf8_lossy(unsafe { str_bytes(text) }).parse().unwrap_or(f64::NAN)
+    unsafe { str_text(text) }.parse().unwrap_or(f64::NAN)
 }
