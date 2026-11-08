@@ -635,7 +635,7 @@ fn new_task(
         unwinding: None,
         paused: Vec::new(),
         caught: None,
-        priority: exploring().map_or(0, |seed| seeded(seed) | 1 << 63),
+        priority: exploring().map_or(0, first_priority),
     };
     let task = match place.is_null() {
         true => Box::into_raw(Box::new(task)),

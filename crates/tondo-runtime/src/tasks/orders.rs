@@ -260,6 +260,12 @@ pub(crate) fn deterministic() -> bool {
     exploring().is_some()
 }
 
+/// The priority a task starts with while exploring orders by a seed: one
+/// the seed gives, above every priority a change gives (`prioritized`).
+pub(super) fn first_priority(seed: &AtomicU64) -> u64 {
+    seeded(seed) | 1 << 63
+}
+
 /// The next number of the seed's sequence (SplitMix64).
 pub(super) fn seeded(state: &AtomicU64) -> u64 {
     let mut z = state.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed).wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -285,5 +291,21 @@ pub(super) fn give_way() {
         // it runnable again.
         (*task).state.store(NOTIFIED, Ordering::Release);
         switch(&mut (*task).sp, *home());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU64;
+
+    /// Every task starts above the two changes, whose priorities are 1 and
+    /// 2, and where the seed puts it, which differs from task to task.
+    #[test]
+    fn tasks_start_above_the_changes_where_the_seed_puts_them() {
+        let seed = AtomicU64::new(7);
+        let firsts: Vec<u64> = (0..1000).map(|_| super::first_priority(&seed)).collect();
+        assert!(firsts.iter().all(|&first| first > 2));
+        let distinct: std::collections::HashSet<u64> = firsts.iter().copied().collect();
+        assert!(distinct.len() > 990, "{} distinct priorities of 1000", distinct.len());
     }
 }
