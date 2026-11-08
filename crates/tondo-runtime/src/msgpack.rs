@@ -40,7 +40,6 @@ struct Event {
     int: i64,
     float: f64,
     bytes: Vec<u8>,
-    path: String,
 }
 
 struct Reader {
@@ -51,13 +50,14 @@ struct Reader {
 }
 
 /// A list or map being read: how many items are left, and for a map
-/// whether the next is a key and the key of the value being read.
+/// whether the next is a key and the event of the key of the value being
+/// read.
 struct Frame {
     map: bool,
     left: u64,
     key: bool,
     index: u64,
-    current: String,
+    current: usize,
 }
 
 struct Decoder<'a> {
@@ -71,10 +71,9 @@ impl Decoder<'_> {
     fn path(&self) -> String {
         let mut path = String::from("$");
         for frame in &self.frames {
-            if frame.map {
-                path.push_str(&format!(".{}", frame.current));
-            } else {
-                path.push_str(&format!("[{}]", frame.index));
+            match frame.map {
+                true => path.push_str(&format!(".{}", self.events.get(frame.current).map_or("", |e| &e.text))),
+                false => path.push_str(&format!("[{}]", frame.index)),
             }
         }
         path
@@ -99,8 +98,7 @@ impl Decoder<'_> {
     }
 
     fn push(&mut self, code: i64) -> &mut Event {
-        let path = self.path();
-        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, bytes: Vec::new(), path });
+        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, bytes: Vec::new() });
         self.events.last_mut().unwrap()
     }
 
@@ -134,7 +132,7 @@ impl Decoder<'_> {
             self.push(if map { END_MAP } else { END_LIST });
             self.done();
         } else {
-            self.frames.push(Frame { map, left: count, key: map, index: 0, current: String::new() });
+            self.frames.push(Frame { map, left: count, key: map, index: 0, current: usize::MAX });
         }
     }
 
@@ -174,9 +172,10 @@ impl Decoder<'_> {
             }
             _ => return self.fail(format!("a map key is not text or an integer (byte {})", self.at - 1)),
         };
+        let at = self.events.len();
         if let Some(frame) = self.frames.last_mut() {
             frame.key = false;
-            frame.current = key.clone();
+            frame.current = at;
         }
         self.push(KEY).text = key;
         Ok(())
@@ -295,7 +294,7 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_parse(input: *mut ArrayHeader) -> *mut NativeObject {
     let input = unsafe { array_items::<u8>(input) };
-    let mut decoder = Decoder { input, at: 0, frames: Vec::new(), events: Vec::new() };
+    let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
     let mut error = None;
     if input.is_empty() {
         error = Some(("the input is empty".to_string(), "$".to_string()));
@@ -332,9 +331,66 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
     reader.read.checked_sub(1).and_then(|index| reader.events.get(index)).map_or(empty, part)
 }
 
+/// Where the event at `index` is, as `$.items[2]`: the path the decoder
+/// was at as it read it, found again by reading the events before it, as
+/// only a failure asks. A key is where its own name says, or, with
+/// `key_after`, where the one before it was, as CBOR's decoder places it.
+pub(crate) fn path_of<'a, E>(
+    events: &'a [E],
+    code: impl Fn(&E) -> i64,
+    text: impl Fn(&'a E) -> &'a str,
+    index: usize,
+    key_after: bool,
+) -> String {
+    // Each open list or map: whether a map, its items so far, its key.
+    let mut frames: Vec<(bool, u64, usize)> = Vec::new();
+    let path = |frames: &[(bool, u64, usize)]| {
+        let mut path = String::from("$");
+        for &(map, items, key) in frames {
+            match map {
+                true => path.push_str(&format!(".{}", events.get(key).map_or("", &text))),
+                false => path.push_str(&format!("[{items}]")),
+            }
+        }
+        path
+    };
+    for (at, event) in events.iter().enumerate().take(index + 1) {
+        let here = match code(event) {
+            BEGIN_LIST | BEGIN_MAP => {
+                let here = path(&frames);
+                frames.push((code(event) == BEGIN_MAP, 0, usize::MAX));
+                here
+            }
+            KEY => {
+                let before = key_after.then(|| path(&frames));
+                if let Some(frame) = frames.last_mut() {
+                    frame.2 = at;
+                }
+                before.unwrap_or_else(|| path(&frames))
+            }
+            code => {
+                if matches!(code, END_LIST | END_MAP) {
+                    frames.pop();
+                }
+                let here = path(&frames);
+                if let Some(frame) = frames.last_mut() {
+                    frame.1 += 1;
+                }
+                here
+            }
+        };
+        if at == index {
+            return here;
+        }
+    }
+    "$".to_string()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_text(object: *mut NativeObject) -> *mut Str {
-    str_new(current(object, |e| e.text.clone(), String::new()).as_bytes())
+    let Some(reader) = reader(object) else { return str_new(b"") };
+    let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
+    str_new(event.map_or(&b""[..], |e| e.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -349,7 +405,9 @@ pub extern "C" fn tondo_rt_msgpack_float(object: *mut NativeObject) -> f64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_bytes(object: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(&current(object, |e| e.bytes.clone(), Vec::new()))
+    let Some(reader) = reader(object) else { return byte_array(&[]) };
+    let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
+    byte_array(event.map_or(&[][..], |e| &e.bytes))
 }
 
 #[unsafe(no_mangle)]
@@ -372,8 +430,11 @@ pub extern "C" fn tondo_rt_msgpack_skip(object: *mut NativeObject, code: i64) ->
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_fail(object: *mut NativeObject, message: *const Str) {
-    let path = current(object, |e| e.path.clone(), "$".to_string());
     if let Some(mut reader) = reader(object) {
+        let path = reader
+            .read
+            .checked_sub(1)
+            .map_or_else(|| "$".to_string(), |index| path_of(&reader.events, |e| e.code, |e| &e.text, index, false));
         reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
     }
 }

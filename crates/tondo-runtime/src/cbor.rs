@@ -43,7 +43,6 @@ struct Event {
     int: i64,
     float: f64,
     bytes: Vec<u8>,
-    path: String,
 }
 
 struct Reader {
@@ -53,14 +52,14 @@ struct Reader {
 }
 
 /// A container being read: how many items are left (`None` until a break
-/// when indefinite), and for a map whether the next is a key and the key of
-/// the value being read.
+/// when indefinite), and for a map whether the next is a key and the event
+/// of the key of the value being read.
 struct Frame {
     map: bool,
     left: Option<u64>,
     key: bool,
     index: u64,
-    current: String,
+    current: usize,
 }
 
 type Failure = (String, String);
@@ -91,7 +90,7 @@ impl Decoder<'_> {
         let mut path = String::from("$");
         for frame in &self.frames {
             if frame.map {
-                path.push_str(&format!(".{}", frame.current));
+                path.push_str(&format!(".{}", self.events.get(frame.current).map_or("", |e| &e.text)));
             } else {
                 path.push_str(&format!("[{}]", frame.index));
             }
@@ -129,8 +128,7 @@ impl Decoder<'_> {
     }
 
     fn push(&mut self, code: i64) -> &mut Event {
-        let path = self.path();
-        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, bytes: Vec::new(), path });
+        self.events.push(Event { code, text: String::new(), int: 0, float: 0.0, bytes: Vec::new() });
         self.events.last_mut().unwrap()
     }
 
@@ -227,7 +225,7 @@ impl Decoder<'_> {
                     self.push(if map { END_MAP } else { END_LIST });
                     self.done();
                 } else {
-                    self.frames.push(Frame { map, left: argument, key: map, index: 0, current: String::new() });
+                    self.frames.push(Frame { map, left: argument, key: map, index: 0, current: usize::MAX });
                 }
                 // A container has no scalar to place.
                 return Ok(None);
@@ -288,18 +286,20 @@ impl Decoder<'_> {
 
     fn scalar_datetime(&mut self, text: String) {
         if self.at_key() {
-            self.push(KEY).text = text.clone();
-            self.key(text);
+            self.push(KEY).text = text;
+            self.key();
         } else {
             self.push(DATETIME).text = text;
             self.done();
         }
     }
 
-    fn key(&mut self, key: String) {
+    /// The key just pushed is the innermost map's.
+    fn key(&mut self) {
+        let at = self.events.len() - 1;
         if let Some(frame) = self.frames.last_mut() {
             frame.key = false;
-            frame.current = key;
+            frame.current = at;
         }
     }
 
@@ -317,8 +317,8 @@ impl Decoder<'_> {
                         Item::Negative(value) => negative(value),
                         _ => return self.fail(format!("a map key is not text or an integer (byte {at})")),
                     };
-                    self.push(KEY).text = key.clone();
-                    self.key(key);
+                    self.push(KEY).text = key;
+                    self.key();
                 } else {
                     match item {
                         Item::Int(value) => self.push(INT).int = value,
@@ -364,7 +364,7 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_parse(input: *mut ArrayHeader) -> *mut NativeObject {
     let input = unsafe { array_items::<u8>(input) };
-    let mut decoder = Decoder { input, at: 0, frames: Vec::new(), events: Vec::new() };
+    let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
     let mut error = if input.is_empty() { Some(("the input is empty".to_string(), "$".to_string())) } else { None };
     if error.is_none()
         && let Err(failure) = decoder.value()
@@ -397,7 +397,9 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_text(object: *mut NativeObject) -> *mut Str {
-    str_new(current(object, |e| e.text.clone(), String::new()).as_bytes())
+    let Some(reader) = reader(object) else { return str_new(b"") };
+    let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
+    str_new(event.map_or(&b""[..], |e| e.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -412,7 +414,9 @@ pub extern "C" fn tondo_rt_cbor_float(object: *mut NativeObject) -> f64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_bytes(object: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(&current(object, |e| e.bytes.clone(), Vec::new()))
+    let Some(reader) = reader(object) else { return byte_array(&[]) };
+    let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
+    byte_array(event.map_or(&[][..], |e| &e.bytes))
 }
 
 #[unsafe(no_mangle)]
@@ -435,8 +439,11 @@ pub extern "C" fn tondo_rt_cbor_skip(object: *mut NativeObject, code: i64) -> i6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_fail(object: *mut NativeObject, message: *const Str) {
-    let path = current(object, |e| e.path.clone(), "$".to_string());
     if let Some(mut reader) = reader(object) {
+        let path = reader.read.checked_sub(1).map_or_else(
+            || "$".to_string(),
+            |index| crate::msgpack::path_of(&reader.events, |e| e.code, |e| &e.text, index, true),
+        );
         reader.error = Some((unsafe { str_text(message) }.to_owned(), path));
     }
 }
