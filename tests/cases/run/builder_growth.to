@@ -1,0 +1,39 @@
+// A text built by appending to it grows its room by doubling, so that a
+// hundred thousand appends allocate a few more times than a thousand, not
+// a hundred thousand more: appending stays linear.
+import std.console
+import std.diagnostics
+import std.format
+
+fn allocations(): Int {
+    var count = 0
+    for metric in diagnostics.metrics() {
+        if metric.name == "memory.allocations" {
+            count = metric.value
+        }
+    }
+    count
+}
+
+// The allocations of building a text of `count` appends.
+fn appended(count: Int): Int {
+    let before = allocations()
+    var builder = format.Builder()
+    for _ in 0..count {
+        builder.add("ab")
+    }
+    let text = builder.text()
+    let after = allocations()
+    if text.length() != 2 * count {
+        console.println("lost an append")
+    }
+    after - before
+}
+
+fn main() {
+    let small = appended(1000)
+    let large = appended(101000)
+    console.println("appending grows the room by doubling: {large - small < 100}")
+}
+
+// expect-stdout: appending grows the room by doubling: true
