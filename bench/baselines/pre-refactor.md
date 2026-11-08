@@ -13,7 +13,10 @@ TONDO=target/release/tondo tondo run bench/compare.to -- --old <the tondo of 31b
 
 which fails when a benchmark is more than 5% slower on the median of the rounds, or allocates more.
 That `tondo` against itself so: 2.4% at worst, but `runtime/mutex 4x1000`, which four tasks
-contend for, moved 11%.
+contend for, moved 11%, and `tasks/spawn 1000` takes either about 180 or about 360 µs from one run
+to the next, as the tasks it starts run on its worker or on others; eight rounds hold them. A phase
+compares with the `tondo` it starts from too: c100d90, in phase 0, changed what the compiler writes,
+which moved `loops/collatz 10000` 8% in a test's build though not in a program's.
 
 and against Go with `TONDO=$(which tondo) tondo run bench/compare.to -- --time 1`, which gave:
 
