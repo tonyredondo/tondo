@@ -1,0 +1,46 @@
+// Thousands of timeouts of `select` that lose to their channel leave behind
+// no more memory than a few: their timers are dropped once they are most of
+// those waiting, and each one kept would hold about a hundred bytes.
+import std.console
+import std.diagnostics
+import std.time
+
+fn feeder(out: Sender[Int], count: Int) {
+    for i in 0..count {
+        time.sleep(time.microseconds(20))
+        out.send(i)
+    }
+}
+
+/// The bytes the program holds now.
+fn held(): Int {
+    var bytes = 0
+    for metric in diagnostics.metrics() {
+        if metric.name == "memory.held" {
+            bytes = metric.value
+        }
+    }
+    bytes
+}
+
+fn main() {
+    let (out, input) = channel[Int](1)
+    let rounds = 5000
+    let feeding = spawn feeder(out, rounds)
+    let before = held()
+    var answered = 0
+    for _ in 0..rounds {
+        let got = select {
+            let value = input.receive() => value.isSome()
+            time.sleep(time.seconds(60)) => false
+        }
+        if got {
+            answered += 1
+        }
+    }
+    feeding.wait()
+    console.println("{answered} {held() - before < 200_000}")
+}
+
+// expect-stdout: 5000 true
+// expect-no-replay: a recorded run holds what it records, which the memory it holds counts

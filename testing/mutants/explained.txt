@@ -1,3 +1,4 @@
 # Mutants of .github/scripts/mutants.sh that change nothing anyone can see: a line each,
 # the mutant as cargo mutants names it without its place, a tab, and why.
 replace && with || in work_until	it wakes another worker when none waits as well: one more idle worker, nothing a program sees
+replace < with == in steal	takes the tasks another worker started as soon as they wait, not after NEXT_WAIT: they run elsewhere sooner, away from their caches, which only timing shows

@@ -1,6 +1,7 @@
 // The timers of waits that ended another way are dropped once they are most
-// of them, and those still pending stay: a task asleep while a hundred
-// timeouts of `select` lose to their channel wakes as it should.
+// of them, as timers_stale_held.to holds, and those still pending stay: a
+// task asleep while a hundred timeouts of `select` lose to their channel
+// wakes as it should.
 import std.console
 import std.time
 
