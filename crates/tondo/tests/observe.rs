@@ -3192,10 +3192,21 @@ fn a_request_is_followed_through_its_tasks() {
     std::fs::create_dir_all(&dir).unwrap();
     let port = free_port();
     let program = format!(
-        "import std.http\nimport std.time\n\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
+        "import std.http\nimport std.time\nimport std.sync\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
          id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
-         app.get(\"/slow\", () {{\n        let job = spawn fetch(1)\n        \"{{job.wait()}}\"\n    }})\n    \
-         app.listen({port})?\n}}\n"
+         app.get(\"/slow\", () {{\n        let job = spawn fetch(1)\n        let answer = job.wait()\n        \
+         let lock = sync.Mutex(0)\n        let (holding, held) = channel[Int]()\n        \
+         let holder = spawn hold(lock, holding)\n        _ = held.receive()\n        \
+         lock.update((value) {{ value += 1 }})\n        let (feeder, fed) = channel[Int]()\n        \
+         let feeding = spawn feed(feeder)\n        _ = fed.receive()\n        \
+         let (room, full) = channel[Int](1)\n        room.send(0)\n        let draining = spawn drain(full)\n        \
+         room.send(1)\n        holder.wait()\n        feeding.wait()\n        draining.wait()\n        \
+         \"{{answer}}\"\n    }})\n    app.listen({port})?\n}}\n\n\
+         fn hold(lock: sync.Mutex[Int], holding: Sender[Int]) {{\n    lock.update((value) {{\n        \
+         holding.send(1)\n        time.sleep(time.milliseconds(20))\n        value += 1\n    }})\n}}\n\n\
+         fn feed(out: Sender[Int]) {{\n    time.sleep(time.milliseconds(20))\n    out.send(1)\n}}\n\n\
+         fn drain(inbox: Receiver[Int]) {{\n    time.sleep(time.milliseconds(20))\n    _ = inbox.receive()\n    \
+         _ = inbox.receive()\n}}\n"
     );
     let source = dir.join("server.to");
     std::fs::write(&source, program).unwrap();
@@ -3237,8 +3248,12 @@ fn a_request_is_followed_through_its_tasks() {
     assert_eq!(slept["at"], "server.to:5 in fetch", "{found}");
     // From when it blocked, which on a loaded machine is after the timer started.
     assert!(slept["took_ms"].as_u64().unwrap() >= 1, "{found}");
-    let joined = waits.iter().find(|step| step["task"] == *answers).unwrap_or_else(|| panic!("{found}"));
-    assert_eq!(joined["on"], "a task", "{found}");
+    // What the task that answers waited for, each named.
+    let on: Vec<&str> =
+        waits.iter().filter(|step| step["task"] == *answers).filter_map(|step| step["on"].as_str()).collect();
+    for what in ["a task", "a lock", "a value of a channel", "room in a channel"] {
+        assert!(on.contains(&what), "{what} in {found}");
+    }
     assert!(steps.iter().any(|step| step["what"] == "ended" && step["task"] == *started), "{found}");
     let text = Command::new(tondo_bin).args(["requests", &pid]).output().unwrap();
     let text = String::from_utf8_lossy(&text.stdout);
