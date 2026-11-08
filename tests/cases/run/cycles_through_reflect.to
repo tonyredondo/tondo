@@ -1,0 +1,28 @@
+// A cycle that passes through a `reflect.Value`, which keeps a value of any
+// type, is collected as the others are (language 16.7): the run checks
+// that nothing leaks, and a cycle still in use stays whole.
+import std.console
+import std.reflect
+import std.sync
+
+type Holder = {
+    name: String
+    kept: sync.Mutex[reflect.Value?]
+}
+
+fn holder(name: String): Ref[Holder] {
+    let made = Ref(Holder { name, kept: sync.Mutex(none) })
+    made.value.kept.set(some(reflect.valueOf(made)))
+    made
+}
+
+fn main() {
+    let alive = holder("alive")
+    for i in 0..2000 {
+        _ = holder("h{i}")
+    }
+    let back = alive.value.kept.get().map((value) { value.to[Ref[Holder]]().map((it) { it == alive }).unwrapOr(false) })
+    console.println("{alive.value.name} {back}")
+}
+
+// expect-stdout: alive some(true)
