@@ -551,11 +551,18 @@ fn output_goes_out_when_a_program_has_nothing_to_do() {
     let built = Command::new(tondo).args(["build", "idle.to", "--output", "idle"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut child = Command::new(dir.join("idle")).stdout(std::process::Stdio::piped()).spawn().unwrap();
-    let mut line = String::new();
-    let read = std::io::BufRead::read_line(&mut std::io::BufReader::new(child.stdout.take().unwrap()), &mut line);
+    // While it sleeps: it lets everything out as it ends, after 30 seconds.
+    let stdout = child.stdout.take().unwrap();
+    let (said, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(stdout), &mut line);
+        let _ = said.send(line);
+    });
+    let line = heard.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_default();
     let _ = child.kill();
     let _ = child.wait();
-    assert_eq!((read.unwrap(), line.as_str()), (8, "waiting\n"));
+    assert_eq!(line, "waiting\n");
 }
 
 /// Programs broken at random, as an edit leaves them, get diagnostics. The
