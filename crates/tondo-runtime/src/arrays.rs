@@ -47,19 +47,6 @@ pub(crate) unsafe fn array_items<'a, T>(a: *mut ArrayHeader) -> &'a [T] {
     unsafe { std::slice::from_raw_parts(element(a, std::mem::size_of::<T>(), 0) as *const T, (*a).len) }
 }
 
-/// How a native gives a `Result` to the compiled code: 0, with the value
-/// stored where `store` puts it, or the code of the error, which says its
-/// variant plus one.
-pub(crate) fn status<T, E>(result: Result<T, E>, code: impl FnOnce(E) -> i64, store: impl FnOnce(T)) -> i64 {
-    match result {
-        Ok(value) => {
-            store(value);
-            0
-        }
-        Err(error) => code(error),
-    }
-}
-
 /// An `Array[Byte]` of `bytes`.
 pub(crate) fn byte_array(bytes: &[u8]) -> *mut ArrayHeader {
     let array = tondo_rt_array_new(1, bytes.len());

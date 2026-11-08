@@ -103,6 +103,19 @@ pub(crate) use panics::{
 pub(crate) use references::*;
 pub(crate) use strings::*;
 
+/// How a native gives a `Result` to the compiled code: 0, with the value
+/// stored where `store` puts it, or the code of the error, which says its
+/// variant plus one.
+pub(crate) fn status<T, E>(result: Result<T, E>, code: impl FnOnce(E) -> i64, store: impl FnOnce(T)) -> i64 {
+    match result {
+        Ok(value) => {
+            store(value);
+            0
+        }
+        Err(error) => code(error),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Process entry
 // ---------------------------------------------------------------------------
