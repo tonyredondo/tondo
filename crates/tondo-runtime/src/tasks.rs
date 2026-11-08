@@ -525,11 +525,14 @@ thread_local! {
 }
 
 /// This thread's `Worker`. Never inlined, so that the compiler cannot keep
-/// the address of a thread-local across a switch of a task between threads.
+/// the address of a thread-local across a switch of a task between threads;
+/// and opaque, or the compiler, seeing a function that reads no memory,
+/// takes its result never to change and merges its calls across a switch.
 #[inline(never)]
 fn worker() -> &'static Worker {
+    let worker = WORKER.with(|worker| worker as *const Worker);
     // A worker's thread lives as long as the program.
-    WORKER.with(|worker| unsafe { &*(worker as *const Worker) })
+    unsafe { &*std::hint::black_box(worker) }
 }
 
 pub(crate) fn current() -> *mut Task {
