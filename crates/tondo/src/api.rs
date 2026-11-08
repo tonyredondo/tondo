@@ -45,21 +45,32 @@ fn hidden(name: &str) -> bool {
 }
 
 /// The methods `std/api/builtins.to` gives `owner`, such as `String`, and
-/// the operations of the numbers (language 18.9).
-pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
-    BUILTINS
-        .lines()
-        .chain(crate::numbers::declarations().lines())
-        .filter_map(|line| {
-            let rest = line.strip_prefix("pub fn ")?.strip_prefix(owner)?;
+/// the operations of the numbers (language 18.9), in the order declared.
+/// The checker asks at every call of one, so the text is read once.
+pub fn builtin_methods(owner: &str) -> &'static [&'static str] {
+    static BY_OWNER: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<&'static str>>> =
+        std::sync::OnceLock::new();
+    let by_owner = BY_OWNER.get_or_init(|| {
+        let mut by_owner: std::collections::HashMap<&'static str, Vec<&'static str>> = Default::default();
+        for line in BUILTINS.lines().chain(crate::numbers::declarations().lines()) {
+            let Some(rest) = line.strip_prefix("pub fn ") else { continue };
+            // `Owner.name(` or `Owner[T].name[U](`.
+            let Some(end) = rest.find(['[', '.', '(']) else { continue };
+            let (owner, rest) = rest.split_at(end);
             let rest = match rest.strip_prefix('[') {
-                Some(generic) => &generic[generic.find(']')? + 1..],
+                Some(generic) => match generic.find(']') {
+                    Some(close) => &generic[close + 1..],
+                    None => continue,
+                },
                 None => rest,
             };
-            let rest = rest.strip_prefix('.')?;
-            Some(&rest[..rest.find(['(', '['])?])
-        })
-        .collect()
+            let Some(rest) = rest.strip_prefix('.') else { continue };
+            let Some(name_end) = rest.find(['(', '[']) else { continue };
+            by_owner.entry(owner).or_default().push(&rest[..name_end]);
+        }
+        by_owner
+    });
+    by_owner.get(owner).map_or(&[], Vec::as_slice)
 }
 
 /// Whether a function's declaration takes `self`, as a method of a value

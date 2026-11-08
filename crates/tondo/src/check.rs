@@ -14638,7 +14638,7 @@ impl<'a> Checker<'a> {
         };
         let declared = self.methods.keys().filter(|(k, _)| *k == key).map(|(_, n)| n.clone());
         let names: Vec<String> =
-            declared.chain(crate::api::builtin_methods(&owner).into_iter().map(String::from)).collect();
+            declared.chain(crate::api::builtin_methods(&owner).iter().map(|name| name.to_string())).collect();
         closest(name, names.iter().map(String::as_str)).map(String::from)
     }
 

@@ -287,7 +287,7 @@ impl Checker<'_> {
         let shown = self.types.display(ty);
         let intrinsic = shown.split('[').next().unwrap_or_default().to_string();
         let runtime = by_owner.builtins.entry(intrinsic.clone()).or_insert_with(|| {
-            let names = crate::api::builtin_methods(&intrinsic).into_iter();
+            let names = crate::api::builtin_methods(&intrinsic).iter().copied();
             names
                 .filter(|name| {
                     crate::api::builtin_doc(&intrinsic, name).is_some_and(|(d, _)| crate::api::takes_self(&d))
