@@ -35,13 +35,10 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("replay.rs", "HOLDS", "a recording's threads, of the program and of C, not its tasks"),
     ("replay.rs", "CALLED", "a recording's threads, of the program and of C, not its tasks"),
     ("replay.rs", "MADE", "a recording's threads, of the program and of C, not its tasks"),
-    ("replay.rs", "ENTRY", "a directory read in a replay by the wrappers of C, one call at a time"),
-    ("replay.rs", "REGISTRY", "a directory read in a replay by the wrappers of C, one call at a time"),
-    ("replay.rs", "MADE_SO_FAR", "a directory read in a replay by the wrappers of C, one call at a time"),
+    ("replay/calls.rs", "ENTRY", "a directory read in a replay by the wrappers of C, one call at a time"),
     ("shared.rs", "LOCAL", "a thread's place in the reclamation of shared collections, whichever task runs"),
     ("shared.rs", "DEPTH", "set while a shared collection is read, which never waits"),
     ("trace.rs", "LAST", "where the thread's latest tasks were started, for a fault's report"),
-    ("trace.rs", "KEPT", "where the thread's latest tasks were started, for a fault's report"),
     ("trace.rs", "SIGNAL", "a signal's handler, which runs on its thread"),
 ];
 
@@ -69,8 +66,11 @@ fn a_thread_keeps_nothing_but_what_is_known() {
         let file = path.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
         let mut rest = text.as_str();
         while let Some(at) = rest.find("thread_local! {") {
+            // The block ends at the brace as far in as its start.
+            let line = rest[..at].rsplit('\n').next().unwrap_or("");
+            let indent = &line[..line.len() - line.trim_start().len()];
             rest = &rest[at..];
-            let end = rest.find("\n}").unwrap_or(rest.len());
+            let end = rest.find(&format!("\n{indent}}}")).unwrap_or(rest.len());
             for line in rest[..end].lines() {
                 // With its visibility, if any, as `pub(super) static`.
                 let line = line.trim_start();
