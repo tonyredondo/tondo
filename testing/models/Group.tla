@@ -1,5 +1,5 @@
 ---- MODULE Group ----
-\* A group of tasks (crates/tondo-runtime/src/tasks.rs: tondo_rt_group_add,
+\* A group of tasks (crates/tondo-runtime/src/tasks/mod.rs: tondo_rt_group_add,
 \* group_completed, group_try_next, group_block, complete). `add` counts the task
 \* with the group's lock, then with the join's lock either finds it done or leaves
 \* its place in the join, so that `complete` tells the group.

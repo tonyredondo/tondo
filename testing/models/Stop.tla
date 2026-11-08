@@ -1,5 +1,5 @@
 ---- MODULE Stop ----
-\* How the world stops (crates/tondo-runtime/src/tasks.rs: stop_world,
+\* How the world stops (crates/tondo-runtime/src/tasks/mod.rs: stop_world,
 \* resume_world, enter_tondo, leave_tondo). The cycle collector, dumps,
 \* profiles, logpoints and reloads each stop it, and read or change memory
 \* meanwhile, so nothing may run while any of them is inside.

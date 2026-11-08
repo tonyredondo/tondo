@@ -1,6 +1,6 @@
 //! What the runtime keeps for each thread (docs/refactor.md, phase 1). A task
 //! may resume on another thread after any wait, so what a worker keeps is in
-//! one `Worker`, reached through `worker()`, which never inlines; a value
+//! one `Worker`, lent by `worker`, which never inlines; a value
 //! kept per thread elsewhere, in code that runs on a task's stack, is right
 //! only while no wait comes between where it is written and where it is
 //! read. Each one there is, is here with why that holds; a new one is either
@@ -10,9 +10,9 @@ use std::path::Path;
 
 /// The thread-locals besides the worker's, by file and name, with why.
 const KNOWN: &[(&str, &str, &str)] = &[
-    ("tasks.rs", "WORKER", "what a worker keeps: reached through `worker()` alone"),
-    ("tasks.rs", "GIVE_BACK", "gives the worker's spare stacks back as its thread ends"),
-    ("tasks.rs", "LOOSE_CLEANUPS", "cleanups registered outside any task, as in unit tests"),
+    ("tasks/mod.rs", "WORKER", "what a worker keeps: lent by `worker` alone"),
+    ("tasks/mod.rs", "GIVE_BACK", "gives the worker's spare stacks back as its thread ends"),
+    ("tasks/mod.rs", "LOOSE_CLEANUPS", "cleanups registered outside any task, as in unit tests"),
     ("contexts.rs", "SHOWING", "outside any task; a task keeps its own"),
     ("cycles.rs", "OWES", "the thread owes the collector until its next safe point, which it reaches as it runs"),
     ("cycles.rs", "BUSY", "set while this thread collects, which never waits"),
@@ -65,7 +65,8 @@ fn a_thread_keeps_nothing_but_what_is_known() {
     let mut found = Vec::new();
     for path in files {
         let text = std::fs::read_to_string(&path).unwrap();
-        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        // By its path from src, as `tasks/mod.rs`.
+        let file = path.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
         let mut rest = text.as_str();
         while let Some(at) = rest.find("thread_local! {") {
             rest = &rest[at..];
@@ -87,7 +88,7 @@ fn a_thread_keeps_nothing_but_what_is_known() {
     assert!(
         unknown.is_empty(),
         "thread-locals of the runtime that are not known: {unknown:?}\na task may resume on another thread after \
-         any wait: what a worker keeps goes in `Worker`, in tasks.rs, reached through `worker()`; one that must be \
+         any wait: what a worker keeps goes in `Worker`, in tasks/mod.rs, lent by `worker`; one that must be \
          per thread is added to KNOWN, in this test, with why no wait comes between where it is written and read"
     );
     let gone: Vec<&str> = KNOWN

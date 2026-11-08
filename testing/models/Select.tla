@@ -1,6 +1,6 @@
 ---- MODULE Select ----
 \* `select` over two channels, against a task that sends on each and a task
-\* that cancels it (crates/tondo-runtime/src/tasks.rs: select, try_case,
+\* that cancels it (crates/tondo-runtime/src/tasks/mod.rs: select, try_case,
 \* claim_first, Wait::claim). The selecting task registers one waiter in each
 \* queue under the locks of both, and one `claim` decides which operation won.
 \* A sender that loses the claim goes on to the next waiter, or to the buffer.

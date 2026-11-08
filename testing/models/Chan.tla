@@ -1,5 +1,5 @@
 ---- MODULE Chan ----
-\* A channel (crates/tondo-runtime/src/tasks.rs: try_send, try_receive,
+\* A channel (crates/tondo-runtime/src/tasks/mod.rs: try_send, try_receive,
 \* claim_first, close_waits, the waits of send, receive and select). A step is
 \* what the code does with the channel's lock held. A wait is claimed by one
 \* operation or by a cancellation, as `Wait::claim`, and the claimer notifies.
