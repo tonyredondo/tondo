@@ -1,0 +1,66 @@
+// An actor's mailbox as its senders see it: `trySend` fails while it is
+// full; a `send` that waits for room learns that the actor stopped once
+// `stop` closes the mailbox; a sender cancelled while it waits stops
+// waiting; and the actor still handles what its mailbox held.
+
+import std.console
+import std.executor
+import std.sync
+import std.time
+
+fn sendWaiting(
+    to: executor.ActorRef[Int],
+    value: Int,
+    started: sync.Atomic[Int],
+    gate: sync.Mutex[Bool],
+): !executor.SendError {
+    _ = started.add(1)
+    let sent = to.send(value)
+    gate.update((open) { open = true })
+    sent?
+}
+
+fn cancelledSender(to: executor.ActorRef[Int], started: sync.Atomic[Int]) {
+    defer console.println("the cancelled sender stopped waiting")
+    _ = started.add(1)
+    _ = to.send(5)
+}
+
+fn main(): !(executor.ExecutorError | executor.SendError) {
+    let gate = sync.Mutex(false)
+    let handled: sync.Mutex[Array[Int]] = sync.Mutex([])
+    let slow = executor.actor(0, 1, (_: var Int, n: Int) {
+        gate.updateWhen((open) { open }, (_) {})
+        handled.update((all) { all.push(n) })
+    })?
+    let to = slow.reference()
+    // The actor takes the first and waits at the gate; the second fills
+    // its mailbox, which holds one.
+    to.send(1)?
+    to.send(2)?
+    match to.trySend(3) {
+        ok(_) => console.println("sent 3")
+        err(error) => console.println("3: {error}")
+    }
+    let started = sync.Atomic(0)
+    let cancelled = spawn cancelledSender(to, started)
+    let fourth = spawn sendWaiting(to, 4, started, gate)
+    for started.load() < 2 {
+        time.sleep(time.milliseconds(1))
+    }
+    // Time for both to wait for room.
+    time.sleep(time.milliseconds(20))
+    cancelled.cancel()
+    // The fourth's send ends as the mailbox closes, and it opens the gate.
+    slow.stop()?
+    match fourth.wait() {
+        ok(_) => console.println("sent 4")
+        err(error) => console.println("4: {error}")
+    }
+    console.println("handled {handled.get()}")
+}
+
+// expect-stdout: 3: the mailbox is full
+// expect-stdout: the cancelled sender stopped waiting
+// expect-stdout: 4: the actor stopped
+// expect-stdout: handled [1, 2]
