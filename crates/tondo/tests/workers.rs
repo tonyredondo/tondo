@@ -18,7 +18,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("cycles.rs", "BUSY", "set while this thread collects, which never waits"),
     ("debugger.rs", "PANIC_REGISTERS", "written and read in one panic's report, which never waits"),
     ("debugger.rs", "PANIC_NUMBERS", "written and read in one panic's report, which never waits"),
-    ("debugger.rs", "SHOWING", "a view the debugger shows runs to its end"),
+    ("debugger/bindings.rs", "SHOWING", "a view the debugger shows runs to its end"),
     ("diagnostics.rs", "BLOCK", "the threads that serve the tools, which run no task"),
     ("fs.rs", "HOST_ERROR", "the threads that do a task's blocking work, which run no task"),
     ("heap.rs", "UNTIL", "a sample of the heap per thread, whichever task allocates"),
