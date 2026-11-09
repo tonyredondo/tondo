@@ -128,9 +128,9 @@ pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Optio
         let wait = Wait::new();
         let waker = Waker::from(Arc::new(Notify(wait.clone())));
         let (polled, let_go) = poll_once(future.as_mut(), &waker);
-        for stream in let_go {
-            unsafe { free(stream as *mut StreamObject) };
-        }
+        // Not here, between the poll that gave the waker away and the wait
+        // it wakes: a wait of closing would take the wake meant for that one.
+        close_later(let_go);
         if let Poll::Ready(value) = polled {
             return Some(value);
         }
@@ -796,12 +796,21 @@ pub(crate) fn polled_here(poll: impl FnOnce()) {
         let _context = super::http::runtime().enter();
         holding(poll)
     };
+    close_later(let_go);
+}
+
+/// Closes the streams a poll let go on a thread of the pool, as closing
+/// may wait; a recorded run, which calls the system from its worker alone,
+/// closes them there, where closing does its work in place and never waits.
+fn close_later(let_go: Vec<usize>) {
+    if let_go.is_empty() {
+        return;
+    }
     let close = move || {
         for stream in let_go {
             unsafe { free(stream as *mut StreamObject) };
         }
     };
-    // A recorded run calls the system from its worker alone.
     match super::replay::on() {
         true => close(),
         false => submit(Box::new(close), false),
