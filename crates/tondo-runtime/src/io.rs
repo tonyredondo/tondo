@@ -796,15 +796,15 @@ pub(crate) fn polled_here(poll: impl FnOnce()) {
         let _context = super::http::runtime().enter();
         holding(poll)
     };
-    if !let_go.is_empty() {
-        submit(
-            Box::new(move || {
-                for stream in let_go {
-                    unsafe { free(stream as *mut StreamObject) };
-                }
-            }),
-            false,
-        );
+    let close = move || {
+        for stream in let_go {
+            unsafe { free(stream as *mut StreamObject) };
+        }
+    };
+    // A recorded run calls the system from its worker alone.
+    match super::replay::on() {
+        true => close(),
+        false => submit(Box::new(close), false),
     }
 }
 

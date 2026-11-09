@@ -1301,18 +1301,47 @@ pub extern "C" fn tondo_rt_http_request_headers(object: *mut NativeObject) -> *m
     string_array(&pairs)
 }
 
-/// A request's body as the host of a stream.
+/// A frame of a request's body, or its end.
+type BodyFrame = Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>;
+
+/// A request's body as the host of a stream, which waits for the body with
+/// its task, not its thread: the connection that brings it is polled by
+/// the workers, which a thread that waited could be.
 struct RequestBody {
-    body: Option<http_body_util::Limited<Idle>>,
+    body: Arc<Mutex<Option<http_body_util::Limited<Idle>>>>,
+    /// A frame that came as it waited.
+    came: Arc<Mutex<Option<BodyFrame>>>,
     chunk: Bytes,
     exceeded: Arc<std::sync::atomic::AtomicBool>,
+    waiting: bool,
+    gave_up: Option<std::io::ErrorKind>,
+}
+
+impl RequestBody {
+    /// The next frame, if one is there now.
+    fn frame(&mut self) -> Option<BodyFrame> {
+        if let Some(frame) = lock(&self.came).take() {
+            return Some(frame);
+        }
+        let mut body = lock(&self.body);
+        let Some(body) = body.as_mut() else { return Some(None) };
+        // Its timer is the runtime's.
+        let _context = runtime().enter();
+        match hyper::body::Body::poll_frame(Pin::new(body), &mut Context::from_waker(std::task::Waker::noop())) {
+            Poll::Ready(frame) => Some(frame),
+            Poll::Pending => None,
+        }
+    }
 }
 
 impl Host for RequestBody {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         while self.chunk.is_empty() {
-            let Some(body) = self.body.as_mut() else { return Ok(0) };
-            match runtime().block_on(body.frame()) {
+            let Some(frame) = self.frame() else {
+                self.waiting = true;
+                return Err(self.gave_up.unwrap_or(std::io::ErrorKind::WouldBlock).into());
+            };
+            match frame {
                 Some(Ok(frame)) => {
                     if let Ok(data) = frame.into_data() {
                         self.chunk = data;
@@ -1322,13 +1351,38 @@ impl Host for RequestBody {
                     note_exceeded(error.as_ref(), &self.exceeded);
                     return Err(std::io::Error::other(error));
                 }
-                None => self.body = None,
+                None => {
+                    *lock(&self.body) = None;
+                    return Ok(0);
+                }
             }
         }
         let count = buffer.len().min(self.chunk.len());
         buffer[..count].copy_from_slice(&self.chunk[..count]);
         self.chunk.advance(count);
         Ok(count)
+    }
+
+    fn blocked(&mut self) -> Option<crate::io::Ready> {
+        if !std::mem::take(&mut self.waiting) {
+            return None;
+        }
+        let (body, came) = (self.body.clone(), self.came.clone());
+        Some(Box::pin(std::future::poll_fn(move |context| {
+            let mut body = lock(&body);
+            let Some(body) = body.as_mut() else { return Poll::Ready(()) };
+            match hyper::body::Body::poll_frame(Pin::new(body), context) {
+                Poll::Ready(frame) => {
+                    *lock(&came) = Some(frame);
+                    Poll::Ready(())
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        })))
+    }
+
+    fn give_up(&mut self, kind: Option<std::io::ErrorKind>) {
+        self.gave_up = kind;
     }
 }
 
@@ -1368,8 +1422,15 @@ pub extern "C" fn tondo_rt_http_request_stalled(object: *mut NativeObject) -> u8
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_body(object: *mut NativeObject) -> *mut StreamObject {
     let r = request(object);
-    let body = RequestBody { body: r.take_body(), chunk: Bytes::new(), exceeded: r.exceeded.clone() };
-    crate::io::stream(Box::new(body), Mode::Long, false)
+    let body = RequestBody {
+        body: Arc::new(Mutex::new(r.take_body())),
+        came: Arc::default(),
+        chunk: Bytes::new(),
+        exceeded: r.exceeded.clone(),
+        waiting: false,
+        gave_up: None,
+    };
+    crate::io::stream(Box::new(body), Mode::Ready, false)
 }
 
 /// The whole body; on a failure, what was read and the failure recorded.
