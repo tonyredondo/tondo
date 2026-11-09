@@ -25,7 +25,8 @@ The rules are marked `Tondo:` in `src/isa/x64/inst.isle`,
 Only the code of x86-64 and arm64 is kept; the build still compiles every
 target's ISLE, so the `.isle` files of the others stay.
 
-To move to a newer Cranelift: copy the published crate here, drop
-`src/isa/riscv64`, `src/isa/s390x` and `src/isa/pulley_shared` but their
-`.isle` files, and add the rules again, unless Cranelift has them by then,
-when this directory and the patch go.
+This copy is where an optimization that Tondo's code needs and Cranelift
+lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
+copy the published crate here, drop `src/isa/riscv64`, `src/isa/s390x` and
+`src/isa/pulley_shared` but their `.isle` files, and add the rules again,
+but those Cranelift has by then.

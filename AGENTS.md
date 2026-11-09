@@ -154,6 +154,19 @@ its own, with `gh workflow run CI --ref <branch>`.
 - Commits have a short title that says what changed and a body that says
   why, with no trailers.
 
+### Where Tondo is going
+
+- As fast as Go or faster, in time and in allocations: every row of
+  `bench/`, those of the network too, at or under Go's (`bench/README.md`).
+  A change that leaves a row behind Go's needs a reason that outweighs it.
+- Cranelift's code generator is Tondo's own copy, in
+  `vendor/cranelift-codegen` (`vendor/README.md`): an optimization that
+  the generated code lacks is written there, as a rule marked `Tondo:`,
+  rather than worked around in the compiler.
+- Then a `tondo` written in Tondo, with a version of this one as its base.
+  Once the speed and the optimizations are where they should be, the
+  standard library gets every API that it needs and lacks.
+
 ### Waits and wakes in the runtime
 
 A program that hangs now and then has most often lost a wake. The runtime
