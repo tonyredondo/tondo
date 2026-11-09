@@ -17,24 +17,29 @@ concurrency:
 # a pack only from a run of main where every job passed.
 jobs:
   test:
-    name: test (${{ matrix.os }}, ${{ matrix.target }})
+    name: test (${{ matrix.target }}, ${{ matrix.run }})
     strategy:
       fail-fast: false
       matrix:
+        # Each platform's tests split between jobs that build by themselves,
+        # with the caches the job of the workspace keeps; `run` says what each
+        # job runs, and `shard` the share of the cases its live builds take.
         include:
           # A build asks for the glibc of where it is built, and so does what
           # it compiles: an old system, for what is published to run on most.
-          - os: ubuntu-22.04
-            target: x86_64-linux-gnu
-          - os: ubuntu-22.04-arm
-            target: aarch64-linux-gnu
-          - os: macos-latest
-            target: aarch64-macos
+          - { os: ubuntu-22.04, target: x86_64-linux-gnu, run: workspace clippy }
+          - { os: ubuntu-22.04, target: x86_64-linux-gnu, run: system-cc static debug replay }
+          - { os: ubuntu-22.04, target: x86_64-linux-gnu, run: live no-cc }
+          - { os: ubuntu-22.04-arm, target: aarch64-linux-gnu, run: workspace clippy }
+          - { os: ubuntu-22.04-arm, target: aarch64-linux-gnu, run: system-cc static debug replay }
+          - { os: ubuntu-22.04-arm, target: aarch64-linux-gnu, run: live no-cc }
+          # An account runs five jobs of macOS at once: two here, one for
+          # Intel, and the two packs.
+          - { os: macos-latest, target: aarch64-macos, run: workspace clippy live, shard: 1/2 }
+          - { os: macos-latest, target: aarch64-macos, run: system-cc debug replay live, shard: 2/2 }
           # The slowest runner: its clippy and the cases' other builds run
           # each night (nightly.yml).
-          - os: macos-15-intel
-            target: x86_64-macos
-            light: true
+          - { os: macos-15-intel, target: x86_64-macos, run: workspace }
     runs-on: ${{ matrix.os }}
     # A test that hangs fails the job instead of holding a runner for hours.
     timeout-minutes: 150
@@ -46,12 +51,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.target }}
+          save-if: ${{ contains(matrix.run, 'workspace') }}
       - uses: ./.github/actions/runtime
         with:
           label: ${{ matrix.os }}-${{ matrix.target }}
       # The servers the tests of std.sql and std.acme speak to, which start
       # while the tests build: Pebble checks names on port 5001 of the host.
-      - if: matrix.target == 'x86_64-linux-gnu'
+      - if: matrix.target == 'x86_64-linux-gnu' && contains(matrix.run, 'workspace')
         run: |
           docker run -d -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=tondo postgres:18
           docker run -d -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=tondo mysql:8.4
@@ -61,45 +69,49 @@ jobs:
           echo "TONDO_TEST_MYSQL=mysql://root:secret@localhost:3306/tondo" >> "$GITHUB_ENV"
           echo "TONDO_TEST_ACME=https://localhost:14000/dir" >> "$GITHUB_ENV"
           echo "TONDO_TEST_ACME_TRUST=$RUNNER_TEMP/pebble.pem" >> "$GITHUB_ENV"
-      - run: cargo fmt --all -- --check
-      - if: ${{ !matrix.light }}
+      - if: contains(matrix.run, 'workspace')
+        run: cargo fmt --all -- --check
+      - if: contains(matrix.run, 'clippy')
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-        env:
-          TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
+      - run: cargo test --workspace --no-run
       - if: ${{ !cancelled() }}
         uses: ./.github/actions/runtime
         with:
           label: ${{ matrix.os }}-${{ matrix.target }}
           save: true
+      - if: contains(matrix.run, 'workspace')
+        run: cargo test --workspace
+        env:
+          TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
       # Linking with the system's C compiler, as `TONDO_CC` asks.
-      - if: ${{ !matrix.light }}
+      - if: contains(matrix.run, 'system-cc')
         run: cargo test --workspace --test cases cases
         env:
           TONDO_CC: cc
       # Static executables, with musl (`--static`).
-      - if: runner.os == 'Linux'
+      - if: contains(matrix.run, 'static')
         run: cargo test --workspace --test cases cases
         env:
           TONDO_CASES_STATIC: 1
       # Debug builds (`--debug`).
-      - if: ${{ !matrix.light }}
+      - if: contains(matrix.run, 'debug')
         run: cargo test --workspace --test cases
         env:
           TONDO_CASES_DEBUG: 1
       # Every case recorded and replayed, which must end the same.
-      - if: ${{ !matrix.light }}
+      - if: contains(matrix.run, 'replay')
         run: cargo test --workspace --test cases cases
         env:
           TONDO_CASES_REPLAY: 1
       # Live builds (`--live`), whose calls go through slots.
-      - if: ${{ !matrix.light }}
+      - if: contains(matrix.run, 'live')
         run: cargo test --workspace --test cases cases
         env:
           TONDO_CASES_LIVE: 1
+          TONDO_CASES_SHARD: ${{ matrix.shard }}
       # The cases and projects where there is no C compiler, dynamic and
       # static.
-      - if: runner.os == 'Linux'
+      - if: contains(matrix.run, 'no-cc')
         run: |
           cases=$(cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*')
           run="docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -v $PWD:$PWD -w $PWD"
@@ -112,7 +124,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: dumps-${{ matrix.target }}
+          name: dumps-${{ matrix.target }}-${{ strategy.job-index }}
           path: ${{ runner.temp }}/dumps
           if-no-files-found: ignore
 
