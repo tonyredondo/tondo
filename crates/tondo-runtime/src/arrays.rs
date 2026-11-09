@@ -63,6 +63,17 @@ pub(crate) fn int_array(values: &[i64]) -> *mut ArrayHeader {
     array
 }
 
+/// An `Array[String]` of `count` texts, each of bytes as UTF-8 reads them,
+/// with no Rust string between where they are UTF-8 already.
+pub(crate) fn texts_array<'a>(count: usize, items: impl Iterator<Item = &'a [u8]>) -> *mut ArrayHeader {
+    let array = tondo_rt_array_new(8, count);
+    for (index, item) in items.take(count).enumerate() {
+        let text = String::from_utf8_lossy(item);
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(text.as_bytes()) };
+    }
+    array
+}
+
 /// An `Array[String]` of `items`.
 pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
     let array = tondo_rt_array_new(8, items.len());

@@ -24,16 +24,12 @@ pub type Response = {
     priv native: httpNative.Native
     priv verb: String
     priv code: Int
-    priv phrase: String
-    priv finalUrl: String
-    priv protocol: String
-    priv headerList: Array[String]
 }
 
 /// `200 OK`.
 impl Display for Response {
     fn display(self): String {
-        "{self.code} {self.phrase}"
+        "{self.code} {self.reason()}"
     }
 }
 
@@ -44,17 +40,17 @@ pub fn Response.status(self): Int {
 
 /// The status's reason phrase: `OK`, `Not Found`.
 pub fn Response.reason(self): String {
-    self.phrase
+    httpNative.reason(self.native)
 }
 
 /// The URL that answered, after redirects.
 pub fn Response.url(self): String {
-    self.finalUrl
+    httpNative.finalUrl(self.native)
 }
 
 /// `HTTP/1.1` or `HTTP/2.0`.
 pub fn Response.version(self): String {
-    self.protocol
+    httpNative.version(self.native)
 }
 
 /// The first value of a header, by its name in any case.
@@ -64,25 +60,17 @@ pub fn Response.header(self, name: String): String? {
 
 /// Every value of a header, by its name in any case.
 pub fn Response.headerValues(self, name: String): Array[String] {
-    let wanted = name.toLower()
-    var values: Array[String] = []
-    var index = 0
-    for index + 1 < self.headerList.length() {
-        if self.headerList[index] == wanted {
-            values.push(self.headerList[index + 1])
-        }
-        index += 2
-    }
-    values
+    httpNative.header(self.native, name)
 }
 
 /// The headers, lowercase, with the values of a repeated one joined by
 /// `, `.
 pub fn Response.headers(self): Map[String, String] {
+    let pairs = httpNative.headers(self.native)
     var out: Map[String, String] = [:]
     var index = 0
-    for index + 1 < self.headerList.length() {
-        let (name, value) = (self.headerList[index], self.headerList[index + 1])
+    for index + 1 < pairs.length() {
+        let (name, value) = (pairs[index], pairs[index + 1])
         out[name] = match out.get(name) {
             some(before) => "{before}, {value}"
             none => value
@@ -576,16 +564,7 @@ fn deliver(connection: httpNative.Native, request: ClientRequest, limit: Int): R
         limit,
     )
     failed(sent)?
-    let parts = httpNative.head(sent).split("\t")
-    let response = Response {
-        native: sent
-        verb: request.method
-        code: httpNative.status(sent)
-        phrase: parts[0]
-        finalUrl: parts[1]
-        protocol: parts[2]
-        headerList: httpNative.headers(sent)
-    }
+    let response = Response { native: sent, verb: request.method, code: httpNative.status(sent) }
     if response.code >= 400 {
         fail HttpError.Status(response)
     }

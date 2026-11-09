@@ -58,7 +58,7 @@ impl Display for HttpError {
             HttpError.Listen(why) => "cannot listen: {why}"
             HttpError.Timeout => "the request timed out"
             HttpError.Status(response) =>
-                "{response.verb} {response.finalUrl} answered {response.code} {response.phrase}"
+                "{response.verb} {response.url()} answered {response.code} {response.reason()}"
             HttpError.Body(why) => "the body: {why}"
             HttpError.Protocol(why) => "HTTP: {why}"
         }

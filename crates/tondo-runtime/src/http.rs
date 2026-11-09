@@ -5,7 +5,7 @@
 
 use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, Str, element, str_new, string_array};
+use super::{ArrayHeader, Str, element, str_new, string_array, texts_array};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
@@ -482,10 +482,10 @@ pub extern "C" fn tondo_rt_http_body_form(form: *mut NativeObject) -> *mut Nativ
 struct Response {
     failure: Failure,
     status: u16,
-    reason: String,
     url: String,
-    version: String,
-    headers: Vec<String>,
+    version: reqwest::Version,
+    /// As they came, until the program asks for one.
+    headers: reqwest::header::HeaderMap,
     body: Mutex<Option<reqwest::Response>>,
 }
 
@@ -494,10 +494,9 @@ impl Response {
         Response {
             failure: Mutex::new(Some((kind, message))),
             status: 0,
-            reason: String::new(),
             url: String::new(),
-            version: String::new(),
-            headers: Vec::new(),
+            version: reqwest::Version::default(),
+            headers: reqwest::header::HeaderMap::new(),
             body: Mutex::new(None),
         }
     }
@@ -586,23 +585,15 @@ pub unsafe extern "C" fn tondo_rt_http_send(
             let (kind, message) = classify(&error);
             Response::failed(kind, message)
         }
-        Some(Ok(response)) => {
-            let status = response.status();
-            let headers = response
-                .headers()
-                .iter()
-                .flat_map(|(name, value)| [name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()])
-                .collect();
-            Response {
-                failure: Mutex::new(None),
-                status: status.as_u16(),
-                reason: status.canonical_reason().unwrap_or_default().to_string(),
-                url: response.url().to_string(),
-                version: format!("{:?}", response.version()),
-                headers,
-                body: Mutex::new(Some(response)),
-            }
-        }
+        Some(Ok(mut response)) => Response {
+            failure: Mutex::new(None),
+            status: response.status().as_u16(),
+            url: response.url().to_string(),
+            version: response.version(),
+            // The body reads none of them, decoded as it is already.
+            headers: std::mem::take(response.headers_mut()),
+            body: Mutex::new(Some(response)),
+        },
     };
     native::new(response)
 }
@@ -628,18 +619,38 @@ pub extern "C" fn tondo_rt_http_status(object: *mut NativeObject) -> i64 {
     i64::from(response(object).status)
 }
 
-/// The status's reason phrase, its final URL after redirects and the
-/// protocol version, as `reason\turl\tversion`.
+/// The status's reason phrase: `OK`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_head(object: *mut NativeObject) -> *mut Str {
-    let response = response(object);
-    str_new(format!("{}\t{}\t{}", response.reason, response.url, response.version).as_bytes())
+pub extern "C" fn tondo_rt_http_reason(object: *mut NativeObject) -> *mut Str {
+    let reason = reqwest::StatusCode::from_u16(response(object).status).ok().and_then(|s| s.canonical_reason());
+    str_new(reason.unwrap_or_default().as_bytes())
+}
+
+/// The URL that answered, after redirects.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_final_url(object: *mut NativeObject) -> *mut Str {
+    str_new(response(object).url.as_bytes())
+}
+
+/// The protocol's version: `HTTP/1.1`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_version(object: *mut NativeObject) -> *mut Str {
+    super::server::version_text(response(object).version)
+}
+
+/// The values of a header, by its name in any case.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_header(object: *mut NativeObject, name: *const Str) -> *mut ArrayHeader {
+    let values = response(object).headers.get_all(text(name).as_str());
+    texts_array(values.iter().count(), values.iter().map(|value| value.as_bytes()))
 }
 
 /// The headers' names, lowercase, and values in turn.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_headers(object: *mut NativeObject) -> *mut ArrayHeader {
-    string_array(&response(object).headers)
+    let headers = &response(object).headers;
+    let pairs = headers.iter().flat_map(|(name, value)| [name.as_str().as_bytes(), value.as_bytes()]);
+    texts_array(headers.len() * 2, pairs)
 }
 
 /// Why a second read of a response's body has nothing.
