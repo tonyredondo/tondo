@@ -1030,6 +1030,9 @@ pub extern "C" fn tondo_rt_http_connection_next(connection: *mut NativeObject) -
     let next = super::io::wait_for(std::future::poll_fn(|context| exchange.poll_next(context)));
     let Some(mut request) = next.flatten() else { return native::new(Request::closed()) };
     request.in_turn = request.version < hyper::Version::HTTP_2;
+    if let Some(flight) = &request.flight {
+        flight.taken();
+    }
     native::new(request)
 }
 

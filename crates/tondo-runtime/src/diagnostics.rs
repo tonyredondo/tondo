@@ -149,12 +149,23 @@ impl Flown {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
             let (method, path) = (method.to_string(), path.to_string());
             let flight = Flight { id, method, path, since: Instant::now(), task: 0, steps: Vec::new() };
-            if super::events::on() {
-                super::events::add(super::events::What::Request(flight.text()));
-            }
             FLIGHTS.lock().unwrap_or_else(|e| e.into_inner()).push(flight);
             Flown(id)
         })
+    }
+
+    /// The task that takes it, which the events show it came to: hyper
+    /// reads it where the workers poll a connection, at no task.
+    pub(crate) fn taken(&self) {
+        if !super::events::on() {
+            return;
+        }
+        let flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        let text = flights.iter().find(|flight| flight.id == self.0).map(Flight::text);
+        drop(flights);
+        if let Some(text) = text {
+            super::events::add(super::events::What::Request(text));
+        }
     }
 
     /// `task` answers it.
