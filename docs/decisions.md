@@ -5603,3 +5603,10 @@ the HTTP/1.1 server, HTTP/2, TLS, WebSocket upgrades, files and uploads, compres
 stop, gRPC's server with gRPC-Web and Connect, the client on hyper's connections instead of
 reqwest, gRPC's client, and tokio itself once nothing uses it. Each is measured against Go and
 leaves no old path behind.
+
+As built, the first step changed how the futures are polled: hyper's connection is polled by the
+workers themselves, at their turns between tasks and right after the poller's events, and a waker
+only puts it in their list, because the code that wakes a future may hold a lock its poll takes,
+as h2's does; the task of each connection polls it too as it asks for the next request. TLS goes
+through tokio-rustls's adapter over the poller's socket, which needs no thread of tokio's; its
+own sans-IO connection can replace it if A3 shows the adapter costs.
