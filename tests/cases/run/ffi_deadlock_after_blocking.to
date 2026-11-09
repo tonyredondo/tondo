@@ -1,0 +1,27 @@
+// Calls of C that block their workers long enough get other workers in
+// their place, which retire once the calls return; then a program whose
+// tasks all wait is a deadlock as any other, which the count of the workers
+// left must show.
+import std.env
+import std.ffi
+
+extern fn usleep(micros: ffi.CUInt): ffi.CInt
+
+fn nap() {
+    unsafe {
+        _ = usleep(50000)
+    }
+}
+
+fn main() {
+    var group = Group[Unit]()
+    for _ in 0..env.processors() * 2 + 2 {
+        group.add(spawn nap())
+    }
+    _ = group.wait()
+    let (_sender, receiver) = channel[Int]()
+    _ = receiver.receive()
+}
+
+// expect-panic: P0013
+// expect-stderr: panic[P0013]: deadlock: every task waits and none of them can wake the others
