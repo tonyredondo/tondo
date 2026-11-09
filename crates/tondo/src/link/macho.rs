@@ -110,7 +110,7 @@ mod raw {
     pub const X86_64_RELOC_SIGNED_4: u8 = 8;
     pub const X86_64_RELOC_TLV: u8 = 9;
 }
-use super::core::{Image, error};
+use super::core::{Image, Members, error};
 use crate::hash::FastMap;
 use object::{Endianness, Object, ObjectSection};
 use std::collections::{HashMap, HashSet};
@@ -615,7 +615,8 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
     for (name, data) in &inputs.objects {
         linker.add(name.clone(), data)?;
     }
-    linker.archives(&inputs.archives)?;
+    let (arch, globals) = (linker.arch, (0..linker.globals.len()).collect());
+    super::core::load_members(&mut linker, &inputs.archives, globals, |name, data| parse(arch, name, data))?;
     for name in [b"__mh_execute_header".as_slice(), b"__mh_dylib_header", b"___dso_handle"] {
         if let Some(&id) = linker.names.get(name)
             && linker.globals[id].def == Def::Undefined
@@ -738,64 +739,6 @@ impl<'a> Linker<'a> {
         }
         self.inputs.push(input);
         Ok(undefined)
-    }
-
-    /// Brings in the members of archives that define what is undefined.
-    fn archives(&mut self, archives: &[(String, &'a [u8])]) -> Result<(), String> {
-        let mut index: FastMap<&'a [u8], (usize, u64)> = FastMap::default();
-        let mut parsed = Vec::new();
-        for (a, (name, data)) in archives.iter().enumerate() {
-            let archive = object::read::archive::ArchiveFile::parse(*data).map_err(|e| error(name, e))?;
-            if let Some(symbols) = archive.symbols().map_err(|e| error(name, e))? {
-                for symbol in symbols {
-                    let symbol = symbol.map_err(|e| error(name, e))?;
-                    index.entry(symbol.name()).or_insert((a, symbol.offset().0));
-                }
-            }
-            parsed.push(archive);
-        }
-        // Room for the names the archives may bring.
-        self.names.reserve(index.len());
-        self.globals.reserve(index.len());
-        let mut loaded: HashSet<(usize, u64)> = HashSet::new();
-        let mut pending: Vec<usize> =
-            (0..self.globals.len()).filter(|&id| self.globals[id].def == Def::Undefined).collect();
-        // In rounds: the members that define what is needed now are read
-        // on every core, and taken in, in the order of the archives, while
-        // what brought each in is still undefined.
-        loop {
-            let mut wanted: Vec<((usize, u64), usize)> = Vec::new();
-            for id in pending.drain(..) {
-                let global = &self.globals[id];
-                if global.def != Def::Undefined {
-                    continue;
-                }
-                let Some(&member) = index.get(global.name) else { continue };
-                if loaded.insert(member) {
-                    wanted.push((member, id));
-                }
-            }
-            if wanted.is_empty() {
-                return Ok(());
-            }
-            wanted.sort_unstable();
-            let read = crate::parallel::map(&wanted, 4, |&((a, offset), _)| {
-                let (archive_name, data) = &archives[a];
-                let member = parsed[a]
-                    .member(object::read::archive::ArchiveOffset(offset))
-                    .map_err(|e| error(archive_name, e))?;
-                let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
-                parse(self.arch, format!("{archive_name}({})", String::from_utf8_lossy(member.name())), bytes)
-            });
-            for ((member, id), read) in wanted.into_iter().zip(read) {
-                if self.globals[id].def != Def::Undefined {
-                    // Another member of this round defined it first.
-                    loaded.remove(&member);
-                    continue;
-                }
-                pending.extend(self.take(read?)?);
-            }
-        }
     }
 
     /// The target of a relocation's symbol field.
@@ -1081,6 +1024,24 @@ impl<'a> Linker<'a> {
             self.import_of.insert(id, self.imports.len() as u32);
             self.imports.push(id);
         }
+    }
+}
+
+impl<'a> Members<'a> for Linker<'a> {
+    type Object = Parsed<'a>;
+
+    fn wanted(&self, id: usize) -> Option<&'a [u8]> {
+        let global = &self.globals[id];
+        (global.def == Def::Undefined).then_some(global.name)
+    }
+
+    fn take_member(&mut self, object: Parsed<'a>) -> Result<Vec<usize>, String> {
+        self.take(object)
+    }
+
+    fn reserve(&mut self, count: usize) {
+        self.names.reserve(count);
+        self.globals.reserve(count);
     }
 }
 
