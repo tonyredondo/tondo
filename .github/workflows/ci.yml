@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Each job tests, then packs the `tondo` it built for its platform as an
-# artifact: dist/tondo-<target>.tar.gz.
+# The tests of each platform, and beside them the `tondo` built for each,
+# packed as an artifact: dist/tondo-<target>.tar.gz. dist/install.sh takes
+# a pack only from a run of main where every job passed.
 jobs:
   test:
     name: test (${{ matrix.os }}, ${{ matrix.target }})
@@ -104,9 +105,6 @@ jobs:
           run="docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -v $PWD:$PWD -w $PWD"
           $run debian:stable-slim sh -c "! command -v cc && $cases cases projects"
           $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
-      # On macOS, signed with the Developer ID and notarized, on pushes to
-      # main: a fork's pull request has no secrets, and its build is not
-      # signed.
       # What hung says so by Tondo's own tools: the failures in the summary of
       # the run, and the dumps to open with `tondo dump serve`.
       - if: failure()
@@ -117,6 +115,36 @@ jobs:
           name: dumps-${{ matrix.target }}
           path: ${{ runner.temp }}/dumps
           if-no-files-found: ignore
+
+  # The release `tondo` of each platform, built and packed while the tests
+  # run, with the runtime the tests' job keeps.
+  package:
+    name: package (${{ matrix.os }}, ${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-linux-gnu
+          - os: macos-latest
+            target: aarch64-macos
+          - os: macos-15-intel
+            target: x86_64-macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ${{ matrix.os }}-${{ matrix.target }}
+      # On macOS, signed with the Developer ID and notarized, on pushes to
+      # main: a fork's pull request has no secrets, and its build is not
+      # signed.
       - run: dist/package.sh ${{ matrix.target }}
         env:
           MACOS_CERTIFICATE: ${{ github.event_name == 'push' && secrets.MACOS_CERTIFICATE || '' }}
@@ -124,6 +152,11 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ${{ matrix.os }}-${{ matrix.target }}
+          save: true
       # The way in that the README and AGENTS.md give.
       - run: sh dist/install.sh "$RUNNER_TEMP/bin"
       - uses: actions/upload-artifact@v4
@@ -216,8 +249,7 @@ jobs:
           (rustup show active-toolchain || rustup toolchain install) &&
           cargo test --workspace &&
           TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases &&
-          cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*' > target/cases &&
-          dist/package.sh ${{ matrix.target }}"
+          cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*' > target/cases"
       # The cases and projects where there is no C compiler, dynamic and
       # static.
       - run: |
@@ -232,6 +264,42 @@ jobs:
         with:
           label: alpine-${{ matrix.target }}
           save: true
+
+  # The release `tondo` built with musl, packed while musl's tests run.
+  package-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-linux-musl
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: alpine-${{ matrix.target }}
+      - run: >
+          mkdir -p ~/.cargo/registry ~/.cargo/git &&
+          docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
+          -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
+          rust:alpine sh -c
+          "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
+          (rustup show active-toolchain || rustup toolchain install) &&
+          dist/package.sh ${{ matrix.target }}"
+      - if: ${{ !cancelled() }}
+        run: sudo chown -R "$(id -u):$(id -g)" target ~/.cargo dist
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: alpine-${{ matrix.target }}
+          save: true
       - uses: actions/upload-artifact@v4
         with:
           name: tondo-${{ matrix.target }}
@@ -240,7 +308,7 @@ jobs:
 
   # What is published, on the oldest systems it says it runs on.
   floor:
-    needs: [test, musl]
+    needs: [package, package-musl]
     strategy:
       fail-fast: false
       matrix:
