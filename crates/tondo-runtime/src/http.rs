@@ -586,7 +586,9 @@ pub unsafe extern "C" fn tondo_rt_http_send(
             None => return native::new(Response::failed("body", "a multipart body is sent once".into())),
         },
     };
-    let response = match wait(async move { request.send().await }) {
+    // Polled by the task in place, as the server's futures are: only the
+    // connection's own future runs on tokio's threads.
+    let response = match super::io::wait_for(request.send()) {
         None => Response::failed("protocol", "the task was cancelled".into()),
         Some(Err(error)) => {
             let (kind, message) = classify(&error);
@@ -672,7 +674,7 @@ pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut Arra
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return byte_array(&[]);
     };
-    match wait(async move { body.bytes().await }) {
+    match super::io::wait_for(body.bytes()) {
         Some(Ok(bytes)) => byte_array(&bytes),
         outcome => {
             let failure = match outcome {
