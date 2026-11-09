@@ -332,3 +332,21 @@ pub(super) fn watch() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    /// A worker counted idle may wake before `wake_idle` takes the queue's
+    /// lock: then none is woken and none is marked as looking for tasks, for
+    /// a mark that no worker clears keeps every later task from waking one.
+    #[test]
+    fn a_worker_is_marked_looking_only_when_one_sleeps() {
+        super::IDLE.store(1, Ordering::SeqCst);
+        super::wake_idle();
+        super::IDLE.store(0, Ordering::SeqCst);
+        let waking = std::mem::take(&mut super::queue().waking);
+        let seeking = super::SEEKING.swap(false, Ordering::SeqCst);
+        assert!(!waking && !seeking, "marked as looking with no worker asleep");
+    }
+}
