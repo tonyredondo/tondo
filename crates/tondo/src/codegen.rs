@@ -2856,13 +2856,15 @@ impl Codegen<'_> {
     fn trace_table(&mut self, id: DataId) {
         let pad = |blob: &mut Vec<u8>| blob.resize(blob.len().next_multiple_of(4), 0);
         let mut blob = Vec::new();
+        // The texts the table names, files and types, each once, by its
+        // number in the order first named.
         let mut files: Vec<String> = Vec::new();
-        let name = |files: &mut Vec<String>, text: String| match files.iter().position(|f| *f == text) {
-            Some(found) => found as u32,
-            None => {
-                files.push(text);
+        let mut numbers: HashMap<String, u32> = HashMap::new();
+        let mut name = |files: &mut Vec<String>, text: String| {
+            *numbers.entry(text).or_insert_with_key(|text| {
+                files.push(text.clone());
                 files.len() as u32 - 1
-            }
+            })
         };
         let mut entries = vec![0u8; self.traced.len() * 16];
         for (index, function) in self.traced.iter().enumerate() {
