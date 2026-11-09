@@ -111,7 +111,7 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
 /// polls without holding its worker until the future's waker notifies it;
 /// `None` when the task is cancelled first, which drops the future.
 pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Option<T> {
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::task::{Poll, Wake, Waker};
     struct Notify(Arc<Wait>);
     impl Wake for Notify {
         fn wake(self: Arc<Self>) {
@@ -120,20 +120,17 @@ pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Optio
             }
         }
     }
-    let runtime = super::http::runtime();
     if current().is_null() {
-        return Some(runtime.block_on(future));
+        return Some(super::http::runtime().block_on(future));
     }
     let mut future = std::pin::pin!(future);
     loop {
         let wait = Wait::new();
         let waker = Waker::from(Arc::new(Notify(wait.clone())));
-        // The runtime's context only while polling: the task may resume on
-        // another thread.
-        let polled = {
-            let _context = runtime.enter();
-            future.as_mut().poll(&mut Context::from_waker(&waker))
-        };
+        let (polled, let_go) = poll_once(future.as_mut(), &waker);
+        for stream in let_go {
+            unsafe { free(stream as *mut StreamObject) };
+        }
         if let Poll::Ready(value) = polled {
             return Some(value);
         }
@@ -748,6 +745,19 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
+        // Inside a poll `wait_for` makes, closing may wait, which would move
+        // the task to another thread in the middle of the poll: it waits
+        // until the poll returns.
+        if HELD.with(|held| held.borrow_mut().as_mut().map(|held| held.push(stream as usize)).is_some()) {
+            return;
+        }
+        free(stream);
+    }
+}
+
+/// Closes a stream no one holds any more, and frees it.
+unsafe fn free(stream: *mut StreamObject) {
+    unsafe {
         // A `Ready` host delivers what it holds on its own, so letting it
         // go never waits on the other side of a connection.
         if (*stream).mode != Mode::Ready {
@@ -758,6 +768,42 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
         drop(Box::from_raw(stream));
         LIVE_OBJECTS.gone();
     }
+}
+
+thread_local! {
+    /// While `wait_for` polls a future on this thread, the streams it let go.
+    static HELD: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// One poll of a future in the runtime's context, which it has only while
+/// polling: the task may resume on another thread. Not inlined, so that
+/// the addresses of the thread's own variables are this thread's, not
+/// those of the thread it ran on before.
+#[inline(never)]
+fn poll_once<F: std::future::Future>(
+    future: std::pin::Pin<&mut F>,
+    waker: &std::task::Waker,
+) -> (std::task::Poll<F::Output>, Vec<usize>) {
+    let _context = super::http::runtime().enter();
+    holding(|| future.poll(&mut std::task::Context::from_waker(waker)))
+}
+
+/// Runs a poll, during which the task must not wait: the streams let go
+/// meanwhile are given back, to close once it returned.
+fn holding<T>(poll: impl FnOnce() -> T) -> (T, Vec<usize>) {
+    /// What a poll this one runs inside held, back once it ends.
+    struct Outer(Option<Option<Vec<usize>>>);
+    impl Drop for Outer {
+        fn drop(&mut self) {
+            if let Some(outer) = self.0.take() {
+                HELD.with(|held| *held.borrow_mut() = outer);
+            }
+        }
+    }
+    let mut outer = Outer(Some(HELD.with(|held| held.borrow_mut().replace(Vec::new()))));
+    let value = poll();
+    let let_go = HELD.with(|held| std::mem::replace(&mut *held.borrow_mut(), outer.0.take().flatten()));
+    (value, let_go.unwrap_or_default())
 }
 
 pub(crate) fn retain(stream: *mut StreamObject) -> *mut StreamObject {
