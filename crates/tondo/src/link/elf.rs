@@ -10,6 +10,7 @@
 //! loader for the library's block, and `.eh_frame_hdr` indexes the unwind
 //! tables.
 
+use super::core::{Image, error};
 use crate::hash::{FastMap, FastSet};
 use object::elf::*;
 use object::read::elf::{ElfFile64, SectionHeader as _};
@@ -582,10 +583,6 @@ struct Linker<'a> {
     library: bool,
     /// Its references to `RECORDED` functions are to their wrappers.
     recordable: bool,
-}
-
-fn error(input: &str, message: impl std::fmt::Display) -> String {
-    format!("linking {input}: {message}")
 }
 
 /// Links the executable, whose bytes it gives.
@@ -1580,36 +1577,6 @@ fn elf_hash(name: &[u8]) -> u32 {
         h &= !g;
     }
     h
-}
-
-struct Image {
-    bytes: Vec<u8>,
-}
-
-impl Image {
-    fn put(&mut self, at: u64, data: &[u8]) {
-        let at = at as usize;
-        if self.bytes.len() < at + data.len() {
-            self.bytes.resize(at + data.len(), 0);
-        }
-        self.bytes[at..at + data.len()].copy_from_slice(data);
-    }
-
-    fn u16(&mut self, at: u64, v: u16) {
-        self.put(at, &v.to_le_bytes());
-    }
-
-    fn u32(&mut self, at: u64, v: u32) {
-        self.put(at, &v.to_le_bytes());
-    }
-
-    fn u64(&mut self, at: u64, v: u64) {
-        self.put(at, &v.to_le_bytes());
-    }
-
-    fn read32(&self, at: u64) -> u32 {
-        u32::from_le_bytes(self.bytes[at as usize..at as usize + 4].try_into().unwrap())
-    }
 }
 
 impl<'a> Linker<'a> {

@@ -4,6 +4,7 @@
 //! packages either.
 
 mod archive;
+mod core;
 mod elf;
 pub mod macho;
 pub mod patch;

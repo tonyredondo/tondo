@@ -110,6 +110,7 @@ mod raw {
     pub const X86_64_RELOC_SIGNED_4: u8 = 8;
     pub const X86_64_RELOC_TLV: u8 = 9;
 }
+use super::core::{Image, error};
 use crate::hash::FastMap;
 use object::{Endianness, Object, ObjectSection};
 use std::collections::{HashMap, HashSet};
@@ -448,10 +449,6 @@ struct Linker<'a> {
     exports: Option<Vec<usize>>,
     /// Its references to `RECORDED` functions are to their wrappers.
     recordable: bool,
-}
-
-fn error(input: &str, message: impl std::fmt::Display) -> String {
-    format!("linking {input}: {message}")
 }
 
 /// An object read on its own, before the linker takes in its symbols: its
@@ -1149,37 +1146,6 @@ impl Linker<'_> {
             });
         }
         out
-    }
-}
-
-/// Writing the image.
-struct Image {
-    bytes: Vec<u8>,
-}
-
-impl Image {
-    fn put(&mut self, at: u64, data: &[u8]) {
-        let at = at as usize;
-        if self.bytes.len() < at + data.len() {
-            self.bytes.resize(at + data.len(), 0);
-        }
-        self.bytes[at..at + data.len()].copy_from_slice(data);
-    }
-
-    fn u32(&mut self, at: u64, v: u32) {
-        self.put(at, &v.to_le_bytes());
-    }
-
-    fn u64(&mut self, at: u64, v: u64) {
-        self.put(at, &v.to_le_bytes());
-    }
-
-    fn read32(&self, at: u64) -> u32 {
-        u32::from_le_bytes(self.bytes[at as usize..at as usize + 4].try_into().unwrap())
-    }
-
-    fn read64(&self, at: u64) -> u64 {
-        u64::from_le_bytes(self.bytes[at as usize..at as usize + 8].try_into().unwrap())
     }
 }
 
