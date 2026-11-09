@@ -387,13 +387,13 @@ fn forward(mut pipe: std::io::PipeReader, target: Held) -> Worker {
                     && count > 0
                 {
                     let (target, chunk) = (target.clone(), buffer[..count].to_vec());
-                    let written = super::http::blocking(move || run(target.0, move |s| s.write(&chunk))).await;
+                    let written = super::http::blocking(true, move || run(target.0, move |s| s.write(&chunk))).await;
                     if !matches!(written, Ok(Ok(()))) {
                         break;
                     }
                 }
             }
-            let _ = super::http::blocking(move || run(target.0, |s| s.flush())).await;
+            let _ = super::http::blocking(true, move || run(target.0, |s| s.flush())).await;
         }));
     }
     Worker::Thread(super::tasks::spawn_thread(None, move || {
@@ -427,7 +427,7 @@ fn feed(mut pipe: std::io::PipeWriter, input: Input) -> Worker {
                     let source = Arc::new(source);
                     loop {
                         let reading = source.clone();
-                        match super::http::blocking(move || run(reading.0, |s| s.read(64 * 1024))).await {
+                        match super::http::blocking(true, move || run(reading.0, |s| s.read(64 * 1024))).await {
                             Ok(Ok(Some(chunk))) if sender.write_all(&chunk).await.is_ok() => {}
                             _ => break,
                         }

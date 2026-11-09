@@ -749,7 +749,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
         },
     };
     let address = format!("{}:{port}", text(host));
-    let listener = match wait(async move { blocking(move || bind(&address)).await }) {
+    let listener = match wait(async move { blocking(false, move || bind(&address)).await }) {
         Some(Ok(Ok(listener))) => listener,
         Some(Ok(Err(error)) | Err(error)) => return failed(error.to_string()),
         None => return failed("the task was cancelled".into()),
@@ -1666,7 +1666,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     let opened = {
         let path = path.clone();
         wait(async move {
-            let (file, metadata) = blocking(move || -> std::io::Result<_> {
+            let (file, metadata) = blocking(false, move || -> std::io::Result<_> {
                 let file = std::fs::File::open(&path)?;
                 let metadata = file.metadata()?;
                 if metadata.is_dir() {
@@ -1738,7 +1738,7 @@ impl Disk {
         op: impl FnOnce(&mut std::fs::File) -> std::io::Result<T> + Send + 'static,
     ) -> std::io::Result<T> {
         let mut file = self.0.take().ok_or_else(|| std::io::Error::other("the file failed before"))?;
-        let (file, result) = blocking(move || {
+        let (file, result) = blocking(false, move || {
             let result = op(&mut file);
             (file, result)
         })
@@ -1840,7 +1840,7 @@ pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path
     let (path, body, exceeded) = (text(path), r.take_body(), r.exceeded.clone());
     let saved = wait(async move {
         let offset = u64::try_from(offset).unwrap_or(0);
-        let opened = blocking(move || -> std::io::Result<_> {
+        let opened = blocking(false, move || -> std::io::Result<_> {
             use std::io::Seek;
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent)?;
@@ -2023,7 +2023,7 @@ pub unsafe extern "C" fn tondo_rt_http_upload_save(object: *mut NativeObject, pa
     let Some(u) = native::get::<Upload>(object) else { return -1 };
     let (path, field) = (text(path), lock(&u.field).take());
     let saved = wait(async move {
-        let created = blocking(move || -> std::io::Result<_> {
+        let created = blocking(false, move || -> std::io::Result<_> {
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent)?;
             }

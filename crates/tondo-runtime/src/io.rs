@@ -149,7 +149,7 @@ pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Optio
     }
 }
 
-fn submit(job: Job, long: bool) {
+pub(crate) fn submit(job: Job, long: bool) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.jobs.push_back(job);
     if pool.idle >= pool.jobs.len() {

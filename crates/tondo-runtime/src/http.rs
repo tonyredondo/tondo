@@ -100,20 +100,27 @@ pub(crate) fn drive(runtime: &'static tokio::runtime::Runtime, wait: bool, until
     });
 }
 
-/// Work that blocks, the runtime's own, done where it holds no thread of
-/// the runtime: on a thread of tokio's, or by the worker of a recorded run,
-/// whose calls the recording has, between its tasks.
-pub(crate) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> std::io::Result<T> {
-    if driven().is_none() {
-        return tokio::task::spawn_blocking(work).await.map_err(std::io::Error::other);
-    }
+/// Work that blocks, the runtime's own, done where it holds no worker: on a
+/// thread of the runtime's pool, `long` when it may wait indefinitely, as
+/// reading a pipe does, or by the worker of a recorded run, whose calls the
+/// recording has, between its tasks.
+pub(crate) async fn blocking<T: Send + 'static>(
+    long: bool,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<T> {
     let (done, result) = tokio::sync::oneshot::channel();
-    DEFERRED.lock().unwrap_or_else(|e| e.into_inner()).push_back(Box::new(move || {
+    let job = Box::new(move || {
         let _ = done.send(work());
-    }));
-    // The worker may wait in the runtime.
-    if let Some(poller) = super::poll::poller() {
-        poller.wake();
+    });
+    match driven() {
+        None => super::io::submit(job, long),
+        Some(_) => {
+            DEFERRED.lock().unwrap_or_else(|e| e.into_inner()).push_back(job);
+            // The worker may wait in the runtime.
+            if let Some(poller) = super::poll::poller() {
+                poller.wake();
+            }
+        }
     }
     result.await.map_err(std::io::Error::other)
 }
@@ -346,7 +353,7 @@ pub(crate) fn stream_of(
             }
         } else {
             let reading = source.clone();
-            blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await.and_then(|read| read)
+            blocking(true, move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await.and_then(|read| read)
         };
         match read {
             Ok(Some(bytes)) => Some((Ok(Bytes::from(bytes)), source)),
