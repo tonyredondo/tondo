@@ -1,0 +1,723 @@
+# Speed after the refactoring: the compiler, waits, HTTP and the linker
+
+This plan comes after `docs/refactor.md`. That plan reorganized the runtime and the standard library
+and pinned their behaviour with tests. This one uses that safety net to make Tondo faster where the
+refactoring did not reach: the compiler, which was outside it; the runtime's blocking waits, which
+phase 8 did not touch; HTTP, which runs on a scheduler of its own; and the linker, which repeats the
+same work on every build. The goals are the maintainer's:
+
+- compile as fast as possible, because script mode compiles and runs in one command;
+- few allocations and few cycles;
+- every core in use where the work allows it;
+- Release stays the fastest code, as always.
+
+The maintainer approved the whole plan on 2026-11-08, the long-term parts included. The steps marked
+**Decision** still go to the maintainer with numbers before any code is written.
+
+## How this plan was made, and what to check first
+
+It comes from a read-only review of `28805b99` on 2026-11-08, done while phase 0 of the refactoring
+was closing. Nothing was measured: the machine was at load 55 with the mutation run, and the review
+could not touch the tree. Every claim below cites the code at that commit. The numbers come from
+`bench/baselines/pre-refactor.md`, measured at 31bd462, and from the phases' own reports. Line
+numbers will have moved by the time you read this; find the code again before changing it.
+
+The table at the end says where each phase is, and is kept current.
+
+## Rules for every phase
+
+The rules of `docs/refactor.md` hold here too. In short:
+
+- Measure before and after. Phase A builds the instruments, and nothing else starts before it.
+- A phase ends published, with its gate passed: fmt, clippy and the workspace's tests; the cases in
+  debug, replay, live and static builds; `.github/scripts/local.sh`; a round on the M2; the Nightly;
+  the models; and the baselines within 5%, with no more allocations.
+- A commit that only moves code goes alone. A bug found on the way gets its own commit and its test,
+  as before.
+- A design decision gets its entry in `docs/decisions.md`. Nothing here should change a
+  specification. A new environment variable, a new CLI flag or a change to the public API is a change
+  of specification, so propose it to the maintainer first.
+- **Same bytes.** Where a step says its output must not change, build every case with the `tondo`
+  from before the step and with the one after it, and compare the executables byte for byte, masking
+  the live build id. This was done for the parallel IR in 1af56dc with `/tmp/osr/same.sh`. That
+  script is gone: write it again in `~/.cache/tondo-scratch`, or in `.github/scripts` if it earns a
+  place there.
+- The lessons of the refactoring still apply:
+  - judge a flagged benchmark by `perf stat -e instructions:u`, because layout alone moves
+    nano-benchmarks by up to 60%;
+  - rebuild release before comparing;
+  - never edit the tree while a gate runs;
+  - check a command's exit status before `git commit`, because `cmd | grep` hides failures;
+  - always run the check of a scripted split (`check_split.py`), because a script once dropped items
+    silently.
+
+## Order
+
+| Phase | What | Needs |
+| --- | --- | --- |
+| A | Instruments: compile benchmarks, a linearity guard, network benchmarks against Go, profiles of waits | — |
+| B | Cheap compile wins: the verifier, lints, `fmt`, `std` loaded in one round, `check`'s analyses in parallel | A |
+| C | Blocking waits without allocations | A |
+| H1 | HTTP: quick wins on the current design | A |
+| D | Split `check.rs` and `codegen.rs`, moves only | — |
+| E | Check only the bodies of `std` the program reaches | D |
+| G | One core for the ELF and Mach-O linkers | — |
+| F | Caches: `std` parsed once per process, Cranelift's code by function, the runtime's index for the linker; a **Decision** on a shared runtime for `tondo run` | E, G |
+| H2 | HTTP, gRPC and TLS on the workers' poller | A, H1; a design the maintainer approves |
+| I | The duplication and allocations left | — |
+| J | The checker on every core, if the numbers still ask for it | B, D, E |
+
+The order puts the cheap and safe work first, then what the measurements confirm, then the large
+designs. G comes before F because F's linker cache would otherwise be written twice, once per format.
+
+What is already done and must not be redone: parsing on every core; the parallel IR and Cranelift on
+the pool (`parallel.rs`); the linker's mmap and its parallel reads and relocations; the table of
+`api::builtin_methods` (phase 8); and the standard library loaded as multi-file modules with one
+identity per file (phase 7).
+
+---
+
+## Phase A: instruments
+
+### A1. Compile-time benchmarks
+
+`bench/` measures only the runtime, while compile time is half of what a script costs. Nobody would
+notice a regression of the compiler today.
+
+1. **Fixtures**, under `bench/compile/`:
+   - `hello.to`, which prints a line;
+   - `server.to`, a `std.http` server with one route that encodes JSON;
+   - `imports.to`, which imports `std.http`, `std.sql` and `std.grpc` (phase 8 measured its check at
+     95 ms, then 62);
+   - a project made by a deterministic generator in Tondo (`bench/compile/generate.to`): modules of
+     records, enums, generic functions, closures, `match`, interpolation and calls into `std.json`,
+     at about 3,000, 24,000 and 192,000 lines. The 24,000-line program is the size used in October;
+     the 8× steps serve A2. `~/.cache/tondo-scratch/big60` is a 60,000-line project used for the LSP,
+     if it helps to compare.
+2. **Commands measured:**
+   - `tondo check`;
+   - `tondo build`;
+   - a cold `tondo run`: an empty build cache, with the runtime's archives already extracted;
+   - a warm `tondo run`: the cache hit, `exec` included;
+   - the first build after installing, extraction included (about 110 ms in October), as a row of
+     its own.
+
+   Each command runs with its own `XDG_CACHE_HOME`.
+3. **Measures:** the median wall time of N runs, and `perf stat -x, -e instructions:u` when `perf`
+   is there (`perf_event_paranoid` is 2 on this machine, which allows counting user code). A runner
+   in Tondo, `bench/compile.to`, writes the table, as `compare.to` does for the runtime.
+4. **Where the time goes.** Add an internal switch that prints the time of each part to stderr: load
+   and parse, `std`, meta/derive/templates, check, mono, lower, the MIR passes, building the IR,
+   Cranelift, writing the object, and linking. `TONDO_COVERAGE_STD` is the precedent for an internal
+   switch of the compiler. If the toolchain's table (7.17) must list it, ask the maintainer first.
+
+### A2. A guard against passes that grow too fast
+
+Three quadratic passes were found by hand so far: a block of 200,000 `let`s, `prove::Facts`, and the
+LSP's highlighting. In the Nightly, check and build the generated project at N and at 8N, and fail
+when the ratio of instructions passes about 10×. The failure names the part, using A1's switch.
+
+### A3. Network benchmarks against Go
+
+There is no HTTP, `std.net` or gRPC row in `bench/`. That is where H1 and H2 act, and where the ports
+of Gin and dd-trace-go would run.
+
+Add `bench/tondo/src/http_test.to` and the same names in `bench/go/bench_test.go`:
+
+- `http/hello 1x1000`: one keep-alive connection, 1,000 GETs in a row to a server in the same
+  process;
+- `http/hello 64x100`: 64 client tasks at once;
+- `http/json 64x100`: a POST of a small record, decoded and encoded;
+- `http/tls 64x100`: the same over HTTPS, with a certificate kept in the bench project
+  (`net.Tls.pem`);
+- `net/echo 1x1000` and `net/tls echo 1x1000`: a round trip over `std.net`.
+
+Go's side uses `httptest.NewServer` and an `http.Client` with `MaxIdleConnsPerHost` set to 64. Report
+allocations per operation too. In Tondo the client is reqwest on the same tokio runtime, so a row
+mixes client and server: use a profile to tell them apart. gRPC rows can come later, because Go's
+side needs `google.golang.org/grpc` in `go.mod`.
+
+### A4. A profile of the blocking waits
+
+Before C, profile the four rows below to learn where their time and allocations go:
+
+- `runtime/mutex 4x1000`: 15.69× Go, with 4,056 allocations per operation against Go's 6;
+- `runtime/select 1000`: 1.28×, 4,355 against 4;
+- `tasks/channel 10000`: 1.19×, 316 against 2;
+- `runtime/join 1`: 5 against 2.
+
+These are the figures at 31bd462. Use `tondo profile`, then
+`TONDO_HEAP_RATE=512 tondo profile --memory` and `profile show --sample alloc_objects`, as phase 8
+did, and `perf stat`.
+
+Questions to answer:
+
+- How many allocations does a contended lock make, and from where: the `Arc<Wait>` (C), `held()`'s
+  `Vec`, `update`'s closure, or something else?
+- How much of the time is parking, waking on another worker, and stealing?
+- Do Go's four goroutines run in parallel at all? Run Go's side with `GOMAXPROCS=1` and with the
+  default to see.
+
+### A5. The baseline
+
+Save the tables of A1, A3 and the runtime as `bench/baselines/pre-speed.md`, the same way as
+`pre-refactor.md`, and keep the `tondo` of that commit in `~/.cache/tondo-scratch/pre-speed/` as the
+reference binary for the gates.
+
+**Done when** the four instruments run, A2 runs in the Nightly, and the baseline is committed.
+
+---
+
+## Phase B: cheap compile wins
+
+Each step is small, the output must not change (except in B2 and B5, which say what to compare), and
+each is measured with A1.
+
+### B1. Cranelift's verifier is on in every build
+
+`codegen.rs:906-908` builds Cranelift's flags without `enable_verifier`, whose default is `true`
+(`vendor/cranelift-codegen/src/settings.rs`). `Context::compile` therefore checks the IR of every
+function several times (`vendor/cranelift-codegen/src/context.rs`, the `verify_if` calls). Cranelift
+describes this as slower compilation useful during development, and Wasmtime turns it off by default.
+
+Set it from `cfg!(debug_assertions)`. The tests and the cases run `target/debug/tondo` and keep it on;
+the release build that ships turns it off. That is the only flags builder in the compiler, but search
+again before the change.
+
+Proof: same bytes for every case (the verifier never changes code), and A1's check and build rows.
+
+### B2. `lints::run` parses the whole project again for nothing
+
+`lints.rs:98-104` parses every file of the program again. `tondo check` (`main.rs:255`) and the MCP
+tool `check` (`mcp.rs:193`) always call it, even without `--docs` or `--performance`, when it has
+nothing to look for.
+
+Return early when neither is asked, setting `diags.asked` as it does now. When one is asked, parse the
+files with `parallel::map` in the files' order.
+
+Proof: the JSON of `tondo check` is identical across the CLI and MCP tests, and A1's check row of the
+generated project goes down.
+
+### B3. `tondo fmt` formats one file after another
+
+`fmt_command` (`main.rs:1917`) reads, formats and writes each file in turn, and copies each text once
+more (`text.clone()`). Format with `parallel::map`, then report and write in the order of the
+arguments, so the output does not change. Compare with the text in the `SourceMap` instead of keeping
+a copy.
+
+Proof: the CLI's fmt tests.
+
+### B4. `std` loaded in one round, without copying it
+
+`stdlib.rs:283-311` loads the standard library in rounds. Each round parses, on every core, the
+modules wanted so far, and only then learns what they import, so the next round waits for the
+slowest file of the previous one. Each file's text is also copied into the `SourceMap`
+(`text.to_string()`, `stdlib.rs:291`), and `SourceMap::add` scans it for its lines on every build
+(`source.rs:82-85`).
+
+The graph of imports inside `std` never changes for a given compiler:
+
+1. Compute, once per process (a `OnceLock`, or in `build.rs`), each std module's direct std imports by
+   reading its `import std.` lines, as `brings` (`stdlib.rs:203`) already does, with the same mapping
+   as `source()` (`testing` → `fuzz`, companions first) and as `companions()`. Handle
+   `import std.x as y`.
+2. From the program's imports, compute `pending` in exactly today's order: round by round, file by
+   file, with the same deduplication and the same `replaced` modules. The source ids, the bases and
+   the order of the modules then stay as they are.
+3. Add every file to `sources` in that order, and parse them all in a single `parallel::map`.
+4. In debug builds of `tondo`, assert that the imports the parser found are those of the table, so
+   that a mistake in reading the lines fails a test.
+5. Let std files lend their text instead of copying it: `SourceFile.text` (`source.rs:30`) becomes a
+   `Cow<'static, str>` or an `Arc<str>`. Compute a std file's line starts once per process.
+
+Proof: same bytes for every case, the JSON of `tondo check` identical, and A1's hello and imports
+rows.
+
+### B5. `tondo check` of a project runs its analyses one after another
+
+`driver::check` (`driver.rs:210-229`) analyzes the project for this machine's system, then for each
+other system it runs on when it has files of a system, then once more with its tests. Each is a full
+parse and check.
+
+Run them on scoped threads (`std::thread::scope`) and merge the results in today's order. The
+driver's state is per thread: `OPEN`, `ROOT` and `SYSTEM` (`driver.rs:143-150`). Copy what the caller
+set into each thread, through `with_open`, the root and `for_system`.
+
+The pool of `parallel.rs` serves one caller at a time (its `busy` flag), so the second analysis runs
+its own maps on its own thread. That is acceptable, because the serial checker is the largest part
+anyway. Measure both ways.
+
+Proof: identical diagnostics, order included, in the CLI, LSP and MCP tests; the per-system cases;
+and A1's project row.
+
+### B6. `deps::resolve` several times per command
+
+`deps::resolve` has ten call sites. `inputs()`, `checked_systems()` and `analyze_with()` each read the
+lock file and every manifest again, and the function may rewrite `tondo.lock`.
+
+Keep its result within one run of a CLI command, keyed by directory and `update`, and never across an
+LSP or MCP session, where `tondo.toml` changes under it. Do this only if A1's breakdown shows it.
+
+**Done when** B1 to B5 are published with their proofs. B6 is done, or found not to matter, with the
+number that says so.
+
+---
+
+## Phase C: blocking waits without allocations
+
+### C1. Why
+
+Each blocking wait makes an `Arc<Wait>`: `Wait::new` (`tasks/waits.rs:35-37`) has 19 call sites,
+among them the contended lock (`sync.rs:258`), the channels (4), join, group, select, io (3), the
+clock, contexts, live builds (2) and http. The rows of A4 are the worst against Go, and phase 8 left
+them as they were.
+
+The `Arc` exists because some holders outlive the wait:
+
+- **timers:** `Timer` holds an `Arc<Wait>` (`tasks/mod.rs:255`, `tasks/timers.rs:34`); a timer can
+  fire after the task has gone on, and stale timers are dropped lazily (`timers_ended`);
+- **wakers inside futures:** `io.rs:115` (`Notify`), `http.rs:137` (`Done`), and the clock in
+  `clock.rs`.
+
+Every other notifier is an entry the task removes from a queue itself before it goes on, as the doc
+comment on `Wait` says.
+
+### C2. Design
+
+1. **Confirm with A4** that the allocations are the `Wait`s. If `held()` (`sync.rs:186`), `update`'s
+   closure or anything else allocates on each operation, fix that first.
+2. **One `Wait` per task.** A `Wait` kept in the `Task` (or in the frame of the waiting function)
+   serves waits whose notifiers are all queue entries the task removes before going on, and that
+   register no timer. That covers locks and `RwLock`, `updateWhen`, barriers, channels, `select` over
+   channels, joins and groups, `join` and `group.wait`. The task already points to its current wait
+   (`Task.waiting`, `tasks/mod.rs:162`), and cancellation and reloads claim it through that pointer
+   (`tasks/reload.rs:22`). Check that a task never has two waits at once, for instance a wait inside
+   a cleanup that runs while it is blocked.
+3. **Waits that keep the `Arc`, for now:** a timer (a timeout, or the task's `within` deadline, which
+   `DEADLINE` notifies), or a waker. If A4 shows that timed waits matter, recycle their `Wait`s
+   through a free list in the `Worker` of phase 1. A recycled `Wait` needs a generation, packed
+   together with the operation's index into `fired`, so that a stale timer cannot claim its next use.
+4. **The invariant to write down and to model.** Today's code reads a `Wait` after claiming it:
+   - `sync.rs:330` and `sync.rs:683` read `(*w).task` after `claim`;
+   - `tasks/channels.rs:173` and `tasks/channels.rs:186` claim through a waiter;
+   - `tasks/reload.rs:22` claims through `t.waiting`.
+
+   This is safe only because a task never moves past its wait before the claimer's notification. A
+   `Wait` that lives in the task or its frame depends on the same rule. Write it in `waits.rs`, check
+   it in the models (Wake, Lock, Select, in `testing/models` under `std.model`, and TLC while it
+   remains), and read `task` before the CAS wherever that costs nothing.
+5. **The scheduler's share of the 15.7×.** If A4 shows the gap is parking and waking across workers
+   rather than allocation, measure how long a woken waiter takes to run, and whether `SPIN_ROUNDS`
+   suits, before changing any policy. Go may simply run the four goroutines one after another.
+
+### C3. Proof
+
+- the models;
+- `tests/orders`, and `--schedules all` on the sync cases;
+- `TONDO_CASES_REPEAT=100 cargo test -p tondo --test cases cases` on the M2;
+- `.github/scripts/mutants.sh` over `tasks/waits.rs`, `sync.rs` and `tasks/channels.rs`;
+- the rows of A4: allocations near Go's count, and time by instructions and by wall time.
+
+**Done when** locks, channels, `select`, joins and groups without timers allocate nothing per wait,
+and the gate passes.
+
+---
+
+## Phase H1: HTTP, quick wins on the current design
+
+### What happens today
+
+`http.rs:20-45` builds a tokio runtime with `worker_threads(2)`. The HTTP server and client, gRPC,
+`std.net`'s TLS (`net.rs:669-672`, `net.rs:1156`), file watching (`files.rs:439`, `files.rs:582`) and
+`io.rs:123` all run on those two threads. TLS, HTTP parsing and HTTP/2 framing therefore use two cores
+at most.
+
+One request goes through these steps (`server.rs:827-870`):
+
+1. The method, path, query and authority are copied into `String`s, and the version is
+   `format!("{:?}")`.
+2. Each header becomes two `String`s.
+3. The `Request` is built with several `Arc` and `Mutex` values.
+4. It goes through an `mpsc::channel(1024)` (`server.rs:734`) to the single Tondo task `serve`
+   (`std/http/server.to:356`). That task takes it with `tondo_rt_http_next`, through a receiver
+   behind an `Arc<tokio::sync::Mutex<…>>` (`server.rs:32`), and starts a task for it.
+5. That task calls `requestHead`, splits a tab-joined text into seven strings
+   (`std/http/server.to:370`), and calls `requestHeaders`.
+6. The reply goes back through a `oneshot` (`server.rs:859`).
+
+Each request crosses threads twice and makes a few dozen allocations.
+
+### Steps
+
+1. **Size tokio's workers by A3:** try `available_parallelism`, half of it, and 2, at 1 and at 64
+   connections. Add no new environment variable.
+2. **Read the request's head without joining and splitting text.** Use natives for each field, or one
+   native that fills the record's fields. The method and the version become static strings. The
+   headers stay in hyper's `HeaderMap` inside the native request and turn into Tondo strings only
+   when the program asks (`requestHeaders`, or one header by name). The public API does not change;
+   `std-api.txt` guards it.
+3. **Count the allocations per request** before and after with A3.
+
+### Proof
+
+The http, grpc and net cases; the observe tests (requests in dumps, `flight`, `HTTP_SERVER_ACTIVE`);
+`local.sh services`; the M2; and A3's rows.
+
+---
+
+## Phase D: split the compiler, moves only
+
+The refactoring split the runtime and `std`, but not the compiler:
+
+- `check.rs` has 18,065 lines, with one `impl Checker` of about 16,500 lines from line 1288 and about
+  400 methods. `call` alone runs from line 15765 to 16540.
+- The `Checker` struct (`check.rs:844-1063`) has about 120 fields, many of them for one std module
+  each: `duration`, `instant`, `datetime`, `fs`, `process`, `pacing_module` and others.
+- `codegen.rs` has 10,044 lines.
+
+`check/` already has `indexing.rs` and `routes.rs`, and `codegen/` has `cabi.rs` and `worker.rs`.
+Splitting is a prerequisite of E and J, and it makes a cache by module possible later.
+
+**`check/`**, by the methods' current order (adjust the boundaries while moving):
+
+| Module | What | Lines at 28805b99 |
+| --- | --- | --- |
+| `program.rs` | `program`, tests, fuzz, bench, snapshot, recover, `within`, panics | 1289–2236 |
+| `std_checks.rs` | `is_std_fn`, model names, regex and template literals, reflection, numbers, intrinsics, the clock | 2236–2916 |
+| `foreign.rs` | externs, exports, C types, layouts and calls | 2916–3216, 4148–4188, 4702–4770, 14176–14271 |
+| `declarations.rs` | prelude, imports, module names, types, generics, kinds, defaults | 3216–4148, 4188–4243, 4770–4944 |
+| `annotations.rs` | annotations, rules, messages, `embed` | 4243–4702 |
+| `traits.rs` | signatures, traits, impls, `satisfies`, bounds, inference from bounds | 4944–6108 |
+| `owners.rs` | receivers, owners of methods, resolving types | 6108–6594 |
+| `functions.rs` | `new_cx`, `function`, ownership, `script_main`, unused results, closures, `defer`, `spawn` | 6594–7688 |
+| `natives.rs` | sync, time, process, io, file, `Ref`, atomic, channel and handle methods; `lost_updates` | 7688–9340 |
+| `statements.rs` | declarations, blocks, statements, assignment, places, loans, `for` | 9340–10841 |
+| `expressions.rs` | coercion, `expr`, record and union literals, unification and inference | 10841–11843 |
+| `contexts.rs` | contexts and their initial values | 11843–12169 |
+| `patterns.rs` | `match`, `select`, patterns, `with`, update, construction | 12169–13035 |
+| `literals.rs` | `try`, map, set and array literals; numbers, templates, display and formatting, queries, strings, paths, unknown names | 13035–13325, 14756–15765 |
+| `calls.rs` | generic, method, language, trait and dot calls; function values; cursors; hints; `call` and its arguments | 13325–14756, 15765–17285 |
+| `operators.rs` | unary, arithmetic, binary, `if` | 17285–17828 |
+
+**`codegen/`:**
+
+- the runtime's declarations (`Rt`, `runtime_signature`);
+- glue;
+- the entry point and `process_main`;
+- the debug and dump tables;
+- live codegen;
+- coverage;
+- `FnCodegen` grouped by the statements and values it builds.
+
+**Technique:** that of phases 5 and 6 (`~/.cache/tondo-scratch/move_lib.sh`, `move_sub.py`). Each
+file is an `impl<'a> Checker<'a>` block; the fields and the helpers that other files use become
+`pub(super)`; one module per commit; and phase 7's comparison of the multiset of code lines after
+every move.
+
+**Proof:** same bytes for every case, and A1 unchanged. `lsp.rs` (6,161 lines) can follow the same
+way later; it is not needed for E.
+
+---
+
+## Phase E: check only the bodies of `std` the program reaches
+
+### Why
+
+`check.rs:1435-1437` checks every declared body, those of `std` included. Then `mono`
+(`mono.rs:26-83`) keeps only what `main`, the tests, the exports, the contexts and `Display` reach.
+
+Every program loads `prelude` and what it imports (`formats`, `math`, `panics`, `reflect`,
+`serialization` and the `std.internal` modules), several thousand lines, and checks all their bodies
+on every build. A program that imports `http`, `sql` and `grpc` checked in about 62 ms after phase 8,
+against about 25 ms without them. The standard library comes with the compiler, and its own tests
+check it.
+
+### Design
+
+1. **Declarations as today:** every signature, type, trait and impl of every loaded module.
+2. **Bodies through a work list.** First every body that is not std's: the program, its tests and its
+   dependencies, which may have errors. Then each std body when something reaches it, until nothing
+   new is reached.
+3. **What reaches a std function:**
+   - a checked body that names it: a call, a method call resolved to it, a function value;
+   - for a trait method, conservatively, the impls of that method among the loaded ones;
+   - mono's own roots: the `Display` of `main`'s error, the contexts' maker, log, label and
+     computed functions, the exports, the `debug.View` views, the conversions of `?`, derived impls
+     and iterator defaults;
+   - what the checker or the code generator call by name: the uses of `is_std_fn` (`model.*`,
+     `cli.markup`, `format.apply`), `panics.report`, the loops of testing and fuzz, templates.
+
+   Build this list from `mono.rs` and `codegen.rs`, not from this plan.
+4. **An unreached std function** keeps its signature and a body marked unchecked. Mono stops with an
+   internal error that names any unchecked function it instantiates, so that a missing edge fails a
+   test loudly instead of compiling wrong code.
+5. **State that bodies feed, to review one by one:**
+   - `dropped_calls` and `only_computes`;
+   - `cell_uses` and `lost_updates` (which compares every write with every read, std's included
+     today);
+   - `calls`, `test_calls`, `spawning` and `test_spawns`;
+   - `const_uses` and `public_fns`;
+   - `model_steps` and `checks_models`;
+   - `contexts` and `context_of`;
+   - the index;
+   - the numbering of closures: `closure_base` stays, and closures take their ids in checking order,
+     which is deterministic but differs from today's.
+6. **What stays eager:**
+   - the editor's analyses (`analyze_for_editor`, the index);
+   - documentation fences (`analyze_fence`, which replaces std modules);
+   - `TONDO_COVERAGE_STD`, whose measure counts the std lines that compile;
+   - an internal switch that forces everything to be checked, for differential tests.
+
+### Proof
+
+The cases in all five modes; every case built eager and lazy with its output and exit compared; the
+deterministic builds of `tests/link.rs`; the API snapshot and the guide's tests; A1's hello, server,
+imports and generated rows. The bytes may differ from today's, because types are interned in another
+order. The program's behaviour must not.
+
+---
+
+## Phase G: one core for the two linkers
+
+`link/elf.rs` has 2,469 lines and `link/macho.rs` 2,715, and they repeat their core:
+
+- `archives()` (`elf.rs:785-843`, `macho.rs:747-803`) differs in three lines: ELF brings a member
+  only for a *required* undefined global, and the two return differently;
+- `intern`, `add` and much of `take`;
+- `redirected` (`elf.rs:247`, `macho.rs:288`), the same table with Mach-O's `_` prefix;
+- `error`;
+- `Image` with `put`, `u32`, `u64` and `read32` (`elf.rs:1585`, `macho.rs:1156`);
+- `uleb` and `sleb`;
+- the skeleton of the work list that keeps live sections.
+
+Windows (item 12 of the wish list) would add a third copy.
+
+**Steps:** move the shared parts to `link/core.rs`:
+
+- the table of globals and its interning;
+- loading archive members, with the format's `parse`/`take` and its rule for which globals bring a
+  member as parameters;
+- `Image`;
+- the redirect table built from `RECORDED` with the platform's prefix.
+
+Moves first, each commit alone, then the unification with parameters. Layout and writing stay per
+format.
+
+**Proof:**
+
+- same bytes for every case on Linux;
+- on macOS, the M2 round and the checks of a cross-built Mach-O used in H12 (structure, binds,
+  rebases and `__unwind_info`, read with `llvm-objdump`);
+- `tests/link.rs`;
+- the Nightly.
+
+---
+
+## Phase F: caches
+
+### F1. `std` parsed once per process
+
+The LSP analyzes the whole project after each edit, and MCP's `check` and `fix`, `run --watch` and
+`test --watch` analyze it again and again. Each time they parse the same std files, which never
+change for a given compiler, together with their derived `Display` (`stdlib.rs:313`).
+
+**What blocks it:** spans are offsets in one `SourceMap`, and a file's `base` is where the previous
+one ended (`source.rs:82-83`). A std file's spans therefore depend on what was loaded before it.
+
+**Steps:**
+
+1. Give std files fixed bases: a region at the start of the `SourceMap`, laid out in the order of
+   `SOURCES`, whatever the program loads, with the program's files after it.
+2. Keep the parsed std modules in a `OnceLock`, and clone or share them into each analysis. Measure a
+   clone against a parse.
+3. This is the first piece of the cache by file that phase 7 prepared for, and that the maintainer
+   expects to come.
+
+**Proof:**
+
+- the LSP tests, including go-to-definition into std, which writes std's sources to disk;
+- the source links of dumps and traces;
+- identical diagnostics;
+- the latency of `~/.cache/tondo-scratch/lsp5/latency.py`, before and after.
+
+### F2. Cranelift's code, kept by function
+
+`compile_one` (`codegen.rs:1597-1670`) compiles every function on every build. The vendored Cranelift
+has the feature `incremental-cache` (`vendor/cranelift-codegen/Cargo.toml:73`, which needs serde,
+postcard and sha2), with `Context::compile_with_cache` (`incremental_cache.rs:39`) and the trait
+`CacheKvStore` (`incremental_cache.rs:100`).
+
+The key hashes a function's IR and the ISA's flags. Tondo's source locations are numbers of sites
+within each function (`codegen.rs:5964-5966`), so they do not shift from one build to the next.
+Editing one function of a script, or building two programs that share std, should then recompile only
+what changed.
+
+**Steps:**
+
+1. Enable the feature, and check `cargo build --locked` and the vendored build with the new
+   dependencies.
+2. Keep the store in `cache_dir()/code/<compiler identity>/`, as files sharded by key or as one pack
+   per build with its index. Write it after `compile_all`, not from the pool's threads. Sweep it
+   after 30 days like the other entries, with a cap on its size.
+3. Call `compile_with_cache` in `compile_one`.
+4. Check that a cached result keeps everything `compile_one` reads:
+   - the source locations;
+   - the call sites and their exception handlers;
+   - the patchable call sites and the nop units;
+   - `code_info`;
+   - the ranges of value labels that dumps read;
+   - the unwind information.
+
+Live builds hash the code they get (`code_hash`), which works the same way with a cache hit.
+
+**Proof:** same bytes for every case built with a cold cache, with a warm one, and without it; A1's
+rows after editing one function of the generated project, and after building `server.to` twice with
+a different `main`; and the hit rates.
+
+### F3. The runtime's index for the linker (after G)
+
+On every build the linker:
+
+1. reads the runtime archive's symbol table into a map (`elf.rs:788-797`);
+2. brings members in rounds, parsing each member's ELF to learn what it needs next
+   (`elf.rs:802-841`).
+
+The archive is the same for a given `RUNTIME_HASH`.
+
+**Steps:**
+
+1. Record, for each member, the globals it defines and those it needs. Do it in `build.rs`, embedded
+   next to `runtime-hash`, or once beside the extracted archive in `cache_dir()/runtime/`.
+2. Resolve the closure of members from that record, without parsing them.
+3. Parse the chosen members in one `parallel::map`.
+4. Keep the same rules: the first definition in archive order wins, weak symbols, and ELF's
+   `required`.
+
+**Proof:** same bytes for every case in both formats, and A1's build rows.
+
+### F4. **Decision:** `tondo run` against a shared runtime
+
+If A1 still shows linking as the largest part of a cold `tondo run` after F3, what remains is
+relocating and writing the runtime's code on every build: a program that prints a line is 2.6 MB.
+Linking `run`'s builds against a shared object of the runtime, kept in the cache, would leave only
+the program's object to link.
+
+What it costs and touches:
+
+- start time, because the loader relocates a large object (compare with 1.35 ms today);
+- the redirection of the C library's calls in recorded runs (`redirected`, `elf.rs:247`);
+- whatever reads the runtime's addresses: the trace table, dumps, the debugger and unwinding;
+- live builds;
+- `--static`.
+
+Bring the numbers and a recommendation to the maintainer before writing any code.
+
+---
+
+## Phase H2: HTTP, gRPC and TLS on the workers' poller
+
+### Why
+
+`docs/decisions.md` (2026-10-23, "The network without a thread per connection") measured that the
+hop from tokio's reactor thread to a worker kept `std.net` behind Go: a round trip of 22 µs against
+12. Polling from the workers (`poll.rs`) later removed that hop for plain TCP. HTTP, gRPC and TLS
+still take it, on two threads (H1).
+
+### Design to propose to the maintainer, with its entry in `docs/decisions.md`, before code
+
+- **hyper inside Tondo tasks.** Run hyper's connection futures in Tondo tasks, polled with the
+  mechanism `std.net`'s `Ready` streams already use: the task polls the future in place with a waker
+  that notifies it.
+- **IO and time:** IO through `poll.rs`'s `Registered<mio::net::TcpStream>` (`attempt`, `ready`),
+  implementing `hyper::rt::Read` and `Write`. hyper's `Timer` on the runtime's timers. hyper's
+  executor, which HTTP/2 uses for its background futures, as Tondo tasks owned by the server.
+- **TLS** with rustls's sans-IO connection on the same socket. This replaces tokio-rustls and
+  `std.net`'s two piping tasks (`net.rs:669-672`).
+- **The rule of 2026-10-23 stays:** no callback crosses into Tondo, Tondo calls natives. The Tondo
+  side changes shape: a task for each HTTP/1.1 connection asks the native for its next request and
+  calls the handler itself, and HTTP/2 gets a task for each stream. `serve`'s single queue goes
+  away. The public API does not change; the snapshot guards it.
+- **Recording and replay.** Today a recorded run drives tokio from its worker (`http.rs:31-37`,
+  `drive` at `http.rs:55`). With the sockets on the workers' poller, recording goes through the
+  wrappers that `std.net`'s plain TCP already uses.
+- **Order of work:**
+  1. the HTTP/1.1 server;
+  2. HTTP/2;
+  3. TLS;
+  4. WebSocket upgrades;
+  5. files, ranges and uploads to disk;
+  6. compression;
+  7. the draining stop and SIGTERM;
+  8. the gRPC server, then gRPC-Web and Connect;
+  9. the client, on hyper's client connections instead of reqwest. Check feature by feature what
+     reqwest gives today: redirects, proxies, cookies, compression, multipart;
+  10. the gRPC client;
+  11. tokio itself, once nothing uses it (file watches, `io.rs`, `process.rs`).
+
+  Each step is measured with A3, and no old path stays behind as a silent fallback.
+
+### Proof
+
+- every http, grpc and net case;
+- the observe tests (requests in dumps, `flight`, counters);
+- the debugger and a replay of a server case;
+- `local.sh services` and the gRPC interop tools;
+- the M2 and the Nightly;
+- A3 against Go at 1 and at 64 connections, and the allocations per request.
+
+---
+
+## Phase I: the duplication and allocations left
+
+### I1. One debugger session for `tondo dap` and `tondo debug`
+
+Each keeps its own session with the program. Both send a command, read the answer, treat its
+`error`, and keep `break`, `delete`, `catch` and `steps` for a replay (`dap.rs:271-282`,
+`debug.rs:617-640`). Give them one session type in `observe.rs`, or in `debug.rs`; MCP already goes
+through `tondo debug --json`.
+
+Proof: the dap, debug and MCP integration tests.
+
+### I2. Text conversions on hot paths
+
+The runtime still has 89 `from_utf8_lossy` and 37 uses of `str_text`; phase 4 replaced only part of
+them. Go through those on hot paths, where a native copies a Tondo string into Rust and then back:
+the HTTP request (`server.rs`, `http.rs`), gRPC, `process` and `fs`.
+
+Proof: A3's allocations per operation.
+
+### I3. YAML and TOML
+
+Decoding a record of four fields takes 60 allocations from YAML and 40 from TOML, against 11 from
+JSON (phase 8's numbers). TOML decodes through toml_edit's `DocumentMut` (`toml.rs:9`, `toml.rs:55`),
+and YAML through saphyr's tree together with its parser's events (`yaml.rs:14-15`). Profile them as
+phase 8 did. A reader of events without the tree is the larger option; take it only if the numbers
+justify it.
+
+---
+
+## Phase J: the checker on every core, if the numbers still ask for it
+
+After B, D and E, measure check on the generated project. If checking bodies still dominates large
+projects, bring back the design of 2026-10-26 with the numbers: a fixed number of contiguous groups
+of bodies, each group's new types interned again in order, and the HIR renumbered. The maintainer
+deferred it then because of its permanent cost; the split of D makes that cost lower. This is the
+maintainer's decision.
+
+---
+
+## Status
+
+| Phase | State |
+| --- | --- |
+| A | started 2026-11-09. A1: `bench/compile.to`, with `--old` and `--guard`, over the programs of `bench/compile` and the projects of `bench/compile/generate.to`, and `TONDO_COMPILE_TIMES`. A2: `--guard` in the Nightly, which found at once two parts that grew as the square of a program's types: `mono` looked at all of a trait's implementations for each type, 3.4 s of checking 192,000 lines and 0.39 s now, and the table of a build's trace looked for each name among all the others, 67 s of building them and 3.4 s now; both builds keep every case's executable byte for byte. A3, A4 and A5 to do |
+| B | not started |
+| C | not started |
+| H1 | not started |
+| D | not started |
+| E | not started |
+| G | not started |
+| F | not started; F4 needs the maintainer's decision |
+| H2 | not started; the design needs the maintainer's approval |
+| I | not started |
+| J | only if the measurements ask for it |
