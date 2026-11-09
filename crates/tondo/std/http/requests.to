@@ -122,7 +122,6 @@ pub type Request = {
     /// over TLS.
     priv authority: String
     priv secure: Bool
-    priv headerList: Array[String]
     priv params: Map[String, String]
     /// The route that answers it, chosen before the middleware runs, and
     /// without one the methods of the routes of its path, for `405`.
@@ -657,38 +656,23 @@ pub fn Request.intQuery(self, name: String): Int? ! Problem {
 
 /// The first value of a header, by its name in any case.
 pub fn Request.header(self, name: String): String? {
-    let wanted = name.toLower()
-    var index = 0
-    for index + 1 < self.headerList.length() {
-        if self.headerList[index] == wanted {
-            return some(self.headerList[index + 1])
-        }
-        index += 2
-    }
-    none
+    self.headerValues(name).first()
 }
 
-/// Every value of a header, by its name in any case, in order.
+/// Every value of a header, by its name in any case, in order. The headers
+/// stay as the server read them until one is asked for.
 pub fn Request.headerValues(self, name: String): Array[String] {
-    let wanted = name.toLower()
-    var values: Array[String] = []
-    var index = 0
-    for index + 1 < self.headerList.length() {
-        if self.headerList[index] == wanted {
-            values.push(self.headerList[index + 1])
-        }
-        index += 2
-    }
-    values
+    httpNative.requestHeader(self.native, name.toLower())
 }
 
 /// The headers, lowercase, with the values of a repeated one joined by
 /// `, `.
 pub fn Request.headers(self): Map[String, String] {
+    let pairs = httpNative.requestHeaders(self.native)
     var out: Map[String, String] = [:]
     var index = 0
-    for index + 1 < self.headerList.length() {
-        let (name, value) = (self.headerList[index], self.headerList[index + 1])
+    for index + 1 < pairs.length() {
+        let (name, value) = (pairs[index], pairs[index + 1])
         out[name] = match out.get(name) {
             some(before) => "{before}, {value}"
             none => value

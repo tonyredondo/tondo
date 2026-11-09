@@ -367,17 +367,15 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
     // A client that goes away before the reply cancels this task: the
     // handler stops at its next wait and runs its `defer`s.
     httpNative.requestAnswering(incoming)
-    let fields = httpNative.requestHead(incoming).split("\t")
     let request = Request {
         native: incoming
-        verb: fields[0]
-        target: fields[1]
-        queryText: fields[2]
-        protocol: fields[3]
-        peer: fields[4]
-        authority: fields[5]
-        secure: fields[6] == "1"
-        headerList: httpNative.requestHeaders(incoming)
+        verb: httpNative.requestMethod(incoming)
+        target: httpNative.requestPath(incoming)
+        queryText: httpNative.requestQuery(incoming)
+        protocol: httpNative.requestVersion(incoming)
+        peer: httpNative.requestRemote(incoming)
+        authority: httpNative.requestAuthority(incoming)
+        secure: httpNative.requestSecure(incoming)
         params: [:]
         chosen: none
         allowed: []

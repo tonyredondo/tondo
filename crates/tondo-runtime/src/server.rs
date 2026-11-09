@@ -312,18 +312,17 @@ struct Request {
     open: bool,
     /// While a dump would show it.
     flight: Option<super::diagnostics::Flown>,
-    method: String,
-    path: String,
-    query: String,
-    version: String,
+    /// Its head as hyper read it, which the program reads a part at a time,
+    /// made into its texts only when it asks (docs/speed.md, H1).
+    method: hyper::Method,
+    uri: hyper::Uri,
+    version: hyper::Version,
+    headers: hyper::HeaderMap,
     remote: String,
-    /// The host the request was for: `:authority`, or `Host`.
-    authority: String,
     /// Whether it came over TLS.
     secure: bool,
     /// The DER of the certificate the client showed, if it showed one.
     client: Arc<Vec<u8>>,
-    headers: Vec<String>,
     body: Mutex<Option<Incoming>>,
     /// Whether the body was taken to be read, which happens once.
     taken: std::sync::atomic::AtomicBool,
@@ -345,15 +344,13 @@ impl Request {
             flight: None,
             failure: Mutex::new(None),
             open: false,
-            method: String::new(),
-            path: String::new(),
-            query: String::new(),
-            version: String::new(),
+            method: hyper::Method::GET,
+            uri: hyper::Uri::default(),
+            version: hyper::Version::default(),
+            headers: hyper::HeaderMap::new(),
             remote: String::new(),
-            authority: String::new(),
             secure: false,
             client: Arc::default(),
-            headers: Vec::new(),
             body: Mutex::new(None),
             taken: Default::default(),
             limit: Default::default(),
@@ -384,7 +381,7 @@ impl Request {
 
     /// The first value of a header, by its lowercase name.
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers.chunks(2).find(|pair| pair[0] == name).map(|pair| pair[1].as_str())
+        self.headers.get(name).and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
     }
 
     fn send(&self, response: hyper::Response<Body>) {
@@ -844,32 +841,18 @@ async fn handle(
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     let upgrade = websocket.then(|| hyper::upgrade::on(&mut request));
     let (parts, body) = request.into_parts();
-    let authority = match parts.uri.authority() {
-        Some(authority) => authority.to_string(),
-        None => parts
-            .headers
-            .get(hyper::header::HOST)
-            .map_or(String::new(), |h| String::from_utf8_lossy(h.as_bytes()).into_owned()),
-    };
-    let headers = parts
-        .headers
-        .iter()
-        .flat_map(|(name, value)| [name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()])
-        .collect();
     let (reply, answer) = oneshot::channel();
     let incoming = Request {
         failure: Mutex::new(None),
         open: true,
         flight: super::diagnostics::Flown::new(parts.method.as_str(), parts.uri.path()),
-        method: parts.method.to_string(),
-        path: parts.uri.path().to_string(),
-        query: parts.uri.query().unwrap_or_default().to_string(),
-        version: format!("{:?}", parts.version),
+        method: parts.method,
+        uri: parts.uri,
+        version: parts.version,
+        headers: parts.headers,
         remote,
-        authority,
         secure,
         client,
-        headers,
         body: Mutex::new(Some(body)),
         taken: Default::default(),
         limit: std::sync::atomic::AtomicUsize::new(limits.body),
@@ -954,13 +937,69 @@ pub extern "C" fn tondo_rt_http_request_open(object: *mut NativeObject) -> u8 {
     native::get::<Request>(object).is_some_and(|r| r.open) as u8
 }
 
-/// `method\tpath\tquery\tversion\tremote`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_head(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_request_method(object: *mut NativeObject) -> *mut Str {
+    str_new(request(object).method.as_str().as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_path(object: *mut NativeObject) -> *mut Str {
+    str_new(request(object).uri.path().as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_query(object: *mut NativeObject) -> *mut Str {
+    str_new(request(object).uri.query().unwrap_or_default().as_bytes())
+}
+
+/// `HTTP/1.1`, as `Response.version` says it too.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_version(object: *mut NativeObject) -> *mut Str {
+    let version = request(object).version;
+    match version {
+        hyper::Version::HTTP_09 => str_new(b"HTTP/0.9"),
+        hyper::Version::HTTP_10 => str_new(b"HTTP/1.0"),
+        hyper::Version::HTTP_11 => str_new(b"HTTP/1.1"),
+        hyper::Version::HTTP_2 => str_new(b"HTTP/2.0"),
+        hyper::Version::HTTP_3 => str_new(b"HTTP/3.0"),
+        other => str_new(format!("{other:?}").as_bytes()),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_remote(object: *mut NativeObject) -> *mut Str {
+    str_new(request(object).remote.as_bytes())
+}
+
+/// The host the request was for: `:authority`, or `Host`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_authority(object: *mut NativeObject) -> *mut Str {
     let r = request(object);
-    let secure = r.secure as u8;
-    let head = format!("{}\t{}\t{}\t{}\t{}\t{}\t{secure}", r.method, r.path, r.query, r.version, r.remote, r.authority);
-    str_new(head.as_bytes())
+    match r.uri.authority() {
+        Some(authority) => str_new(authority.as_str().as_bytes()),
+        None => str_new(
+            String::from_utf8_lossy(r.headers.get(hyper::header::HOST).map_or(&[][..], |h| h.as_bytes())).as_bytes(),
+        ),
+    }
+}
+
+/// Whether it came over TLS.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_secure(object: *mut NativeObject) -> u8 {
+    request(object).secure as u8
+}
+
+/// Every value of the header `name`, lowercase, in order.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_header(object: *mut NativeObject, name: *mut Str) -> *mut ArrayHeader {
+    let name = unsafe { crate::str_text(name) };
+    let values: Vec<String> = request(object)
+        .headers
+        .get_all(name)
+        .iter()
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .collect();
+    string_array(&values)
 }
 
 /// The DER of the certificate the client showed, empty without one.
@@ -971,7 +1010,12 @@ pub extern "C" fn tondo_rt_http_request_certificate(object: *mut NativeObject) -
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_headers(object: *mut NativeObject) -> *mut ArrayHeader {
-    string_array(&request(object).headers)
+    let headers = &request(object).headers;
+    let pairs: Vec<String> = headers
+        .iter()
+        .flat_map(|(name, value)| [name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()])
+        .collect();
+    string_array(&pairs)
 }
 
 /// A request's body as the host of a stream.
@@ -1015,7 +1059,7 @@ pub extern "C" fn tondo_rt_http_request_answering(object: *mut NativeObject) {
     if let Some(flight) = &request.flight {
         flight.answered_by(super::tasks::current_id());
     }
-    super::debugger::serving(&request.method, &request.path);
+    super::debugger::serving(request.method.as_str(), request.uri.path());
     answering.cancel_if_gone();
 }
 
@@ -1354,7 +1398,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
     if status == 206 {
         extra.extend(["content-range".into(), format!("bytes {first}-{last}/{length}")]);
     }
-    if r.method == "HEAD" || size == 0 {
+    if r.method == hyper::Method::HEAD || size == 0 {
         r.send(response(status, &extra, full(Bytes::new())));
         return;
     }

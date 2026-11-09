@@ -47,17 +47,13 @@ pub fn Request.cookie(self, name: String): String? {
 /// The cookies the client sent, by name, their values decoded.
 pub fn Request.cookies(self): Map[String, String] {
     var found: Map[String, String] = [:]
-    var index = 0
-    for index + 1 < self.headerList.length() {
-        if self.headerList[index] == "cookie" {
-            for pair in self.headerList[index + 1].split(";") {
-                match nameAndValue(pair) {
-                    some((name, value)) => found[name] = value
-                    none => {}
-                }
+    for sent in self.headerValues("cookie") {
+        for pair in sent.split(";") {
+            match nameAndValue(pair) {
+                some((name, value)) => found[name] = value
+                none => {}
             }
         }
-        index += 2
     }
     found
 }
