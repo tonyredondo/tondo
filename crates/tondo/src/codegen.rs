@@ -910,6 +910,10 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
     // Integers of 128 bits pass as C passes them, in two registers.
     flags.set("enable_llvm_abi_extensions", "true").map_err(|e| e.to_string())?;
+    // Cranelift checks the IR of every function it compiles, more than
+    // once: the debug build of tondo, which the tests run, keeps checking,
+    // and the one that ships compiles without it (docs/speed.md, B1).
+    flags.set("enable_verifier", if cfg!(debug_assertions) { "true" } else { "false" }).map_err(|e| e.to_string())?;
     // Code for the machine, with what its processor has, or for a target.
     let builder = match target {
         Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
