@@ -813,3 +813,22 @@ pub(super) unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Few;
+
+    /// A `select` locks each of its objects once: two cases on one channel
+    /// lock it once, and every other channel still is locked.
+    #[test]
+    fn a_select_locks_each_object_once() {
+        for (items, unique) in
+            [(vec![3, 1, 3, 2, 1, 3], vec![1, 2, 3]), ((0..12).chain(0..12).collect(), (0..12).collect())]
+        {
+            let mut few = Few::new(0, items.into_iter());
+            few.sort_unstable();
+            let kept = few.partition_dedup_len();
+            assert_eq!(&few[..kept], unique.as_slice());
+        }
+    }
+}
