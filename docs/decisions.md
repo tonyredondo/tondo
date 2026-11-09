@@ -5584,3 +5584,22 @@ and its test of warnings checks every body of it with `TONDO_STD_WARNINGS`, as a
 analysis does to know every name; `TONDO_CHECK_STD` checks them all for any build, and the cases
 give the same with it as without. Types are interned in another order, so an executable's bytes
 differ from before; what it does does not.
+
+## HTTP, gRPC and TLS run on the workers' poller
+
+Plain TCP stopped hopping from tokio's reactor thread to a worker when the workers began to poll
+the sockets themselves (`poll.rs`); HTTP, gRPC and TLS still run on tokio's threads, and every
+request crosses to a Tondo task and back: with 64 clients at once `http/tls` takes 136 ms where Go
+takes 83 (docs/speed.md, H2). They move to the workers' poller. hyper's connection futures run
+inside Tondo tasks, polled in place with a waker that notifies the task, as `std.net`'s streams
+wait already; their IO is the poller's sockets, hyper's timer the runtime's timers, and the
+futures hyper's HTTP/2 runs in the background are Tondo tasks the server owns. TLS is rustls's
+connection without tokio, on the same socket, which also replaces the two tasks that pipe
+`std.net`'s TLS today. No callback crosses into Tondo: a task for each HTTP/1.1 connection asks
+the native for its next request and calls the handler itself, and HTTP/2 gets a task for each
+stream, so `serve`'s single queue goes; the public API does not change. A recorded run records
+these sockets through the wrappers plain TCP already goes through. The work goes in eleven steps:
+the HTTP/1.1 server, HTTP/2, TLS, WebSocket upgrades, files and uploads, compression, the draining
+stop, gRPC's server with gRPC-Web and Connect, the client on hyper's connections instead of
+reqwest, gRPC's client, and tokio itself once nothing uses it. Each is measured against Go and
+leaves no old path behind.
