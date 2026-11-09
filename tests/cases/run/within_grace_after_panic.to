@@ -1,0 +1,35 @@
+// When a task's panic ends the program, the cleanup of a detached task that
+// waits inside a `within` has until its deadline (language 11.11, 11.15):
+// the end of `main`, which cancels the task once more, does not cut its
+// wait, and the program waits for it before it exits.
+import std.console
+import std.time
+
+fn slow(inbox: Receiver[Int]) {
+    defer {
+        _ =
+            within time.seconds(5) {
+                let started = time.now()
+                time.sleep(time.milliseconds(200))
+                console.println("the cleanup slept {started.elapsed() >= time.milliseconds(200)}")
+            }
+    }
+    _ = inbox.receive()
+}
+
+fn boom() {
+    time.sleep(time.milliseconds(20))
+    panic("in a task")
+}
+
+fn main() {
+    let (sender, inbox) = channel[Int]()
+    spawn detached slow(inbox)
+    let failing = spawn boom()
+    failing.wait()
+    sender.send(1)
+}
+
+// expect-panic: P0008
+// expect-stdout: the cleanup slept true
+// expect-stderr: panic[P0008]: explicit-panic: in a task

@@ -111,7 +111,9 @@ pub(crate) fn cancel_by_id(id: u64) {
     }
 }
 
-/// Cancels a running task: marks it and ends the wait it is blocked in.
+/// Cancels a running task: marks it and ends the wait it is blocked in,
+/// unless a `within` its cleanup entered gives that wait until its deadline
+/// (11.15), as when the end of `main` cancels a detached task again.
 pub(super) unsafe fn cancel_task(task: *mut Task) {
     unsafe {
         let t = &mut *task;
@@ -125,7 +127,7 @@ pub(super) unsafe fn cancel_task(task: *mut Task) {
         // Every step of a task is one that this could come before.
         touch(t.name as usize);
         lock_unseen(&t.waiting_lock);
-        let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
+        let woken = !t.waiting.is_null() && t.grace.is_none() && (*t.waiting).claim(CANCELLED);
         unlock(&t.waiting_lock);
         if woken {
             notify(task);
@@ -143,7 +145,7 @@ pub(crate) unsafe fn alarm(task: *mut Task) {
             attend(true);
         }
         lock_unseen(&t.waiting_lock);
-        let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
+        let woken = !t.waiting.is_null() && t.grace.is_none() && (*t.waiting).claim(CANCELLED);
         unlock(&t.waiting_lock);
         if woken {
             notify(task);
