@@ -100,6 +100,12 @@ While working on a feature, `TONDO_RUNTIME_FAST=1` in the environment of
 `cargo` compiles a change to the runtime in about half the time. Leave it
 out for the final check below, which is the build that ships.
 
+The runtime is built once, in `target/tondo-runtime`, and kept there under
+a key of everything that makes it (`crates/tondo/build.rs`): clippy, the
+tests and release take it from there, and only a change to the runtime,
+its dependencies or the toolchains builds it again. CI keeps it between
+runs the same way.
+
 Before every commit, as CI does on Linux, macOS, musl and under emulation:
 
 ```sh
@@ -110,9 +116,19 @@ TONDO_CASES_DEBUG=1 cargo test --workspace --test cases
 TONDO_CASES_REPLAY=1 cargo test --workspace --test cases cases
 ```
 
+`--workspace` in the last two takes what `cargo test --workspace` built;
+`-p tondo` would build `tondo` again, with fewer features.
+
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
 race with little CPU, which is where a failure otherwise shows hours later.
+Leave the tree alone while these checks run: bash reads a script as it
+runs it, and cargo builds what is there.
+
+CI splits each platform's tests between jobs that build by themselves. A
+newer push to a branch ends the run of the one before, which is then
+superseded, not failed. A change to the workflows is tried on a branch of
+its own, with `gh workflow run CI --ref <branch>`.
 
 - The implementation follows the specifications. Changing one is the
   maintainer's decision: propose it, with a recommendation, before
@@ -142,3 +158,25 @@ race with little CPU, which is where a failure otherwise shows hours later.
   A test checks it.
 - Commits have a short title that says what changed and a body that says
   why, with no trailers.
+
+### Waits and wakes in the runtime
+
+A hang that shows only now and then is most often a wake that was lost.
+The runtime holds to three rules:
+
+- A task gives a waker away, then blocks on its `Wait`: nothing may wait
+  in between, as that wait takes the notification meant for the other
+  (`io::wait_for` closes streams after it, on the pool).
+- A waker never polls a future: the code that wakes it may hold a lock
+  the poll takes. It queues it for a worker's turn (`tasks::poll_soon`).
+- What two threads write, as "polling now" and "woken meanwhile", is one
+  atomic changed with read-modify-writes: a flag beside a lock, or a plain
+  read on one side and a plain store on the other, lose a wake under load
+  (`Turning::run` in `server.rs`, `tasks/park.rs`).
+
+To find one, reproduce it under load first: in `bench/tondo`,
+`tondo test --bench --exact bench::unit::bench::http --exact
+bench::unit::bench::net` hung once in 20 runs before the last of these
+fixes. Count with atomics, and have a thread print what is stuck when the
+counts stop moving: a lock or a print on the path hides the race, as a
+log guarded by a mutex hid that one.
