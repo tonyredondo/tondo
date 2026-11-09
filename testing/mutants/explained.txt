@@ -1,6 +1,7 @@
-# Mutants of .github/scripts/mutants.sh that change nothing anyone can see: a line each,
-# the mutant as cargo mutants names it without its place, a tab, the line it changes as it
-# was, a tab, and why.
+# Mutants of .github/scripts/mutants.sh that no test sees: a line each, the mutant as cargo
+# mutants names it without its place, a tab, the line it changes as it was, a tab, and why.
+# All but one change nothing anyone can see; that one breaks a step the model of waking in
+# testing/models shows is needed, in a moment no test brings about.
 replace > with == in Builder::finish	if cap - self.len > self.len.max(16) {	keeps the spare room of a text it built unless that is exactly as large as the text: memory, not the text
 replace > with >= in Builder::extend	if self.len + bytes.len() > self.room() {	grows the text one append early, when what comes just fits: more room, the same text
 replace > with >= in Builder::finish	if cap - self.len > self.len.max(16) {	gives back the spare room also when it is as large as the text: memory, not the text
@@ -39,3 +40,4 @@ replace > with == in steal	let more = theirs.0.len() > 1;	says no tasks are left
 replace > with >= in steal	let more = theirs.0.len() > 1;	says tasks are left when only the one taken was: one more worker wakes and finds nothing, timing only
 replace || with && in enqueue	if looks_next() || SEEKING.load(Ordering::SeqCst) {	wakes a worker though this one looks at the queue next or another already looks for tasks: more wakes, timing only
 replace || with && in wake_idle	if IDLE.load(Ordering::SeqCst) == 0 || SEEKING.load(Ordering::SeqCst) {	takes the queue's lock to wake a worker though none sleeps or one already looks, and the check under the lock finds so: timing only
+delete ! in work_until	if !queue.runnable.is_empty() {	leaves what a retiring worker had in the shared queue without waking a worker for it, a step testing/models/tests/wake.to shows is needed (wakeFindsATaskNobodyRuns), in a moment no test brings about: a worker retires while another sleeps trusting it to look

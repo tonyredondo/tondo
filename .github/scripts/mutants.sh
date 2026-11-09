@@ -4,13 +4,14 @@
 # each, applied in turn to a copy of the repository, must make a test fail:
 # the cases, the runtime's own tests, the orders of tests/orders or another
 # test of the toolchain, as those of the tools the scheduler serves. One that
-# passes is a missing test, or a change that changes nothing, which
-# testing/mutants/explained.txt says why: a line each, the mutant as cargo
-# mutants names it without its place, a tab, the line it changes as it was,
-# a tab, and why. The first argument is the slice of them to try, as `3/30`,
-# so that each night tries another within its time; the second, the seconds
-# it may take. It prints each that survived, with its diff, and ends with a
-# summary; it fails only when the unmutated tests fail.
+# passes is a missing test, or a change that changes nothing or that only a
+# model of testing/models shows, which testing/mutants/explained.txt says
+# why: a line each, the mutant as cargo mutants names it without its place,
+# a tab, the line it changes as it was, a tab, and why. The first argument is
+# the slice of them to try, as `3/30`, so that each night tries another
+# within its time; the second, the seconds it may take. It prints each that
+# survived, with its diff, and ends with a summary; it fails only when the
+# unmutated tests fail.
 set -eu
 slice=${1:-1/1}
 budget=${2:-3000}
