@@ -6,7 +6,7 @@
 
 use super::http::{Failure, Source, blocking, runtime, socket, stream_of, strings, text, wait};
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_new};
+use super::{ArrayHeader, Kept, Str, str_new};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
@@ -939,7 +939,26 @@ pub extern "C" fn tondo_rt_http_request_open(object: *mut NativeObject) -> u8 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_method(object: *mut NativeObject) -> *mut Str {
-    str_new(request(object).method.as_str().as_bytes())
+    static METHODS: (Kept<3>, Kept<4>, Kept<3>, Kept<6>, Kept<4>, Kept<5>, Kept<7>) = (
+        Kept::new(b"GET"),
+        Kept::new(b"POST"),
+        Kept::new(b"PUT"),
+        Kept::new(b"DELETE"),
+        Kept::new(b"HEAD"),
+        Kept::new(b"PATCH"),
+        Kept::new(b"OPTIONS"),
+    );
+    let method = &request(object).method;
+    match *method {
+        hyper::Method::GET => METHODS.0.get(),
+        hyper::Method::POST => METHODS.1.get(),
+        hyper::Method::PUT => METHODS.2.get(),
+        hyper::Method::DELETE => METHODS.3.get(),
+        hyper::Method::HEAD => METHODS.4.get(),
+        hyper::Method::PATCH => METHODS.5.get(),
+        hyper::Method::OPTIONS => METHODS.6.get(),
+        _ => str_new(method.as_str().as_bytes()),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -955,13 +974,24 @@ pub extern "C" fn tondo_rt_http_request_query(object: *mut NativeObject) -> *mut
 /// `HTTP/1.1`, as `Response.version` says it too.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_version(object: *mut NativeObject) -> *mut Str {
-    let version = request(object).version;
+    version_text(request(object).version)
+}
+
+/// `HTTP/1.1`, kept for good as each version is.
+pub(crate) fn version_text(version: hyper::Version) -> *mut Str {
+    static VERSIONS: [Kept<8>; 5] = [
+        Kept::new(b"HTTP/0.9"),
+        Kept::new(b"HTTP/1.0"),
+        Kept::new(b"HTTP/1.1"),
+        Kept::new(b"HTTP/2.0"),
+        Kept::new(b"HTTP/3.0"),
+    ];
     match version {
-        hyper::Version::HTTP_09 => str_new(b"HTTP/0.9"),
-        hyper::Version::HTTP_10 => str_new(b"HTTP/1.0"),
-        hyper::Version::HTTP_11 => str_new(b"HTTP/1.1"),
-        hyper::Version::HTTP_2 => str_new(b"HTTP/2.0"),
-        hyper::Version::HTTP_3 => str_new(b"HTTP/3.0"),
+        hyper::Version::HTTP_09 => VERSIONS[0].get(),
+        hyper::Version::HTTP_10 => VERSIONS[1].get(),
+        hyper::Version::HTTP_11 => VERSIONS[2].get(),
+        hyper::Version::HTTP_2 => VERSIONS[3].get(),
+        hyper::Version::HTTP_3 => VERSIONS[4].get(),
         other => str_new(format!("{other:?}").as_bytes()),
     }
 }

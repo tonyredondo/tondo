@@ -27,8 +27,33 @@ pub(crate) fn str_layout(len: usize) -> Layout {
     Layout::from_size_align(HEADER + len, std::mem::align_of::<Str>()).expect("string too large")
 }
 
-/// Allocates a string with refcount 1 holding a copy of `bytes`.
+/// A string the runtime keeps for good, as the compiler keeps a literal:
+/// retaining and releasing it do nothing, and nothing changes it in place.
+#[repr(C)]
+pub(crate) struct Kept<const N: usize> {
+    header: Str,
+    bytes: [u8; N],
+}
+
+impl<const N: usize> Kept<N> {
+    pub(crate) const fn new(bytes: &[u8; N]) -> Kept<N> {
+        Kept { header: Str { rc: AtomicUsize::new(IMMORTAL), len: N, cap: N }, bytes: *bytes }
+    }
+
+    pub(crate) fn get(&'static self) -> *mut Str {
+        &self.header as *const Str as *mut Str
+    }
+}
+
+/// Every empty string the runtime makes.
+static EMPTY: Kept<0> = Kept::new(b"");
+
+/// Allocates a string with refcount 1 holding a copy of `bytes`; the empty
+/// string is the one kept for good.
 pub fn str_new(bytes: &[u8]) -> *mut Str {
+    if bytes.is_empty() {
+        return EMPTY.get();
+    }
     let layout = str_layout(bytes.len());
     unsafe {
         let ptr = alloc(layout) as *mut Str;
