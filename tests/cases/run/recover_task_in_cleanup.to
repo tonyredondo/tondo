@@ -1,19 +1,21 @@
 // A task's panic that reaches the task waiting for it while that task runs
 // the cleanups of another panic is reported as suppressed, as a panic in a
-// cleanup is: the cleanup goes on, and `recover` gives the first panic.
+// cleanup is: the cleanup goes on, and `recover` gives the first. The task
+// panics when the cleanup lets it, which a time would not ensure.
 import std.console
-import std.time
 
-fn failing() {
-    time.sleep(time.milliseconds(10))
+fn failing(go: Receiver[Bool]) {
+    let _ = go.receive()
     panic("the task's own")
 }
 
 fn main() {
+    let (go, waits) = channel[Bool](1)
     let caught = recover {
-        let job = spawn failing()
+        let job = spawn failing(waits)
         {
             defer {
+                go.send(true)
                 job.wait()
                 console.println("the cleanup went on")
             }
@@ -31,4 +33,4 @@ fn main() {
 // expect-stderr:  --> recover_task_in_cleanup.to:9:5
 // expect-stderr:   failing  recover_task_in_cleanup.to:9:5
 // expect-stderr: in a task spawned at:
-// expect-stderr:   main  recover_task_in_cleanup.to:14:19
+// expect-stderr:   main  recover_task_in_cleanup.to:15:19
