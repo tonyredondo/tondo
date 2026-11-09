@@ -4323,7 +4323,11 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let events = tondo(&["dump", "read", dump.to_str().unwrap(), "events", "--json"]);
     let what: Vec<&str> = events["events"].as_array().unwrap().iter().map(|e| e["what"].as_str().unwrap()).collect();
     let came = what.iter().position(|w| *w == "request").unwrap_or_else(|| panic!("{events}"));
-    assert!(what[came..].contains(&"spawned"), "{events}");
+    // The task of its connection, which takes it, started before it came.
+    let taker = &events["events"][came]["task"];
+    let started =
+        events["events"].as_array().unwrap()[..came].iter().any(|e| e["what"] == "spawned" && e["other"] == *taker);
+    assert!(started, "{events}");
     assert!(events["events"][came]["text"].as_str().unwrap().contains("GET /slow/77"), "{events}");
     // What breaks the copy that shows the values says nothing here.
     let said = String::from_utf8_lossy(&output.stderr);
