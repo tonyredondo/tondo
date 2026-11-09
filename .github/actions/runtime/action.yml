@@ -23,14 +23,20 @@ runs:
         restore-keys: runtime-${{ inputs.label }}-
     - if: inputs.save != 'true'
       shell: bash
-      run: mkdir -p target/tondo-runtime && ls target/tondo-runtime/outputs 2>/dev/null | sha256sum | cut -c1-16 > target/tondo-runtime/restored
+      run: |
+        mkdir -p target/tondo-runtime
+        { ls target/tondo-runtime/outputs 2>/dev/null || true; } | sha256sum | cut -c1-16 > target/tondo-runtime/restored
     # Kept again only when the build made another runtime.
     - if: inputs.save == 'true'
       id: kept
       shell: bash
+      # A directory that is not there lists nothing, under the -o pipefail
+      # that Actions gives bash.
       run: |
-        names=$(ls target/tondo-runtime/outputs 2>/dev/null | sha256sum | cut -c1-16)
-        if [ -n "$(ls target/tondo-runtime/outputs 2>/dev/null)" ] && [ "$names" != "$(cat target/tondo-runtime/restored 2>/dev/null)" ]; then
+        kept=$(ls target/tondo-runtime/outputs 2>/dev/null || true)
+        names=$(printf '%s\n' "$kept" | sha256sum | cut -c1-16)
+        restored=$(cat target/tondo-runtime/restored 2>/dev/null || true)
+        if [ -n "$kept" ] && [ "$names" != "$restored" ]; then
           echo "names=$names" >> "$GITHUB_OUTPUT"
         fi
     - if: inputs.save == 'true' && steps.kept.outputs.names != ''
