@@ -44,16 +44,16 @@ services() {
   TONDO_TEST_POSTGRES=postgres://postgres:secret@localhost:15432/tondo \
   TONDO_TEST_MYSQL=mysql://root:secret@localhost:13306/tondo \
   TONDO_TEST_ACME=https://localhost:14000/dir TONDO_TEST_ACME_TRUST=$S/tmp/pebble.pem \
-    cargo test -p tondo --test sql --test acme
+    cargo test --workspace --test sql --test acme
   local status=$?
   docker rm -f tondo-ci-pg tondo-ci-mysql tondo-ci-pebble > /dev/null 2>&1
   return $status
 }
 
 nocc() {
-  TONDO_CC=cc cargo test -p tondo --test cases cases || return 1
-  TONDO_CASES_STATIC=1 cargo test -p tondo --test cases cases || return 1
-  cases=$(cargo test -p tondo --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*')
+  TONDO_CC=cc cargo test --workspace --test cases cases || return 1
+  TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases || return 1
+  cases=$(cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*')
   run="docker run --rm -u $me -e HOME=/tmp -v $PWD:$PWD -w $PWD"
   $run debian:stable-slim sh -c "! command -v cc && $cases cases projects" || return 1
   $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
@@ -69,7 +69,7 @@ musl() {
      # What the tests left, which the last run gave this machine's user: as
      # root's again, a directory of dumps is private to who runs them.
      (chown -R 0:0 /alpine-target/tmp 2>/dev/null; true) &&
-     cargo test --workspace && TONDO_CASES_STATIC=1 cargo test -p tondo --test cases cases;
+     cargo test --workspace && TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases;
      status=\$?; chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git; exit \$status"
 }
 
@@ -147,7 +147,7 @@ stress() {
         grep -E " FAILED$|panicked at" "$out/stress-now.txt" | cut -c1-200 | head -8
       fi
     done < target/stress
-    TONDO_CASES_SCHEDULE=$round cargo test -q -p tondo --test cases cases > "$out/stress-now.txt" 2>&1
+    TONDO_CASES_SCHEDULE=$round cargo test -q --workspace --test cases cases > "$out/stress-now.txt" 2>&1
     code=$?
     echo "round $round, cases in the order of seed $round: $code"
     if [ $code != 0 ]; then

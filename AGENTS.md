@@ -106,8 +106,8 @@ Before every commit, as CI does on Linux, macOS, musl and under emulation:
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-TONDO_CASES_DEBUG=1 cargo test -p tondo --test cases
-TONDO_CASES_REPLAY=1 cargo test -p tondo --test cases cases
+TONDO_CASES_DEBUG=1 cargo test --workspace --test cases
+TONDO_CASES_REPLAY=1 cargo test --workspace --test cases cases
 ```
 
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
