@@ -1,7 +1,7 @@
 //! The contract between compiled code and the runtime: every function of
-//! the runtime the compiler calls, by the signatures `codegen.rs` declares
-//! and those of `NATIVES`, is one the runtime defines, with as many
-//! arguments, of the same classes, and the same result. A function moved,
+//! the runtime the compiler calls, by the signatures `codegen.rs` and its
+//! modules declare and those of `NATIVES`, is one the runtime defines, with
+//! as many arguments, of the same classes, and the same result. A function moved,
 //! renamed or changed on one side only would otherwise be found by a crash
 //! (docs/refactor.md, phase 0.3).
 
@@ -134,11 +134,15 @@ fn defined() -> BTreeMap<String, Signature> {
     found
 }
 
-/// The signatures `codegen.rs` declares, as `("tondo_rt_x", &[I64], &[I8])`.
+/// The signatures `codegen.rs` and its modules declare, as
+/// `("tondo_rt_x", &[I64], &[I8])`.
 fn declared() -> BTreeMap<String, Signature> {
-    let text = include_str!("../src/codegen.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![src.join("codegen.rs")];
+    sources(&src.join("codegen"), &mut files);
+    let text: String = files.iter().map(|path| std::fs::read_to_string(path).unwrap()).collect();
     let mut found = BTreeMap::new();
-    let mut rest = text;
+    let mut rest = text.as_str();
     while let Some(at) = rest.find("(\"tondo_rt_") {
         rest = &rest[at + 2..];
         let name_end = rest.find('"').unwrap();
