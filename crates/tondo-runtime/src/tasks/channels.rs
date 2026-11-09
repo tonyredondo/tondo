@@ -6,6 +6,7 @@ use super::*;
 
 /// A task waiting on a channel: the value it sends, or where the value it
 /// receives goes, and how the wait ended.
+#[derive(Clone, Copy)]
 pub(super) struct Waiter {
     pub(super) wait: *const Wait,
     pub(super) index: usize,
@@ -597,6 +598,64 @@ pub(super) unsafe fn select_within(cases: &mut [Case; 2]) -> i64 {
     }
 }
 
+/// What a `select` keeps for each of its cases, as the objects to lock and
+/// the order to try them in: on the stack for the few cases a `select`
+/// has, on the heap past `FEW`, so that it allocates nothing to wait.
+struct Few<T: Copy> {
+    inline: [T; FEW],
+    len: usize,
+    heap: Vec<T>,
+}
+
+const FEW: usize = 8;
+
+impl<T: Copy> Few<T> {
+    fn new(filler: T, items: impl Iterator<Item = T>) -> Few<T> {
+        let mut few = Few { inline: [filler; FEW], len: 0, heap: Vec::new() };
+        for item in items {
+            if few.heap.is_empty() && few.len < FEW {
+                few.inline[few.len] = item;
+            } else {
+                if few.heap.is_empty() {
+                    few.heap.extend_from_slice(&few.inline[..few.len]);
+                }
+                few.heap.push(item);
+            }
+            few.len += 1;
+        }
+        few
+    }
+}
+
+impl<T: Copy + PartialEq> Few<T> {
+    /// Moves the first of each run of equal items to the front: how many
+    /// there are.
+    fn partition_dedup_len(&mut self) -> usize {
+        let items = &mut **self;
+        let mut kept = 0;
+        for at in 0..items.len() {
+            if kept == 0 || items[at] != items[kept - 1] {
+                items[kept] = items[at];
+                kept += 1;
+            }
+        }
+        kept
+    }
+}
+
+impl<T: Copy> std::ops::Deref for Few<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        if self.heap.is_empty() { &self.inline[..self.len] } else { &self.heap }
+    }
+}
+
+impl<T: Copy> std::ops::DerefMut for Few<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        if self.heap.is_empty() { &mut self.inline[..self.len] } else { &mut self.heap }
+    }
+}
+
 /// `select` over `count` operations at `cases`: completes the first that
 /// is ready, chosen at random among those ready, and returns its index;
 /// with `blocking` 0 (an `else` arm) returns -1 when none is, and -2 when
@@ -614,41 +673,47 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
     unsafe {
         // Every object is locked, once and in address order, from checking
         // readiness until the task is registered everywhere.
-        let mut locks: Vec<*const AtomicBool> = cases.iter().filter_map(|c| c.lock()).collect();
-        locks.sort();
-        locks.dedup();
+        let mut locks = Few::new(std::ptr::null(), cases.iter().filter_map(|c| c.lock()));
+        locks.sort_unstable();
+        let unique = locks.partition_dedup_len();
+        let locks = &locks[..unique];
         let lock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| lock(&**l));
         let unlock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| unlock(&**l));
-        lock_all(&locks);
-        let mut order: Vec<usize> = (0..cases.len()).collect();
+        lock_all(locks);
+        let mut order = Few::new(0, 0..cases.len());
         for i in (1..order.len()).rev() {
             order.swap(i, random(i + 1));
         }
-        for &index in &order {
+        for &index in order.iter() {
             let case = &mut cases[index];
             // A panic that a `recover` stops ends the `select` as a
             // cancellation would, and the code unwinds (language 15.9).
             if case.kind == SEND && (*(*(case.handle as *mut SenderObject)).channel).closed {
-                unlock_all(&locks);
+                unlock_all(locks);
                 crate::raise(12, CLOSED_MESSAGE, location);
                 return -2;
             }
             if let Some(woken) = try_case(case) {
-                unlock_all(&locks);
+                unlock_all(locks);
                 woken.into_iter().for_each(notify);
                 return index as i64;
             }
         }
         if !blocking {
-            unlock_all(&locks);
+            unlock_all(locks);
             return -1;
         }
         let wait = Wait::new();
-        let mut waiters: Vec<Waiter> = cases
-            .iter()
-            .enumerate()
-            .map(|(index, case)| Waiter { wait: Arc::as_ptr(&wait), index, value: case.value, state: 0 })
-            .collect();
+        let filler = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: std::ptr::null_mut(), state: 0 };
+        let mut waiters = Few::new(
+            filler,
+            cases.iter().enumerate().map(|(index, case)| Waiter {
+                wait: Arc::as_ptr(&wait),
+                index,
+                value: case.value,
+                state: 0,
+            }),
+        );
         for (index, case) in cases.iter().enumerate() {
             let waiter: *mut Waiter = &mut waiters[index];
             match case.kind {
@@ -659,10 +724,10 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
                 _ => add_timer(Duration::from_nanos(case.nanos as u64), wait.clone(), index),
             }
         }
-        unlock_all(&locks);
+        unlock_all(locks);
         let won = wait.block_on_task();
         // Leave every queue the wait is still in.
-        lock_all(&locks);
+        lock_all(locks);
         for (index, case) in cases.iter().enumerate() {
             let waiter: *mut Waiter = &mut waiters[index];
             match case.kind {
@@ -680,7 +745,7 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
         }
         let sleeps = cases.iter().enumerate().filter(|&(i, c)| c.kind == SLEEP && i != won).count();
         if won == CANCELLED {
-            unlock_all(&locks);
+            unlock_all(locks);
             timers_ended(sleeps);
             return -2;
         }
@@ -689,7 +754,7 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
         match case.kind {
             RECEIVE => case.found = (waiters[won].state == MOVED) as u8,
             SEND if waiters[won].state == CLOSED => {
-                unlock_all(&locks);
+                unlock_all(locks);
                 timers_ended(sleeps);
                 crate::raise(12, CLOSED_MESSAGE, location);
                 return -2;
@@ -704,7 +769,7 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
             }
             _ => {}
         }
-        unlock_all(&locks);
+        unlock_all(locks);
         if sleeps > 0 {
             timers_ended(sleeps);
         }
