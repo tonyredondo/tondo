@@ -1,0 +1,29 @@
+// When `main` itself panics, the program waits for the other tasks to run
+// their cleanups before it exits (language 11.11), also when its thread is
+// the only worker, as on one core: the cleanup of a detached task that
+// waits inside a `within` sleeps its time.
+import std.console
+import std.time
+
+fn slow(inbox: Receiver[Int]) {
+    defer {
+        _ =
+            within time.seconds(5) {
+                let started = time.now()
+                time.sleep(time.milliseconds(200))
+                console.println("the cleanup slept {started.elapsed() >= time.milliseconds(200)}")
+            }
+    }
+    _ = inbox.receive()
+}
+
+fn main() {
+    let (_sender, inbox) = channel[Int]()
+    spawn detached slow(inbox)
+    time.sleep(time.milliseconds(20))
+    panic("in main")
+}
+
+// expect-panic: P0008
+// expect-stdout: the cleanup slept true
+// expect-stderr: panic[P0008]: explicit-panic: in main

@@ -667,6 +667,11 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
     );
     schedule(task);
     let status = work(true);
+    // After a panic, the other tasks' cleanups, which no other worker runs
+    // when this is the only one: exploring orders, recording or on one core.
+    if ENDING.load(Ordering::SeqCst) != usize::MAX && queue().workers == 1 {
+        work_until(false, Some(&|| live_tasks() == 0));
+    }
     // A thread of C that waits for the program finishes its call, as the
     // end of the program waits for it.
     super::replay::waits();
