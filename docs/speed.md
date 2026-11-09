@@ -158,6 +158,29 @@ Questions to answer:
 - Do Go's four goroutines run in parallel at all? Run Go's side with `GOMAXPROCS=1` and with the
   default to see.
 
+**What it found (2026-11-09, at c5cfe870).** The figures of 31bd462 measured `tondo test`'s watch of
+lost updates, which kept where each lock was taken: `--bench` measures without it now
+(docs/decisions.md). Without it, by median time and allocations per operation, against Go 1.27 on
+the same machine:
+
+| Row | Tondo | Go | Allocations, Tondo and Go |
+| --- | ---: | ---: | ---: |
+| `runtime/mutex 4x1000` | 76 µs | 21.5 µs, 15.3 µs with `GOMAXPROCS=1` | 29, 6 |
+| `runtime/select 1000` | 149 µs | 147 µs | 4,355, 4 |
+| `tasks/channel 10000` | 285 µs | 276 µs | 316, 2 |
+| `runtime/join 1` | 303 ns | 329 ns | 5, 2 |
+
+- The contended lock allocates little now: of its 29 allocations, 5 are `Wait`s and the rest start
+  the four tasks. Its time is in `lock` and `unlock` themselves, 55%, and hardly any in parking
+  (`work_until`, 3%). Go runs it faster on one processor: its four goroutines run one after
+  another, while Tondo's four tasks take the lock from four workers at once.
+- A channel's allocations are its `Wait`s, 96%: one each time a side blocks. C removes them.
+- `select` allocates on every call, before it waits: 94% of its allocations are two `Vec`s, of the
+  cases' locks and of their order, and two more when it blocks, the waiters and the `Wait`.
+- `join` makes the `Wait`, the closure, the task and two in `join` itself, where Go makes 2.
+- Reading the running task through `worker`, which never inlines (phase 1), takes 9% of the time
+  of the lock's row and 11% of the channel's.
+
 ### A5. The baseline
 
 Save the tables of A1, A3 and the runtime as `bench/baselines/pre-speed.md`, the same way as
@@ -710,7 +733,7 @@ maintainer's decision.
 
 | Phase | State |
 | --- | --- |
-| A | started 2026-11-09. A1: `bench/compile.to`, with `--old` and `--guard`, over the programs of `bench/compile` and the projects of `bench/compile/generate.to`, and `TONDO_COMPILE_TIMES`. A2: `--guard` in the Nightly, which found at once two parts that grew as the square of a program's types: `mono` looked at all of a trait's implementations for each type, 3.4 s of checking 192,000 lines and 0.39 s now, and the table of a build's trace looked for each name among all the others, 67 s of building them and 3.4 s now; both builds keep every case's executable byte for byte. A3, A4 and A5 to do |
+| A | done 2026-11-09, but for A2's first night. A1: `bench/compile.to`, with `--old` and `--guard`, over the programs of `bench/compile` and the projects of `bench/compile/generate.to`, and `TONDO_COMPILE_TIMES`. A2: `--guard` in the Nightly, which found at once two parts that grew as the square of a program's types: `mono` looked at all of a trait's implementations for each type, 3.4 s of checking 192,000 lines and 0.39 s now, and the table of a build's trace looked for each name among all the others, 67 s of building them and 3.4 s now; both builds keep every case's executable byte for byte. A3: `http/` and `net/` against Go, in bench/tondo/src/http_test.to and bench/go/http_test.go. A4: what it found is under A4; first that `--bench` measured the watch of lost updates, which the maintainer agreed to leave out. A5: bench/baselines/pre-speed.md, and the `tondo` of c5cfe870 in `~/.cache/tondo-scratch/pre-speed/` |
 | B | not started |
 | C | not started |
 | H1 | not started |
