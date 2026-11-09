@@ -97,6 +97,22 @@ jobs:
           echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $RUNNER_TEMP/tla2tools.jar" | sha256sum -c
           .github/scripts/models.sh "$RUNNER_TEMP/tla2tools.jar" target/release/tondo "$GITHUB_RUN_NUMBER"
 
+  # What the compiler costs against a program's size (docs/speed.md, A2):
+  # checking or building a generated project of 8 times the lines may cost
+  # at most 10 times as much, which a pass that grows faster than the
+  # program goes past, as two did.
+  growth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p tondo
+      - run: target/release/tondo run bench/compile.to -- --guard --runs 3
+        env:
+          TONDO: target/release/tondo
+
   # The parsers of the standard library, searched for inputs that fail
   # (docs/refactor.md, 0.6). What fails stays in testing/fuzz/fuzz, to
   # commit, and the report prints it.
