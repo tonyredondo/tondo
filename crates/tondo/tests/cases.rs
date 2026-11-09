@@ -341,7 +341,9 @@ fn projects() {
 fn run_all(mut paths: Vec<PathBuf>, name: &str) {
     paths.sort();
     assert!(!paths.is_empty(), "no {name} found");
-    if let Ok(shard) = std::env::var("TONDO_CASES_SHARD") {
+    // Empty, as a workflow gives a value its job does not have, it shares
+    // nothing out.
+    if let Some(shard) = std::env::var("TONDO_CASES_SHARD").ok().filter(|shard| !shard.is_empty()) {
         let parsed = shard.split_once('/').and_then(|(k, n)| Some((k.parse().ok()?, n.parse().ok()?)));
         let Some((k, n)) = parsed.filter(|&(k, n)| (1..=n).contains(&k)) else {
             panic!("TONDO_CASES_SHARD is k/n, with k from 1 to n, not {shard}")
