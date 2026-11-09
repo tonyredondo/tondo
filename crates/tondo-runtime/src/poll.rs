@@ -232,6 +232,26 @@ impl<S: mio::event::Source> Registered<S> {
         }
     }
 
+    /// Runs a non-blocking operation for a future: when it would block, the
+    /// task's waker waits for the socket's next event of that direction.
+    pub(crate) fn poll_attempt<R>(
+        &self,
+        context: &mut Context<'_>,
+        direction: Direction,
+        mut operation: impl FnMut(&S) -> std::io::Result<R>,
+    ) -> Polled<std::io::Result<R>> {
+        loop {
+            match self.attempt(direction, &mut operation) {
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if Pin::new(&mut self.ready(direction)).poll(context).is_pending() {
+                        return Polled::Pending;
+                    }
+                }
+                done => return Polled::Ready(done),
+            }
+        }
+    }
+
     /// Becomes ready when the socket may be read or written again.
     pub(crate) fn ready(&self, direction: Direction) -> Ready {
         Ready { source: self.source.clone(), direction }

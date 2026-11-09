@@ -300,6 +300,7 @@ pub(super) fn poll(
     }
     worker(|w| w.looks_next.set(alone));
     events.wake();
+    turn_host();
     worker(|w| w.looks_next.set(false));
     self::queue()
 }

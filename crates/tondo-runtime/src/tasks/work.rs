@@ -89,6 +89,7 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     // This worker looks for tasks for `SEEKING`.
     let mut seeker = starts;
     loop {
+        turn_host();
         // The task made runnable by the one that ran here, but now and then
         // the queue first, so that two tasks that wake each other do not
         // keep the others waiting.
@@ -215,6 +216,13 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                 if queue.idle + 1 >= queue.workers && crate::stdout_waits() {
                     drop(queue);
                     flush_stdout();
+                    queue = self::queue();
+                    continue;
+                }
+                // What the host has ready to poll comes first.
+                if HOST_READY_COUNT.load(Ordering::SeqCst) > 0 {
+                    drop(queue);
+                    turn_host();
                     queue = self::queue();
                     continue;
                 }
@@ -400,6 +408,40 @@ pub(super) fn run(task: *mut Task) {
             (*task).state.store(RUNNING, Ordering::Release);
             schedule(task);
         }
+    }
+}
+
+/// A future of the host that the workers poll at their turns, where the
+/// code that woke it holds none of its locks (docs/speed.md, H2): a
+/// connection of the HTTP server.
+pub(crate) trait Turned: Send + Sync {
+    fn turn(self: Arc<Self>);
+}
+
+static HOST_READY: Mutex<Vec<Arc<dyn Turned>>> = Mutex::new(Vec::new());
+static HOST_READY_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Polls `future` at a worker's turn: on a worker, its next, once the task
+/// it runs waits or ends, or after the events of the network it woke for,
+/// with no other worker woken; elsewhere, one woken for it. A task that
+/// keeps its worker without waiting keeps what it woke waiting too.
+pub(crate) fn poll_soon(future: Arc<dyn Turned>) {
+    HOST_READY.lock().unwrap_or_else(|e| e.into_inner()).push(future);
+    HOST_READY_COUNT.fetch_add(1, Ordering::SeqCst);
+    if own_next().is_none() {
+        wake_one(queue());
+    }
+}
+
+/// Polls what the host has ready.
+pub(super) fn turn_host() {
+    if HOST_READY_COUNT.load(Ordering::SeqCst) == 0 {
+        return;
+    }
+    let ready = std::mem::take(&mut *HOST_READY.lock().unwrap_or_else(|e| e.into_inner()));
+    HOST_READY_COUNT.fetch_sub(ready.len(), Ordering::SeqCst);
+    for future in ready {
+        future.turn();
     }
 }
 

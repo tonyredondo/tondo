@@ -788,6 +788,26 @@ fn poll_once<F: std::future::Future>(
     holding(|| future.poll(&mut std::task::Context::from_waker(waker)))
 }
 
+/// Runs the poll of a future of the host at a worker's turn, in the
+/// runtime's context; the streams it let go are closed on a thread of the
+/// pool, as closing may wait.
+pub(crate) fn polled_here(poll: impl FnOnce()) {
+    let ((), let_go) = {
+        let _context = super::http::runtime().enter();
+        holding(poll)
+    };
+    if !let_go.is_empty() {
+        submit(
+            Box::new(move || {
+                for stream in let_go {
+                    unsafe { free(stream as *mut StreamObject) };
+                }
+            }),
+            false,
+        );
+    }
+}
+
 /// Runs a poll, during which the task must not wait: the streams let go
 /// meanwhile are given back, to close once it returned.
 fn holding<T>(poll: impl FnOnce() -> T) -> (T, Vec<usize>) {

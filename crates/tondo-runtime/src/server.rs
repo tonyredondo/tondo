@@ -1,11 +1,16 @@
-//! The server of `std.http` (standard library 14.24): hyper accepts
-//! connections, over TLS with a certificate, and hands each request to Tondo
-//! through a channel; the task that handles it sends the response back.
-//! Files go out with ranges, so a download can resume, and uploads go to
-//! disk as they arrive.
+//! The server of `std.http` (standard library 14.24): its sockets are the
+//! workers' poller's, and hyper runs on each connection, over TLS with a
+//! certificate, polled by the workers at their turns, with no hop to
+//! tokio's threads (docs/speed.md, H2). A task of the program accepts the
+//! connections, and one for each connection takes its requests: it answers
+//! one of HTTP/1 itself, and gives one of HTTP/2 a task of its own. Files go
+//! out with ranges, so a download can resume, and uploads go to disk as they
+//! arrive.
 
 use super::http::{Failure, Source, blocking, runtime, socket, stream_of, strings, text, wait};
 use super::native::{self, NativeObject};
+use super::net::Wire;
+use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Kept, Str, str_new};
 use crate::array_items;
 use crate::byte_array;
@@ -15,10 +20,12 @@ use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot, watch};
+use std::task::{Context, Poll};
+use tokio::sync::{oneshot, watch};
 
 type Body = UnsyncBoxBody<Bytes, std::io::Error>;
 
@@ -29,18 +36,19 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 struct Server {
     failure: Failure,
     address: String,
-    requests: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<Request>>>>,
+    /// Until it stops: then the port is free for another.
+    listening: Mutex<Option<Listening>>,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+    limits: Limits,
     life: Option<Arc<Life>>,
     /// The file of a server on a Unix socket, which goes when it stops.
     socket: Option<String>,
 }
 
-/// Where a server is in its life, how many connections it has open, and
-/// whether it still listens for more.
+/// Where a server is in its life, and how many connections it has open.
 struct Life {
     phase: watch::Sender<Phase>,
     open: watch::Sender<usize>,
-    listening: watch::Sender<bool>,
 }
 
 /// Serving; after `stop`, draining, as its connections end the requests
@@ -76,11 +84,15 @@ impl Drop for Server {
     }
 }
 
-/// What a server accepts connections on: a TCP port or a Unix socket.
+/// What a server accepts connections on, polled by the workers: a TCP
+/// port or a Unix socket.
 enum Listening {
-    Tcp(tokio::net::TcpListener),
-    Unix(tokio::net::UnixListener),
+    Tcp(Registered<mio::net::TcpListener>),
+    Unix(Registered<mio::net::UnixListener>),
 }
+
+/// A connection a server accepted, and who it is from.
+type Accepted = (Box<dyn Connected>, String);
 
 /// A connection a server accepted, of either kind.
 trait Connected: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
@@ -89,14 +101,78 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> C
 
 impl Listening {
     /// The next connection, and who it is from.
-    async fn accept(&self) -> std::io::Result<(Box<dyn Connected>, String)> {
+    fn poll_accept(&self, context: &mut Context<'_>) -> Poll<std::io::Result<Accepted>> {
         match self {
             Listening::Tcp(listener) => {
-                let (stream, remote) = listener.accept().await?;
-                Ok((Box::new(stream), remote.to_string()))
+                listener.poll_attempt(context, Direction::Read, |listener| listener.accept()).map(|accepted| {
+                    let (stream, remote) = accepted?;
+                    on_poller(stream, remote.to_string())
+                })
             }
-            Listening::Unix(listener) => Ok((Box::new(listener.accept().await?.0), String::new())),
+            Listening::Unix(listener) => listener
+                .poll_attempt(context, Direction::Read, |listener| listener.accept())
+                .map(|accepted| on_poller(accepted?.0, String::new())),
         }
+    }
+}
+
+/// A connection accepted, on the workers' poller.
+fn on_poller<S: Wire + Unpin>(stream: S, remote: String) -> std::io::Result<Accepted> {
+    Ok((Box::new(Polled::new(stream)?), remote))
+}
+
+/// A socket of the workers' poller as tokio's traits read and write it,
+/// which hyper and TLS take: an operation that would block leaves the waker
+/// it was polled with to the poller, which wakes it on the socket's event.
+struct Polled<S: Wire> {
+    socket: Registered<S>,
+}
+
+impl<S: Wire> Polled<S> {
+    fn new(io: S) -> std::io::Result<Polled<S>> {
+        Ok(Polled { socket: Registered::new(io)? })
+    }
+}
+
+impl<S: Wire> tokio::io::AsyncRead for Polled<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // As tokio does: the socket writes the bytes it reads, and reads none.
+        let unfilled = unsafe { &mut *(buffer.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
+        let read = self.socket.poll_attempt(context, Direction::Read, |socket| socket.take(unfilled));
+        read.map_ok(|count| {
+            unsafe { buffer.assume_init(count) };
+            buffer.advance(count);
+        })
+    }
+}
+
+impl<S: Wire> tokio::io::AsyncWrite for Polled<S> {
+    fn poll_write(self: Pin<&mut Self>, context: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
+        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give(data))
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        parts: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give_all(parts))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        true
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(self.socket.io().end())
     }
 }
 
@@ -336,6 +412,8 @@ struct Request {
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
     upgrade: Mutex<Option<hyper::upgrade::OnUpgrade>>,
     answering: Arc<Answering>,
+    /// Whether the task that took it answers it itself.
+    in_turn: bool,
 }
 
 impl Request {
@@ -360,6 +438,7 @@ impl Request {
             reply: Mutex::new(None),
             upgrade: Mutex::new(None),
             answering: Arc::default(),
+            in_turn: false,
         }
     }
 
@@ -670,13 +749,30 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
         },
     };
     let address = format!("{}:{port}", text(host));
-    let listener = match wait(async move { tokio::net::TcpListener::bind(address).await }) {
-        Some(Ok(listener)) => listener,
-        Some(Err(error)) => return failed(error.to_string()),
+    let listener = match wait(async move { blocking(move || bind(&address)).await }) {
+        Some(Ok(Ok(listener))) => listener,
+        Some(Ok(Err(error)) | Err(error)) => return failed(error.to_string()),
         None => return failed("the task was cancelled".into()),
     };
     let address = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
-    started(Listening::Tcp(listener), tls, address, None, limits)
+    match Registered::new(listener) {
+        Ok(listener) => started(Listening::Tcp(listener), tls, address, None, limits),
+        Err(error) => failed(error.to_string()),
+    }
+}
+
+/// A listener on the first address of `address` that takes it, as tokio's
+/// binding did.
+fn bind(address: &str) -> std::io::Result<mio::net::TcpListener> {
+    let mut last = None;
+    for at in std::net::ToSocketAddrs::to_socket_addrs(address)? {
+        match mio::net::TcpListener::bind(at) {
+            Ok(listener) => return Ok(listener),
+            Err(error) => last = Some(error),
+        }
+    }
+    Err(last
+        .unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "could not resolve to any address")))
 }
 
 /// The media type a file's name says, or `application/octet-stream`.
@@ -699,11 +795,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen_unix(
     if let Err(problem) = super::net::make_room(&path, false) {
         return failed(problem.to_string());
     }
-    let listener = {
-        let _context = runtime().enter();
-        tokio::net::UnixListener::bind(&path)
-    };
-    match listener {
+    match mio::net::UnixListener::bind(&path).and_then(Registered::new) {
         Ok(listener) => started(Listening::Unix(listener), None, path.clone(), Some(path), limits),
         Err(error) => failed(error.to_string()),
     }
@@ -714,13 +806,16 @@ fn failed(message: String) -> *mut NativeObject {
     native::new(Server {
         failure: Mutex::new(Some(("listen", message))),
         address: String::new(),
-        requests: None,
+        listening: Mutex::new(None),
+        tls: None,
+        limits: Limits::of(0, 0, [0; 3]),
         life: None,
         socket: None,
     })
 }
 
-/// A server accepting on `listening` in a task of its own.
+/// A server listening on `listening`, whose connections a task of the
+/// program accepts (`tondo_rt_http_accept`).
 fn started(
     listening: Listening,
     tls: Option<tokio_rustls::TlsAcceptor>,
@@ -728,102 +823,282 @@ fn started(
     socket: Option<String>,
     limits: Limits,
 ) -> *mut NativeObject {
-    let (sender, receiver) = mpsc::channel(1024);
-    let life = Arc::new(Life {
-        phase: watch::channel(Phase::Serving).0,
-        open: watch::channel(0).0,
-        listening: watch::channel(true).0,
-    });
-    // Watched from now, so that a `stop` before the task first runs is seen.
-    let stopped = life.phase.subscribe();
-    runtime().spawn(accept(listening, tls, sender, life.clone(), stopped, limits));
+    let life = Arc::new(Life { phase: watch::channel(Phase::Serving).0, open: watch::channel(0).0 });
     native::new(Server {
         failure: Mutex::new(None),
         address,
-        requests: Some(Arc::new(tokio::sync::Mutex::new(receiver))),
+        listening: Mutex::new(Some(listening)),
+        tls,
+        limits,
         life: Some(life),
         socket,
     })
 }
 
-async fn accept(
-    listener: Listening,
-    tls: Option<tokio_rustls::TlsAcceptor>,
-    sender: mpsc::Sender<Request>,
-    life: Arc<Life>,
-    mut stopped: watch::Receiver<Phase>,
-    limits: Limits,
-) {
-    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-    loop {
-        let (stream, remote) = tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok(accepted) => accepted,
-                Err(_) => continue,
-            },
-            _ = stopped.changed() => {
-                // The port is free once `stop` returns, for a server that
-                // takes it again or a client that must find it closed.
-                drop(listener);
-                life.listening.send_replace(false);
+impl Server {
+    /// The next connection, while the server listens.
+    fn poll_accept(&self, context: &mut Context<'_>) -> Poll<std::io::Result<Accepted>> {
+        match lock(&self.listening).as_ref() {
+            Some(listening) => listening.poll_accept(context),
+            // Stopped, which its phase says.
+            None => Poll::Pending,
+        }
+    }
+}
+
+/// A connection of a server: what it does until it ends (`serving`),
+/// driven by whatever wakes it, on the thread that wakes it, as a task of
+/// tokio's would be without the hop to tokio's threads: the socket's
+/// events, a response the program sends, a timer, the end of the server.
+struct Exchange {
+    future: Mutex<Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>,
+    /// Woken since it was last polled: whoever polls it now polls it again.
+    again: std::sync::atomic::AtomicBool,
+    /// Among what the workers poll at their next turns.
+    queued: std::sync::atomic::AtomicBool,
+    ended: std::sync::atomic::AtomicBool,
+    /// The requests hyper read that no task took yet, and the task that
+    /// waits for the next.
+    read: Mutex<VecDeque<Request>>,
+    waiting: Mutex<Option<std::task::Waker>>,
+    /// Its one waker, which the socket knows from a waker it has already.
+    waker: std::task::Waker,
+}
+
+impl Exchange {
+    fn new(future: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>) -> Arc<Exchange> {
+        Arc::new_cyclic(|exchange| Exchange {
+            ended: std::sync::atomic::AtomicBool::new(future.is_none()),
+            future: Mutex::new(future),
+            again: std::sync::atomic::AtomicBool::new(false),
+            queued: std::sync::atomic::AtomicBool::new(false),
+            read: Mutex::default(),
+            waiting: Mutex::new(None),
+            waker: std::task::Waker::from(Arc::new(Woken(exchange.clone()))),
+        })
+    }
+
+    /// Polls it, unless another thread polls it now, which polls it again
+    /// once it lets it go.
+    fn run(self: &Arc<Self>) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.again.store(true, SeqCst);
+        loop {
+            let Ok(mut future) = self.future.try_lock() else { return };
+            if !self.again.swap(false, SeqCst) {
                 return;
             }
-        };
-        let (sender, tls, mut stopping) = (sender.clone(), tls.clone(), stopped.clone());
-        // Counted first: either the drain sees it, or this sees that the server
-        // stops, as a connection nobody would answer waits out the whole grace.
-        let counted = Counted::new(life.clone());
-        if *stopped.borrow() != Phase::Serving {
-            continue;
+            if let Some(polled) = future.as_mut()
+                && polled.as_mut().poll(&mut Context::from_waker(&self.waker)).is_ready()
+            {
+                *future = None;
+                self.ended.store(true, SeqCst);
+                self.tell();
+            }
+            drop(future);
+            if !self.again.load(SeqCst) {
+                return;
+            }
         }
-        tokio::spawn(async move {
-            let _counted = counted;
-            let secure = tls.is_some();
-            let (stream, client): (Box<dyn Connected>, _) = match tls {
-                Some(acceptor) => {
-                    // A client that does not finish its handshake in time is let go.
-                    let shaken = tokio::time::timeout(limits.head_timeout, acceptor.accept(stream)).await;
-                    let Ok(Ok(stream)) = shaken else { return };
-                    let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
-                    (Box::new(stream), shown.unwrap_or_default())
+    }
+
+    /// Hands a request hyper read to the task that takes it.
+    fn push(&self, request: Request) {
+        lock(&self.read).push_back(request);
+        self.tell();
+    }
+
+    /// Wakes the task that waits for the next request.
+    fn tell(&self) {
+        if let Some(waker) = lock(&self.waiting).take() {
+            waker.wake();
+        }
+    }
+
+    /// The next request; none once it ended and gave all it read.
+    fn poll_next(self: &Arc<Self>, context: &mut Context<'_>) -> Poll<Option<Request>> {
+        *lock(&self.waiting) = Some(context.waker().clone());
+        if let Some(request) = lock(&self.read).pop_front() {
+            return Poll::Ready(Some(request));
+        }
+        self.run();
+        if let Some(request) = lock(&self.read).pop_front() {
+            return Poll::Ready(Some(request));
+        }
+        match self.ended.load(std::sync::atomic::Ordering::SeqCst) {
+            true => Poll::Ready(None),
+            false => Poll::Pending,
+        }
+    }
+}
+
+/// What wakes an exchange, which a worker polls at its next turn: the code
+/// that wakes it may hold a lock the poll takes.
+struct Woken(std::sync::Weak<Exchange>);
+
+impl std::task::Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        if let Some(exchange) = self.0.upgrade()
+            && !exchange.queued.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            super::tasks::poll_soon(exchange);
+        }
+    }
+}
+
+impl super::tasks::Turned for Exchange {
+    fn turn(self: Arc<Self>) {
+        self.queued.store(false, std::sync::atomic::Ordering::SeqCst);
+        super::io::polled_here(|| self.run());
+    }
+}
+
+/// The next connection of a server, or the mark that it stopped: after
+/// `stop`, once its connections ended the requests they had, or its grace
+/// passed.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_accept(server: *mut NativeObject) -> *mut NativeObject {
+    let closed = || native::new(Connection(Exchange::new(None)));
+    let Some(server) = native::get::<Server>(server) else { return closed() };
+    let Some(life) = server.life.clone() else { return closed() };
+    let accepted = super::io::wait_for(async {
+        let (mut phase, mut open) = (life.phase.subscribe(), life.open.subscribe());
+        loop {
+            let now = *phase.borrow_and_update();
+            match now {
+                Phase::Closed => return None,
+                Phase::Draining => {
+                    tokio::select! {
+                        _ = open.wait_for(|open| *open == 0) => return None,
+                        changed = phase.changed() => if changed.is_err() { return None },
+                    }
+                    continue;
                 }
-                None => (stream, Vec::new()),
+                Phase::Serving => {}
+            }
+            let (stream, remote) = tokio::select! {
+                accepted = std::future::poll_fn(|context| server.poll_accept(context)) => match accepted {
+                    Ok(accepted) => accepted,
+                    Err(_) => continue,
+                },
+                changed = phase.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                    continue;
+                }
             };
-            let (client, answering) = (Arc::new(client), stopping.clone());
-            let serve = hyper::service::service_fn(move |request| {
-                handle(request, sender.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
-            });
-            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
-            builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
-            builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
-            let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
-            let connection = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve);
-            tokio::pin!(connection);
-            // When the server stops, a connection kept open takes no more
-            // requests: it ends those it has and closes, with a GOAWAY on
-            // HTTP/2, so that its client connects again; once the server's
-            // grace passes, it closes as it is.
+            // Counted first: either the drain sees it, or this sees that the
+            // server stops, as a connection nobody would answer waits out the
+            // whole grace.
+            let counted = Counted::new(life.clone());
+            if *life.phase.borrow() != Phase::Serving {
+                continue;
+            }
+            // The exchange hands it the requests it reads, so it comes first.
+            let exchange = Exchange::new(None);
+            let stopping = life.phase.subscribe();
+            let ends = serving(stream, remote, counted, server.tls.clone(), server.limits, stopping, exchange.clone());
+            *lock(&exchange.future) = Some(Box::pin(ends));
+            exchange.ended.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Some(exchange);
+        }
+    });
+    native::new(Connection(accepted.flatten().unwrap_or_else(|| Exchange::new(None))))
+}
+
+/// A connection of a server, as the program holds it.
+struct Connection(Arc<Exchange>);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_connection_open(connection: *mut NativeObject) -> u8 {
+    native::get::<Connection>(connection).is_some_and(|c| !c.0.ended.load(std::sync::atomic::Ordering::SeqCst)) as u8
+}
+
+/// The next request of a connection, or the mark that it ended. One of
+/// HTTP/1, which the client sends after the response to the one before,
+/// is answered by the task that took it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_connection_next(connection: *mut NativeObject) -> *mut NativeObject {
+    let Some(Connection(exchange)) = native::get::<Connection>(connection) else {
+        return native::new(Request::closed());
+    };
+    let next = super::io::wait_for(std::future::poll_fn(|context| exchange.poll_next(context)));
+    let Some(mut request) = next.flatten() else { return native::new(Request::closed()) };
+    request.in_turn = request.version < hyper::Version::HTTP_2;
+    native::new(request)
+}
+
+/// Whether the task that took the request answers it itself: one of HTTP/1.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_in_turn(object: *mut NativeObject) -> u8 {
+    native::get::<Request>(object).is_some_and(|r| r.in_turn) as u8
+}
+
+/// What a connection does until it ends: its TLS handshake, the requests
+/// hyper reads, each of which `exchange` hands to a task of the program,
+/// and, when the server stops, ending those it has.
+async fn serving(
+    stream: Box<dyn Connected>,
+    remote: String,
+    counted: Counted,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+    limits: Limits,
+    mut stopping: watch::Receiver<Phase>,
+    exchange: Arc<Exchange>,
+) {
+    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+    let _counted = counted;
+    let secure = tls.is_some();
+    let (stream, client): (Box<dyn Connected>, _) = match tls {
+        Some(acceptor) => {
+            // A client that does not finish its handshake in time is let go.
+            let shaken = tokio::time::timeout(limits.head_timeout, acceptor.accept(stream)).await;
+            let Ok(Ok(stream)) = shaken else { return };
+            let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
+            (Box::new(stream), shown.unwrap_or_default())
+        }
+        None => (stream, Vec::new()),
+    };
+    let (client, answering) = (Arc::new(client), stopping.clone());
+    // Weak: the exchange holds this future, which would keep it alive.
+    let exchange = Arc::downgrade(&exchange);
+    let serve = hyper::service::service_fn(move |request| {
+        handle(request, exchange.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
+    });
+    let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+    builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
+    builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
+    let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
+    let connection = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve);
+    tokio::pin!(connection);
+    // When the server stops, a connection kept open takes no more
+    // requests: it ends those it has and closes, with a GOAWAY on
+    // HTTP/2, so that its client connects again; once the server's
+    // grace passes, it closes as it is.
+    tokio::select! {
+        _ = connection.as_mut() => {}
+        _ = async { _ = stopping.wait_for(|phase| *phase != Phase::Serving).await } => {
+            connection.as_mut().graceful_shutdown();
             tokio::select! {
                 _ = connection.as_mut() => {}
-                _ = async { _ = stopping.wait_for(|phase| *phase != Phase::Serving).await } => {
-                    connection.as_mut().graceful_shutdown();
-                    tokio::select! {
-                        _ = connection.as_mut() => {}
-                        _ = async {
-                            if stopping.wait_for(|phase| *phase == Phase::Closed).await.is_err() {
-                                std::future::pending::<()>().await;
-                            }
-                        } => {}
+                _ = async {
+                    if stopping.wait_for(|phase| *phase == Phase::Closed).await.is_err() {
+                        std::future::pending::<()>().await;
                     }
-                }
+                } => {}
             }
-        });
+        }
     }
 }
 
 async fn handle(
     mut request: hyper::Request<Incoming>,
-    sender: mpsc::Sender<Request>,
+    exchange: std::sync::Weak<Exchange>,
     remote: String,
     secure: bool,
     client: Arc<Vec<u8>>,
@@ -862,11 +1137,13 @@ async fn handle(
         reply: Mutex::new(Some(reply)),
         upgrade: Mutex::new(upgrade),
         answering: Arc::default(),
+        in_turn: false,
     };
     // Dropped with this future when the client goes away first.
     let _abandoned = Abandoned(incoming.answering.clone());
-    if sender.send(incoming).await.is_err() {
-        return Ok(plain(503, "the server is stopping"));
+    match exchange.upgrade() {
+        Some(exchange) => exchange.push(incoming),
+        None => return Ok(plain(503, "the server is stopping")),
     }
     Ok(answer.await.unwrap_or_else(|_| plain(500, "the handler ended without a response")))
 }
@@ -877,38 +1154,13 @@ pub extern "C" fn tondo_rt_http_server_address(server: *mut NativeObject) -> *mu
     str_new(native::get::<Server>(server).map_or("", |s| s.address.as_str()).as_bytes())
 }
 
-/// The next request, or the mark that the server stopped: after `stop`,
-/// once its connections ended the requests they had, or its grace passed.
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_next(server: *mut NativeObject) -> *mut NativeObject {
-    let Some(server) = native::get::<Server>(server) else { return native::new(Request::closed()) };
-    let (Some(requests), Some(life)) = (server.requests.clone(), server.life.clone()) else {
-        return native::new(Request::closed());
-    };
-    let next = wait(async move {
-        let (mut phase, mut open) = (life.phase.subscribe(), life.open.subscribe());
-        let mut requests = requests.lock().await;
-        loop {
-            let now = *phase.borrow_and_update();
-            if now == Phase::Closed {
-                return None;
-            }
-            tokio::select! {
-                request = requests.recv() => return request,
-                _ = open.wait_for(|open| *open == 0), if now == Phase::Draining => return None,
-                changed = phase.changed() => if changed.is_err() { return None },
-            }
-        }
-    });
-    native::new(next.flatten().unwrap_or_else(Request::closed))
-}
-
 /// Stops accepting connections and drains those open: each ends the
 /// requests it has and closes, and after `grace` milliseconds those left
 /// close as they are.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject, grace: i64) {
-    if let Some(life) = native::get::<Server>(server).and_then(|s| s.life.clone()) {
+    let Some(server) = native::get::<Server>(server) else { return };
+    if let Some(life) = server.life.clone() {
         let draining = life.phase.send_if_modified(|phase| {
             let serving = *phase == Phase::Serving;
             if serving {
@@ -917,17 +1169,18 @@ pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject, grace: i6
             serving
         });
         if draining {
-            let mut listening = life.listening.subscribe();
+            // The port is free once `stop` returns, for a server that takes
+            // it again or a client that must find it closed.
+            drop(lock(&server.listening).take());
             runtime().spawn(async move {
                 let grace = std::time::Duration::from_millis(grace.max(0) as u64);
                 let mut open = life.open.subscribe();
                 let _ = tokio::time::timeout(grace, open.wait_for(|open| *open == 0)).await;
                 life.phase.send_replace(Phase::Closed);
             });
-            wait(async move { _ = listening.wait_for(|listening| !*listening).await });
         }
     }
-    if let Some(path) = native::get::<Server>(server).and_then(|s| s.socket.as_ref()) {
+    if let Some(path) = &server.socket {
         let _ = std::fs::remove_file(path);
     }
 }

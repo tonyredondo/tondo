@@ -30,6 +30,7 @@ pub(crate) use workers::*;
 
 mod work;
 use work::*;
+pub(crate) use work::{Turned, poll_soon};
 
 mod park;
 pub(crate) use park::*;

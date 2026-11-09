@@ -355,11 +355,28 @@ fn serveThenSignal(
 
 fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
     for {
-        let incoming = httpNative.next(server)
+        let connection = httpNative.accept(server)
+        if not httpNative.connectionOpen(connection) {
+            return
+        }
+        spawn detached converse(connection, handler)
+    }
+}
+
+/// The requests of a connection: one of HTTP/1, which comes after the
+/// response to the one before, answered by this task, and one of HTTP/2 by
+/// a task of its own while this one goes on reading the next.
+fn converse(connection: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    for {
+        let incoming = httpNative.connectionNext(connection)
         if not httpNative.requestOpen(incoming) {
             return
         }
-        spawn detached answer(incoming, handler)
+        if httpNative.requestInTurn(incoming) {
+            answer(incoming, handler)
+        } else {
+            spawn detached answer(incoming, handler)
+        }
     }
 }
 

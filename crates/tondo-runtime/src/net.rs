@@ -250,9 +250,10 @@ async fn send(mut to: tokio::io::WriteHalf<Tls>, pipe: Arc<Pipe>) {
 }
 
 /// A connected socket of the workers' poll: TCP or Unix.
-trait Wire: mio::event::Source + Send + Sync + 'static {
+pub(crate) trait Wire: mio::event::Source + Send + Sync + 'static {
     fn take(&self, buffer: &mut [u8]) -> std::io::Result<usize>;
     fn give(&self, data: &[u8]) -> std::io::Result<usize>;
+    fn give_all(&self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize>;
     fn end(&self) -> std::io::Result<()>;
 }
 
@@ -262,6 +263,9 @@ impl Wire for mio::net::TcpStream {
     }
     fn give(&self, data: &[u8]) -> std::io::Result<usize> {
         (&*self).write(data)
+    }
+    fn give_all(&self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        (&*self).write_vectored(parts)
     }
     fn end(&self) -> std::io::Result<()> {
         self.shutdown(Shutdown::Write)
@@ -274,6 +278,9 @@ impl Wire for mio::net::UnixStream {
     }
     fn give(&self, data: &[u8]) -> std::io::Result<usize> {
         (&*self).write(data)
+    }
+    fn give_all(&self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        (&*self).write_vectored(parts)
     }
     fn end(&self) -> std::io::Result<()> {
         self.shutdown(Shutdown::Write)
