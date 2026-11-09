@@ -1019,10 +1019,22 @@ fn build(provider: &Path, entry: Entry) -> Result<PathBuf, String> {
     if executable.is_file() {
         return Ok(executable);
     }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Each build in a directory of its own, as two analyses of one
+    // `tondo check` may build the same program at once, and the executable
+    // into place by a rename.
+    let own = dir.join(format!("build-{}", crate::driver::aside()));
+    std::fs::create_dir_all(&own).map_err(|e| e.to_string())?;
+    let built = build_in(provider, &source, &own, &executable);
+    let _ = std::fs::remove_dir_all(&own);
+    built.map(|()| executable)
+}
+
+/// Builds `source`, `provider`'s with its `main`, in the directory `own`,
+/// and renames the executable to `executable`.
+fn build_in(provider: &Path, source: &str, own: &Path, executable: &Path) -> Result<(), String> {
     let name = provider.file_name().map_or("provider.to".into(), |n| n.to_string_lossy().into_owned());
-    let file = dir.join(&name);
-    std::fs::write(&file, &source).map_err(|e| e.to_string())?;
+    let file = own.join(&name);
+    std::fs::write(&file, source).map_err(|e| e.to_string())?;
     let analysis = crate::driver::analyze_meta(&file)?;
     if analysis.diags.has_errors() {
         let shown = analysis
@@ -1032,10 +1044,9 @@ fn build(provider: &Path, entry: Entry) -> Result<PathBuf, String> {
         return Err(format!("it does not compile:\n{shown}"));
     }
     let object = crate::driver::object(&analysis, false, None)?;
-    let partial = dir.join(format!("provider.partial-{}", std::process::id()));
+    let partial = own.join("provider");
     crate::driver::link(&object, &partial, &analysis.libraries, Default::default())?;
-    std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
-    Ok(executable)
+    std::fs::rename(&partial, executable).map_err(|e| e.to_string())
 }
 
 /// The alias the provider imports `std.meta` under.

@@ -1212,9 +1212,17 @@ pub fn compiler_identity() -> String {
 
 /// Writes `bytes` to `path` atomically.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temporary = path.with_extension(format!("tmp{}", std::process::id()));
+    let temporary = path.with_extension(format!("tmp{}", aside()));
     std::fs::write(&temporary, bytes).map_err(|e| format!("cannot write {}: {e}", temporary.display()))?;
     std::fs::rename(&temporary, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// What tells a file a build writes aside, to rename it into place, from
+/// another build's: of another process, or of this one, as `tondo check`
+/// analyzes on several threads at once.
+pub fn aside() -> String {
+    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!("{}-{}", std::process::id(), COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
 /// What the linker receives for a library entry (see
@@ -1363,7 +1371,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         return crate::link::link(object, &archives, &runtime_args, libraries, output, product);
     };
     let dir = cache_dir().join("runtime");
-    let object_path = dir.join(format!("object-{}.o", std::process::id()));
+    let object_path = dir.join(format!("object-{}.o", aside()));
     std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
     let mut native = Vec::new();
     for library in libraries {
@@ -1430,6 +1438,26 @@ mod tests {
         std::fs::File::open(dir.join("recent")).unwrap().set_modified(now - Duration::from_secs(40 * 86400)).unwrap();
         super::sweep(&dir, now);
         assert!(dir.join("recent").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Threads that write the same file at once, as two analyses extracting
+    /// the runtime, each write it whole.
+    #[test]
+    fn threads_write_one_file_at_once() {
+        let dir = std::env::temp_dir().join(format!("tondo-aside-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.a");
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..200 {
+                        super::write_atomic(&path, &[7; 4096]).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), [7; 4096]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
