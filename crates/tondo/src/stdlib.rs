@@ -180,18 +180,30 @@ pub fn text(name: &str) -> Option<std::borrow::Cow<'static, str>> {
 /// The module written in Tondo an import brings.
 pub(crate) fn source(path: &[ast::Ident]) -> Option<&'static str> {
     match path {
-        [std, name] if std.name == "std" => {
-            // `std.testing` brings the loop of `testing.fuzz`, and with
-            // it `std.json`, which `testing.snapshot` encodes values with;
-            // and a module the compiler implements, its parts in Tondo.
-            let name = match name.name.as_str() {
-                "testing" => "fuzz",
-                name => companions(name).first().copied().unwrap_or(name),
-            };
-            SOURCES.iter().find(|(n, _)| *n == name).map(|(name, _)| *name)
-        }
+        [std, name] if std.name == "std" => source_named(&name.name),
         _ => None,
     }
+}
+
+/// The module written in Tondo that `import std.<name>` brings: `std.testing`
+/// brings the loop of `testing.fuzz`, and with it `std.json`, which
+/// `testing.snapshot` encodes values with; and a module the compiler
+/// implements, its parts in Tondo.
+fn source_named(name: &str) -> Option<&'static str> {
+    let name = match name {
+        "testing" => "fuzz",
+        name => companions(name).first().copied().unwrap_or(name),
+    };
+    SOURCES.iter().find(|(n, _)| *n == name).map(|(name, _)| *name)
+}
+
+/// What a file of the standard library imports of it: the path after
+/// `import std.` of each of its lines that starts so, before its first
+/// declaration, as the parser reads them, which debug builds check.
+fn imported(text: &'static str) -> impl Iterator<Item = &'static str> {
+    text.lines()
+        .take_while(|line| line.trim().is_empty() || line.starts_with("//") || line.starts_with("import "))
+        .filter_map(|line| line.strip_prefix("import std.")?.split_whitespace().next())
 }
 
 /// The standard modules that import `std.reflect` only to implement it for
@@ -252,24 +264,25 @@ pub fn add_except(
     let package = packages.len();
     let first = modules.len();
     let mut pending: Vec<&str> = vec!["prelude"];
-    let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
-        for import in &module.imports {
-            let Some(name) = source(&import.path) else { continue };
-            // A module replaced comes without its parts in Tondo.
-            if completed(name).is_some_and(|module| replaced.contains(&module)) {
-                continue;
-            }
-            let others = completed(name).map_or(&[][..], companions);
-            for name in std::iter::once(name).chain(others.iter().copied()) {
-                if !pending.contains(&name) && !replaced.contains(&name) {
-                    pending.push(name);
-                }
+    let want = |name: &'static str, pending: &mut Vec<&str>| {
+        // A module replaced comes without its parts in Tondo.
+        if completed(name).is_some_and(|module| replaced.contains(&module)) {
+            return;
+        }
+        let others = completed(name).map_or(&[][..], companions);
+        for name in std::iter::once(name).chain(others.iter().copied()) {
+            if !pending.contains(&name) && !replaced.contains(&name) {
+                pending.push(name);
             }
         }
     };
     for module in modules.iter() {
         for (file, _) in &module.files {
-            wanted(file, &mut pending);
+            for import in &file.imports {
+                if let Some(name) = source(&import.path) {
+                    want(name, &mut pending);
+                }
+            }
         }
     }
     packages.push(PackageInfo {
@@ -277,37 +290,55 @@ pub fn add_except(
         dependencies: Default::default(),
         dev_dependencies: Default::default(),
     });
-    // In rounds: the modules wanted so far are parsed on every core, and
-    // what they import is wanted next, in the order the files were added.
-    let mut done = 0;
-    while done < pending.len() {
-        let round: Vec<&str> = pending[done..].to_vec();
-        done = pending.len();
-        // Each file with its own identity, `<std>/http/server.to`.
-        let files: Vec<(&str, usize)> = round
-            .iter()
-            .flat_map(|name| files(name).unwrap_or_default().iter().map(move |file| (*name, file)))
-            .map(|(name, (path, text))| {
-                let file = sources.add(Path::new(&format!("{path}.to")), text.to_string());
-                sources.set_identity(file, format!("<std>/{path}.to"), format!("std.{name}"));
-                (name, file)
-            })
-            .collect();
-        let parsed = crate::parallel::map(&files, 1, |&(_, file)| {
-            let mut found = Diagnostics::default();
-            (parser::parse_file(sources.file(file), &mut found), found)
-        });
-        let mut parts: Vec<(&str, Vec<(ast::Module, bool)>)> = round.iter().map(|name| (*name, Vec::new())).collect();
-        for ((name, _), (parsed, mut found)) in files.into_iter().zip(parsed) {
-            diags.list.append(&mut found.list);
-            wanted(&parsed, &mut pending);
-            if let Some((_, part)) = parts.iter_mut().find(|(n, _)| *n == name) {
-                part.push((parsed, false));
+    // What each wanted module imports is wanted after it, in the order of
+    // its files and their lines, known from `imported` without parsing: the
+    // order rounds of parsing gave, and then one round parses all of them
+    // on every core (docs/speed.md, B4).
+    let mut at = 0;
+    while at < pending.len() {
+        let name = pending[at];
+        at += 1;
+        for (_, text) in files(name).unwrap_or_default() {
+            for line in imported(text) {
+                if let Some(name) = source_named(line) {
+                    want(name, &mut pending);
+                }
             }
         }
-        for (name, files) in parts {
-            modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files });
+    }
+    // Each file with its own identity, `<std>/http/server.to`.
+    let files: Vec<(&str, &str, &str, usize)> = pending
+        .iter()
+        .flat_map(|name| files(name).unwrap_or_default().iter().map(move |file| (*name, file)))
+        .map(|(name, (path, text))| {
+            let file = sources.add(Path::new(&format!("{path}.to")), text.to_string());
+            sources.set_identity(file, format!("<std>/{path}.to"), format!("std.{name}"));
+            (name, *path, *text, file)
+        })
+        .collect();
+    let parsed = crate::parallel::map(&files, 1, |&(_, _, _, file)| {
+        let mut found = Diagnostics::default();
+        (parser::parse_file(sources.file(file), &mut found), found)
+    });
+    let mut parts: Vec<(&str, Vec<(ast::Module, bool)>)> = pending.iter().map(|name| (*name, Vec::new())).collect();
+    for ((name, path, text, _), (parsed, mut found)) in files.into_iter().zip(parsed) {
+        diags.list.append(&mut found.list);
+        // The lines read for its imports are those the parser found.
+        if cfg!(debug_assertions) {
+            let found: Vec<String> = parsed
+                .imports
+                .iter()
+                .filter(|import| import.path.first().is_some_and(|first| first.name == "std"))
+                .map(|import| import.path[1..].iter().map(|part| part.name.as_str()).collect::<Vec<_>>().join("."))
+                .collect();
+            assert_eq!(found, imported(text).collect::<Vec<_>>(), "the imports of <std>/{path}.to");
         }
+        if let Some((_, part)) = parts.iter_mut().find(|(n, _)| *n == name) {
+            part.push((parsed, false));
+        }
+    }
+    for (name, files) in parts {
+        modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files });
     }
     // Their enums of plain variants show their names, as the program's do.
     crate::derive::derive_display(&mut modules[first..], sources, diags);
