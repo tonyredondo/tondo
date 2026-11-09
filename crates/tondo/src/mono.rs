@@ -36,6 +36,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         tests,
         contexts,
         field_defaults,
+        unchecked,
         ..
     } = program;
     let index = ImplIndex::new(&types, &impls);
@@ -45,6 +46,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         traits: &traits,
         impls: &impls,
         index: &index,
+        unchecked: &unchecked,
         instances: HashMap::new(),
         queue: VecDeque::new(),
         out: Vec::new(),
@@ -138,6 +140,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         tests,
         contexts,
         field_defaults,
+        unchecked: HashSet::new(),
     })
 }
 
@@ -221,6 +224,8 @@ struct Mono<'a> {
     traits: &'a [TraitInfo],
     impls: &'a [ImplInfo],
     index: &'a ImplIndex,
+    /// The functions whose bodies were not checked, which none reaches.
+    unchecked: &'a HashSet<FnId>,
     instances: HashMap<(FnId, Vec<Ty>), FnId>,
     /// The user `Display.display` of types displayed inside collections.
     display: HashMap<Ty, FnId>,
@@ -243,12 +248,16 @@ impl Mono<'_> {
         if let Some(&instance) = self.instances.get(&(id, args.clone())) {
             return instance;
         }
+        let name = &self.functions[id.0 as usize].name;
+        assert!(
+            !self.unchecked.contains(&id),
+            "`{name}` is compiled but its body was not checked: check/reach.rs misses what reaches it"
+        );
         let instance = FnId(self.out.len() as u32);
         if args.iter().any(|&a| self.types.depth(a) > MAX_DEPTH) {
             self.runaway.get_or_insert_with(|| self.functions[id.0 as usize].name.clone());
             return instance;
         }
-        let name = &self.functions[id.0 as usize].name;
         let mut function = Function {
             name: name.clone(),
             generics: Vec::new(),

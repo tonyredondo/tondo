@@ -50,15 +50,7 @@ impl<'a> Checker<'a> {
         let signature = self.signatures[id.0 as usize].clone();
         let scope = self.fn_scopes[id.0 as usize].clone();
         let trait_default = scope.self_type.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Param(_)));
-        // A trace names a trait's method by the type: `Cell.display`, and
-        // `Box.display[Int]` once monomorphized.
-        self.naming = match (&scope.implementing, scope.self_type) {
-            (Some(_), Some(target)) => {
-                let target = self.types.display(target);
-                format!("{}.{}", target.split('[').next().unwrap_or(&target), f.name.name)
-            }
-            _ => signature.name.clone(),
-        };
+        self.naming = self.traced_name(f, id);
         let outer_types = std::mem::replace(&mut self.type_params, scope.types);
         let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
         let outer_implementing = std::mem::replace(&mut self.implementing, scope.implementing);
@@ -157,6 +149,19 @@ impl<'a> Checker<'a> {
         };
         self.ownership(&mut function, &cx.params);
         function
+    }
+
+    /// The name a trace gives a function: a trait's method by the type,
+    /// `Cell.display`, and `Box.display[Int]` once monomorphized.
+    pub(super) fn traced_name(&self, f: &ast::FnDecl, id: FnId) -> String {
+        let scope = &self.fn_scopes[id.0 as usize];
+        match (&scope.implementing, scope.self_type) {
+            (Some(_), Some(target)) => {
+                let target = self.types.display(target);
+                format!("{}.{}", target.split('[').next().unwrap_or(&target), f.name.name)
+            }
+            _ => self.signatures[id.0 as usize].name.clone(),
+        }
     }
 
     /// Checks moves and obligations (8.10) once the body is typed; whether

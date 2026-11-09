@@ -39,6 +39,9 @@ pub struct Program {
     /// The constant defaults of records' fields (9.2), which a live build
     /// gives a new field of a value alive.
     pub field_defaults: FieldDefaults,
+    /// Before monomorphization: the functions of the standard library that
+    /// nothing reaches, whose bodies were not checked (docs/speed.md, E).
+    pub unchecked: HashSet<FnId>,
 }
 
 /// The default of each field of a record, by its type, or by its template

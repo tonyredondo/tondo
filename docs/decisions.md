@@ -5566,3 +5566,21 @@ program does not make. `--bench` now measures the program as it runs outside the
 already did without the diagnostics of a test that does not end; a plain `tondo test` keeps both
 watches, and runs each benchmark's body once under them. `--lock-order`, asked for, still applies
 when measuring.
+
+## The standard library's bodies are checked as far as a program reaches them
+
+Every build checked the body of every function of every module it loaded, the standard library's
+with the program's, and monomorphization then compiled only what `main`, the tests, the exports and
+the contexts reach: of the 8 ms that checking hello world took, 6 went to bodies of the standard
+library that it never calls. The checker now checks every body of the program, of its tests and of
+its dependencies, which may have errors, and then each body of the standard library that a checked
+one could lead monomorphization to: a call or a function value, the implementations of a trait's
+method that a receiver of its type may use, all of them for a type parameter, the `Display` of
+what is shown, the error of a failing `main`, and what monomorphization calls by name
+(`check/reach.rs`). A body nothing reaches keeps its signature, and monomorphization stops with an
+error of the compiler naming any such body it is asked to compile, so that an edge missing from
+reach.rs fails a test instead of compiling code never checked. The standard library has no errors,
+and its test of warnings checks every body of it with `TONDO_STD_WARNINGS`, as an editor's
+analysis does to know every name; `TONDO_CHECK_STD` checks them all for any build, and the cases
+give the same with it as without. Types are interned in another order, so an executable's bytes
+differ from before; what it does does not.

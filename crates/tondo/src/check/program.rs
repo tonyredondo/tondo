@@ -1,5 +1,6 @@
 //! The program as a whole: tests, fuzzing, benchmarks, snapshots, `recover`, `within`, panics.
 
+use super::reach::Reach;
 use super::*;
 
 impl<'a> Checker<'a> {
@@ -150,8 +151,14 @@ impl<'a> Checker<'a> {
             }
         }
         self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty()) + u32::from(testing);
-        let mut functions: Vec<hir::Function> =
-            bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
+        // The program's bodies, then those of the standard library they reach.
+        let mut reach = Reach::new(bodies.len());
+        for (f, i) in bodies.iter().zip(0..) {
+            if !self.reached_later(f) {
+                reach.add(FnId(i));
+            }
+        }
+        self.check_reached(&bodies, &mut reach);
         for (id, span) in std::mem::take(&mut self.dropped_calls) {
             if self.only_computes(&bodies, id, &mut HashSet::new()) {
                 self.result_unused(span);
@@ -162,13 +169,15 @@ impl<'a> Checker<'a> {
             Some(ModuleName::Fn(id)) => Some(*id),
             _ => None,
         };
+        // A script's `main` and a test build's root, after the declared functions.
+        let mut made = Vec::new();
         let main = if !module.statements.is_empty() {
             if let Some(id) = explicit_main {
                 let span = fns[id.0 as usize].name.span;
                 self.diags.error("E1802", span, "a script with top-level statements cannot also declare `main`");
             }
-            functions.push(self.script_main(&module.statements));
-            Some(FnId(functions.len() as u32 - 1))
+            made.push(self.script_main(&module.statements));
+            Some(FnId((bodies.len() + made.len()) as u32 - 1))
         } else if let Some(id) = explicit_main {
             self.validate_main(fns[id.0 as usize], id);
             Some(id)
@@ -186,14 +195,63 @@ impl<'a> Checker<'a> {
         // A test build runs its tests instead of `main`.
         let main = match &module.test_package {
             Some(package) => {
-                functions.push(self.tests(module, package));
-                self.mark_models();
-                Some(FnId(functions.len() as u32 - 1))
+                made.push(self.tests(module, package));
+                Some(FnId((bodies.len() + made.len()) as u32 - 1))
             }
             None => main,
         };
+        for function in &made {
+            self.reach_from(function, &mut reach);
+        }
+        // A failing `main` shows its error with `Display` (20.10).
+        let result = main.and_then(|main| match reach.functions.get(main.0 as usize) {
+            Some(function) => function.as_ref().map(|f| f.result),
+            None => made.last().map(|f| f.result),
+        });
+        if let Some(result) = result
+            && let TyKind::Result(_, error) = *self.types.kind(result)
+        {
+            self.reach_display(error, &mut reach);
+        }
+        self.check_reached(&bodies, &mut reach);
+        if testing {
+            self.mark_models();
+        }
         self.check_model_names();
         let makers = self.context_makers();
+        for context in &makers {
+            let initials = context.initials.iter().map(|initial| &initial.function);
+            for function in [&context.maker].into_iter().chain(&context.log).chain(&context.label).chain(initials) {
+                self.reach_from(function, &mut reach);
+            }
+            // What fails to compute an initial value is shown in its panic.
+            for error in context.initials.iter().filter_map(|initial| initial.error) {
+                self.reach_display(error, &mut reach);
+            }
+        }
+        self.check_reached(&bodies, &mut reach);
+        let mut unchecked = HashSet::new();
+        let mut functions: Vec<hir::Function> = Vec::with_capacity(bodies.len());
+        for ((function, f), i) in reach.functions.into_iter().zip(&bodies).zip(0..) {
+            functions.push(function.unwrap_or_else(|| {
+                unchecked.insert(FnId(i));
+                let signature = &self.signatures[i as usize];
+                hir::Function {
+                    name: self.traced_name(f, FnId(i)),
+                    generics: signature.generics.clone(),
+                    params: Vec::new(),
+                    loans: Vec::new(),
+                    fallible: false,
+                    locals: Vec::new(),
+                    result: signature.result,
+                    body: hir::Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
+                    moves: HashSet::new(),
+                    test: false,
+                    span: f.name.span,
+                }
+            }));
+        }
+        functions.extend(made);
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
         let mut contexts = Vec::new();
         for ContextMade { maker, log, label, initials } in makers {
@@ -267,6 +325,7 @@ impl<'a> Checker<'a> {
             tests: std::mem::take(&mut self.test_nodes),
             contexts,
             field_defaults: self.exported_defaults(),
+            unchecked,
         })
     }
 

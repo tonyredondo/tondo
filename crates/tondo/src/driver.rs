@@ -742,8 +742,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             let called = root.as_ref().is_some_and(|root| f.name == *root || f.name.ends_with(&format!(".{root}")));
             called || tests && f.generics.is_empty() && f.span != Span::default() && sources.file_of(f.span.start).own
         };
-        let roots: Vec<hir::FnId> =
-            (0..program.functions.len()).filter(|&i| own(&program.functions[i])).map(|i| hir::FnId(i as u32)).collect();
+        let roots: Vec<hir::FnId> = (0..program.functions.len())
+            .map(|i| hir::FnId(i as u32))
+            .filter(|&id| own(&program.functions[id.0 as usize]) && !program.unchecked.contains(&id))
+            .collect();
         mono::monomorphize_with(program, &roots, &mut diags)
     });
     drop_dependency_warnings(&mut diags, &sources, &dependencies);

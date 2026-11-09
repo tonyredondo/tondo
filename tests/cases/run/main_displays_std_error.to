@@ -1,0 +1,15 @@
+import std.regex
+
+fn pattern(): String {
+    "("
+}
+
+fn main(): !regex.RegexError {
+    _ = regex.Regex.compile(pattern())?
+}
+
+// A failing main shows an error of the standard library with its
+// `Display`, which nothing but that failure reaches: its body is checked
+// for it.
+// expect-exit: 1
+// expect-stderr: error: regex.UnexpectedEnd at byte 0 (Compile)

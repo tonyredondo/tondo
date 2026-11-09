@@ -17,6 +17,7 @@ mod operators;
 mod owners;
 mod patterns;
 mod program;
+mod reach;
 mod routes;
 mod statements;
 mod std_checks;
@@ -67,8 +68,12 @@ fn check_with<'a>(
     let deprecated = deprecated_names(module);
     let asked = index.is_some();
     let index = index.or_else(|| (!deprecated.is_empty()).then(crate::index::Index::default));
+    // An editor, and a test of the standard library, see every body.
+    let every_body =
+        asked || ["TONDO_CHECK_STD", "TONDO_STD_WARNINGS"].iter().any(|name| std::env::var_os(name).is_some());
     let mut checker = Checker {
         index,
+        every_body,
         index_exprs: Vec::new(),
         cell_uses: Vec::new(),
         meta,
@@ -861,6 +866,9 @@ struct Checker<'a> {
     /// What an editor asks to know: each declaration and each name that
     /// refers to one.
     index: Option<crate::index::Index>,
+    /// Whether every body is checked, the standard library's too, and not
+    /// only those of it the program reaches (`reach.rs`).
+    every_body: bool,
     /// For an editor: the type of each expression of the program's own files.
     index_exprs: Vec<(Span, Ty)>,
     /// The `meta` profile: no host capabilities (27.7).
