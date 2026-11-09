@@ -20,6 +20,14 @@ pub(super) fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
             } else if current == PINNED {
                 let _lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 PINNED_WAKE.notify_all();
+                // The thread that stands in for its worker may wait in the
+                // poller, or in the runtime a recorded run drives, which
+                // nothing else tells that the task goes on.
+                if exploring().is_some()
+                    && let Some(poller) = crate::poll::poller()
+                {
+                    poller.wake();
+                }
             }
             return;
         }

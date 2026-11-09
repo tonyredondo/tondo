@@ -1,0 +1,34 @@
+// A function C calls back may wait for a process with C's frames on its
+// stack: its worker waits for it on its thread. Recording, or exploring
+// orders, where it is the only worker, another thread stands in for it
+// meanwhile, which must see the task go on: woken in the runtime a recorded
+// run drives, or looking again, as nothing else wakes it
+// (crates/tondo/tests/cli.rs).
+import std.console
+import std.ffi
+import std.process
+
+extern fn qsort(
+    base: Pointer[ffi.Void],
+    count: ffi.CSize,
+    size: ffi.CSize,
+    compare: extern fn(Pointer[ffi.Void], Pointer[ffi.Void]): ffi.CInt,
+)
+
+unsafe fn waitsForAProcess(_: Pointer[ffi.Void], _: Pointer[ffi.Void]): ffi.CInt {
+    match process.command("sleep", "0.2").status() {
+        ok(status) => console.println("the process ended: {status.success}")
+        err(error) => console.println("{error}")
+    }
+    0
+}
+
+fn main() {
+    unsafe {
+        let values = ffi.allocate[Int](2)
+        qsort(values.cast[ffi.Void](), 2u64, 8u64, waitsForAProcess)
+        ffi.free(values)
+    }
+}
+
+// expect-stdout: the process ended: true
