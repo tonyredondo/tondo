@@ -4,15 +4,16 @@
 use super::*;
 
 /// Wakes a task for its current wait, or makes its next `park` return at
-/// once if it has not parked yet; `run` makes it runnable.
+/// once if it has not parked yet; `run` makes it runnable. The state is
+/// written even when it says notified already, as the task takes a
+/// notification with a write too: a notifier that only read it could see
+/// one the task has just taken, while the task, which then reads its wait,
+/// may not see what this notifier claimed, and both would let it sleep.
 pub(super) fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
     let state = unsafe { &(*task).state };
     loop {
         let current = state.load(Ordering::Acquire);
         let next = if current == PARKED || current == PINNED { RUNNING } else { NOTIFIED };
-        if current == NOTIFIED {
-            return;
-        }
         if state.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
             if current == PARKED {
                 crate::clock::woke(task);
@@ -53,14 +54,16 @@ pub(super) fn park() {
         let in_c = in_c_here();
         if !in_c.is_null() && (*in_c).depth.load(Ordering::SeqCst) > 0 {
             if state.compare_exchange(RUNNING, PINNED, Ordering::AcqRel, Ordering::Acquire).is_err() {
-                state.store(RUNNING, Ordering::Release);
+                state.swap(RUNNING, Ordering::AcqRel);
                 return;
             }
             wait_pinned(task);
             return;
         }
+        // Notified already: the notification is taken with a write, which
+        // `notify_with` says why.
         if state.compare_exchange(RUNNING, PARKING, Ordering::AcqRel, Ordering::Acquire).is_err() {
-            state.store(RUNNING, Ordering::Release);
+            state.swap(RUNNING, Ordering::AcqRel);
             return;
         }
         switch(&mut (*task).sp, *home());

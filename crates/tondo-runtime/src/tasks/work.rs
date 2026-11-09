@@ -404,8 +404,9 @@ pub(super) fn run(task: *mut Task) {
         } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
             crate::clock::stopped(in_domain);
         } else {
-            // Notified while switching out.
-            (*task).state.store(RUNNING, Ordering::Release);
+            // Notified while switching out, taken with a write as `park`
+            // takes it.
+            (*task).state.swap(RUNNING, Ordering::AcqRel);
             schedule(task);
         }
     }
