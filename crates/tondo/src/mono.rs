@@ -38,11 +38,13 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         field_defaults,
         ..
     } = program;
+    let index = ImplIndex::new(&types, &impls);
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
         traits: &traits,
         impls: &impls,
+        index: &index,
         instances: HashMap::new(),
         queue: VecDeque::new(),
         out: Vec::new(),
@@ -156,11 +158,69 @@ enum Resolved {
     Made(FnId),
 }
 
+/// The implementations of each trait that may apply to a type, in their
+/// order: those whose target is a record, an enum or an instance of a
+/// generic one, which match only that type or instances of the same one,
+/// and the others, which any type may match. Looking at all of a trait's
+/// for each type made a program's every derived `Encode` cost as much as
+/// the program had types.
+struct ImplIndex {
+    named: HashMap<(TraitId, Head), Vec<usize>>,
+    others: HashMap<TraitId, Vec<usize>>,
+}
+
+/// What an implementation's target names that a type must name too.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Head {
+    Template(crate::types::TemplateId),
+    Type(Ty),
+}
+
+fn head(types: &Types, ty: Ty) -> Option<Head> {
+    match types.kind(ty) {
+        TyKind::Adt(_) => Some(types.instance_of(ty).map_or(Head::Type(ty), |(template, _)| Head::Template(template))),
+        _ => None,
+    }
+}
+
+impl ImplIndex {
+    fn new(types: &Types, impls: &[ImplInfo]) -> ImplIndex {
+        let mut index = ImplIndex { named: HashMap::new(), others: HashMap::new() };
+        for (at, implementation) in impls.iter().enumerate() {
+            match head(types, implementation.target) {
+                Some(head) => index.named.entry((implementation.trait_id, head)).or_default().push(at),
+                None => index.others.entry(implementation.trait_id).or_default().push(at),
+            }
+        }
+        index
+    }
+
+    /// The implementations of `trait_id` that may apply to `ty`, in order.
+    fn candidates(&self, types: &Types, trait_id: TraitId, ty: Ty) -> Vec<usize> {
+        let none: &[usize] = &[];
+        let named = head(types, ty).and_then(|head| self.named.get(&(trait_id, head))).map_or(none, Vec::as_slice);
+        let others = self.others.get(&trait_id).map_or(none, Vec::as_slice);
+        let mut merged = Vec::with_capacity(named.len() + others.len());
+        let (mut i, mut j) = (0, 0);
+        while i < named.len() || j < others.len() {
+            if j == others.len() || (i < named.len() && named[i] < others[j]) {
+                merged.push(named[i]);
+                i += 1;
+            } else {
+                merged.push(others[j]);
+                j += 1;
+            }
+        }
+        merged
+    }
+}
+
 struct Mono<'a> {
     types: &'a mut Types,
     functions: &'a [Function],
     traits: &'a [TraitInfo],
     impls: &'a [ImplInfo],
+    index: &'a ImplIndex,
     instances: HashMap<(FnId, Vec<Ty>), FnId>,
     /// The user `Display.display` of types displayed inside collections.
     display: HashMap<Ty, FnId>,
@@ -541,7 +601,8 @@ impl Mono<'_> {
                 return Resolved::Made(self.union_codec(trait_id, self_ty, &members, own));
             }
         }
-        for implementation in self.impls.iter().filter(|i| i.trait_id == trait_id) {
+        for at in self.index.candidates(self.types, trait_id, self_ty) {
+            let implementation = &self.impls[at];
             let mut map = HashMap::new();
             let matched = self.types.matches(implementation.target, self_ty, &implementation.generics, &mut map)
                 && implementation
@@ -829,7 +890,8 @@ impl Mono<'_> {
             return;
         }
         if let TyKind::Adt(_) = self.types.kind(ty) {
-            for implementation in self.impls.iter().filter(|i| i.trait_id == view) {
+            for at in self.index.candidates(self.types, view, ty) {
+                let implementation = &self.impls[at];
                 let mut map = HashMap::new();
                 if !self.types.matches(implementation.target, ty, &implementation.generics, &mut map) {
                     continue;
