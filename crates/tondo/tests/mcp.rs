@@ -294,8 +294,10 @@ fn runs_tests_and_debugs() {
     assert!(benchmark["ns_per_op"]["median"].as_f64().unwrap() > 0.0, "{benchmark}");
     assert!(text.contains("  twice "), "{text}");
 
-    // A search for an input that fails, kept and reduced (testing 10.6).
-    let fuzz = "import std.testing\n\ntest parsesCodes {\n    testing.fuzz(\"code\", [1], (n: Int) {\n        assert(n != 4242)\n    })\n}\n";
+    // A search for an input that fails, kept and reduced (testing 10.6),
+    // which takes the value from the project's code, not by chance.
+    std::fs::write(dir.join("src/codes.to"), "fn accepts(code: Int): Bool {\n    code != 4242\n}\n").unwrap();
+    let fuzz = "import std.testing\n\ntest parsesCodes {\n    testing.fuzz(\"code\", [1], (n: Int) {\n        assert(accepts(n))\n    })\n}\n";
     std::fs::write(dir.join("src/fuzz_test.to"), fuzz).unwrap();
     let (searched, text) = agent.call("test", json!({ "fuzz": 300 }));
     let call = &searched["report"]["tests"][0]["attempts"][0]["fuzz"][0];
