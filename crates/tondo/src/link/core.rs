@@ -1,6 +1,6 @@
-//! What the linkers of every format share: how archives' members come in,
-//! what references to recorded functions are to, the image they write, and
-//! how they say what is wrong with an input.
+//! What the linkers of every format share: their table of globals, how
+//! archives' members come in, what references to recorded functions are
+//! to, the image they write, and how they say what is wrong with an input.
 
 use crate::hash::FastMap;
 use std::collections::{HashMap, HashSet};
@@ -152,4 +152,18 @@ impl Redirects {
             false => name,
         }
     }
+}
+
+/// The index of the global named `name` among `globals`, which `names`
+/// indexes by name: a new one `make` makes if there is none.
+pub(super) fn intern<'a, G>(
+    globals: &mut Vec<G>,
+    names: &mut FastMap<&'a [u8], usize>,
+    name: &'a [u8],
+    make: impl FnOnce() -> G,
+) -> usize {
+    *names.entry(name).or_insert_with(|| {
+        globals.push(make());
+        globals.len() - 1
+    })
 }

@@ -625,12 +625,8 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
 
 impl<'a> Linker<'a> {
     fn intern(&mut self, name: &'a [u8]) -> usize {
-        if let Some(&id) = self.names.get(name) {
-            return id;
-        }
-        self.globals.push(Global { name, def: Def::Undefined, weak: false, required: false, common: 0 });
-        self.names.insert(name, self.globals.len() - 1);
-        self.globals.len() - 1
+        let new = || Global { name, def: Def::Undefined, weak: false, required: false, common: 0 };
+        super::core::intern(&mut self.globals, &mut self.names, name, new)
     }
 
     /// Adds an object: its sections cut into atoms, and its symbols.

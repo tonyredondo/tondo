@@ -649,10 +649,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
 
 impl<'a> Linker<'a> {
     fn intern(&mut self, name: &'a [u8]) -> usize {
-        if let Some(&id) = self.names.get(name) {
-            return id;
-        }
-        self.globals.push(Global {
+        super::core::intern(&mut self.globals, &mut self.names, name, || Global {
             name,
             def: Def::Undefined,
             weak: false,
@@ -661,9 +658,7 @@ impl<'a> Linker<'a> {
             plt: None,
             dynsym: None,
             common: 0,
-        });
-        self.names.insert(name, self.globals.len() - 1);
-        self.globals.len() - 1
+        })
     }
 
     /// Adds an object: its sections, and the globals it defines and needs.
