@@ -5,7 +5,7 @@
 
 use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, Str, element, str_new, string_array, texts_array};
+use super::{ArrayHeader, Str, element, str_new, texts_array};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
