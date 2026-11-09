@@ -1,0 +1,20 @@
+// A server with one route that encodes JSON, started, asked once over its
+// port and stopped, so that `tondo run` of it ends.
+import std.console
+import std.http
+
+pub type Greeting = {
+    message: String
+    letters: Int
+}
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get(
+        "/greet/:name",
+        (name: String) { Greeting { message: "hello {name}", letters: name.length() } },
+    )
+    let server = app.start()?
+    console.println(http.get("{server.url()}/greet/tondo")?.text()?)
+    server.stop()
+}

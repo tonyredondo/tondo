@@ -1,0 +1,11 @@
+// What the largest modules of the standard library cost to load and check,
+// for a program that names one type of each.
+import std.console
+import std.grpc
+import std.http
+import std.sql
+
+fn main() {
+    let (code, cookie, value) = (grpc.Code.NotFound, http.SameSite.Lax, sql.Value.Null)
+    console.println("{code} {cookie} {value}")
+}

@@ -87,3 +87,26 @@ On 2026-10-26, before any of the work they call for:
 | regex/match 1000 | 47.00 µs | 151.66 µs | 0.31× | 0 | 0 |
 
 23 of 27 benchmarks are slower than Go.
+
+## Compiling
+
+`compile.to` measures what the compiler costs (docs/speed.md, A1): `tondo
+check`, `tondo build`, a cold `tondo run`, with no build in the cache but
+the runtime's archives there, and a warm one, for the programs of
+`compile/` and for projects of about 3,000, 24,000 and 192,000 lines that
+`compile/generate.to` writes; and the first build after installing. A row
+is the median of its runs in wall time and, where `perf` counts them, in
+instructions of user code, which layout and load move far less. `TONDO`
+names the `tondo` it measures:
+
+```sh
+TONDO=target/release/tondo tondo run bench/compile.to -- --runs 5 --output compile.md
+TONDO=target/release/tondo tondo run bench/compile.to -- --old <tondo before>
+TONDO=target/release/tondo tondo run bench/compile.to -- --guard
+```
+
+`--old` measures another `tondo` in turns with this one, and fails on a row
+that costs more than 5% more. `--guard`, which the Nightly runs, fails when
+the generated project of 8 times the lines costs more than 10 times as
+much, and names the part of the compiler that grew the most:
+`TONDO_COMPILE_TIMES=1` makes `tondo` say how long each part takes.

@@ -1,0 +1,6 @@
+// What a script costs at its smallest: a line printed.
+import std.console
+
+fn main() {
+    console.println("hello")
+}

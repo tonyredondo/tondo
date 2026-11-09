@@ -1,0 +1,127 @@
+// Writes a project for the benchmarks of compiling (docs/speed.md, A1), of
+// about as many lines as asked and always the same for a number: modules of
+// four files, each module importing the one before it, each file of units
+// of a record, an enum, a generic function, closures, a `match`,
+// interpolation and calls into `std.json`, and a `main` that runs them all.
+//
+//   tondo run bench/compile/generate.to -- <lines> <directory>
+
+import std.console
+import std.env
+import std.fs
+import std.path
+
+/// Unit `index`: its names end with the number, unique in the project.
+fn unit(index: Int): String {
+    let template = r"""
+pub type Item@ = {
+    id: Int
+    name: String
+    tags: Array[String]
+    score: Float
+}
+
+pub enum Shape@ {
+    Circle(Float)
+    Square(Float)
+    Named(String)
+}
+
+fn area@(shape: Shape@): Float {
+    match shape {
+        Shape@.Circle(radius) => radius * radius * 3.14
+        Shape@.Square(side) => side * side
+        Shape@.Named(name) => Float(name.length())
+    }
+}
+
+fn pick@[T](values: Array[T], keep: fn(T): Bool): Array[T] {
+    values.filter(keep)
+}
+
+pub fn run@(seed: Int): Int ! json.JsonError {
+    let items = (0..8)
+        .map(
+            (n) {
+                Item@ {
+                    id: n + seed
+                    name: "item {n} of {seed}"
+                    tags: ["t{n}", "u{seed}"]
+                    score: Float(n) * 1.5
+                }
+            },
+        )
+        .collect()
+    let kept = pick@(items, (item: Item@) { item.id % 2 == 0 })
+    let text = json.encode(kept)
+    let back: Array[Item@] = json.decode(text)?
+    var total = 0.0
+    for shape in [Shape@.Circle(1.0), Shape@.Square(Float(seed)), Shape@.Named("s{seed}")] {
+        total += area@(shape)
+    }
+    back.length() + text.length() + Int.saturating(total)
+}
+"""
+    template.replace("@", "{index}")
+}
+
+/// Writes `text` to `file`, with the directories it is in.
+fn write(file: String, text: String): !String {
+    let directory = path.parent(file).unwrapOr(".")
+    fs.createDirectory(directory).mapErr((e) { "cannot create {directory}: {e}" })?
+    fs.writeText(file, text).mapErr((e) { "cannot write {file}: {e}" })?
+}
+
+fn main(): !String {
+    let arguments = env.args()
+    if arguments.length() != 2 {
+        fail "usage: tondo run bench/compile/generate.to -- <lines> <directory>"
+    }
+    let wanted = Int.parse(arguments[0]).mapErr((_) { "the lines are a number: {arguments[0]}" })?
+    let root = arguments[1]
+    write(path.join(root, "tondo.toml"), "[package]\nname = \"generated\"\n")?
+    var (lines, units, modules) = (0, 0, 0)
+    for lines < wanted {
+        // Four files of units, and one that runs them and the first unit
+        // of the module before.
+        let first = units
+        for file in 0..4 {
+            var text = "import std.json\n"
+            for _ in 0..6 {
+                text = "{text}\n{unit(units)}\n"
+                units += 1
+            }
+            lines += text.lines().length()
+            write(path.join(root, "src/part{modules}/file{file}.to"), text)?
+        }
+        var start = ""
+        if modules > 0 {
+            start = "import generated.part{modules - 1}\n"
+        }
+        start =
+            "{start}import std.json\n\npub fn start(seed: Int): Int ! json.JsonError {{\n    var total = 0\n"
+        if modules > 0 {
+            start = "{start}    total += part{modules - 1}.run{first - 24}(seed)?\n"
+        }
+        for index in first..units {
+            start = "{start}    total += run{index}(seed)?\n"
+        }
+        start = "{start}    total\n}}\n"
+        lines += start.lines().length()
+        write(path.join(root, "src/part{modules}/start.to"), start)?
+        modules += 1
+    }
+    var program = ""
+    for module in 0..modules {
+        program = "{program}import generated.part{module}\n"
+    }
+    program =
+        "{program}import std.console\nimport std.json\n\nfn main(): !json.JsonError {{\n    var total = 0\n"
+    for module in 0..modules {
+        program = "{program}    total += part{module}.start({module})?\n"
+    }
+    program = "{program}    console.println(\"{{total}}\")\n}}\n"
+    lines += program.lines().length()
+    write(path.join(root, "src/main.to"), program)?
+    console.println("{lines} lines in {modules} modules of {units} units")
+}

@@ -1,0 +1,390 @@
+// Measures what compiling costs (docs/speed.md, A1): `tondo check`,
+// `tondo build`, a cold `tondo run`, with no build in the cache but the
+// runtime's archives there, and a warm one, the build in the cache and the
+// program's run included, for the programs of bench/compile and for the
+// projects bench/compile/generate.to writes; and the first build after
+// installing, which extracts the runtime's archives. Each command runs in a
+// cache of its own, once to warm it and then `--runs` times, 5 by default.
+// A row gives the median wall time and, where `perf` counts them, the
+// median instructions of user code, which layout and load do not move.
+//
+//   tondo run bench/compile.to -- [--runs 5] [--sizes 3000,24000,192000] [--output <file>]
+//
+// With `--old <tondo>` it compares that `tondo` with this one: the two
+// measure in turns, each first in every other round, and it fails when a
+// row costs more than `--max` percent, 5 by default, in instructions, or in
+// time where `perf` cannot count.
+//
+// With `--guard` it checks and builds the generated project of `--size`
+// lines, 24,000 by default, and of 8 times as many, and fails when either
+// costs more than 10 times as much, naming the part of the compiler that
+// grew the most, which `TONDO_COMPILE_TIMES` times (A2).
+//
+// It runs from the repository's root; `TONDO` names the `tondo` to measure,
+// `tondo` on PATH by default.
+
+import std.console
+import std.env
+import std.fs
+import std.path
+import std.process
+import std.time
+
+/// What a row runs.
+enum Kind {
+    Check
+    Build
+    ColdRun
+    WarmRun
+    FirstBuild
+}
+
+type Case = {
+    program: String
+    kind: Kind
+    target: String
+}
+
+type Measure = {
+    nanoseconds: Float
+    instructions: Float
+}
+
+fn command(kind: Kind): String {
+    match kind {
+        Kind.Check => "check"
+        Kind.Build => "build"
+        Kind.ColdRun => "cold run"
+        Kind.WarmRun => "warm run"
+        Kind.FirstBuild => "first build"
+    }
+}
+
+/// Removes `file` with what is in it, if it is there.
+fn clear(file: String): !String {
+    if fs.exists(file) {
+        fs.remove(file, recursive: true).mapErr((e) { "cannot remove {file}: {e}" })?
+    }
+}
+
+/// One run of `case` with `tondo`, in the cache `cache`, counted by `perf`
+/// when `counting`.
+fn once(
+    tondo: String,
+    case: Case,
+    cache: String,
+    counting: Bool,
+    times: Bool,
+): process.ProcessOutput ! String {
+    let output = path.join(cache, "program")
+    match case.kind {
+        Kind.ColdRun => clear(path.join(cache, "tondo/run"))?
+        Kind.FirstBuild => clear(path.join(cache, "tondo"))?
+        _ => {}
+    }
+    let arguments = match case.kind {
+        Kind.Check => ["check", case.target]
+        Kind.ColdRun => ["run", case.target]
+        Kind.WarmRun => ["run", case.target]
+        _ => ["build", case.target, "--output", output]
+    }
+    var run = if counting {
+        process.command("perf", "stat", "-x,", "-e", "instructions:u", "--", tondo, ...arguments)
+    } else {
+        process.command(tondo, ...arguments)
+    }
+    run = run.env("XDG_CACHE_HOME", cache)
+    if times {
+        run = run.env("TONDO_COMPILE_TIMES", "1")
+    }
+    let ran = run.output().mapErr((e) { "cannot run {tondo}: {e}" })?
+    if not ran.statuses.all((status) { status.success }) {
+        fail "{case.program} {command(case.kind)} failed: {String.fromBytes(ran.stderr).unwrapOr("")}"
+    }
+    ran
+}
+
+/// The instructions `perf stat -x,` counted, in its lines on stderr.
+fn counted(ran: process.ProcessOutput): Float {
+    for line in String.fromBytes(ran.stderr).unwrapOr("").lines() {
+        let fields = line.split(",")
+        if fields.length() > 2 and fields[2].startsWith("instructions") {
+            return Float.parse(fields[0]).unwrapOr(0.0)
+        }
+    }
+    0.0
+}
+
+/// The median of some numbers.
+fn median(values: Array[Float]): Float {
+    var sorted = values
+    sorted.sortBy((value) { value })
+    if sorted.isEmpty() { 0.0 } else { sorted[sorted.length() / 2] }
+}
+
+/// `case` measured `runs` times after a run that warms its cache.
+fn measure(tondo: String, case: Case, cache: String, runs: Int, counting: Bool): Measure ! String {
+    _ = once(tondo, case, cache, false, false)?
+    var (times, counts): (Array[Float], Array[Float]) = ([], [])
+    for _ in 0..runs {
+        let started = time.now()
+        let ran = once(tondo, case, cache, counting, false)?
+        times.push(Float(started.elapsed().nanoseconds()))
+        counts.push(counted(ran))
+    }
+    Measure { nanoseconds: median(times), instructions: median(counts) }
+}
+
+/// A time, in the unit that reads best.
+fn shown(nanoseconds: Float): String {
+    if nanoseconds < 1_000_000_000.0 {
+        return "{(nanoseconds / 1_000_000.0).toFixed(1)} ms"
+    }
+    "{(nanoseconds / 1_000_000_000.0).toFixed(2)} s"
+}
+
+/// A count of instructions, in millions.
+fn millions(instructions: Float): String {
+    if instructions == 0.0 { "—" } else { "{(instructions / 1_000_000.0).toFixed(1)} M" }
+}
+
+/// Writes the generated project of `lines` lines in `directory`, with the
+/// `tondo` that measures; how many lines it has.
+fn generated(tondo: String, lines: Int, directory: String): Int ! String {
+    let ran =
+        process
+            .command(tondo, "run", "bench/compile/generate.to", "--", "{lines}", directory)
+            .env("XDG_CACHE_HOME", "{directory}-cache")
+            .output()
+            .mapErr((e) { "cannot run the generator: {e}" })?
+    let said = ran.text().mapErr((e) { "the generator said no text: {e}" })?
+    if not ran.statuses.all((status) { status.success }) {
+        fail "the generator failed: {String.fromBytes(ran.stderr).unwrapOr("")}"
+    }
+    Int.parse(said.words().first().unwrapOr("0")).unwrapOr(lines)
+}
+
+/// The rows: every command for each program, and the first build of
+/// `hello.to`.
+fn cases(tondo: String, sizes: Array[Int], scratch: String): Array[Case] ! String {
+    var programs: Array[(String, String)] = [
+        ("hello", "bench/compile/hello.to"),
+        ("server", "bench/compile/server.to"),
+        ("imports", "bench/compile/imports.to"),
+    ]
+    for size in sizes {
+        let directory = path.join(scratch, "generated-{size}")
+        let lines = generated(tondo, size, directory)?
+        programs.push(("generated, {lines} lines", directory))
+    }
+    var all: Array[Case] = []
+    for (program, target) in programs {
+        for kind in [Kind.Check, Kind.Build, Kind.ColdRun, Kind.WarmRun] {
+            all.push(Case { program, kind, target })
+        }
+    }
+    all.push(Case { program: "hello", kind: Kind.FirstBuild, target: "bench/compile/hello.to" })
+    all
+}
+
+/// Writes `lines` out, and to `output` when one is named.
+fn report(lines: Array[String], output: String): !String {
+    let table = lines.join("\n")
+    console.println(table)
+    if output != "" {
+        fs.writeText(output, "{table}\n").mapErr((e) { "cannot write {output}: {e}" })?
+    }
+}
+
+/// How long each part took, by `TONDO_COMPILE_TIMES`'s lines, the times of
+/// a part summed.
+fn parts(ran: process.ProcessOutput): Map[String, Float] {
+    var took: Map[String, Float] = [:]
+    for line in String.fromBytes(ran.stderr).unwrapOr("").lines() {
+        let rest = line.removePrefix("tondo: ")
+        match rest.findLast(" took ") {
+            some(at) if rest.endsWith(" ms") => {
+                let name = rest.slice(0, at).unwrapOr("")
+                let ms = Float
+                    .parse(rest.slice(at + 6, rest.length() - 3).unwrapOr(""))
+                    .unwrapOr(0.0)
+                took[name] = took.get(name).unwrapOr(0.0) + ms
+            }
+            _ => {}
+        }
+    }
+    took
+}
+
+/// `case` measured, and then how long each part of it took.
+fn timed(
+    tondo: String,
+    case: Case,
+    cache: String,
+    runs: Int,
+    counting: Bool,
+): (Measure, Map[String, Float]) ! String {
+    let measured = measure(tondo, case, cache, runs, counting)?
+    (measured, parts(once(tondo, case, cache, false, true)?))
+}
+
+/// A2: the generated project at `size` lines and at 8 times as many, each
+/// command at most 10 times as costly.
+fn guard(tondo: String, size: Int, runs: Int, counting: Bool, scratch: String): !String {
+    let (small, large) = (path.join(scratch, "small"), path.join(scratch, "large"))
+    let smallLines = generated(tondo, size, small)?
+    let largeLines = generated(tondo, size * 8, large)?
+    var lines: Array[String] = [
+        "| Command | {smallLines} lines | {largeLines} lines | Growth | Part that grew the most |",
+        "|---|---:|---:|---:|---|",
+    ]
+    var failed: Array[String] = []
+    for (index, kind) in [Kind.Check, Kind.Build].enumerate() {
+        let smaller = Case { program: "generated", kind, target: small }
+        let larger = Case { program: "generated", kind, target: large }
+        let (before, beforeParts) =
+            timed(tondo, smaller, path.join(scratch, "small-{index}"), runs, counting)?
+        let (after, afterParts) =
+            timed(tondo, larger, path.join(scratch, "large-{index}"), runs, counting)?
+        let growth = if counting {
+            after.instructions / before.instructions
+        } else {
+            after.nanoseconds / before.nanoseconds
+        }
+        var (worst, worstGrowth) = ("", 0.0)
+        for (name, ms) in afterParts {
+            let grew = ms / beforeParts.get(name).unwrapOr(ms).max(0.01)
+            // Parts that take a few milliseconds even when large grow by noise.
+            if ms > 50.0 and grew > worstGrowth {
+                (worst, worstGrowth) = (name, grew)
+            }
+        }
+        let mark = if growth > 10.0 { " ⚠" } else { "" }
+        if mark != "" {
+            failed.push("{command(kind)} grew {growth.toFixed(1)} times, most in {worst}")
+        }
+        let (shownBefore, shownAfter) = if counting {
+            (millions(before.instructions), millions(after.instructions))
+        } else {
+            (shown(before.nanoseconds), shown(after.nanoseconds))
+        }
+        lines.push(
+            "| {command(kind)} | {shownBefore} | {shownAfter} | {growth.toFixed(1)}×{mark} | {worst}, {worstGrowth.toFixed(1)}× |",
+        )
+    }
+    report(lines, "")?
+    if not failed.isEmpty() {
+        fail "grew more than 10 times for 8 times the lines: {failed.join("; ")}"
+    }
+}
+
+/// The old `tondo` against this one, in turns.
+fn againstOld(
+    old: String,
+    tondo: String,
+    sizes: Array[Int],
+    runs: Int,
+    max: Float,
+    counting: Bool,
+    scratch: String,
+    output: String,
+): !String {
+    let all = cases(tondo, sizes, scratch)?
+    var lines: Array[String] = [
+        "| Program | Command | Before | Now | Change | Instructions before | Instructions now |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    var regressed: Array[String] = []
+    for (index, case) in all.enumerate() {
+        let (oldCache, newCache) = (
+            path.join(scratch, "old-{index}"),
+            path.join(scratch, "new-{index}"),
+        )
+        var (olds, news): (Array[Measure], Array[Measure]) = ([], [])
+        for round in 0..2 {
+            if round == 1 {
+                news.push(measure(tondo, case, newCache, runs, counting)?)
+            }
+            olds.push(measure(old, case, oldCache, runs, counting)?)
+            if round == 0 {
+                news.push(measure(tondo, case, newCache, runs, counting)?)
+            }
+        }
+        let combined = (measures: Array[Measure]) {
+            Measure {
+                nanoseconds: median(measures.map((m) { m.nanoseconds }))
+                instructions: median(measures.map((m) { m.instructions }))
+            }
+        }
+        let (before, now) = (combined(olds), combined(news))
+        let change = if counting {
+            (now.instructions / before.instructions - 1.0) * 100.0
+        } else {
+            (now.nanoseconds / before.nanoseconds - 1.0) * 100.0
+        }
+        let mark = if change > max { " ⚠" } else { "" }
+        if mark != "" {
+            regressed.push("{case.program} {command(case.kind)}")
+        }
+        lines.push(
+            "| {case.program} | {command(case.kind)} | {shown(before.nanoseconds)} | {shown(now.nanoseconds)} | {change.toFixed(1)}%{mark} | {millions(before.instructions)} | {millions(now.instructions)} |",
+        )
+    }
+    lines.push("")
+    lines.push("{regressed.length()} of {all.length()} rows regressed by more than {max}%.")
+    report(lines, output)?
+    if not regressed.isEmpty() {
+        fail "regressed: {regressed.join(", ")}"
+    }
+}
+
+fn main(): !String {
+    var (runs, output, old, max, size, guarding) = (5, "", "", 5.0, 24000, false)
+    var sizes = [3000, 24000, 192000]
+    let arguments = env.args()
+    for i in 0..arguments.length() {
+        let value = if i + 1 < arguments.length() { arguments[i + 1] } else { "" }
+        match arguments[i] {
+            "--runs" => runs = Int.parse(value).unwrapOr(5)
+            "--sizes" => sizes = value.split(",").map((n) { Int.parse(n).unwrapOr(0) })
+            "--output" => output = value
+            "--old" => old = value
+            "--max" => max = Float.parse(value).unwrapOr(5.0)
+            "--size" => size = Int.parse(value).unwrapOr(24000)
+            "--guard" => guarding = true
+            _ => {}
+        }
+    }
+    let tondo = env.get("TONDO").unwrapOr("tondo")
+    // `perf` counts where the system lets it: a count of instructions, or
+    // none, as in a container.
+    let counting = process
+        .command("perf", "stat", "-x,", "-e", "instructions:u", "--", "true")
+        .output()
+        .map((ran) { counted(ran) > 0.0 })
+        .unwrapOr(false)
+    let scratch =
+        fs.createTemporaryDirectory(pattern: "tondo-compile-").mapErr((e) { "no scratch: {e}" })?
+    defer {
+        _ = fs.remove(scratch, recursive: true)
+    }
+    if guarding {
+        guard(tondo, size, runs, counting, scratch)?
+        return
+    }
+    if old != "" {
+        againstOld(old, tondo, sizes, runs, max, counting, scratch, output)?
+        return
+    }
+    var lines: Array[String] = [
+        "| Program | Command | Median | Instructions |",
+        "|---|---|---:|---:|",
+    ]
+    for (index, case) in cases(tondo, sizes, scratch)?.enumerate() {
+        let measured = measure(tondo, case, path.join(scratch, "cache-{index}"), runs, counting)?
+        lines.push(
+            "| {case.program} | {command(case.kind)} | {shown(measured.nanoseconds)} | {millions(measured.instructions)} |",
+        )
+    }
+    report(lines, output)?
+}
