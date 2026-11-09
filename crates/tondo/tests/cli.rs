@@ -565,6 +565,37 @@ fn output_goes_out_when_a_program_has_nothing_to_do() {
     assert_eq!(line, "waiting\n");
 }
 
+/// Exploring orders, the thread that stands in for a worker that a function
+/// C called back holds sees the task go on although nothing wakes it: here
+/// a process it waits for ends. The case of it otherwise runs as any other.
+#[test]
+fn a_thread_stands_in_while_a_callback_waits_for_the_host() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = scratch("stand-in");
+    let case = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run/ffi_callback_waits_for_a_process.to");
+    let (_, stderr, status) = tondo(&dir, &["build", case.to_str().unwrap(), "--output", "callback"]);
+    assert_eq!(status, 0, "{stderr}");
+    let mut child = Command::new(dir.join("callback"))
+        .env("TONDO_RT_SCHEDULE", "1")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // One that missed it would hang.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the program hung: {:?}", child.wait_with_output().unwrap());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "the process ended: true\n");
+    assert!(output.status.success());
+}
+
 /// Programs broken at random, as an edit leaves them, get diagnostics. The
 /// Nightly's, for the time it takes.
 #[test]
