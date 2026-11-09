@@ -3,6 +3,12 @@
 //! Linux it embeds as well what a static executable links (`--static`):
 //! the runtime built for musl, and musl's C library, unwinder and start
 //! file, which Rust ships for that target.
+//!
+//! The runtime is built in `<target-dir>/tondo-runtime`, not under
+//! `OUT_DIR`, which is another for each way of compiling `tondo` (its
+//! tests, clippy, release) and built the runtime again for each; what a
+//! build makes is kept there by a key of everything that makes it, which
+//! CI keeps between runs.
 
 use std::env;
 use std::io::Write;
@@ -15,6 +21,8 @@ fn main() {
     for part in ["src", "data", "build.rs", "Cargo.toml"] {
         println!("cargo:rerun-if-changed={}", runtime.join(part).display());
     }
+    // The versions of the runtime's dependencies.
+    println!("cargo:rerun-if-changed={}", manifest.join("../../Cargo.lock").display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
@@ -23,7 +31,42 @@ fn main() {
     let sysroot = sysroot.map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim())).unwrap_or_default();
     let self_contained = |target: &str| sysroot.join(format!("lib/rustlib/{target}/lib/self-contained"));
 
-    let (library, link_args) = build_runtime(&runtime, &out_dir, &target);
+    // The runtime's source, with the compiler's version, identifies it on
+    // every target: a target's runtime that another `tondo` packed works
+    // with this one when they agree (toolchain 7.8).
+    let mut files = Vec::new();
+    let mut pending = vec![runtime.join("src"), runtime.join("data")];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path) } else { files.push(path) }
+        }
+    }
+    files.extend([runtime.join("build.rs"), runtime.join("Cargo.toml")]);
+    files.sort();
+    let mut identity = fnv(0xcbf2_9ce4_8422_2325, env::var("CARGO_PKG_VERSION").unwrap().as_bytes());
+    for file in files {
+        identity = fnv(identity, file.strip_prefix(&runtime).unwrap().to_string_lossy().as_bytes());
+        identity = fnv(identity, &std::fs::read(&file).unwrap());
+    }
+    std::fs::write(out_dir.join("runtime-identity.txt"), format!("{identity:016x}")).unwrap();
+
+    // What else makes the runtime what it is, besides its source: the
+    // versions of its dependencies, the toolchains of Rust and C, and the
+    // environment they read.
+    let version =
+        |program: &str, flag: &str| Command::new(program).arg(flag).output().map(|o| o.stdout).unwrap_or_default();
+    let mut inputs = fnv(identity, &std::fs::read(manifest.join("../../Cargo.lock")).unwrap_or_default());
+    inputs = fnv(inputs, &version(&rustc, "-vV"));
+    inputs = fnv(inputs, &version("cc", "--version"));
+    let mut shaping: Vec<(String, String)> = env::vars().filter(|(name, _)| shapes(name)).collect();
+    shaping.sort();
+    for (name, value) in shaping {
+        inputs = fnv(fnv(inputs, name.as_bytes()), value.as_bytes());
+    }
+    let root = runtime_root(&out_dir);
+
+    let (library, link_args) = build_runtime(&runtime, &root, &target, inputs);
     std::fs::write(out_dir.join("runtime-link-args.txt"), link_args).unwrap();
     let bytes = std::fs::read(&library).unwrap();
     compress(&bytes, &out_dir.join("libtondo_runtime.a.gz"));
@@ -52,7 +95,7 @@ fn main() {
             (true, Some(file)) => compress(&std::fs::read(self_contained(&musl).join(file)).unwrap(), &path),
             (true, None) if musl == target => compress(&bytes, &path),
             (true, None) => {
-                let (library, _) = build_runtime(&runtime, &out_dir, &musl);
+                let (library, _) = build_runtime(&runtime, &root, &musl, inputs);
                 compress(&std::fs::read(library).unwrap(), &path);
             }
         }
@@ -65,35 +108,31 @@ fn main() {
         hash = fnv(hash, &std::fs::read(out_dir.join(name)).unwrap());
     }
     std::fs::write(out_dir.join("runtime-hash.txt"), format!("{hash:016x}")).unwrap();
-
-    // The runtime's source, with the compiler's version, identifies it on
-    // every target: a target's runtime that another `tondo` packed works
-    // with this one when they agree (toolchain 7.8).
-    let mut files = Vec::new();
-    let mut pending = vec![runtime.join("src"), runtime.join("data")];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() { pending.push(path) } else { files.push(path) }
-        }
-    }
-    files.extend([runtime.join("build.rs"), runtime.join("Cargo.toml")]);
-    files.sort();
-    let mut identity = fnv(0xcbf2_9ce4_8422_2325, env::var("CARGO_PKG_VERSION").unwrap().as_bytes());
-    for file in files {
-        identity = fnv(identity, file.strip_prefix(&runtime).unwrap().to_string_lossy().as_bytes());
-        identity = fnv(identity, &std::fs::read(&file).unwrap());
-    }
-    std::fs::write(out_dir.join("runtime-identity.txt"), format!("{identity:016x}")).unwrap();
 }
 
 fn fnv(start: u64, bytes: &[u8]) -> u64 {
     bytes.iter().fold(start, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
 
-/// Builds the runtime for `target`: the archive, and the native libraries
-/// it needs as linker arguments.
-fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, String) {
+/// The variables of the environment that change what the runtime's build
+/// makes: the C compilers and their flags, which the `cc` crate reads,
+/// Rust's flags, and Apple's deployment target and SDK.
+fn shapes(name: &str) -> bool {
+    let prefixes = ["CC", "CFLAGS", "CXX", "AR", "TARGET_", "HOST_", "RUSTFLAGS", "LIBSQLITE3", "MACOSX_", "SDKROOT"];
+    prefixes.iter().any(|prefix| name.starts_with(prefix))
+}
+
+/// `tondo-runtime` in the target directory: the one above `OUT_DIR` that
+/// cargo marks with `CACHEDIR.TAG`, or `OUT_DIR` itself when there is none.
+fn runtime_root(out_dir: &Path) -> PathBuf {
+    let target_dir = out_dir.ancestors().find(|dir| dir.join("CACHEDIR.TAG").is_file()).unwrap_or(out_dir);
+    target_dir.join("tondo-runtime")
+}
+
+/// Builds the runtime for `target`, unless a build kept it for the same
+/// `inputs`: the archive, and the native libraries it needs as linker
+/// arguments.
+fn build_runtime(runtime: &Path, root: &Path, target: &str, inputs: u64) -> (PathBuf, String) {
     // `TONDO_RUNTIME_FAST=1`, while working on the toolchain: many codegen
     // units, incrementally, compile a change sooner, with a runtime that
     // runs as the real one but is not measured or shipped.
@@ -109,11 +148,12 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         && env::var("HOST").is_ok_and(|host| host == target);
     // Its own build directory, so this build does not wait for the one
     // that runs it; and one for each way, so that neither undoes the other.
-    let target_dir = out_dir.join(match (coverage, fast) {
+    let mode = match (coverage, fast) {
         (true, _) => "runtime-coverage",
         (false, true) => "runtime-fast",
         (false, false) => "runtime",
-    });
+    };
+    let target_dir = root.join(mode);
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut command = Command::new(&cargo);
     command
@@ -140,7 +180,9 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         )
         .args(["--print", "native-static-libs"])
         .current_dir(runtime)
-        .env_remove("CARGO_ENCODED_RUSTFLAGS");
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        // Under clippy the runtime is built as under rustc, and is the same.
+        .env_remove("RUSTC_WORKSPACE_WRAPPER");
     // The C parts of the runtime's dependencies, for musl on a system
     // without a musl compiler: the system's, without glibc's fortified
     // functions, nor the C23 names its headers give functions, as
@@ -158,6 +200,18 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
     // not have: its `off_t` is 64 bits already.
     if target.contains("musl") {
         command.env("LIBSQLITE3_FLAGS", "-DSQLITE_DISABLE_LFS");
+    }
+    let mut key = fnv(inputs, format!("{target} {mode}").as_bytes());
+    let mut given: Vec<_> = command.get_envs().collect();
+    given.sort();
+    for (name, value) in given {
+        key = fnv(key, name.as_encoded_bytes());
+        key = fnv(key, value.map_or(&b""[..], |value| value.as_encoded_bytes()));
+    }
+    let kept = root.join("outputs").join(format!("{target}.{mode}.{key:016x}"));
+    let (library, arguments) = (kept.join("libtondo_runtime.a"), kept.join("link-args.txt"));
+    if let (true, Ok(link_args)) = (library.is_file(), std::fs::read_to_string(&arguments)) {
+        return (library, link_args);
     }
     let output = command.output().expect("failed to run cargo for the Tondo runtime");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -185,7 +239,30 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
             .expect("profiler_builtins in rustc's sysroot");
         link_args = format!("{} -Wl,-u,__llvm_profile_runtime {link_args}", profiler.display());
     }
-    (target_dir.join(target).join("release/libtondo_runtime.a"), link_args)
+    keep(&kept, &target_dir.join(target).join("release/libtondo_runtime.a"), &link_args);
+    (library, link_args)
+}
+
+/// Keeps what a build made in `kept`, written whole or not at all, and lets
+/// go of what an earlier key of the same target and way left beside it.
+fn keep(kept: &Path, library: &Path, link_args: &str) {
+    let (outputs, name) = (kept.parent().unwrap(), kept.file_name().unwrap().to_string_lossy());
+    let writing = outputs.join(format!(".{name}.{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&writing);
+    std::fs::create_dir_all(&writing).unwrap();
+    std::fs::copy(library, writing.join("libtondo_runtime.a")).unwrap();
+    std::fs::write(writing.join("link-args.txt"), link_args).unwrap();
+    // Another build may have kept the same first.
+    if std::fs::rename(&writing, kept).is_err() {
+        let _ = std::fs::remove_dir_all(&writing);
+    }
+    let same = &name[..name.rfind('.').unwrap() + 1];
+    for entry in std::fs::read_dir(outputs).into_iter().flatten().flatten() {
+        let other = entry.file_name().to_string_lossy().into_owned();
+        if other.starts_with(same) && other != name {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn on_path(program: &str) -> bool {
