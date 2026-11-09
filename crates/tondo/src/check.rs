@@ -1301,8 +1301,6 @@ struct Capture {
     mutable: bool,
 }
 
-impl<'a> Checker<'a> {}
-
 /// `[]`, `Set[]` or `[:]`, whose type only what is expected of it can give.
 fn empty_literal(expr: &ast::Expr) -> bool {
     match &expr.kind {
