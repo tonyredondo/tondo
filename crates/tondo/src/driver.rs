@@ -209,28 +209,95 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
 /// of only one says which (language 6.8).
 pub fn check(path: &Path) -> Result<Analysis, String> {
     let systems = checked_systems(path)?;
-    let mut analysis = for_system(systems[0], || analyze_with(path, false, false, false, Root::Checked))?;
-    for &other in &systems[1..] {
-        let more = for_system(other, || analyze_with(path, false, false, false, Root::Checked))?;
-        merge_system(&mut analysis, &more, other);
+    let carried = Carried::here();
+    // The other systems' analyses and the tests' run beside this machine's,
+    // each on a thread of its own as this one is set, and are merged in the
+    // same order as one after another (docs/speed.md, B5).
+    std::thread::scope(|scope| {
+        let others: Vec<_> = systems[1..]
+            .iter()
+            .map(|&other| {
+                beside(scope, &carried, move || {
+                    for_system(other, || analyze_with(path, false, false, false, Root::Checked))
+                })
+            })
+            .collect();
+        let tests =
+            path.is_dir().then(|| beside(scope, &carried, || analyze_with(path, true, false, false, Root::Checked)));
+        let mut analysis = for_system(systems[0], || analyze_with(path, false, false, false, Root::Checked))?;
+        for (handle, &other) in others.into_iter().zip(&systems[1..]) {
+            let more = joined(handle)?;
+            merge_system(&mut analysis, &more, other);
+        }
+        // A project's tests too, once its code is right, as an editor shows
+        // them: what they alone say, in their own files.
+        if let Some(handle) = tests {
+            let tests = joined(handle);
+            if !analysis.diags.has_errors() {
+                let tests = tests?;
+                // And of the code, what only the tests show: a mark in it of a
+                // step no model in them has (`W1020`).
+                merge(&mut analysis, &tests, None, |diagnostic, file| {
+                    file.logical.ends_with("_test.to")
+                        || Path::new(&file.logical).starts_with("tests")
+                        || diagnostic.code == Some("W1020")
+                });
+            }
+        }
+        // What fails on one system does not build.
+        if analysis.diags.has_errors() {
+            analysis.program = None;
+        }
+        Ok(analysis)
+    })
+}
+
+/// The stack of a thread that analyzes a program, as the main thread's: a
+/// deeply nested program checks on it as on that one.
+const ANALYSIS_STACK: usize = 8 << 20;
+
+/// What the builds of a thread are set to, given to another.
+#[derive(Clone)]
+struct Carried {
+    open: std::collections::HashMap<PathBuf, String>,
+    root: Option<String>,
+    system: Option<project::System>,
+}
+
+impl Carried {
+    fn here() -> Carried {
+        Carried {
+            open: OPEN.with(|o| o.borrow().clone()),
+            root: ROOT.with(|r| r.borrow().clone()),
+            system: SYSTEM.get(),
+        }
     }
-    // A project's tests too, once its code is right, as an editor shows
-    // them: what they alone say, in their own files.
-    if path.is_dir() && !analysis.diags.has_errors() {
-        let tests = analyze_with(path, true, false, false, Root::Checked)?;
-        // And of the code, what only the tests show: a mark in it of a step
-        // no model in them has (`W1020`).
-        merge(&mut analysis, &tests, None, |diagnostic, file| {
-            file.logical.ends_with("_test.to")
-                || Path::new(&file.logical).starts_with("tests")
-                || diagnostic.code == Some("W1020")
-        });
+
+    /// Runs `f` on this thread, a new one, set as the one it came from.
+    fn set<T>(self, f: impl FnOnce() -> T) -> T {
+        OPEN.with(|o| *o.borrow_mut() = self.open);
+        ROOT.with(|r| *r.borrow_mut() = self.root);
+        SYSTEM.set(self.system);
+        f()
     }
-    // What fails on one system does not build.
-    if analysis.diags.has_errors() {
-        analysis.program = None;
-    }
-    Ok(analysis)
+}
+
+/// Runs the analysis `f` on a thread of its own in `scope`, set as `carried`.
+fn beside<'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    carried: &Carried,
+    f: impl FnOnce() -> Result<Analysis, String> + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, Result<Analysis, String>> {
+    let carried = carried.clone();
+    std::thread::Builder::new()
+        .stack_size(ANALYSIS_STACK)
+        .spawn_scoped(scope, move || carried.set(f))
+        .expect("a thread for an analysis")
+}
+
+/// What the thread of an analysis gave, or its panic, passed on.
+fn joined(handle: std::thread::ScopedJoinHandle<'_, Result<Analysis, String>>) -> Result<Analysis, String> {
+    handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// The systems `tondo check` checks a project for: this machine's, first,
