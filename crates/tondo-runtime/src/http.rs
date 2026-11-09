@@ -587,8 +587,9 @@ pub unsafe extern "C" fn tondo_rt_http_send(
         },
     };
     // Polled by the task in place, as the server's futures are: only the
-    // connection's own future runs on tokio's threads.
-    let response = match super::io::wait_for(request.send()) {
+    // connection's own future runs on tokio's threads. Made in the poll,
+    // with tokio's context, as a timeout's timer is made with the future.
+    let response = match super::io::wait_for(async move { request.send().await }) {
         None => Response::failed("protocol", "the task was cancelled".into()),
         Some(Err(error)) => {
             let (kind, message) = classify(&error);
@@ -674,7 +675,7 @@ pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut Arra
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return byte_array(&[]);
     };
-    match super::io::wait_for(body.bytes()) {
+    match super::io::wait_for(async move { body.bytes().await }) {
         Some(Ok(bytes)) => byte_array(&bytes),
         outcome => {
             let failure = match outcome {
