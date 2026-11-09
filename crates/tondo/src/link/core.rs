@@ -65,30 +65,31 @@ pub(super) trait Members<'a> {
 /// still wanted.
 pub(super) fn load_members<'a, L: Members<'a>>(
     linker: &mut L,
-    archives: &[(String, &'a [u8])],
+    archives: &[Archive<'a>],
     mut pending: Vec<usize>,
     parse: impl Fn(String, &'a [u8]) -> Result<L::Object, String> + Sync,
 ) -> Result<(), String> {
-    let mut index: FastMap<&'a [u8], (usize, u64)> = FastMap::default();
+    // Each archive's symbols, the first of each name: from the index kept
+    // beside it, or read now.
     let mut parsed = Vec::new();
-    for (a, (name, data)) in archives.iter().enumerate() {
-        let archive = object::read::archive::ArchiveFile::parse(*data).map_err(|e| error(name, e))?;
-        if let Some(symbols) = archive.symbols().map_err(|e| error(name, e))? {
-            for symbol in symbols {
-                let symbol = symbol.map_err(|e| error(name, e))?;
-                index.entry(symbol.name()).or_insert((a, symbol.offset().0));
-            }
-        }
-        parsed.push(archive);
+    let mut symbols = Vec::new();
+    for archive in archives {
+        let file = object::read::archive::ArchiveFile::parse(archive.data).map_err(|e| error(&archive.name, e))?;
+        symbols.push(match archive.index.and_then(|index| Index::open(index, archive.data)) {
+            Some(index) => Symbols::Kept(index),
+            None => Symbols::Read(read_symbols(&archive.name, &file)?),
+        });
+        parsed.push(file);
     }
+    let member = |name: &[u8]| symbols.iter().enumerate().find_map(|(a, symbols)| Some((a, symbols.find(name)?)));
     // Room for the names the archives may bring.
-    linker.reserve(index.len());
+    linker.reserve(symbols.iter().map(Symbols::len).sum());
     let mut loaded: HashSet<(usize, u64)> = HashSet::new();
     loop {
         let mut wanted: Vec<((usize, u64), usize)> = Vec::new();
         for id in pending.drain(..) {
             let Some(name) = linker.wanted(id) else { continue };
-            let Some(&member) = index.get(name) else { continue };
+            let Some(member) = member(name) else { continue };
             if loaded.insert(member) {
                 wanted.push((member, id));
             }
@@ -98,11 +99,10 @@ pub(super) fn load_members<'a, L: Members<'a>>(
         }
         wanted.sort_unstable();
         let read = crate::parallel::map(&wanted, 4, |&((a, offset), _)| {
-            let (archive_name, data) = &archives[a];
-            let member =
-                parsed[a].member(object::read::archive::ArchiveOffset(offset)).map_err(|e| error(archive_name, e))?;
-            let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
-            parse(format!("{archive_name}({})", String::from_utf8_lossy(member.name())), bytes)
+            let Archive { name, data, .. } = &archives[a];
+            let member = parsed[a].member(object::read::archive::ArchiveOffset(offset)).map_err(|e| error(name, e))?;
+            let bytes = member.data(*data).map_err(|e| error(name, e))?;
+            parse(format!("{name}({})", String::from_utf8_lossy(member.name())), bytes)
         });
         for ((member, id), read) in wanted.into_iter().zip(read) {
             if linker.wanted(id).is_none() {
@@ -166,4 +166,179 @@ pub(super) fn intern<'a, G>(
         globals.push(make());
         globals.len() - 1
     })
+}
+
+/// An archive the linker reads members from, with the index of its symbols
+/// kept beside it in the cache, if it has one (`index_symbols`).
+pub(crate) struct Archive<'a> {
+    pub(crate) name: String,
+    pub(crate) data: &'a [u8],
+    pub(crate) index: Option<&'a [u8]>,
+}
+
+/// An archive's symbols, by name, the first of each with its member.
+enum Symbols<'a> {
+    Kept(Index<'a>),
+    Read(FastMap<&'a [u8], u64>),
+}
+
+impl Symbols<'_> {
+    fn find(&self, name: &[u8]) -> Option<u64> {
+        match self {
+            Symbols::Kept(index) => index.find(name),
+            Symbols::Read(map) => map.get(name).copied(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Symbols::Kept(index) => index.count,
+            Symbols::Read(map) => map.len(),
+        }
+    }
+}
+
+fn read_symbols<'a>(
+    name: &str,
+    file: &object::read::archive::ArchiveFile<'a>,
+) -> Result<FastMap<&'a [u8], u64>, String> {
+    let mut map = FastMap::default();
+    for symbol in file.symbols().map_err(|e| error(name, e))?.into_iter().flatten() {
+        let symbol = symbol.map_err(|e| error(name, e))?;
+        map.entry(symbol.name()).or_insert(symbol.offset().0);
+    }
+    Ok(map)
+}
+
+/// The index of the symbols of an archive that does not change, as the
+/// runtime's in the cache, kept beside it so that a link finds each name
+/// it needs without reading the tens of thousands the archive lists
+/// (docs/speed.md, F3): after a header of `INDEX` and the archive's length,
+/// how many names and how many slots, a table of slots of four numbers,
+/// each name's hash, where the name is in the archive, its length, and its
+/// member's offset, an empty slot with a name of no length.
+const INDEX: &[u8; 8] = b"tondoix1";
+
+/// The index of `data`'s symbols, for `Index::open`; none for an archive
+/// past 4 GiB, which the table cannot point into.
+pub(super) fn index_symbols(data: &[u8]) -> Option<Vec<u8>> {
+    let file = object::read::archive::ArchiveFile::parse(data).ok()?;
+    let read = read_symbols("", &file).ok()?;
+    if u32::try_from(data.len()).is_err() {
+        return None;
+    }
+    let slots = (read.len() * 2).next_power_of_two().max(16);
+    let mut table = vec![0u32; slots * 4];
+    // In the archive's order, as the first of each name is the one taken.
+    let mut names: Vec<(&[u8], u64)> = read.into_iter().collect();
+    names.sort_unstable_by_key(|&(name, _)| name.as_ptr() as usize);
+    for (name, member) in names.iter().filter(|(name, _)| !name.is_empty()) {
+        let hash = index_hash(name);
+        let mut slot = hash as usize & (slots - 1);
+        while table[slot * 4 + 2] != 0 {
+            slot = (slot + 1) & (slots - 1);
+        }
+        let at = name.as_ptr() as usize - data.as_ptr() as usize;
+        table[slot * 4..slot * 4 + 4].copy_from_slice(&[hash, at as u32, name.len() as u32, *member as u32]);
+    }
+    let mut bytes = INDEX.to_vec();
+    for number in [data.len() as u64, names.len() as u64, slots as u64] {
+        bytes.extend(number.to_le_bytes());
+    }
+    bytes.extend(table.iter().flat_map(|n| n.to_le_bytes()));
+    Some(bytes)
+}
+
+fn index_hash(name: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for &byte in name {
+        hash = (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// An index of `index_symbols` read in place.
+struct Index<'a> {
+    table: &'a [u8],
+    slots: usize,
+    count: usize,
+    data: &'a [u8],
+}
+
+impl<'a> Index<'a> {
+    /// The index, if it is one of `data`, the archive it was made of.
+    fn open(index: &'a [u8], data: &'a [u8]) -> Option<Index<'a>> {
+        let number = |at: usize| Some(u64::from_le_bytes(index.get(at..at + 8)?.try_into().ok()?) as usize);
+        let (length, count, slots) = (number(8)?, number(16)?, number(24)?);
+        let table = index.get(32..)?;
+        let fits = slots.is_power_of_two() && table.len() == slots * 16;
+        (index.starts_with(INDEX) && length == data.len() && fits).then_some(Index { table, slots, count, data })
+    }
+
+    fn find(&self, name: &[u8]) -> Option<u64> {
+        let hash = index_hash(name);
+        let mut slot = hash as usize & (self.slots - 1);
+        loop {
+            let number = |field: usize| {
+                let at = slot * 16 + field * 4;
+                u32::from_le_bytes(self.table[at..at + 4].try_into().unwrap())
+            };
+            let length = number(2) as usize;
+            if length == 0 {
+                return None;
+            }
+            let at = number(1) as usize;
+            if number(0) == hash && self.data.get(at..at + length) == Some(name) {
+                return Some(u64::from(number(3)));
+            }
+            slot = (slot + 1) & (self.slots - 1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// An object of `names`, each a function it defines.
+    fn object(names: &[&str]) -> Vec<u8> {
+        use object::write::{Object, Symbol, SymbolSection};
+        use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
+        let mut written = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+        let section = written.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        written.append_section_data(section, &[0xc3; 16], 16);
+        for (at, name) in names.iter().enumerate() {
+            written.add_symbol(Symbol {
+                name: name.as_bytes().to_vec(),
+                value: at as u64,
+                size: 1,
+                kind: SymbolKind::Text,
+                scope: SymbolScope::Linkage,
+                weak: false,
+                section: SymbolSection::Section(section),
+                flags: SymbolFlags::None,
+            });
+        }
+        written.write().unwrap()
+    }
+
+    /// The index kept beside an archive finds each name where reading the
+    /// archive finds it, the first member that defines it, and no other.
+    #[test]
+    fn an_index_finds_what_reading_the_archive_finds() {
+        let (first, second) = (object(&["shared", "first_only"]), object(&["shared", "second_only"]));
+        let members = [("first.o".to_string(), &first[..]), ("second.o".to_string(), &second[..])];
+        let data = super::super::archive(&members, false);
+        let file = object::read::archive::ArchiveFile::parse(&data[..]).unwrap();
+        let read = super::read_symbols("test", &file).unwrap();
+        let index_bytes = super::index_symbols(&data).unwrap();
+        let index = super::Index::open(&index_bytes, &data).unwrap();
+        assert_eq!(index.count, 3);
+        for name in ["shared", "first_only", "second_only"] {
+            assert_eq!(index.find(name.as_bytes()), read.get(name.as_bytes()).copied(), "{name}");
+        }
+        assert_ne!(index.find(b"first_only"), index.find(b"second_only"));
+        assert_eq!(index.find(b"shared"), index.find(b"first_only"));
+        assert_eq!(index.find(b"missing"), None);
+        // Nor is it the index of another archive.
+        assert!(super::Index::open(&index_bytes, &data[..data.len() - 2]).is_none());
+    }
 }

@@ -75,7 +75,7 @@ pub struct Inputs<'a> {
     /// Objects, which come in whole.
     pub objects: Vec<(String, &'a [u8])>,
     /// Archives, whose members come in when they define what is missing.
-    pub archives: Vec<(String, &'a [u8])>,
+    pub archives: Vec<super::core::Archive<'a>>,
     /// Shared libraries, searched in order for what the rest leaves
     /// undefined; the first ones are always needed.
     pub shared: Vec<(String, &'a [u8])>,

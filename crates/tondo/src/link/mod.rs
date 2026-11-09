@@ -4,9 +4,9 @@
 //! packages either.
 
 mod archive;
-mod core;
+pub(crate) mod core;
 mod elf;
-pub mod macho;
+pub(crate) mod macho;
 pub mod patch;
 
 pub use archive::archive;
@@ -173,6 +173,8 @@ pub fn link(
     // An object among them, as the start file of a static executable,
     // comes in whole.
     let (archive_data, object_data): (Vec<_>, Vec<_>) = files.into_iter().partition(|(_, d)| d.starts_with(b"!<arch>"));
+    let indexes: Vec<Option<Mapped>> =
+        archive_data.iter().map(|(name, data)| kept_index(Path::new(name), data)).collect();
     let shared_data: Vec<(String, Mapped)> = shared
         .iter()
         .chain(&system)
@@ -183,7 +185,7 @@ pub fn link(
         objects: std::iter::once(("the program".to_string(), object))
             .chain(object_data.iter().map(|(n, d)| (n.clone(), &d[..])))
             .collect(),
-        archives: archive_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
+        archives: with_indexes(&archive_data, &indexes),
         shared: shared_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
         always_needed: shared.len(),
         runpath,
@@ -212,6 +214,32 @@ pub fn link(
         let _ = std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755));
     }
     Ok(())
+}
+
+/// The archives as the linkers read them, each with its index if it has one.
+fn with_indexes<'a>(data: &'a [(String, Mapped)], indexes: &'a [Option<Mapped>]) -> Vec<core::Archive<'a>> {
+    let archive = |((name, data), index): (&'a (String, Mapped), &'a Option<Mapped>)| core::Archive {
+        name: name.clone(),
+        data,
+        index: index.as_deref(),
+    };
+    data.iter().zip(indexes).map(archive).collect()
+}
+
+/// The index of the symbols of an archive of the runtime in the cache,
+/// kept beside it: made by the first link that needs it, read in place by
+/// the others (`core::index_symbols`); none for any other archive.
+fn kept_index(path: &Path, data: &[u8]) -> Option<Mapped> {
+    if !path.starts_with(crate::driver::cache_dir().join("runtime")) {
+        return None;
+    }
+    let mut kept = path.as_os_str().to_owned();
+    kept.push(".index");
+    let kept = PathBuf::from(kept);
+    if !kept.is_file() {
+        crate::driver::write_atomic(&kept, &core::index_symbols(data)?).ok()?;
+    }
+    Mapped::open(&kept).ok()
 }
 
 /// The dynamic loader this `tondo` would ask for on its own machine.
@@ -437,11 +465,13 @@ fn link_macho(
     }
     let archive_data: Vec<(String, Mapped)> =
         archive_paths.iter().map(|p| Ok((p.display().to_string(), Mapped::open(p)?))).collect::<Result<_, String>>()?;
+    let indexes: Vec<Option<Mapped>> =
+        archive_paths.iter().zip(&archive_data).map(|(p, (_, d))| kept_index(p, d)).collect();
     let identifier = output.file_name().map_or("a.out".into(), |n| n.to_string_lossy().into_owned());
     let inputs = macho::Inputs {
         arch,
         objects: vec![("the program".into(), object)],
-        archives: archive_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
+        archives: with_indexes(&archive_data, &indexes),
         dylibs,
         rpaths,
         entry: "_main".into(),

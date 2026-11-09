@@ -60,6 +60,10 @@ fn forget_others(dir: &Path, name: &str, own: &str, now: std::time::SystemTime) 
         let unused = modified.is_some_and(|modified| now.duration_since(modified).unwrap_or_default() > DAY);
         if other && unused {
             let _ = std::fs::remove_file(entry.path());
+            // With the index of its symbols the linker keeps beside it.
+            let mut index = entry.path().into_os_string();
+            index.push(".index");
+            let _ = std::fs::remove_file(index);
         }
     }
 }
@@ -1213,7 +1217,7 @@ pub fn compiler_identity() -> String {
 }
 
 /// Writes `bytes` to `path` atomically.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension(format!("tmp{}", aside()));
     std::fs::write(&temporary, bytes).map_err(|e| format!("cannot write {}: {e}", temporary.display()))?;
     std::fs::rename(&temporary, path).map_err(|e| format!("cannot write {}: {e}", path.display()))

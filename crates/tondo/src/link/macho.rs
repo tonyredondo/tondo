@@ -125,7 +125,7 @@ pub enum Arch {
 pub struct Inputs<'a> {
     pub arch: Arch,
     pub objects: Vec<(String, &'a [u8])>,
-    pub archives: Vec<(String, &'a [u8])>,
+    pub archives: Vec<super::core::Archive<'a>>,
     /// The install names of the libraries it loads, the system's first.
     pub dylibs: Vec<String>,
     pub rpaths: Vec<String>,
