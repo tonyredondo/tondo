@@ -852,8 +852,9 @@ impl Server {
 /// events, a response the program sends, a timer, the end of the server.
 struct Exchange {
     future: Mutex<Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>,
-    /// Woken since it was last polled: whoever polls it now polls it again.
-    again: std::sync::atomic::AtomicBool,
+    /// Whether a thread polls it now, and whether it was woken meanwhile,
+    /// which that thread polls it again for.
+    polling: std::sync::atomic::AtomicU8,
     /// Among what the workers poll at their next turns.
     queued: std::sync::atomic::AtomicBool,
     ended: std::sync::atomic::AtomicBool,
@@ -870,7 +871,7 @@ impl Exchange {
         Arc::new_cyclic(|exchange| Exchange {
             ended: std::sync::atomic::AtomicBool::new(future.is_none()),
             future: Mutex::new(future),
-            again: std::sync::atomic::AtomicBool::new(false),
+            polling: std::sync::atomic::AtomicU8::new(IDLE),
             queued: std::sync::atomic::AtomicBool::new(false),
             read: Mutex::default(),
             waiting: Mutex::new(None),
@@ -879,15 +880,21 @@ impl Exchange {
     }
 
     /// Polls it, unless another thread polls it now, which polls it again
-    /// once it lets it go.
+    /// once it is done. One atomic says both, as a flag beside a lock let a
+    /// wake fall between the poller's last look and its letting go.
     fn run(self: &Arc<Self>) {
-        use std::sync::atomic::Ordering::SeqCst;
-        self.again.store(true, SeqCst);
+        use std::sync::atomic::Ordering::{AcqRel, Acquire, SeqCst};
+        let mut seen = IDLE;
         loop {
-            let Ok(mut future) = self.future.try_lock() else { return };
-            if !self.again.swap(false, SeqCst) {
-                return;
+            let next = if seen == IDLE { POLLING } else { AGAIN };
+            match self.polling.compare_exchange(seen, next, AcqRel, Acquire) {
+                Ok(IDLE) => break,
+                Ok(_) | Err(AGAIN) => return,
+                Err(now) => seen = now,
             }
+        }
+        loop {
+            let mut future = lock(&self.future);
             if let Some(polled) = future.as_mut()
                 && polled.as_mut().poll(&mut Context::from_waker(&self.waker)).is_ready()
             {
@@ -896,9 +903,10 @@ impl Exchange {
                 self.tell();
             }
             drop(future);
-            if !self.again.load(SeqCst) {
+            if self.polling.compare_exchange(POLLING, IDLE, AcqRel, Acquire).is_ok() {
                 return;
             }
+            self.polling.store(POLLING, SeqCst);
         }
     }
 
@@ -931,6 +939,10 @@ impl Exchange {
         }
     }
 }
+
+const IDLE: u8 = 0;
+const POLLING: u8 = 1;
+const AGAIN: u8 = 2;
 
 /// What wakes an exchange, which a worker polls at its next turn: the code
 /// that wakes it may hold a lock the poll takes.
