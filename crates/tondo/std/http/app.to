@@ -724,39 +724,60 @@ fn dispatch(request: Request): Reply ! Problem {
 /// The parameters a pattern takes from a path and how fixed the match is:
 /// two for a fixed segment, one for a parameter.
 fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], Int)? {
-    var params: Map[String, String] = [:]
+    // Whether it matches first, which most routes do not, making nothing.
     var score = 0
-    for (index, part) in pattern.enumerate() {
+    var rest = false
+    var index = 0
+    for index < pattern.length() {
+        let part = pattern[index]
         if part.startsWith("*") {
-            let name = part.slice(1, part.length()).unwrapOr("")
-            params[name] = path
-                .drop(index)
-                .map((segment) { __encoding.urlDecode(segment).unwrapOr(segment) })
-                .join("/")
-            return some((params, score))
+            rest = true
+            break
         }
         if index >= path.length() {
             return none
         }
         if part.startsWith(":") {
-            params[part.slice(1, part.length()).unwrapOr("")] = __encoding
-                .urlDecode(path[index])
-                .unwrapOr(path[index])
             score += 1
         } else if part == path[index] {
             score += 2
         } else {
             return none
         }
+        index += 1
     }
-    if pattern.length() != path.length() {
+    if not rest and pattern.length() != path.length() {
         return none
+    }
+    // Then its parameters.
+    var params: Map[String, String] = [:]
+    index = 0
+    for index < pattern.length() {
+        let part = pattern[index]
+        if part.startsWith("*") {
+            let name = part.slice(1, part.length()).unwrapOr("")
+            params[name] = path
+                .drop(index)
+                .map((segment) { __encoding.urlDecode(segment).unwrapOr(segment) })
+                .join("/")
+        } else if part.startsWith(":") {
+            params[part.slice(1, part.length()).unwrapOr("")] = __encoding
+                .urlDecode(path[index])
+                .unwrapOr(path[index])
+        }
+        index += 1
     }
     some((params, score))
 }
 
 fn segments(path: String): Array[String] {
-    path.split("/").filter((segment) { not segment.isEmpty() })
+    var parts: Array[String] = []
+    for part in path.split("/") {
+        if not part.isEmpty() {
+            parts.push(part)
+        }
+    }
+    parts
 }
 
 /// The segments of a route's path: a parameter, `:name`, or the rest of
