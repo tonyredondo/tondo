@@ -23,9 +23,9 @@ runs:
         restore-keys: runtime-${{ inputs.label }}-
     - if: inputs.save != 'true'
       shell: bash
+      # Beside the build's directory, which cargo is to make.
       run: |
-        mkdir -p target/tondo-runtime
-        { ls target/tondo-runtime/outputs 2>/dev/null || true; } | sha256sum | cut -c1-16 > target/tondo-runtime/restored
+        { ls target/tondo-runtime/outputs 2>/dev/null || true; } | sha256sum | cut -c1-16 > "$RUNNER_TEMP/tondo-runtime-restored"
     # Kept again only when the build made another runtime.
     - if: inputs.save == 'true'
       id: kept
@@ -35,7 +35,7 @@ runs:
       run: |
         kept=$(ls target/tondo-runtime/outputs 2>/dev/null || true)
         names=$(printf '%s\n' "$kept" | sha256sum | cut -c1-16)
-        restored=$(cat target/tondo-runtime/restored 2>/dev/null || true)
+        restored=$(cat "$RUNNER_TEMP/tondo-runtime-restored" 2>/dev/null || true)
         if [ -n "$kept" ] && [ "$names" != "$restored" ]; then
           echo "names=$names" >> "$GITHUB_OUTPUT"
         fi

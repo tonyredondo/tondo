@@ -122,11 +122,17 @@ fn shapes(name: &str) -> bool {
     prefixes.iter().any(|prefix| name.starts_with(prefix))
 }
 
-/// `tondo-runtime` in the target directory: the one above `OUT_DIR` that
-/// cargo marks with `CACHEDIR.TAG`, or `OUT_DIR` itself when there is none.
+/// `tondo-runtime` in the directory cargo builds in, which `OUT_DIR` is
+/// under: `<dir>/[<target>/]<profile>/build/<package>-<hash>/out`. Not the
+/// one cargo marks with `CACHEDIR.TAG`, which it marks only when it makes
+/// it: CI's caches may have made it first.
 fn runtime_root(out_dir: &Path) -> PathBuf {
-    let target_dir = out_dir.ancestors().find(|dir| dir.join("CACHEDIR.TAG").is_file()).unwrap_or(out_dir);
-    target_dir.join("tondo-runtime")
+    let built = out_dir.ancestors().nth(2).filter(|dir| dir.file_name().is_some_and(|name| name == "build"));
+    let mut dir = built.and_then(Path::parent).and_then(Path::parent);
+    if dir.and_then(Path::file_name).is_some_and(|name| Some(name) == env::var_os("TARGET").as_deref()) {
+        dir = dir.and_then(Path::parent);
+    }
+    dir.unwrap_or(out_dir).join("tondo-runtime")
 }
 
 /// Builds the runtime for `target`, unless a build kept it for the same
