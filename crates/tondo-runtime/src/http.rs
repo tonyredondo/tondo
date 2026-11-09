@@ -36,9 +36,14 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
                 super::poll::started();
                 tokio::runtime::Builder::new_current_thread()
             }
+            // Half the cores, two at least: with 64 clients at once on 32
+            // threads, two took 160 ms for 6,400 requests, half 90 and all
+            // of them 89, the same as half, which leaves the rest to the
+            // program's workers; one client is as quick with any.
             false => {
+                let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2));
                 let mut builder = tokio::runtime::Builder::new_multi_thread();
-                builder.worker_threads(2).thread_name("tondo-http");
+                builder.worker_threads(workers).thread_name("tondo-http");
                 builder
             }
         };
