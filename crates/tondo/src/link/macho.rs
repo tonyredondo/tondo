@@ -110,7 +110,7 @@ mod raw {
     pub const X86_64_RELOC_SIGNED_4: u8 = 8;
     pub const X86_64_RELOC_TLV: u8 = 9;
 }
-use super::core::{Image, Members, error};
+use super::core::{Image, Members, Redirects, error};
 use crate::hash::FastMap;
 use object::{Endianness, Object, ObjectSection};
 use std::collections::{HashMap, HashSet};
@@ -284,27 +284,10 @@ fn imported(function: &str) -> String {
     }
 }
 
-/// What a reference to `name` is to: the wrapper of a recorded function,
-/// or, for the wrapper's own call, the function.
+/// What a reference to `name` is to (`Redirects`).
 fn redirected(name: &[u8], recordable: bool) -> &[u8] {
-    type Names = HashMap<Vec<u8>, Vec<u8>>;
-    static NAMES: std::sync::OnceLock<(Names, Names)> = std::sync::OnceLock::new();
-    let (wrappers, reals) = NAMES.get_or_init(|| {
-        let wrapped = RECORDED.iter().map(|n| (format!("_{}", imported(n)).into_bytes(), n));
-        let wrappers = wrapped.clone().map(|(import, n)| (import, format!("_tondo_rr_{n}").into_bytes())).collect();
-        let reals = wrapped.map(|(import, n)| (format!("_tondo_real_{n}").into_bytes(), import)).collect();
-        (wrappers, reals)
-    });
-    if let Some(real) = reals.get(name) {
-        return real;
-    }
-    if let Some(real) = name.strip_prefix(b"_tondo_real_") {
-        return &name[name.len() - real.len() - 1..];
-    }
-    match recordable {
-        true => wrappers.get(name).map_or(name, Vec::as_slice),
-        false => name,
-    }
+    static REDIRECTS: std::sync::OnceLock<Redirects> = std::sync::OnceLock::new();
+    REDIRECTS.get_or_init(|| Redirects::new("_", RECORDED, imported)).redirected(name, recordable)
 }
 
 const PAGE: u64 = 0x4000;

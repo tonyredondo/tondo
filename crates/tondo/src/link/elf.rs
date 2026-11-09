@@ -10,7 +10,7 @@
 //! loader for the library's block, and `.eh_frame_hdr` indexes the unwind
 //! tables.
 
-use super::core::{Image, Members, error};
+use super::core::{Image, Members, Redirects, error};
 use crate::hash::{FastMap, FastSet};
 use object::elf::*;
 use object::read::elf::{ElfFile64, SectionHeader as _};
@@ -243,19 +243,10 @@ const RECORDED: &[&str] = &[
     "getpwuid_r",
 ];
 
-/// What a reference to `name` is to: the wrapper of a recorded function,
-/// or, for the wrapper's own call, the function.
+/// What a reference to `name` is to (`Redirects`).
 fn redirected(name: &[u8], recordable: bool) -> &[u8] {
-    static WRAPPERS: std::sync::OnceLock<HashMap<&'static [u8], Vec<u8>>> = std::sync::OnceLock::new();
-    if let Some(real) = name.strip_prefix(b"tondo_real_") {
-        return real;
-    }
-    if !recordable {
-        return name;
-    }
-    let wrappers = WRAPPERS
-        .get_or_init(|| RECORDED.iter().map(|n| (n.as_bytes(), format!("tondo_rr_{n}").into_bytes())).collect());
-    wrappers.get(name).map_or(name, Vec::as_slice)
+    static REDIRECTS: std::sync::OnceLock<Redirects> = std::sync::OnceLock::new();
+    REDIRECTS.get_or_init(|| Redirects::new("", RECORDED, str::to_string)).redirected(name, recordable)
 }
 
 /// The parts of the executable, in the order they are laid out: what is

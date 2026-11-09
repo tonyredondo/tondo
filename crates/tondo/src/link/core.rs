@@ -1,8 +1,9 @@
 //! What the linkers of every format share: how archives' members come in,
-//! the image they write, and how they say what is wrong with an input.
+//! what references to recorded functions are to, the image they write, and
+//! how they say what is wrong with an input.
 
 use crate::hash::FastMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) fn error(input: &str, message: impl std::fmt::Display) -> String {
     format!("linking {input}: {message}")
@@ -110,6 +111,45 @@ pub(super) fn load_members<'a, L: Members<'a>>(
                 continue;
             }
             pending.extend(linker.take_member(read?)?);
+        }
+    }
+}
+
+/// What references are to in an executable that can record its runs
+/// (toolchain 7.6): one to a function the runtime records is to its wrapper,
+/// `tondo_rr_<name>`, and the wrapper's own call, `tondo_real_<name>`, to
+/// the function; each name as the format writes C's, after `prefix`.
+pub(super) struct Redirects {
+    prefix: &'static str,
+    wrappers: HashMap<Vec<u8>, Vec<u8>>,
+    reals: HashMap<Vec<u8>, Vec<u8>>,
+}
+
+impl Redirects {
+    /// For the functions `recorded` names, each imported by the name
+    /// `imported` gives it.
+    pub(super) fn new(prefix: &'static str, recorded: &[&str], imported: impl Fn(&str) -> String) -> Redirects {
+        let wrapped = recorded.iter().map(|n| (format!("{prefix}{}", imported(n)).into_bytes(), n));
+        let wrappers =
+            wrapped.clone().map(|(import, n)| (import, format!("{prefix}tondo_rr_{n}").into_bytes())).collect();
+        let reals = wrapped.map(|(import, n)| (format!("{prefix}tondo_real_{n}").into_bytes(), import)).collect();
+        Redirects { prefix, wrappers, reals }
+    }
+
+    /// What a reference to `name` is to: the wrapper of a recorded
+    /// function, or, for the wrapper's own call, the function.
+    pub(super) fn redirected<'n>(&'n self, name: &'n [u8], recordable: bool) -> &'n [u8] {
+        if let Some(real) = self.reals.get(name) {
+            return real;
+        }
+        let called = name.strip_prefix(self.prefix.as_bytes()).and_then(|rest| rest.strip_prefix(b"tondo_real_"));
+        if let Some(real) = called {
+            // The prefix is none or `_`, which `tondo_real_` ends with.
+            return &name[name.len() - real.len() - self.prefix.len()..];
+        }
+        match recordable {
+            true => self.wrappers.get(name).map_or(name, Vec::as_slice),
+            false => name,
         }
     }
 }
