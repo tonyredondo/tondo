@@ -902,6 +902,7 @@ pub struct Options<'o> {
 
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
+    let building = crate::times::part("IR");
     let Options { meta, debug, target, mut live, coverage, fuzz, roots } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
@@ -1111,7 +1112,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         job(id, &mut context, None, Vec::new(), Vec::new(), 0);
         cg.module.clear_context(&mut context);
     }
+    drop(building);
+    let compiling = crate::times::part("Cranelift");
     cg.compile_all(jobs)?;
+    drop(compiling);
+    let _writing = crate::times::part("object");
 
     if let (Some(out), Some((counters, counted))) = (coverage, cg.coverage.take()) {
         let mut data = cranelift_module::DataDescription::new();

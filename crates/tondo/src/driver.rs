@@ -361,6 +361,7 @@ enum Root {
 }
 
 fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) -> Result<Analysis, String> {
+    let parsing = crate::times::part("parse");
     let mut expansions = Vec::new();
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
@@ -566,11 +567,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies, dev_dependencies });
             providers.push(Vec::new());
         }
+        drop(parsing);
+        let expanding = crate::times::part("meta, derive and templates");
         expansions = crate::meta::generate(&mut modules, &packages, &generators, &mut sources, &mut diags);
         expansions.extend(crate::meta::expand(&mut modules, &packages, &providers, &mut sources, &mut diags));
         crate::derive::derive(&mut modules, &mut sources, &mut diags);
         crate::templates::compile(&mut modules, &mut sources, &mut diags);
+        drop(expanding);
+        let loading = crate::times::part("std");
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
+        drop(loading);
+        let _linking = crate::times::part("modules");
         let mut module = modules::link(modules, root, &packages, &mut diags);
         module.test_package = tests.then_some(tested);
         module
@@ -592,6 +599,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 });
             }
         };
+        drop(parsing);
         if stdlib::needed(&module) {
             // The file links with the standard modules it imports.
             let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -602,10 +610,15 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 dependencies: Default::default(),
                 dev_dependencies: Default::default(),
             }];
+            let expanding = crate::times::part("meta, derive and templates");
             expansions = crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
             crate::derive::derive(&mut modules, &mut sources, &mut diags);
             crate::templates::compile(&mut modules, &mut sources, &mut diags);
+            drop(expanding);
+            let loading = crate::times::part("std");
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
+            drop(loading);
+            let _linking = crate::times::part("modules");
             modules::link(modules, 0, &packages, &mut diags)
         } else {
             module
@@ -649,7 +662,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             project: Some(project.clone()),
         });
     }
+    let checking = crate::times::part("check");
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
+    drop(checking);
+    let _monomorphizing = crate::times::part("mono");
     let program = program.and_then(|program| {
         // A test build has every function of the project that is not
         // generic, so that coverage counts those no test calls (testing
@@ -1047,9 +1063,12 @@ pub fn compile(
 ) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let debug = debug || live.is_some();
+    let lowering = crate::times::part("lower");
     let mut bodies = lower::lower(program, live.is_some(), debug, live.as_ref().map(|build| &build.catch_ups));
+    drop(lowering);
     let triple = target.map(Target::triple);
     if !debug && !analysis.meta {
+        let _passes = crate::times::part("MIR passes");
         crate::inline::inline(&mut bodies);
         crate::elide::elide(&mut bodies, &program.types);
         crate::thread::thread(&mut bodies, &program.types);
@@ -1224,6 +1243,7 @@ pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec
 }
 
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
+    let _linking = crate::times::part("link");
     if let Some(target) = linking.target.filter(|t| !t.native()) {
         let archives = target.pack(RUNTIME_IDENTITY.trim())?;
         let product = crate::link::Product::Executable {

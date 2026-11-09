@@ -78,6 +78,7 @@ pub mod thread;
 /// The patterns of `std.time`, which the checker checks in a literal
 /// (standard library 14.3.5).
 mod time_pattern;
+pub mod times;
 pub mod toml;
 pub mod types;
 pub mod unroll;
