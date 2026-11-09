@@ -219,11 +219,19 @@ fn profiles_time_memory_and_tasks() {
     let page = std::fs::read_to_string(dir.join("flame.html")).unwrap();
     assert!(page.contains("<svg") && page.contains("<title>fib") && !page.contains("<script"), "{page}");
     // Memory, as the program left it: what it holds and what it allocated.
-    run(&["profile", "--memory", "--duration", "2", "--output", "memory.pprof", "--", "allocating.to"]);
+    // A sample every 64 KiB: at the default 512 KiB, the 11 MB it holds are
+    // about 21 samples, and one run in a few thousand passed the bounds.
+    let sampled = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--memory", "--duration", "2", "--output", "memory.pprof", "--", "allocating.to"])
+        .env("TONDO_HEAP_RATE", "65536")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(sampled.status.success(), "{}", String::from_utf8_lossy(&sampled.stderr));
     let memory = show(&["memory.pprof"]);
     assert_eq!(memory["type"], "inuse_space", "{memory}");
     assert_eq!(memory["types"], json!(["alloc_objects", "alloc_space", "inuse_objects", "inuse_space"]));
-    // Twenty thousand strings of about 450 bytes, estimated from samples.
+    // Twenty thousand strings of about 550 bytes, estimated from samples.
     let held = memory["total"].as_i64().unwrap();
     assert!((4_000_000..20_000_000).contains(&held), "{memory}");
     let line = &memory["lines"][0];
