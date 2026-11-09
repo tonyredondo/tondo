@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch supersedes a run, which ends: the newer
+# one tests everything before it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # Each job tests, then packs the `tondo` it built for its platform as an
 # artifact: dist/tondo-<target>.tar.gz.
@@ -38,6 +45,9 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ${{ matrix.os }}-${{ matrix.target }}
       # The servers the tests of std.sql and std.acme speak to, which start
       # while the tests build: Pebble checks names on port 5001 of the host.
       - if: matrix.target == 'x86_64-linux-gnu'
@@ -56,6 +66,11 @@ jobs:
       - run: cargo test --workspace
         env:
           TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ${{ matrix.os }}-${{ matrix.target }}
+          save: true
       # Linking with the system's C compiler, as `TONDO_CC` asks.
       - if: ${{ !matrix.light }}
         run: cargo test -p tondo --test cases cases
@@ -142,11 +157,17 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       # A version of its own, rather than the latest, which the action
       # reads from ziglang.org's index, at times not even JSON.
+      # Without its cache, which kept one entry for each run and filled
+      # Actions' cache: zig compiles a few files of C here.
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+          use-cache: false
       - uses: docker/setup-qemu-action@v3
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: across-${{ matrix.os }}-${{ matrix.arch }}
       - name: Build tondo for ${{ matrix.arch }}
         run: |
           . .github/scripts/across.sh ${{ matrix.arch }}
@@ -156,6 +177,11 @@ jobs:
           docker run --rm --platform ${{ matrix.platform }} -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" \
             debian:stable-slim target/${{ matrix.arch }}-unknown-linux-gnu/debug/tondo target pack target/packs
           TONDO_TARGETS=$PWD/target/packs cargo test -p tondo --test targets
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: across-${{ matrix.os }}-${{ matrix.arch }}
+          save: true
 
   # Linux with musl, as Alpine has it. The checkout and the cache run on the
   # host, since their Node cannot run on Alpine for arm64: the container's
@@ -178,6 +204,9 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: alpine-${{ matrix.target }}
       - run: >
           mkdir -p ~/.cargo/registry ~/.cargo/git &&
           docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
@@ -196,7 +225,13 @@ jobs:
           $run alpine sh -c "! command -v cc && $(cat target/cases) cases projects"
           $run -e TONDO_CASES_STATIC=1 alpine sh -c "! command -v cc && $(cat target/cases) cases"
       # What the containers wrote as root, for the cache to clean and keep.
-      - run: sudo chown -R "$(id -u):$(id -g)" target ~/.cargo
+      - if: ${{ !cancelled() }}
+        run: sudo chown -R "$(id -u):$(id -g)" target ~/.cargo
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: alpine-${{ matrix.target }}
+          save: true
       - uses: actions/upload-artifact@v4
         with:
           name: tondo-${{ matrix.target }}
@@ -233,7 +268,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
       - run: cargo test -p tondo --test observe --test mcp --test live --test runbooks --no-run
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: taskset -c 0 cargo test -p tondo --test observe --test mcp --test live --test runbooks
 
   # The VS Code extension: its tests, then the .vsix as an artifact.
@@ -255,8 +298,16 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
       - run: cargo build -p tondo
         working-directory: .
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb neovim
       - run: xvfb-run -a npm run test:editor
         env:

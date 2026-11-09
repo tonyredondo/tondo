@@ -33,12 +33,17 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       # A version of its own, rather than the latest, which the action
-      # reads from ziglang.org's index, at times not even JSON.
+      # reads from ziglang.org's index, at times not even JSON; without its
+      # cache, which kept one entry for each run and filled Actions' cache.
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+          use-cache: false
       - uses: docker/setup-qemu-action@v3
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: emulated-${{ matrix.os }}-${{ matrix.arch }}
       - name: Build the tests for ${{ matrix.arch }}
         run: |
           set -o pipefail
@@ -47,6 +52,11 @@ jobs:
           cargo test --workspace --target ${{ matrix.arch }}-unknown-linux-gnu --no-run --message-format=json |
             jq -r 'select(.profile.test == true and .executable != null)
               | (.manifest_path | rtrimstr("Cargo.toml")) + " " + .executable' > target/emulated
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: emulated-${{ matrix.os }}-${{ matrix.arch }}
+          save: true
       - name: Test under emulation
         run: >
           docker run --rm --platform ${{ matrix.platform }} -v "$PWD:$PWD" -w "$PWD"
@@ -70,6 +80,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+      - run: cargo test -p tondo --test lsp --test observe --test cli --no-run
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
         env:
           TONDO_SWEEP: 1
@@ -91,7 +110,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
       - run: cargo build --release --locked -p tondo
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: |
           curl -fsSL -o "$RUNNER_TEMP/tla2tools.jar" https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
           echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $RUNNER_TEMP/tla2tools.jar" | sha256sum -c
@@ -108,7 +135,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
       - run: cargo build --release --locked -p tondo
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: target/release/tondo run bench/compile.to -- --guard --runs 3
         env:
           TONDO: target/release/tondo
@@ -123,7 +158,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
       - run: cargo build --release --locked -p tondo
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-latest-x86_64-linux-gnu
+          save: true
       - run: target/release/tondo test testing/fuzz --fuzz --fuzz-time 1200
       - if: failure()
         uses: actions/upload-artifact@v4
@@ -158,7 +201,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/runtime
+        with:
+          label: macos-15-intel-x86_64-macos
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: macos-15-intel-x86_64-macos
+          save: true
       # Linking with the system's C compiler, as `TONDO_CC` asks.
       - run: cargo test -p tondo --test cases cases
         env:
