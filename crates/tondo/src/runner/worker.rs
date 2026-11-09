@@ -213,8 +213,14 @@ fn worker(
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)
         // Locks taken in orders that can deadlock warn; `--lock-order` fails.
-        .env("TONDO_LOCK_ORDER", if run.options.lock_order { "fail" } else { "1" })
-        .env("TONDO_RACE", "1")
+        // A benchmark measures the program as it runs outside the tests,
+        // without the watches the tests add on their own (toolchain 8).
+        .envs(match (run.options.lock_order, run.bench.is_none()) {
+            (true, _) => Some(("TONDO_LOCK_ORDER", "fail")),
+            (false, true) => Some(("TONDO_LOCK_ORDER", "1")),
+            (false, false) => None,
+        })
+        .envs(run.bench.is_none().then_some(("TONDO_RACE", "1")))
         // What a test that does not end was doing, unless it measures.
         .envs((run.bench.is_none() && stores.profiles.is_none()).then_some(("TONDO_DIAGNOSTICS", "1")))
         .env("TONDO_TEST_NONCE", &nonce)

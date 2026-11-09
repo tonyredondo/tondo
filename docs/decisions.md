@@ -5554,3 +5554,15 @@ does what it was started with, as a program that sets `TONDO_DUMP` for itself me
 children. Those the runtime takes out of the environment for its children not to inherit leave it
 where they did. `TZ`, `HOME` and `XDG_CACHE_HOME` are the system's and are still read where they
 are used.
+
+## A benchmark measures without the watches of the tests
+
+`tondo test` watches every test for updates that tasks lose and for locks taken in orders that
+can deadlock, and kept watching while `--bench` measured: the watch of lost updates keeps where
+each lock of `std.sync` was taken, so a benchmark that takes a lock 4,000 times made 4,051
+allocations and took 323 µs, of which 82 µs and 29 allocations were the program's. The comparison
+with Go measured the watch, and the speed plan (docs/speed.md) was about to chase allocations the
+program does not make. `--bench` now measures the program as it runs outside the tests, as it
+already did without the diagnostics of a test that does not end; a plain `tondo test` keeps both
+watches, and runs each benchmark's body once under them. `--lock-order`, asked for, still applies
+when measuring.

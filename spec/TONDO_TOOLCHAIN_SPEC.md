@@ -1068,9 +1068,9 @@ comando lo dice. Las variables son las que el código optimizado conserva en esa
 Un programa con `TONDO_DUMP`, en el depurador o con `TONDO_LOCK_ORDER=1` apunta en qué
 orden toma cada tarea los locks de `std.sync` mientras tiene otro, y un ciclo es un
 interbloqueo que aún no ocurrió: lo dice por stderr y `why` lo repite, con dónde se
-tomó cada uno, aunque las tareas nunca coincidan. `tondo test` lo mira siempre y lo da
-como aviso del test que lo cierra, y `tondo test --lock-order` hace fallar ese test con
-`P0019`. Dos lectores no se esperan, y no cuentan.
+tomó cada uno, aunque las tareas nunca coincidan. `tondo test` lo mira siempre, salvo
+al medir con `--bench`, y lo da como aviso del test que lo cierra, y `tondo test
+--lock-order` hace fallar ese test con `P0019`, también al medir. Dos lectores no se esperan, y no cuentan.
 
 `tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
 comando `blocked` del depurador el de un programa parado.
@@ -1079,7 +1079,7 @@ El código seguro no tiene carreras de datos, pero una actualización se puede p
 tarea lee una celda de `std.sync` y la escribe después, y entre medias otra tarea la
 cambió. El compilador avisa con `W1016` cuando la escritura usa lo leído, con la reparación
 que lo hace un solo `update` en un `Mutex` o un `RwLock` si lo leído no se usa después, y
-`tondo test` avisa de lo que ve ocurrir: siempre mira los `Mutex`, `RwLock` y `Atomic` y, si una tarea
+`tondo test` avisa de lo que ve ocurrir: siempre, salvo al medir con `--bench`, mira los `Mutex`, `RwLock` y `Atomic` y, si una tarea
 lee y escribe en la misma función una celda que otra escribió entre medias, deja un aviso
 en ese test, que no falla, en `warnings` de su intento en el informe: el MCP lo da con el
 informe y el editor en la salida del test y en el panel de problemas, con su línea. Con
@@ -2093,7 +2093,7 @@ significan lo de siempre.
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
 | `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |
-| `TONDO_RACE` | `tondo test` y `tondo debug` de un test | `1` busca actualizaciones perdidas. |
+| `TONDO_RACE` | `tondo test`, salvo con `--bench`, y `tondo debug` de un test | `1` busca actualizaciones perdidas. |
 | `TONDO_LIVE_HOLD` | `tondo run --watch` y las sesiones de las herramientas | `1` retiene un pánico hasta que cambia el código. |
 | `TONDO_RT_CHECK_LEAKS` | Los tests del toolchain | Cuenta los objetos vivos al terminar el programa. |
 | `TONDO_RT_RECORD` | `tondo run --record` y `tondo test --record` | El archivo donde graba la ejecución. |

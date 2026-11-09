@@ -1534,6 +1534,23 @@ test logic {
     assert!(!stdout.contains("coverage"), "{stdout}");
 }
 
+/// `--bench` measures a program as it runs outside the tests, without the
+/// watches `tondo test` adds on its own (toolchain 8): a lock taken alone
+/// allocates nothing, where the watch of lost updates keeps where each lock
+/// was taken.
+#[test]
+fn benchmarks_measure_without_the_watches_of_tests() {
+    let tests = "import std.sync\nimport std.testing\n\ntest locks {\n    let counter = sync.Mutex(0)\n    \
+        testing.bench(\"lock 100\", () {\n        for _ in 0..100 {\n            counter.update((count) { count += 1 })\n        \
+        }\n    })\n}\n";
+    let dir = project("bench-watches", tests);
+    let (stdout, _, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.1", "--test-format", "json"]);
+    assert_eq!(status, 0, "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let benchmark = &report["tests"][0]["attempts"][0]["benchmarks"][0];
+    assert_eq!(benchmark["allocations_per_op"].as_f64(), Some(0.0), "{benchmark}");
+}
+
 #[test]
 fn measures_benchmarks() {
     let tests = "\

@@ -122,9 +122,11 @@ test parsing {
 - `tondo test` runs each closure once, so a benchmark that breaks fails like
   any test.
 - `tondo test --bench` runs only the benchmarks, one at a time and
-  optimized: each warms up, takes 50 samples in `--bench-time` seconds (3 by
-  default) and counts what a run allocates, then prints the time a run
-  takes, its spread, and its allocations and bytes:
+  optimized, as the program runs outside the tests: without the watches of
+  lost updates and lock orders that a plain run keeps. Each warms up, takes
+  50 samples in `--bench-time` seconds (3 by default) and counts what a run
+  allocates, then prints the time a run takes, its spread, and its
+  allocations and bytes:
   `parse 10  1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op`.
   `--test-format json` gives every sample, and the machine.
 - What the closure gives is kept, so the work that made it is not optimized

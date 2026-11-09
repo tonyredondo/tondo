@@ -2422,9 +2422,11 @@ Sin `--bench`, un benchmark es un test más: cada `bench` ejecuta su cuerpo una
 vez, así que un benchmark que se rompe falla como cualquier test.
 
 `--bench` ejecuta solo los benchmarks de la selección, uno a uno, en el build
-optimizado que no cuenta nada: no admite `--debug`, `--coverage` ni un reporte
-de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`, `--schedules`
-ni `--update-snapshots`. Cada `bench` mide así:
+optimizado que no cuenta nada y sin lo que `tondo test` mira por su cuenta, las
+actualizaciones perdidas y el orden de los locks (8 del toolchain): mide el
+programa como corre fuera de los tests. No admite `--debug`, `--coverage` ni un
+reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
+`--schedules` ni `--update-snapshots`. Cada `bench` mide así:
 
 1. Calienta durante una décima parte de su tiempo, entre 50 ms y 1 s,
    ejecutando el cuerpo en tandas que doblan las de la anterior.
