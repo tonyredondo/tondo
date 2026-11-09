@@ -1930,15 +1930,26 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
     // With `--json`: each file, whether it changed (or would, with
     // `--check`), its compact form, or why it is not Tondo.
     let mut reported: Vec<serde_json::Value> = Vec::new();
-    for file in &files {
+    // Each file formatted on every core, then said and written in the order
+    // of the arguments, as one after another were.
+    let done = tondo::parallel::map(&files, 1, |file| {
         let path = Path::new(file);
         let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut sources = tondo::source::SourceMap::default();
-        let index = sources.add(path, text.clone());
+        let index = sources.add(path, text);
         let mut diags = tondo::diag::Diagnostics::default();
+        let output = match compact {
+            true => tondo::compact::compact(sources.file(index), &mut diags),
+            false => tondo::fmt::format(sources.file(index), &mut diags),
+        };
+        Ok::<_, String>((sources, diags, output))
+    });
+    for (file, done) in files.iter().zip(done) {
+        let path = Path::new(file);
+        let (sources, diags, output) = done?;
         let source_id = format!("root:{}", path.display());
         if compact {
-            match tondo::compact::compact(sources.file(index), &mut diags) {
+            match output {
                 Some(text) if json => reported.push(serde_json::json!({ "file": path, "compact": text })),
                 Some(text) => print!("{text}"),
                 None => {
@@ -1952,7 +1963,7 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             continue;
         }
-        let Some(formatted) = tondo::fmt::format(sources.file(index), &mut diags) else {
+        let Some(formatted) = output else {
             match json {
                 true => {
                     reported.push(serde_json::json!({ "file": path, "diagnostics": diags.json(&sources, &source_id) }))
@@ -1962,7 +1973,7 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
             status = ExitCode::FAILURE;
             continue;
         };
-        let changed = formatted != text;
+        let changed = formatted != sources.file(0).text;
         if json {
             reported.push(serde_json::json!({ "file": path, "changed": changed }));
         }
