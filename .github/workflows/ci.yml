@@ -79,8 +79,9 @@ jobs:
         with:
           label: ${{ matrix.os }}-${{ matrix.target }}
           save: true
+      # What `cargo test --workspace` runs, two test binaries at a time.
       - if: contains(matrix.run, 'workspace')
-        run: cargo test --workspace
+        run: .github/scripts/tests.sh 2
         env:
           TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
       # Linking with the system's C compiler, as `TONDO_CC` asks.
