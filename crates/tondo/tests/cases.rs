@@ -32,7 +32,8 @@
 //! many times, each checked. With `TONDO_CASES_COVERAGE`, a directory, each
 //! build counts the lines it runs, the standard library's too, and each case
 //! leaves in a directory of its own what its counters count and their counts
-//! (docs/refactor.md, 0.1).
+//! (docs/refactor.md, 0.1). With `TONDO_CASES_SHARD=k/n`, only the k-th of
+//! n shares of the cases runs, so that jobs of CI split a mode between them.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -340,6 +341,17 @@ fn projects() {
 fn run_all(mut paths: Vec<PathBuf>, name: &str) {
     paths.sort();
     assert!(!paths.is_empty(), "no {name} found");
+    if let Ok(shard) = std::env::var("TONDO_CASES_SHARD") {
+        let parsed = shard.split_once('/').and_then(|(k, n)| Some((k.parse().ok()?, n.parse().ok()?)));
+        let Some((k, n)) = parsed.filter(|&(k, n)| (1..=n).contains(&k)) else {
+            panic!("TONDO_CASES_SHARD is k/n, with k from 1 to n, not {shard}")
+        };
+        paths = share(paths, k, n);
+    }
+    // How many ran, even when they pass, to compare one way of running them
+    // with another.
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{name}: {} to run", paths.len());
 
     let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&scratch);
@@ -363,6 +375,23 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str) {
         handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
     });
     assert!(failures.is_empty(), "{} of {} cases failed:\n\n{}", failures.len(), paths.len(), failures.join("\n\n"));
+}
+
+/// The k-th of n shares of `paths`: those whose index modulo n is k - 1.
+fn share(paths: Vec<PathBuf>, k: usize, n: usize) -> Vec<PathBuf> {
+    paths.into_iter().enumerate().filter(|(index, _)| index % n == k - 1).map(|(_, path)| path).collect()
+}
+
+#[test]
+fn shares_together_are_every_case() {
+    let paths: Vec<PathBuf> = (0..10).map(|i| PathBuf::from(format!("{i}.to"))).collect();
+    for n in 1..=4 {
+        let mut together: Vec<PathBuf> = (1..=n).flat_map(|k| share(paths.clone(), k, n)).collect();
+        together.sort();
+        let mut all = paths.clone();
+        all.sort();
+        assert_eq!(together, all, "{n} shares");
+    }
 }
 
 #[test]
