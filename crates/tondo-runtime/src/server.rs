@@ -846,37 +846,37 @@ impl Server {
     }
 }
 
-/// A connection of a server: what it does until it ends (`serving`),
-/// driven by whatever wakes it, on the thread that wakes it, as a task of
-/// tokio's would be without the hop to tokio's threads: the socket's
-/// events, a response the program sends, a timer, the end of the server.
-struct Exchange {
+/// A future of the host that the workers poll at their turns, as a task of
+/// tokio's would be polled without the hop to tokio's threads: a waker only
+/// puts it in their list (`tasks::poll_soon`), as the code that wakes it may
+/// hold a lock its poll takes, and whoever needs it polled now polls it in
+/// place (`run`).
+struct Turning {
     future: Mutex<Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>,
     /// Whether a thread polls it now, and whether it was woken meanwhile,
     /// which that thread polls it again for.
     polling: std::sync::atomic::AtomicU8,
     /// Among what the workers poll at their next turns.
     queued: std::sync::atomic::AtomicBool,
-    ended: std::sync::atomic::AtomicBool,
-    /// The requests hyper read that no task took yet, and the task that
-    /// waits for the next.
-    read: Mutex<VecDeque<Request>>,
-    waiting: Mutex<Option<std::task::Waker>>,
-    /// Its one waker, which the socket knows from a waker it has already.
+    done: std::sync::atomic::AtomicBool,
+    /// Its one waker, which what it waits on knows from a waker it has
+    /// already; it does not keep it.
     waker: std::task::Waker,
 }
 
-impl Exchange {
-    fn new(future: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>) -> Arc<Exchange> {
-        Arc::new_cyclic(|exchange| Exchange {
-            ended: std::sync::atomic::AtomicBool::new(future.is_none()),
-            future: Mutex::new(future),
+impl Turning {
+    fn new() -> Arc<Turning> {
+        Arc::new_cyclic(|turning| Turning {
+            future: Mutex::new(None),
             polling: std::sync::atomic::AtomicU8::new(IDLE),
             queued: std::sync::atomic::AtomicBool::new(false),
-            read: Mutex::default(),
-            waiting: Mutex::new(None),
-            waker: std::task::Waker::from(Arc::new(Woken(exchange.clone()))),
+            done: std::sync::atomic::AtomicBool::new(false),
+            waker: std::task::Waker::from(Arc::new(Woken(turning.clone()))),
         })
+    }
+
+    fn start(&self, future: impl std::future::Future<Output = ()> + Send + 'static) {
+        *lock(&self.future) = Some(Box::pin(future));
     }
 
     /// Polls it, unless another thread polls it now, which polls it again
@@ -899,8 +899,7 @@ impl Exchange {
                 && polled.as_mut().poll(&mut Context::from_waker(&self.waker)).is_ready()
             {
                 *future = None;
-                self.ended.store(true, SeqCst);
-                self.tell();
+                self.done.store(true, SeqCst);
             }
             drop(future);
             if self.polling.compare_exchange(POLLING, IDLE, AcqRel, Acquire).is_ok() {
@@ -908,6 +907,77 @@ impl Exchange {
             }
             self.polling.store(POLLING, SeqCst);
         }
+    }
+
+    /// Polls it at a worker's next turn.
+    fn soon(self: &Arc<Self>) {
+        if !self.queued.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            super::tasks::poll_soon(self.clone());
+        }
+    }
+}
+
+const IDLE: u8 = 0;
+const POLLING: u8 = 1;
+const AGAIN: u8 = 2;
+
+/// What wakes a future the workers poll at their turns.
+struct Woken(std::sync::Weak<Turning>);
+
+impl std::task::Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        if let Some(turning) = self.0.upgrade() {
+            turning.soon();
+        }
+    }
+}
+
+impl super::tasks::Turned for Turning {
+    fn turn(self: Arc<Self>) {
+        self.queued.store(false, std::sync::atomic::Ordering::SeqCst);
+        super::io::polled_here(|| self.run());
+    }
+}
+
+/// A connection of a server: what it does until it ends (`serving`), the
+/// requests it read for the program's tasks to take, and the futures
+/// HTTP/2 starts for its streams, which live as long as it does.
+struct Exchange {
+    connection: Arc<Turning>,
+    ended: std::sync::atomic::AtomicBool,
+    /// The requests hyper read that no task took yet, and the task that
+    /// waits for the next.
+    read: Mutex<VecDeque<Request>>,
+    waiting: Mutex<Option<std::task::Waker>>,
+    streams: Mutex<Vec<Arc<Turning>>>,
+}
+
+impl Exchange {
+    /// One that has ended, until `start` gives it what it does.
+    fn new() -> Arc<Exchange> {
+        Arc::new(Exchange {
+            connection: Turning::new(),
+            ended: std::sync::atomic::AtomicBool::new(true),
+            read: Mutex::default(),
+            waiting: Mutex::new(None),
+            streams: Mutex::default(),
+        })
+    }
+
+    fn start(self: &Arc<Self>, serving: impl std::future::Future<Output = ()> + Send + 'static) {
+        let exchange = Arc::downgrade(self);
+        self.ended.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.connection.start(async move {
+            serving.await;
+            if let Some(exchange) = exchange.upgrade() {
+                exchange.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+                exchange.tell();
+            }
+        });
     }
 
     /// Hands a request hyper read to the task that takes it.
@@ -929,7 +999,7 @@ impl Exchange {
         if let Some(request) = lock(&self.read).pop_front() {
             return Poll::Ready(Some(request));
         }
-        self.run();
+        self.connection.run();
         if let Some(request) = lock(&self.read).pop_front() {
             return Poll::Ready(Some(request));
         }
@@ -940,32 +1010,22 @@ impl Exchange {
     }
 }
 
-const IDLE: u8 = 0;
-const POLLING: u8 = 1;
-const AGAIN: u8 = 2;
+/// What runs the futures hyper's HTTP/2 starts in the background, one for
+/// each stream: futures the workers poll at their turns, which the
+/// connection keeps.
+#[derive(Clone)]
+struct Streams(std::sync::Weak<Exchange>);
 
-/// What wakes an exchange, which a worker polls at its next turn: the code
-/// that wakes it may hold a lock the poll takes.
-struct Woken(std::sync::Weak<Exchange>);
-
-impl std::task::Wake for Woken {
-    fn wake(self: Arc<Self>) {
-        self.wake_by_ref();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
-        if let Some(exchange) = self.0.upgrade()
-            && !exchange.queued.swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            super::tasks::poll_soon(exchange);
-        }
-    }
-}
-
-impl super::tasks::Turned for Exchange {
-    fn turn(self: Arc<Self>) {
-        self.queued.store(false, std::sync::atomic::Ordering::SeqCst);
-        super::io::polled_here(|| self.run());
+impl<F: std::future::Future<Output = ()> + Send + 'static> hyper::rt::Executor<F> for Streams {
+    fn execute(&self, future: F) {
+        let Some(exchange) = self.0.upgrade() else { return };
+        let stream = Turning::new();
+        stream.start(future);
+        let mut streams = lock(&exchange.streams);
+        streams.retain(|stream| !stream.done.load(std::sync::atomic::Ordering::SeqCst));
+        streams.push(stream.clone());
+        drop(streams);
+        stream.soon();
     }
 }
 
@@ -974,7 +1034,7 @@ impl super::tasks::Turned for Exchange {
 /// passed.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_accept(server: *mut NativeObject) -> *mut NativeObject {
-    let closed = || native::new(Connection(Exchange::new(None)));
+    let closed = || native::new(Connection(Exchange::new()));
     let Some(server) = native::get::<Server>(server) else { return closed() };
     let Some(life) = server.life.clone() else { return closed() };
     let accepted = super::io::wait_for(async {
@@ -1012,15 +1072,21 @@ pub extern "C" fn tondo_rt_http_accept(server: *mut NativeObject) -> *mut Native
                 continue;
             }
             // The exchange hands it the requests it reads, so it comes first.
-            let exchange = Exchange::new(None);
+            let exchange = Exchange::new();
             let stopping = life.phase.subscribe();
-            let ends = serving(stream, remote, counted, server.tls.clone(), server.limits, stopping, exchange.clone());
-            *lock(&exchange.future) = Some(Box::pin(ends));
-            exchange.ended.store(false, std::sync::atomic::Ordering::SeqCst);
+            exchange.start(serving(
+                stream,
+                remote,
+                counted,
+                server.tls.clone(),
+                server.limits,
+                stopping,
+                exchange.clone(),
+            ));
             return Some(exchange);
         }
     });
-    native::new(Connection(accepted.flatten().unwrap_or_else(|| Exchange::new(None))))
+    native::new(Connection(accepted.flatten().unwrap_or_else(Exchange::new)))
 }
 
 /// A connection of a server, as the program holds it.
@@ -1066,7 +1132,7 @@ async fn serving(
     mut stopping: watch::Receiver<Phase>,
     exchange: Arc<Exchange>,
 ) {
-    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+    use hyper_util::rt::{TokioIo, TokioTimer};
     let _counted = counted;
     let secure = tls.is_some();
     let (stream, client): (Box<dyn Connected>, _) = match tls {
@@ -1082,10 +1148,11 @@ async fn serving(
     let (client, answering) = (Arc::new(client), stopping.clone());
     // Weak: the exchange holds this future, which would keep it alive.
     let exchange = Arc::downgrade(&exchange);
+    let streams = Streams(exchange.clone());
     let serve = hyper::service::service_fn(move |request| {
         handle(request, exchange.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
     });
-    let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+    let mut builder = hyper_util::server::conn::auto::Builder::new(streams);
     builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
     builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
     let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
