@@ -121,4 +121,7 @@ Next == \/ \E t \in Tasks : Start(t) \/ Try(t) \/ Park(t) \/ Release(t) \/ Wake(
 Exclusion == /\ Cardinality({t \in Writers : pc[t] = "holds"}) <= 1
              /\ (\E t \in Writers : pc[t] = "holds") => ~\E t \in Readers : pc[t] = "holds"
              /\ writer => readers = 0
+\* A task is in the queue only while it waits there: the wait it waited with
+\* is its own again for its next (`Wait::new`), as no release can claim it.
+Gone == \A i \in 1..Len(waiting) : pc[waiting[i]] = "waits"
 ====

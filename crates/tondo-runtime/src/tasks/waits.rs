@@ -22,6 +22,14 @@ pub(super) fn expire(task: &mut Task) {
 /// A task's wait for the first of one or more operations. The objects it
 /// waits on point to it until the task removes itself, and timers hold it,
 /// since they outlive it.
+///
+/// What makes one wait serve a task's next: the task goes on only once the
+/// operation that claimed its wait notified it, and first leaves every
+/// queue that points to the wait, with that queue's lock; whoever claims
+/// it through such a pointer does so with the lock held, and reads the
+/// task before notifying it. So when nothing but the task holds the wait,
+/// as a timer or the waker of a future does until it is dropped, no one
+/// can claim it any more, and it is the task's to wait with again.
 pub(crate) struct Wait {
     pub(crate) task: *mut Task,
     pub(super) fired: AtomicUsize,
@@ -32,8 +40,23 @@ unsafe impl Send for Wait {}
 unsafe impl Sync for Wait {}
 
 impl Wait {
+    /// A wait for the running task: the one it waited with last, when
+    /// nothing else holds it, or a new one, which it keeps for its next
+    /// (docs/speed.md, C). Outside a task, always a new one.
     pub(crate) fn new() -> Arc<Wait> {
-        Arc::new(Wait { task: current(), fired: AtomicUsize::new(NONE) })
+        let task = current();
+        let Some(running) = (unsafe { task.as_mut() }) else {
+            return Arc::new(Wait { task, fired: AtomicUsize::new(NONE) });
+        };
+        if let Some(kept) = &running.kept_wait
+            && Arc::strong_count(kept) == 1
+        {
+            kept.fired.store(NONE, Ordering::Relaxed);
+            return kept.clone();
+        }
+        let wait = Arc::new(Wait { task, fired: AtomicUsize::new(NONE) });
+        running.kept_wait = Some(wait.clone());
+        wait
     }
 
     /// Claims the wait for operation `index`; false when another operation

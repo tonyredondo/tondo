@@ -185,8 +185,15 @@ fn check(grantLooks: Bool): model.Checked ! model.Violation {
         },
         name: "Exclusion",
     )
+    // A task is in the queue only while it waits there: the wait it waited
+    // with is its own again for its next (`Wait::new`), as no release can
+    // claim it.
+    let gone = model.always(
+        (lock: Lock) { lock.waiting.items().all((t) { lock.tasks[t].pc == Pc.Waits }) },
+        name: "Gone",
+    )
     let over = (lock: Lock) { lock.tasks.all((each) { each.pc == Pc.Idle and each.rounds == 0 }) }
-    model.check(start, (lock) { steps(lock, grantLooks) }, holds: [exclusion], ends: some(over))
+    model.check(start, (lock) { steps(lock, grantLooks) }, holds: [exclusion, gone], ends: some(over))
 }
 
 test lockAsTlcDoes {

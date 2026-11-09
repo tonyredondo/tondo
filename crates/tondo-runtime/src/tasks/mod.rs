@@ -161,6 +161,9 @@ pub(crate) struct Task {
     /// guarded by `waiting_lock`.
     waiting: *const Wait,
     waiting_lock: AtomicBool,
+    /// The wait it waited with last, which its next takes again when
+    /// nothing else holds it (`Wait::new`).
+    kept_wait: Option<Arc<Wait>>,
     /// Under `tondo test`, what it goes by in the orders of a test, from
     /// who started it, and how many it started.
     name: u64,
@@ -604,6 +607,7 @@ fn new_task(
         again: AtomicBool::new(false),
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),
+        kept_wait: None,
         name,
         started: 0,
         held: Vec::new(),
