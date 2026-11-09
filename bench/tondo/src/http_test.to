@@ -1,0 +1,124 @@
+import std.embed
+import std.http
+import std.net
+import std.testing
+
+type Payload = {
+    name: String
+    count: Int
+    tags: Array[String]
+}
+
+// A server's certificate for 127.0.0.1 and the authority that signed it,
+// made for these benchmarks alone.
+const Certificate: String = embed.text("tls/cert.pem")
+
+const Key: String = embed.text("tls/key.pem")
+
+const Authority: String = embed.text("tls/ca.pem")
+
+fn app(): http.App {
+    var routes = http.App()
+    routes.get("/hello", () { "hello" })
+    routes.post("/json", (input: Payload) { input with { count: input.count + 1 } })
+    routes
+}
+
+/// `count` requests for a short text, one after another.
+fn hellos(client: http.Client, count: Int): Int ! http.HttpError {
+    var length = 0
+    for _ in 0..count {
+        length += client.get("/hello")?.text()?.length()
+    }
+    length
+}
+
+/// `count` records posted, which the server decodes and encodes again.
+fn posts(client: http.Client, count: Int): Int ! http.HttpError {
+    var total = 0
+    for i in 0..count {
+        let sent = Payload { name: "item {i}", count: i, tags: ["a", "b"] }
+        let back: Payload = client.post("/json", body: http.Body.json(sent))?.json()?
+        total += back.count
+    }
+    total
+}
+
+/// `tasks` clients at once, each making `count` calls with `each`.
+fn together(
+    tasks: Int,
+    count: Int,
+    client: http.Client,
+    each: fn(http.Client, Int): Int ! http.HttpError,
+): Int ! http.HttpError {
+    var group = Group[Int ! http.HttpError]()
+    for _ in 0..tasks {
+        group.add(spawn each(client, count))
+    }
+    var total = 0
+    for done in group.wait()? {
+        total += done
+    }
+    total
+}
+
+test http {
+    let plain = app().start()?
+    let client = http.Client(baseUrl: plain.url())
+    testing.bench("hello 1x1000", () { hellos(client, 1000) })?
+    testing.bench("hello 64x100", () { together(64, 100, client, hellos) })?
+    testing.bench("json 64x100", () { together(64, 100, client, posts) })?
+    plain.stop()
+    let secure = app().start(tls: net.Tls.pem(Certificate, Key))?
+    let trusting = http.Client(baseUrl: secure.url(), trust: Authority)
+    testing.bench("tls 64x100", () { together(64, 100, trusting, hellos) })?
+    secure.stop()
+}
+
+/// Sends back each line of a connection until it closes.
+fn echo(connection: net.Stream) {
+    for {
+        match connection.readLine() {
+            ok(some(line)) => {
+                if connection.write("{line}\n").isErr() {
+                    return
+                }
+            }
+            _ => return
+        }
+    }
+}
+
+fn serve(listener: net.Listener) {
+    for {
+        match listener.accept() {
+            ok(connection) => spawn detached echo(connection)
+            err(_) => return
+        }
+    }
+}
+
+/// `count` lines sent and read back, one after another.
+fn roundTrips(stream: net.Stream, count: Int): Int ! net.NetError {
+    var total = 0
+    for i in 0..count {
+        stream.write("ping {i}\n")?
+        total += stream.readLine()?.unwrapOr("").length()
+    }
+    total
+}
+
+test net {
+    let listener = net.listen("127.0.0.1", 0)?
+    let server = spawn serve(listener)
+    let stream = net.connect("127.0.0.1", listener.address().port)?
+    testing.bench("echo 1x1000", () { roundTrips(stream, 1000) })?
+    stream.close()?
+    server.cancel()
+    let secureListener = net.listen("127.0.0.1", 0, tls: net.Tls.pem(Certificate, Key))?
+    let secureServer = spawn serve(secureListener)
+    let secure = net.connectTls("127.0.0.1", secureListener.address().port, trust: Authority)?
+    testing.bench("tls echo 1x1000", () { roundTrips(secure, 1000) })?
+    secure.close()?
+    secureServer.cancel()
+}

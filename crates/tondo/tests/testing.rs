@@ -1838,15 +1838,17 @@ test joining {
     assert!(stderr.contains("--profile is cpu or memory, not time"), "{stderr}");
 }
 
-/// The comparison with Go (bench/) keeps compiling: its Tondo benchmarks
-/// run once as tests, and the program that compares checks.
+/// The benchmarks (bench/) keep compiling: those against Go run once as
+/// tests, and the programs that compare and that measure compiling check.
 #[test]
 fn the_comparison_with_go_builds() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let (stdout, stderr, status) = tondo(&root, &["test", "bench/tondo"]);
     assert_eq!(status, 0, "{stdout}{stderr}");
-    let (stdout, stderr, status) = tondo(&root, &["check", "bench/compare.to"]);
-    assert_eq!(status, 0, "{stdout}{stderr}");
+    for program in ["bench/compare.to", "bench/compile.to", "bench/compile/generate.to"] {
+        let (stdout, stderr, status) = tondo(&root, &["check", program]);
+        assert_eq!(status, 0, "{program}: {stdout}{stderr}");
+    }
 }
 
 /// `--affected` runs the tests that reach what changed since a commit: through

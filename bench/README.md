@@ -14,6 +14,12 @@ Each side measures a run as the median of its samples; Go's `-benchmem`
 and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.
 
+The rows of `http/` and `net/` run a server and its clients in one
+process, so a row mixes the two sides of each request, which a profile
+tells apart: HTTP/1.1 in the clear and HTTP/2 over TLS, as Tondo's client
+and server negotiate them, with the certificate in `tondo/src/tls`, made
+for these benchmarks alone.
+
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27.
 Now, at bd240e1:
 
