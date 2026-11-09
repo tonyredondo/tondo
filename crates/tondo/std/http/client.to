@@ -147,6 +147,11 @@ pub fn Response.events(self): Events {
 /// read for the labels of Latin-1 and ASCII, or UTF-8, which it is when it
 /// names no charset; why not, for any other charset.
 fn windows1252(contentType: String): Bool ! String {
+    // As servers mostly write it, read at no cost: no parameters, or
+    // UTF-8's last, which is the charset that wins below.
+    if not contentType.contains(";") or contentType.endsWith("charset=utf-8") {
+        return false
+    }
     var charset = "utf-8"
     for parameter in contentType.split(";") {
         let pair = parameter.trim().toLower()

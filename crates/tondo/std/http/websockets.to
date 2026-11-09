@@ -177,7 +177,15 @@ fn joined(base: String, url: String): String {
     if url.isEmpty() {
         return base
     }
-    "{base.removeSuffix("/")}/{url.removePrefix("/")}"
+    // One slash between them, made with as little as it takes.
+    let (slashed, rooted) = (base.endsWith("/"), url.startsWith("/"))
+    if slashed != rooted {
+        return "{base}{url}"
+    }
+    if slashed {
+        return "{base}{url.removePrefix("/")}"
+    }
+    "{base}/{url}"
 }
 
 fn withQuery(url: String, query: Map[String, String]): String {
