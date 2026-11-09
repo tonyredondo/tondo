@@ -96,24 +96,29 @@ fn target(file: &SourceFile, comment: Span) -> usize {
 
 /// What `tondo check` adds to a program's diagnostics.
 pub fn run(sources: &SourceMap, diags: &mut Diagnostics, docs: bool, performance: bool) {
-    for file in (0..sources.len()).map(|index| sources.file(index)) {
+    diags.asked = PROFILES.iter().copied().filter(|code| if *code == "W1010" { docs } else { performance }).collect();
+    // Parsed again only for what is asked, on every core, in the files' order.
+    if docs || performance {
         // The program's, whether a project's or a file alone.
-        if file.dependency || file.logical.starts_with("<std>") || file.name.ends_with("_test.to") {
-            continue;
-        }
-        let module = crate::parser::parse_file(file, &mut Diagnostics::default());
-        for item in &module.items {
-            if docs {
-                undocumented(file, item, diags);
-            }
-            if let (true, Item::Fn(f)) = (performance, item)
-                && let Some(body) = &f.body
-            {
-                copies(file, body, diags);
+        let files: Vec<&SourceFile> = (0..sources.len())
+            .map(|index| sources.file(index))
+            .filter(|file| !file.dependency && !file.logical.starts_with("<std>") && !file.name.ends_with("_test.to"))
+            .collect();
+        let modules =
+            crate::parallel::map(&files, 1, |file| crate::parser::parse_file(file, &mut Diagnostics::default()));
+        for (file, module) in files.into_iter().zip(modules) {
+            for item in &module.items {
+                if docs {
+                    undocumented(file, item, diags);
+                }
+                if let (true, Item::Fn(f)) = (performance, item)
+                    && let Some(body) = &f.body
+                {
+                    copies(file, body, diags);
+                }
             }
         }
     }
-    diags.asked = PROFILES.iter().copied().filter(|code| if *code == "W1010" { docs } else { performance }).collect();
     diags.sort(sources);
 }
 
