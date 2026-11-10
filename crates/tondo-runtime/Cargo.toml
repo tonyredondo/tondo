@@ -15,7 +15,10 @@ path = "src/lib.rs"
 [dependencies]
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
 bcrypt = { version = "0.19.3", default-features = false, features = ["std"] }
+brotli-decompressor = "6.0.1"
 bytes = "1.12.1"
+cookie = "0.18.2"
+cookie_store = "0.22.1"
 flate2 = "1"
 futures-util = { version = "0.3.34", features = ["sink"] }
 h2 = "0.4.20"
@@ -45,7 +48,6 @@ regex = "1"
 regex-syntax = "0.8"
 ring = "0.17.14"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "multipart", "gzip", "brotli", "deflate", "system-proxy", "cookies"] }
 rmp = "0.8"
 ruzstd = "0.9"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
@@ -61,6 +63,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 unicode-normalization = "0.1"
+url = "2.5.8"
 webpki-roots = "1.0.10"
 
 [build-dependencies]

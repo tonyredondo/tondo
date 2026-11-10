@@ -17,7 +17,9 @@ use crate::byte_array;
 use crate::io::{Host, Mode, Ready, StreamObject, retain, run, run_until, wait_for};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
@@ -284,6 +286,67 @@ impl Wire for mio::net::UnixStream {
     }
     fn end(&self) -> std::io::Result<()> {
         self.shutdown(Shutdown::Write)
+    }
+}
+
+/// A socket of the workers' poller as tokio's traits read and write it,
+/// which hyper and TLS take: an operation that would block leaves the waker
+/// it was polled with to the poller, which wakes it on the socket's event.
+pub(crate) struct Polled<S: Wire> {
+    socket: Registered<S>,
+}
+
+impl<S: Wire> Polled<S> {
+    pub(crate) fn new(io: S) -> std::io::Result<Polled<S>> {
+        Ok(Polled { socket: Registered::new(io)? })
+    }
+}
+
+impl<S: Wire> From<Registered<S>> for Polled<S> {
+    fn from(socket: Registered<S>) -> Polled<S> {
+        Polled { socket }
+    }
+}
+
+impl<S: Wire> tokio::io::AsyncRead for Polled<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // As tokio does: the socket writes the bytes it reads, and reads none.
+        let unfilled = unsafe { &mut *(buffer.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
+        let read = self.socket.poll_attempt(context, Direction::Read, |socket| socket.take(unfilled));
+        read.map_ok(|count| {
+            unsafe { buffer.assume_init(count) };
+            buffer.advance(count);
+        })
+    }
+}
+
+impl<S: Wire> tokio::io::AsyncWrite for Polled<S> {
+    fn poll_write(self: Pin<&mut Self>, context: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
+        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give(data))
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        parts: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give_all(parts))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        true
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(self.socket.io().end())
     }
 }
 
@@ -696,7 +759,7 @@ async fn open<S, F: Future<Output = std::io::Result<S>>>(
 }
 
 /// A TCP connection to `address` on the workers' poll.
-async fn connect(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpStream>> {
+pub(crate) async fn connect(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpStream>> {
     let socket = Registered::new(mio::net::TcpStream::connect(address)?)?;
     loop {
         socket.ready(Direction::Write).await;

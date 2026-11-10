@@ -22,8 +22,12 @@ const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// one without it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8) -> *mut Str {
-    let (alphabet, pad) = if url != 0 { (URL, false) } else { (STANDARD, true) };
-    let data = unsafe { array_items::<u8>(data) };
+    str_new(&base64_encode(unsafe { array_items::<u8>(data) }, url != 0))
+}
+
+/// Base64 of RFC 4648, as `tondo_rt_base64_encode` writes it.
+pub(crate) fn base64_encode(data: &[u8], url: bool) -> Vec<u8> {
+    let (alphabet, pad) = if url { (URL, false) } else { (STANDARD, true) };
     let mut out = Vec::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
@@ -34,7 +38,7 @@ pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8)
             out.extend(std::iter::repeat_n(b'=', 3 - chunk.len()));
         }
     }
-    str_new(&out)
+    out
 }
 
 /// The bytes of Base64 text, with or without its padding, or the offset

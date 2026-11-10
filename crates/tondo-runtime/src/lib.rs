@@ -18,6 +18,7 @@ mod boxes;
 mod builder;
 mod cbor;
 mod civil;
+mod client;
 mod clock;
 mod codec;
 mod compress;

@@ -95,6 +95,32 @@ fn serve(stream: TcpStream) {
             respond(&mut stream, "200 OK", &[], &body)
         }
         "/missing" => respond(&mut stream, "404 Not Found", &[], b"nothing here"),
+        // Encoded as the client asks, which it decodes.
+        "/gzip" | "/deflate" => {
+            let text = format!("decoded with {}", &path[1..]);
+            let mut encoded = Vec::new();
+            if path == "/gzip" {
+                let mut encoder = flate2::write::GzEncoder::new(&mut encoded, flate2::Compression::default());
+                encoder.write_all(text.as_bytes()).unwrap();
+                encoder.finish().unwrap();
+            } else {
+                let mut encoder = flate2::write::ZlibEncoder::new(&mut encoded, flate2::Compression::default());
+                encoder.write_all(text.as_bytes()).unwrap();
+                encoder.finish().unwrap();
+            }
+            let accepted = header("accept-encoding");
+            respond(
+                &mut stream,
+                "200 OK",
+                &[("content-encoding", path[1..].into()), ("x-accepted", accepted)],
+                &encoded,
+            )
+        }
+        // `decoded with brotli`, as `brotli` writes it.
+        "/brotli" => {
+            let encoded = b"\x0f\x09\x80decoded with brotli\x03";
+            respond(&mut stream, "200 OK", &[("content-encoding", "br".into())], encoded)
+        }
         "/slow" => {
             std::thread::sleep(std::time::Duration::from_secs(3));
             respond(&mut stream, "200 OK", &[], b"late")
@@ -195,6 +221,11 @@ fn main(): !(http.HttpError | fs.FsError) {
     console.println("{"{http.get("not a url")}".startsWith("err(invalid URL")}")
     let redirected = client.get("/redirect")?
     console.println("{redirected.url().endsWith("/hello?from=redirect")} {redirected.text()?}")
+    let gzipped = client.get("/gzip")?
+    console.println("{gzipped.text()?} {gzipped.header("content-encoding")} {gzipped.header("x-accepted")}")
+    console.println("{client.get("/deflate")?.text()?} {client.get("/brotli")?.text()?}")
+    // Asked for by the program, the encoding is the program's to decode.
+    console.println("{client.get("/gzip", headers: ["Accept-Encoding": "gzip"])?.header("content-encoding")}")
 
     for event in client.get("/events")?.events() {
         let e = event?
@@ -251,6 +282,9 @@ err(the request timed out)
 true
 true
 true hello GET from=redirect
+decoded with gzip none some(gzip, deflate, br)
+decoded with deflate decoded with brotli
+some(gzip)
 greeting: hello
 world some(1)
 message: second none
@@ -644,6 +678,95 @@ fn main(): !http.HttpError {
     let (stdout, stderr, success) = run("http-tls", program, &files);
     assert_eq!(stdout, "true HTTP/2.0 secure HTTP/2.0\ntrue\ntrue\n", "{stderr}");
     assert!(success, "{stderr}");
+}
+
+/// A proxy that answers a request for a whole URL itself, with what it was
+/// asked, and opens a tunnel for `CONNECT`; what it was asked to connect to
+/// goes in `asked`.
+fn proxy(asked: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let asked = asked.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let Some(request) = read_request(&mut reader) else { return };
+                let mut stream = stream;
+                asked.lock().unwrap().push(format!("{} {}", request.method, request.target));
+                if request.method != "CONNECT" {
+                    let body = format!("proxied {}", request.target);
+                    return respond(&mut stream, "200 OK", &[], body.as_bytes());
+                }
+                let Ok(target) = TcpStream::connect(&request.target) else { return };
+                stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").unwrap();
+                let (mut up, mut down) = (target.try_clone().unwrap(), stream.try_clone().unwrap());
+                std::thread::spawn(move || std::io::copy(&mut reader, &mut up));
+                let _ = std::io::copy(&mut &target, &mut down);
+            });
+        }
+    });
+    format!("http://{address}")
+}
+
+/// The proxies of the environment: a URL of HTTP through `HTTP_PROXY`, one
+/// of HTTPS through a tunnel of `HTTPS_PROXY`, and a host of `NO_PROXY`
+/// straight.
+#[test]
+fn client_through_proxies() {
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+    let mut authority = CertificateParams::new(Vec::<String>::new()).unwrap();
+    authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let authority = CertifiedIssuer::self_signed(authority, KeyPair::generate().unwrap()).unwrap();
+    let key = KeyPair::generate().unwrap();
+    let certificate =
+        CertificateParams::new(vec!["localhost".to_string()]).unwrap().signed_by(&key, &authority).unwrap();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let through = proxy(asked.clone());
+    let base = server();
+    let program = r#"
+import std.console
+import std.env
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/", (request) { http.Reply.text("secure") })
+    let server = app.start(tls: http.Tls.files("server.pem", "server.key"))?
+    let secure = server.url().replace("127.0.0.1", "localhost")
+    console.println(http.Client(trust: "authority.pem").get(secure)?.text()?)
+    console.println(http.get("http://example.invalid/through?a=1")?.text()?)
+    console.println(http.get("{env.get("BASE").unwrapOr("")}/hello")?.text()?)
+    console.println(server.url().replace("https://127.0.0.1", "localhost"))
+    server.stop()
+}
+"#;
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("http-proxies");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files =
+        [("authority.pem", authority.pem()), ("server.pem", certificate.pem()), ("server.key", key.serialize_pem())];
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "main.to"])
+        .current_dir(&dir)
+        .env("BASE", &base)
+        .env("HTTP_PROXY", &through)
+        .env("HTTPS_PROXY", &through)
+        .env("NO_PROXY", "127.0.0.1")
+        .env("TONDO_RT_CHECK_LEAKS", "1")
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines[..3], ["secure", "proxied http://example.invalid/through?a=1", "hello GET "], "{stderr}");
+    assert!(output.status.success(), "{stderr}");
+    // The tunnel, then the whole URL: the host of `NO_PROXY` went straight.
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(asked, [format!("CONNECT {}", lines[3]), "GET http://example.invalid/through?a=1".to_string()]);
 }
 
 #[test]

@@ -9,7 +9,7 @@
 
 use super::http::{Failure, Source, blocking, runtime, socket, stream_of, strings, text, wait};
 use super::native::{self, NativeObject};
-use super::net::Wire;
+use super::net::{Polled, Wire};
 use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Kept, Str, str_new};
 use crate::array_items;
@@ -123,61 +123,6 @@ impl Listening {
 /// A connection accepted, on the workers' poller.
 fn on_poller<S: Wire + Unpin>(stream: S, remote: String) -> std::io::Result<Accepted> {
     Ok((Box::new(Polled::new(stream)?), remote))
-}
-
-/// A socket of the workers' poller as tokio's traits read and write it,
-/// which hyper and TLS take: an operation that would block leaves the waker
-/// it was polled with to the poller, which wakes it on the socket's event.
-struct Polled<S: Wire> {
-    socket: Registered<S>,
-}
-
-impl<S: Wire> Polled<S> {
-    fn new(io: S) -> std::io::Result<Polled<S>> {
-        Ok(Polled { socket: Registered::new(io)? })
-    }
-}
-
-impl<S: Wire> tokio::io::AsyncRead for Polled<S> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-        buffer: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        // As tokio does: the socket writes the bytes it reads, and reads none.
-        let unfilled = unsafe { &mut *(buffer.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
-        let read = self.socket.poll_attempt(context, Direction::Read, |socket| socket.take(unfilled));
-        read.map_ok(|count| {
-            unsafe { buffer.assume_init(count) };
-            buffer.advance(count);
-        })
-    }
-}
-
-impl<S: Wire> tokio::io::AsyncWrite for Polled<S> {
-    fn poll_write(self: Pin<&mut Self>, context: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
-        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give(data))
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-        parts: &[std::io::IoSlice<'_>],
-    ) -> Poll<std::io::Result<usize>> {
-        self.socket.poll_attempt(context, Direction::Write, |socket| socket.give_all(parts))
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        true
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(self.socket.io().end())
-    }
 }
 
 /// What a server allows each client (`http.Limits`): the bytes of a
@@ -855,7 +800,7 @@ impl Server {
 /// puts it in their list (`tasks::poll_soon`), as the code that wakes it may
 /// hold a lock its poll takes, and whoever needs it polled now polls it in
 /// place (`run`).
-struct Turning {
+pub(crate) struct Turning {
     future: Mutex<Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>,
     /// Whether a thread polls it now, and whether it was woken meanwhile,
     /// which that thread polls it again for.
@@ -866,6 +811,8 @@ struct Turning {
     /// Its one waker, which what it waits on knows from a waker it has
     /// already; it does not keep it.
     waker: std::task::Waker,
+    /// Itself, for one that nothing else keeps until it ends (`detach`).
+    held: Mutex<Option<Arc<Turning>>>,
 }
 
 impl Turning {
@@ -876,6 +823,7 @@ impl Turning {
             queued: std::sync::atomic::AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
             waker: std::task::Waker::from(Arc::new(Woken(turning.clone()))),
+            held: Mutex::new(None),
         })
     }
 
@@ -886,7 +834,7 @@ impl Turning {
     /// Polls it, unless another thread polls it now, which polls it again
     /// once it is done. One atomic says both, as a flag beside a lock let a
     /// wake fall between the poller's last look and its letting go.
-    fn run(self: &Arc<Self>) {
+    pub(crate) fn run(self: &Arc<Self>) {
         use std::sync::atomic::Ordering::{AcqRel, Acquire, SeqCst};
         let mut seen = IDLE;
         loop {
@@ -904,6 +852,7 @@ impl Turning {
             {
                 *future = None;
                 self.done.store(true, SeqCst);
+                lock(&self.held).take();
             }
             drop(future);
             if self.polling.compare_exchange(POLLING, IDLE, AcqRel, Acquire).is_ok() {
@@ -924,6 +873,17 @@ impl Turning {
 const IDLE: u8 = 0;
 const POLLING: u8 = 1;
 const AGAIN: u8 = 2;
+
+/// Runs a future of the host at the workers' turns until it ends, which
+/// keeps itself meanwhile: the future of a connection of the client, which
+/// a task that waits on it may poll in place too (`Turning::run`).
+pub(crate) fn detach(future: impl std::future::Future<Output = ()> + Send + 'static) -> Arc<Turning> {
+    let turning = Turning::new();
+    turning.start(future);
+    *lock(&turning.held) = Some(turning.clone());
+    turning.soon();
+    turning
+}
 
 /// What wakes a future the workers poll at their turns.
 struct Woken(std::sync::Weak<Turning>);

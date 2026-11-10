@@ -268,41 +268,12 @@ pub unsafe extern "C" fn tondo_rt_http_client(
     key: *const Str,
     minimum: i64,
 ) -> *mut NativeObject {
-    let config = match tls(&text(trust), &text(cert), &text(key), minimum) {
-        Ok(config) => config,
-        Err(problem) => return native::new(Err::<reqwest::Client, String>(problem)),
-    };
-    let mut builder = reqwest::Client::builder()
-        .tls_backend_preconfigured(config)
-        .user_agent(concat!("tondo/", env!("CARGO_PKG_VERSION")))
-        .redirect(match redirects {
-            0 => reqwest::redirect::Policy::none(),
-            n => reqwest::redirect::Policy::limited(n.max(0) as usize),
-        });
-    if connect_ms > 0 {
-        builder = builder.connect_timeout(Duration::from_millis(connect_ms as u64));
-    }
-    let socket = text(socket);
-    if !socket.is_empty() {
-        builder = builder.unix_socket(std::path::PathBuf::from(socket));
-    }
-    if cookies != 0 {
-        builder = builder.cookie_store(true);
-    }
-    native::new(builder.dns_resolver(Resolver).build().map_err(|error| error.to_string()))
-}
-
-/// Looks hosts up as `std.net` does, on the worker of a recorded run.
-struct Resolver;
-
-impl reqwest::dns::Resolve for Resolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let host = name.as_str().to_string();
-        Box::pin(async move {
-            let found = crate::net::addresses(&host, 0).await?;
-            Ok(Box::new(found.into_iter()) as reqwest::dns::Addrs)
-        })
-    }
+    let made = tls(&text(trust), &text(cert), &text(key), minimum).map(|config| {
+        let socket = Some(text(socket)).filter(|socket| !socket.is_empty()).map(std::path::PathBuf::from);
+        let connect = (connect_ms > 0).then(|| Duration::from_millis(connect_ms as u64));
+        Arc::new(super::client::Client::new(config, connect, redirects.max(0) as usize, socket, cookies != 0))
+    });
+    native::new(made)
 }
 
 // ---------------------------------------------------------------------------
@@ -329,12 +300,7 @@ enum Body {
 }
 
 /// A multipart form under construction, or the first problem of a part.
-type Form = Result<reqwest::multipart::Form, String>;
-
-/// The body's chunks, read from the stream on blocking threads.
-fn chunks(source: Source) -> reqwest::Body {
-    reqwest::Body::wrap_stream(stream_of(source))
-}
+type Form = Result<super::client::Form, String>;
 
 /// The chunks a stream of `std.io` gives, read on blocking threads.
 pub(crate) fn stream_of(
@@ -390,36 +356,33 @@ pub unsafe extern "C" fn tondo_rt_http_body_stream(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_form() -> *mut NativeObject {
-    native::new(Mutex::new(Some(Ok::<_, String>(reqwest::multipart::Form::new()))))
+    native::new(Mutex::new(Some(Ok::<_, String>(super::client::Form::default()))))
 }
 
 /// Adds a part to a form under construction, with its file name and
 /// content type when given; a content type that does not parse is the
 /// form's problem.
-fn add_part(
-    form: *mut NativeObject,
-    name: String,
-    part: reqwest::multipart::Part,
-    file_name: String,
-    content_type: String,
-) {
+fn add_part(form: *mut NativeObject, part: super::client::Part) {
     let Some(slot) = native::get::<Mutex<Option<Form>>>(form) else { return };
     let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
-    let part = if file_name.is_empty() { part } else { part.file_name(file_name) };
-    let part = match content_type.is_empty() {
-        true => Ok(part),
-        false => part.mime_str(&content_type).map_err(|_| format!("`{content_type}` is not a content type")),
-    };
-    *slot = match (slot.take(), part) {
-        (Some(Ok(current)), Ok(part)) => Some(Ok(current.part(name, part))),
-        (Some(Ok(_)), Err(problem)) => Some(Err(problem)),
-        (other, _) => other,
-    };
+    let kind = &part.content_type;
+    let wrong = !kind.is_empty() && kind.parse::<mime_guess::mime::Mime>().is_err();
+    if let Some(Ok(current)) = slot.as_mut() {
+        match wrong {
+            true => *slot = Some(Err(format!("`{kind}` is not a content type"))),
+            false => current.add(part),
+        }
+    }
+}
+
+fn part(name: String, file_name: String, content_type: String, content: super::client::Content) -> super::client::Part {
+    super::client::Part { name, file_name, content_type, content }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_form_text(form: *mut NativeObject, name: *const Str, value: *const Str) {
-    add_part(form, text(name), reqwest::multipart::Part::text(text(value)), String::new(), String::new());
+    let value = super::client::Content::Bytes(Bytes::from(text(value)));
+    add_part(form, part(text(name), String::new(), String::new(), value));
 }
 
 #[unsafe(no_mangle)]
@@ -430,8 +393,8 @@ pub unsafe extern "C" fn tondo_rt_http_form_bytes(
     file_name: *const Str,
     content_type: *const Str,
 ) {
-    let part = reqwest::multipart::Part::bytes(unsafe { array_items::<u8>(data) }.to_vec());
-    add_part(form, text(name), part, text(file_name), text(content_type));
+    let data = super::client::Content::Bytes(Bytes::copy_from_slice(unsafe { array_items::<u8>(data) }));
+    add_part(form, part(text(name), text(file_name), text(content_type), data));
 }
 
 /// Adds a file's part, read from disk as it is sent; the error when the
@@ -443,11 +406,26 @@ pub unsafe extern "C" fn tondo_rt_http_form_file(
     path: *const Str,
     content_type: *const Str,
 ) -> *mut Str {
-    let path = text(path);
-    let opened = wait(async move { reqwest::multipart::Part::file(path).await });
+    let path = std::path::PathBuf::from(text(path));
+    let opening = path.clone();
+    let opened = super::io::wait_for(async move {
+        blocking(false, move || {
+            let file = std::fs::File::open(&opening)?;
+            let length = file.metadata()?.len();
+            Ok::<_, std::io::Error>((file, length))
+        })
+        .await?
+    });
     match opened {
-        Some(Ok(part)) => {
-            add_part(form, text(name), part, String::new(), text(content_type));
+        Some(Ok((file, length))) => {
+            // Its name, and the content type of its extension, unless given.
+            let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let kind = match text(content_type) {
+                given if given.is_empty() => mime_guess::from_path(&path).first_or_octet_stream().to_string(),
+                given => given,
+            };
+            let content = super::client::Content::Stream(Box::pin(read_file(file)), Some(length));
+            add_part(form, part(text(name), file_name, kind, content));
             str_new(b"")
         }
         Some(Err(error)) => str_new(error.to_string().as_bytes()),
@@ -465,12 +443,28 @@ pub unsafe extern "C" fn tondo_rt_http_form_stream(
     length: i64,
 ) {
     unsafe { super::tasks::tondo_rt_handle_retain(input as *mut u8) };
-    let body = chunks(Source(input));
-    let part = match u64::try_from(length) {
-        Ok(length) => reqwest::multipart::Part::stream_with_length(body, length),
-        Err(_) => reqwest::multipart::Part::stream(body),
-    };
-    add_part(form, text(name), part, text(file_name), text(content_type));
+    let content = super::client::Content::Stream(Box::pin(stream_of(Source(input))), u64::try_from(length).ok());
+    add_part(form, part(text(name), text(file_name), text(content_type), content));
+}
+
+/// A file's chunks, read on the runtime's pool as they are sent.
+fn read_file(file: std::fs::File) -> impl futures_util::Stream<Item = std::io::Result<Bytes>> + Send + 'static {
+    futures_util::stream::unfold(Some(file), |file| async move {
+        let mut file = file?;
+        let read = blocking(false, move || {
+            let mut buffer = vec![0; 64 * 1024];
+            let count = std::io::Read::read(&mut file, &mut buffer)?;
+            buffer.truncate(count);
+            Ok::<_, std::io::Error>((file, buffer))
+        })
+        .await
+        .and_then(|read| read);
+        match read {
+            Ok((_, buffer)) if buffer.is_empty() => None,
+            Ok((file, buffer)) => Some((Ok(Bytes::from(buffer)), Some(file))),
+            Err(error) => Some((Err(error), None)),
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -490,10 +484,10 @@ struct Response {
     failure: Failure,
     status: u16,
     url: String,
-    version: reqwest::Version,
+    version: hyper::Version,
     /// As they came, until the program asks for one.
-    headers: reqwest::header::HeaderMap,
-    body: Mutex<Option<reqwest::Response>>,
+    headers: hyper::HeaderMap,
+    body: Mutex<Option<super::client::Received>>,
 }
 
 impl Response {
@@ -502,34 +496,11 @@ impl Response {
             failure: Mutex::new(Some((kind, message))),
             status: 0,
             url: String::new(),
-            version: reqwest::Version::default(),
-            headers: reqwest::header::HeaderMap::new(),
+            version: hyper::Version::default(),
+            headers: hyper::HeaderMap::new(),
             body: Mutex::new(None),
         }
     }
-}
-
-/// What kind of failure a reqwest error is, and its message with its causes.
-fn classify(error: &reqwest::Error) -> (&'static str, String) {
-    let kind = if error.is_builder() {
-        "url"
-    } else if error.is_timeout() {
-        "timeout"
-    } else if error.is_connect() {
-        "connect"
-    } else if error.is_body() || error.is_decode() {
-        "body"
-    } else {
-        "protocol"
-    };
-    let mut message = error.to_string();
-    let mut source = std::error::Error::source(error);
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    (kind, message)
 }
 
 /// Sends a request and waits for the head of its response. `headers` are
@@ -545,64 +516,47 @@ pub unsafe extern "C" fn tondo_rt_http_send(
     timeout_ms: i64,
 ) -> *mut NativeObject {
     super::diagnostics::HTTP_CLIENT_REQUESTS.add(1);
-    let client = match native::get::<Result<reqwest::Client, String>>(client) {
+    let client = match native::get::<Result<Arc<super::client::Client>, String>>(client) {
         Some(Ok(client)) => client.clone(),
         Some(Err(problem)) => return native::new(Response::failed("connect", problem.clone())),
         None => return native::new(Response::failed("protocol", "not an HTTP client".into())),
     };
-    let Ok(method) = reqwest::Method::from_bytes(text(method).as_bytes()) else {
+    let Ok(method) = hyper::Method::from_bytes(text(method).as_bytes()) else {
         return native::new(Response::failed("protocol", format!("`{}` is not an HTTP method", text(method))));
     };
-    let mut request = client.request(method, text(url));
-    let headers = strings(headers);
-    for pair in headers.chunks(2) {
-        if let [name, value] = pair {
-            request = request.header(name.as_str(), value.as_str());
-        }
-    }
-    if timeout_ms > 0 {
-        request = request.timeout(Duration::from_millis(timeout_ms as u64));
-    }
-    let has = |name: &str| headers.chunks(2).any(|pair| pair[0].eq_ignore_ascii_case(name));
-    request = match native::get::<Body>(body) {
-        None | Some(Body::Empty) => request,
-        Some(Body::Bytes(data, content_type)) => {
-            let request = if has("content-type") { request } else { request.header("content-type", content_type) };
-            request.body(data.clone())
-        }
+    let headers: Vec<(String, String)> =
+        strings(headers).chunks(2).filter_map(|pair| Some((pair.first()?.clone(), pair.get(1)?.clone()))).collect();
+    use super::client::Body as Sent;
+    let body = match native::get::<Body>(body) {
+        None | Some(Body::Empty) => Sent::Empty,
+        Some(Body::Bytes(data, content_type)) => Sent::Bytes(data.clone(), content_type.clone()),
         Some(Body::Stream(source, length, content_type)) => {
             let Some(source) = source.lock().unwrap_or_else(|e| e.into_inner()).take() else {
                 return native::new(Response::failed("body", "a stream body is sent once".into()));
             };
-            let mut request = if has("content-type") { request } else { request.header("content-type", content_type) };
-            if *length >= 0 && !has("content-length") {
-                request = request.header("content-length", length.to_string());
-            }
-            request.body(chunks(source))
+            let chunks = super::client::streamed(stream_of(source));
+            Sent::Stream(chunks, u64::try_from(*length).ok(), content_type.clone())
         }
         Some(Body::Form(form)) => match form.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            Some(Ok(form)) => request.multipart(form),
+            Some(Ok(form)) => Sent::Form(form),
             Some(Err(problem)) => return native::new(Response::failed("body", problem)),
             None => return native::new(Response::failed("body", "a multipart body is sent once".into())),
         },
     };
-    // Polled by the task in place, as the server's futures are: only the
-    // connection's own future runs on tokio's threads. Made in the poll,
-    // with tokio's context, as a timeout's timer is made with the future.
-    let response = match super::io::wait_for(async move { request.send().await }) {
+    let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms as u64));
+    let request = super::client::Request { method, url: text(url), headers, body, timeout };
+    // Polled by the task in place, as the server's futures are; only the
+    // futures of the connections run at the workers' turns.
+    let response = match super::io::wait_for(async move { client.send(request).await }) {
         None => Response::failed("protocol", "the task was cancelled".into()),
-        Some(Err(error)) => {
-            let (kind, message) = classify(&error);
-            Response::failed(kind, message)
-        }
-        Some(Ok(mut response)) => Response {
+        Some(Err((kind, message))) => Response::failed(kind, message),
+        Some(Ok(answer)) => Response {
             failure: Mutex::new(None),
-            status: response.status().as_u16(),
-            url: response.url().to_string(),
-            version: response.version(),
-            // The body reads none of them, decoded as it is already.
-            headers: std::mem::take(response.headers_mut()),
-            body: Mutex::new(Some(response)),
+            status: answer.status.as_u16(),
+            url: answer.url,
+            version: answer.version,
+            headers: answer.headers,
+            body: Mutex::new(Some(answer.body)),
         },
     };
     native::new(response)
@@ -632,7 +586,7 @@ pub extern "C" fn tondo_rt_http_status(object: *mut NativeObject) -> i64 {
 /// The status's reason phrase: `OK`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_reason(object: *mut NativeObject) -> *mut Str {
-    let reason = reqwest::StatusCode::from_u16(response(object).status).ok().and_then(|s| s.canonical_reason());
+    let reason = hyper::StatusCode::from_u16(response(object).status).ok().and_then(|s| s.canonical_reason());
     str_new(reason.unwrap_or_default().as_bytes())
 }
 
@@ -675,11 +629,11 @@ pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut Arra
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return byte_array(&[]);
     };
-    match super::io::wait_for(async move { body.bytes().await }) {
+    match super::io::wait_for(async move { body.all().await }) {
         Some(Ok(bytes)) => byte_array(&bytes),
         outcome => {
             let failure = match outcome {
-                Some(Err(error)) => classify(&error),
+                Some(Err(failure)) => failure,
                 _ => ("protocol", "the task was cancelled".into()),
             };
             *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(failure);
@@ -690,7 +644,7 @@ pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut Arra
 
 /// A response's body as the host of a stream: chunks as they arrive.
 struct Chunks {
-    body: Option<reqwest::Response>,
+    body: Option<super::client::Received>,
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
@@ -709,7 +663,7 @@ impl Host for Chunks {
                 Ok(Some(chunk)) if self.windows_1252 => self.chunk = windows_1252(&chunk).into_bytes().into(),
                 Ok(Some(chunk)) => self.chunk = chunk,
                 Ok(None) => self.body = None,
-                Err(error) => return Err(std::io::Error::other(error)),
+                Err((_, message)) => return Err(std::io::Error::other(message)),
             }
         }
         let count = buffer.len().min(self.chunk.len());
