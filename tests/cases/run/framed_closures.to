@@ -1,0 +1,95 @@
+// A closure only its frame calls or reads the captures of, as one passed
+// to a function inlined there, is made in the frame, without the heap: its
+// captures, counted ones too, are let go of once where it is, also when its
+// body panics; one made in each turn of a loop has that turn's captures. A
+// closure that leaves the frame, returned, kept, captured by another or
+// sent, is made on the heap as before, and calls what it captured after
+// the frame that made it ends.
+
+import std.console
+
+fn apply(f: fn(Int): Int, times: Int): Int {
+    var total = 0
+    for i in 0..times {
+        total += f(i)
+    }
+    total
+}
+
+fn twice(f: fn(String): String, text: String): String {
+    f(f(text))
+}
+
+fn counted(): Int {
+    let name = "x".repeat(40)
+    let parts = [name, "y".repeat(30)]
+    let inner = (n: Int): Int { n + parts.length() }
+    apply((i: Int): Int { inner(i) + name.length() + parts[1].length() }, 10)
+}
+
+fn turns(): Int {
+    var total = 0
+    for round in 0..50 {
+        let label = "round {round * 1_000}"
+        total += apply((i: Int): Int { i * round + label.length() }, 3)
+    }
+    total
+}
+
+fn panics(limit: Int): Int {
+    let text = "z".repeat(50)
+    apply(
+        (i: Int): Int {
+            if i == limit {
+                panic("stop at {i}")
+            }
+            text.length()
+        },
+        5,
+    )
+}
+
+fn made(base: String): fn(Int): String {
+    (n: Int): String { "{base} {n * 1_000}" }
+}
+
+fn kept(): Array[fn(): String] {
+    var all: Array[fn(): String] = []
+    for i in 0..3 {
+        let text = "kept {i * 1_000}"
+        all.push(() { text })
+    }
+    all
+}
+
+fn wrapped(text: String): fn(): Int {
+    let measure = () { text.length() }
+    () { measure() * 2 }
+}
+
+fn run(f: fn(): String): String {
+    f()
+}
+
+fn main() {
+    console.println("{counted()} {turns()}")
+    console.println(twice((t: String): String { "<{t}>" }, "a"))
+    match recover { panics(3) } {
+        ok(value) => console.println("{value}")
+        err(stopped) => console.println(stopped.message)
+    }
+    console.println("{panics(10)}")
+    let one = made("made")
+    var texts: Array[String] = []
+    for f in kept() {
+        texts.push(f())
+    }
+    let job = spawn run(() { "sent {one(7)}" })
+    console.println("{one(2)} {texts} {wrapped("abc")()} {job.wait()}")
+}
+
+// expect-stdout: 765 5286
+// expect-stdout: <<a>>
+// expect-stdout: stop at 3
+// expect-stdout: 250
+// expect-stdout: made 2000 [kept 0, kept 1000, kept 2000] 6 sent made 7000

@@ -1,16 +1,21 @@
-//! Texts made where the function's frame keeps them, rather than on the
-//! heap, when nothing but this function's own borrows reads them: a text
-//! an interpolation makes to be measured or compared, as `"{i}".length()`,
-//! was allocated and freed each time. Its room in the frame gives it the
-//! count of a text nothing counts, as a literal's, so that retaining and
-//! releasing it do nothing; a text that does not fit there goes on the
-//! heap as before, and its release frees it.
+//! Texts and functions' values made where the function's frame keeps
+//! them, rather than on the heap, when nothing but this function's own
+//! borrows reads them: a text an interpolation makes to be measured or
+//! compared, as `"{i}".length()`, was allocated and freed each time, and so
+//! was the value of a closure passed to a function inlined here, which
+//! then only reads its captures. Its room in the frame gives it the count
+//! of a value nothing counts, as a literal's, so that retaining and
+//! releasing it do nothing: a text that does not fit there goes on the heap
+//! as before, and its release frees it; a function's value releases its
+//! captures where it is released.
 //!
 //! A text made so is assigned only by interpolations that append to no
 //! other text, as many times as copies of a loop do, and is otherwise only
-//! released, measured or compared: any other read could keep it past the
-//! frame, or past the next text made in its room. A function that calls
-//! itself makes none, as each of its frames would keep room for them.
+//! released, measured or compared; a function's value only by closures,
+//! and is otherwise only released, called, or read for its captures: any
+//! other read could keep it past the frame, or past the next value made in
+//! its room. A function that calls itself makes none, as each of its frames
+//! would keep room for them.
 
 use crate::ast::BinOp;
 use crate::mir::*;
@@ -29,6 +34,15 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
 
 fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
     let count = body.locals.len();
+    let mut erased = vec![false; count];
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::Assign(place, rvalue, _) = statement
+            && place.path.is_empty()
+            && matches!(**rvalue, Rvalue::Erase(..))
+        {
+            erased[place.local.0 as usize] = true;
+        }
+    }
     let (mut made, mut kept, mut otherwise) = (vec![false; count], vec![false; count], vec![false; count]);
     let keep = |locals: Vec<Local>, kept: &mut Vec<bool>| locals.into_iter().for_each(|l| kept[l.0 as usize] = true);
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
@@ -37,14 +51,15 @@ fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
             Statement::Release(place) if place.path.is_empty() => continue,
             Statement::Assign(place, rvalue, _) => {
                 let interpolated = matches!(&**rvalue,
-                    Rvalue::Concat(pieces) if !pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))));
+                    Rvalue::Concat(pieces) if !pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))))
+                    || matches!(**rvalue, Rvalue::Erase(..));
                 if place.path.is_empty() {
                     let at = place.local.0 as usize;
                     made[at] |= interpolated;
                     otherwise[at] |= !interpolated;
                 }
                 match &**rvalue {
-                    Rvalue::Concat(_) => statement_locals(statement, &mut read, &mut defined),
+                    Rvalue::Concat(_) | Rvalue::Erase(..) => statement_locals(statement, &mut read, &mut defined),
                     // Borrows that keep nothing.
                     Rvalue::Length(operand) => borrowed(&[operand], &mut read),
                     Rvalue::Binary(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, a, b) => {
@@ -69,6 +84,8 @@ fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
                 read.append(&mut defined);
             }
         }
+        // A function's value read only for its captures, or called.
+        read.retain(|&local| !erased[local.0 as usize] || !borrowed_function(statement, local));
         keep(read, &mut kept);
     }
     for block in &body.blocks {
@@ -81,10 +98,29 @@ fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
         .map(|local| Local(local as u32))
         .filter(|&local| {
             let at = local.0 as usize;
-            made[at] && !kept[at] && !otherwise[at] && types.repr(body.locals[at]) == Ty::STRING
+            made[at] && !kept[at] && !otherwise[at] && (erased[at] || types.repr(body.locals[at]) == Ty::STRING)
         })
         .take(FRAMED)
         .collect()
+}
+
+/// Whether the statement reads the function's value at `local` only for
+/// its captures, or calls it.
+fn borrowed_function(statement: &Statement, local: Local) -> bool {
+    let mut statement = statement.clone();
+    if let Statement::Assign(_, rvalue, _) = &mut statement
+        && let Rvalue::CallIndirect(callee, _) = &mut **rvalue
+        && matches!(callee, Operand::Copy(place) if place.local == local && place.path.is_empty())
+    {
+        *callee = Operand::Const(Const::Unit);
+    }
+    let mut only = true;
+    crate::inline::visit_statement(&mut statement, &mut |place: &mut Place| {
+        if place.local == local && !matches!(place.path.first(), Some(Proj::Captures(_))) {
+            only = false;
+        }
+    });
+    only
 }
 
 /// The locals the operands read, but a whole local, which they only borrow.

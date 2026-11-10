@@ -5644,3 +5644,10 @@ calls itself, whose frames would each keep room. The room stays under the length
 runtime keeps a string's positions by its address, which the room reuses for each text it holds.
 Debug and live builds, which skip the MIR's passes, make every text on the heap. `int to text
 1000` takes no allocation instead of 900 and 8.2 µs instead of 18.
+
+The value of a closure is made so too when the function only calls it or reads its captures, as
+it does once the function the closure was passed to is inlined: its room holds the header of a
+function's value and the captures, with the same count, and where it is released the frame lets
+go of its captures, which the count would otherwise never free. A closure that another captures,
+that is returned, kept, sent or passed on stays on the heap. `closure 1000` takes no allocation
+instead of one, and 245 ns instead of 274, where Go takes 426.

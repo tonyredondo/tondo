@@ -69,6 +69,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.mark(place.local, false);
                 }
                 let ty = self.place_ty(place);
+                // A function's value the frame made: its captures go, its
+                // room is the frame's.
+                if matches!(stmt, Statement::Release(_))
+                    && place.path.is_empty()
+                    && self.body.framed.contains(&place.local)
+                    && matches!(self.e.cg.types().kind(ty), TyKind::Fn(..))
+                {
+                    let value = self.scalar(&Operand::Copy(place.clone()));
+                    self.e.call_rt(Rt::FnLetGo, &[value]);
+                    return;
+                }
                 if !self.e.cg.types().needs_drop(ty) || place.path.is_empty() && self.literal.contains_key(&place.local)
                 {
                     return;
@@ -636,7 +647,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(env).size as i64);
                 let release = self.e.glue_or_null(Glue::Release, env);
                 let visit = self.e.glue_or_null(Glue::Visit, env);
-                let object = self.e.call_rt(Rt::FnNew, &[code, size, release, visit]).unwrap();
+                let object = match place.path.is_empty() && self.body.framed.contains(&place.local) {
+                    // A value only this frame reads, in room the frame keeps.
+                    true => {
+                        let room = FN_HEADER as u32 + self.e.cg.layout(env).size;
+                        let slot = *self.framed.entry(place.local).or_insert_with(|| {
+                            let data = StackSlotData::new(StackSlotKind::ExplicitSlot, room, 3);
+                            self.e.fb.create_sized_stack_slot(data)
+                        });
+                        let room = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                        self.e.call_rt(Rt::FnIn, &[room, code, size, release, visit]).unwrap()
+                    }
+                    false => self.e.call_rt(Rt::FnNew, &[code, size, release, visit]).unwrap(),
+                };
                 let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
                 self.e.store_val(captures, env, value);
                 Val::Scalar(object)

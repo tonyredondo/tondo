@@ -43,6 +43,32 @@ pub extern "C" fn tondo_rt_fn_new(
     }
 }
 
+/// A function value in room `room` of a frame, which only the frame reads
+/// (`stack.rs`): nothing counts it, as a named function's value, and the
+/// frame lets go of its captures (`tondo_rt_fn_let_go`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fn_in(
+    room: *mut FnObject,
+    code: *const u8,
+    size: usize,
+    release: Option<Glue>,
+    visit: Option<cycles::Visit>,
+) -> *mut FnObject {
+    unsafe { room.write(FnObject { rc: AtomicUsize::new(IMMORTAL), release, code, size, visit }) };
+    room
+}
+
+/// Lets go of the captures of a function value a frame made, whose room is
+/// the frame's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fn_let_go(f: *mut FnObject) {
+    unsafe {
+        if let Some(release) = (*f).release {
+            release((f as *mut u8).add(FN_HEADER));
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fn_retain(f: *mut FnObject) {
     if f.is_null() {
