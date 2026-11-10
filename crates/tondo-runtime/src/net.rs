@@ -8,7 +8,7 @@
 //! HTTP runtime's tokio, whose tasks move the bytes of a TLS stream between
 //! it and two buffers.
 
-use super::http::{runtime, text};
+use super::http::text;
 use super::native::{self, NativeObject};
 use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Str, str_new};
@@ -193,7 +193,7 @@ impl Pipe {
     }
 }
 
-type Tls = tokio_rustls::TlsStream<tokio::net::TcpStream>;
+type Tls = tokio_rustls::TlsStream<Polled<mio::net::TcpStream>>;
 
 /// Moves what a TLS stream receives into `pipe` while it has room.
 async fn receive(mut from: tokio::io::ReadHalf<Tls>, pipe: Arc<Pipe>) {
@@ -726,7 +726,7 @@ fn link<S: Wire>(socket: Registered<S>, local: Endpoint, remote: Endpoint) -> Co
 
 /// A connection over TLS, and the pipes `secure` moves its bytes through
 /// once the handshake is over.
-fn tls(stream: &tokio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pipe>), Failure> {
+fn tls(stream: &mio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pipe>), Failure> {
     let _ = stream.set_nodelay(true);
     let (local, remote) = (stream.local_addr()?, stream.peer_addr()?);
     let (inbox, outbox) = (Arc::new(Pipe::default()), Arc::new(Pipe::default()));
@@ -735,11 +735,13 @@ fn tls(stream: &tokio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pip
     Ok((Connection::new(Box::new(reader), Box::new(writer), local.into(), remote.into()), inbox, outbox))
 }
 
-/// Starts the tasks that move the bytes of a TLS stream.
+/// Starts what moves the bytes of a TLS stream: futures the workers poll at
+/// their turns, as the socket's events and the stream's writes wake them,
+/// without a thread of tokio's between the program and the socket.
 fn secure(stream: Tls, inbox: Arc<Pipe>, outbox: Arc<Pipe>) {
     let (from, to) = tokio::io::split(stream);
-    runtime().spawn(receive(from, inbox));
-    runtime().spawn(send(to, outbox));
+    let _ = super::server::detach(receive(from, inbox));
+    let _ = super::server::detach(send(to, outbox));
 }
 
 /// Connects to each address of `host` in turn, until one answers.
@@ -779,12 +781,6 @@ pub(crate) async fn connect(address: SocketAddr) -> std::io::Result<Registered<m
     }
 }
 
-/// A socket of the workers' poll as one of tokio's, for TLS.
-fn tokio_stream(stream: mio::net::TcpStream) -> std::io::Result<tokio::net::TcpStream> {
-    let _context = runtime().enter();
-    tokio::net::TcpStream::from_std(std::net::TcpStream::from(std::os::fd::OwnedFd::from(stream)))
-}
-
 /// What verifies a TLS connection to `host`: the roots, the authorities
 /// of `trust`, and the certificate and key it shows, as `http::tls` takes
 /// them.
@@ -802,14 +798,14 @@ fn verifier(
     Ok((tokio_rustls::TlsConnector::from(Arc::new(config)), name))
 }
 
-/// The handshake of a client over `stream`, and its connection.
+/// The handshake of a client over `socket`, and its connection.
 async fn handshake(
-    stream: tokio::net::TcpStream,
+    socket: Registered<mio::net::TcpStream>,
     connector: tokio_rustls::TlsConnector,
     name: rustls_pki_types::ServerName<'static>,
 ) -> Result<Connection, Failure> {
-    let (connection, inbox, outbox) = tls(&stream)?;
-    let stream = connector.connect(name, stream).await.map_err(|error| {
+    let (connection, inbox, outbox) = tls(socket.io())?;
+    let stream = connector.connect(name, Polled::from(socket)).await.map_err(|error| {
         let mut why = Failure::from(&error).detail;
         if why.contains("UnknownIssuer") {
             why.push_str("; if an authority of your own signed it, pass its PEM as `trust:`");
@@ -842,7 +838,7 @@ pub unsafe extern "C" fn tondo_rt_net_connect(
         };
         waited(within(deadline, async move {
             let Some((connector, name)) = verify else { return tcp(open(&host, port, connect).await?) };
-            handshake(open(&host, port, tokio::net::TcpStream::connect).await?, connector, name).await
+            handshake(open(&host, port, connect).await?, connector, name).await
         }))
     });
     native::new(Net::from(connected.map(Net::Connection)))
@@ -879,11 +875,8 @@ pub unsafe extern "C" fn tondo_rt_net_start_tls(
         connection.upgraded.store(true, std::sync::atomic::Ordering::Release);
         let socket = unsafe { std::net::TcpStream::from_raw_fd(duplicate) };
         socket.set_nonblocking(true)?;
-        let stream = {
-            let _context = runtime().enter();
-            tokio::net::TcpStream::from_std(socket)?
-        };
-        waited(within(deadline(timeout_ms), handshake(stream, connector, name)))
+        let socket = Registered::new(mio::net::TcpStream::from_std(socket))?;
+        waited(within(deadline(timeout_ms), handshake(socket, connector, name)))
     });
     native::new(Net::from(upgraded.map(Net::Connection)))
 }
@@ -1219,11 +1212,12 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             Accepted::Tcp(stream) => stream,
         };
         let Some(acceptor) = acceptor else { return tcp(Registered::new(stream)?).map(Net::Connection) };
-        let stream = tokio_stream(stream)?;
         let (connection, inbox, outbox) = tls(&stream)?;
-        // The handshake happens in its own task, so a slow client does not
-        // hold up the next one; its failure is the first read's.
-        runtime().spawn(async move {
+        let stream = Polled::new(stream)?;
+        // The handshake happens on its own, at the workers' turns, so a
+        // slow client does not hold up the next one; its failure is the
+        // first read's.
+        let _ = super::server::detach(async move {
             match acceptor.accept(stream).await {
                 Ok(stream) => secure(stream.into(), inbox, outbox),
                 Err(error) => {
