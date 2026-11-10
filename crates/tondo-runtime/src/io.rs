@@ -227,8 +227,23 @@ pub(crate) fn other_end_gone(stream: *mut StreamObject) -> Option<Gone> {
     state.host.as_mut()?.other_end_gone()
 }
 
-/// What a `Mode::Ready` host waits for.
-pub(crate) type Ready = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+/// What a `Mode::Ready` host waits for: a socket of the workers' poller,
+/// which takes no allocation, or another future.
+pub(crate) enum Ready {
+    Socket(super::poll::Ready),
+    Other(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
+}
+
+impl std::future::Future for Ready {
+    type Output = ();
+
+    fn poll(self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        match self.get_mut() {
+            Ready::Socket(socket) => std::pin::Pin::new(socket).poll(context),
+            Ready::Other(future) => future.as_mut().poll(context),
+        }
+    }
+}
 
 impl Host for std::fs::File {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
@@ -343,7 +358,7 @@ impl Host for Stdin {
 
     fn blocked(&mut self) -> Option<Ready> {
         std::mem::take(&mut self.waiting).then(|| {
-            Box::pin(async {
+            Ready::Other(Box::pin(async {
                 loop {
                     let notified = INPUT_READ.notified();
                     let mut notified = std::pin::pin!(notified);
@@ -353,7 +368,7 @@ impl Host for Stdin {
                     }
                     notified.await;
                 }
-            }) as Ready
+            }))
         })
     }
 

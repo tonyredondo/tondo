@@ -485,7 +485,7 @@ impl<S: Wire> Host for TcpIn<S> {
     }
 
     fn blocked(&mut self) -> Option<Ready> {
-        std::mem::take(&mut self.waiting).then(|| Box::pin(self.tcp.socket.ready(Direction::Read)) as Ready)
+        std::mem::take(&mut self.waiting).then(|| Ready::Socket(self.tcp.socket.ready(Direction::Read)))
     }
 
     fn give_up(&mut self, kind: Option<ErrorKind>) {
@@ -515,9 +515,9 @@ impl Host for Inbox {
     fn blocked(&mut self) -> Option<Ready> {
         let pipe = self.pipe.clone();
         std::mem::take(&mut self.waiting).then(|| {
-            Box::pin(
-                async move { pipe.until(|flow| !flow.bytes.is_empty() || flow.end || flow.failure.is_some()).await },
-            ) as Ready
+            Ready::Other(Box::pin(async move {
+                pipe.until(|flow| !flow.bytes.is_empty() || flow.end || flow.failure.is_some()).await
+            }))
         })
     }
 
@@ -564,7 +564,7 @@ impl<S: Wire> Host for TcpOut<S> {
     }
 
     fn blocked(&mut self) -> Option<Ready> {
-        std::mem::take(&mut self.waiting).then(|| Box::pin(self.tcp.socket.ready(Direction::Write)) as Ready)
+        std::mem::take(&mut self.waiting).then(|| Ready::Socket(self.tcp.socket.ready(Direction::Write)))
     }
 
     fn give_up(&mut self, kind: Option<ErrorKind>) {
@@ -614,9 +614,9 @@ impl Host for Outbox {
     fn blocked(&mut self) -> Option<Ready> {
         let pipe = self.pipe.clone();
         std::mem::take(&mut self.waiting).then(|| {
-            Box::pin(async move {
+            Ready::Other(Box::pin(async move {
                 pipe.until(|flow| (flow.bytes.is_empty() && flow.sending == 0) || flow.failure.is_some()).await
-            }) as Ready
+            }))
         })
     }
 

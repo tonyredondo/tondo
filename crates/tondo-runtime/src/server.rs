@@ -1414,7 +1414,7 @@ impl Host for RequestBody {
             return None;
         }
         let (body, came) = (self.body.clone(), self.came.clone());
-        Some(Box::pin(std::future::poll_fn(move |context| {
+        Some(crate::io::Ready::Other(Box::pin(std::future::poll_fn(move |context| {
             let mut body = lock(&body);
             let Some(body) = body.as_mut() else { return Poll::Ready(()) };
             match hyper::body::Body::poll_frame(Pin::new(body), context) {
@@ -1424,7 +1424,7 @@ impl Host for RequestBody {
                 }
                 Poll::Pending => Poll::Pending,
             }
-        })))
+        }))))
     }
 
     fn give_up(&mut self, kind: Option<std::io::ErrorKind>) {

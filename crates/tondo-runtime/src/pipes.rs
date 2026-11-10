@@ -38,7 +38,7 @@ impl Pipe {
     /// What a task that would block waits for: `ready` to hold.
     fn until(self: &Arc<Self>, ready: fn(&Flow, usize) -> bool) -> Ready {
         let pipe = self.clone();
-        Box::pin(async move {
+        Ready::Other(Box::pin(async move {
             loop {
                 let notified = pipe.changed.notified();
                 let mut notified = std::pin::pin!(notified);
@@ -48,7 +48,7 @@ impl Pipe {
                 }
                 notified.await;
             }
-        })
+        }))
     }
 }
 
