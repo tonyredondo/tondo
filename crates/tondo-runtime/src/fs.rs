@@ -3,14 +3,14 @@
 //! worker. Each operation returns 0, or 1 plus the index of the `FsError`
 //! variant, and writes its value to `out`.
 
-use super::io::{Mode, StreamObject, StreamState, run, run_ready, stream};
+use super::io::{Mode, StreamObject, StreamState, made_text, run, run_ready, stream};
 use super::{ArrayHeader, Str, element, str_bytes, str_new, tondo_rt_array_new};
 use crate::array_items;
 use crate::byte_array;
 use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn host<R: Send + 'static>(job: impl FnOnce() -> R + Send + 'static) -> R {
+fn host<R: Send + 'static>(job: impl FnOnce() -> R + Send) -> R {
     super::io::host(false, job)
 }
 
@@ -174,22 +174,22 @@ pub unsafe extern "C" fn tondo_rt_fs_read_bytes(path_text: *const Str, out: *mut
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_text(path_text: *const Str, contents: *const Str) -> i64 {
-    let (path, data) = unsafe { (path(path_text), str_bytes(contents).to_vec()) };
-    finish(host(move || write_atomically(&path?, &data)), |_| ())
+    let (path, data) = unsafe { (path(path_text), str_bytes(contents)) };
+    finish(host(move || write_atomically(&path?, data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_bytes(path_text: *const Str, contents: *mut ArrayHeader) -> i64 {
-    let (path, data) = unsafe { (path(path_text), array_items::<u8>(contents).to_vec()) };
-    finish(host(move || write_atomically(&path?, &data)), |_| ())
+    let (path, data) = unsafe { (path(path_text), array_items::<u8>(contents)) };
+    finish(host(move || write_atomically(&path?, data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_append_text(path_text: *const Str, contents: *const Str) -> i64 {
-    let (path, data) = unsafe { (path(path_text), str_bytes(contents).to_vec()) };
+    let (path, data) = unsafe { (path(path_text), str_bytes(contents)) };
     let appended = host(move || {
         let mut file = io(std::fs::OpenOptions::new().append(true).create(true).open(path?))?;
-        io(file.write_all(&data))
+        io(file.write_all(data))
     });
     finish(appended, |_| ())
 }
@@ -286,9 +286,10 @@ pub unsafe extern "C" fn tondo_rt_fs_open(path_text: *const Str, mode: i64, out:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_read_line(file: *mut StreamObject, out: *mut *mut Str) -> i64 {
-    let line =
-        run_ready(file, StreamState::has_line, |s| io(s.read_line()).and_then(|line| line.map(text).transpose()));
-    finish(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| str_new(l.as_bytes())) })
+    let line = run_ready(file, StreamState::has_line, |s| {
+        io(s.read_line(made_text))?.map(|line| line.ok_or(FsError::InvalidData)).transpose()
+    });
+    finish(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 
 #[unsafe(no_mangle)]
@@ -306,16 +307,14 @@ pub unsafe extern "C" fn tondo_rt_fs_read_rest(file: *mut StreamObject, out: *mu
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write(file: *mut StreamObject, contents: *const Str) -> i64 {
-    let data = unsafe { str_bytes(contents).to_vec() };
-    let count = data.len();
-    finish(run_ready(file, |s| s.has_room(count), move |s| io(s.write(&data))), |_| ())
+    let data = unsafe { str_bytes(contents) };
+    finish(run_ready(file, |s| s.has_room(data.len()), |s| io(s.write(data))), |_| ())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_bytes_to(file: *mut StreamObject, contents: *mut ArrayHeader) -> i64 {
-    let data = unsafe { array_items::<u8>(contents) }.to_vec();
-    let count = data.len();
-    finish(run_ready(file, |s| s.has_room(count), move |s| io(s.write(&data))), |_| ())
+    let data = unsafe { array_items::<u8>(contents) };
+    finish(run_ready(file, |s| s.has_room(data.len()), |s| io(s.write(data))), |_| ())
 }
 
 #[unsafe(no_mangle)]

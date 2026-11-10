@@ -971,7 +971,7 @@ fn connection_of<'a>(object: *mut NativeObject) -> Option<&'a Connection> {
 fn on<R: Send + 'static>(
     stream: &Held,
     deadline: Option<Instant>,
-    op: impl FnMut(&mut crate::io::StreamState) -> std::io::Result<R> + Send + 'static,
+    op: impl FnMut(&mut crate::io::StreamState) -> std::io::Result<R> + Send,
 ) -> Result<R, Failure> {
     run_until(stream.0, deadline, op).map_err(|error| match error.kind() {
         ErrorKind::NotConnected => failure(CLOSED, "closed"),
@@ -984,9 +984,12 @@ fn on<R: Send + 'static>(
 pub unsafe extern "C" fn tondo_rt_net_read(object: *mut NativeObject, max: i64, timeout_ms: i64) -> *mut ArrayHeader {
     let Some(connection) = connection_of(object) else { return byte_array(&[]) };
     let max = max.max(1) as usize;
-    let read = on(&connection.reader, deadline(timeout_ms), move |s| s.read(max));
-    let bytes = read.as_ref().ok().cloned().flatten().unwrap_or_default();
-    note(connection, false, read.map(|bytes| bytes.is_some()));
+    let (bytes, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read(max)) {
+        Ok(Some(bytes)) => (bytes, Ok(true)),
+        Ok(None) => (Vec::new(), Ok(false)),
+        Err(failure) => (Vec::new(), Err(failure)),
+    };
+    note(connection, false, read);
     byte_array(&bytes)
 }
 
@@ -994,36 +997,38 @@ pub unsafe extern "C" fn tondo_rt_net_read(object: *mut NativeObject, max: i64, 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_read_line(object: *mut NativeObject, timeout_ms: i64) -> *mut Str {
     let Some(connection) = connection_of(object) else { return str_new(b"") };
-    let read = on(&connection.reader, deadline(timeout_ms), |s| s.read_line());
-    let line = read.and_then(|line| match line {
-        Some(line) => String::from_utf8(line).map(Some).map_err(|_| failure(IO, "a line that is not UTF-8")),
-        None => Ok(None),
-    });
-    let text = line.as_ref().ok().cloned().flatten().unwrap_or_default();
-    note(connection, false, line.map(|line| line.is_some()));
-    str_new(text.as_bytes())
+    let (line, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read_line(crate::io::made_text)) {
+        Ok(Some(Some(line))) => (line.0, Ok(true)),
+        Ok(Some(None)) => (str_new(b""), Err(failure(IO, "a line that is not UTF-8"))),
+        Ok(None) => (str_new(b""), Ok(false)),
+        Err(failure) => (str_new(b""), Err(failure)),
+    };
+    note(connection, false, read);
+    line
 }
 
 /// `readAll`: everything until the other side ends.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_read_all(object: *mut NativeObject, timeout_ms: i64) -> *mut ArrayHeader {
     let Some(connection) = connection_of(object) else { return byte_array(&[]) };
-    let read = on(&connection.reader, deadline(timeout_ms), |s| s.read_rest());
-    let bytes = read.as_ref().ok().cloned().unwrap_or_default();
-    note(connection, false, read.map(|_| true));
+    let (bytes, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read_rest()) {
+        Ok(bytes) => (bytes, Ok(true)),
+        Err(failure) => (Vec::new(), Err(failure)),
+    };
+    note(connection, false, read);
     byte_array(&bytes)
 }
 
-fn write(object: *mut NativeObject, data: Vec<u8>, timeout_ms: i64) -> i64 {
+fn write(object: *mut NativeObject, data: &[u8], timeout_ms: i64) -> i64 {
     let Some(connection) = connection_of(object) else { return CLOSED };
-    let written = on(&connection.writer, deadline(timeout_ms), move |s| s.write(&data));
+    let written = on(&connection.writer, deadline(timeout_ms), |s| s.write(data));
     note(connection, true, written.map(|_| true))
 }
 
 /// `write`: 0, or the code of a failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_write(object: *mut NativeObject, text: *const Str, timeout_ms: i64) -> i64 {
-    write(object, unsafe { super::str_bytes(text) }.to_vec(), timeout_ms)
+    write(object, unsafe { super::str_bytes(text) }, timeout_ms)
 }
 
 /// `writeBytes`: 0, or the code of a failure.
@@ -1033,7 +1038,7 @@ pub unsafe extern "C" fn tondo_rt_net_write_bytes(
     data: *mut ArrayHeader,
     timeout_ms: i64,
 ) -> i64 {
-    write(object, unsafe { array_items::<u8>(data) }.to_vec(), timeout_ms)
+    write(object, unsafe { array_items::<u8>(data) }, timeout_ms)
 }
 
 /// `close` (`both` 1) and `closeWrite`: sends what is pending, then ends

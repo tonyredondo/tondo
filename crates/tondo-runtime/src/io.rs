@@ -33,8 +33,10 @@ const MOST_THREADS: usize = 64;
 /// waits; directly outside a task, and in a recorded run, whose calls are
 /// those of its one thread (toolchain 7.6), where a wait holds the other
 /// tasks; and in an order of the tasks, which the time of a thread would
-/// change, unless it is `long` work, which may wait indefinitely.
-pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send + 'static) -> R {
+/// change, unless it is `long` work, which may wait indefinitely. The task
+/// waits until the work has run, so the work may borrow, as a scoped
+/// thread's does.
+pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send) -> R {
     if current().is_null() || super::replay::on() || (!long && super::tasks::deterministic()) {
         return job();
     }
@@ -45,22 +47,23 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
     // A virtual clock does not move while its tasks wait on the host.
     let virtual_clock = super::clock::in_domain();
     super::clock::external(true);
-    submit(
-        Box::new(move || {
-            let value = job();
-            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
-            // The task is runnable before the work ends, so no worker can
-            // see a moment with neither and report a deadlock.
-            if waiting.claim(0) {
-                notify(waiting.task);
-            }
-            if virtual_clock {
-                super::clock::external(false);
-            }
-            HOST_WORK.fetch_sub(1, Ordering::SeqCst);
-        }),
-        long,
-    );
+    let work: Box<dyn FnOnce() + Send + '_> = Box::new(move || {
+        // Calling `job` drops what it borrows, before the task goes on.
+        let value = job();
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+        // The task is runnable before the work ends, so no worker can
+        // see a moment with neither and report a deadlock.
+        if waiting.claim(0) {
+            notify(waiting.task);
+        }
+        if virtual_clock {
+            super::clock::external(false);
+        }
+        HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+    });
+    // SAFETY: only the work claims `wait`, after `job` has run, and
+    // `block_fully` returns only then, even for a cancelled task.
+    submit(unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + '_>, Job>(work) }, long);
     wait.block_fully();
     result.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the host operation finished")
 }
@@ -530,22 +533,21 @@ impl StreamState {
         read.map(|n| n > 0)
     }
 
-    /// The next line without its `\n` or `\r\n`, or `None` at the end.
-    pub(crate) fn read_line(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+    /// What `make` makes of the next line without its `\n` or `\r\n`, or
+    /// `None` at the end.
+    pub(crate) fn read_line<T>(&mut self, make: impl FnOnce(&[u8]) -> T) -> std::io::Result<Option<T>> {
         loop {
             if let Some(end) = self.ahead[self.position..self.filled].iter().position(|&b| b == b'\n') {
-                let mut line = self.ahead[self.position..self.position + end].to_vec();
+                let line = &self.ahead[self.position..self.position + end];
+                let line = make(line.strip_suffix(b"\r").unwrap_or(line));
                 self.position += end + 1;
-                if line.last() == Some(&b'\r') {
-                    line.pop();
-                }
                 return Ok(Some(line));
             }
             if !self.fill()? {
                 if self.position == self.filled {
                     return Ok(None);
                 }
-                let line = self.ahead[self.position..self.filled].to_vec();
+                let line = make(&self.ahead[self.position..self.filled]);
                 self.position = self.filled;
                 return Ok(Some(line));
             }
@@ -626,10 +628,7 @@ impl Shared {
 }
 
 /// Runs an operation on a stream where its mode says.
-pub(crate) fn run<R: Send + 'static>(
-    stream: *mut StreamObject,
-    op: impl FnMut(&mut StreamState) -> R + Send + 'static,
-) -> R {
+pub(crate) fn run<R: Send + 'static>(stream: *mut StreamObject, op: impl FnMut(&mut StreamState) -> R + Send) -> R {
     run_until(stream, None, op)
 }
 
@@ -638,7 +637,7 @@ pub(crate) fn run<R: Send + 'static>(
 pub(crate) fn run_until<R: Send + 'static>(
     stream: *mut StreamObject,
     deadline: Option<std::time::Instant>,
-    mut op: impl FnMut(&mut StreamState) -> R + Send + 'static,
+    mut op: impl FnMut(&mut StreamState) -> R + Send,
 ) -> R {
     let shared = Shared(stream);
     match unsafe { (*stream).mode } {
@@ -697,7 +696,7 @@ pub(crate) fn attempt<R>(stream: *mut StreamObject, op: impl FnOnce(&mut StreamS
 pub(crate) fn run_ready<R: Send + 'static>(
     stream: *mut StreamObject,
     ready: impl FnOnce(&StreamState) -> bool,
-    mut op: impl FnMut(&mut StreamState) -> R + Send + 'static,
+    mut op: impl FnMut(&mut StreamState) -> R + Send,
 ) -> R {
     if let Ok(mut state) = unsafe { (*stream).state.try_lock() }
         && ready(&state)
@@ -862,11 +861,21 @@ pub(crate) fn utf8(bytes: Vec<u8>) -> std::io::Result<String> {
     String::from_utf8(bytes).map_err(|_| ErrorKind::InvalidData.into())
 }
 
+/// A string of the program's, which an operation may make on a thread of
+/// the pool for the task that waits on it.
+pub(crate) struct Made(pub(crate) *mut Str);
+
+unsafe impl Send for Made {}
+
+/// `bytes` as a string of the program's, if they are UTF-8.
+pub(crate) fn made_text(bytes: &[u8]) -> Option<Made> {
+    std::str::from_utf8(bytes).is_ok().then(|| Made(str_new(bytes)))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write(stream: *mut StreamObject, text: *const Str) -> i64 {
-    let data = unsafe { str_bytes(text).to_vec() };
-    let count = data.len();
-    status(run_ready(stream, |s| s.has_room(count), move |s| s.write(&data)), |_| ())
+    let data = unsafe { str_bytes(text) };
+    status(run_ready(stream, |s| s.has_room(data.len()), |s| s.write(data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
@@ -879,9 +888,8 @@ pub unsafe extern "C" fn tondo_rt_io_write_line(stream: *mut StreamObject, text:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write_bytes(stream: *mut StreamObject, data: *mut ArrayHeader) -> i64 {
-    let data = unsafe { array_items::<u8>(data) }.to_vec();
-    let count = data.len();
-    status(run_ready(stream, |s| s.has_room(count), move |s| s.write(&data)), |_| ())
+    let data = unsafe { array_items::<u8>(data) };
+    status(run_ready(stream, |s| s.has_room(data.len()), |s| s.write(data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
@@ -896,8 +904,10 @@ pub unsafe extern "C" fn tondo_rt_io_close(stream: *mut StreamObject) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_read_line(stream: *mut StreamObject, out: *mut *mut Str) -> i64 {
-    let line = run_ready(stream, StreamState::has_line, |s| s.read_line()?.map(utf8).transpose());
-    status(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| str_new(l.as_bytes())) })
+    let line = run_ready(stream, StreamState::has_line, |s| {
+        s.read_line(made_text)?.map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into())).transpose()
+    });
+    status(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 
 #[unsafe(no_mangle)]
@@ -1089,9 +1099,11 @@ pub extern "C" fn tondo_rt_console_flush() -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_console_read_line() -> *mut Str {
     let stream = console_stream(2);
-    let line = run_ready(stream, StreamState::has_line, |s| s.read_line().ok().flatten());
+    let line = run_ready(stream, StreamState::has_line, |s| {
+        s.read_line(|line| Made(str_new(String::from_utf8_lossy(line).as_bytes()))).ok().flatten()
+    });
     unsafe { tondo_rt_stream_release(stream) };
-    line.map_or(std::ptr::null_mut(), |l| str_new(String::from_utf8_lossy(&l).as_bytes()))
+    line.map_or(std::ptr::null_mut(), |l| l.0)
 }
 
 /// `console.stdout()`, `stderr()` and `stdin()` (0, 1 and 2).
