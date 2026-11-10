@@ -6,6 +6,11 @@ use super::*;
 pub(super) enum Glue {
     Retain,
     Release,
+    /// `Retain` and `Release` for the rare way of code that tests a value
+    /// first: they keep every register, so that the code around keeps its
+    /// values in them, as a loop's.
+    RetainCold,
+    ReleaseCold,
     Equal,
     /// Appends the `Display` text of a value to a string builder.
     Display,
@@ -56,6 +61,11 @@ pub(super) fn define_glue(
         _ => None,
     };
     match (kind, enum_shape) {
+        (Glue::RetainCold | Glue::ReleaseCold, _) => {
+            let warm = if kind == Glue::ReleaseCold { Glue::Release } else { Glue::Retain };
+            e.call_glue(warm, ty, &[params[0]]);
+            e.fb.ins().return_(&[]);
+        }
         (Glue::Test, _) => {
             let TyKind::Fn(_, result, ..) = *e.cg.types.kind(ty) else { unreachable!("a test member is a `fn()`") };
             let code = e.fb.ins().load(POINTER, flags(), params[0], 16);

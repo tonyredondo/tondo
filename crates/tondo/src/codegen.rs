@@ -1070,6 +1070,9 @@ impl<'t> Shapes<'t> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.make_signature();
         signature.params.push(AbiParam::new(POINTER));
+        if matches!(kind, Glue::RetainCold | Glue::ReleaseCold) {
+            signature.call_conv = cranelift_codegen::isa::CallConv::PreserveAll;
+        }
         if matches!(kind, Glue::Display | Glue::Visit | Glue::Show | Glue::ShowRaw | Glue::Secret) {
             signature.params.push(AbiParam::new(POINTER));
         }
@@ -2472,7 +2475,8 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 self.fb.set_cold_block(call);
                 self.fb.ins().brif(holds, call, &[], done, &[]);
                 self.fb.switch_to_block(call);
-                self.call_glue(kind, ty, &[address]);
+                let cold = if release { Glue::ReleaseCold } else { Glue::RetainCold };
+                self.call_glue(cold, ty, &[address]);
                 self.fb.ins().jump(done, &[]);
                 self.fb.switch_to_block(done);
             }
