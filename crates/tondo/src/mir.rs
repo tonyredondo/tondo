@@ -433,6 +433,12 @@ pub enum Terminator {
 /// The blocks of the loops of a body that hold no other loop and call
 /// nothing: where each instruction counts.
 pub fn tight_loops(blocks: &[BlockData]) -> Vec<bool> {
+    inner_loops(blocks, false)
+}
+
+/// The blocks of the loops of a body that hold no other loop, and, unless
+/// `calling`, call nothing.
+pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {
     let successors = |block: usize| match &blocks[block].terminator {
         Terminator::Goto(to) => vec![to.0 as usize],
         Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
@@ -487,7 +493,7 @@ pub fn tight_loops(blocks: &[BlockData]) -> Vec<bool> {
     };
     let mut tight = vec![false; blocks.len()];
     for (head, inside) in &loops {
-        let called = blocks.iter().zip(inside).any(|(block, inside)| *inside && calls(block));
+        let called = !calling && blocks.iter().zip(inside).any(|(block, inside)| *inside && calls(block));
         if !called && !loops.iter().any(|(other, _)| other != head && inside[*other]) {
             tight.iter_mut().zip(inside).for_each(|(block, inside)| *block |= inside);
         }

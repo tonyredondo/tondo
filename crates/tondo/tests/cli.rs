@@ -871,6 +871,47 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert!(one != plain && two != one);
 }
 
+/// `tondo optimizations --against` says what changed since a git revision:
+/// what only it has, and what only the code has, each place known by its
+/// code rather than its line, so that code moved down a line is no change.
+#[test]
+fn what_a_release_build_makes_differently_since_a_revision() {
+    let fast: &[u8] =
+        b"fn quarter(value: Int): Int {\n    if value < 0 {\n        return 0\n    }\n    value / 4\n}\n\n\
+        fn main() {\n    let values = [1, 2, 3]\n    for i in 0..3 {\n        _ = quarter(values[i])\n    }\n}\n";
+    let dir = project_at("optimizations-against", &[("main.to", fast)]);
+    let git = |args: &[&str]| {
+        let status = Command::new("git").args(args).current_dir(&dir).status().unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "main.to"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "fast"]);
+    // Moved down a line, the same code makes the same.
+    std::fs::write(dir.join("main.to"), [b"\n", fast].concat()).unwrap();
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--against", "HEAD"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(said, "a release build makes of the code what it made of HEAD\n");
+    // A function that calls itself is a call where it was inlined.
+    let slow = String::from_utf8_lossy(fast).replace("return 0", "return quarter(0 - value)");
+    std::fs::write(dir.join("main.to"), &slow).unwrap();
+    let (said, _, _) = tondo(&dir, &["optimizations", "main.to", "--against", "HEAD", "--kind", "call"]);
+    assert!(said.starts_with("only now:\n  main.to:3:16: `quarter(0 - value)` stays a call of `quarter`"), "{said}");
+    let (found, status) = json(&dir, &["optimizations", "main.to", "--against", "HEAD", "--json"]);
+    assert_eq!(status, 0);
+    assert_eq!(found["against"]["ref"], "HEAD");
+    assert!(found["new"].as_array().unwrap().iter().any(|o| o["kind"] == "call"), "{found}");
+    // And the other way, what the revision had.
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", "slow"]);
+    std::fs::write(dir.join("main.to"), fast).unwrap();
+    let (said, _, _) = tondo(&dir, &["optimizations", "main.to", "--against", "HEAD", "--kind", "call"]);
+    assert!(said.starts_with("only in HEAD ("), "{said}");
+    assert!(said.contains("\n  main.to:3:16: `quarter(0 - value)` stays a call of `quarter`"), "{said}");
+    let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--against", "nowhere"]);
+    assert_eq!(status, 3, "{stderr}");
+    assert!(stderr.contains("git knows no revision nowhere"), "{stderr}");
+}
+
 /// `tondo optimizations` says what a release build makes of the program's
 /// own code, at each place, in the functions whose code it is in: the
 /// calls inlined and those kept, with why, the texts made in the frame or

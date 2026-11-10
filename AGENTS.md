@@ -164,7 +164,8 @@ Ask the toolchain before guessing why code is slow or allocates:
   inlined and those it kept, with why; the texts and closures made in the
   frame, and what keeps the others on the heap; the checks dropped, and
   those a loop keeps. `--kind heap` gives only what allocates, `--function
-  <name>` one function. A pass that decides something the author of the
+  <name>` one function, and `--against <commit>` only what a change made
+  different. A pass that decides something the author of the
   code could change says so there, with `mir_text::remark`.
 - `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
   every function whose name holds `<name>` after lowering and after each

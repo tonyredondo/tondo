@@ -222,13 +222,22 @@ impl Server {
                 Ok(Reply::new(text, graph.json(view == View::Packages)))
             }
             "optimizations" => {
+                let (function, kind) = (args.text("function"), args.text("kind"));
+                if let Some(reference) = args.text("against") {
+                    let (commit, gone, new) =
+                        driver::optimizations_against(&args.path(), &reference, function.as_deref(), kind.as_deref())?;
+                    let text = driver::changed_text(&reference, &commit, &gone, &new);
+                    let list =
+                        |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
+                    let against = json!({ "ref": reference, "commit": commit });
+                    return Ok(Reply::new(text, json!({ "against": against, "gone": list(&gone), "new": list(&new) })));
+                }
                 let analysis = driver::analyze(&args.path())?;
                 if analysis.program.is_none() {
                     let diagnostics = diagnostics(&analysis);
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
                     return Ok(Reply::new(report(&analysis, &diagnostics), data));
                 }
-                let (function, kind) = (args.text("function"), args.text("kind"));
                 let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref())?;
                 let text = match found.is_empty() {
                     true => "nothing to tell of the program's own code".to_string(),
@@ -2149,6 +2158,7 @@ checks more than it should, before measuring it.",
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "Only the functions whose names hold this."),
             ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
+            ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
         ],
     },
     Tool {

@@ -254,7 +254,7 @@ tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
-tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--json]
+tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision>] [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -1935,7 +1935,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
-| `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila |
+| `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
 | `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
@@ -2159,6 +2159,13 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
 - `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene.
+- `--against <revisión>` compara con lo que hace un build de release del
+  código de esa revisión de git, que extrae como `tondo test --against` (10.4
+  de testing): da lo que solo tiene ella, bajo `only in <revisión>`, y lo que
+  solo tiene el código, bajo `only now`, o que no cambió nada. Un sitio se
+  reconoce por su archivo, su código, su tipo, su texto y sus funciones, no
+  por su línea, que un cambio mueve. Para revisar lo que un cambio del
+  compilador o del programa hace a su código antes de medirlo.
 - Con `--json` da `tondo-optimizations-0.1/1` (sección 7.12): `kind` es lo
   que mira una herramienta; `text` es para leer, y `source`, el código del
   sitio.

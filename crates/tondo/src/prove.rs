@@ -30,12 +30,12 @@ pub fn prove(bodies: &mut [Body], types: &Types) {
     });
 }
 
-/// Remarks on the checks a body keeps in its tight loops, where they cost
-/// the most, and on its products by a constant that are checked by the
-/// range of the other factor (`tondo optimizations`).
+/// Remarks on the checks a body keeps in its innermost loops, where they
+/// cost the most, and on its products by a constant that are checked by
+/// the range of the other factor (`tondo optimizations`).
 fn kept(body: &mut Body, types: &Types) {
     use crate::ast::BinOp;
-    let tight = crate::mir::tight_loops(&body.blocks);
+    let tight = crate::mir::inner_loops(&body.blocks, true);
     let mut remarks: Vec<(Span, &'static str, &'static str)> = Vec::new();
     for (index, block) in body.blocks.iter_mut().enumerate() {
         let looping = tight.get(index).copied().unwrap_or(false);

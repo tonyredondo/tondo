@@ -5661,7 +5661,7 @@ the code. `tondo optimizations` runs the passes of a release build without gener
 says, at each place of the program's own code, what they did and what they could not: the calls
 inlined and those kept, with why; the texts and closures made in the frame, and what keeps the
 others on the heap, followed through the copies to a call, a return, a value or a task; the bounds
-and overflow checks dropped, the ones a tight loop keeps, and the products and divisions done
+and overflow checks dropped, the ones an innermost loop keeps, and the products and divisions done
 without multiplying or dividing. The passes write a remark only when it is asked for, so a build
 does the same work and makes the same bytes as before.
 
@@ -5674,6 +5674,12 @@ tools, the done and the not done side by side (`inlined` and `call`, `frame` and
 `unchecked` and `checked`, `arithmetic`), and its text is English like the rest of the
 compiler's, written to follow the code of the place. The MCP tool of the same name gives it to
 an agent, filtered by kind or function.
+
+`--against <revision>` builds the code of a git revision the same way, extracted as `tondo test
+--against` extracts it, and tells only what changed: what the revision had and what is new. A
+place is known by its file, code, kind, text and functions, not its line, so code that moved is no
+change. A check kept in a loop is told for every innermost loop, calls or not, so that a call added
+to a loop does not read as a check gone.
 
 ## A benchmark counts the instructions of a run
 

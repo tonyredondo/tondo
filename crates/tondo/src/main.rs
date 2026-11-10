@@ -755,42 +755,7 @@ fn baseline_path(project: &Path, name: &str) -> Result<PathBuf, String> {
 /// (testing 10.4): its files, extracted once per commit into the cache,
 /// and their tests built as these are.
 fn revision_tests(path: &Path, reference: &str, build: &TestBuild) -> Result<tondo::runner::Revision, String> {
-    use std::process::{Command, Stdio};
-    let git = |dir: &Path, args: &[&str]| -> Option<String> {
-        let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
-        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    };
-    let project = path.canonicalize().map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let root = git(&project, &["rev-parse", "--show-toplevel"]).map(PathBuf::from).ok_or(format!(
-        "--against compares with a revision of the project's git repository, and {} is in none",
-        path.display()
-    ))?;
-    let commit = git(&root, &["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
-        .filter(|c| !c.is_empty())
-        .ok_or(format!("git knows no revision {reference}: give a branch, a tag or a commit, as `--against main`"))?;
-    let within =
-        project.strip_prefix(root.canonicalize().unwrap_or(root.clone())).unwrap_or(Path::new("")).to_path_buf();
-    let tree = driver::cache_entry("revision", &commit);
-    if !tree.join(".complete").is_file() {
-        let _ = std::fs::remove_dir_all(&tree);
-        std::fs::create_dir_all(&tree).map_err(|e| format!("cannot create {}: {e}", tree.display()))?;
-        let mut archive = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["archive", "--format=tar", &commit])
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-        let stdout = archive.stdout.take().expect("piped");
-        let extracted = Command::new("tar").arg("-x").arg("-C").arg(&tree).stdin(stdout).status();
-        let archived = archive.wait().map_err(|e| e.to_string())?;
-        if !archived.success() || !extracted.is_ok_and(|s| s.success()) {
-            let _ = std::fs::remove_dir_all(&tree);
-            return Err(format!("cannot extract {reference} from git"));
-        }
-        std::fs::write(tree.join(".complete"), &commit).map_err(|e| e.to_string())?;
-    }
-    let dir = tree.join(within);
+    let (commit, dir) = driver::revision(path, reference)?;
     eprintln!("tondo: building the tests of {reference} ({}) to compare with", &commit[..commit.len().min(12)]);
     let (executable, tree) = build_tests(&dir, build)?
         .ok_or(format!("the tests of {reference} do not compile, so there is nothing to compare with"))?;
@@ -1946,13 +1911,29 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         args.drain(at..at + 2);
         Ok(Some(value))
     };
-    let (function, kind) = (valued("--function")?, valued("--kind")?);
+    let (function, kind, against) = (valued("--function")?, valued("--kind")?, valued("--against")?);
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-') && *a != "--project") {
         return Err(format!("optimizations does not take {}\n{USAGE}", flag.display()));
     }
     let (path, rest) = source_argument(&args);
     if !rest.is_empty() {
         return Err(format!("optimizations takes one project or file\n{USAGE}"));
+    }
+    if let Some(reference) = against {
+        let (commit, gone, new) =
+            driver::optimizations_against(&path, &reference, function.as_deref(), kind.as_deref())?;
+        if json {
+            let list = |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
+            let against = serde_json::json!({ "ref": reference, "commit": commit });
+            print_json(
+                "optimizations",
+                true,
+                serde_json::json!({ "against": against, "gone": list(&gone), "new": list(&new) }),
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        print!("{}", driver::changed_text(&reference, &commit, &gone, &new));
+        return Ok(ExitCode::SUCCESS);
     }
     let analysis = driver::analyze(&path)?;
     if analysis.program.is_none() {

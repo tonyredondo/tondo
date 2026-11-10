@@ -806,5 +806,13 @@ fn says_what_a_release_build_makes_of_the_code() {
     let (wrong, text) = agent.call("optimizations", json!({ "path": "wrong.to" }));
     assert_eq!(wrong["compiles"], false, "{wrong}");
     assert!(text.contains("nothing"), "{text}");
+    // What changed since a commit.
+    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    git(&["init", "-q"]);
+    git(&["add", "main.to"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
+    let (same, text) = agent.call("optimizations", json!({ "path": "main.to", "against": "HEAD" }));
+    assert_eq!((&same["gone"], &same["new"]), (&json!([]), &json!([])), "{same}");
+    assert!(text.contains("what it made of HEAD"), "{text}");
     agent.stop();
 }

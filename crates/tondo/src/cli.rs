@@ -364,7 +364,9 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "optimizations",
-        usage: &["tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--json]"],
+        usage: &[
+            "tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <rev>] [--json]",
+        ],
         summary: &[
             "what a release build makes of the code: the calls it",
             "inlines and those it keeps, the texts and closures made",

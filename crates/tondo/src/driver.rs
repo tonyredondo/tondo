@@ -1159,6 +1159,48 @@ pub fn compile(
     codegen::compile(program, &bodies, &analysis.sources, options)
 }
 
+/// The files of the project or file at `path` as the git revision
+/// `reference` has them, extracted once per commit into the cache: the
+/// commit, and where `path` is in them (testing 10.4, toolchain 7.18).
+pub fn revision(path: &Path, reference: &str) -> Result<(String, PathBuf), String> {
+    use std::process::{Command, Stdio};
+    let git = |dir: &Path, args: &[&str]| -> Option<String> {
+        let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let given = path.canonicalize().map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let place = if given.is_file() { given.parent().unwrap_or(&given).to_path_buf() } else { given.clone() };
+    let root = git(&place, &["rev-parse", "--show-toplevel"]).map(PathBuf::from).ok_or(format!(
+        "--against compares with a revision of the project's git repository, and {} is in none",
+        path.display()
+    ))?;
+    let commit = git(&root, &["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
+        .filter(|c| !c.is_empty())
+        .ok_or(format!("git knows no revision {reference}: give a branch, a tag or a commit, as `--against main`"))?;
+    let within = given.strip_prefix(root.canonicalize().unwrap_or(root.clone())).unwrap_or(Path::new("")).to_path_buf();
+    let tree = cache_entry("revision", &commit);
+    if !tree.join(".complete").is_file() {
+        let _ = std::fs::remove_dir_all(&tree);
+        std::fs::create_dir_all(&tree).map_err(|e| format!("cannot create {}: {e}", tree.display()))?;
+        let mut archive = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["archive", "--format=tar", &commit])
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let stdout = archive.stdout.take().expect("piped");
+        let extracted = Command::new("tar").arg("-x").arg("-C").arg(&tree).stdin(stdout).status();
+        let archived = archive.wait().map_err(|e| e.to_string())?;
+        if !archived.success() || !extracted.is_ok_and(|s| s.success()) {
+            let _ = std::fs::remove_dir_all(&tree);
+            return Err(format!("cannot extract {reference} from git"));
+        }
+        std::fs::write(tree.join(".complete"), &commit).map_err(|e| e.to_string())?;
+    }
+    Ok((commit, tree.join(within)))
+}
+
 /// The MIR passes of a release build, in their order, each followed by
 /// what `after` does.
 fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sources: &SourceMap) {
@@ -1190,6 +1232,7 @@ fn after(stage: &str, bodies: &[crate::mir::Body], types: &crate::types::Types, 
 
 /// What a pass of a release build did, or could not do, at a place in the
 /// program's own code (toolchain 7.18).
+#[derive(Clone)]
 pub struct Optimization {
     pub file: String,
     pub line: usize,
@@ -1307,6 +1350,73 @@ pub fn optimizations(
         }
     }
     Ok(grouped)
+}
+
+/// What a release build made of the code at `path` as the git revision
+/// `reference` has it, and of the code as it is: what only the revision
+/// has, and what only the code has. A place is known by its file, code,
+/// kind, text and functions rather than its line, which a change moves.
+pub fn optimizations_against(
+    path: &Path,
+    reference: &str,
+    function: Option<&str>,
+    kind: Option<&str>,
+) -> Result<(String, Vec<Optimization>, Vec<Optimization>), String> {
+    let now = analyze(path)?;
+    if now.program.is_none() {
+        return Err(format!("{} does not compile: `tondo check` says why", path.display()));
+    }
+    let now = optimizations(&now, function, kind)?;
+    let (commit, dir) = revision(path, reference)?;
+    let then = analyze(&dir)?;
+    if then.program.is_none() {
+        return Err(format!("the code of {reference} does not compile, so there is nothing to compare with"));
+    }
+    // A file on its own is named as given, the revision's in the cache.
+    let (cached, given) = (dir.display().to_string(), path.display().to_string());
+    let mut then = optimizations(&then, function, kind)?;
+    for optimization in &mut then {
+        if let Some(rest) = optimization.file.strip_prefix(&cached) {
+            optimization.file = format!("{given}{rest}");
+        }
+    }
+    let key = |o: &Optimization| (o.file.clone(), o.source.clone(), o.kind, o.text.clone(), o.functions.clone());
+    let only = |these: Vec<Optimization>, others: &[Optimization]| {
+        let mut left: std::collections::HashMap<_, usize> = std::collections::HashMap::new();
+        others.iter().for_each(|o| *left.entry(key(o)).or_default() += 1);
+        these
+            .into_iter()
+            .filter(|o| match left.get_mut(&key(o)) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    false
+                }
+                _ => true,
+            })
+            .collect::<Vec<_>>()
+    };
+    let gone = only(then.clone(), &now);
+    let new = only(now, &then);
+    Ok((commit, gone, new))
+}
+
+/// What changed against a revision, as `tondo optimizations --against`
+/// writes it: what only the revision has, then what only the code has.
+pub fn changed_text(reference: &str, commit: &str, gone: &[Optimization], new: &[Optimization]) -> String {
+    if gone.is_empty() && new.is_empty() {
+        return format!("a release build makes of the code what it made of {reference}\n");
+    }
+    let short = &commit[..commit.len().min(12)];
+    let mut text = String::new();
+    if !gone.is_empty() {
+        text.push_str(&format!("only in {reference} ({short}):\n"));
+        gone.iter().for_each(|o| text.push_str(&format!("  {}\n", o.line())));
+    }
+    if !new.is_empty() {
+        text.push_str("only now:\n");
+        new.iter().for_each(|o| text.push_str(&format!("  {}\n", o.line())));
+    }
+    text
 }
 
 /// Whether this tondo can build for `target`: its own machine's, or one
