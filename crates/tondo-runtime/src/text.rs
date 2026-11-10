@@ -33,7 +33,7 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
     let finder = memchr::memmem::Finder::new(separator);
     // Counted first, so that the array is made once at its length.
     let count = match separator {
-        [byte] => s.iter().filter(|c| *c == byte).count(),
+        [byte] => memchr::memchr_iter(*byte, s).count(),
         _ => finder.find_iter(s).count(),
     };
     let array = tondo_rt_array_new(8, count + 1);
@@ -46,9 +46,9 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
         start = end + separator.len();
     };
     match separator {
-        // A byte, as a comma, is looked for byte by byte: the pieces it
-        // ends are short, shorter than what a search sets up for each.
-        [byte] => s.iter().enumerate().filter(|(_, c)| *c == byte).for_each(|(at, _)| piece(at)),
+        // A byte, as a comma, is looked for with memchr, which sets up
+        // nothing for each search, as the pieces it ends are short.
+        [byte] => memchr::memchr_iter(*byte, s).for_each(&mut piece),
         _ => finder.find_iter(s).for_each(&mut piece),
     }
     piece(s.len());

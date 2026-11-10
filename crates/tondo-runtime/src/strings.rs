@@ -98,9 +98,13 @@ fn piece_room(len: usize) -> usize {
     (HEADER + len).next_multiple_of(std::mem::align_of::<Str>())
 }
 
-/// The pieces of one text, written into a block as they come.
+/// The pieces of one text, written into a block as they come; what the
+/// block's header says of them goes there once they are all in.
 pub(crate) struct Pieces {
     block: *mut Block,
+    used: usize,
+    count: usize,
+    long: bool,
 }
 
 impl Pieces {
@@ -113,7 +117,7 @@ impl Pieces {
             handle_alloc_error(layout);
         }
         unsafe { block.write(Block { count: AtomicUsize::new(0), size, used: BLOCK, long: false }) };
-        Pieces { block }
+        Pieces { block, used: BLOCK, count: 0, long: false }
     }
 
     /// The next piece, with one reference; the empty string kept for good
@@ -123,14 +127,14 @@ impl Pieces {
             return EMPTY.get();
         }
         unsafe {
-            let at = (*self.block).used;
+            let at = self.used;
             debug_assert!(at + piece_room(bytes.len()) <= (*self.block).size, "a piece past its block's room");
             let piece = (self.block as *mut u8).add(at) as *mut Str;
             piece.write(Str { rc: AtomicUsize::new(PIECE | at), len: bytes.len(), cap: bytes.len() });
             copy_short(bytes, (piece as *mut u8).add(HEADER));
-            (*self.block).used = at + piece_room(bytes.len());
-            (*self.block).long |= bytes.len() >= POSITIONED_FROM;
-            *(*self.block).count.get_mut() += 1;
+            self.used = at + piece_room(bytes.len());
+            self.long |= bytes.len() >= POSITIONED_FROM;
+            self.count += 1;
             piece
         }
     }
@@ -138,11 +142,13 @@ impl Pieces {
     /// Done: the block holds its pieces, or goes when none needs it.
     pub(crate) fn finish(self) {
         unsafe {
-            if (*self.block).count.load(Ordering::Relaxed) == 0 {
+            if self.count == 0 {
                 dealloc(self.block as *mut u8, block_layout(self.block));
-            } else {
-                LIVE_OBJECTS.made();
+                return;
             }
+            let block = &mut *self.block;
+            (*block.count.get_mut(), block.used, block.long) = (self.count, self.used, self.long);
+            LIVE_OBJECTS.made();
         }
     }
 }
