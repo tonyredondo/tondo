@@ -263,10 +263,36 @@ impl Prover<'_> {
         }
         let successors: Vec<Vec<usize>> = self.body.blocks.iter().map(|block| successors(&block.terminator)).collect();
         let (order, heads) = order(&successors);
+        let Some((mut entry, reaching)) = self.fixpoint(&order, &heads, &HashMap::new()) else { return };
+        // What a loop's counter bounds of the locals it only adds to, which
+        // a second round holds at the loop's head.
+        let pins = self.accumulators(&entry, &reaching, &successors, &heads);
+        if !pins.is_empty()
+            && let Some((pinned, _)) = self.fixpoint(&order, &heads, &pins)
+        {
+            entry = pinned;
+        }
+        for (block, facts) in entry.into_iter().enumerate() {
+            if let Some(facts) = facts {
+                self.exits(block, facts, true);
+            }
+        }
+    }
+
+    /// The facts at the start of each block, and what reaches each block
+    /// from each of its predecessors, with `pins` held at the heads of
+    /// loops; none when they do not settle.
+    #[allow(clippy::type_complexity)]
+    fn fixpoint(
+        &mut self,
+        order: &[usize],
+        heads: &[bool],
+        pins: &HashMap<usize, Vec<(Node, Node, i128)>>,
+    ) -> Option<(Vec<Option<Facts>>, Vec<HashMap<usize, Option<Facts>>>)> {
+        let count = self.body.blocks.len();
         let mut entry: Vec<Option<Facts>> = vec![None; count];
         entry[0] = Some(Facts::default());
         let mut turns = vec![0u32; count];
-        // What reaches each block from each of its predecessors.
         let mut reaching: Vec<HashMap<usize, Option<Facts>>> = vec![HashMap::new(); count];
         let mut changed = true;
         let mut rounds = 0;
@@ -274,9 +300,9 @@ impl Prover<'_> {
             changed = false;
             rounds += 1;
             if rounds > 40 {
-                return;
+                return None;
             }
-            for &block in &order {
+            for &block in order {
                 if block != 0 {
                     let mut joined: Option<Facts> = None;
                     for facts in reaching[block].values().flatten() {
@@ -285,10 +311,15 @@ impl Prover<'_> {
                             Some(joined) => joined.join(facts),
                         });
                     }
-                    let joined = match (&entry[block], joined) {
+                    let mut joined = match (&entry[block], joined) {
                         (Some(old), Some(new)) if heads[block] && turns[block] >= 2 => Some(old.widen(&new)),
                         (_, joined) => joined,
                     };
+                    if let (Some(facts), Some(pinned)) = (&mut joined, pins.get(&block)) {
+                        for &(a, b, k) in pinned {
+                            facts.add(a, b, k);
+                        }
+                    }
                     if joined == entry[block] && turns[block] > 0 {
                         continue;
                     }
@@ -304,11 +335,320 @@ impl Prover<'_> {
                 }
             }
         }
-        for (block, facts) in entry.into_iter().enumerate() {
-            if let Some(facts) = facts {
-                self.exits(block, facts, true);
+        Some((entry, reaching))
+    }
+
+    /// Bounds at the heads of loops for the locals they only add to. A
+    /// counter whose additions on every way around sum to at least one
+    /// step bounds how often the head is reached, between its bounds
+    /// there; a local whose only writes in the loop add a bounded amount,
+    /// at most so many times on any way from the head, then stays within
+    /// what it held on entry and that many additions of the most and the
+    /// least: facts true at every arrival at the head, which the first
+    /// round's widening drops as the local grows.
+    fn accumulators(
+        &mut self,
+        entry: &[Option<Facts>],
+        reaching: &[HashMap<usize, Option<Facts>>],
+        successors: &[Vec<usize>],
+        heads: &[bool],
+    ) -> HashMap<usize, Vec<(Node, Node, i128)>> {
+        use crate::ast::BinOp;
+        let count = successors.len();
+        let mut predecessors = vec![Vec::new(); count];
+        for (from, tos) in successors.iter().enumerate() {
+            for &to in tos {
+                predecessors[to].push(from);
             }
         }
+        // A loop's blocks: its head, and what the head reaches that reaches
+        // an edge back to it without passing it.
+        let blocks_of = |head: usize| -> Vec<bool> {
+            let mut reached = vec![false; count];
+            let mut stack = vec![head];
+            reached[head] = true;
+            while let Some(block) = stack.pop() {
+                for &to in &successors[block] {
+                    if !reached[to] {
+                        reached[to] = true;
+                        stack.push(to);
+                    }
+                }
+            }
+            let mut inside = vec![false; count];
+            inside[head] = true;
+            let mut stack: Vec<usize> = predecessors[head].iter().copied().filter(|&from| reached[from]).collect();
+            for &from in &stack {
+                inside[from] = true;
+            }
+            while let Some(block) = stack.pop() {
+                for &from in &predecessors[block] {
+                    if reached[from] && !inside[from] {
+                        inside[from] = true;
+                        stack.push(from);
+                    }
+                }
+            }
+            inside
+        };
+        #[derive(Clone, Copy)]
+        enum Write {
+            Step(i128),
+            Add(usize, usize, bool),
+            Other,
+        }
+        let mut pins: HashMap<usize, Vec<(Node, Node, i128)>> = HashMap::new();
+        for head in 0..count {
+            if !heads[head] || entry[head].is_none() {
+                continue;
+            }
+            // What reaches the head, joined once the facts settled without
+            // the widening: a bound that grew on each turn until a test
+            // held it, as a counter's under its limit, holds there too.
+            let Some(at_head) = reaching[head].values().flatten().fold(None, |joined: Option<Facts>, facts| {
+                Some(joined.map_or_else(|| facts.clone(), |j| j.join(facts)))
+            }) else {
+                continue;
+            };
+            pins.entry(head).or_default().extend(at_head.0.iter().map(|(&(a, b), &k)| (a, b, k)));
+            let inside = blocks_of(head);
+            // A way back to the head must start inside: what reaches it
+            // only from outside is no loop of this head.
+            let back: Vec<usize> = predecessors[head].iter().copied().filter(|&from| inside[from]).collect();
+            if back.is_empty() {
+                continue;
+            }
+            // The loops inside this one, whose turns no count bounds, and
+            // their edges back to their heads.
+            let mut nested = vec![false; count];
+            let mut turning: std::collections::HashSet<(usize, usize)> = Default::default();
+            for other in (0..count).filter(|&other| other != head && inside[other] && heads[other]) {
+                let within = blocks_of(other);
+                for (block, &is) in within.iter().enumerate() {
+                    nested[block] |= is && inside[block];
+                }
+                for &from in predecessors[other].iter().filter(|&&from| within[from]) {
+                    turning.insert((from, other));
+                }
+            }
+            // The ways through the loop once, without edges back to its head
+            // or to the head of a loop inside it, in an order where each
+            // block comes after those before it.
+            let edge =
+                |from: usize, to: usize| inside[from] && inside[to] && to != head && !turning.contains(&(from, to));
+            let mut ins = vec![0usize; count];
+            for (from, tos) in successors.iter().enumerate() {
+                for &to in tos {
+                    if edge(from, to) {
+                        ins[to] += 1;
+                    }
+                }
+            }
+            let mut topological = vec![head];
+            let mut next = 0;
+            while next < topological.len() {
+                let from = topological[next];
+                next += 1;
+                for &to in &successors[from] {
+                    if edge(from, to) {
+                        ins[to] -= 1;
+                        if ins[to] == 0 {
+                            topological.push(to);
+                        }
+                    }
+                }
+            }
+            if topological.len() != inside.iter().filter(|&&within| within).count() {
+                continue;
+            }
+            // Each local's writes in the loop, by block.
+            let mut writes: HashMap<Local, Vec<(usize, Write)>> = HashMap::new();
+            let mut all_other = false;
+            for block in (0..count).filter(|&block| inside[block]) {
+                for (at, statement) in self.body.blocks[block].stmts.iter().enumerate() {
+                    if matches!(statement, Statement::OsrLoad(_)) {
+                        all_other = true;
+                    }
+                    let (mut used, mut defined) = (Vec::new(), Vec::new());
+                    statement_locals(statement, &mut used, &mut defined);
+                    let kind = |local: Local| -> Write {
+                        let Statement::Assign(place, rvalue, _) = statement else { return Write::Other };
+                        if !place.path.is_empty() || place.local != local || !self.int(local) {
+                            return Write::Other;
+                        }
+                        let me = Some((Node::Int(local), 0));
+                        match &**rvalue {
+                            Rvalue::Increment(o) if self.value(o) == me => Write::Step(1),
+                            Rvalue::Binary(BinOp::Add, a, b) | Rvalue::Exact(BinOp::Add, a, b) => {
+                                match (self.value(a), self.value(b)) {
+                                    (x, Some((Node::Zero, c))) | (Some((Node::Zero, c)), x) if x == me => {
+                                        Write::Step(c)
+                                    }
+                                    (x, Some((n, _))) if x == me && n != Node::Int(local) => {
+                                        Write::Add(block, at, false)
+                                    }
+                                    (Some((n, _)), x) if x == me && n != Node::Int(local) => {
+                                        Write::Add(block, at, false)
+                                    }
+                                    _ => Write::Other,
+                                }
+                            }
+                            Rvalue::Binary(BinOp::Sub, a, b) | Rvalue::Exact(BinOp::Sub, a, b) => {
+                                match (self.value(a), self.value(b)) {
+                                    (x, Some((Node::Zero, c))) if x == me => Write::Step(-c),
+                                    (x, Some((n, _))) if x == me && n != Node::Int(local) => {
+                                        Write::Add(block, at, true)
+                                    }
+                                    _ => Write::Other,
+                                }
+                            }
+                            _ => Write::Other,
+                        }
+                    };
+                    for local in defined {
+                        writes.entry(local).or_default().push((block, kind(local)));
+                    }
+                    // A call may write a local it is given, by a loan.
+                    if let Statement::Assign(_, rvalue, _) = statement
+                        && let Rvalue::Call(_, operands)
+                        | Rvalue::CallIndirect(_, operands)
+                        | Rvalue::CallOsr(_, operands, _) = &**rvalue
+                    {
+                        for operand in operands {
+                            if let Operand::Copy(place) = operand {
+                                writes.entry(place.local).or_default().push((block, Write::Other));
+                            }
+                        }
+                    }
+                }
+            }
+            if all_other {
+                continue;
+            }
+            // The fewest turns' worth of steps of each counter.
+            let mut turns: Option<i128> = None;
+            for (&local, list) in &writes {
+                if list.iter().any(|&(block, write)| nested[block] || !matches!(write, Write::Step(_))) {
+                    continue;
+                }
+                let (Some(high), Some(low)) =
+                    (at_head.bound(Node::Int(local), Node::Zero), at_head.bound(Node::Zero, Node::Int(local)))
+                else {
+                    continue;
+                };
+                let step = |block: usize| -> i128 {
+                    list.iter()
+                        .filter(|&&(b, _)| b == block)
+                        .map(|&(_, w)| if let Write::Step(k) = w { k } else { 0 })
+                        .sum()
+                };
+                let mut least = vec![None::<i128>; count];
+                least[head] = Some(step(head));
+                for &block in &topological {
+                    let Some(here) = least[block] else { continue };
+                    for &to in &successors[block] {
+                        if edge(block, to) {
+                            let through = here + step(to);
+                            least[to] = Some(least[to].map_or(through, |old: i128| old.min(through)));
+                        }
+                    }
+                }
+                let Some(each) =
+                    back.iter().map(|&from| least[from]).collect::<Option<Vec<_>>>().and_then(|l| l.into_iter().min())
+                else {
+                    continue;
+                };
+                if each < 1 {
+                    continue;
+                }
+                let span = (high + low).max(0);
+                let arrivals = span / each + 1;
+                turns = Some(turns.map_or(arrivals, |old| old.min(arrivals)));
+            }
+            let Some(arrivals) = turns else { continue };
+            for (&local, list) in &writes {
+                if list.iter().any(|&(block, write)| nested[block] || matches!(write, Write::Other))
+                    || !list.iter().any(|&(_, write)| matches!(write, Write::Add(..)))
+                {
+                    continue;
+                }
+                // What each write adds: a step its constant, an addition the
+                // values its operand may hold there.
+                let mut most = 0i128;
+                let mut least = 0i128;
+                let mut bounded = true;
+                for &(_, write) in list {
+                    let (low, high) = match write {
+                        Write::Step(k) => (k, k),
+                        Write::Add(block, at, subtracts) => {
+                            let Some(mut facts) = entry[block].clone() else { continue };
+                            let mut tests = HashMap::new();
+                            for statement in &self.body.blocks[block].stmts[..at] {
+                                self.step(statement, &mut facts, &mut tests);
+                            }
+                            let Statement::Assign(_, rvalue, _) = &self.body.blocks[block].stmts[at] else { continue };
+                            let (Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b)) = &**rvalue else { continue };
+                            let me = Some((Node::Int(local), 0));
+                            let other = if self.value(a) == me { b } else { a };
+                            let Some(value) = self.value(other) else {
+                                bounded = false;
+                                break;
+                            };
+                            let (low, high) = facts.range(value);
+                            if subtracts { (-high, -low) } else { (low, high) }
+                        }
+                        Write::Other => unreachable!("skipped above"),
+                    };
+                    if low.abs() >= LIMIT / 4 || high.abs() >= LIMIT / 4 {
+                        bounded = false;
+                        break;
+                    }
+                    most = most.max(high);
+                    least = least.min(low);
+                }
+                if !bounded {
+                    continue;
+                }
+                // The most writes on any way from the head.
+                let written = |block: usize| list.iter().filter(|&&(b, _)| b == block).count() as i128;
+                let mut many = vec![None::<i128>; count];
+                many[head] = Some(written(head));
+                for &block in &topological {
+                    let Some(here) = many[block] else { continue };
+                    for &to in &successors[block] {
+                        if edge(block, to) {
+                            let through = here + written(to);
+                            many[to] = Some(many[to].map_or(through, |old: i128| old.max(through)));
+                        }
+                    }
+                }
+                let Some(each) = many.iter().flatten().copied().max() else { continue };
+                // What it holds on entry, from outside the loop.
+                let (mut low, mut high) = (i128::MAX, i128::MIN);
+                for (&from, facts) in &reaching[head] {
+                    if inside[from] {
+                        continue;
+                    }
+                    let Some(facts) = facts else { continue };
+                    let (l, h) = facts.range((Node::Int(local), 0));
+                    low = low.min(l);
+                    high = high.max(h);
+                }
+                if low > high || low <= i64::MIN as i128 || high >= i64::MAX as i128 {
+                    continue;
+                }
+                let additions = arrivals.saturating_mul(each);
+                let low = low.saturating_add(additions.saturating_mul(least));
+                let high = high.saturating_add(additions.saturating_mul(most));
+                if low.abs() >= LIMIT || high.abs() >= LIMIT {
+                    continue;
+                }
+                let pinned = pins.entry(head).or_default();
+                pinned.push((Node::Zero, Node::Int(local), -low));
+                pinned.push((Node::Int(local), Node::Zero, high));
+            }
+        }
+        pins
     }
 
     /// The facts on each way out of a block that starts with `facts`;
