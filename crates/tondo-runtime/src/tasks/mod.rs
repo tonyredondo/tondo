@@ -357,6 +357,8 @@ struct Worker {
     runner: Cell<Option<&'static Runner>>,
     /// Its calls of C, once it made one.
     in_c: Cell<*const InC>,
+    /// The futures of the host it polls at a turn, whose room it keeps.
+    turns: Cell<Vec<Arc<dyn Turned>>>,
 }
 
 thread_local! {
@@ -370,6 +372,7 @@ thread_local! {
             stacks: Cell::new(std::ptr::null_mut()),
             runner: Cell::new(None),
             in_c: Cell::new(std::ptr::null()),
+            turns: Cell::new(Vec::new()),
         }
     };
 }

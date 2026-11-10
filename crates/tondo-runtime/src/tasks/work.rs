@@ -439,11 +439,15 @@ pub(super) fn turn_host() {
     if HOST_READY_COUNT.load(Ordering::SeqCst) == 0 {
         return;
     }
-    let ready = std::mem::take(&mut *HOST_READY.lock().unwrap_or_else(|e| e.into_inner()));
+    // Swapped with the worker's own list, which keeps its room for the next
+    // wake: taken whole, the list left the next wake to allocate another.
+    let mut ready = worker(|w| w.turns.take());
+    std::mem::swap(&mut ready, &mut *HOST_READY.lock().unwrap_or_else(|e| e.into_inner()));
     HOST_READY_COUNT.fetch_sub(ready.len(), Ordering::SeqCst);
-    for future in ready {
+    for future in ready.drain(..) {
         future.turn();
     }
+    worker(|w| w.turns.set(ready));
 }
 
 pub(super) fn deadlock() -> ! {
