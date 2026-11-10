@@ -1,0 +1,58 @@
+// Counted values that pass through the locals inlining leaves, a call's
+// result then the caller's, are written where the last copy goes: the
+// string inside keeps one reference, and none is lost or freed twice, also
+// when what comes between may panic and a `recover` stops it.
+
+import std.console
+
+pub enum Problem {
+    Odd(String)
+    Negative
+}
+
+fn named(i: Int): String ! Problem {
+    if i < 0 {
+        fail Problem.Negative
+    }
+    if i % 2 == 1 {
+        fail Problem.Odd("odd {i}")
+    }
+    "even {i}"
+}
+
+fn wrap(value: String?): String? {
+    value
+}
+
+fn pick(values: Array[String], at: Int): String? {
+    some(values[at])
+}
+
+fn main() {
+    var total = 0
+    for i in -2..10 {
+        total += named(i).unwrapOr("none").length()
+        match named(i) {
+            ok(text) => total += text.length()
+            err(Problem.Odd(text)) => total += text.length() * 2
+            err(Problem.Negative) => total += 100
+        }
+    }
+    console.println("{total}")
+    let kept = wrap(wrap(wrap(some("kept"))))
+    console.println("{kept.unwrapOr("")}")
+    // The index panics between the value it reads and the copy.
+    let words = ["alpha", "beta"]
+    for at in 0..3 {
+        match recover { pick(words, at).unwrapOr("") } {
+            ok(word) => console.println("{at} {word}")
+            err(caught) => console.println("{at} caught {caught.message}")
+        }
+    }
+}
+
+// expect-stdout: 338
+// expect-stdout: kept
+// expect-stdout: 0 alpha
+// expect-stdout: 1 beta
+// expect-stdout: 2 caught index 2 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end

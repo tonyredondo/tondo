@@ -1,0 +1,92 @@
+// An enum's value released where its variant may hold something counted
+// or nothing: the tag is read in place, and only a variant that holds a
+// string, an array or a box goes through the glue, which keeps every
+// register, so the floats a loop holds come through its rare way intact.
+
+import std.console
+import std.math
+
+pub enum Reading {
+    Missing
+    Number(Float)
+    Note(String)
+    Notes(Array[String])
+}
+
+fn reading(i: Int): Reading {
+    match i % 4 {
+        0 => Reading.Missing
+        1 => Reading.Number(Float(i) / 2.0)
+        2 => Reading.Note("note {i}")
+        _ => Reading.Notes(["a {i}", "b {i}"])
+    }
+}
+
+fn weight(value: Reading): Float {
+    match value {
+        Reading.Missing => 0.0
+        Reading.Number(number) => number
+        Reading.Note(text) => Float(text.length())
+        Reading.Notes(texts) => Float(texts.length())
+    }
+}
+
+// A third of these fail with a string in the error: each failure is
+// released through the glue while the loop holds its total and a root.
+fn half(i: Int): Float ! math.MathError {
+    if i % 3 == 0 {
+        fail math.MathError.NotANumber("x{i}")
+    }
+    Float(i) / 2.0
+}
+
+fn roots(count: Int): Float {
+    var total = 0.0
+    for i in 0..count {
+        let root = math.sqrt(Float(i)).unwrapOr(0.0)
+        total += root + half(i).unwrapOr(-1.0) * 0.25
+    }
+    total
+}
+
+// Values made before the loop: copying one retains it, and the loop calls
+// nothing else, so its floats stay in registers across the rare way.
+fn sums(values: Array[Float ! math.MathError], rounds: Int): Float {
+    var (total, scale) = (0.0, 1.0)
+    for i in 0..rounds {
+        let value = values[i % values.length()]
+        total += value.unwrapOr(0.5) * scale
+        scale += 0.125
+    }
+    total
+}
+
+fn main() {
+    var total = 0.0
+    var kept: Array[Reading] = []
+    for i in 0..400 {
+        let value = reading(i)
+        if i % 50 == 0 {
+            kept.push(value)
+        }
+        total += weight(reading(i)) * 1.5
+    }
+    console.println("{total} {kept.length()}")
+    console.println("{roots(1000)}")
+    let values: Array[Float ! math.MathError] = [ok(1.5), err(math.MathError.NotANumber("first")), ok(2.25), err(math.MathError.Domain)]
+    console.println("{sums(values, 1000)}")
+    // A value released whole after the variant it held was read.
+    var words = 0
+    for i in 0..300 {
+        match reading(i) {
+            Reading.Notes(texts) => words += texts.length()
+            _ => {}
+        }
+    }
+    console.println("{words}")
+}
+
+// expect-stdout: 16384.5 8
+// expect-stdout: 62565.70811087907
+// expect-stdout: 75312.5
+// expect-stdout: 150
