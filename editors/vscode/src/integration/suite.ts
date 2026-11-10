@@ -137,7 +137,10 @@ const tests: [string, () => Promise<void>][] = [
   [
     'what a release build makes of the code',
     async () => {
-      await openMain();
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tondo-told-'));
+      const code = 'import std.console\n\nfn main() {\n    let n = 3\n    console.println("{[n, n]}")\n}\n';
+      fs.writeFileSync(path.join(dir, 'told.to'), code);
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(path.join(dir, 'told.to')));
       const told = await vscode.commands.executeCommand<number | undefined>('tondo.showOptimizations');
       assert.ok(told && told > 0, `${told} lines told`);
       await execute('tondo.clearOptimizations');
