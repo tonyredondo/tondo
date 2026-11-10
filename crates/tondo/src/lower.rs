@@ -452,6 +452,7 @@ fn lower_function(
     Body {
         name: function.name.clone(),
         locals: b.locals,
+        framed: Vec::new(),
         names: b.names,
         scoped: Vec::new(),
         arguments: Vec::new(),

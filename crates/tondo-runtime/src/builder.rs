@@ -38,13 +38,20 @@ impl Builder {
         self.extend(&[byte]);
     }
 
+    /// Whether it builds in room a frame keeps (`tondo_rt_sb_start_in`).
+    fn framed(&self) -> bool {
+        !self.text.is_null() && unsafe { (*self.text).rc.load(Ordering::Relaxed) } == FRAMING
+    }
+
     #[cold]
     fn grow(&mut self, more: usize) {
         let room = (self.len + more).max(self.room() * 2);
         let layout = str_layout(room);
         // A new block holds what was asked, as a guess that is seldom
-        // short; one that grows takes all the room its block has.
-        let grown = !self.text.is_null();
+        // short; one that grows takes all the room its block has. What a
+        // frame's room held moves to the heap.
+        let framed = self.framed();
+        let grown = !self.text.is_null() && !framed;
         let text = unsafe {
             match grown {
                 false => alloc(layout),
@@ -54,8 +61,14 @@ impl Builder {
         if text.is_null() {
             handle_alloc_error(layout);
         }
+        if framed {
+            unsafe { std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len) };
+        }
         self.text = text as *mut Str;
-        unsafe { (*self.text).cap = if grown { meta::usable(text, layout.size()) - HEADER } else { room } }
+        unsafe {
+            (*self.text).rc = AtomicUsize::new(0);
+            (*self.text).cap = if grown { meta::usable(text, layout.size()) - HEADER } else { room };
+        }
     }
 
     /// The string built. Its block keeps room it does not use, as much as it
@@ -65,6 +78,12 @@ impl Builder {
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
+        }
+        // Built in a frame's room: a text nothing counts.
+        if self.framed() {
+            unsafe { (*self.text).rc.store(IMMORTAL, Ordering::Relaxed) };
+            unsafe { (*self.text).len = self.len };
+            return self.text;
         }
         let mut text = self.text as *mut u8;
         let mut cap = self.room();
@@ -125,6 +144,46 @@ pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str) -> *mut
 }
 
 /// `x = "{x}{i}"`, as `tondo_rt_str_append`.
+/// The count of the text a builder builds in room a frame keeps.
+const FRAMING: usize = usize::MAX - 1;
+
+/// Starts the builder at `b` with room for `room` bytes, in `framed`, the
+/// room a frame keeps for a text no one but the frame reads, when it has
+/// `framed_room` bytes or more (`stack.rs`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_start_in(b: *mut Builder, room: usize, framed: *mut Str, framed_room: usize) {
+    // The positions of a longer text are kept by its address, which the
+    // frame's room reuses for the next.
+    let framed_room = framed_room.min(POSITIONED_FROM - 1);
+    if room > framed_room {
+        return unsafe { b.write(Builder::new(room)) };
+    }
+    unsafe {
+        framed.write(Str { rc: AtomicUsize::new(FRAMING), len: 0, cap: framed_room });
+        b.write(Builder { text: framed, len: 0 });
+    }
+}
+
+/// `"{i}"` in room a frame keeps for it, which it always fits.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_int_text_into(value: i64, framed: *mut Str) -> *mut Str {
+    if (0..100).contains(&value) {
+        return tondo_rt_int_text(value);
+    }
+    let mut digits = [0; 21];
+    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
+    let start = 21 - text.len() - usize::from(value < 0);
+    if value < 0 {
+        digits[start] = b'-';
+    }
+    let bytes = &digits[start..];
+    unsafe {
+        framed.write(Str { rc: AtomicUsize::new(IMMORTAL), len: bytes.len(), cap: bytes.len() });
+        copy_short(bytes, (framed as *mut u8).add(HEADER));
+    }
+    framed
+}
+
 /// `"{i}"`: an integer's digits, in a string of their own; those of 0 to
 /// 99, as Go's, from strings the program keeps, which take no allocation.
 #[unsafe(no_mangle)]

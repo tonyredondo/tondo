@@ -75,6 +75,10 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
+/// The bytes a frame keeps for a text made there (`stack.rs`), after its
+/// header: fewer than those of a text whose positions the runtime keeps by
+/// its address, which a frame's room reuses.
+const FRAMED_ROOM: u32 = 56;
 /// Where a `std.sync` cell (`SyncObject`) keeps the address of its value,
 /// after its count and its state.
 const SYNC_VALUE: i32 = 16;
@@ -2713,6 +2717,8 @@ struct FnCodegen<'a, 'b> {
     /// references: retaining and releasing them does nothing; and the
     /// literal, when it is always the same.
     literal: HashMap<Local, Option<String>>,
+    /// The room in the frame of each text made there (`Body.framed`).
+    framed: HashMap<Local, ir::StackSlot>,
     /// While a statement that a check for a panic follows is built: where
     /// its panics unwind to (15.9). And whether that check follows one
     /// whose panics all jumped there, so that it asks nothing.
@@ -2928,6 +2934,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             starts: HashMap::new(),
             ways: HashMap::new(),
             literal: literals(body),
+            framed: HashMap::new(),
             unwind_to: None,
             quiet_check: false,
             tried: false,

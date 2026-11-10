@@ -5628,3 +5628,19 @@ operation. `split`, `lines` and `words` make them: 101 allocations become 2, the
 block. What it costs is memory: a piece that is kept keeps its whole block, at most as large as
 the text it came from, as a Go substring keeps the text it points into; a piece that changes is
 copied first, and the copy keeps nothing else.
+
+## A text only its frame reads is made in the frame
+
+`"{i}".length()` allocated a string and freed it for each number, where Go makes none for numbers
+below 100 and one for the rest, which its collector frees in bulk. Escape analysis, as the
+maintainer asked of the optimizer on 2026-10-28, starts with texts: a pass over the MIR of a
+release build (`stack.rs`) finds the strings that interpolations make and that the function only
+measures, compares and releases. Codegen builds each in room of the frame, 56 bytes after a
+string's header, whose count says that no one counts it, as a literal's does, so that retaining
+and releasing it do nothing; one that does not fit, at the start or as it grows, moves to the heap
+and is released as before. Any other read of such a text, an argument, a copy, a loan or a move,
+could keep it past the frame, and keeps it on the heap; so does every text of a function that
+calls itself, whose frames would each keep room. The room stays under the length from which the
+runtime keeps a string's positions by its address, which the room reuses for each text it holds.
+Debug and live builds, which skip the MIR's passes, make every text on the heap. `int to text
+1000` takes no allocation instead of 900 and 8.2 µs instead of 18.

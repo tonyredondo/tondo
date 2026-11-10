@@ -1150,6 +1150,7 @@ pub fn compile(
         crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
         lower::drop_dead_checks(&mut bodies);
+        crate::stack::stack(&mut bodies, &program.types);
     }
     let roots = analysis.project.as_ref().map_or(String::new(), |p| crate::roots::table(p, &analysis.sources));
     let options = codegen::Options {

@@ -764,7 +764,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 })
             }
             Rvalue::Binary(op, left, right) => Val::Scalar(self.binary(*op, left, right, span)),
-            Rvalue::Concat(pieces) => Val::Scalar(self.concat(pieces)),
+            Rvalue::Concat(pieces) => {
+                let framed = self.framed_room(place);
+                Val::Scalar(self.concat(pieces, framed))
+            }
         };
         self.write(place, value);
     }

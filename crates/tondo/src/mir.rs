@@ -99,6 +99,9 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
 pub struct Body {
     pub name: String,
     pub locals: Vec<Ty>,
+    /// Texts made in room the frame keeps, as only this function's borrows
+    /// read them (`stack.rs`).
+    pub framed: Vec<Local>,
     /// The names of the program's own bindings, for a debugger; the
     /// compiler's temporaries have none.
     pub names: Vec<Option<String>>,

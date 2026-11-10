@@ -1,0 +1,87 @@
+// A text an interpolation makes to be measured or compared, and nothing
+// else, is made where the frame keeps it, without the heap: its length and
+// comparisons are those of the text, in loops too, also when it does not
+// fit and goes on the heap, or grows past its room as it is built. A text
+// that leaves the frame, returned, kept in a collection, captured, sent,
+// passed on or appended to, is made on the heap as before, and is what it
+// was after the frame that made it ends.
+
+import std.console
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+fn digits(count: Int): Int {
+    var total = 0
+    for i in -count..count {
+        total += "{i * 1_000}".length()
+    }
+    total
+}
+
+fn compared(a: Int, b: Int): String {
+    var said = ""
+    if "{a}-{b}" == "12-345" {
+        said = "equal"
+    }
+    if "{a}" < "{b}" {
+        said = "{said} less"
+    }
+    said
+}
+
+fn long(n: Int): Int {
+    // Longer than the room the frame keeps, from the start and as it grows.
+    let padded = "{"x".repeat(n)}{n}".length()
+    let grown = "{[n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n]}".length()
+    padded + grown
+}
+
+fn returned(n: Int): String {
+    let text = "n is {n}"
+    text
+}
+
+fn kept(n: Int): Array[String] {
+    var all: Array[String] = []
+    for i in 0..n {
+        all.push("item {i * 1_000}")
+    }
+    all
+}
+
+fn captured(n: Int): fn(): String {
+    let text = "captured {n * 1_000}"
+    () { text }
+}
+
+fn sent(out: Sender[String], n: Int) {
+    out.send("sent {n * 1_000}")
+}
+
+fn measure(text: String): Int {
+    text.length()
+}
+
+fn main() {
+    console.println("{digits(50)} {compared(12, 345)} {long(70)}")
+    let p = Point { x: 1_000, y: -2_000 }
+    console.println("{"{p.x},{p.y}".length()} {"{[p.x, p.y]}" == "[1000, -2000]"}")
+    let (out, inbox) = channel[String](1)
+    sent(out, 7)
+    var appended = "a"
+    for i in 0..3 {
+        appended = "{appended}{i * 1_000}"
+    }
+    let passed = measure("passed {p.x}")
+    let closure = captured(5)
+    console.println(
+        "{returned(123_456)} {kept(3)} {closure()} {inbox.receive()} {appended} {passed}",
+    )
+}
+
+// expect-stdout: 528 equal less 152
+// expect-stdout: 10 true
+// expect-stdout: n is 123456 [item 0, item 1000, item 2000] captured 5000 some(sent 7000) a010002000 11

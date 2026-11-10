@@ -86,7 +86,22 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         result
     }
 
-    pub(super) fn concat(&mut self, pieces: &[Piece]) -> ir::Value {
+    /// The room the frame keeps for the text made at `place`, when it is
+    /// one only the frame reads (`Body.framed`).
+    pub(super) fn framed_room(&mut self, place: &Place) -> Option<ir::Value> {
+        if !place.path.is_empty() || !self.body.framed.contains(&place.local) {
+            return None;
+        }
+        let slot = *self.framed.entry(place.local).or_insert_with(|| {
+            let data = StackSlotData::new(StackSlotKind::ExplicitSlot, STRING_BYTES as u32 + FRAMED_ROOM, 3);
+            self.e.fb.create_sized_stack_slot(data)
+        });
+        Some(self.e.fb.ins().stack_addr(POINTER, slot, 0))
+    }
+
+    /// The text the pieces make, in `framed`, the room of the frame, when
+    /// it is one only the frame reads and fits there.
+    pub(super) fn concat(&mut self, pieces: &[Piece], framed: Option<ir::Value>) -> ir::Value {
         // A type shown as what it is made of: one that shows itself, as a
         // `Duration` made of an `Int`, goes through its `Display`.
         let plain = |this: &Self, ty: Ty| {
@@ -135,7 +150,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         {
             let value = self.scalar(operand);
             let value = self.wide(value, int.signed());
-            return self.e.call_rt(Rt::IntText, &[value]).unwrap();
+            return match framed {
+                Some(room) => self.e.call_rt(Rt::IntTextInto, &[value, room]).unwrap(),
+                None => self.e.call_rt(Rt::IntText, &[value]).unwrap(),
+            };
         }
         // A string alone is that string.
         if let [Piece::Value(operand, ty)] = pieces
@@ -200,9 +218,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let adopted = self.e.call_rt(Rt::SbAdopt, &[builder, text, room]).unwrap();
                 released = Some((adopted, text));
             }
-            None => {
-                self.e.call_rt(Rt::SbStart, &[builder, room]);
-            }
+            None => match framed {
+                Some(framed) => {
+                    let framed_room = self.e.fb.ins().iconst(types::I64, FRAMED_ROOM as i64);
+                    self.e.call_rt(Rt::SbStartIn, &[builder, room, framed, framed_room]);
+                }
+                None => {
+                    self.e.call_rt(Rt::SbStart, &[builder, room]);
+                }
+            },
         }
         let mut values = values.into_iter();
         for piece in pieces {
