@@ -106,3 +106,5 @@ fn main() {
 // expect-stdout: uint past 3689348814741910324 * 5 does not fit in UInt (0 to 18446744073709551615)
 // expect-stdout: 3n+1 9223372036854775807
 // expect-stdout: 3n+2 9223372036854775806 + 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-optimization: 20:30 arithmetic
+// expect-optimization: 67:28 arithmetic

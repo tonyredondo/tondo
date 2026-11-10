@@ -18,6 +18,10 @@
 //!   recorded, for the reason given.
 //! - `// expect-no-schedule: <why>` — with `TONDO_CASES_SCHEDULE`, its tasks
 //!   run as ever, for the reason given.
+//! - `// expect-optimization: <line>:<column> <kind> [text]` — `tondo
+//!   optimizations` tells, at that place of the case, a remark of that
+//!   kind whose text contains `text` when given: what a release build
+//!   makes of the code, which a change to the passes must keep.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once. With
@@ -54,6 +58,7 @@ struct Expect {
     env: Vec<(String, String)>,
     no_replay: bool,
     no_schedule: bool,
+    optimizations: Vec<String>,
 }
 
 fn expectations(source: &str) -> Expect {
@@ -73,6 +78,7 @@ fn expectations(source: &str) -> Expect {
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
             "no-replay" => expect.no_replay = true,
             "no-schedule" => expect.no_schedule = true,
+            "optimization" => expect.optimizations.push(value.trim().into()),
             "env" => {
                 let (name, value) = value.split_once('=').expect("`NAME=value`");
                 expect.env.push((name.trim().into(), value.trim().into()));
@@ -170,6 +176,11 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     if expect.warnings.is_empty() && !diagnostics.is_empty() {
         return Err(format!("unexpected diagnostics:\n{diagnostics}"));
     }
+    // What a release build makes of it, once, in the modes that build one.
+    let release = ["TONDO_CASES_DEBUG", "TONDO_CASES_REPLAY", "TONDO_CASES_LIVE"];
+    if !expect.optimizations.is_empty() && release.iter().all(|mode| std::env::var_os(mode).is_none()) {
+        optimized(path, scratch, &expect.optimizations)?;
+    }
 
     // A crash writes no core file, which takes the system a while.
     let program = || {
@@ -251,6 +262,50 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
             Ok(())
         };
         once().map_err(|e| if repeat > 1 { format!("run {round} of {repeat}: {e}") } else { e })?;
+    }
+    Ok(())
+}
+
+/// Whether `tondo optimizations` tells each remark a case expects.
+fn optimized(path: &Path, scratch: &Path, expected: &[String]) -> Result<(), String> {
+    let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(path.parent().unwrap())
+        .args([std::ffi::OsStr::new("optimizations"), path.file_name().unwrap(), std::ffi::OsStr::new("--json")])
+        .env("XDG_CACHE_HOME", scratch.join("cache"))
+        .output()
+        .map_err(|e| format!("tondo optimizations: {e}"))?;
+    let told: serde_json::Value = serde_json::from_slice(&told.stdout)
+        .map_err(|e| format!("tondo optimizations: {e}\n{}", String::from_utf8_lossy(&told.stderr)))?;
+    let found = told["optimizations"].as_array().cloned().unwrap_or_default();
+    for expected in expected {
+        let (at, rest) = expected.split_once(' ').unwrap_or((expected, ""));
+        let (kind, text) = rest.split_once(' ').unwrap_or((rest, ""));
+        let place = at
+            .split_once(':')
+            .and_then(|(line, column)| Some((line.parse::<u64>().ok()?, column.parse::<u64>().ok()?)));
+        let (line, column) =
+            place.ok_or(format!("`expect-optimization: {expected}` is not `<line>:<column> <kind> [text]`"))?;
+        let here = |o: &serde_json::Value| {
+            o["line"] == line
+                && o["column"] == column
+                && o["kind"] == kind
+                && o["text"].as_str().is_some_and(|t| t.contains(text))
+        };
+        if !found.iter().any(here) {
+            let said: Vec<String> = found
+                .iter()
+                .map(|o| {
+                    format!(
+                        "{}:{} {} {}",
+                        o["line"],
+                        o["column"],
+                        o["kind"].as_str().unwrap_or(""),
+                        o["text"].as_str().unwrap_or("")
+                    )
+                })
+                .collect();
+            return Err(format!("no optimization `{expected}`; a release build made of it:\n{}", said.join("\n")));
+        }
     }
     Ok(())
 }

@@ -30,3 +30,4 @@ fn main() {
 // expect-stdout: 10
 // expect-panic: P0001
 // expect-stderr: panic[P0001]: bounds: index 1 is out of bounds: the array is empty
+// expect-optimization: 16:18 checked keeps its bounds check

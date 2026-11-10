@@ -85,3 +85,6 @@ fn main() {
 // expect-stdout: 528 equal less 152
 // expect-stdout: 10 true
 // expect-stdout: n is 123456 [item 0, item 1000, item 2000] captured 5000 some(sent 7000) a010002000 11
+// expect-optimization: 19:18 frame
+// expect-optimization: 38:17 heap the frame holds as many as it keeps
+// expect-optimization: 43:16 heap it is returned

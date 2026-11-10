@@ -47,3 +47,7 @@ fn main() {
 }
 
 // expect-stdout: 2 11 pair! [5, 7, 9] [a!, b] 41 102 cell!
+// expect-optimization: 23:5 inlined
+// expect-optimization: 31:5 inlined
+// expect-optimization: 34:5 inlined
+// expect-optimization: 41:23 inlined

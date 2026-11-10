@@ -63,3 +63,6 @@ fn main() {
 // expect-stdout: 16 2 -1
 // expect-stdout: (5, 9223372036854775806) (3, -9223372036854775806) (7, -9223372036854775802)
 // expect-stdout: [0, 10, 20, 30, 40, 50]
+// expect-optimization: 28:12 unchecked stays within its array
+// expect-optimization: 49:9 unchecked in one copy of the code
+// expect-optimization: 59:32 frame

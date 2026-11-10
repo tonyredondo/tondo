@@ -138,3 +138,7 @@ fn main() {
 // expect-stdout: 249500250000
 // expect-stdout: caught 9223193340756366400 + 473384830201856 does not fit in Int (-9223372036854775808 to 9223372036854775807)
 // expect-stdout: caught 9200000000000000000 + 100000000000000000 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-optimization: 14:9 unchecked in one copy of the code
+// expect-optimization: 28:9 unchecked in one copy of the code
+// expect-optimization: 38:9 checked
+// expect-optimization: 50:9 checked

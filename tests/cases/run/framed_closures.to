@@ -93,3 +93,7 @@ fn main() {
 // expect-stdout: stop at 3
 // expect-stdout: 250
 // expect-stdout: made 2000 [kept 0, kept 1000, kept 2000] 6 sent made 7000
+// expect-optimization: 27:11 frame
+// expect-optimization: 34:24 frame
+// expect-optimization: 60:18 heap a collection takes it
+// expect-optimization: 87:15 heap a task takes it

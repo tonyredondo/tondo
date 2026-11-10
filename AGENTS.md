@@ -130,7 +130,8 @@ its own, with `gh workflow run CI --ref <branch>`.
   writing it.
 - A feature lands with its tests and its documents: a program in
   `tests/cases` whose comments state its output, exit, panic or
-  diagnostic; the section of the specification; the guide's topic, in
+  diagnostic, and for an optimization what a release build makes of the
+  code (`// expect-optimization:`); the section of the specification; the guide's topic, in
   `crates/tondo/guide`, when users meet it; an entry in
   `docs/decisions.md` for a decision of design; and its row in
   `docs/roadmap.md`, and in the README's status when it changes it.
