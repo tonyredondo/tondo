@@ -4,6 +4,35 @@
 
 use super::*;
 
+/// The waits for a task's end: most often one, kept in place, and the rest
+/// beside it, so that a join waited for once allocates nothing for it.
+#[derive(Default)]
+pub(super) struct Waiters {
+    first: Option<(*const Wait, usize)>,
+    rest: Vec<(*const Wait, usize)>,
+}
+
+impl Waiters {
+    pub(super) fn push(&mut self, waiter: (*const Wait, usize)) {
+        match self.first {
+            None => self.first = Some(waiter),
+            Some(_) => self.rest.push(waiter),
+        }
+    }
+
+    /// Every entry of a wait, as `select` makes one for each case.
+    pub(super) fn remove(&mut self, wait: *const Wait) {
+        self.rest.retain(|&(w, _)| w != wait);
+        if self.first.is_some_and(|(w, _)| w == wait) {
+            self.first = self.rest.pop();
+        }
+    }
+
+    pub(super) fn take(&mut self) -> impl Iterator<Item = (*const Wait, usize)> {
+        self.first.take().into_iter().chain(std::mem::take(&mut self.rest))
+    }
+}
+
 /// The handle `spawn` returns (11.11). `rc` counts the program's references;
 /// the task itself only touches the object until it marks it done, and the
 /// last reference waits for that before freeing it. The result lives here
@@ -14,7 +43,7 @@ pub struct JoinObject {
     pub(super) lock: AtomicBool,
     pub(super) done: bool,
     pub(super) taken: bool,
-    pub(super) waiters: Vec<(*const Wait, usize)>,
+    pub(super) waiters: Waiters,
     pub(super) result: *mut u8,
     pub(super) size: usize,
     pub(super) align: usize,
@@ -84,7 +113,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             lock: AtomicBool::new(false),
             done: false,
             taken: false,
-            waiters: Vec::new(),
+            waiters: Waiters::default(),
             result: std::ptr::null_mut(),
             size,
             align,
@@ -146,17 +175,24 @@ pub(super) unsafe fn complete(join: *mut JoinObject) -> bool {
         lock(&j.lock);
         j.done = true;
         let detached = j.detached;
-        let mut woken: Vec<*mut Task> = Vec::new();
-        for (wait, index) in std::mem::take(&mut j.waiters) {
+        // Most often one task to wake, kept in place.
+        let (mut first, mut rest): (Option<*mut Task>, Vec<*mut Task>) = (None, Vec::new());
+        let mut woken = |task: *mut Task| match first {
+            None => first = Some(task),
+            Some(_) => rest.push(task),
+        };
+        for (wait, index) in j.waiters.take() {
             if (*wait).claim(index) {
-                woken.push((*wait).task);
+                woken((*wait).task);
             }
         }
-        if !j.group.is_null() {
-            woken.extend(group_completed(j.group, j.index));
+        if !j.group.is_null()
+            && let Some(task) = group_completed(j.group, j.index)
+        {
+            woken(task);
         }
         unlock(&j.lock);
-        woken.into_iter().for_each(notify);
+        first.into_iter().chain(rest).for_each(notify);
         detached
     }
 }
@@ -242,7 +278,7 @@ pub(super) unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
             return true;
         }
         lock_unseen(&j.lock);
-        j.waiters.retain(|&(w, _)| w != Arc::as_ptr(&wait));
+        j.waiters.remove(Arc::as_ptr(&wait));
         unlock(&j.lock);
         false
     }

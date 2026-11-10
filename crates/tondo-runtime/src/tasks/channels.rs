@@ -733,7 +733,7 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
             match case.kind {
                 RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.retain(|w| *w != waiter),
                 SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.retain(|w| *w != waiter),
-                WAIT => (*(case.handle as *mut JoinObject)).waiters.retain(|&(w, _)| w != Arc::as_ptr(&wait)),
+                WAIT => (*(case.handle as *mut JoinObject)).waiters.remove(Arc::as_ptr(&wait)),
                 NEXT => {
                     let group = &mut *(case.handle as *mut GroupObject);
                     if group.waiter.is_some_and(|(w, _)| w == Arc::as_ptr(&wait)) {
