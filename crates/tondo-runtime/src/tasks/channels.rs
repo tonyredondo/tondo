@@ -5,13 +5,80 @@
 use super::*;
 
 /// A task waiting on a channel: the value it sends, or where the value it
-/// receives goes, and how the wait ended.
+/// receives goes, and how the wait ended. It lives where the task waits,
+/// on its stack, and is linked into the channel's queue there.
 #[derive(Clone, Copy)]
 pub(super) struct Waiter {
     pub(super) wait: *const Wait,
     pub(super) index: usize,
     pub(super) value: *mut u8,
     pub(super) state: u8,
+    /// Whether it is in a queue, and its neighbours there.
+    queued: bool,
+    before: *mut Waiter,
+    after: *mut Waiter,
+}
+
+impl Waiter {
+    pub(super) fn new(wait: *const Wait, index: usize, value: *mut u8) -> Waiter {
+        let null = std::ptr::null_mut();
+        Waiter { wait, index, value, state: 0, queued: false, before: null, after: null }
+    }
+}
+
+/// The tasks waiting on one side of a channel, first to last, linked
+/// through their waiters, so that waiting takes no room of the channel's.
+/// With the channel locked.
+pub(super) struct Queue {
+    first: *mut Waiter,
+    last: *mut Waiter,
+}
+
+impl Queue {
+    pub(super) const fn new() -> Queue {
+        Queue { first: std::ptr::null_mut(), last: std::ptr::null_mut() }
+    }
+
+    pub(super) unsafe fn push(&mut self, waiter: *mut Waiter) {
+        unsafe {
+            (*waiter).queued = true;
+            (*waiter).before = self.last;
+            (*waiter).after = std::ptr::null_mut();
+            match self.last.is_null() {
+                true => self.first = waiter,
+                false => (*self.last).after = waiter,
+            }
+        }
+        self.last = waiter;
+    }
+
+    pub(super) unsafe fn pop(&mut self) -> Option<*mut Waiter> {
+        let first = self.first;
+        if first.is_null() {
+            return None;
+        }
+        unsafe { self.remove(first) };
+        Some(first)
+    }
+
+    /// Takes the waiter out, if it is still in the queue.
+    pub(super) unsafe fn remove(&mut self, waiter: *mut Waiter) {
+        unsafe {
+            if !(*waiter).queued {
+                return;
+            }
+            let (before, after) = ((*waiter).before, (*waiter).after);
+            match before.is_null() {
+                true => self.first = after,
+                false => (*before).after = after,
+            }
+            match after.is_null() {
+                true => self.last = before,
+                false => (*after).before = before,
+            }
+            (*waiter).queued = false;
+        }
+    }
 }
 
 pub(super) const MOVED: u8 = 1;
@@ -20,15 +87,15 @@ pub(super) const CLOSED: u8 = 2;
 pub(super) const DISCARDED: u8 = 3;
 
 /// Whether a channel that discards drops what is sent now: no `Receiver`
-/// is left, only the senders' holds. With the channel locked.
+/// is left, only its sender's hold. With the channel locked.
 pub(super) fn discarding(c: &ChannelObject) -> bool {
     c.discard && c.rc.load(Ordering::Acquire) <= c.senders
 }
 
-/// A channel (11.13). `rc` counts the `Receiver` handles and the sender
-/// objects; `senders` counts the latter, and the channel closes when it
-/// reaches zero. A receiver only waits while the buffer is empty, and a
-/// sender only while it is full.
+/// A channel (11.13). `rc` counts the `Receiver` handles and its sender's
+/// hold; `senders` is 1 while the sender has references, and the channel
+/// closes when it reaches zero. A receiver only waits while the buffer is
+/// empty, and a sender only while it is full.
 #[repr(C)]
 pub struct ChannelObject {
     pub(super) rc: AtomicUsize,
@@ -46,15 +113,20 @@ pub struct ChannelObject {
     /// Visits a value for the cycle collector, when it may refer back to
     /// the channel, which is then registered with it.
     pub(super) visit: Option<Visit>,
-    /// The buffered values' bytes, `count` values of `size` bytes each.
-    pub(super) buffer: VecDeque<u8>,
+    /// The buffered values' bytes, `count` values of `size` bytes each,
+    /// and the room after the channel that it may hold them in.
+    pub(super) buffer: Ring,
     pub(super) count: usize,
-    pub(super) receiving: VecDeque<*mut Waiter>,
-    pub(super) sending: VecDeque<*mut Waiter>,
+    inline: usize,
+    pub(super) receiving: Queue,
+    pub(super) sending: Queue,
+    /// Its `Sender`, which every `copy()` is another reference to: the
+    /// channel closes when the last of them goes, as it would when the last
+    /// of many senders went, and copying makes nothing.
+    pub(super) sender: SenderObject,
 }
 
-/// A `Sender` handle: one per `channel` or `copy()`, shared by the
-/// program's references to it.
+/// The `Sender` of a channel, inside it.
 #[repr(C)]
 pub struct SenderObject {
     pub(super) rc: AtomicUsize,
@@ -63,6 +135,149 @@ pub struct SenderObject {
 
 /// The most room a bounded channel takes for its values when it is made.
 const PREALLOCATED: usize = 64 * 1024;
+
+/// The values a channel holds, first to last, as bytes in a ring: in the
+/// channel's own allocation when it is bounded and they fit there, as they
+/// then always do, or on the heap, where the ring grows as it needs. With
+/// the channel locked.
+pub(crate) struct Ring {
+    data: *mut u8,
+    room: usize,
+    start: usize,
+    len: usize,
+    /// Whether `data` is the ring's to free, rather than the channel's.
+    owned: bool,
+}
+
+unsafe impl Send for Ring {}
+
+impl Ring {
+    pub(crate) const fn new() -> Ring {
+        Ring { data: std::ptr::null_mut(), room: 0, start: 0, len: 0, owned: false }
+    }
+
+    fn with_room(room: usize) -> Ring {
+        let mut ring = Ring::new();
+        ring.grow(room);
+        ring
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Where the byte `offset` bytes after the first is, for an offset
+    /// within the room: a subtraction, where `%` would divide.
+    fn at(&self, offset: usize) -> usize {
+        let at = self.start + offset;
+        if at >= self.room { at - self.room } else { at }
+    }
+
+    /// The byte `offset` bytes after the first.
+    pub(crate) fn byte(&self, offset: usize) -> u8 {
+        unsafe { *self.data.add(self.at(offset)) }
+    }
+
+    /// Copies the `size` bytes `offset` bytes after the first to `out`.
+    pub(crate) fn read(&self, offset: usize, out: *mut u8, size: usize) {
+        if size == 0 {
+            return;
+        }
+        let at = self.at(offset);
+        let first = size.min(self.room - at);
+        unsafe {
+            copy(self.data.add(at), out, first);
+            if first < size {
+                copy(self.data, out.add(first), size - first);
+            }
+        }
+    }
+
+    /// Adds the `size` bytes at `value` after the last.
+    pub(crate) fn push(&mut self, value: *const u8, size: usize) {
+        if size == 0 {
+            return;
+        }
+        if self.len + size > self.room {
+            self.grow(self.len + size);
+        }
+        let at = self.at(self.len);
+        let first = size.min(self.room - at);
+        unsafe {
+            copy(value, self.data.add(at), first);
+            if first < size {
+                copy(value.add(first), self.data, size - first);
+            }
+        }
+        self.len += size;
+    }
+
+    /// Moves the first `size` bytes to `out`.
+    pub(crate) fn pop(&mut self, out: *mut u8, size: usize) {
+        if size == 0 {
+            return;
+        }
+        self.read(0, out, size);
+        self.len -= size;
+        self.start = if self.len == 0 { 0 } else { self.at(size) };
+    }
+
+    /// Moves the bytes to a ring of its own with room for `needed`.
+    fn grow(&mut self, needed: usize) {
+        let room = needed.max(self.room * 2).max(64);
+        let layout = std::alloc::Layout::array::<u8>(room).unwrap();
+        let data = unsafe { std::alloc::alloc(layout) };
+        if data.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        self.read(0, data, self.len);
+        self.free();
+        (self.data, self.room, self.start, self.owned) = (data, room, 0, true);
+    }
+
+    fn free(&mut self) {
+        if self.owned {
+            unsafe { std::alloc::dealloc(self.data, std::alloc::Layout::array::<u8>(self.room).unwrap()) };
+        }
+    }
+
+    /// Its bytes in a ring of its own, which may outlive the channel, and
+    /// it empty.
+    pub(crate) fn take(&mut self) -> Ring {
+        let taken = std::mem::replace(self, Ring::new());
+        if taken.owned || taken.len == 0 {
+            return taken;
+        }
+        let mut own = Ring::with_room(taken.len);
+        taken.read(0, own.data, taken.len);
+        own.len = taken.len;
+        own
+    }
+}
+
+/// Copies `size` bytes: a value of 8, as most are, in one load and one
+/// store rather than a call.
+#[inline(always)]
+unsafe fn copy(from: *const u8, to: *mut u8, size: usize) {
+    unsafe {
+        match size {
+            8 => to.cast::<u64>().write_unaligned(from.cast::<u64>().read_unaligned()),
+            _ => std::ptr::copy_nonoverlapping(from, to, size),
+        }
+    }
+}
+
+impl Drop for Ring {
+    fn drop(&mut self) {
+        self.free();
+    }
+}
+
+/// A channel's allocation with `inline` bytes of room for its values after
+/// it, and where they start.
+fn channel_layout(inline: usize) -> (std::alloc::Layout, usize) {
+    std::alloc::Layout::new::<ChannelObject>().extend(std::alloc::Layout::array::<u8>(inline).unwrap()).unwrap()
+}
 
 /// `channel[T](capacity)` without its sender: the `Receiver`. A negative
 /// capacity panics with `P0001`.
@@ -85,28 +300,43 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
         );
     }
     LIVE_OBJECTS.made();
-    let channel = Box::into_raw(Box::new(ChannelObject {
-        rc: AtomicUsize::new(1),
-        lock: AtomicBool::new(false),
-        closed: false,
-        senders: 0,
-        discard: discard != 0,
-        capacity: if bounded != 0 { capacity as usize } else { usize::MAX },
-        size,
-        align: align.max(1),
-        release,
-        visit,
-        // Room for what it may hold, as it fills: growing by doubling took
-        // seven allocations to fill one of 64. Up to a limit, past which it
-        // grows as it needs.
-        buffer: VecDeque::with_capacity(match bounded {
-            0 => 0,
-            _ => (capacity as usize).saturating_mul(size).min(PREALLOCATED),
-        }),
-        count: 0,
-        receiving: VecDeque::new(),
-        sending: VecDeque::new(),
-    }));
+    // Room for what it may hold, as it fills: growing by doubling took seven
+    // allocations to fill one of 64. In its own allocation, or, past a
+    // limit, from that much on as it needs.
+    let wanted = (capacity as usize).saturating_mul(size);
+    let inline = if bounded != 0 && wanted <= PREALLOCATED { wanted } else { 0 };
+    let (layout, offset) = channel_layout(inline);
+    let channel = unsafe { std::alloc::alloc(layout) } as *mut ChannelObject;
+    if channel.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    let buffer = if inline > 0 {
+        Ring { data: unsafe { (channel as *mut u8).add(offset) }, room: inline, ..Ring::new() }
+    } else if bounded != 0 && wanted > 0 {
+        Ring::with_room(PREALLOCATED)
+    } else {
+        Ring::new()
+    };
+    unsafe {
+        channel.write(ChannelObject {
+            rc: AtomicUsize::new(1),
+            lock: AtomicBool::new(false),
+            closed: false,
+            senders: 0,
+            discard: discard != 0,
+            capacity: if bounded != 0 { capacity as usize } else { usize::MAX },
+            size,
+            align: align.max(1),
+            release,
+            visit,
+            buffer,
+            count: 0,
+            inline,
+            receiving: Queue::new(),
+            sending: Queue::new(),
+            sender: SenderObject { rc: AtomicUsize::new(0), channel },
+        })
+    };
     if visit.is_some() {
         cycles::remember(channel as *const u8, Kind::Channel);
     }
@@ -118,10 +348,7 @@ pub(crate) unsafe fn visit_channel(visitor: &mut Visitor, channel: *mut u8) {
     let c = unsafe { &*(channel as *const ChannelObject) };
     let mut value = vec![0u64; c.size.div_ceil(8).max(1)];
     for index in 0..c.count {
-        let bytes = c.buffer.range(index * c.size..(index + 1) * c.size);
-        for (at, &byte) in bytes.enumerate() {
-            unsafe { *(value.as_mut_ptr() as *mut u8).add(at) = byte };
-        }
+        c.buffer.read(index * c.size, value.as_mut_ptr() as *mut u8, c.size);
         unsafe { visitor.visit(c.visit, value.as_mut_ptr() as *mut u8) };
     }
 }
@@ -136,50 +363,42 @@ pub(crate) unsafe fn visit_sender(visitor: &mut Visitor, sender: *mut u8) {
 pub(crate) unsafe fn clear_channel(channel: *mut u8) -> Option<Taken> {
     let c = unsafe { &mut *(channel as *mut ChannelObject) };
     let release = c.release?;
-    let (mut buffer, count, size) = (std::mem::take(&mut c.buffer), std::mem::take(&mut c.count), c.size);
+    // Releasing the values may free the channel, and the room after it.
+    let (mut buffer, count, size) = (c.buffer.take(), std::mem::take(&mut c.count), c.size);
     Some(Box::new(move || {
         let mut value = vec![0u64; size.div_ceil(8).max(1)];
         for _ in 0..count {
-            pop_bytes(&mut buffer, value.as_mut_ptr() as *mut u8, size);
+            buffer.pop(value.as_mut_ptr() as *mut u8, size);
             unsafe { release(value.as_mut_ptr() as *mut u8) };
         }
     }))
 }
 
-/// A new `Sender` of the channel: the one `channel` returns, or `copy()`.
+/// The `Sender` of a channel just made, which `channel` returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sender_new(channel: *mut ChannelObject) -> *mut SenderObject {
     unsafe {
         let c = &mut *channel;
         lock(&c.lock);
-        c.senders += 1;
+        c.senders = 1;
         unlock(&c.lock);
         c.rc.fetch_add(1, Ordering::Relaxed);
+        c.sender.rc.store(1, Ordering::Relaxed);
+        &raw mut c.sender
     }
-    LIVE_OBJECTS.made();
-    Box::into_raw(Box::new(SenderObject { rc: AtomicUsize::new(1), channel }))
 }
 
+/// `sender.copy()`: another reference to the channel's sender.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sender_copy(sender: *mut SenderObject) -> *mut SenderObject {
-    unsafe { tondo_rt_sender_new((*sender).channel) }
-}
-
-/// Moves the value at the front of the buffer, `size` bytes, into `out`.
-pub(super) fn pop_bytes(buffer: &mut VecDeque<u8>, out: *mut u8, size: usize) {
-    let (front, back) = buffer.as_slices();
-    let first = front.len().min(size);
-    unsafe {
-        std::ptr::copy_nonoverlapping(front.as_ptr(), out, first);
-        std::ptr::copy_nonoverlapping(back.as_ptr(), out.add(first), size - first);
-    }
-    buffer.drain(..size);
+    unsafe { (*sender).rc.fetch_add(1, Ordering::Relaxed) };
+    sender
 }
 
 /// The first waiter of `queue` whose wait it can still claim, removed;
 /// waiters another operation claimed first are dropped.
-pub(super) unsafe fn claim_first(queue: &mut VecDeque<*mut Waiter>) -> Option<*mut Waiter> {
-    while let Some(waiter) = queue.pop_front() {
+pub(super) unsafe fn claim_first(queue: &mut Queue) -> Option<*mut Waiter> {
+    while let Some(waiter) = unsafe { queue.pop() } {
         if unsafe { (*(*waiter).wait).claim((*waiter).index) } {
             return Some(waiter);
         }
@@ -191,7 +410,7 @@ pub(super) unsafe fn claim_first(queue: &mut VecDeque<*mut Waiter>) -> Option<*m
 pub(super) unsafe fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
     c.closed = true;
     let mut woken = Vec::new();
-    for waiter in c.receiving.drain(..).chain(c.sending.drain(..)) {
+    while let Some(waiter) = unsafe { c.receiving.pop().or_else(|| c.sending.pop()) } {
         unsafe {
             if (*(*waiter).wait).claim((*waiter).index) {
                 (*waiter).state = CLOSED;
@@ -218,7 +437,7 @@ pub(super) unsafe fn try_send(c: &mut ChannelObject, value: *mut u8) -> Option<O
         }
         if c.count < c.capacity {
             tools::sent(c as *const ChannelObject as usize, c.count, current_id());
-            c.buffer.extend(std::slice::from_raw_parts(value, c.size));
+            c.buffer.push(value, c.size);
             c.count += 1;
             return Some(None);
         }
@@ -234,12 +453,12 @@ pub(super) unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<
         if c.count > 0 {
             let channel = c as *const ChannelObject as usize;
             tools::taken(channel, c.count, current_id());
-            pop_bytes(&mut c.buffer, out, c.size);
+            c.buffer.pop(out, c.size);
             c.count -= 1;
             // A sender waiting for room moves its value in.
             let woken = claim_first(&mut c.sending).map(|sender| {
                 tools::sent(channel, c.count, (*(*(*sender).wait).task).id);
-                c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
+                c.buffer.push((*sender).value, c.size);
                 c.count += 1;
                 (*sender).state = MOVED;
                 (*(*sender).wait).task
@@ -290,13 +509,13 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
             return;
         }
         let wait = Wait::new();
-        let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value, state: 0 };
-        c.sending.push_back(&mut waiter);
+        let mut waiter = Waiter::new(Arc::as_ptr(&wait), 0, value);
+        c.sending.push(&mut waiter);
         unlock(&c.lock);
         let channel = c as *const ChannelObject as usize;
         if blocked_in(SENDING, channel, || wait.block_on_task()) == CANCELLED {
             lock(&c.lock);
-            c.sending.retain(|w| *w != &raw mut waiter);
+            c.sending.remove(&mut waiter);
             unlock(&c.lock);
             drop_unsent(c, value);
             return;
@@ -349,12 +568,12 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
             return FULL;
         }
         let blocked = Wait::new();
-        let mut waiter = Waiter { wait: Arc::as_ptr(&blocked), index: 0, value, state: 0 };
-        c.sending.push_back(&mut waiter);
+        let mut waiter = Waiter::new(Arc::as_ptr(&blocked), 0, value);
+        c.sending.push(&mut waiter);
         unlock(&c.lock);
         if blocked.block_on_task() == CANCELLED {
             lock(&c.lock);
-            c.sending.retain(|w| *w != &raw mut waiter);
+            c.sending.remove(&mut waiter);
             unlock(&c.lock);
             drop_unsent(c, value);
             return SHUT;
@@ -389,8 +608,8 @@ pub(crate) unsafe fn offer_new(sender: *mut SenderObject, value: *mut u8) {
         let c = &mut *(*sender).channel;
         lock(&c.lock);
         let size = c.size;
-        let fresh = std::slice::from_raw_parts(value, size);
-        let same = c.count > 0 && c.buffer.range(c.buffer.len() - size..).eq(fresh.iter());
+        let last = c.buffer.len().wrapping_sub(size);
+        let same = c.count > 0 && (0..size).all(|at| c.buffer.byte(last + at) == *value.add(at));
         let woken = if c.closed || same { None } else { try_send(c, value) };
         unlock(&c.lock);
         woken.flatten().into_iter().for_each(notify);
@@ -422,12 +641,12 @@ pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, o
             return found as u8;
         }
         let wait = Wait::new();
-        let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: out, state: 0 };
-        c.receiving.push_back(&mut waiter);
+        let mut waiter = Waiter::new(Arc::as_ptr(&wait), 0, out);
+        c.receiving.push(&mut waiter);
         unlock(&c.lock);
         if blocked_in(RECEIVING, channel as usize, || wait.block_on_task()) == CANCELLED {
             lock(&c.lock);
-            c.receiving.retain(|w| *w != &raw mut waiter);
+            c.receiving.remove(&mut waiter);
             unlock(&c.lock);
             return 0;
         }
@@ -485,15 +704,14 @@ pub unsafe extern "C" fn tondo_rt_sender_release(sender: *mut SenderObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
-        let sender = Box::from_raw(sender);
-        LIVE_OBJECTS.gone();
-        let c = &mut *sender.channel;
+        let channel = (*sender).channel;
+        let c = &mut *channel;
         lock(&c.lock);
-        c.senders -= 1;
-        let woken = if c.senders == 0 && !c.closed { close_waits(c) } else { Vec::new() };
+        c.senders = 0;
+        let woken = if !c.closed { close_waits(c) } else { Vec::new() };
         unlock(&c.lock);
         woken.into_iter().for_each(notify);
-        tondo_rt_receiver_release(sender.channel);
+        tondo_rt_receiver_release(channel);
     }
 }
 
@@ -528,19 +746,22 @@ pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) 
             cycles::forget(channel as *const u8);
         }
         crate::live::forget_object(channel as usize);
-        let mut c = Box::from_raw(channel);
+        let c = &mut *channel;
         if let Some(release) = c.release
             && c.size > 0
         {
             let layout = std::alloc::Layout::from_size_align(c.size, c.align).unwrap();
             let value = std::alloc::alloc(layout);
             while c.count > 0 {
-                pop_bytes(&mut c.buffer, value, c.size);
+                c.buffer.pop(value, c.size);
                 c.count -= 1;
                 release(value);
             }
             std::alloc::dealloc(value, layout);
         }
+        let layout = channel_layout(c.inline).0;
+        std::ptr::drop_in_place(channel);
+        std::alloc::dealloc(channel as *mut u8, layout);
         LIVE_OBJECTS.gone();
     }
 }
@@ -713,21 +934,16 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
             return -1;
         }
         let wait = Wait::new();
-        let filler = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: std::ptr::null_mut(), state: 0 };
+        let filler = Waiter::new(Arc::as_ptr(&wait), 0, std::ptr::null_mut());
         let mut waiters = Few::new(
             filler,
-            cases.iter().enumerate().map(|(index, case)| Waiter {
-                wait: Arc::as_ptr(&wait),
-                index,
-                value: case.value,
-                state: 0,
-            }),
+            cases.iter().enumerate().map(|(index, case)| Waiter::new(Arc::as_ptr(&wait), index, case.value)),
         );
         for (index, case) in cases.iter().enumerate() {
             let waiter: *mut Waiter = &mut waiters[index];
             match case.kind {
-                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.push_back(waiter),
-                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.push_back(waiter),
+                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.push(waiter),
+                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.push(waiter),
                 WAIT => (*(case.handle as *mut JoinObject)).waiters.push((Arc::as_ptr(&wait), index)),
                 NEXT => (*(case.handle as *mut GroupObject)).waiter = Some((Arc::as_ptr(&wait), index)),
                 _ => add_timer(Duration::from_nanos(case.nanos as u64), wait.clone(), index),
@@ -740,8 +956,8 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
         for (index, case) in cases.iter().enumerate() {
             let waiter: *mut Waiter = &mut waiters[index];
             match case.kind {
-                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.retain(|w| *w != waiter),
-                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.retain(|w| *w != waiter),
+                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.remove(waiter),
+                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.remove(waiter),
                 WAIT => (*(case.handle as *mut JoinObject)).waiters.remove(Arc::as_ptr(&wait)),
                 NEXT => {
                     let group = &mut *(case.handle as *mut GroupObject);
@@ -825,7 +1041,92 @@ pub(super) unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Few;
+    use super::{Few, Queue, Ring, Waiter};
+
+    /// A ring in room of another's keeps its values in order as they wrap
+    /// around it, also split at its end, and moves them to room of its own
+    /// when it grows past it, as it is wrapped, or is taken; values of no
+    /// bytes take none.
+    #[test]
+    fn a_ring_keeps_its_values_in_order() {
+        fn push(ring: &mut Ring, next: &mut u32) {
+            ring.push(next.to_le_bytes().as_ptr(), 4);
+            *next += 1;
+        }
+        fn pop(ring: &mut Ring, first: &mut u32) {
+            let mut out = [0u8; 4];
+            ring.pop(out.as_mut_ptr(), 4);
+            assert_eq!(u32::from_le_bytes(out), *first);
+            *first += 1;
+        }
+        let (mut next, mut first) = (0u32, 0u32);
+        for take in [false, true] {
+            let mut room = [0u8; 10];
+            let mut ring = Ring { data: room.as_mut_ptr(), room: room.len(), ..Ring::new() };
+            push(&mut ring, &mut next);
+            for _ in 0..7 {
+                push(&mut ring, &mut next);
+                pop(&mut ring, &mut first);
+            }
+            ring.push([].as_ptr(), 0);
+            assert!(!ring.owned && ring.start != 0);
+            let mut ring = match take {
+                false => ring,
+                true => {
+                    let taken = ring.take();
+                    assert!(ring.len() == 0 && !ring.owned);
+                    taken
+                }
+            };
+            assert_eq!(ring.owned, take);
+            for _ in 0..4 {
+                push(&mut ring, &mut next);
+            }
+            assert!(ring.owned && ring.len() == 20);
+            let mut second = [0u8; 4];
+            ring.read(4, second.as_mut_ptr(), 4);
+            assert_eq!(u32::from_le_bytes(second), first + 1);
+            assert_eq!(ring.byte(4) as u32, first + 1);
+            while ring.len() > 0 {
+                pop(&mut ring, &mut first);
+            }
+        }
+        assert_eq!(first, next);
+    }
+
+    /// The waiters of a queue leave it first to last, and one taken out
+    /// anywhere, or twice, leaves the others linked as they were.
+    #[test]
+    fn a_queue_keeps_its_order_as_waiters_leave() {
+        let mut waiters: Vec<Waiter> =
+            (0..5).map(|index| Waiter::new(std::ptr::null(), index, std::ptr::null_mut())).collect();
+        let at: Vec<*mut Waiter> = waiters.iter_mut().map(|w| w as *mut Waiter).collect();
+        let mut queue = Queue::new();
+        let drained = |queue: &mut Queue| {
+            let mut out = Vec::new();
+            while let Some(waiter) = unsafe { queue.pop() } {
+                out.push(unsafe { (*waiter).index });
+            }
+            out
+        };
+        unsafe {
+            at.iter().for_each(|&w| queue.push(w));
+            // The middle, the first and the last; then one already out.
+            queue.remove(at[2]);
+            queue.remove(at[0]);
+            queue.remove(at[4]);
+            queue.remove(at[2]);
+            assert_eq!(drained(&mut queue), [1, 3]);
+            // Empty, it takes waiters again, also those that left it.
+            queue.remove(at[1]);
+            [at[4], at[0], at[2]].iter().for_each(|&w| queue.push(w));
+            assert_eq!(queue.pop().map(|w| (*w).index), Some(4));
+            queue.push(at[3]);
+            queue.remove(at[3]);
+            assert_eq!(drained(&mut queue), [0, 2]);
+            assert!(queue.first.is_null() && queue.last.is_null());
+        }
+    }
 
     /// A `select` locks each of its objects once: two cases on one channel
     /// lock it once, and every other channel still is locked.

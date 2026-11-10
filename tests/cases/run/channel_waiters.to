@@ -1,0 +1,116 @@
+// The tasks that wait on a channel are linked into its queues where they
+// wait: each value goes to one receiver, those cancelled in the middle of a
+// queue leave the others in it, a close wakes all of them, a channel that
+// discards lets its waiting senders go, and a `select` that waits twice on
+// one channel leaves both places when it ends.
+
+import std.console
+import std.time
+
+fn take(inbox: Receiver[Int], out: Sender[Int]) {
+    match inbox.receive() {
+        some(value) => out.send(value)
+        none => out.send(-1)
+    }
+}
+
+fn put(out: Sender[Int], value: Int) {
+    out.send(value)
+}
+
+fn either(inbox: Receiver[Int], same: Receiver[Int]): Int {
+    select {
+        let value = inbox.receive() => value.unwrapOr(-1)
+        let value = same.receive() => value.unwrapOr(-2)
+    }
+}
+
+fn sum(got: Receiver[Int], count: Int): Int {
+    var total = 0
+    for _ in 0..count {
+        total += got.receive().unwrapOr(1000)
+    }
+    total
+}
+
+/// Senders wait for room in a channel that discards, and its receiver goes.
+fn abandoned(): Array[Join[Unit]] {
+    let (out, _inbox) = channel[Int](1, discardWhenAbandoned: true)
+    out.send(0)
+    var putters: Array[Join[Unit]] = []
+    for value in 1..=3 {
+        putters.push(spawn put(out.copy(), value))
+    }
+    time.sleep(time.milliseconds(5))
+    putters
+}
+
+fn main() {
+    // Receivers in line, two of the middle ones cancelled.
+    let (values, inbox) = channel[Int]()
+    let (results, got) = channel[Int](16)
+    var takers: Array[Join[Unit]] = []
+    for _ in 0..2 {
+        takers.push(spawn take(inbox, results.copy()))
+    }
+    let third = spawn take(inbox, results.copy())
+    let fourth = spawn take(inbox, results.copy())
+    for _ in 0..2 {
+        takers.push(spawn take(inbox, results.copy()))
+    }
+    time.sleep(time.milliseconds(5))
+    third.cancel()
+    fourth.cancel()
+    for value in [10, 20, 30, 40] {
+        values.send(value)
+    }
+    console.println("taken {sum(got, 4)}")
+    // The close wakes those still waiting.
+    for _ in 0..3 {
+        takers.push(spawn take(inbox, results.copy()))
+    }
+    time.sleep(time.milliseconds(5))
+    values.close()
+    console.println("closed {sum(got, 3)}")
+
+    // Senders waiting for room, one of the middle ones cancelled.
+    let (full, room) = channel[Int](1)
+    full.send(1)
+    var putters = [spawn put(full.copy(), 2)]
+    let second = spawn put(full.copy(), 4)
+    putters.push(spawn put(full.copy(), 8))
+    putters.push(spawn put(full.copy(), 16))
+    time.sleep(time.milliseconds(5))
+    second.cancel()
+    var sent = 0
+    for _ in 0..4 {
+        sent += room.receive().unwrapOr(1000)
+    }
+    console.println("sent {sent}")
+    match room.receive(timeout: time.milliseconds(5)) {
+        some(value) => console.println("late {value}")
+        none => console.println("nothing more")
+    }
+
+    for putter in abandoned() {
+        putter.wait()
+    }
+    console.println("let go")
+
+    // Two places in one queue: one wins, and the other is gone after.
+    let (twice, both) = channel[Int]()
+    let picker = spawn either(both, both)
+    time.sleep(time.milliseconds(5))
+    twice.send(5)
+    console.println("picked {picker.wait()}")
+    twice.send(6)
+    console.println("then {both.receive().unwrapOr(-3)}")
+}
+
+// expect-stdout: taken 100
+// expect-stdout: closed -3
+// expect-stdout: sent 27
+// expect-stdout: nothing more
+// expect-stdout: let go
+// expect-stdout: picked 5
+// expect-stdout: then 6

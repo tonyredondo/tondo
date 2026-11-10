@@ -1,0 +1,63 @@
+// A channel has one sender, inside it, and each `copy()` is another
+// reference to it: the channel closes when the last copy goes, wherever it
+// went, `close()` through any copy closes it for all of them, and each
+// copy sees the channel abandoned.
+
+import std.console
+
+fn produce(out: Sender[Int], from: Int) {
+    for value in from..from + 3 {
+        out.send(value)
+    }
+}
+
+type Holder = {
+    out: Sender[Int]
+}
+
+fn orphan(): Sender[Int] {
+    let (out, _inbox) = channel[Int]()
+    out
+}
+
+fn main() {
+    // Producers with a copy each: the receiver ends after the last.
+    let (out, inbox) = channel[Int](2)
+    let a = spawn produce(out.copy(), 0)
+    let b = spawn produce(out.copy(), 10)
+    let holder = Holder { out: out.copy() }
+    let c = spawn produce(out, 100)
+    let Holder { out: kept } = holder
+    let d = spawn produce(kept, 20)
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    a.wait()
+    b.wait()
+    c.wait()
+    d.wait()
+    console.println("total {total}")
+
+    // Closed through a copy, for every copy.
+    let (first, closing) = channel[Int](4)
+    let second = first.copy()
+    first.send(1)
+    second.close()
+    console.println("{first.isClosed()} {second.isClosed()} {closing.isClosed()}")
+    match recover { first.send(2) } {
+        ok(_) => console.println("sent")
+        err(caught) => console.println(caught.message)
+    }
+    console.println("{closing.receive()} {closing.receive()}")
+
+    let lonely = orphan()
+    let copy = lonely.copy()
+    console.println("{lonely.isAbandoned()} {copy.isAbandoned()}")
+}
+
+// expect-stdout: total 402
+// expect-stdout: true true true
+// expect-stdout: cannot send on this channel: it was closed
+// expect-stdout: some(1) none
+// expect-stdout: true true

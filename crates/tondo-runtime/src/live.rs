@@ -440,7 +440,7 @@ struct Held {
 enum Staged {
     Ref(usize, *mut u8, usize),
     Sync(usize, *mut u8, usize),
-    Channel(usize, std::collections::VecDeque<u8>, usize),
+    Channel(usize, super::tasks::Ring, usize),
 }
 
 /// What every value with identity of a type of another shape holds,
@@ -511,9 +511,7 @@ fn unstage(staged: Vec<Staged>, held: &[Held]) {
                 let layout = std::alloc::Layout::from_size_align(h.size.max(1), h.align.max(1)).expect("a layout");
                 let value = unsafe { std::alloc::alloc(layout) };
                 for at in 0..buffer.len() / h.size.max(1) {
-                    for byte in 0..h.size {
-                        unsafe { value.add(byte).write(buffer[at * h.size + byte]) };
-                    }
+                    buffer.read(at * h.size, value, h.size);
                     if let Some(release) = h.release {
                         unsafe { release(value) };
                     }

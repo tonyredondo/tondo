@@ -55,7 +55,7 @@ pub(crate) unsafe fn channel_convert(
     size: usize,
     align: usize,
     release: Option<crate::Glue>,
-) -> Option<VecDeque<u8>> {
+) -> Option<Ring> {
     let c = unsafe { &mut *(channel as *mut ChannelObject) };
     lock(&c.lock);
     let (old, new) = (
@@ -63,28 +63,22 @@ pub(crate) unsafe fn channel_convert(
         std::alloc::Layout::from_size_align(size.max(1), align).unwrap(),
     );
     let (from, to) = unsafe { (std::alloc::alloc(old), std::alloc::alloc(new)) };
-    let mut out = VecDeque::new();
+    let mut out = Ring::new();
     let mut made = 0;
     let mut fine = true;
     for index in 0..c.count {
-        let at = index * c.size;
-        for byte in 0..c.size {
-            unsafe { from.add(byte).write(c.buffer[at + byte]) };
-        }
+        c.buffer.read(index * c.size, from, c.size);
         if !convert(from, to) {
             fine = false;
             break;
         }
-        out.extend(unsafe { std::slice::from_raw_parts(to, size) });
+        out.push(to, size);
         made += 1;
     }
     unlock(&c.lock);
     if !fine {
         for index in 0..made {
-            let at = index * size;
-            for byte in 0..size {
-                unsafe { to.add(byte).write(out[at + byte]) };
-            }
+            out.read(index * size, to, size);
             if let Some(release) = release {
                 unsafe { release(to) };
             }
@@ -102,7 +96,7 @@ pub(crate) unsafe fn channel_convert(
 /// theirs.
 pub(crate) unsafe fn channel_commit(
     channel: usize,
-    buffer: VecDeque<u8>,
+    buffer: Ring,
     size: usize,
     align: usize,
     release: Option<crate::Glue>,
@@ -126,9 +120,7 @@ pub(crate) unsafe fn channel_commit(
         let layout = std::alloc::Layout::from_size_align(old_size, old_align).unwrap();
         let value = unsafe { std::alloc::alloc(layout) };
         for index in 0..old.len() / old_size {
-            for byte in 0..old_size {
-                unsafe { value.add(byte).write(old[index * old_size + byte]) };
-            }
+            old.read(index * old_size, value, old_size);
             unsafe { release(value) };
         }
         unsafe { std::alloc::dealloc(value, layout) };
