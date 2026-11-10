@@ -97,7 +97,11 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         1 => {
             fence(Ordering::Acquire);
             LIVE_OBJECTS.gone();
-            forget_positions(s);
+            // Only a long string's positions are kept, and its room never
+            // shrinks, even if it does.
+            if unsafe { (*s).cap } >= POSITIONED_FROM {
+                forget_positions(s);
+            }
             unsafe { dealloc(s as *mut u8, str_layout((*s).cap)) }
         }
         0 => runtime_fault("string released after it was freed"),
@@ -201,9 +205,8 @@ pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize>
 /// The number of scalars, from the string's slot when it has one.
 pub(crate) unsafe fn scalar_count(s: *const Str) -> usize {
     let bytes = unsafe { str_bytes(s) };
-    let slot = position_slot(s);
-    if bytes.len() >= POSITIONED_FROM && POSITIONED[slot].load(Ordering::Relaxed) == s as usize {
-        let held = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
+    if bytes.len() >= POSITIONED_FROM && POSITIONED[position_slot(s)].load(Ordering::Relaxed) == s as usize {
+        let held = POSITIONS[position_slot(s)].lock().unwrap_or_else(|e| e.into_inner());
         if let Some(positions) = held.as_ref().filter(|p| p.text == s as usize && p.len == bytes.len()) {
             return positions.count;
         }
