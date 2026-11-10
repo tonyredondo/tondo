@@ -47,8 +47,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Statement::LendAt(local, guard) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
+                    // The cell's value, read where the cell keeps it; none
+                    // for an empty guard, as a `tryUpdate` that found the
+                    // lock taken has.
                     let guard = self.scalar(guard);
-                    let address = self.e.call_rt(Rt::SyncValue, &[guard]).unwrap();
+                    let (read, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                    self.e.fb.append_block_param(done, POINTER);
+                    let none = self.e.fb.ins().iconst(POINTER, 0);
+                    self.e.fb.ins().brif(guard, read, &[], done, &[none.into()]);
+                    self.e.fb.switch_to_block(read);
+                    let cell = self.e.fb.ins().band_imm_s(guard, !1);
+                    let address = self.e.fb.ins().load(POINTER, flags(), cell, SYNC_VALUE);
+                    self.e.fb.ins().jump(done, &[address.into()]);
+                    self.e.fb.switch_to_block(done);
+                    let address = self.e.fb.block_params(done)[0];
                     self.define(var, address);
                 }
             }

@@ -154,7 +154,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let release = self.e.glue_or_null(Glue::Release, state);
                 let visit = self.e.glue_or_null(Glue::Visit, state);
                 let cell = self.e.call_rt(Rt::SyncNew, &[size, align, release, visit]).unwrap();
-                let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
+                let address = self.e.fb.ins().load(POINTER, flags(), cell, SYNC_VALUE);
                 self.e.store_val(address, state, value);
                 self.live_object(cell, state, 1);
                 Some(Val::Scalar(cell))

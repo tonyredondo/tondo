@@ -26,15 +26,16 @@ pub struct SyncObject {
     rc: AtomicUsize,
     /// `WRITER`, `PARKED`, and the number of readers in units of `READER`.
     state: AtomicUsize,
+    /// The value: after the cell, in its allocation, until a reload puts
+    /// one of another type on the heap. Compiled code reads it at 16
+    /// (`SYNC_VALUE` in codegen).
+    value: *mut u8,
     /// Guards `waiting` and `changes`.
     queue: AtomicBool,
     /// Tasks waiting to take it, whether to change it, and since when.
     waiting: VecDeque<(*const Wait, bool, std::time::Instant)>,
     /// Tasks in `updateWhen` waiting for the value to change.
     changes: Vec<*const Wait>,
-    /// The value: after the cell, in its allocation, until a reload puts
-    /// one of another type on the heap.
-    value: *mut u8,
     size: usize,
     align: usize,
     /// The size and alignment the cell was made with room for.
@@ -47,6 +48,8 @@ pub struct SyncObject {
     /// the debugger's watch of the cell stops.
     writer: std::sync::atomic::AtomicU64,
 }
+
+const _: () = assert!(std::mem::offset_of!(SyncObject, value) == 16);
 
 /// A cell's allocation with room for a value of `size` bytes after it, and
 /// where the value starts.
@@ -86,7 +89,7 @@ const TRY: u8 = 2;
 const SPIN_ROUNDS: u32 = 8;
 
 /// A new cell for a value of `size` bytes, which compiled code stores at
-/// `tondo_rt_sync_value`.
+/// the address the cell keeps at 16.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_sync_new(
     size: usize,

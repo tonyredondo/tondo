@@ -36,6 +36,15 @@ fn twice(outer: sync.Mutex[Int], inner: sync.RwLock[Big], turns: Int) {
     }
 }
 
+fn holding(cell: sync.Mutex[Int], go: Receiver[Int], ready: Sender[Int]) {
+    cell.update(
+        (n) {
+            ready.send(1)
+            n += go.receive().unwrapOr(0)
+        },
+    )
+}
+
 fn again(cell: sync.Mutex[Int]): Int {
     match recover {
         cell.update(
@@ -74,6 +83,20 @@ fn main() {
     }
     console.println("caught {caught > 0} {cell.get()}")
 
+    // Tried while another task holds it: no value to change.
+    let (go, goes) = channel[Int](1)
+    let (ready, readied) = channel[Int](1)
+    let held = sync.Mutex(10)
+    let keeper = spawn holding(held, goes, ready)
+    _ = readied.receive()
+    let tried = match held.tryUpdate((n) { n }) {
+        some(value) => "got {value}"
+        none => "busy"
+    }
+    go.send(5)
+    keeper.wait()
+    console.println("{tried} {held.tryUpdate((n) { n })}")
+
     // Cells of nothing, of text, and one holding a closure that holds it.
     let nothing = sync.Mutex(())
     nothing.set(())
@@ -97,4 +120,5 @@ fn main() {
 
 // expect-stdout: 2000 2000 2000 big
 // expect-stdout: caught true 1
+// expect-stdout: busy some(15)
 // expect-stdout: ab

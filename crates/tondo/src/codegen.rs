@@ -75,6 +75,9 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
+/// Where a `std.sync` cell (`SyncObject`) keeps the address of its value,
+/// after its count and its state.
+const SYNC_VALUE: i32 = 16;
 /// Where a string's length is in its header (`Str`), after its count, its
 /// room after that, and where its bytes start.
 const STRING_LENGTH: i32 = 8;
