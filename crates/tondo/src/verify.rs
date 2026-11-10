@@ -2,11 +2,23 @@
 //! a debug build of `tondo`, as the tests run it: no local is read on a
 //! path that has not assigned it, which the generated code would read as
 //! zeros. A local starts as zeros, so releasing one that no path assigned
-//! releases nothing, and reading one that holds nothing, as `Unit`, reads
-//! nothing: those are not reads here.
+//! releases nothing, and reading one whose only value is zeros, as `Unit`
+//! or `!Never`, reads that value: those are not reads here.
 
 use crate::mir::*;
-use crate::types::{Ty, Types};
+use crate::types::{Ty, TyKind, Types};
+
+/// Whether the only value of a type is zeros: what holds nothing, and a
+/// result that cannot fail of it, which a function that gives nothing
+/// gives where one is expected.
+fn nothing(types: &Types, ty: Ty) -> bool {
+    match types.kind(types.repr(ty)) {
+        TyKind::Unit | TyKind::Never | TyKind::Error => true,
+        TyKind::Result(ok, error) => nothing(types, *ok) && types.repr(*error) == Ty::NEVER,
+        TyKind::Tuple(items) => items.iter().all(|&item| nothing(types, item)),
+        _ => false,
+    }
+}
 
 /// Panics, in a debug build of `tondo`, at the first body that reads a
 /// local before every path to the read assigns it, after `stage`, with
@@ -70,7 +82,7 @@ pub fn unassigned(body: &Body, types: &Types) -> Option<String> {
     if blocks == 0 {
         return None;
     }
-    let empty: Vec<bool> = body.locals.iter().map(|&ty| types.repr(ty) == Ty::UNIT).collect();
+    let empty: Vec<bool> = body.locals.iter().map(|&ty| nothing(types, ty)).collect();
     let successors = |block: usize| match &body.blocks[block].terminator {
         Terminator::Goto(to) => vec![to.0 as usize],
         Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
