@@ -2219,6 +2219,7 @@ tondo test [<project> | --project <dir>]
            [--schedules <positive-int>]
            [--watch]
            [--artifacts <path>]
+           [--exec <command>]
            [--update-snapshots]
            [--diagnostic-format <human|json>]
            [--test-format <human|json|events>]
@@ -2284,7 +2285,17 @@ Reglas:
 - `--list` no ejecuta bodies ni genera código: le basta el análisis de los
   tests. No admite `--show-output`, `--deny-skips` ni un
   reporte `junit`; tampoco admite `--retry`, `--repeat`, `--allow-flaky`,
-  `--artifacts` ni `--update-snapshots`. Sí admite los tres selectores,
+  `--artifacts`, `--exec` ni `--update-snapshots`.
+- `--exec <command>` ejecuta cada trabajador bajo una orden, como
+  `go test -exec`: el toolchain parte `<command>` en palabras por los
+  espacios, sin intérprete, y ejecuta esas palabras seguidas del ejecutable
+  de los tests, y de qemu antes de él cuando es de otra máquina. Sirve para
+  examinar los tests con las herramientas del sistema, como
+  `--exec "perf record -g"`, `valgrind` o `strace -f`. La orden debe ejecutar
+  el programa que recibe con su entorno, su entrada y su salida tal cual: el
+  protocolo de los trabajadores no cambia. Lo que la orden misma escribe va
+  a los archivos que ella nombra, como `perf stat -o <archivo>`: la salida
+  de los trabajadores la recoge el runner. Sí admite los tres selectores,
   sharding, orden y reporte `json`.
 - `--jobs` vale `1` por defecto.
 - `--timeout` acepta un número positivo de segundos y aplica por test hoja y por

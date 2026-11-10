@@ -138,6 +138,10 @@ test parsing {
 - `--profile cpu` (or `memory`) writes a profile of each test, or with
   `--bench` of what each benchmark measured, to `target/profiles`, which
   `tondo profile show` reads (topic `stdlib`).
+- `--exec "perf record -g"` runs the tests' executable under a command, as
+  a profiler, `valgrind` or `strace -f`: the command's words, then the
+  executable and its arguments. What the command writes goes to the files
+  it names, as `perf stat -o stat.txt`; the runner keeps the tests' output.
 - `--against main` builds the tests of a git revision and runs each next to
   these on the same machine; with `--max-regression 5`, a benchmark 5%
   slower, or allocating more, fails the run: a gate for CI.

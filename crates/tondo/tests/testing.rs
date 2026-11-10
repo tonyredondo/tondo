@@ -2511,3 +2511,29 @@ fn a_plain_run_tries_the_orders_of_tasks() {
     let (stdout, _, _) = tondo(&dir, &["test", "--schedules", "1"]);
     assert!(!stdout.contains("failed in order") && !stdout.contains("ran in one order"), "{stdout}");
 }
+
+/// `--exec` runs the tests' executable under a command, which gets the
+/// executable and its arguments after its own words, and the tests run as
+/// without it; `--list` runs nothing to put under one.
+#[test]
+fn runs_the_tests_under_a_command() {
+    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join("exec-wrapper");
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    let marker = scratch.join("ran");
+    let wrapper = scratch.join("wrap.sh");
+    std::fs::write(&wrapper, format!("#!/bin/sh\necho \"$1 $2\" >> {}\nshift\nexec \"$@\"\n", marker.display()))
+        .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = format!("{} given", wrapper.display());
+    let (stdout, stderr, status) =
+        tondo(&sample(), &["test", "--exec", &command, "--exact", "sample::unit::sample::logsAndTags"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("logsAndTags ... ok"), "{stdout}");
+    let ran = std::fs::read_to_string(&marker).unwrap();
+    assert!(ran.lines().all(|line| line.starts_with("given /")), "{ran}");
+    let (_, stderr, status) = tondo(&sample(), &["test", "--list", "--exec", &command]);
+    assert_eq!(status, 2, "{stderr}");
+    assert!(stderr.contains("--exec"), "{stderr}");
+}

@@ -89,6 +89,9 @@ pub struct Options {
     /// What runs the tests' executable when it is for another machine:
     /// qemu's user emulation (toolchain 7.8).
     pub launcher: Option<PathBuf>,
+    /// `--exec`: the command, by words, that runs the executable and its
+    /// arguments, as a profiler or a tracer does (testing 10).
+    pub exec: Vec<String>,
     /// Where attachments go; `target/test-artifacts` of the project if not.
     pub artifacts: Option<PathBuf>,
     /// Records missing and changed snapshots instead of failing on them.

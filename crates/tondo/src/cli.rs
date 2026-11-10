@@ -150,13 +150,14 @@ pub const COMMANDS: &[Command] = &[
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
             "          [--models]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
-            "          [--static] [--debug] [--library] [--target <target>]",
+            "          [--static] [--debug] [--library] [--target <target>] [--exec <command>]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",
             "again as its files change; --bench measures its benchmarks,",
             "--fuzz searches for inputs that fail its fuzz tests, and",
-            "--models checks the models of `std.model` alone",
+            "--models checks the models of `std.model` alone; --exec runs",
+            "the tests' executable under a command, as `perf record -g`",
         ],
     },
     Command {

@@ -201,14 +201,12 @@ fn worker(
         &std::process::id().to_le_bytes(),
         format!("{:?}{:?}", Instant::now(), std::thread::current().id()).as_bytes(),
     ]);
-    let mut command = match &run.options.launcher {
-        Some(launcher) => {
-            let mut command = Command::new(launcher);
-            command.arg(executable);
-            command
-        }
-        None => Command::new(executable),
-    };
+    // `--exec`'s words, then qemu for another machine, then the executable.
+    let mut words: Vec<std::ffi::OsString> = run.options.exec.iter().map(Into::into).collect();
+    words.extend(run.options.launcher.iter().map(Into::into));
+    words.push(executable.into());
+    let mut command = Command::new(&words[0]);
+    command.args(&words[1..]);
     command
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)

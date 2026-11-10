@@ -333,6 +333,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         artifacts: None,
         update_snapshots: false,
         launcher: None,
+        exec: Vec::new(),
         bench: None,
         save_baseline: None,
         baseline: None,
@@ -520,6 +521,12 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--json" => options.json = true,
             "--update-snapshots" => options.update_snapshots = true,
             "--artifacts" => options.artifacts = Some(PathBuf::from(value()?)),
+            "--exec" => {
+                options.exec = value()?.split_whitespace().map(String::from).collect();
+                if options.exec.is_empty() {
+                    return Err(usage("--exec names a command, as `--exec \"perf record -g\"`".into()));
+                }
+            }
             "--test-format" => match value()?.as_str() {
                 "human" => (options.json, options.events) = (false, false),
                 "json" => (options.json, options.events) = (true, false),
@@ -609,6 +616,9 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         if options.jobs != 1 || random {
             return Err(usage("--update-snapshots runs with --jobs 1 and the canonical order".into()));
         }
+    }
+    if options.list && given("--exec") {
+        return Err(usage("--list runs nothing, so it does not go with --exec".into()));
     }
     if options.list && given("--artifacts") {
         return Err(usage("--list attaches nothing, so it does not go with --artifacts".into()));
