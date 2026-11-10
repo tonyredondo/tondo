@@ -2130,7 +2130,10 @@ significan lo de siempre.
 `tondo optimizations` dice qué hace un build de release con el código propio
 del programa, sin generarlo: en cada sitio, qué llamadas copia en su lugar y
 cuáles deja como llamadas, y por qué; qué textos y closures hace en el frame,
-sin el heap, y qué retiene en el heap a los demás; qué comprobaciones de
+sin el heap, y qué retiene en el heap a los demás; qué más hace en el heap:
+los arrays cuyos valores no son todos constantes (uno de constantes va en los
+datos del programa), los mapas y los sets, los slices, que copian su parte, y
+la caja de un valor cuyo tipo se contiene a sí mismo; qué comprobaciones de
 límites y de desbordamiento quita y cuáles deja en un bucle, donde cuestan
 más; y qué productos y divisiones hace sin multiplicar ni dividir. Sirve para
 ver, antes de medir, por qué un código asigna o comprueba más de lo que se

@@ -412,21 +412,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let types = self.e.cg.types();
         let TyKind::Array(element) = *types.kind(types.repr(ty)) else { return None };
-        let element = types.repr(element);
-        let fits = |constant: &Const| match constant {
-            Const::Int(_, of) | Const::Float(_, of) => types.repr(*of) == element,
-            Const::Bool(_) => element == Ty::BOOL,
-            Const::Char(_) => element == Ty::CHAR,
-            Const::Str(_) => element == Ty::STRING,
-            Const::Bytes(_, of) => types.repr(*of) == element,
-            Const::Unit => false,
-        };
         // An empty one too, as the notes of a derived encoder at every call:
         // the first change copies it, as it would have allocated anyway.
         values
             .iter()
             .map(|value| match value {
-                Operand::Const(constant) if fits(constant) => Some(constant.clone()),
+                Operand::Const(constant) if in_data(types, element, constant) => Some(constant.clone()),
                 _ => None,
             })
             .collect()
@@ -515,5 +506,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         };
         self.e.fb.ins().call(callee, &[]);
+    }
+}
+
+/// Whether a constant element of an array literal goes, with the array,
+/// in the program's data rather than on the heap (`constants`).
+pub(crate) fn in_data(types: &crate::types::Types, element: Ty, constant: &Const) -> bool {
+    let element = types.repr(element);
+    match constant {
+        Const::Int(_, of) | Const::Float(_, of) => types.repr(*of) == element,
+        Const::Bool(_) => element == Ty::BOOL,
+        Const::Char(_) => element == Ty::CHAR,
+        Const::Str(_) => element == Ty::STRING,
+        Const::Bytes(_, of) => types.repr(*of) == element,
+        Const::Unit => false,
     }
 }

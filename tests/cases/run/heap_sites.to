@@ -1,0 +1,30 @@
+// What a release build makes on the heap, as `tondo optimizations` tells
+// it: an array whose values are not all constants, a map, a set, a slice,
+// and the box of a value whose type holds itself; an array of constants is
+// in the program's data and is not told. Each still holds what it should.
+
+import std.console
+
+type Node = { value: Int, next: Node? }
+
+fn main() {
+    let fixed = [1, 2, 3]
+    let n = fixed.length()
+    let computed = [n, n * 2]
+    let names = ["a": 1, "b": n]
+    let seen = Set[Int]()
+    let part = computed[0:1]
+    let list = Node { value: 1, next: Node { value: n, next: none } }
+    let second = match list.next {
+        some(next) => next.value
+        none => 0
+    }
+    console.println("{fixed} {computed} {names.length()} {seen.length()} {part} {second}")
+}
+
+// expect-stdout: [1, 2, 3] [3, 6] 2 0 [3] 3
+// expect-optimization: 13:20 heap an array whose values are not all constants
+// expect-optimization: 14:17 heap a map
+// expect-optimization: 15:16 heap a set
+// expect-optimization: 16:16 heap a slice copies its part
+// expect-optimization: 17:39 heap the `Node` in it holds itself

@@ -5662,7 +5662,10 @@ says, at each place of the program's own code, what they did and what they could
 inlined and those kept, with why; the texts and closures made in the frame, and what keeps the
 others on the heap, followed through the copies to a call, a return, a value or a task; the bounds
 and overflow checks dropped, the ones an innermost loop keeps, and the products and divisions done
-without multiplying or dividing. The passes write a remark only when it is asked for, so a build
+without multiplying or dividing; and what else is made on the heap at the code that makes it,
+arrays whose values are not all constants, maps and sets, slices and the boxes of a type that holds
+itself, by the rules codegen follows. What a call allocates inside is told in the called function,
+or, for the standard library's, left to the memory profile, which knows the stacks. The passes write a remark only when it is asked for, so a build
 does the same work and makes the same bytes as before.
 
 A place is told once, with the functions whose code it is in: its own, and the ones it was inlined

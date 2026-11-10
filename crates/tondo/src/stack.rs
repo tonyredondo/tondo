@@ -33,7 +33,53 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
         for (span, kind, text) in remarks {
             crate::mir_text::remark(body, span, kind, || text);
         }
+        if crate::mir_text::remarking() {
+            for (span, text) in allocations(body, types) {
+                crate::mir_text::remark(body, span, "heap", || text);
+            }
+        }
     }
+}
+
+/// What else a body makes on the heap, at the code that makes it: arrays
+/// whose values are not all constants, maps and sets, slices, and the
+/// boxes of a value whose type holds itself (`tondo optimizations`).
+fn allocations(body: &Body, types: &Types) -> Vec<(crate::source::Span, String)> {
+    let mut found = Vec::new();
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let Statement::Assign(place, rvalue, span) = statement else { continue };
+        let ty = body.place_ty(types, place);
+        let text = match &**rvalue {
+            Rvalue::Array(values, _) => {
+                let crate::types::TyKind::Array(element) = *types.kind(types.repr(ty)) else { continue };
+                let constant = |value: &Operand| matches!(value, Operand::Const(constant) if crate::codegen::in_data(types, element, constant));
+                if values.iter().all(constant) {
+                    continue;
+                }
+                "is made on the heap: an array whose values are not all constants".to_string()
+            }
+            Rvalue::MapOp(crate::hir::MapOp::New, ..) => match types.kind(types.repr(ty)) {
+                crate::types::TyKind::Set(_) => "is made on the heap: a set".to_string(),
+                _ => "is made on the heap: a map".to_string(),
+            },
+            Rvalue::Slice(..) => "is made on the heap: a slice copies its part".to_string(),
+            Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) => {
+                let boxed = operands.iter().find_map(|operand| {
+                    let component = match operand {
+                        Operand::Copy(place) => body.place_ty(types, place),
+                        Operand::Const(_) => return None,
+                    };
+                    types.is_boxed(ty, component).then_some(component)
+                });
+                let Some(component) = boxed else { continue };
+                let name = types.display(component);
+                format!("is made with a box on the heap: the `{name}` in it holds itself")
+            }
+            _ => continue,
+        };
+        found.push((*span, text));
+    }
+    found
 }
 
 /// What `framed` finds: the locals made in the frame; while the MIR is to
