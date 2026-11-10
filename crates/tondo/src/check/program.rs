@@ -941,9 +941,15 @@ impl<'a> Checker<'a> {
         let Some((ty, values)) = inner(&mut call) else { return call };
         let json = ty != Ty::STRING;
         if json {
+            // The value, then each option of `json.encode` as it is when
+            // not given.
             let raw = values.remove(1);
-            let no = || Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span);
-            let text = hir::ExprKind::Call(Callee::Fn(encode), vec![ty], vec![raw, no(), no()]);
+            let encoding = &self.signatures[encode.0 as usize];
+            let options = (1..encoding.params.len()).map(|at| {
+                encoding.defaults.get(at).cloned().flatten().expect("every option of `json.encode` has a default")
+            });
+            let arguments = std::iter::once(raw).chain(options).collect();
+            let text = hir::ExprKind::Call(Callee::Fn(encode), vec![ty], arguments);
             values.insert(1, Self::mk(text, Ty::STRING, span));
         } else if let Some(arg) =
             args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == "ignore" || n.name == "matches"))
