@@ -43,6 +43,15 @@ fn free_port() -> u16 {
     }
 }
 
+/// The dumps a directory holds, but those still being written aside.
+fn dumps_in(dir: &Path) -> Vec<std::path::PathBuf> {
+    let finished = |path: &std::path::PathBuf| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        !name.starts_with('.') && (name.ends_with(".dump.json.gz") || name.ends_with(".dump.json"))
+    };
+    std::fs::read_dir(dir).unwrap().flatten().map(|entry| entry.path()).filter(finished).collect()
+}
+
 fn listed(pid: u32) -> bool {
     tondo(&["ps", "--json"])["programs"].as_array().unwrap().iter().any(|p| p["pid"] == pid)
 }
@@ -3004,8 +3013,8 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         messages.clear();
-        for file in std::fs::read_dir(dir.join("dumps")).unwrap().flatten() {
-            let read = Command::new(tondo_bin).args(["dump", "read"]).arg(file.path()).arg("--json").output().unwrap();
+        for file in dumps_in(&dir.join("dumps")) {
+            let read = Command::new(tondo_bin).args(["dump", "read"]).arg(file).arg("--json").output().unwrap();
             messages.push(String::from_utf8_lossy(&read.stdout).into_owned());
         }
         let seen = |text: &str| messages.iter().any(|message| message.contains(text));
@@ -3019,7 +3028,7 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     assert!(messages.iter().any(|m| m.contains("GET /slow/7 took")), "{messages:?}");
     assert!(messages.iter().any(|m| m.contains("nothing moved for")), "{messages:?}");
     // What can be shared has where it was, and nothing it held.
-    let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
+    let dump = dumps_in(&dir.join("dumps")).remove(0);
     let shared = dir.join("shared.dump.json");
     let redacted = Command::new(tondo_bin).args(["dump", "redact"]).arg(&dump).arg(&shared).output().unwrap();
     assert!(redacted.status.success(), "{redacted:?}");
@@ -4122,12 +4131,7 @@ fn dumps_come_on_a_schedule_and_differ() {
         .output()
         .unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
-    let mut dumps: Vec<_> = std::fs::read_dir(dir.join("dumps"))
-        .unwrap()
-        .flatten()
-        .map(|f| f.path())
-        .filter(|path| path.to_string_lossy().ends_with(".dump.json.gz"))
-        .collect();
+    let mut dumps = dumps_in(&dir.join("dumps"));
     dumps.sort_by_key(|dump| dump.metadata().unwrap().modified().unwrap());
     // One more, if the program ended as the oldest was about to go.
     assert!((2..=3).contains(&dumps.len()), "{dumps:?}");
@@ -4170,7 +4174,7 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
         .spawn()
         .unwrap();
     // The first dump says it is well under way.
-    while std::fs::read_dir(dir.join("dumps")).unwrap().next().is_none() {
+    while dumps_in(&dir.join("dumps")).is_empty() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let pid = child.id().to_string();
@@ -4179,7 +4183,7 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     // It went on to its end.
     assert!(output.status.success(), "{output:?}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "120000\n");
-    let dumps: Vec<_> = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().map(|f| f.path()).collect();
+    let dumps = dumps_in(&dir.join("dumps"));
     let asked = dumps.iter().find(|d| d.to_string_lossy().contains("-quit-1.dump.json.gz"));
     let asked = asked.unwrap_or_else(|| panic!("{dumps:?}"));
     let summary = tondo(&["dump", "read", asked.to_str().unwrap(), "--json"]);
@@ -4266,9 +4270,9 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let dump = loop {
-        let found = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next();
+        let found = dumps_in(&dir.join("dumps")).into_iter().next();
         if let Some(found) = found.filter(|_| std::time::Instant::now() < deadline) {
-            break found.path();
+            break found;
         }
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(50));
