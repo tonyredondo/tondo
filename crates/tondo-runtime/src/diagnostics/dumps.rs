@@ -196,6 +196,14 @@ pub(super) fn crash_dir() -> Option<(PathBuf, bool)> {
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
     let private = std::fs::symlink_metadata(&dir)
         .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
+    if !private {
+        // Said, as a dump that is not left otherwise goes unnoticed.
+        let why = format!(
+            "no dump: {} is not this user's alone; make it so with `chmod 700`, or give TONDO_DUMP a directory",
+            dir.display()
+        );
+        let _ = writeln!(std::io::stderr(), "tondo runtime: {why}");
+    }
     private.then_some((dir, true))
 }
 
