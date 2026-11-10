@@ -5666,9 +5666,10 @@ without multiplying or dividing. The passes write a remark only when it is asked
 does the same work and makes the same bytes as before.
 
 A place is told once, with the functions whose code it is in: its own, and the ones it was inlined
-into, where it may fare differently. A loop unrolled or a recursion inlined copies a place, and
-what is done in one copy and not in another is told as not done, the check that stays, the call,
-the heap: that is the cost left. Arithmetic of constants is not told. Each remark has a `kind` for
+into, where it may fare differently. A loop unrolled or code inlined twice copies a place, and what
+is done in one copy and not in another is told as not done when it is a call or the heap, the cost
+left; a check that one copy drops and another keeps is told as dropped in one copy, since a
+counted loop runs its checked copy only for bounds far from zero. Arithmetic of constants is not told. Each remark has a `kind` for
 tools, the done and the not done side by side (`inlined` and `call`, `frame` and `heap`,
 `unchecked` and `checked`, `arithmetic`), and its text is English like the rest of the
 compiler's, written to follow the code of the place. The MCP tool of the same name gives it to

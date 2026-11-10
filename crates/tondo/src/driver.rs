@@ -1229,8 +1229,9 @@ impl Optimization {
 /// code, in the functions whose names hold `function` and of the `kind`
 /// when they are given, in
 /// the order of the source, without generating the code. What is done in
-/// one copy of a place, of a loop unrolled or a recursion inlined, and not
-/// in another, is told as not done: a check kept, a call, the heap.
+/// one copy of a place, of a loop unrolled or code inlined twice, and not
+/// in another, is told as not done when it is a call or the heap, and as
+/// both when it is a check.
 pub fn optimizations(
     analysis: &Analysis,
     function: Option<&str>,
@@ -1249,16 +1250,18 @@ pub fn optimizations(
     crate::mir_text::ask_remarks(false);
     let mut found = Vec::new();
     for body in bodies.iter().filter(|body| function.is_none_or(|name| body.name.contains(name))) {
-        // What a loop unrolled or a recursion inlined does in one copy
-        // of a place and not in another is told as the worse.
+        // What a loop unrolled or code inlined twice does in one copy of
+        // a place and not in another: a call or the heap is told as such,
+        // and a check one copy drops and another keeps as both.
         let worse = |kind: &str| match kind {
-            "unchecked" => "checked",
             "inlined" => "call",
             "frame" => "heap",
+            "checked" => "unchecked",
             _ => "",
         };
         let told: std::collections::HashSet<_> =
             body.remarks.iter().map(|r| (r.kind, r.span.start, r.span.end)).collect();
+        let kept = |remark: &crate::mir::Remark| told.contains(&("checked", remark.span.start, remark.span.end));
         for remark in &body.remarks {
             let file = sources.file_of(remark.span.start);
             if file.dependency || file.logical.starts_with("<std>/") {
@@ -1275,13 +1278,17 @@ pub fn optimizations(
                 true => format!("{}…", first.chars().take(59).collect::<String>()),
                 false => first.to_string(),
             };
+            let text = match remark.kind == "unchecked" && kept(remark) {
+                true => format!("{}, in one copy of the code; another keeps the check", remark.text),
+                false => remark.text.clone(),
+            };
             found.push(Optimization {
                 file: name,
                 line,
                 column,
                 functions: vec![body.name.clone()],
                 kind: remark.kind,
-                text: remark.text.clone(),
+                text,
                 source,
             });
         }

@@ -2151,8 +2151,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   está: la suya y aquellas en las que se inlineó. Van en el orden del código,
   y solo las del código del programa, no las de sus dependencias ni de `std`.
 - Lo que se hace en una copia de un sitio y no en otra, de un bucle
-  desenrollado o de una recursión inlineada, se dice como no hecho: la
-  comprobación que queda, la llamada, el heap.
+  desenrollado o de un código inlineado dos veces, se dice como no hecho si
+  es la llamada que queda o el heap; una comprobación que una copia quita y
+  otra deja se dice de las dos, como la que quita.
 - Cada cosa es de un tipo, su `kind`: `inlined` o `call`, `frame` o `heap`,
   `unchecked` o `checked`, o `arithmetic`. `--kind <tipo>` da solo las de ese
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
