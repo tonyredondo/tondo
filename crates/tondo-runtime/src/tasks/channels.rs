@@ -61,6 +61,9 @@ pub struct SenderObject {
     pub(super) channel: *mut ChannelObject,
 }
 
+/// The most room a bounded channel takes for its values when it is made.
+const PREALLOCATED: usize = 64 * 1024;
+
 /// `channel[T](capacity)` without its sender: the `Receiver`. A negative
 /// capacity panics with `P0001`.
 #[unsafe(no_mangle)]
@@ -93,7 +96,13 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
         align: align.max(1),
         release,
         visit,
-        buffer: VecDeque::new(),
+        // Room for what it may hold, as it fills: growing by doubling took
+        // seven allocations to fill one of 64. Up to a limit, past which it
+        // grows as it needs.
+        buffer: VecDeque::with_capacity(match bounded {
+            0 => 0,
+            _ => (capacity as usize).saturating_mul(size).min(PREALLOCATED),
+        }),
         count: 0,
         receiving: VecDeque::new(),
         sending: VecDeque::new(),
