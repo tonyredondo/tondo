@@ -106,6 +106,10 @@ impl Listening {
             Listening::Tcp(listener) => {
                 listener.poll_attempt(context, Direction::Read, |listener| listener.accept()).map(|accepted| {
                     let (stream, remote) = accepted?;
+                    // A reply goes out as it is written, as Go's server
+                    // sends it: Nagle's wait, with the client's delayed
+                    // acknowledgment, held small writes for tens of ms.
+                    let _ = stream.set_nodelay(true);
                     on_poller(stream, remote.to_string())
                 })
             }
