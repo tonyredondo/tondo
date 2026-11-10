@@ -554,9 +554,14 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     let exclusive = guard & 1 == 0;
     let address = object(guard) as usize;
     super::tasks::touch(address);
-    let task = current();
     unsafe {
         let o = &mut *object(guard);
+        // The task that lets go of a lock held to change is the one the
+        // cell holds, which finding the running one would cost a call.
+        let task = match exclusive {
+            true => o.owner.load(Ordering::Relaxed) as *mut Task,
+            false => current(),
+        };
         gave_up(o, task, exclusive);
         let before = if exclusive {
             // Only a debugger's watch of a cell reads who changed it last.
