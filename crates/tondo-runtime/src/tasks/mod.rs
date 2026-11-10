@@ -365,6 +365,9 @@ struct Worker {
     /// The sockets its waits for the network's events find ready, whose
     /// room it keeps, made when first needed, as `turns` is.
     events: Cell<*mut crate::poll::Events>,
+    /// The waits of tasks that ended here, for the next to wait with
+    /// (`Wait::new`), made when first needed, as `turns` is.
+    waits: Cell<*mut Vec<Arc<Wait>>>,
 }
 
 thread_local! {
@@ -380,6 +383,7 @@ thread_local! {
             in_c: Cell::new(std::ptr::null()),
             turns: Cell::new(std::ptr::null_mut()),
             events: Cell::new(std::ptr::null_mut()),
+            waits: Cell::new(std::ptr::null_mut()),
         }
     };
 }

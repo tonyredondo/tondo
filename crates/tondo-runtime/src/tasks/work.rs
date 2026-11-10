@@ -370,6 +370,7 @@ pub(super) fn run(task: *mut Task) {
             if let Some(stack) = (*task).stack.take() {
                 recycle(stack);
             }
+            Wait::left(&mut *task);
             unregister(task);
             (*task).mark = 0;
             // A spawned task lives in its join's block.

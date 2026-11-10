@@ -1,0 +1,143 @@
+// A task that ends leaves its wait to the next one its thread runs: tasks
+// that wait on a channel, a task, a lock, a timer, a `select` and a
+// deadline, one after another and side by side, are each woken by what
+// they wait for and by nothing that woke one before, also after one was
+// cancelled while it waited, or a timer outlived its wait.
+
+import std.console
+import std.sync
+import std.time
+
+fn relay(input: Receiver[Int], out: Sender[Int]) {
+    for value in input {
+        out.send(value + 1)
+    }
+}
+
+fn feed(out: Sender[Int]) {
+    for value in 0..10 {
+        out.send(value)
+    }
+}
+
+/// Ten values through two relays, on channels that hold one value, so that
+/// every task waits at every step.
+fn relayed(): Int {
+    let (first, input) = channel[Int](1)
+    let (middle, through) = channel[Int](1)
+    let (last, output) = channel[Int](1)
+    let feeder = spawn feed(first)
+    let a = spawn relay(input, middle)
+    let b = spawn relay(through, last)
+    var total = 0
+    for value in output {
+        total += value
+    }
+    feeder.wait()
+    a.wait()
+    b.wait()
+    total
+}
+
+fn counted(count: sync.Mutex[Int], turns: Int) {
+    for _ in 0..turns {
+        count.update(
+            (n) {
+                n += 1
+            },
+        )
+    }
+}
+
+fn sleepy(n: Int): Int {
+    time.sleep(time.milliseconds(1))
+    n
+}
+
+/// Its timer still holds the wait when the task ends.
+fn chosen(first: Receiver[Int], second: Receiver[Int]): Int {
+    select {
+        let value = first.receive() => value.unwrapOr(-1)
+        let value = second.receive() => value.unwrapOr(-2) * 10
+        time.sleep(time.seconds(60)) => 0
+    }
+}
+
+fn stuck(inbox: Receiver[Int]): Int {
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    total
+}
+
+fn late(): String {
+    match within time.milliseconds(1) { time.sleep(time.seconds(60)) } {
+        ok(_) => "woke"
+        err(_) => "late"
+    }
+}
+
+fn main() {
+    var relays = 0
+    for _ in 0..50 {
+        relays += relayed()
+    }
+    console.println("relays {relays}")
+
+    let count: sync.Mutex[Int] = sync.Mutex(0)
+    var workers: Array[Join[Unit]] = []
+    for _ in 0..8 {
+        workers.push(spawn counted(count, 100))
+    }
+    for worker in workers {
+        worker.wait()
+    }
+    console.println("locks {count.get()}")
+
+    var sleepers: Array[Join[Int]] = []
+    for n in 0..20 {
+        sleepers.push(spawn sleepy(n))
+    }
+    var slept = 0
+    for sleeper in sleepers {
+        slept += sleeper.wait()
+    }
+    console.println("sleeps {slept}")
+
+    var selected = 0
+    for i in 0..20 {
+        let (one, fromOne) = channel[Int](1)
+        let (two, fromTwo) = channel[Int](1)
+        let picker = spawn chosen(fromOne, fromTwo)
+        if i % 2 == 0 { one.send(i) } else { two.send(i) }
+        selected += picker.wait()
+    }
+    console.println("selects {selected}")
+
+    let (sender, receiver) = channel[Int]()
+    let job = spawn stuck(receiver)
+    sender.send(1)
+    job.cancel()
+    console.println("after a cancel {relayed()}")
+
+    var lates: Array[Join[String]] = []
+    for _ in 0..4 {
+        lates.push(spawn late())
+    }
+    for task in lates {
+        console.println(task.wait())
+    }
+    console.println("after deadlines {relayed()}")
+}
+
+// expect-stdout: relays 3250
+// expect-stdout: locks 800
+// expect-stdout: sleeps 190
+// expect-stdout: selects 1090
+// expect-stdout: after a cancel 65
+// expect-stdout: late
+// expect-stdout: late
+// expect-stdout: late
+// expect-stdout: late
+// expect-stdout: after deadlines 65

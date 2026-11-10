@@ -29,7 +29,8 @@ pub(super) fn expire(task: &mut Task) {
 /// it through such a pointer does so with the lock held, and reads the
 /// task before notifying it. So when nothing but the task holds the wait,
 /// as a timer or the waker of a future does until it is dropped, no one
-/// can claim it any more, and it is the task's to wait with again.
+/// can claim it any more, and it is the task's to wait with again, or,
+/// once the task ends, another's on its thread.
 pub(crate) struct Wait {
     pub(crate) task: *mut Task,
     pub(super) fired: AtomicUsize,
@@ -41,8 +42,9 @@ unsafe impl Sync for Wait {}
 
 impl Wait {
     /// A wait for the running task: the one it waited with last, when
-    /// nothing else holds it, or a new one, which it keeps for its next
-    /// (docs/speed.md, C). Outside a task, always a new one.
+    /// nothing else holds it, or one a task that ended on this thread left,
+    /// or a new one, which it keeps for its next (docs/speed.md, C).
+    /// Outside a task, always a new one.
     pub(crate) fn new() -> Arc<Wait> {
         let task = current();
         let Some(running) = (unsafe { task.as_mut() }) else {
@@ -54,9 +56,26 @@ impl Wait {
             kept.fired.store(NONE, Ordering::Relaxed);
             return kept.clone();
         }
-        let wait = Arc::new(Wait { task, fired: AtomicUsize::new(NONE) });
+        let mut wait = spare_waits().pop().unwrap_or_else(|| Arc::new(Wait { task, fired: AtomicUsize::new(NONE) }));
+        match Arc::get_mut(&mut wait) {
+            Some(only) => {
+                only.task = task;
+                *only.fired.get_mut() = NONE;
+            }
+            None => wait = Arc::new(Wait { task, fired: AtomicUsize::new(NONE) }),
+        }
         running.kept_wait = Some(wait.clone());
         wait
+    }
+
+    /// What a task that ended leaves: the wait it kept, for the next task
+    /// on this thread, when nothing else holds it.
+    pub(super) fn left(task: &mut Task) {
+        let Some(wait) = task.kept_wait.take() else { return };
+        let spare = spare_waits();
+        if Arc::strong_count(&wait) == 1 && spare.len() < SPARE_WAITS {
+            spare.push(wait);
+        }
     }
 
     /// Claims the wait for operation `index`; false when another operation
@@ -154,6 +173,19 @@ impl Wait {
             }
         }
     }
+}
+
+/// How many waits of tasks that ended a worker keeps.
+const SPARE_WAITS: usize = 16;
+
+fn spare_waits() -> &'static mut Vec<Arc<Wait>> {
+    let waits = worker(|w| {
+        if w.waits.get().is_null() {
+            w.waits.set(Box::into_raw(Box::default()));
+        }
+        w.waits.get()
+    });
+    unsafe { &mut *waits }
 }
 
 /// The waker of a future the task waits on: its wake claims the wait as
