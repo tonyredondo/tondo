@@ -38,7 +38,12 @@ pub(crate) fn within_ends(task: &mut Task, level: usize) {
 /// a cancelled task, but not in its `defer`s, which do what needs no wait,
 /// and whose waits `Wait::block` ends at once (11.15).
 pub(crate) fn stops() -> bool {
-    cancelled() && unsafe { current().as_ref() }.is_some_and(|task| task.deferring == 0)
+    stops_task(current())
+}
+
+/// `stops`, for the running task already read.
+pub(crate) fn stops_task(task: *mut Task) -> bool {
+    unsafe { task.as_ref() }.is_some_and(|task| halted(task) && task.deferring == 0)
 }
 
 /// A `defer` starts to run.

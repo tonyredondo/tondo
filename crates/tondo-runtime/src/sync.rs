@@ -2,7 +2,7 @@
 //! park tasks instead of blocking threads, semaphores and barriers.
 
 use super::cycles::{self, Kind, Taken, Visit, Visitor};
-use super::tasks::{CANCELLED, Task, Wait, current, lock, notify, stops, unlock};
+use super::tasks::{CANCELLED, Task, Wait, current, lock, notify, stops, stops_task, unlock};
 use super::{Glue, LIVE_OBJECTS, Str};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -182,9 +182,10 @@ fn try_take(o: &SyncObject, exclusive: bool) -> bool {
     }
 }
 
-/// The locks the current task holds.
-fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
-    unsafe { &mut (*current()).held }
+/// The locks a task holds, read once for each operation: finding the
+/// running task costs a call.
+fn held(task: *mut Task) -> &'static mut Vec<(usize, bool, *const Str)> {
+    unsafe { &mut (*task).held }
 }
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
@@ -206,12 +207,13 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
 }
 
 unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
-    if stops() {
+    let task = current();
+    if stops_task(task) {
         return 0;
     }
     let exclusive = mode != SHARED;
     let address = object as usize;
-    let holds = held();
+    let holds = held(task);
     if let Some(&(_, alone, taken)) = holds.iter().find(|&&(o, alone, _)| o == address && (exclusive || alone)) {
         let how = |exclusive: bool| if exclusive { "to change its value" } else { "to read it" };
         let mut message = format!(
@@ -241,7 +243,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
     let mut woken = false;
     loop {
         if try_take(o, exclusive) {
-            held().push((address, exclusive, location));
+            holds.push((address, exclusive, location));
             return guard;
         }
         if mode == TRY {
@@ -260,7 +262,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         if try_take(o, exclusive) {
             unlock(&o.queue);
-            held().push((address, exclusive, location));
+            held(current()).push((address, exclusive, location));
             return guard;
         }
         // A task woken before goes first, and starves the lock once it
@@ -284,7 +286,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
                 return 0;
             }
             HANDED => {
-                held().push((address, exclusive, location));
+                held(current()).push((address, exclusive, location));
                 return guard;
             }
             _ => {
@@ -382,15 +384,21 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     let exclusive = guard & 1 == 0;
     let address = object(guard) as usize;
     super::tasks::touch(address);
-    let holds = held();
+    let task = current();
+    let holds = held(task);
     if let Some(index) = holds.iter().position(|&(o, _, _)| o == address) {
         holds.swap_remove(index);
     }
     unsafe {
         let o = &mut *object(guard);
         let before = if exclusive {
-            o.writer.store(super::tasks::current_id(), Ordering::Relaxed);
-            o.state.fetch_and(!WRITER, Ordering::Release)
+            // Only a debugger's watch of a cell reads who changed it last.
+            if super::debugger::watching() {
+                o.writer.store((*task).id, Ordering::Relaxed);
+            }
+            // The bit is set, as this task holds the lock: subtracting it
+            // takes one instruction where clearing it loops on a compare.
+            o.state.fetch_sub(WRITER, Ordering::Release)
         } else {
             o.state.fetch_sub(READER, Ordering::Release)
         };
@@ -438,7 +446,7 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         if !delay.is_zero() {
             super::profiling::contended(delay);
         }
-        let holds = held();
+        let holds = held(current());
         let mut location = std::ptr::null();
         if let Some(index) = holds.iter().position(|&(h, _, _)| h == object as usize) {
             location = holds.swap_remove(index).2;

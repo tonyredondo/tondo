@@ -262,6 +262,12 @@ fn attached() -> bool {
 static HOLD: AtomicBool = AtomicBool::new(false);
 /// A frame watches an expression: every probe looks.
 static WATCHING: AtomicBool = AtomicBool::new(false);
+
+/// Whether a frame watches an expression, as a cell's watch wants to know
+/// which task last changed it.
+pub(crate) fn watching() -> bool {
+    WATCHING.load(Ordering::Relaxed)
+}
 /// Steps stop in the standard library's code: always (`steps all`), or
 /// for a step that starts there.
 static STEPS_ALL: AtomicBool = AtomicBool::new(false);
