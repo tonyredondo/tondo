@@ -160,24 +160,33 @@ pub(crate) enum Direction {
 
 impl Source {
     fn ready(&self, read: bool, write: bool) {
-        let (wakers, flush) = {
-            let mut state = lock(&self.state);
+        // The few that wait, most often one, go on the stack, and the lists
+        // keep their room: an event allocates nothing.
+        let mut first: [Option<Waker>; 4] = Default::default();
+        let mut rest = Vec::new();
+        let flush = {
+            let mut guard = lock(&self.state);
+            let state = &mut *guard;
             state.ticks += 1;
-            let mut wakers = Vec::new();
-            if read {
-                state.readable = true;
-                wakers.append(&mut state.readers);
+            state.readable |= read;
+            state.writable |= write;
+            let mut slots = first.iter_mut();
+            for waiting in
+                [read.then_some(&mut state.readers), write.then_some(&mut state.writers)].into_iter().flatten()
+            {
+                for waker in waiting.drain(..) {
+                    match slots.next() {
+                        Some(slot) => *slot = Some(waker),
+                        None => rest.push(waker),
+                    }
+                }
             }
-            if write {
-                state.writable = true;
-                wakers.append(&mut state.writers);
-            }
-            (wakers, if write { state.on_writable.clone() } else { None })
+            if write { state.on_writable.clone() } else { None }
         };
         if let Some(flush) = flush {
             flush();
         }
-        wakers.into_iter().for_each(Waker::wake);
+        first.into_iter().flatten().chain(rest).for_each(Waker::wake);
     }
 }
 
