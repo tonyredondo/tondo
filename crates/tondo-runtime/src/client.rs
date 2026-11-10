@@ -82,8 +82,9 @@ struct Proxies {
 
 impl Proxies {
     fn from_environment() -> Proxies {
-        let read = |name: &str| {
-            std::env::var(name.to_lowercase()).or_else(|_| std::env::var(name)).ok().filter(|value| !value.is_empty())
+        let read = |upper: &str| {
+            let names = [upper.to_lowercase(), upper.to_string()];
+            names.into_iter().find_map(|name| std::env::var(name).ok()).filter(|value| !value.is_empty())
         };
         let all = read("ALL_PROXY");
         let proxy = |value: Option<String>| value.or_else(|| all.clone()).and_then(|url| Proxy::parse(&url));
