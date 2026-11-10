@@ -40,6 +40,30 @@ pub fn inline(bodies: &mut Vec<Body>) {
             }
         });
     }
+    note_calls(bodies);
+}
+
+/// Notes, in a function whose MIR is to be written, why each call left
+/// stays a call.
+fn note_calls(bodies: &mut [Body]) {
+    for index in 0..bodies.len() {
+        if !crate::mir_text::noting(&bodies[index].name) {
+            continue;
+        }
+        let mut notes = Vec::new();
+        for statement in bodies[index].blocks.iter().flat_map(|block| &block.stmts) {
+            let Statement::Assign(_, rvalue, _) = statement else { continue };
+            let Rvalue::Call(Callee::Fn(callee), _) = &**rvalue else { continue };
+            let callee = callee.0 as usize;
+            let why = match callee == index {
+                true => "it is this one".to_string(),
+                false => not_small(&bodies[callee]).unwrap_or_else(|| format!("inlining stops after {ROUNDS} rounds")),
+            };
+            notes.push(format!("inline: the call of `{}` stays: {why}", bodies[callee].name));
+        }
+        notes.dedup();
+        bodies[index].notes.append(&mut notes);
+    }
 }
 
 fn inline_small(bodies: &mut Vec<Body>) {
@@ -248,20 +272,25 @@ fn warm(body: &Body) -> Vec<bool> {
 /// registers no `defer`, and uses its loans only as places. A call of
 /// itself it makes is not inlined, and each round inlines one level more.
 fn small(body: &Body) -> bool {
+    not_small(body).is_none()
+}
+
+/// Why a function is not inlined, or none when it is small enough.
+fn not_small(body: &Body) -> Option<String> {
     if body.osr.is_some() || !body.points.is_empty() {
-        return false;
+        return Some("it is a live build's".to_string());
     }
     let cost = self::cost(body);
     for block in &body.blocks {
         for statement in &block.stmts {
             match statement {
-                Statement::DeferPush(..) | Statement::DeferPop | Statement::OsrLoad(_) => return false,
+                Statement::DeferPush(..) | Statement::DeferPop => return Some("it has a `defer`".to_string()),
+                Statement::OsrLoad(_) => return Some("it is a live build's".to_string()),
                 Statement::Assign(_, rvalue, _) => match &**rvalue {
-                    Rvalue::CallOsr(..)
-                    | Rvalue::Restart(_)
-                    | Rvalue::Transfer(_)
-                    | Rvalue::OsrPoint
-                    | Rvalue::TestMembers(_) => return false,
+                    Rvalue::CallOsr(..) | Rvalue::Restart(_) | Rvalue::Transfer(_) | Rvalue::OsrPoint => {
+                        return Some("it is a live build's".to_string());
+                    }
+                    Rvalue::TestMembers(_) => return Some("it runs tests".to_string()),
                     _ => {}
                 },
                 _ => {}
@@ -269,7 +298,7 @@ fn small(body: &Body) -> bool {
         }
     }
     if cost > SMALL {
-        return false;
+        return Some(format!("it costs {cost}, past {SMALL}"));
     }
     // A loan becomes the place lent, which cannot be an index or a local
     // a statement defines whole; a place can be assigned, as
@@ -287,7 +316,8 @@ fn small(body: &Body) -> bool {
         block.stmts.iter_mut().for_each(|statement| visit_statement(statement, &mut indexes));
         visit_terminator(&mut block.terminator, &mut indexes);
     }
-    body.params.iter().enumerate().all(|(index, param)| !loan(body, index) || !named.contains(param))
+    let fits = body.params.iter().enumerate().all(|(index, param)| !loan(body, index) || !named.contains(param));
+    (!fits).then(|| "a loan it takes is an index, or what a statement binds".to_string())
 }
 
 /// Whether a parameter is a loan; a closure's body lists none for its

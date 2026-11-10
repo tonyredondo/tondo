@@ -806,7 +806,8 @@ fn a_long_call_of_c_holds_up_no_other_task() {
 fn the_mir_of_a_function_and_what_the_passes_decided() {
     let source: &[u8] = b"import std.console\n\nfn measured(count: Int): Int {\n    var total = 0\n    \
         for i in 0..count {\n        total += \"{i * 1000}\".length()\n    }\n    total\n}\n\n\
-        fn main() {\n    for round in 0..3 {\n        console.println(\"{measured(round)}\")\n    }\n}\n";
+        fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\
+        fn main() {\n    for round in 0..3 {\n        console.println(\"{measured(round)} {fib(round)}\")\n    }\n}\n";
     let dir = project_at("dump-mir", &[("main.to", source)]);
     let dumped = |asked: &str| {
         let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
@@ -827,6 +828,8 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     assert!(stack.contains("String (in the frame)") && stack.contains("length of l"), "{stack}");
     assert!(stack.contains("note prove: loop at b"), "{stack}");
     assert!(stack.contains("@main.to:6:"), "{stack}");
+    let calls = dumped("fib@inline");
+    assert!(calls.contains("note inline: the call of `fib` stays: it is this one"), "{calls}");
     let (_, quiet, _) = tondo(&dir, &["build", "main.to", "--output", "main"]);
     assert!(!quiet.contains("== measured"), "{quiet}");
 }
