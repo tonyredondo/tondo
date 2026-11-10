@@ -234,14 +234,18 @@ jobs:
   # cargo builds in the checkout's target and downloads to the host's
   # ~/.cargo.
   musl:
+    name: musl (${{ matrix.target }}, ${{ matrix.run }})
     strategy:
       fail-fast: false
       matrix:
+        # As the other platforms, split between jobs that build by
+        # themselves: the workspace, and the static cases with the runs
+        # without a C compiler.
         include:
-          - os: ubuntu-latest
-            target: x86_64-linux-musl
-          - os: ubuntu-24.04-arm
-            target: aarch64-linux-musl
+          - { os: ubuntu-latest, target: x86_64-linux-musl, run: workspace }
+          - { os: ubuntu-latest, target: x86_64-linux-musl, run: static no-cc }
+          - { os: ubuntu-24.04-arm, target: aarch64-linux-musl, run: workspace }
+          - { os: ubuntu-24.04-arm, target: aarch64-linux-musl, run: static no-cc }
     runs-on: ${{ matrix.os }}
     # A hang fails the job instead of holding it for hours.
     timeout-minutes: 90
@@ -250,22 +254,26 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: musl-${{ matrix.target }}
+          save-if: ${{ contains(matrix.run, 'workspace') }}
       - uses: ./.github/actions/runtime
         with:
           label: alpine-${{ matrix.target }}
+      # tests.sh asks for jq, and for an xargs that runs two at a time.
       - run: >
           mkdir -p ~/.cargo/registry ~/.cargo/git &&
           docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
           -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
           rust:alpine sh -c
-          "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
+          "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar jq findutils &&
           (rustup show active-toolchain || rustup toolchain install) &&
-          cargo test --workspace &&
-          TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases &&
+          ${{ contains(matrix.run, 'workspace') && '.github/scripts/tests.sh 2' || 'TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases' }} &&
           cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*' > target/cases"
       # The cases and projects where there is no C compiler, dynamic and
       # static.
-      - run: |
+      - if: contains(matrix.run, 'no-cc')
+        run: |
           run="docker run --rm -v $PWD:/work -w /work"
           $run alpine sh -c "! command -v cc && $(cat target/cases) cases projects"
           $run -e TONDO_CASES_STATIC=1 alpine sh -c "! command -v cc && $(cat target/cases) cases"
