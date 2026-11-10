@@ -183,53 +183,105 @@ fn inner_loop(blocks: &[BlockData], body: &[usize], entry: usize) -> bool {
 
 fn rewrite(body: &mut Body, found: &Counted) {
     let scope = body.scopes.get(found.head).copied().flatten();
-    let fresh = |body: &mut Body, data: BlockData| {
-        body.blocks.push(data);
-        body.scopes.resize(body.blocks.len() - 1, None);
-        body.scopes.push(scope);
-        BlockId(body.blocks.len() as u32 - 1)
-    };
-    let local = |body: &mut Body, ty: Ty| {
-        body.locals.push(ty);
-        body.names.push(None);
-        Local(body.locals.len() as u32 - 1)
-    };
-    let (big, bound, fits) = (local(body, Ty::BOOL), local(body, Ty::INT), local(body, Ty::BOOL));
-    let unrolled_head = BlockId(body.blocks.len() as u32 + 2);
-    let original = BlockId(found.head as u32);
     let span = Span::default();
     let operand = |local: Local| Operand::local(local);
     let int = |value: i128| Operand::Const(Const::Int(value, Ty::INT));
+    let original = BlockId(found.head as u32);
+    let (big, counted_small, small, bound) =
+        (new_local(body, Ty::BOOL), new_local(body, Ty::BOOL), new_local(body, Ty::BOOL), new_local(body, Ty::INT));
     // Before the loop: `bound = last - 3` when it fits, or only the loop
     // as it was.
     let at_least = Rvalue::Binary(BinOp::Ge, operand(found.last), int(i64::MIN as i128 + COPIES as i128 - 1));
-    let before = fresh(
-        body,
-        BlockData {
-            stmts: vec![Statement::Assign(Place::local(big), Box::new(at_least), span)],
-            terminator: Terminator::Branch(operand(big), BlockId(body.blocks.len() as u32 + 1), original),
-        },
-    );
+    let placeholder = BlockData { stmts: Vec::new(), terminator: Terminator::Unreachable };
+    let before = fresh(body, scope, placeholder.clone());
+    let sizes = [fresh(body, scope, placeholder.clone()), fresh(body, scope, placeholder.clone())];
+    body.blocks[before.0 as usize] = BlockData {
+        stmts: vec![Statement::Assign(Place::local(big), Box::new(at_least), span)],
+        terminator: Terminator::Branch(operand(big), sizes[0], original),
+    };
+    // Then the turns of four in one of two copies: one for a counter and a
+    // bound within 2³¹ of zero, where `prove` sees that a square of the
+    // counter, or a sum of what is smaller than it over the turns, stays
+    // within an `Int` and needs no check; another for any others.
+    let from = Rvalue::Binary(BinOp::Ge, operand(found.counter), int(-SMALL_BOUND));
+    let to = Rvalue::Binary(BinOp::Le, operand(found.last), int(SMALL_BOUND));
     let less = Rvalue::Exact(BinOp::Sub, operand(found.last), int(COPIES as i128 - 1));
-    fresh(
-        body,
-        BlockData {
-            stmts: vec![Statement::Assign(Place::local(bound), Box::new(less), span)],
-            terminator: Terminator::Goto(unrolled_head),
-        },
-    );
-    // The head of the turns of four: `counter < bound`.
+    let (within, any) = (unrolled(body, found, scope, bound), unrolled(body, found, scope, bound));
+    let starts: Vec<BlockId> = [within, any]
+        .into_iter()
+        .map(|head| {
+            fresh(
+                body,
+                scope,
+                BlockData {
+                    stmts: vec![Statement::Assign(Place::local(bound), Box::new(less.clone()), span)],
+                    terminator: Terminator::Goto(head),
+                },
+            )
+        })
+        .collect();
+    body.blocks[sizes[0].0 as usize] = BlockData {
+        stmts: vec![Statement::Assign(Place::local(counted_small), Box::new(from), span)],
+        terminator: Terminator::Branch(operand(counted_small), sizes[1], starts[1]),
+    };
+    body.blocks[sizes[1].0 as usize] = BlockData {
+        stmts: vec![Statement::Assign(Place::local(small), Box::new(to), span)],
+        terminator: Terminator::Branch(operand(small), starts[0], starts[1]),
+    };
+    // What entered the loop enters it through the test of the bound.
+    let count = body.blocks.len();
+    for block in 0..count {
+        if block == found.step || block >= before.0 as usize {
+            continue;
+        }
+        let terminator = &mut body.blocks[block].terminator;
+        match terminator {
+            Terminator::Goto(to) if *to == original => *to = before,
+            Terminator::Branch(_, then, otherwise) => {
+                for to in [then, otherwise] {
+                    if *to == original {
+                        *to = before;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The most a counter and its bound may be from zero for the copy whose
+/// arithmetic `prove` can check before the loop.
+const SMALL_BOUND: i128 = 1 << 31;
+
+fn fresh(body: &mut Body, scope: Option<u32>, data: BlockData) -> BlockId {
+    body.blocks.push(data);
+    body.scopes.resize(body.blocks.len() - 1, None);
+    body.scopes.push(scope);
+    BlockId(body.blocks.len() as u32 - 1)
+}
+
+fn new_local(body: &mut Body, ty: Ty) -> Local {
+    body.locals.push(ty);
+    body.names.push(None);
+    Local(body.locals.len() as u32 - 1)
+}
+
+/// The turns of four of a loop: their head, `counter < bound`, the copies
+/// of the body, each followed by a step to the next, the last back to the
+/// head, and out to the loop as it was for the turns left.
+fn unrolled(body: &mut Body, found: &Counted, scope: Option<u32>, bound: Local) -> BlockId {
+    let span = Span::default();
+    let operand = |local: Local| Operand::local(local);
+    let original = BlockId(found.head as u32);
+    let fits = new_local(body, Ty::BOOL);
     let test = Rvalue::Binary(BinOp::Lt, operand(found.counter), operand(bound));
     let placeholder = BlockData { stmts: Vec::new(), terminator: Terminator::Unreachable };
-    let head = fresh(body, placeholder.clone());
-    assert_eq!(head, unrolled_head);
-    // The copies, each followed by a step to the next, the last back to
-    // the head.
+    let head = fresh(body, scope, placeholder.clone());
     let mut entries = Vec::new();
     let mut maps = Vec::new();
     for _ in 0..COPIES {
         let map: HashMap<usize, BlockId> =
-            found.blocks.iter().map(|&block| (block, fresh(body, placeholder.clone()))).collect();
+            found.blocks.iter().map(|&block| (block, fresh(body, scope, placeholder.clone()))).collect();
         // Each copy of a block comes from the call its block's code does.
         for (&block, &new) in &map {
             body.scopes[new.0 as usize] = body.scopes.get(block).copied().flatten();
@@ -237,7 +289,7 @@ fn rewrite(body: &mut Body, found: &Counted) {
         entries.push(map[&found.entry]);
         maps.push(map);
     }
-    let steps: Vec<BlockId> = (0..COPIES).map(|_| fresh(body, placeholder.clone())).collect();
+    let steps: Vec<BlockId> = (0..COPIES).map(|_| fresh(body, scope, placeholder.clone())).collect();
     body.blocks[head.0 as usize] = BlockData {
         stmts: vec![Statement::Assign(Place::local(fits), Box::new(test), span)],
         terminator: Terminator::Branch(operand(fits), entries[0], original),
@@ -268,23 +320,5 @@ fn rewrite(body: &mut Body, found: &Counted) {
             terminator: Terminator::Goto(next),
         };
     }
-    // What entered the loop enters it through the test of the bound.
-    let count = body.blocks.len();
-    for block in 0..count {
-        if block == found.step || block >= before.0 as usize {
-            continue;
-        }
-        let terminator = &mut body.blocks[block].terminator;
-        match terminator {
-            Terminator::Goto(to) if *to == original => *to = before,
-            Terminator::Branch(_, then, otherwise) => {
-                for to in [then, otherwise] {
-                    if *to == original {
-                        *to = before;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    head
 }
