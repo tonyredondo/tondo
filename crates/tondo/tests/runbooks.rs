@@ -182,6 +182,9 @@ fn every_runbook_runs_as_it_says() {
     }
     let topics: Vec<_> = tondo::guide::TOPICS.iter().filter(|(name, _)| name.starts_with("runbook-")).collect();
     assert!(topics.len() >= 4);
+    // The dumps of an earlier run, as CI's cache gives them back owned by
+    // another user, whose directory a crash would not write to.
+    let _ = std::fs::remove_dir_all(Path::new(env!("CARGO_TARGET_TMPDIR")).join("runbook-cache/tondo/dumps"));
     std::thread::scope(|scope| {
         let runs: Vec<_> = topics.iter().map(|(name, text)| scope.spawn(move || replay(name, text))).collect();
         runs.into_iter().for_each(|run| run.join().unwrap());
