@@ -114,22 +114,14 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
 /// polls without holding its worker until the future's waker notifies it;
 /// `None` when the task is cancelled first, which drops the future.
 pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Option<T> {
-    use std::task::{Poll, Wake, Waker};
-    struct Notify(Arc<Wait>);
-    impl Wake for Notify {
-        fn wake(self: Arc<Self>) {
-            if self.0.claim(0) {
-                notify(self.0.task);
-            }
-        }
-    }
+    use std::task::{Poll, Waker};
     if current().is_null() {
         return Some(super::http::runtime().block_on(future));
     }
     let mut future = std::pin::pin!(future);
     loop {
         let wait = Wait::new();
-        let waker = Waker::from(Arc::new(Notify(wait.clone())));
+        let waker = Waker::from(wait.clone());
         let (polled, let_go) = poll_once(future.as_mut(), &waker);
         // Not here, between the poll that gave the waker away and the wait
         // it wakes: a wait of closing would take the wake meant for that one.

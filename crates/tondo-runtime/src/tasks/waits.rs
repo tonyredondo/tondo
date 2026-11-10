@@ -156,6 +156,20 @@ impl Wait {
     }
 }
 
+/// The waker of a future the task waits on: its wake claims the wait as
+/// operation 0.
+impl std::task::Wake for Wait {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        if self.claim(0) {
+            notify(self.task);
+        }
+    }
+}
+
 /// A short spin lock over one object's state.
 #[inline(always)]
 pub(crate) fn lock(flag: &AtomicBool) {
