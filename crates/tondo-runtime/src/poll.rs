@@ -79,26 +79,25 @@ impl Poller {
         self.poll.try_lock().ok()
     }
 
-    /// Waits for events until `deadline`: what they make ready.
-    pub(crate) fn wait(&self, mut polling: MutexGuard<'_, Polling>, deadline: Option<Instant>) -> Events {
+    /// Waits for events until `deadline`: what they make ready goes in
+    /// `ready`.
+    pub(crate) fn wait(&self, mut polling: MutexGuard<'_, Polling>, deadline: Option<Instant>, ready: &mut Events) {
         let timeout = deadline.map(|at| at.saturating_duration_since(Instant::now()));
         let Polling { poll, events } = &mut *polling;
         if poll.poll(events, timeout).is_err() {
             // An interrupted wait: the worker looks again.
             drop(polling);
             std::thread::sleep(Duration::from_micros(50));
-            return Events(Vec::new());
+            return;
         }
         let slots = lock(&self.sources);
-        let mut ready = Vec::new();
         for event in polling.events.iter() {
             if let Some(Some(source)) = slots.sources.get(event.token().0) {
                 let read = event.is_readable() || event.is_read_closed() || event.is_error();
                 let write = event.is_writable() || event.is_write_closed() || event.is_error();
-                ready.push((source.clone(), read, write));
+                ready.0.push((source.clone(), read, write));
             }
         }
-        Events(ready)
     }
 
     fn add(&self, source: Arc<Source>) -> usize {
@@ -123,12 +122,13 @@ impl Poller {
 }
 
 /// The sockets a wait found ready, and for what.
+#[derive(Default)]
 pub(crate) struct Events(Vec<(Arc<Source>, bool, bool)>);
 
 impl Events {
-    /// Wakes what waits for them.
-    pub(crate) fn wake(self) {
-        for (source, read, write) in self.0 {
+    /// Wakes what waits for them, keeping the room for the next wait.
+    pub(crate) fn wake(&mut self) {
+        for (source, read, write) in self.0.drain(..) {
             source.ready(read, write);
         }
     }

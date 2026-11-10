@@ -362,6 +362,9 @@ struct Worker {
     /// destructor, which a signal handler that reads it first would have to
     /// register, as it may not.
     turns: Cell<*mut Vec<Arc<dyn Turned>>>,
+    /// The sockets its waits for the network's events find ready, whose
+    /// room it keeps, made when first needed, as `turns` is.
+    events: Cell<*mut crate::poll::Events>,
 }
 
 thread_local! {
@@ -376,6 +379,7 @@ thread_local! {
             runner: Cell::new(None),
             in_c: Cell::new(std::ptr::null()),
             turns: Cell::new(std::ptr::null_mut()),
+            events: Cell::new(std::ptr::null_mut()),
         }
     };
 }

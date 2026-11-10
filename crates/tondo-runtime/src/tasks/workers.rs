@@ -287,7 +287,15 @@ pub(super) fn poll(
     poll: MutexGuard<'static, crate::poll::Polling>,
     deadline: Option<Instant>,
 ) -> MutexGuard<'static, Queue> {
-    let events = poller.wait(poll, deadline);
+    let events = worker(|w| {
+        if w.events.get().is_null() {
+            w.events.set(Box::into_raw(Box::default()));
+        }
+        w.events.get()
+    });
+    // Waking queues what waits, and polls nothing that could wait here again.
+    let events = unsafe { &mut *events };
+    poller.wait(poll, deadline, events);
     let mut queue = queue();
     queue.polling = false;
     let alone = queue.runnable.is_empty();
