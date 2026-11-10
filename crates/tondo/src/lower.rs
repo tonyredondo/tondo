@@ -87,7 +87,7 @@ pub fn drop_dead_checks(bodies: &mut [Body]) {
 /// Whether a statement may panic and return, when a `recover` stops it:
 /// a call, an operation of the runtime, checked arithmetic or a read or
 /// write by an index (15.9).
-fn may_panic(statement: &Statement) -> bool {
+pub(crate) fn may_panic(statement: &Statement) -> bool {
     let checked = |place: &Place| place.path.iter().any(|p| matches!(p, Proj::Index(..)));
     let read = |operand: &Operand| matches!(operand, Operand::Copy(place) if checked(place));
     match statement {

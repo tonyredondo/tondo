@@ -2,8 +2,10 @@
 //! call's result: `a = value` then `b = a`, with `a` read nowhere after,
 //! becomes `b = value`. A value that lives in memory, as an enum's, was
 //! copied whole each time, two or three times for `math.sqrt(x)`'s result.
-//! Only values without references to count go: a counted one would also
-//! have to move its releases.
+//! A counted value goes only when its reference passes along the copies:
+//! when nothing ever retains, releases or clears the local it goes through,
+//! and nothing between where it takes the value and the copy may panic,
+//! whose unwinding would release what holds it then.
 
 use crate::mir::*;
 use crate::types::{TyKind, Types};
@@ -63,6 +65,17 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
     for local in body.params.iter().chain(&body.ret) {
         seen[local.0 as usize] = true;
     }
+    // The locals a counted value only passes through.
+    let mut owns = vec![false; body.locals.len()];
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        match statement {
+            Statement::Retain(place) | Statement::Release(place) | Statement::Moved(place) => {
+                owns[place.local.0 as usize] = true;
+            }
+            Statement::Clear(local) => owns[local.0 as usize] = true,
+            _ => {}
+        }
+    }
     let locals = |statement: &Statement| {
         let (mut used, mut defined) = (Vec::new(), Vec::new());
         statement_locals(statement, &mut used, &mut defined);
@@ -103,7 +116,7 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
             if from == to
                 || ty != body.locals[to.0 as usize]
                 || !in_memory(types, ty)
-                || types.needs_drop(ty)
+                || (types.needs_drop(ty) && owns[from.0 as usize])
                 || seen[from.0 as usize]
                 || lent[to.0 as usize]
             {
@@ -129,6 +142,10 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
                 copy += 1;
                 continue;
             };
+            if types.needs_drop(ty) && statements[made + 1..copy].iter().any(crate::lower::may_panic) {
+                copy += 1;
+                continue;
+            }
             // `from` is not read again before it takes another value.
             let read_later = effects[copy + 1..]
                 .iter()
