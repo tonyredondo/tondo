@@ -22,6 +22,7 @@ import {
   graphed,
   hotLines,
   incompatible,
+  optimizedLines,
   listed,
   outcomes,
   place,
@@ -765,4 +766,32 @@ test('what broke in a model, as a table of its steps', () => {
   assert.match(table, /\| start \| `Door \{ open: false \}` \|/);
   assert.match(table, /\| open \| `Door \{ open: true \}` \|/);
   assert.equal(modelSteps({ kind: 'check', broken: null }), undefined);
+});
+
+test('what a release build makes of each line, and what costs at its end', () => {
+  const told = JSON.stringify({
+    format: 'tondo-optimizations-0.1/1',
+    ok: true,
+    optimizations: [
+      { file: 'src/main.to', line: 6, column: 9, kind: 'checked', text: 'keeps its overflow check, in a loop', source: 'total += values[i]', functions: ['main', 'sum'] },
+      { file: 'src/main.to', line: 6, column: 18, kind: 'unchecked', text: 'stays within its array: no bounds check', source: 'values[i]', functions: ['main', 'sum'] },
+      { file: 'src/main.to', line: 9, column: 5, kind: 'inlined', text: 'is inlined: the body of `sum` is copied here', source: 'sum(values)', functions: ['main'] },
+      { file: 'src/main.to', line: 12, column: 21, kind: 'heap', text: 'is made on the heap: a task takes it', source: '"{n}"', functions: ['main'] },
+      { file: 'src/main.to', line: 12, column: 30, kind: 'call', text: 'stays a call of `fib`: the function calls itself', source: 'fib(n)', functions: ['main'] },
+    ],
+  });
+  const lines = optimizedLines(told, '/work/app');
+  assert.deepEqual(
+    lines.map(({ file, line, end }) => [file, line, end]),
+    [
+      ['/work/app/src/main.to', 6, 'keeps a check'],
+      ['/work/app/src/main.to', 9, ''],
+      ['/work/app/src/main.to', 12, 'allocates, a call stays'],
+    ],
+  );
+  assert.deepEqual(lines[0].said, [
+    '`total += values[i]` keeps its overflow check, in a loop (in main, sum)',
+    '`values[i]` stays within its array: no bounds check (in main, sum)',
+  ]);
+  assert.throws(() => optimizedLines('{"format":"tondo-check-0.1/1"}', '/work/app'));
 });

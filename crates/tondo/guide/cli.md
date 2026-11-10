@@ -65,6 +65,8 @@ tondo api --diff v1.2              what the public API lost, changed or gained s
 tondo check --unreached            the code neither main nor a test reaches
 tondo check --docs                 what is public and has no /// (W1010)
 tondo check --performance          a copy a loop makes on every turn (W1009)
+tondo optimizations                what a release build inlines, makes without the heap
+                                   and checks, place by place; --kind heap, --function
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build

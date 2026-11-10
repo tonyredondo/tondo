@@ -869,3 +869,62 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert_eq!(one, again);
     assert!(one != plain && two != one);
 }
+
+/// `tondo optimizations` says what a release build makes of the program's
+/// own code, at each place, in the functions whose code it is in: the
+/// calls inlined and those kept, with why, the texts made in the frame or
+/// on the heap, with what keeps them, the checks dropped and those a loop
+/// keeps; one function alone with `--function`, as data with `--json`, and
+/// the diagnostics of a program that does not check.
+#[test]
+fn what_a_release_build_makes_of_the_code() {
+    let source: &[u8] = b"import std.console\n\nfn sum(values: Array[Int]): Int {\n    var total = 0\n    \
+        for i in 0..values.length() {\n        total += values[i]\n    }\n    total\n}\n\n\
+        fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\
+        fn quarter(value: Int): Int {\n    if value < 0 {\n        return 0\n    }\n    value / 4\n}\n\n\
+        fn main() {\n    let values = [1, 2, 3, 4]\n    for round in 0..3 {\n        \
+        console.println(\"{sum(values)} {fib(round)} {\"{round * 1000}\".length()} {quarter(values[round])}\")\n        \
+        console.println(\"{3 * values[round]}\")\n    }\n}\n";
+    let dir = project_at("optimizations", &[("main.to", source)]);
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to"]);
+    assert_eq!(status, 0, "{stderr}");
+    for line in [
+        "main.to:6:9: `total += values[i]` keeps its overflow check, in a loop (in main, sum)",
+        "main.to:6:18: `values[i]` stays within its array: no bounds check (in main, sum)",
+        "main.to:15:5: `fib(n - 1)` stays a call of `fib`: the function calls itself (in fib)",
+        "main.to:15:5: `fib(n - 1)` stays a call of `fib`: inlining stops after 3 rounds (in main)",
+        "main.to:22:5: `value / 4` is a shift or a mask: its dividend is not negative (in main, quarter)",
+        "main.to:28:27: `sum(values)` is inlined: the body of `sum` is copied here (in main)",
+        "main.to:28:54: `\"{round * 1000}\"` is made in the frame, without the heap (in main)",
+        "main.to:29:27: `3 * values[round]` is checked by the range of the other factor, not by the product (in main)",
+    ] {
+        assert!(said.lines().any(|said| said == line), "{line}\n{said}");
+    }
+    assert!(said.contains("is made on the heap: it is passed to a call that may keep it (in main)"), "{said}");
+    // The copies of a place: a recursion inlined into `main` then kept as
+    // a call is told as a call there, and the standard library is not told.
+    assert!(!said.contains("`fib(n - 1)` is inlined"), "{said}");
+    assert!(!said.contains("<std>") && !said.contains("String."), "{said}");
+    let (fib, _, _) = tondo(&dir, &["optimizations", "main.to", "--function", "fib"]);
+    assert!(fib.lines().count() >= 3 && fib.lines().all(|line| line.ends_with("(in fib)")), "{fib}");
+    let (found, status) = json(&dir, &["optimizations", "main.to", "--json"]);
+    assert_eq!(status, 0);
+    assert_eq!(found["format"], "tondo-optimizations-0.1/1");
+    let all = found["optimizations"].as_array().unwrap();
+    let bounds = all.iter().find(|o| o["source"] == "values[i]").unwrap();
+    assert_eq!(bounds["kind"], "unchecked");
+    assert_eq!(
+        (bounds["file"].as_str(), bounds["line"].as_u64(), bounds["column"].as_u64()),
+        (Some("main.to"), Some(6), Some(18))
+    );
+    assert_eq!(bounds["functions"], json!(["main", "sum"]));
+    let kinds: std::collections::BTreeSet<&str> = all.iter().map(|o| o["kind"].as_str().unwrap()).collect();
+    for kind in ["inlined", "call", "frame", "heap", "unchecked", "checked", "arithmetic"] {
+        assert!(kinds.contains(kind), "{kind}: {found}");
+    }
+    let wrong = project_at("optimizations-wrong", &[("main.to", b"fn main() {\n    let x: Int = \"no\"\n}\n")]);
+    let (said, status) = json(&wrong, &["optimizations", "main.to", "--json"]);
+    assert_eq!(status, 1);
+    assert_eq!(said["ok"], false);
+    assert!(said["diagnostics"].to_string().contains("E"), "{said}");
+}

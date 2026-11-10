@@ -5651,3 +5651,25 @@ function's value and the captures, with the same count, and where it is released
 go of its captures, which the count would otherwise never free. A closure that another captures,
 that is returned, kept, sent or passed on stays on the heap. `closure 1000` takes no allocation
 instead of one, and 245 ns instead of 274, where Go takes 426.
+
+## `tondo optimizations` says what a release build made of the code
+
+Why a program allocates or checks more than it should was found by reading the MIR the passes
+leave (`TONDO_DUMP_MIR`), which takes knowing the compiler. The maintainer asked on 2026-11-10 for
+tools that make that easier, for the compiler's work and for anyone who writes Tondo, at no cost to
+the code. `tondo optimizations` runs the passes of a release build without generating code and
+says, at each place of the program's own code, what they did and what they could not: the calls
+inlined and those kept, with why; the texts and closures made in the frame, and what keeps the
+others on the heap, followed through the copies to a call, a return, a value or a task; the bounds
+and overflow checks dropped, the ones a tight loop keeps, and the products and divisions done
+without multiplying or dividing. The passes write a remark only when it is asked for, so a build
+does the same work and makes the same bytes as before.
+
+A place is told once, with the functions whose code it is in: its own, and the ones it was inlined
+into, where it may fare differently. A loop unrolled or a recursion inlined copies a place, and
+what is done in one copy and not in another is told as not done, the check that stays, the call,
+the heap: that is the cost left. Arithmetic of constants is not told. Each remark has a `kind` for
+tools, the done and the not done side by side (`inlined` and `call`, `frame` and `heap`,
+`unchecked` and `checked`, `arithmetic`), and its text is English like the rest of the
+compiler's, written to follow the code of the place. The MCP tool of the same name gives it to
+an agent, filtered by kind or function.

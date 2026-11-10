@@ -12,6 +12,7 @@
 
 use crate::hir::Callee;
 use crate::mir::*;
+use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 use std::collections::HashMap;
 
@@ -23,7 +24,49 @@ pub fn prove(bodies: &mut [Body], types: &Types) {
         if let Some(relevant) = relevant(body, types) {
             Prover { body, types, loans: &loans, relevant }.run();
         }
+        if crate::mir_text::remarking() {
+            kept(body, types);
+        }
     });
+}
+
+/// Remarks on the checks a body keeps in its tight loops, where they cost
+/// the most, and on its products by a constant that are checked by the
+/// range of the other factor (`tondo optimizations`).
+fn kept(body: &mut Body, types: &Types) {
+    use crate::ast::BinOp;
+    let tight = crate::mir::tight_loops(&body.blocks);
+    let mut remarks: Vec<(Span, &'static str, &'static str)> = Vec::new();
+    for (index, block) in body.blocks.iter_mut().enumerate() {
+        let looping = tight.get(index).copied().unwrap_or(false);
+        for statement in &mut block.stmts {
+            if looping {
+                crate::inline::visit_statement(statement, &mut |place| {
+                    if let Some(Proj::Index(_, span)) = place.path.first() {
+                        remarks.push((*span, "checked", "keeps its bounds check, in a loop"));
+                    }
+                });
+            }
+            let Statement::Assign(place, rvalue, span) = statement else { continue };
+            let Rvalue::Binary(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) = &**rvalue else { continue };
+            let Some(int) = place.path.is_empty().then(|| types.as_int(body.locals[place.local.0 as usize])).flatten()
+            else {
+                continue;
+            };
+            let constant = match (a, b) {
+                (_, Operand::Const(Const::Int(c, _))) | (Operand::Const(Const::Int(c, _)), _) => Some(*c),
+                _ => None,
+            };
+            if *op == BinOp::Mul && constant.is_some_and(|c| crate::codegen::by_range(c, int.bits())) {
+                remarks.push((*span, "arithmetic", "is checked by the range of the other factor, not by the product"));
+            } else if looping {
+                remarks.push((*span, "checked", "keeps its overflow check, in a loop"));
+            }
+        }
+    }
+    for (span, kind, text) in remarks {
+        crate::mir_text::remark(body, span, kind, || text.to_string());
+    }
 }
 
 /// The locals the facts follow: the indexes of arrays' elements, the
@@ -686,13 +729,17 @@ impl Prover<'_> {
     fn exits(&mut self, block: usize, mut facts: Facts, rewrite: bool) -> Vec<(usize, Option<Facts>)> {
         let mut tests: HashMap<Local, Test> = HashMap::new();
         let mut statements = std::mem::take(&mut self.body.blocks[block].stmts);
+        let mut remarks = Vec::new();
         for statement in &mut statements {
             if rewrite {
-                self.rewrite(statement, &facts);
+                self.rewrite(statement, &facts, &mut remarks);
             }
             self.step(statement, &mut facts, &mut tests);
         }
         self.body.blocks[block].stmts = statements;
+        for (span, kind, text) in remarks {
+            crate::mir_text::remark(self.body, span, kind, || text.to_string());
+        }
         let terminator = &self.body.blocks[block].terminator;
         match terminator {
             Terminator::Goto(to) => vec![(to.0 as usize, Some(facts))],
@@ -716,19 +763,24 @@ impl Prover<'_> {
     }
 
     /// Marks what the facts before a statement prove in it.
-    fn rewrite(&self, statement: &mut Statement, facts: &Facts) {
+    fn rewrite(&self, statement: &mut Statement, facts: &Facts, remarks: &mut Vec<(Span, &'static str, &'static str)>) {
         let within = |place: &mut Place| {
-            if let Some(Proj::Index(index, _)) = place.path.first()
+            if let Some(Proj::Index(index, span)) = place.path.first()
                 && self.array(place.local)
                 && self.int(*index)
                 && facts.bound(Node::Zero, Node::Int(*index)).is_some_and(|k| k <= 0)
                 && facts.bound(Node::Int(*index), Node::Len(place.local)).is_some_and(|k| k <= -1)
             {
+                remarks.push((*span, "unchecked", "stays within its array: no bounds check"));
                 place.path[0] = Proj::InBounds(*index);
             }
         };
         let mut within = within;
         crate::inline::visit_statement(statement, &mut within);
+        let span = match statement {
+            Statement::Assign(_, _, span) => *span,
+            _ => Span::default(),
+        };
         if let Statement::Assign(place, rvalue, _) = statement
             && place.path.is_empty()
             && self.typed_int(place.local)
@@ -740,6 +792,10 @@ impl Prover<'_> {
             let (low, high) = arithmetic(*op, range_a, range_b);
             if low >= i64::MIN as i128 && high <= i64::MAX as i128 {
                 exact(rvalue);
+                // Arithmetic of constants says nothing.
+                if low < high {
+                    remarks.push((span, "unchecked", "cannot overflow: no check"));
+                }
             }
         } else if let Statement::Assign(place, rvalue, _) = statement
             && place.path.is_empty()
@@ -753,6 +809,9 @@ impl Prover<'_> {
             // A dividend not below zero by a power of two: a shift or a
             // mask, without the work signs take.
             exact(rvalue);
+            if facts.range(a).0 < facts.range(a).1 {
+                remarks.push((span, "arithmetic", "is a shift or a mask: its dividend is not negative"));
+            }
         }
     }
 

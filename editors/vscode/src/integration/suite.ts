@@ -135,6 +135,15 @@ const tests: [string, () => Promise<void>][] = [
     },
   ],
   [
+    'what a release build makes of the code',
+    async () => {
+      await openMain();
+      const told = await vscode.commands.executeCommand<number | undefined>('tondo.showOptimizations');
+      assert.ok(told && told > 0, `${told} lines told`);
+      await execute('tondo.clearOptimizations');
+    },
+  ],
+  [
     'what nothing reaches is marked',
     async () => {
       const document = await openMain();

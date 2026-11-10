@@ -125,6 +125,13 @@ project, running, debugging and testing it.
   (94ms)`, and the flame graph opens beside the code. *Show a Profile…*
   opens any pprof file, a CI artifact or one `std.profile` wrote, and
   *Clear the Profile* takes it away.
+- **Optimizations**: *Show the Optimizations* tells, from `tondo
+  optimizations`, what a release build makes of the program of the file
+  open: the end of each line says what costs there, `⚙ allocates`, `keeps a
+  check` in a loop or `a call stays`, and over the line is everything the
+  compiler did there, what it inlined, made without the heap or stopped
+  checking, and why it did not. Saving tells it again; *Clear the
+  Optimizations* takes it away.
 - **Running programs**, those started with `TONDO_DIAGNOSTICS=1` and debug
   builds: *Attach* picks them by name; *Watch a Running Program's
   Counters* shows them in the *Tondo Counters* view as they change; *Trace

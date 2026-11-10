@@ -106,6 +106,7 @@ target/release/tondo build program.to --output app
 target/release/tondo check program.to            # --json for structured diagnostics
 target/release/tondo fmt program.to               # canonical format; --check to verify
 target/release/tondo graph                       # packages, modules, files and their imports
+target/release/tondo optimizations               # what a release build inlines, keeps off the heap and checks
 target/release/tondo new app                     # a project; `tondo add`, `remove`, `fix`, `explain E1102`
 target/release/tondo script.to args              # for #!/usr/bin/env tondo
 ```

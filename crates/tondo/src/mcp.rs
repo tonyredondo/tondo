@@ -221,6 +221,22 @@ impl Server {
                 };
                 Ok(Reply::new(text, graph.json(view == View::Packages)))
             }
+            "optimizations" => {
+                let analysis = driver::analyze(&args.path())?;
+                if analysis.program.is_none() {
+                    let diagnostics = diagnostics(&analysis);
+                    let data = json!({ "compiles": false, "diagnostics": diagnostics });
+                    return Ok(Reply::new(report(&analysis, &diagnostics), data));
+                }
+                let (function, kind) = (args.text("function"), args.text("kind"));
+                let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref())?;
+                let text = match found.is_empty() {
+                    true => "nothing to tell of the program's own code".to_string(),
+                    false => found.iter().map(|o| o.line() + "\n").collect(),
+                };
+                let found: Vec<Value> = found.iter().map(driver::Optimization::json).collect();
+                Ok(Reply::new(text, json!({ "optimizations": found })))
+            }
             "definition" | "references" | "hover" | "complete" | "rename" | "refactor" | "symbols"
             | "implementations" | "calls" => language(name, args),
             "profile" => profile(args),
@@ -2119,6 +2135,19 @@ imports. Given a directory or file inside a project, its project, and the module
             ("module", "string", "Only what this module imports, directly or not."),
             ("reverse", "boolean", "With `module`, only what imports it, directly or not."),
             ("format", "string", "The text as dot or mermaid, to draw it; the data stays the same."),
+        ],
+    },
+    Tool {
+        name: "optimizations",
+        description: "What a release build makes of the program's own code, place by place, without building it: \
+the calls it inlines and those it keeps, with why; the texts and closures it makes in the frame, and what keeps the \
+others on the heap; the bounds and overflow checks it drops, and those a loop keeps. To see why code allocates or \
+checks more than it should, before measuring it.",
+        kind: Kind::Reads,
+        params: &[
+            ("path", "string", "A project or a .to file; the server's directory by default."),
+            ("function", "string", "Only the functions whose names hold this."),
+            ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
         ],
     },
     Tool {

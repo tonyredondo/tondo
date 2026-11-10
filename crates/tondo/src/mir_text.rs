@@ -24,6 +24,26 @@ fn asked() -> Option<&'static (String, Option<String>)> {
         .as_ref()
 }
 
+static REMARKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks the passes for their remarks, or no longer (`tondo optimizations`).
+pub fn ask_remarks(asked: bool) {
+    REMARKING.store(asked, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the passes say what they did of the source.
+pub fn remarking() -> bool {
+    REMARKING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A remark of a pass on the source at `span`, when they are asked for:
+/// `text` is only made then.
+pub fn remark(body: &mut Body, span: crate::source::Span, kind: &'static str, text: impl FnOnce() -> String) {
+    if remarking() && !(span.start == 0 && span.end == 0) {
+        body.remarks.push(Remark { span, kind, text: text() });
+    }
+}
+
 /// Whether the MIR of the function `name` is to be written, so that its
 /// passes note what they decide.
 pub fn noting(name: &str) -> bool {

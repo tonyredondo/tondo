@@ -254,6 +254,7 @@ tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
+tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -334,6 +335,9 @@ tondo version [--json]
   cuerpos (sección 7.2).
 - `graph` muestra de qué está hecho un programa: sus paquetes, sus módulos
   con sus archivos y lo que importa cada uno (sección 7.11).
+- `optimizations` dice qué hace un build de release con el código del
+  programa: lo que inlinea, lo que hace sin el heap y las comprobaciones que
+  quita y las que deja (sección 7.18).
 - `explain` dice qué significa el código de un error, un warning o un pánico
   (sección 7.13); `new`, `init`, `add`, `remove`, `fix` y `clean` hacen un
   proyecto, cambian sus dependencias, aplican las reparaciones seguras y
@@ -1597,8 +1601,8 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
 - Código: `check` da los diagnósticos, cada uno con el id de `check --json`
   (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
-  `expand`, `api` (también de una declaración, y `search`), `graph`, `guide`
-  y `explain`.
+  `expand`, `api` (también de una declaración, y `search`), `graph`, `guide`,
+  `explain` y `optimizations` (sección 7.18).
 - Navegación: `definition`, `references`, `implementations`, `calls`,
   `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos, con
   lo mismo que el servidor de lenguaje da de cada declaración, las anotaciones
@@ -1931,6 +1935,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
+| `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
 | `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
@@ -1958,7 +1963,7 @@ campos de su resultado:
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `stay_lines`, `again`, `retried` y `converted`; si no puede, `ok` falso, `message` y `restart` |
-| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `optimizations`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |
 | `fix` | `tondo-fix-0.1/1` | `applied` y `skipped`, cada reparación con su `id` y su `title`, `compiles` y los `diagnostics` de después; `ok` si compila |
@@ -2119,6 +2124,44 @@ significan lo de siempre.
 | `TONDO_META_MEMORY` | El compilador | Sus bytes. |
 | `TONDO_META_REQUEST` | El compilador | El archivo de su petición. |
 | `TONDO_META_RESPONSE` | El compilador | El archivo de su respuesta. |
+
+### 7.18 `tondo optimizations`
+
+`tondo optimizations` dice qué hace un build de release con el código propio
+del programa, sin generarlo: en cada sitio, qué llamadas copia en su lugar y
+cuáles deja como llamadas, y por qué; qué textos y closures hace en el frame,
+sin el heap, y qué retiene en el heap a los demás; qué comprobaciones de
+límites y de desbordamiento quita y cuáles deja en un bucle, donde cuestan
+más; y qué productos y divisiones hace sin multiplicar ni dividir. Sirve para
+ver, antes de medir, por qué un código asigna o comprueba más de lo que se
+espera, y qué cambio lo evitaría.
+
+~~~text
+$ tondo optimizations
+src/main.to:6:9: `total += values[i]` keeps its overflow check, in a loop (in main, sum)
+src/main.to:6:18: `values[i]` stays within its array: no bounds check (in main, sum)
+src/main.to:15:5: `fib(n - 1)` stays a call of `fib`: the function calls itself (in fib)
+src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `label` (in main)
+~~~
+
+- El argumento es un proyecto o un archivo, como el de `tondo build`. Un
+  programa con errores da sus diagnósticos y termina con estado 1.
+- Cada línea da el sitio, la primera línea de su código, lo que se hizo, en
+  inglés como los demás textos del compilador, y las funciones en cuyo código
+  está: la suya y aquellas en las que se inlineó. Van en el orden del código,
+  y solo las del código del programa, no las de sus dependencias ni de `std`.
+- Lo que se hace en una copia de un sitio y no en otra, de un bucle
+  desenrollado o de una recursión inlineada, se dice como no hecho: la
+  comprobación que queda, la llamada, el heap.
+- Cada cosa es de un tipo, su `kind`: `inlined` o `call`, `frame` o `heap`,
+  `unchecked` o `checked`, o `arithmetic`. `--kind <tipo>` da solo las de ese
+  tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
+  toolchain (estado 3).
+- `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene.
+- Con `--json` da `tondo-optimizations-0.1/1` (sección 7.12): `kind` es lo
+  que mira una herramienta; `text` es para leer, y `source`, el código del
+  sitio.
+- `tondo mcp` lo ofrece como la herramienta `optimizations` (sección 7.9).
 
 ## 8. Determinismo
 

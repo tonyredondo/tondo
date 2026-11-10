@@ -275,7 +275,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (Some(c), _) => (b, c),
             _ => return None,
         };
-        if !(c >= 2 && c < 1 << (int.bits() - 2) && ((c as u64).is_power_of_two() || [3, 5, 7, 9].contains(&c))) {
+        if !by_range(c as i128, int.bits()) {
             return None;
         }
         let clif = self.e.fb.func.dfg.value_type(factor);
@@ -474,4 +474,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         }
     }
+}
+
+/// Whether a checked product by the constant `c`, of an integer of `bits`,
+/// is checked by the range of the other factor (`multiplied`).
+pub(crate) fn by_range(c: i128, bits: u32) -> bool {
+    bits <= 64 && c >= 2 && c < 1 << (bits - 2) && ((c as u64).is_power_of_two() || [3, 5, 7, 9].contains(&c))
 }

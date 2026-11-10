@@ -81,6 +81,7 @@ fn main() -> ExitCode {
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "graph" => graph_command(&args[1..]),
+        "optimizations" => optimizations_command(&args[1..]),
         "new" | "init" => create_command(command, &args[1..]),
         "add" => add_command(&args[1..]),
         "remove" => remove_command(&args[1..]),
@@ -1918,6 +1919,51 @@ fn graph_command(args: &[OsString]) -> Result<ExitCode, String> {
         "dot" => print!("{}", graph.dot(view)),
         "mermaid" => print!("{}", graph.mermaid(view)),
         _ => print!("{}", graph.text(view)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Says what a release build makes of the program's own code (toolchain
+/// 7.18): each place, the functions it is in, its code and what was done.
+fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let mut valued = |flag: &str| -> Result<Option<String>, String> {
+        let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
+        let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
+        let value = value.ok_or(format!("{flag} takes a value\n{USAGE}"))?;
+        args.drain(at..at + 2);
+        Ok(Some(value))
+    };
+    let (function, kind) = (valued("--function")?, valued("--kind")?);
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-') && *a != "--project") {
+        return Err(format!("optimizations does not take {}\n{USAGE}", flag.display()));
+    }
+    let (path, rest) = source_argument(&args);
+    if !rest.is_empty() {
+        return Err(format!("optimizations takes one project or file\n{USAGE}"));
+    }
+    let analysis = driver::analyze(&path)?;
+    if analysis.program.is_none() {
+        if json {
+            let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+            print_json("optimizations", false, serde_json::json!({ "diagnostics": diagnostics }));
+        } else {
+            show(&analysis, Shown::Human);
+        }
+        return Ok(ExitCode::FAILURE);
+    }
+    let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref())?;
+    if json {
+        let found: Vec<serde_json::Value> = found.iter().map(driver::Optimization::json).collect();
+        print_json("optimizations", true, serde_json::json!({ "optimizations": found }));
+        return Ok(ExitCode::SUCCESS);
+    }
+    for optimization in &found {
+        println!("{}", optimization.line());
+    }
+    if found.is_empty() {
+        println!("nothing to tell of the program's own code");
     }
     Ok(ExitCode::SUCCESS)
 }

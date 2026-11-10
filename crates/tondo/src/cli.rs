@@ -363,6 +363,15 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        name: "optimizations",
+        usage: &["tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--json]"],
+        summary: &[
+            "what a release build makes of the code: the calls it",
+            "inlines and those it keeps, the texts and closures made",
+            "without the heap, the checks it drops and those it keeps",
+        ],
+    },
+    Command {
         name: "target",
         usage: &["tondo target pack [<dir>] [--json]"],
         summary: &["write this machine's target, for a tondo elsewhere", "to build for it (TONDO_TARGETS=<dir>)"],
@@ -404,6 +413,7 @@ pub const FEATURES: &[&str] = &[
     "test-bench",
     "test-fuzz",
     "profile",
+    "optimizations",
     "lsp-tests",
     "lsp-lenses",
     "explain",

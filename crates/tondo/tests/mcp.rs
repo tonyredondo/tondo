@@ -776,3 +776,35 @@ fn reaches_what_the_command_line_does() {
     assert!(output.exists());
     client.stop();
 }
+
+/// `optimizations` says, as `tondo optimizations --json` does, what a
+/// release build makes of the code: one kind of it, one function's, and
+/// the diagnostics of a program that does not compile.
+#[test]
+fn says_what_a_release_build_makes_of_the_code() {
+    let code = "import std.console\n\nfn sum(values: Array[Int]): Int {\n    var total = 0\n    \
+        for i in 0..values.length() {\n        total += values[i]\n    }\n    total\n}\n\n\
+        fn main() {\n    let values = [1, 2, 3]\n    console.println(\"{sum(values)}\")\n}\n";
+    let dir = project("mcp_optimizations", &[("main.to", code), ("wrong.to", "fn main() {\n    nothing()\n}\n")]);
+    let mut agent = Agent::start(&dir);
+    let (found, text) = agent.call("optimizations", json!({ "path": "main.to" }));
+    let all = found["optimizations"].as_array().unwrap();
+    let bounds = all.iter().find(|o| o["source"] == "values[i]").expect("the bounds check dropped");
+    assert_eq!(
+        (&bounds["kind"], &bounds["line"], &bounds["functions"]),
+        (&json!("unchecked"), &json!(6), &json!(["main", "sum"]))
+    );
+    assert!(
+        text.contains("main.to:6:18: `values[i]` stays within its array: no bounds check (in main, sum)"),
+        "{text}"
+    );
+    let (heap, _) = agent.call("optimizations", json!({ "path": "main.to", "kind": "heap" }));
+    let heap = heap["optimizations"].as_array().unwrap();
+    assert!(!heap.is_empty() && heap.iter().all(|o| o["kind"] == "heap"), "{heap:?}");
+    let (sum, _) = agent.call("optimizations", json!({ "path": "main.to", "function": "sum" }));
+    assert!(sum["optimizations"].as_array().unwrap().iter().all(|o| o["functions"] == json!(["sum"])), "{sum}");
+    let (wrong, text) = agent.call("optimizations", json!({ "path": "wrong.to" }));
+    assert_eq!(wrong["compiles"], false, "{wrong}");
+    assert!(text.contains("nothing"), "{text}");
+    agent.stop();
+}

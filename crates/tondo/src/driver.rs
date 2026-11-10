@@ -1144,23 +1144,7 @@ pub fn compile(
     crate::mir_text::dump("lower", &bodies, types, sources);
     if !debug && !analysis.meta {
         let _passes = crate::times::part("MIR passes");
-        crate::inline::inline(&mut bodies);
-        crate::mir_text::dump("inline", &bodies, types, sources);
-        crate::elide::elide(&mut bodies, types);
-        crate::mir_text::dump("elide", &bodies, types, sources);
-        crate::thread::thread(&mut bodies, types);
-        crate::mir_text::dump("thread", &bodies, types, sources);
-        crate::lends::lends(&mut bodies);
-        crate::mir_text::dump("lends", &bodies, types, sources);
-        crate::moves::moves(&mut bodies);
-        crate::mir_text::dump("moves", &bodies, types, sources);
-        crate::unroll::unroll(&mut bodies, types);
-        crate::mir_text::dump("unroll", &bodies, types, sources);
-        crate::prove::prove(&mut bodies, types);
-        lower::drop_dead_checks(&mut bodies);
-        crate::mir_text::dump("prove", &bodies, types, sources);
-        crate::stack::stack(&mut bodies, types);
-        crate::mir_text::dump("stack", &bodies, types, sources);
+        optimize(&mut bodies, types, sources);
     }
     let roots = analysis.project.as_ref().map_or(String::new(), |p| crate::roots::table(p, &analysis.sources));
     let options = codegen::Options {
@@ -1173,6 +1157,142 @@ pub fn compile(
         roots: &roots,
     };
     codegen::compile(program, &bodies, &analysis.sources, options)
+}
+
+/// The MIR passes of a release build, in their order, each followed by
+/// the MIR `TONDO_DUMP_MIR` asks for.
+fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sources: &SourceMap) {
+    crate::inline::inline(bodies);
+    crate::mir_text::dump("inline", bodies, types, sources);
+    crate::elide::elide(bodies, types);
+    crate::mir_text::dump("elide", bodies, types, sources);
+    crate::thread::thread(bodies, types);
+    crate::mir_text::dump("thread", bodies, types, sources);
+    crate::lends::lends(bodies);
+    crate::mir_text::dump("lends", bodies, types, sources);
+    crate::moves::moves(bodies);
+    crate::mir_text::dump("moves", bodies, types, sources);
+    crate::unroll::unroll(bodies, types);
+    crate::mir_text::dump("unroll", bodies, types, sources);
+    crate::prove::prove(bodies, types);
+    lower::drop_dead_checks(bodies);
+    crate::mir_text::dump("prove", bodies, types, sources);
+    crate::stack::stack(bodies, types);
+    crate::mir_text::dump("stack", bodies, types, sources);
+}
+
+/// What a pass of a release build did, or could not do, at a place in the
+/// program's own code (toolchain 7.18).
+pub struct Optimization {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
+    /// The functions whose code it is in: its own, and those it is inlined
+    /// into.
+    pub functions: Vec<String>,
+    /// `inlined` or `call`, `frame` or `heap`, `unchecked` or `checked`, or
+    /// `arithmetic`.
+    pub kind: &'static str,
+    /// What was done, to read after `source`.
+    pub text: String,
+    /// The first line of the code it is about.
+    pub source: String,
+}
+
+/// The kinds of `Optimization`, a pass's done and its not done side by side.
+pub const OPTIMIZATION_KINDS: &[&str] = &["inlined", "call", "frame", "heap", "unchecked", "checked", "arithmetic"];
+
+impl Optimization {
+    /// The line `tondo optimizations` writes.
+    pub fn line(&self) -> String {
+        let (file, line, column) = (&self.file, self.line, self.column);
+        format!("{file}:{line}:{column}: `{}` {} (in {})", self.source, self.text, self.functions.join(", "))
+    }
+
+    /// As data (toolchain 7.12).
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "file": self.file, "line": self.line, "column": self.column, "functions": self.functions,
+            "kind": self.kind, "text": self.text, "source": self.source,
+        })
+    }
+}
+
+/// What the passes of a release build of a checked program did in its own
+/// code, in the functions whose names hold `function` and of the `kind`
+/// when they are given, in
+/// the order of the source, without generating the code. What is done in
+/// one copy of a place, of a loop unrolled or a recursion inlined, and not
+/// in another, is told as not done: a check kept, a call, the heap.
+pub fn optimizations(
+    analysis: &Analysis,
+    function: Option<&str>,
+    kind: Option<&str>,
+) -> Result<Vec<Optimization>, String> {
+    if let Some(kind) = kind.filter(|kind| !OPTIMIZATION_KINDS.contains(kind)) {
+        return Err(format!("no kind `{kind}`: {}", OPTIMIZATION_KINDS.join(", ")));
+    }
+    let program = analysis.program.as_ref().expect("optimizations() requires a checked program");
+    let sources = &analysis.sources;
+    crate::mir_text::ask_remarks(true);
+    let mut bodies = lower::lower(program, false, false, None);
+    if !analysis.meta {
+        optimize(&mut bodies, &program.types, sources);
+    }
+    crate::mir_text::ask_remarks(false);
+    let mut found = Vec::new();
+    for body in bodies.iter().filter(|body| function.is_none_or(|name| body.name.contains(name))) {
+        // What a loop unrolled or a recursion inlined does in one copy
+        // of a place and not in another is told as the worse.
+        let worse = |kind: &str| match kind {
+            "unchecked" => "checked",
+            "inlined" => "call",
+            "frame" => "heap",
+            _ => "",
+        };
+        let told: std::collections::HashSet<_> =
+            body.remarks.iter().map(|r| (r.kind, r.span.start, r.span.end)).collect();
+        for remark in &body.remarks {
+            let file = sources.file_of(remark.span.start);
+            if file.dependency || file.logical.starts_with("<std>/") {
+                continue;
+            }
+            if told.contains(&(worse(remark.kind), remark.span.start, remark.span.end))
+                || kind.is_some_and(|kind| kind != remark.kind)
+            {
+                continue;
+            }
+            let (name, line, column) = sources.position(remark.span.start);
+            let first = sources.slice(remark.span).lines().next().unwrap_or("").trim();
+            let source = match first.chars().count() > 60 {
+                true => format!("{}…", first.chars().take(59).collect::<String>()),
+                false => first.to_string(),
+            };
+            found.push(Optimization {
+                file: name,
+                line,
+                column,
+                functions: vec![body.name.clone()],
+                kind: remark.kind,
+                text: remark.text.clone(),
+                source,
+            });
+        }
+    }
+    let key = |o: &Optimization| (o.file.clone(), o.line, o.column, o.kind, o.text.clone());
+    found.sort_by(|a, b| key(a).cmp(&key(b)).then_with(|| a.functions.cmp(&b.functions)));
+    let mut grouped: Vec<Optimization> = Vec::new();
+    for o in found {
+        match grouped.last_mut() {
+            Some(last) if key(last) == key(&o) => {
+                if !last.functions.contains(&o.functions[0]) {
+                    last.functions.extend(o.functions);
+                }
+            }
+            _ => grouped.push(o),
+        }
+    }
+    Ok(grouped)
 }
 
 /// Whether this tondo can build for `target`: its own machine's, or one

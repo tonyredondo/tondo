@@ -721,6 +721,16 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.showOptimizations",
+        "title": "Show the Optimizations",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.clearOptimizations",
+        "title": "Clear the Optimizations",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.guide",
         "title": "Read the Guide",
         "category": "Tondo"
@@ -961,6 +971,14 @@
         {
           "command": "tondo.clearProfile",
           "when": "tondo.profiled"
+        },
+        {
+          "command": "tondo.showOptimizations",
+          "when": "resourceLangId == tondo"
+        },
+        {
+          "command": "tondo.clearOptimizations",
+          "when": "tondo.optimized"
         },
         {
           "command": "tondo.bisectTest",

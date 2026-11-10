@@ -46,23 +46,36 @@ pub fn inline(bodies: &mut Vec<Body>) {
 /// Notes, in a function whose MIR is to be written, why each call left
 /// stays a call.
 fn note_calls(bodies: &mut [Body]) {
+    let remarking = crate::mir_text::remarking();
     for index in 0..bodies.len() {
-        if !crate::mir_text::noting(&bodies[index].name) {
+        let noting = crate::mir_text::noting(&bodies[index].name);
+        if !noting && !remarking {
             continue;
         }
-        let mut notes = Vec::new();
+        let (mut notes, mut remarks) = (Vec::new(), Vec::new());
         for statement in bodies[index].blocks.iter().flat_map(|block| &block.stmts) {
-            let Statement::Assign(_, rvalue, _) = statement else { continue };
+            let Statement::Assign(_, rvalue, span) = statement else { continue };
             let Rvalue::Call(Callee::Fn(callee), _) = &**rvalue else { continue };
             let callee = callee.0 as usize;
             let why = match callee == index {
                 true => "it is this one".to_string(),
                 false => not_small(&bodies[callee]).unwrap_or_else(|| format!("inlining stops after {ROUNDS} rounds")),
             };
-            notes.push(format!("inline: the call of `{}` stays: {why}", bodies[callee].name));
+            let name = &bodies[callee].name;
+            if noting {
+                notes.push(format!("inline: the call of `{name}` stays: {why}"));
+            }
+            let why = match callee == index {
+                true => "the function calls itself".to_string(),
+                false => why,
+            };
+            remarks.push((*span, format!("stays a call of `{name}`: {why}")));
         }
         notes.dedup();
         bodies[index].notes.append(&mut notes);
+        for (span, text) in remarks {
+            crate::mir_text::remark(&mut bodies[index], span, "call", || text);
+        }
     }
 }
 
@@ -298,7 +311,7 @@ fn not_small(body: &Body) -> Option<String> {
         }
     }
     if cost > SMALL {
-        return Some(format!("it costs {cost}, past {SMALL}"));
+        return Some(format!("its body costs {cost}, more than the {SMALL} inlining takes"));
     }
     // A loan becomes the place lent, which cannot be an index or a local
     // a statement defines whole; a place can be assigned, as
@@ -405,6 +418,9 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
             let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
             let mut assigns = Vec::new();
+            crate::mir_text::remark(&mut body, *span, "inlined", || {
+                format!("is inlined: the body of `{}` is copied here", callee.name)
+            });
             let rename = bind(&mut body, callee, arguments, &mut assigns, *span, &|_| true);
             // A parameter that takes an argument read by an index may
             // panic: it unwinds as the call would have (15.9).

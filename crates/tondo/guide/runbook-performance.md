@@ -35,6 +35,16 @@ profile {"path": "slow.to"}
 `kind` asks `memory`, what it allocates, or `tasks`, where they wait. `top` gives
 more lines, and `profile_show` reads a profile written before.
 
+`optimizations` says what a release build made of that code: the calls it
+inlined and those it kept, with why; the texts and closures it made without the
+heap, and what keeps the others on it; the checks it dropped, and those a loop
+keeps. Its `kind` `heap` gives only what allocates.
+
+```mcp
+optimizations {"path": "slow.to"}
+=> `isPrime(number)` is inlined
+```
+
 For a number to compare, a benchmark is a test that calls `testing.bench`.
 
 ```sh

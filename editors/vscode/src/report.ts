@@ -450,6 +450,46 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
   return where.project ? { program: where.root, cwd: where.root } : { program: file, cwd: path.dirname(file) };
 }
 
+/** What `tondo optimizations --json` says of a line of a file
+ *  (toolchain 7.18): at its end, what costs there, and over it all the
+ *  passes said of it. */
+export interface OptimizedLine {
+  file: string;
+  line: number;
+  /** What costs on the line, `allocates`, `keeps a check` or `a call
+   *  stays`, or nothing when nothing does. */
+  end: string;
+  /** Each thing done or not done, as `tondo optimizations` writes it. */
+  said: string[];
+}
+
+/** What costs, by the kind of a remark, as the end of its line says it. */
+const COSTS: Record<string, string> = { heap: 'allocates', checked: 'keeps a check', call: 'a call stays' };
+
+/** The lines `tondo optimizations --json` tells of, in the order it gives
+ *  them, with their files resolved against `dir`, the program's. */
+export function optimizedLines(json: string, dir: string): OptimizedLine[] {
+  const told = JSON.parse(json) as {
+    format?: string;
+    optimizations?: { file: string; line: number; kind: string; text: string; source: string; functions: string[] }[];
+  };
+  if (told.format !== 'tondo-optimizations-0.1/1' || !told.optimizations) {
+    throw new Error('tondo optimizations told nothing');
+  }
+  const lines = new Map<string, OptimizedLine & { costs: Set<string> }>();
+  for (const o of told.optimizations) {
+    const file = path.resolve(dir, o.file);
+    const key = `${file}:${o.line}`;
+    const line = lines.get(key) ?? { file, line: o.line, end: '', said: [], costs: new Set<string>() };
+    lines.set(key, line);
+    line.said.push(`\`${o.source}\` ${o.text} (in ${o.functions.join(', ')})`);
+    if (COSTS[o.kind]) {
+      line.costs.add(COSTS[o.kind]);
+    }
+  }
+  return [...lines.values()].map(({ costs, ...line }) => ({ ...line, end: [...costs].join(', ') }));
+}
+
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
 export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench', 'profile', 'test-fuzz'];

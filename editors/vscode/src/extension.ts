@@ -11,6 +11,7 @@ import { registerModules } from './modules';
 import { registerObserving } from './observe';
 import { registerProject } from './project';
 import { registerRefactors } from './refactors';
+import { registerOptimizations } from './optimizations';
 import { registerProfiles } from './profiles';
 import { registerStatus } from './status';
 import { registerTasks } from './tasks';
@@ -43,6 +44,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   void checkVersion();
   registerStatus(context, output);
   const showProfile = registerProfiles(context, output);
+  registerOptimizations(context, output);
   onTests = registerTesting(context, output, showProfile);
   // Before the language server starts, so that a `tondo.path` fixed after
   // it failed to start starts it.

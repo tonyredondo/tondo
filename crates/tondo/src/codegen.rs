@@ -58,6 +58,7 @@ mod values;
 mod worker;
 use glue::*;
 use live::*;
+pub(crate) use operators::by_range;
 use runtime::*;
 
 const POINTER: ir::Type = types::I64;

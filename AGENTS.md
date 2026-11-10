@@ -100,20 +100,6 @@ While working on a feature, `TONDO_RUNTIME_FAST=1` in the environment of
 `cargo` compiles a change to the runtime in about half the time. Leave it
 out for the final check below, which is the build that ships.
 
-To see what the compiler made of a function, `TONDO_DUMP_MIR=<name>` in
-the environment of a build writes the MIR of every function whose name
-holds `<name>` after lowering and after each pass, with what the passes
-decided and why; `TONDO_DUMP_MIR=<name>@<pass>` after that pass alone.
-Write a note there (`mir_text::note`) when a pass decides something one
-would need to know, rather than a print to take out later.
-
-A benchmark's row moves by a third when only where its code lies moves.
-Judge a change by the instructions and cycles of a program that does the
-same rounds each time, under `perf stat`, as well as by the row's time;
-`TONDO_LAYOUT_SEED=<n>` in the environment of a build lays its functions
-out in another order, so that a row measured with a few seeds shows how
-much of a difference is where the code lies.
-
 The runtime is built in `target/tondo-runtime`, under a key of what makes
 it (`crates/tondo/build.rs`): every way of compiling `tondo` takes it from
 there, and only a change to the runtime, its dependencies or the
@@ -167,6 +153,40 @@ its own, with `gh workflow run CI --ref <branch>`.
   A test checks it.
 - Commits have a short title that says what changed and a body that says
   why, with no trailers.
+
+### See what the compiler does
+
+Ask the toolchain before guessing why code is slow or allocates:
+
+- `tondo optimizations [<path>]`, or the MCP tool `optimizations`, says
+  what a release build made of each place of a program: the calls it
+  inlined and those it kept, with why; the texts and closures made in the
+  frame, and what keeps the others on the heap; the checks dropped, and
+  those a loop keeps. `--kind heap` gives only what allocates, `--function
+  <name>` one function. A pass that decides something the author of the
+  code could change says so there, with `mir_text::remark`.
+- `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
+  every function whose name holds `<name>` after lowering and after each
+  pass, with what the passes decided and why; `TONDO_DUMP_MIR=<name>@<pass>`
+  after that pass alone. Write a note there (`mir_text::note`) when a pass
+  decides something one would need to know, rather than a print to take
+  out later.
+- `tondo test --exec <command>` runs the tests' executable under a
+  command: `perf stat`, `valgrind`, `gdb --args`.
+- `tondo test --exact <id> --bench --profile memory` writes where a
+  benchmark allocates, every allocation with `TONDO_HEAP_RATE=1` in its
+  environment; `tondo profile show <profile> --sample alloc_objects
+  --lines` gives the lines that allocate most often.
+- A benchmark's row moves by a third when only where its code lies moves.
+  Judge a change by the instructions and cycles of a program that does the
+  same rounds each time, under `perf stat`, as well as by the row's time;
+  `TONDO_LAYOUT_SEED=<n>` in the environment of a build lays its functions
+  out in another order, so that a row measured with a few seeds shows how
+  much of a difference is where the code lies.
+- A change to the passes that should not change the code is proven by
+  building programs with the `tondo` before it and after it and comparing
+  the executables, which are the same but for the date and time the
+  runtime was built, which some of its C code holds.
 
 ### Where Tondo is going
 

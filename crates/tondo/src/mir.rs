@@ -33,6 +33,17 @@ pub enum Proj {
     Captures(Ty),
 }
 
+/// What a pass of a release build did, or could not do, at a place in the
+/// source, in words for whoever wrote it (`tondo optimizations`).
+#[derive(Clone, Debug)]
+pub struct Remark {
+    pub span: Span,
+    /// `inlined` or `call`, `frame` or `heap`, `unchecked` or `checked`,
+    /// or `arithmetic`.
+    pub kind: &'static str,
+    pub text: String,
+}
+
 /// A local or a path inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
@@ -101,6 +112,9 @@ pub struct Body {
     /// What the passes decided of it and why, while `TONDO_DUMP_MIR` asks
     /// for it (`mir_text`).
     pub notes: Vec<String>,
+    /// What the passes decided of its source, while `tondo optimizations`
+    /// asks for it.
+    pub remarks: Vec<Remark>,
     pub locals: Vec<Ty>,
     /// Texts made in room the frame keeps, as only this function's borrows
     /// read them (`stack.rs`).
