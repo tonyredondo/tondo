@@ -64,22 +64,11 @@ pub(super) fn program_ended(queue: &Queue) -> bool {
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     crate::trace::guard_thread(true);
-    if exploring().is_none() && own_next().is_none() {
-        let index = NEXT_COUNT.load(Ordering::Acquire);
-        if index < NEXTS.len() {
-            let next: &'static Next = Box::leak(Box::new(Next {
-                task: AtomicPtr::new(std::ptr::null_mut()),
-                since: AtomicU64::new(0),
-                tasks: Mutex::new(Local(VecDeque::new())),
-                count: AtomicUsize::new(0),
-                waiting: AtomicU64::new(0),
-            }));
-            let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
-            if let Some(slot) = NEXTS.get(index) {
-                slot.store(next as *const Next as *mut Next, Ordering::Release);
-                worker(|w| w.own_next.set(Some(next)));
-            }
-        }
+    if exploring().is_none()
+        && own_next().is_none()
+        && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))
+    {
+        worker(|w| w.own_next.set(Some(next)));
     }
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.

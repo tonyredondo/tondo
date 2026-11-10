@@ -6,7 +6,9 @@ use super::*;
 
 /// What a worker runs next: a task the task it runs made runnable, as Go's
 /// `runnext`, so that two tasks that hand each other values run one after
-/// the other on one thread, and when it was put there.
+/// the other on one thread, and when it was put there. On lines of its own,
+/// which its worker writes all the time.
+#[repr(align(128))]
 pub(super) struct Next {
     pub(super) task: AtomicPtr<Task>,
     pub(super) since: AtomicU64,
@@ -26,6 +28,16 @@ pub(super) struct Local(pub(super) VecDeque<*mut Task>);
 unsafe impl Send for Local {}
 
 impl Next {
+    const fn new() -> Next {
+        Next {
+            task: AtomicPtr::new(std::ptr::null_mut()),
+            since: AtomicU64::new(0),
+            tasks: Mutex::new(Local(VecDeque::new())),
+            count: AtomicUsize::new(0),
+            waiting: AtomicU64::new(0),
+        }
+    }
+
     pub(super) fn tasks(&self) -> MutexGuard<'_, Local> {
         self.tasks.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -99,8 +111,11 @@ pub(super) fn waiting_local() -> Vec<*mut Task> {
 
 /// Every worker's `Next`, which an idle worker takes a task from when the
 /// worker that has it runs another for long: read without a lock, as every
-/// idle worker reads them. A worker past the last has none.
-pub(super) static NEXTS: [AtomicPtr<Next>; 1024] = [const { AtomicPtr::new(std::ptr::null_mut()) }; 1024];
+/// idle worker reads them, and as a worker does before it waits for the
+/// network. One after another: each made at the start of its thread's
+/// first block put them all in one set of the caches, which a worker that
+/// read more than eight missed every time. A worker past the last has none.
+pub(super) static NEXTS: [Next; 1024] = [const { Next::new() }; 1024];
 pub(super) static NEXT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// This worker's next, read by tasks as they wake others: through
@@ -130,8 +145,7 @@ pub(super) fn nanos() -> u64 {
 }
 
 pub(super) fn nexts() -> impl Iterator<Item = &'static Next> {
-    let count = NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len());
-    NEXTS[..count].iter().filter_map(|next| unsafe { next.load(Ordering::Acquire).as_ref() })
+    NEXTS[..NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len())].iter()
 }
 
 /// The tasks waiting next to their workers.
