@@ -2445,7 +2445,36 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             }
             (Val::Memory(address), Shape::Enum { .. }) => {
                 let kind = if release { Glue::Release } else { Glue::Retain };
+                // A variant that holds nothing counted calls nothing, as an
+                // `ok` of a number does: its tag is read here, and only the
+                // others go through the glue.
+                let variants = self.cg.types().variants(ty).unwrap();
+                let counted: Vec<i64> = (0..variants.len())
+                    .filter(|&variant| {
+                        (0..variants[variant].len()).any(|index| {
+                            let slot = self.cg.slot(ty, Proj::Variant(variant as u32, index as u32));
+                            slot.boxed || self.cg.types().needs_drop(slot.ty)
+                        })
+                    })
+                    .map(|variant| variant as i64)
+                    .collect();
+                if counted.len() == variants.len() {
+                    self.call_glue(kind, ty, &[address]);
+                    return;
+                }
+                let tag = self.tag(ty, Val::Memory(address));
+                let mut holds = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, counted[0]);
+                for &variant in &counted[1..] {
+                    let this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant);
+                    holds = self.fb.ins().bor(holds, this);
+                }
+                let (call, done) = (self.fb.create_block(), self.fb.create_block());
+                self.fb.set_cold_block(call);
+                self.fb.ins().brif(holds, call, &[], done, &[]);
+                self.fb.switch_to_block(call);
                 self.call_glue(kind, ty, &[address]);
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(done);
             }
             _ => {}
         }
