@@ -178,6 +178,10 @@ Ask the toolchain before guessing why code is slow or allocates:
   the function, with its MIR.
 - `tondo test --exec <command>` runs the tests' executable under a
   command: `perf stat`, `valgrind`, `gdb --args`.
+- `tondo test --bench` gives, on Linux, the instructions and cycles of a
+  run beside its time; `--regression-by instructions` with
+  `--max-regression` judges a change by them, which where code lies does
+  not move.
 - `tondo test --exact <id> --bench --profile memory` writes where a
   benchmark allocates, every allocation with `TONDO_HEAP_RATE=1` in its
   environment; `tondo profile show <profile> --sample alloc_objects

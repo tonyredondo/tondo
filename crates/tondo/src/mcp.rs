@@ -1259,6 +1259,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(percent) = args.number("max_regression") {
                 argv.extend(["--max-regression".to_string(), percent.to_string()]);
             }
+            option(&mut argv, "--regression-by", "regression_by");
             // A search for inputs that fail, for so many seconds (testing 10.6).
             if let Some(seconds) = args.number("fuzz") {
                 argv.extend(["--fuzz".to_string(), "--fuzz-time".to_string(), seconds.to_string()]);
@@ -2390,6 +2391,11 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
                 "max_regression",
                 "number",
                 "With a baseline: fail when a benchmark is this percent slower, or allocates more.",
+            ),
+            (
+                "regression_by",
+                "string",
+                "What max_regression judges: time (the default), or instructions a run, which where code lies does not move.",
             ),
             STATIC,
             DEBUG,

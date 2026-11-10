@@ -46,6 +46,7 @@ pub(super) struct Printer<'a> {
     /// What the benchmarks compare with (10.4).
     pub(super) baselines: super::bench::Baselines,
     max_regression: Option<f64>,
+    by_instructions: bool,
     /// The benchmarks that regressed beyond `--max-regression`.
     pub(super) regressions: Vec<String>,
     /// Under `--fuzz`, how each call's search goes, and how it is shown.
@@ -80,6 +81,7 @@ impl<'a> Printer<'a> {
         let schedules = options.schedules.filter(|_| options.orders.is_none()).map(|(_, seed, _)| seed);
         let (expected, known) = (Vec::new(), HashMap::new());
         let (baselines, max_regression) = (Default::default(), options.max_regression);
+        let by_instructions = options.by_instructions;
         Printer {
             quiet,
             events,
@@ -92,6 +94,7 @@ impl<'a> Printer<'a> {
             schedules,
             baselines,
             max_regression,
+            by_instructions,
             regressions: Vec::new(),
             fuzz: None,
         }
@@ -219,6 +222,7 @@ impl<'a> Printer<'a> {
                     &attempt.benchmarks,
                     &self.baselines,
                     self.max_regression,
+                    self.by_instructions,
                 );
                 say!("{}", lines.trim_end());
             }

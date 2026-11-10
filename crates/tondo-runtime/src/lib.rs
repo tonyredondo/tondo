@@ -25,6 +25,7 @@ mod compress;
 mod config;
 mod console;
 mod contexts;
+mod counters;
 mod crypto;
 mod cycles;
 mod debugger;

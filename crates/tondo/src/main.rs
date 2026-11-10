@@ -339,6 +339,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         save_baseline: None,
         baseline: None,
         max_regression: None,
+        by_instructions: false,
         profile: None,
         fuzz: None,
     };
@@ -447,6 +448,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .filter(|p| p.is_finite() && *p >= 0.0)
                     .ok_or_else(|| usage("--max-regression takes a percent, as `--max-regression 5`".into()))?;
                 options.max_regression = Some(percent / 100.0);
+            }
+            "--regression-by" => {
+                options.by_instructions = match value()?.as_str() {
+                    "time" => false,
+                    "instructions" => true,
+                    other => return Err(usage(format!("--regression-by is time or instructions, not {other}"))),
+                };
             }
             "--coverage" => options.coverage = true,
             "--watch" => watch = true,
@@ -630,12 +638,15 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if given("--bench-time") && !bench {
         return Err(usage("--bench-time is how long each benchmark measures for: it goes with --bench".into()));
     }
-    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression"];
+    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression", "--regression-by"];
     if !bench && let Some(flag) = comparing.iter().find(|f| given(f)) {
         return Err(usage(format!("{flag} is about benchmarks: it goes with --bench")));
     }
     if baseline.is_some() && against.is_some() {
         return Err(usage("--baseline and --against are two things to compare with: choose one".into()));
+    }
+    if given("--regression-by") && !given("--max-regression") {
+        return Err(usage("--regression-by says what --max-regression judges: add --max-regression <percent>".into()));
     }
     if given("--max-regression") && baseline.is_none() && against.is_none() {
         return Err(usage(

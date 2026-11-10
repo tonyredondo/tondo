@@ -46,6 +46,11 @@ pub(super) fn decimal(value: f64) -> Value {
     Value::Number(format!("{value:.3}"))
 }
 
+/// A measure the processor's counters gave, or `null` without them.
+fn counted(value: Option<f64>) -> Value {
+    value.map_or(Value::Null, decimal)
+}
+
 /// A benchmark in the report (15.11), with how it compares with its
 /// baseline, if it has one.
 pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value {
@@ -66,6 +71,8 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
         ),
         ("allocations_per_op", decimal(benchmark.allocations)),
         ("bytes_per_op", decimal(benchmark.bytes)),
+        ("instructions_per_op", counted(benchmark.instructions)),
+        ("cycles_per_op", counted(benchmark.cycles)),
         ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
     ];
     let baseline = compared.map_or(Value::Null, |c| {
@@ -73,6 +80,8 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
             ("ns_per_op", decimal(c.median)),
             ("allocations_per_op", decimal(c.allocations)),
             ("bytes_per_op", decimal(c.bytes)),
+            ("instructions_per_op", counted(c.instructions)),
+            ("instructions_change_percent", counted(c.instructions_change.map(|change| change * 100.0))),
             ("change_percent", decimal(c.change * 100.0)),
             ("interval_percent", Value::Array(vec![decimal(c.low * 100.0), decimal(c.high * 100.0)])),
             ("verdict", str(c.verdict)),
@@ -95,11 +104,15 @@ pub(super) struct Baselines {
 
 /// How a benchmark compares with its baseline: the baseline's median and
 /// allocations, the change of the median as a fraction, the interval it
-/// is in with 95% confidence, what that says, and why it regressed.
+/// is in with 95% confidence, what that says, and why it regressed; the
+/// baseline's instructions, and their change, when both sides counted
+/// them.
 pub(super) struct Compared {
     pub median: f64,
     pub allocations: f64,
     pub bytes: f64,
+    pub instructions: Option<f64>,
+    pub instructions_change: Option<f64>,
     pub change: f64,
     pub low: f64,
     pub high: f64,
@@ -111,8 +124,9 @@ pub(super) struct Compared {
 const NOISE: f64 = 0.02;
 
 /// Compares a benchmark with its baseline; with `max`, a fraction, a run
-/// slower or allocating more than that much more has regressed.
-pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>) -> Compared {
+/// slower, or with `by_instructions` taking more instructions, or
+/// allocating more than that much more has regressed.
+pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_instructions: bool) -> Compared {
     let (now, before) = (stats(&new.samples).median, stats(&base.samples).median);
     let change = if before > 0.0 { now / before - 1.0 } else { 0.0 };
     let seed = new.name.bytes().fold(0x9e37_79b9_7f4a_7c15u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
@@ -123,8 +137,17 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>) -> Co
         _ => "same",
     };
     let grew = |now: f64, before: f64, max: f64| now > before * (1.0 + max) + 1e-9;
+    let instructions_change = match (new.instructions, base.instructions) {
+        (Some(now), Some(before)) if before > 0.0 => Some(now / before - 1.0),
+        _ => None,
+    };
     let regressed = max.and_then(|max| {
-        if verdict == "slower" && change > max {
+        let more = |change: f64| format!("{:.1}% more instructions", change * 100.0);
+        if by_instructions && instructions_change.is_none() {
+            Some("its instructions were not counted on both sides, which judging by them needs".to_string())
+        } else if by_instructions && instructions_change.is_some_and(|change| change > max) {
+            instructions_change.map(more)
+        } else if !by_instructions && verdict == "slower" && change > max {
             Some(format!("{:.1}% slower", change * 100.0))
         } else if grew(new.allocations, base.allocations, max) {
             Some(format!("{} allocs/op, was {}", amount(new.allocations), amount(base.allocations)))
@@ -134,7 +157,18 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>) -> Co
             None
         }
     });
-    Compared { median: before, allocations: base.allocations, bytes: base.bytes, change, low, high, verdict, regressed }
+    Compared {
+        median: before,
+        allocations: base.allocations,
+        bytes: base.bytes,
+        instructions: base.instructions,
+        instructions_change,
+        change,
+        low,
+        high,
+        verdict,
+        regressed,
+    }
 }
 
 /// Where the change of the median is with 95% confidence, as fractions:
@@ -181,6 +215,8 @@ pub(super) fn baseline(environment: Value, measured: &[(String, &Benchmark)]) ->
                 ("runs_per_sample", Value::Int(benchmark.runs as i64)),
                 ("allocations_per_op", decimal(benchmark.allocations)),
                 ("bytes_per_op", decimal(benchmark.bytes)),
+                ("instructions_per_op", counted(benchmark.instructions)),
+                ("cycles_per_op", counted(benchmark.cycles)),
                 ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
             ])
         })
@@ -214,6 +250,8 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
             samples,
             allocations: number("allocations_per_op"),
             bytes: number("bytes_per_op"),
+            instructions: entry["instructions_per_op"].as_f64(),
+            cycles: entry["cycles_per_op"].as_f64(),
         };
         measures.insert((test.to_string(), name.to_string()), benchmark);
     }
@@ -299,7 +337,13 @@ pub(super) fn time(nanoseconds: f64) -> String {
 
 /// The lines of a test's benchmarks: each name, its time per run with its
 /// spread, and its allocations; and with a baseline, how much it changed.
-pub(super) fn lines(test: &str, benchmarks: &[Benchmark], baselines: &Baselines, max: Option<f64>) -> String {
+pub(super) fn lines(
+    test: &str,
+    benchmarks: &[Benchmark],
+    baselines: &Baselines,
+    max: Option<f64>,
+    by_instructions: bool,
+) -> String {
     let width = benchmarks.iter().map(|b| b.name.chars().count()).max().unwrap_or(0);
     let mut text = String::new();
     for benchmark in benchmarks {
@@ -307,15 +351,20 @@ pub(super) fn lines(test: &str, benchmarks: &[Benchmark], baselines: &Baselines,
         let spread = if stats.median > 0.0 { stats.deviation / stats.median * 100.0 } else { 0.0 };
         let compared = match baselines.measures.get(&(test.to_string(), benchmark.name.clone())) {
             Some(base) => {
-                let compared = compare(benchmark, base, max);
+                let compared = compare(benchmark, base, max, by_instructions);
                 let regressed = if compared.regressed.is_some() { ", REGRESSED" } else { "" };
-                format!("  {:+.1}% {}{regressed}", compared.change * 100.0, compared.verdict)
+                // A change that rounds to nothing has no sign.
+                let percent = |change: f64| if (change * 100.0).abs() < 0.05 { 0.0 } else { change * 100.0 };
+                let instructions =
+                    compared.instructions_change.map_or(String::new(), |c| format!(", {:+.1}% ins", percent(c)));
+                format!("  {:+.1}% {}{instructions}{regressed}", compared.change * 100.0, compared.verdict)
             }
             None if baselines.source.is_some() => "  new".to_string(),
             None => String::new(),
         };
+        let instructions = benchmark.instructions.map_or(String::new(), |i| format!("  {} ins/op", many(i)));
         text.push_str(&format!(
-            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op  {} B/op{compared}\n",
+            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op  {} B/op{instructions}{compared}\n",
             benchmark.name,
             time(stats.median),
             amount(benchmark.allocations),
@@ -323,6 +372,16 @@ pub(super) fn lines(test: &str, benchmarks: &[Benchmark], baselines: &Baselines,
         ));
     }
     text
+}
+
+/// A large count per run, in thousands, millions or billions.
+pub(super) fn many(value: f64) -> String {
+    match value {
+        v if v >= 1e9 => format!("{:.2}G", v / 1e9),
+        v if v >= 1e6 => format!("{:.2}M", v / 1e6),
+        v if v >= 1e3 => format!("{:.1}k", v / 1e3),
+        v => format!("{v:.0}"),
+    }
 }
 
 /// A count per run: whole when it is.
@@ -359,22 +418,54 @@ mod tests {
             samples,
             allocations,
             bytes: 8.0 * allocations,
+            instructions: Some(1000.0),
+            cycles: Some(400.0),
         };
         let base = measured((0..50).map(|i| 100.0 + (i % 5) as f64).collect(), 2.0);
         let slower = measured((0..50).map(|i| 120.0 + (i % 5) as f64).collect(), 2.0);
-        let compared = compare(&slower, &base, Some(0.05));
+        let compared = compare(&slower, &base, Some(0.05), false);
         assert_eq!(compared.verdict, "slower");
         assert!((compared.change - 0.196).abs() < 0.001, "{}", compared.change);
         assert!(compared.low > 0.1 && compared.high < 0.3, "{} {}", compared.low, compared.high);
         assert_eq!(compared.regressed.as_deref(), Some("19.6% slower"));
         // Noise is the same, and so is a change within the limit.
         let noisy = measured((0..50).map(|i| 100.5 + (i % 5) as f64).collect(), 2.0);
-        assert_eq!(compare(&noisy, &base, Some(0.05)).verdict, "same");
-        assert!(compare(&slower, &base, Some(0.5)).regressed.is_none());
+        assert_eq!(compare(&noisy, &base, Some(0.05), false).verdict, "same");
+        assert!(compare(&slower, &base, Some(0.5), false).regressed.is_none());
         // An allocation more regresses, however fast.
         let allocating = measured(base.samples.clone(), 3.0);
-        assert_eq!(compare(&allocating, &base, Some(0.05)).regressed.as_deref(), Some("3 allocs/op, was 2"));
+        assert_eq!(compare(&allocating, &base, Some(0.05), false).regressed.as_deref(), Some("3 allocs/op, was 2"));
         let faster = measured((0..50).map(|i| 50.0 + (i % 5) as f64).collect(), 2.0);
-        assert_eq!(compare(&faster, &base, None).verdict, "faster");
+        assert_eq!(compare(&faster, &base, None, false).verdict, "faster");
+    }
+
+    /// Judged by instructions, a run slower in time with as many
+    /// instructions passes, and one with more instructions regresses; one
+    /// whose instructions a side did not count cannot be judged by them.
+    #[test]
+    fn judges_by_instructions() {
+        let measured = |samples: Vec<f64>, instructions: Option<f64>| Benchmark {
+            name: "parse".into(),
+            runs: 100,
+            samples,
+            allocations: 2.0,
+            bytes: 16.0,
+            instructions,
+            cycles: instructions.map(|i| i / 2.0),
+        };
+        let base = measured((0..50).map(|i| 100.0 + (i % 5) as f64).collect(), Some(1000.0));
+        let slower = measured((0..50).map(|i| 120.0 + (i % 5) as f64).collect(), Some(1001.0));
+        let compared = compare(&slower, &base, Some(0.05), true);
+        assert_eq!((compared.verdict, compared.regressed.as_deref()), ("slower", None));
+        assert!((compared.instructions_change.unwrap() - 0.001).abs() < 1e-9);
+        let more = measured(base.samples.clone(), Some(1100.0));
+        assert_eq!(compare(&more, &base, Some(0.05), true).regressed.as_deref(), Some("10.0% more instructions"));
+        assert!(compare(&more, &base, Some(0.05), false).regressed.is_none());
+        let uncounted = measured(base.samples.clone(), None);
+        let why = compare(&uncounted, &base, Some(0.05), true).regressed.unwrap();
+        assert!(why.contains("not counted"), "{why}");
+        assert_eq!(many(12_345.0), "12.3k");
+        assert_eq!(many(1_234_567.0), "1.23M");
+        assert_eq!(many(512.0), "512");
     }
 }

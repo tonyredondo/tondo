@@ -92,22 +92,23 @@ pub(super) fn markdown(document: &Document) -> String {
             None => out.push_str(".\n\n"),
         }
         let baselined = document.baseline.is_some();
-        out.push_str("| Test | Benchmark | Time/op | ± | Allocs/op | B/op |");
+        out.push_str("| Test | Benchmark | Time/op | ± | Allocs/op | B/op | Ins/op |");
         out.push_str(if baselined {
-            " Change |\n|---|---|---:|---:|---:|---:|---|\n"
+            " Change |\n|---|---|---:|---:|---:|---:|---:|---|\n"
         } else {
-            "\n|---|---|---:|---:|---:|---:|\n"
+            "\n|---|---|---:|---:|---:|---:|---:|\n"
         });
         for (test, benchmark, compared) in &document.benchmarks {
             let stats = bench::stats(&benchmark.samples);
             let mut row = format!(
-                "| `{}` | {} | {} | {:.1}% | {} | {} |",
+                "| `{}` | {} | {} | {:.1}% | {} | {} | {} |",
                 test.rsplit("::").next().unwrap_or(test),
                 cell(&benchmark.name),
                 bench::time(stats.median),
                 spread(&stats),
                 bench::amount(benchmark.allocations),
                 bench::amount(benchmark.bytes),
+                benchmark.instructions.map_or("—".to_string(), bench::many),
             );
             if baselined {
                 row.push_str(&format!(" {} |", change(compared, true)));
@@ -187,7 +188,7 @@ pub(super) fn html(document: &Document) -> String {
         if let Some(baseline) = &document.baseline {
             out.push_str(&format!(", compared with {}", escape(baseline)));
         }
-        out.push_str(".</p>\n<table><tr><th>Test</th><th>Benchmark</th><th>Time/op</th><th>±</th><th>Allocs/op</th><th>B/op</th><th>Samples</th>");
+        out.push_str(".</p>\n<table><tr><th>Test</th><th>Benchmark</th><th>Time/op</th><th>±</th><th>Allocs/op</th><th>B/op</th><th>Ins/op</th><th>Samples</th>");
         let baselined = document.baseline.is_some();
         if baselined {
             out.push_str("<th>Change</th><th></th>");
@@ -203,13 +204,14 @@ pub(super) fn html(document: &Document) -> String {
         for (test, benchmark, compared) in &document.benchmarks {
             let stats = bench::stats(&benchmark.samples);
             out.push_str(&format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td>{}</td>",
+                "<tr><td><code>{}</code></td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td>{}</td>",
                 escape(test.rsplit("::").next().unwrap_or(test)),
                 escape(&benchmark.name),
                 escape(&bench::time(stats.median)),
                 spread(&stats),
                 bench::amount(benchmark.allocations),
                 bench::amount(benchmark.bytes),
+                benchmark.instructions.map_or("—".to_string(), bench::many),
                 samples(&benchmark.samples, &stats),
             ));
             if baselined {

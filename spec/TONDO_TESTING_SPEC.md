@@ -2228,7 +2228,7 @@ tondo test [<project> | --project <dir>]
            [--coverage]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
                     [--baseline <name|path> | --against <revision>]
-                    [--max-regression <percent>]]
+                    [--max-regression <percent> [--regression-by <time|instructions>]]]
            [--profile <cpu|memory>]
            [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>]
                    [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
@@ -2445,7 +2445,12 @@ reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
    tomar 50 muestras en `--bench-time` segundos, 3 por defecto; si una
    ejecución es lenta, toma una por muestra y las muestras que caben en ese
    tiempo, nunca menos de 5.
-3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones.
+3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones. En Linux,
+   si el sistema deja que un programa se cuente a sí mismo
+   (`kernel.perf_event_paranoid` de 2 o menos), cuenta también, durante las
+   muestras, las instrucciones y los ciclos del procesador que ejecuta el
+   programa fuera del kernel, en todos los hilos que tiene al empezarlas.
+   Las instrucciones no cambian con dónde cae el código, como sí el tiempo.
 4. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
 
 Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
@@ -2457,14 +2462,15 @@ como siempre.
 El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
 nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
 desviación (la mediana de las distancias a la mediana, que una muestra
-retrasada por otra cosa no estira) y las asignaciones y bytes por ejecución; y
-una vez por invocación, el tiempo de cada benchmark y la máquina. La salida
-para personas pone bajo la línea de cada test una línea por benchmark:
+retrasada por otra cosa no estira), las asignaciones y bytes por ejecución, y
+las instrucciones y ciclos por ejecución donde se contaron; y una vez por
+invocación, el tiempo de cada benchmark y la máquina. La salida para personas
+pone bajo la línea de cada test una línea por benchmark:
 
 ~~~text
 test app::unit::app::parsing ... ok
-  parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op
-  parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op  85613 B/op
+  parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op  24.1k ins/op
+  parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op  85613 B/op  2.13M ins/op
 ~~~
 
 Las medidas se comparan con una línea base:
@@ -2488,21 +2494,32 @@ Con una línea base, cada benchmark dice cuánto cambió la mediana, el interval
 en que está ese cambio con un 95% de confianza (de mil remuestreos con
 repetición de las muestras de cada lado, con una semilla fija) y su veredicto:
 `slower` si todo el intervalo es mayor que cero y el cambio pasa del 2%,
-`faster` si todo es menor y el cambio baja del −2%, y `same` en otro caso.
+`faster` si todo es menor y el cambio baja del −2%, y `same` en otro caso; y
+cuánto cambiaron sus instrucciones por ejecución, si los dos lados las
+contaron.
 
 `--max-regression <percent>` hace fallar la invocación (9.6) si un benchmark
 es `slower` en más de ese porcentaje, o si sus asignaciones o sus bytes por
 ejecución, que son exactos, crecen más que ese porcentaje. La salida para
-personas añade el cambio a la línea de cada benchmark y lista al final los
-que empeoraron:
+personas añade el cambio, y el de las instrucciones, a la línea de cada
+benchmark y lista al final los que empeoraron:
 
 ~~~text
 test app::unit::app::fibonacci ... ok
-  fib 20     65.05 µs/op  ±0.5%  0 allocs/op  0 B/op  +79.2% slower, REGRESSED
+  fib 20     65.05 µs/op  ±0.5%  0 allocs/op  0 B/op  566.2k ins/op  +79.2% slower, +79.1% ins, REGRESSED
 
 benchmarks that regressed beyond 5%:
   app::unit::app::fibonacci fib 20: 79.2% slower
 ~~~
+
+`--regression-by instructions` juzga con `--max-regression` las instrucciones
+por ejecución en lugar del tiempo: un benchmark empeora si sus instrucciones,
+sus asignaciones o sus bytes crecen más que ese porcentaje, y el tiempo se
+sigue diciendo sin hacer fallar nada. Es el juicio de un cambio del compilador
+o de un gate en máquinas compartidas, donde el tiempo se mueve con dónde cae
+el código o con lo que corre al lado. Un benchmark cuyas instrucciones no
+contó uno de los lados empeora con esa razón. `--regression-by time`, el
+valor por defecto, juzga el tiempo.
 
 ### 10.5 Perfiles
 
@@ -4227,7 +4244,7 @@ en qué máquina, para no comparar como iguales medidas de máquinas distintas:
 `cpu` es el modelo del procesador como lo nombra el sistema, o la arquitectura
 si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez. Le siguen
 `baseline` y `max_regression_percent`, `null` sin `--baseline`, `--against` ni
-`--max-regression`. Una línea base guardada es
+`--max-regression`, y `regression_by`, `time` o `instructions`. Una línea base guardada es
 `{"kind": "saved", "path", "toolchain", "os", "arch", "cpu"}`, con la máquina
 donde se midió, y una revisión, `{"kind": "revision", "ref", "commit"}`. Cada
 benchmark de un intento tiene esta forma:
@@ -4246,11 +4263,15 @@ benchmark de un intento tiene esta forma:
   },
   "allocations_per_op": 0.000,
   "bytes_per_op": 0.000,
+  "instructions_per_op": 61.000,
+  "cycles_per_op": 72.412,
   "samples_ns_per_op": [16.890, 16.478, 16.310],
   "baseline": {
     "ns_per_op": 15.020,
     "allocations_per_op": 0.000,
     "bytes_per_op": 0.000,
+    "instructions_per_op": 61.000,
+    "instructions_change_percent": 0.000,
     "change_percent": 7.443,
     "interval_percent": [6.210, 8.115],
     "verdict": "slower",
@@ -4263,9 +4284,11 @@ benchmark de un intento tiene esta forma:
 cuántas hay; `samples_ns_per_op` da los nanosegundos por ejecución de cada una,
 en el orden en que se tomaron. `deviation` es la mediana de las distancias a la
 mediana. `baseline` es `null` sin línea base o para un benchmark que no tiene;
-da la mediana, las asignaciones y los bytes de la línea base, el cambio de la
-mediana y su intervalo en porcentaje, el veredicto y, con
-`--max-regression`, por qué empeoró, o `null`. Las medidas, en nanosegundos,
+da la mediana, las asignaciones, los bytes y las instrucciones de la línea
+base, el cambio de las instrucciones y el de la mediana y su intervalo en
+porcentaje, el veredicto y, con `--max-regression`, por qué empeoró, o `null`.
+`instructions_per_op` y `cycles_per_op`, y el cambio de las instrucciones,
+son `null` donde no se contaron (10.4). Las medidas, en nanosegundos,
 asignaciones, bytes o porcentajes, son números decimales con exactamente tres
 decimales, sin exponente.
 
@@ -4294,6 +4317,8 @@ orden del reporte:
       "runs_per_sample": 367839,
       "allocations_per_op": 0.000,
       "bytes_per_op": 0.000,
+      "instructions_per_op": 61.000,
+      "cycles_per_op": 72.412,
       "samples_ns_per_op": [16.890, 16.478, 16.310]
     }
   ]
@@ -4316,7 +4341,8 @@ bloqueados, y el tiempo; después, cuando las hay:
 - `Skipped`: cada test omitido, con su razón;
 - `Benchmarks`: dónde se midieron y con qué se comparan, y por benchmark su
   test, su nombre, su tiempo por ejecución, su dispersión, sus asignaciones y
-  bytes, y con una línea base su cambio y su veredicto; y los que empeoraron
+  bytes, sus instrucciones donde se contaron, y con una línea base su cambio y
+  su veredicto; y los que empeoraron
   más que `--max-regression`;
 - `Coverage`: las líneas, funciones y ramas que se ejecutaron de cada archivo
   y del total.

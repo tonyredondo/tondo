@@ -125,9 +125,9 @@ test parsing {
   optimized, as the program runs outside the tests: without the watches of
   lost updates and lock orders that a plain run keeps. Each warms up, takes
   50 samples in `--bench-time` seconds (3 by default) and counts what a run
-  allocates, then prints the time a run takes, its spread, and its
-  allocations and bytes:
-  `parse 10  1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op`.
+  allocates, then prints the time a run takes, its spread, its allocations
+  and bytes, and on Linux the instructions the processor ran for it:
+  `parse 10  1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op  24.1k ins/op`.
   `--test-format json` gives every sample, and the machine.
 - What the closure gives is kept, so the work that made it is not optimized
   away; `testing.keep(value)` keeps a value the closure does not give.
@@ -144,7 +144,10 @@ test parsing {
   it names, as `perf stat -o stat.txt`; the runner keeps the tests' output.
 - `--against main` builds the tests of a git revision and runs each next to
   these on the same machine; with `--max-regression 5`, a benchmark 5%
-  slower, or allocating more, fails the run: a gate for CI.
+  slower, or allocating more, fails the run: a gate for CI. With
+  `--regression-by instructions` it judges the instructions of a run
+  rather than its time, which moves with where the code lies and with
+  what else runs on the machine.
 
 ## Fuzzing
 

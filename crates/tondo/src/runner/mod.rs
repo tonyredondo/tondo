@@ -106,6 +106,9 @@ pub struct Options {
     /// `--max-regression`, as a fraction: a benchmark slower or allocating
     /// more than that fails the run.
     pub max_regression: Option<f64>,
+    /// `--regression-by instructions`: slower is more instructions a run,
+    /// which where the code lies does not move, rather than more time.
+    pub by_instructions: bool,
     /// `--profile`: a profile of each test, or of each benchmark (10.5).
     pub profile: Option<crate::profile::Kind>,
     /// `--fuzz`: searches for inputs that fail the calls of
@@ -373,7 +376,8 @@ pub struct FuzzInput {
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a
-/// run took by sample, and the allocations of a run and their bytes.
+/// run took by sample, the allocations of a run and their bytes, and the
+/// instructions and cycles of a run, where the system let them be counted.
 #[derive(Clone, Debug)]
 pub struct Benchmark {
     pub name: String,
@@ -381,6 +385,8 @@ pub struct Benchmark {
     pub samples: Vec<f64>,
     pub allocations: f64,
     pub bytes: f64,
+    pub instructions: Option<f64>,
+    pub cycles: Option<f64>,
 }
 
 /// Where a virtual clock got, and how many times it moved by itself, by
@@ -693,7 +699,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         .iter()
         .filter_map(|(test, b)| {
             let base = baselines.measures.get(&(test.clone(), b.name.clone()))?;
-            let why = bench::compare(b, base, options.max_regression).regressed?;
+            let why = bench::compare(b, base, options.max_regression, options.by_instructions).regressed?;
             Some(format!("{test} {}: {why}", b.name))
         })
         .collect();
@@ -810,7 +816,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             .iter()
             .map(|(test, b)| {
                 let base = baselines.measures.get(&(test.clone(), b.name.clone()));
-                (test.clone(), *b, base.map(|base| bench::compare(b, base, options.max_regression)))
+                (
+                    test.clone(),
+                    *b,
+                    base.map(|base| bench::compare(b, base, options.max_regression, options.by_instructions)),
+                )
             })
             .collect(),
         machine: options.bench.map(bench::machine),
@@ -1139,6 +1149,7 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
 fn joined(kept: &mut Benchmark, more: Benchmark) {
     kept.samples.extend(more.samples);
     (kept.runs, kept.allocations, kept.bytes) = (more.runs, more.allocations, more.bytes);
+    (kept.instructions, kept.cycles) = (more.instructions, more.cycles);
 }
 
 fn top(tree: &Tree, mut node: u32) -> u32 {

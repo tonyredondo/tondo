@@ -1672,6 +1672,59 @@ test plain {
     assert!(stderr.contains("error[E2006]"), "{stderr}");
 }
 
+/// Where the system lets a program count itself, a benchmark counts the
+/// instructions and cycles of a run, and `--regression-by instructions`
+/// judges them: the same code passes however its time moves, and three
+/// times the work regresses. Where it cannot count, judging by them fails
+/// with why.
+#[test]
+fn judges_benchmarks_by_their_instructions() {
+    let tests = "import std.testing\n\ntest fibonacci {\n    testing.bench(\"fib 15\", () { fib(15) })\n}\n";
+    let dir = project("benchmark-instructions", tests);
+    let source = |extra: &str| {
+        format!(
+            "pub fn fib(n: Int): Int {{\n    if n < 2 {{\n        return n\n    }}\n    fib(n - 1) + fib(n - 2){extra}\n}}\n\nfn main() {{}}\n"
+        )
+    };
+    std::fs::write(dir.join("src/main.to"), source("")).unwrap();
+    let bench = ["test", "--bench", "--bench-time", "0.2"];
+    let (stdout, stderr, status) = tondo(&dir, &[&bench[..], &["--save-baseline", "main"]].concat());
+    assert_eq!(status, 0, "{stderr}");
+    let counts = cfg!(target_os = "linux")
+        && std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
+            .is_ok_and(|level| level.trim().parse::<i32>().is_ok_and(|level| level <= 2));
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();
+    let judged =
+        [&bench[..], &["--baseline", "main", "--max-regression", "5", "--regression-by", "instructions"]].concat();
+    if !counts {
+        assert!(saved["benchmarks"][0]["instructions_per_op"].is_null(), "{saved}");
+        let (stdout, _, status) = tondo(&dir, &judged);
+        assert_eq!(status, 1, "{stdout}");
+        assert!(stdout.contains("its instructions were not counted on both sides"), "{stdout}");
+        return;
+    }
+    let instructions = saved["benchmarks"][0]["instructions_per_op"].as_f64().unwrap();
+    assert!(instructions > 1000.0 && saved["benchmarks"][0]["cycles_per_op"].as_f64().unwrap() > 0.0, "{saved}");
+    assert!(stdout.contains(" ins/op\n"), "{stdout}");
+    let (stdout, _, status) = tondo(&dir, &judged);
+    assert_eq!(status, 0, "{stdout}");
+    assert!(stdout.contains("% ins\n") || stdout.contains("% ins, "), "{stdout}");
+    std::fs::write(dir.join("src/main.to"), source(" + 0 * (fib(n - 1) + fib(n - 2))")).unwrap();
+    let (stdout, _, status) = tondo(&dir, &[&judged[..], &["--test-format", "json"]].concat());
+    assert_eq!(status, 1, "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["bench"]["regression_by"], "instructions");
+    let compared = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"];
+    assert!(compared["instructions_change_percent"].as_f64().unwrap() > 50.0, "{compared}");
+    assert!(compared["regressed"].as_str().unwrap().ends_with("% more instructions"), "{compared}");
+    // What goes with what.
+    let (_, stderr, status) =
+        tondo(&dir, &[&bench[..], &["--baseline", "main", "--regression-by", "instructions"]].concat());
+    assert_eq!(status, 2);
+    assert!(stderr.contains("--regression-by says what --max-regression judges"), "{stderr}");
+}
+
 #[test]
 fn compares_benchmarks_with_baselines() {
     let tests = "\
@@ -1701,7 +1754,7 @@ test fibonacci {
     let compare = [&bench[..], &["--baseline", "main", "--max-regression", "5"]].concat();
     let (stdout, _, status) = tondo(&dir, &compare);
     assert_eq!(status, 1, "{stdout}");
-    assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
+    assert!(stdout.contains("% slower, ") && stdout.contains(", REGRESSED\n"), "{stdout}");
     assert!(stdout.contains("benchmarks that regressed beyond 5%:\n  app::unit::app::fibonacci fib 15: "), "{stdout}");
     let (stdout, _, _) = tondo(&dir, &[&compare[..], &["--test-format", "json"]].concat());
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
@@ -1727,7 +1780,7 @@ test fibonacci {
     let (stdout, stderr, status) = tondo(&dir, &against);
     assert_eq!(status, 1, "{stdout}{stderr}");
     assert!(stderr.contains("tondo: building the tests of HEAD ("), "{stderr}");
-    assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
+    assert!(stdout.contains("% slower, ") && stdout.contains(", REGRESSED\n"), "{stdout}");
     // The same code is not slower, even on a machine shared with others.
     std::fs::write(dir.join("src/main.to"), source("")).unwrap();
     let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "1000"]].concat());
@@ -1791,7 +1844,7 @@ test adding {
         tondo(&dir, &["test", "--bench", "--bench-time", "0.1", "--report", &reports[0], "--report", &reports[1]]);
     let text = std::fs::read_to_string(&markdown).unwrap();
     assert!(text.contains("## Benchmarks\n\nMeasured for 0.1 s each on "), "{text}{stderr}");
-    assert!(text.contains("| Test | Benchmark | Time/op | ± | Allocs/op | B/op |\n"), "{text}");
+    assert!(text.contains("| Test | Benchmark | Time/op | ± | Allocs/op | B/op | Ins/op |\n"), "{text}");
     assert!(text.contains("| `adding` | add \\| sum | "), "{text}");
     let page = std::fs::read_to_string(&html).unwrap();
     assert!(page.contains("<td>add | sum</td>") && page.contains("<svg"), "{page}");

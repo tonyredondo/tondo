@@ -5674,3 +5674,23 @@ tools, the done and the not done side by side (`inlined` and `call`, `frame` and
 `unchecked` and `checked`, `arithmetic`), and its text is English like the rest of the
 compiler's, written to follow the code of the place. The MCP tool of the same name gives it to
 an agent, filtered by kind or function.
+
+## A benchmark counts the instructions of a run
+
+A benchmark's time moves by a third when only where its code lies moves, and with whatever else
+runs on the machine, so a change to the compiler was judged by `perf stat` on programs written for
+it, outside the benchmarks. The maintainer approved on 2026-11-10 counting what does not move:
+under `tondo test --bench`, on Linux, where the system lets a program count itself
+(`perf_event_paranoid` of 2 or less), the runtime opens the processor's counters of instructions
+and cycles outside the kernel on every thread the program has when the samples start, and divides
+what they counted over the samples by the runs. The samples are where the time is measured, so the
+counts cost nothing more, and the batch that counts allocations, slower for it, is not counted.
+A thread started during the samples is not counted, which a benchmark that starts threads of its
+own, rare in Tondo, would show as fewer instructions.
+
+The report, the baselines and the reports for people carry the instructions and cycles of a run,
+`null` or a dash where they were not counted, and a comparison says how the instructions changed.
+`--max-regression` keeps judging time unless `--regression-by instructions` asks for them: the
+time is what users feel, and a change that only adds cache misses moves no instruction, so the
+choice is the caller's; judging by instructions where a side did not count them fails, with why,
+rather than pass a gate that checked nothing.

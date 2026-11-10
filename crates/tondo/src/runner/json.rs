@@ -378,6 +378,8 @@ impl Context<'_> {
             fields.push(("baseline".into(), self.baselines.source.clone().unwrap_or(Value::Null)));
             let max = options.max_regression.map_or(Value::Null, |m| super::bench::decimal(m * 100.0));
             fields.push(("max_regression_percent".into(), max));
+            let by = if options.by_instructions { "instructions" } else { "time" };
+            fields.push(("regression_by".into(), str(by)));
             Value::Object(fields)
         });
         fields.push(("bench", bench.unwrap_or(Value::Null)));
@@ -479,11 +481,11 @@ impl Context<'_> {
         fields.push(("artifacts", artifacts(attempt)));
         fields.push(("snapshots", snapshots(attempt)));
         fields.push(("virtual_time", virtual_time(attempt)));
-        let max = self.options.max_regression;
+        let (max, by) = (self.options.max_regression, self.options.by_instructions);
         let id = self.tree.id(attempt.node);
         let benchmarks = attempt.benchmarks.iter().map(|b| {
             let base = self.baselines.measures.get(&(id.to_string(), b.name.clone()));
-            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max)).as_ref())
+            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max, by)).as_ref())
         });
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));

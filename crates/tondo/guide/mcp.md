@@ -59,7 +59,8 @@ one out, and `update` fetches them again.
 - `test`: `filter`, `glob` or `exact` choose tests and `list` lists them;
   `schedules: "all"` runs each test in every order of its tasks that differs;
   `models` only the tests that check a model; `coverage`; `update_snapshots`; `bench` with `baseline`, `save_baseline`
-  or `against` a git revision, and `max_regression`; `fuzz` with a number
+  or `against` a git revision, and `max_regression`, judged by time or with
+  `regression_by: "instructions"`; `fuzz` with a number
   of seconds; `flags` takes any other option of `tondo test`.
 - `doc_test` checks a Markdown document's examples, `bind` writes extern
   declarations for C headers, and `target_pack` this machine's target.
