@@ -171,6 +171,10 @@ Ask the toolchain before guessing why code is slow or allocates:
   after that pass alone. Write a note there (`mir_text::note`) when a pass
   decides something one would need to know, rather than a print to take
   out later.
+- A debug build of `tondo`, which the tests run, checks the MIR after
+  lowering and after each pass (`verify.rs`): a pass that leaves a local
+  read on a path that does not assign it fails there, naming the pass and
+  the function, with its MIR.
 - `tondo test --exec <command>` runs the tests' executable under a
   command: `perf stat`, `valgrind`, `gdb --args`.
 - `tondo test --exact <id> --bench --profile memory` writes where a

@@ -1141,7 +1141,7 @@ pub fn compile(
     drop(lowering);
     let triple = target.map(Target::triple);
     let (types, sources) = (&program.types, &analysis.sources);
-    crate::mir_text::dump("lower", &bodies, types, sources);
+    after("lower", &bodies, types, sources);
     if !debug && !analysis.meta {
         let _passes = crate::times::part("MIR passes");
         optimize(&mut bodies, types, sources);
@@ -1160,25 +1160,32 @@ pub fn compile(
 }
 
 /// The MIR passes of a release build, in their order, each followed by
-/// the MIR `TONDO_DUMP_MIR` asks for.
+/// what `after` does.
 fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sources: &SourceMap) {
     crate::inline::inline(bodies);
-    crate::mir_text::dump("inline", bodies, types, sources);
+    after("inline", bodies, types, sources);
     crate::elide::elide(bodies, types);
-    crate::mir_text::dump("elide", bodies, types, sources);
+    after("elide", bodies, types, sources);
     crate::thread::thread(bodies, types);
-    crate::mir_text::dump("thread", bodies, types, sources);
+    after("thread", bodies, types, sources);
     crate::lends::lends(bodies);
-    crate::mir_text::dump("lends", bodies, types, sources);
+    after("lends", bodies, types, sources);
     crate::moves::moves(bodies);
-    crate::mir_text::dump("moves", bodies, types, sources);
+    after("moves", bodies, types, sources);
     crate::unroll::unroll(bodies, types);
-    crate::mir_text::dump("unroll", bodies, types, sources);
+    after("unroll", bodies, types, sources);
     crate::prove::prove(bodies, types);
     lower::drop_dead_checks(bodies);
-    crate::mir_text::dump("prove", bodies, types, sources);
+    after("prove", bodies, types, sources);
     crate::stack::stack(bodies, types);
-    crate::mir_text::dump("stack", bodies, types, sources);
+    after("stack", bodies, types, sources);
+}
+
+/// After lowering and each pass: the MIR checked, in a debug build of
+/// `tondo`, and written as `TONDO_DUMP_MIR` asks.
+fn after(stage: &str, bodies: &[crate::mir::Body], types: &crate::types::Types, sources: &SourceMap) {
+    crate::verify::verify(stage, bodies, types, sources);
+    crate::mir_text::dump(stage, bodies, types, sources);
 }
 
 /// What a pass of a release build did, or could not do, at a place in the
