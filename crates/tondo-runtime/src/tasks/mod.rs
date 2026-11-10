@@ -169,8 +169,11 @@ pub(crate) struct Task {
     /// who started it, and how many it started.
     name: u64,
     started: u64,
-    /// The `std.sync` locks it holds, in a list made at its first lock.
+    /// The `std.sync` locks it holds to read, in a list made at its first,
+    /// and the cell it took last to change and holds, the first of a chain
+    /// through those cells (`sync::locks_of`).
     pub(crate) held: Vec<Held>,
+    pub(crate) locked: AtomicUsize,
     /// When it blocked there, in milliseconds of `inspect::millis`.
     blocked_since: AtomicU64,
     finished: bool,
@@ -662,6 +665,7 @@ fn new_task(
         name,
         started: 0,
         held: Vec::new(),
+        locked: AtomicUsize::new(0),
         blocked: AtomicUsize::new(0),
         blocked_kind: AtomicU8::new(0),
         blocked_since: AtomicU64::new(0),

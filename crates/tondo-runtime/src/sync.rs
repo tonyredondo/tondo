@@ -47,6 +47,13 @@ pub struct SyncObject {
     /// The task that last let go of the lock to change the value, which
     /// the debugger's watch of the cell stops.
     writer: std::sync::atomic::AtomicU64,
+    /// The task that holds it to change it, where it took it, and the cell
+    /// that task took before and still holds: a task's exclusive locks are
+    /// a chain through their cells (`Task.locked`), which taking one
+    /// writes in the cell just taken, rather than a list of the task's.
+    owner: AtomicUsize,
+    taken_at: std::sync::atomic::AtomicPtr<Str>,
+    below: std::sync::atomic::AtomicPtr<SyncObject>,
 }
 
 const _: () = assert!(std::mem::offset_of!(SyncObject, value) == 16);
@@ -118,6 +125,9 @@ pub extern "C" fn tondo_rt_sync_new(
             release,
             visit,
             writer: std::sync::atomic::AtomicU64::new(0),
+            owner: AtomicUsize::new(0),
+            taken_at: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            below: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
         })
     };
     if visit.is_some() {
@@ -218,13 +228,90 @@ fn held(task: *mut Task) -> &'static mut Vec<super::tasks::Held> {
     unsafe { &mut (*task).held }
 }
 
-/// Records a lock the task took, in room a task that ended left at its
-/// first.
+/// Records a lock the task took to read, in room a task that ended left
+/// at its first.
 fn hold(holds: &mut Vec<super::tasks::Held>, lock: super::tasks::Held) {
     if holds.capacity() == 0 {
         *holds = super::tasks::held_room();
     }
     holds.push(lock);
+}
+
+/// Records that `task` took the cell, to change it (`exclusive`), at `at`.
+fn took(o: &SyncObject, task: *mut Task, exclusive: bool, at: *const Str) {
+    if !exclusive {
+        return hold(held(task), (o as *const SyncObject as usize, false, at));
+    }
+    let locked = unsafe { &(*task).locked };
+    o.owner.store(task as usize, Ordering::Relaxed);
+    o.taken_at.store(at as *mut Str, Ordering::Relaxed);
+    o.below.store(locked.load(Ordering::Relaxed) as *mut SyncObject, Ordering::Relaxed);
+    locked.store(o as *const SyncObject as usize, Ordering::Relaxed);
+}
+
+/// Takes the cell out of what `task` holds: of its chain, where it is most
+/// often the last taken, when it held it to change it.
+fn gave_up(o: &SyncObject, task: *mut Task, exclusive: bool) {
+    let address = o as *const SyncObject as usize;
+    if !exclusive {
+        let holds = held(task);
+        if let Some(index) = holds.iter().position(|&(h, _, _)| h == address) {
+            holds.swap_remove(index);
+        }
+        return;
+    }
+    o.owner.store(0, Ordering::Relaxed);
+    let below = o.below.load(Ordering::Relaxed);
+    let locked = unsafe { &(*task).locked };
+    if locked.load(Ordering::Relaxed) == address {
+        return locked.store(below as usize, Ordering::Relaxed);
+    }
+    let mut at = locked.load(Ordering::Relaxed) as *mut SyncObject;
+    while let Some(cell) = unsafe { at.as_ref() } {
+        let next = cell.below.load(Ordering::Relaxed);
+        if next as usize == address {
+            return cell.below.store(below, Ordering::Relaxed);
+        }
+        at = next;
+    }
+}
+
+/// The locks a task holds, in the order it took them, for a dump, a
+/// debugger and the order of locks.
+pub(crate) fn locks_of(task: &Task) -> Vec<super::tasks::Held> {
+    let mut locks = Vec::new();
+    let mut at = task.locked.load(Ordering::Relaxed) as *const SyncObject;
+    while let Some(cell) = unsafe { at.as_ref() } {
+        locks.push((at as usize, true, cell.taken_at.load(Ordering::Relaxed) as *const Str));
+        at = cell.below.load(Ordering::Relaxed);
+    }
+    locks.reverse();
+    locks.extend(task.held.iter().copied());
+    locks
+}
+
+/// Panics with `P0014` when `task` holds the cell in a way that taking it
+/// again, to change it when `exclusive`, would wait for itself forever.
+fn reentrant(o: &SyncObject, task: *mut Task, exclusive: bool, location: *const Str) -> bool {
+    let address = o as *const SyncObject as usize;
+    let found = match o.owner.load(Ordering::Relaxed) == task as usize {
+        true => Some((true, o.taken_at.load(Ordering::Relaxed) as *const Str)),
+        false if exclusive => held(task).iter().find(|&&(h, ..)| h == address).map(|&(_, _, at)| (false, at)),
+        false => None,
+    };
+    let Some((alone, taken)) = found else { return false };
+    let how = |exclusive: bool| if exclusive { "to change its value" } else { "to read it" };
+    let mut message = format!(
+        "this task already holds this lock {}, so taking it again {} would wait for itself forever",
+        how(alone),
+        how(exclusive)
+    );
+    if !taken.is_null() {
+        message.push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(taken) })));
+    }
+    // A `recover` stops it: the code unwinds and lets the lock go.
+    super::raise(14, &message, location);
+    true
 }
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
@@ -252,38 +339,33 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
     }
     let exclusive = mode != SHARED;
     let address = object as usize;
-    let holds = held(task);
-    if let Some(&(_, alone, taken)) = holds.iter().find(|&&(o, alone, _)| o == address && (exclusive || alone)) {
-        let how = |exclusive: bool| if exclusive { "to change its value" } else { "to read it" };
-        let mut message = format!(
-            "this task already holds this lock {}, so taking it again {} would wait for itself forever",
-            how(alone),
-            how(exclusive)
-        );
-        if !taken.is_null() {
-            message
-                .push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(taken) })));
+    let o = unsafe { &mut *object };
+    // A lock the task holds is taken, so the first try finds whether it
+    // does; the order of locks asks first.
+    let mut checked = super::lockorder::on();
+    if checked {
+        if reentrant(o, task, exclusive, location) {
+            return 0;
         }
-        // A `recover` stops it: the code unwinds and lets the lock go.
-        super::raise(14, &message, location);
-        return 0;
-    }
-    if !holds.is_empty()
-        && super::lockorder::on()
-        && let Some(message) = super::lockorder::taking(address, exclusive, location, holds)
-    {
-        super::raise(19, &message, location);
-        return 0;
+        let locks = locks_of(unsafe { &*task });
+        if !locks.is_empty()
+            && let Some(message) = super::lockorder::taking(address, exclusive, location, &locks)
+        {
+            super::raise(19, &message, location);
+            return 0;
+        }
     }
     let guard = address | (!exclusive) as usize;
-    let o = unsafe { &mut *object };
     let mut spins = 0;
     let mut since = None;
     let mut woken = false;
     loop {
         if try_take(o, exclusive) {
-            hold(holds, (address, exclusive, location));
+            took(o, task, exclusive, location);
             return guard;
+        }
+        if !std::mem::replace(&mut checked, true) && reentrant(o, task, exclusive, location) {
+            return 0;
         }
         if mode == TRY {
             return 0;
@@ -301,7 +383,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         if try_take(o, exclusive) {
             unlock(&o.queue);
-            hold(held(current()), (address, exclusive, location));
+            took(o, task, exclusive, location);
             return guard;
         }
         // A task woken before goes first, and starves the lock once it
@@ -325,7 +407,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
                 return 0;
             }
             HANDED => {
-                hold(held(current()), (address, exclusive, location));
+                took(o, task, exclusive, location);
                 return guard;
             }
             _ => {
@@ -424,12 +506,9 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     let address = object(guard) as usize;
     super::tasks::touch(address);
     let task = current();
-    let holds = held(task);
-    if let Some(index) = holds.iter().position(|&(o, _, _)| o == address) {
-        holds.swap_remove(index);
-    }
     unsafe {
         let o = &mut *object(guard);
+        gave_up(o, task, exclusive);
         let before = if exclusive {
             // Only a debugger's watch of a cell reads who changed it last.
             if super::debugger::watching() {
@@ -478,17 +557,14 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         o.changes.push(Arc::as_ptr(&wait));
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         o.writer.store(super::tasks::current_id(), Ordering::Relaxed);
+        let location = o.taken_at.load(Ordering::Relaxed) as *const Str;
+        gave_up(o, current(), true);
         o.state.fetch_and(!WRITER, Ordering::Release);
         let (lockers, delay) = wake_lockers(o);
         woken.extend(lockers);
         unlock(&o.queue);
         if !delay.is_zero() {
             super::profiling::contended(delay);
-        }
-        let holds = held(current());
-        let mut location = std::ptr::null();
-        if let Some(index) = holds.iter().position(|&(h, _, _)| h == object as usize) {
-            location = holds.swap_remove(index).2;
         }
         woken.into_iter().for_each(notify);
         if wait.block_on_task() == CANCELLED {
