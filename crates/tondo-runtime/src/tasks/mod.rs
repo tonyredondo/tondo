@@ -357,8 +357,11 @@ struct Worker {
     runner: Cell<Option<&'static Runner>>,
     /// Its calls of C, once it made one.
     in_c: Cell<*const InC>,
-    /// The futures of the host it polls at a turn, whose room it keeps.
-    turns: Cell<Vec<Arc<dyn Turned>>>,
+    /// The futures of the host it polls at a turn, whose room it keeps;
+    /// made when first needed, as `stacks` is, so that a worker needs no
+    /// destructor, which a signal handler that reads it first would have to
+    /// register, as it may not.
+    turns: Cell<*mut Vec<Arc<dyn Turned>>>,
 }
 
 thread_local! {
@@ -372,7 +375,7 @@ thread_local! {
             stacks: Cell::new(std::ptr::null_mut()),
             runner: Cell::new(None),
             in_c: Cell::new(std::ptr::null()),
-            turns: Cell::new(Vec::new()),
+            turns: Cell::new(std::ptr::null_mut()),
         }
     };
 }
