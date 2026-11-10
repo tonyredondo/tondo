@@ -45,6 +45,7 @@ pub mod manage;
 pub mod mcp;
 pub mod meta;
 pub mod mir;
+pub mod mir_text;
 pub mod modules;
 pub mod mono;
 pub mod moves;

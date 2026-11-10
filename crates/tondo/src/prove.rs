@@ -398,6 +398,8 @@ impl Prover<'_> {
             Other,
         }
         let mut pins: HashMap<usize, Vec<(Node, Node, i128)>> = HashMap::new();
+        let noting = crate::mir_text::noting(&self.body.name);
+        let mut notes = Vec::new();
         for head in 0..count {
             if !heads[head] || entry[head].is_none() {
                 continue;
@@ -459,6 +461,11 @@ impl Prover<'_> {
                 }
             }
             if topological.len() != inside.iter().filter(|&&within| within).count() {
+                if noting {
+                    notes.push(format!(
+                        "prove: loop at b{head}: its blocks go round other than through b{head}: no sums bounded"
+                    ));
+                }
                 continue;
             }
             // Each local's writes in the loop, by block.
@@ -563,9 +570,22 @@ impl Prover<'_> {
                 }
                 let span = (high + low).max(0);
                 let arrivals = span / each + 1;
+                if noting {
+                    notes.push(format!(
+                        "prove: loop at b{head}: l{} steps {each} a turn at least: {arrivals} turns at most",
+                        local.0
+                    ));
+                }
                 turns = Some(turns.map_or(arrivals, |old| old.min(arrivals)));
             }
-            let Some(arrivals) = turns else { continue };
+            let Some(arrivals) = turns else {
+                if noting {
+                    notes.push(format!(
+                        "prove: loop at b{head}: no counter within bounds steps each turn: no sums bounded"
+                    ));
+                }
+                continue;
+            };
             for (&local, list) in &writes {
                 if list.iter().any(|&(block, write)| nested[block] || matches!(write, Write::Other))
                     || !list.iter().any(|&(_, write)| matches!(write, Write::Add(..)))
@@ -607,6 +627,9 @@ impl Prover<'_> {
                     least = least.min(low);
                 }
                 if !bounded {
+                    if noting {
+                        notes.push(format!("prove: loop at b{head}: l{} adds what no bound holds", local.0));
+                    }
                     continue;
                 }
                 // The most writes on any way from the head.
@@ -635,6 +658,9 @@ impl Prover<'_> {
                     high = high.max(h);
                 }
                 if low > high || low <= i64::MIN as i128 || high >= i64::MAX as i128 {
+                    if noting {
+                        notes.push(format!("prove: loop at b{head}: l{} enters with no bound", local.0));
+                    }
                     continue;
                 }
                 let additions = arrivals.saturating_mul(each);
@@ -643,11 +669,15 @@ impl Prover<'_> {
                 if low.abs() >= LIMIT || high.abs() >= LIMIT {
                     continue;
                 }
+                if noting {
+                    notes.push(format!("prove: loop at b{head}: l{} stays within {low}..={high}", local.0));
+                }
                 let pinned = pins.entry(head).or_default();
                 pinned.push((Node::Zero, Node::Int(local), -low));
                 pinned.push((Node::Int(local), Node::Zero, high));
             }
         }
+        self.body.notes.append(&mut notes);
         pins
     }
 

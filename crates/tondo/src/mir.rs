@@ -98,6 +98,9 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
 #[derive(Clone)]
 pub struct Body {
     pub name: String,
+    /// What the passes decided of it and why, while `TONDO_DUMP_MIR` asks
+    /// for it (`mir_text`).
+    pub notes: Vec<String>,
     pub locals: Vec<Ty>,
     /// Texts made in room the frame keeps, as only this function's borrows
     /// read them (`stack.rs`).
@@ -641,7 +644,7 @@ fn bounds_uses(bounds: &[Option<Operand>; 3], used: &mut Vec<Local>) {
     bounds.iter().flatten().for_each(|operand| operand_uses(operand, used));
 }
 
-fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
+pub(crate) fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
     match rvalue {
         Rvalue::Use(o)
         | Rvalue::Unary(_, o)

@@ -100,6 +100,17 @@ While working on a feature, `TONDO_RUNTIME_FAST=1` in the environment of
 `cargo` compiles a change to the runtime in about half the time. Leave it
 out for the final check below, which is the build that ships.
 
+To see what the compiler made of a function, `TONDO_DUMP_MIR=<name>` in
+the environment of a build writes the MIR of every function whose name
+holds `<name>` after lowering and after each pass, with what the passes
+decided and why; `TONDO_DUMP_MIR=<name>@<pass>` after that pass alone.
+Write a note there (`mir_text::note`) when a pass decides something one
+would need to know, rather than a print to take out later.
+
+A benchmark's row moves by a third when only where its code lies moves.
+Judge a change by the instructions and cycles of a program that does the
+same rounds each time, under `perf stat`, as well as by the row's time.
+
 The runtime is built in `target/tondo-runtime`, under a key of what makes
 it (`crates/tondo/build.rs`): every way of compiling `tondo` takes it from
 there, and only a change to the runtime, its dependencies or the

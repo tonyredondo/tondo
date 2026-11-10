@@ -798,3 +798,35 @@ fn a_long_call_of_c_holds_up_no_other_task() {
         }
     }
 }
+
+/// `TONDO_DUMP_MIR` writes the MIR of the functions it names after each
+/// pass, or after the one it asks for, with what the passes decided and
+/// why; nothing without it.
+#[test]
+fn the_mir_of_a_function_and_what_the_passes_decided() {
+    let source: &[u8] = b"import std.console\n\nfn measured(count: Int): Int {\n    var total = 0\n    \
+        for i in 0..count {\n        total += \"{i * 1000}\".length()\n    }\n    total\n}\n\n\
+        fn main() {\n    for round in 0..3 {\n        console.println(\"{measured(round)}\")\n    }\n}\n";
+    let dir = project_at("dump-mir", &[("main.to", source)]);
+    let dumped = |asked: &str| {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["build", "main.to", "--output", "main"])
+            .env("TONDO_DUMP_MIR", asked)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        String::from_utf8_lossy(&ran.stderr).into_owned()
+    };
+    let all = dumped("measured");
+    for stage in ["lower", "inline", "prove", "stack"] {
+        assert!(all.contains(&format!("== measured after {stage}\n")), "{stage}: {all}");
+    }
+    let stack = dumped("measured@stack");
+    assert!(!stack.contains("after prove") && stack.contains("== measured after stack"), "{stack}");
+    assert!(stack.contains("String (in the frame)") && stack.contains("length of l"), "{stack}");
+    assert!(stack.contains("note prove: loop at b"), "{stack}");
+    assert!(stack.contains("@main.to:6:"), "{stack}");
+    let (_, quiet, _) = tondo(&dir, &["build", "main.to", "--output", "main"]);
+    assert!(!quiet.contains("== measured"), "{quiet}");
+}

@@ -1140,17 +1140,27 @@ pub fn compile(
     let mut bodies = lower::lower(program, live.is_some(), debug, live.as_ref().map(|build| &build.catch_ups));
     drop(lowering);
     let triple = target.map(Target::triple);
+    let (types, sources) = (&program.types, &analysis.sources);
+    crate::mir_text::dump("lower", &bodies, types, sources);
     if !debug && !analysis.meta {
         let _passes = crate::times::part("MIR passes");
         crate::inline::inline(&mut bodies);
-        crate::elide::elide(&mut bodies, &program.types);
-        crate::thread::thread(&mut bodies, &program.types);
+        crate::mir_text::dump("inline", &bodies, types, sources);
+        crate::elide::elide(&mut bodies, types);
+        crate::mir_text::dump("elide", &bodies, types, sources);
+        crate::thread::thread(&mut bodies, types);
+        crate::mir_text::dump("thread", &bodies, types, sources);
         crate::lends::lends(&mut bodies);
+        crate::mir_text::dump("lends", &bodies, types, sources);
         crate::moves::moves(&mut bodies);
-        crate::unroll::unroll(&mut bodies, &program.types);
-        crate::prove::prove(&mut bodies, &program.types);
+        crate::mir_text::dump("moves", &bodies, types, sources);
+        crate::unroll::unroll(&mut bodies, types);
+        crate::mir_text::dump("unroll", &bodies, types, sources);
+        crate::prove::prove(&mut bodies, types);
         lower::drop_dead_checks(&mut bodies);
-        crate::stack::stack(&mut bodies, &program.types);
+        crate::mir_text::dump("prove", &bodies, types, sources);
+        crate::stack::stack(&mut bodies, types);
+        crate::mir_text::dump("stack", &bodies, types, sources);
     }
     let roots = analysis.project.as_ref().map_or(String::new(), |p| crate::roots::table(p, &analysis.sources));
     let options = codegen::Options {

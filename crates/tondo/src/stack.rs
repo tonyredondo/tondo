@@ -27,12 +27,16 @@ const FRAMED: usize = 8;
 pub fn stack(bodies: &mut [Body], types: &Types) {
     let indices: Vec<usize> = (0..bodies.len()).collect();
     let framed = crate::parallel::map(&indices, 16, |&index| framed(&bodies[index], index, types));
-    for (body, framed) in bodies.iter_mut().zip(framed) {
+    for (body, (framed, mut notes)) in bodies.iter_mut().zip(framed) {
         body.framed = framed;
+        body.notes.append(&mut notes);
     }
 }
 
-fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
+/// The locals made in the frame, and, while its MIR is to be written, why
+/// the others that could be are not.
+fn framed(body: &Body, index: usize, types: &Types) -> (Vec<Local>, Vec<String>) {
+    let noting = crate::mir_text::noting(&body.name);
     let count = body.locals.len();
     let mut erased = vec![false; count];
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
@@ -65,7 +69,13 @@ fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
                     Rvalue::Binary(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, a, b) => {
                         borrowed(&[a, b], &mut read)
                     }
-                    Rvalue::Call(crate::hir::Callee::Fn(callee), _) if callee.0 as usize == index => return Vec::new(),
+                    Rvalue::Call(crate::hir::Callee::Fn(callee), _) if callee.0 as usize == index => {
+                        let notes = match noting {
+                            true => vec!["stack: nothing in the frame: the function calls itself".to_string()],
+                            false => Vec::new(),
+                        };
+                        return (Vec::new(), notes);
+                    }
                     _ => statement_locals(statement, &mut read, &mut defined),
                 }
                 // What the place's indexes read.
@@ -94,14 +104,28 @@ fn framed(body: &Body, index: usize, types: &Types) -> Vec<Local> {
         keep(read, &mut kept);
     }
     body.params.iter().chain(&body.ret).for_each(|local| kept[local.0 as usize] = true);
-    (0..count)
-        .map(|local| Local(local as u32))
-        .filter(|&local| {
-            let at = local.0 as usize;
-            made[at] && !kept[at] && !otherwise[at] && (erased[at] || types.repr(body.locals[at]) == Ty::STRING)
-        })
-        .take(FRAMED)
-        .collect()
+    let mut notes = Vec::new();
+    let mut framed = Vec::new();
+    for at in 0..count {
+        if !made[at] || !(erased[at] || types.repr(body.locals[at]) == Ty::STRING) {
+            continue;
+        }
+        let why = if otherwise[at] {
+            Some("something else is assigned to it")
+        } else if kept[at] {
+            Some("it is read in a way that may keep it: copied, passed, returned or lent")
+        } else if framed.len() == FRAMED {
+            Some("the frame holds as many as it keeps")
+        } else {
+            None
+        };
+        match why {
+            None => framed.push(Local(at as u32)),
+            Some(why) if noting => notes.push(format!("stack: l{at} stays on the heap: {why}")),
+            Some(_) => {}
+        }
+    }
+    (framed, notes)
 }
 
 /// Whether the statement reads the function's value at `local` only for
