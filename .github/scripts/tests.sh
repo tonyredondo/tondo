@@ -17,12 +17,41 @@ jq -r 'select(.profile.test == true and .executable != null)
     grep -E '/(cases|testing|observe)-[0-9a-f]+$' "$work/all"
     grep -vE '/(cases|testing|observe)-[0-9a-f]+$' "$work/all"
 } > "$work/order"
-export work
+# On Linux a watchdog ends a binary, in a process group of its own, that
+# runs past half an hour or holds past its share of the machine's memory,
+# with what each of its processes held and a QUIT first, at which a Tondo
+# program says where each task is: a runaway test then fails with its log,
+# where otherwise it took the runner down with it, log and all.
+share=
+if [ -r /proc/meminfo ] && command -v setsid > /dev/null; then
+    share=$(awk -v at_once="$at_once" '/MemTotal/ { print int($2 * 0.6 / at_once) }' /proc/meminfo)
+fi
+export work share
 tr '\n' '\0' < "$work/order" | xargs -0 -n 1 -P "$at_once" sh -c '
     dir=${1% *} test=${1##* } name=$(basename "${1##* }")
     echo "started $name"
     start=$(date +%s)
-    (cd "$dir" && "$test") > "$work/$name.log" 2>&1
+    if [ -n "$share" ]; then
+        (cd "$dir" && exec setsid "$test") > "$work/$name.log" 2>&1 &
+        pid=$!
+        while kill -0 "$pid" 2> /dev/null; do
+            held=$(ps -o rss= -g "$pid" 2> /dev/null | awk "{ s += \$1 } END { print s + 0 }")
+            if [ "$held" -gt "$share" ] || [ $(($(date +%s) - start)) -gt 1800 ]; then
+                {
+                    echo "watchdog: $name holds $held KiB after $(($(date +%s) - start)) s, past $share KiB or 1800 s:"
+                    ps -o pid,ppid,rss,etime,args -g "$pid"
+                } >> "$work/$name.log" 2>&1
+                kill -QUIT -- "-$pid" 2> /dev/null
+                sleep 5
+                kill -KILL -- "-$pid" 2> /dev/null
+                break
+            fi
+            sleep 1
+        done
+        wait "$pid"
+    else
+        (cd "$dir" && "$test") > "$work/$name.log" 2>&1
+    fi
     code=$?
     echo $code > "$work/$name.code"
     until mkdir "$work/lock" 2>/dev/null; do sleep 1; done
