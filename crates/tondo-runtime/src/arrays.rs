@@ -134,10 +134,21 @@ pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize
         1 => {
             fence(Ordering::Acquire);
             unsafe {
-                if let Some(release) = release {
-                    for index in 0..(*a).len {
-                        release(element(a, size, index));
+                match release {
+                    // Strings, whose pieces of one block go a run at a time.
+                    Some(release) if std::ptr::fn_addr_eq(release, super::strings::tondo_rt_str_release_at as Glue) => {
+                        let mut releasing = super::strings::Releasing::default();
+                        for index in 0..(*a).len {
+                            releasing.release(*(element(a, size, index) as *mut *mut Str));
+                        }
+                        releasing.finish();
                     }
+                    Some(release) => {
+                        for index in 0..(*a).len {
+                            release(element(a, size, index));
+                        }
+                    }
+                    None => {}
                 }
                 LIVE_OBJECTS.gone();
                 dealloc(a as *mut u8, array_layout(size, (*a).cap));

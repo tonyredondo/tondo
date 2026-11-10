@@ -3,17 +3,21 @@
 //! from text. Positions are scalar indexes, as in the language.
 
 use super::{ArrayHeader, Str, element, str_new, tondo_rt_array_new};
+use crate::strings::Pieces;
 
 fn text<'a>(s: *const Str) -> &'a str {
     unsafe { super::str_text(s) }
 }
 
-/// An `Array[String]` of new strings.
-fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str>) -> *mut ArrayHeader {
+/// An `Array[String]` of the parts, in one block of pieces.
+fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone) -> *mut ArrayHeader {
+    let bytes = parts.clone().map(str::len).sum();
     let array = tondo_rt_array_new(8, parts.len());
+    let mut pieces = Pieces::new(parts.len(), bytes);
     for (index, part) in parts.enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(part.as_bytes()) };
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
     }
+    pieces.finish();
     array
 }
 
@@ -33,9 +37,11 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
         _ => finder.find_iter(s).count(),
     };
     let array = tondo_rt_array_new(8, count + 1);
+    // The pieces in one block, which holds the text but its separators.
+    let mut pieces = Pieces::new(count + 1, s.len() - count * separator.len());
     let (mut index, mut start) = (0, 0);
     let mut piece = |end: usize| {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(&s[start..end]) };
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(&s[start..end]) };
         index += 1;
         start = end + separator.len();
     };
@@ -46,6 +52,7 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
         _ => finder.find_iter(s).for_each(&mut piece),
     }
     piece(s.len());
+    pieces.finish();
     array
 }
 

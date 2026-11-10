@@ -1662,7 +1662,11 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
     }
 
     fn glue_address(&mut self, kind: Glue, ty: Ty) -> ir::Value {
-        let id = self.cg.glue(kind, ty);
+        // A string's, which an array's release knows: the pieces of one
+        // block among its elements go a run at a time.
+        let string = matches!(self.cg.types().kind(self.cg.types().repr(ty)), TyKind::String);
+        let id =
+            if kind == Glue::Release && string { self.cg.runtime(Rt::StrReleaseAt) } else { self.cg.glue(kind, ty) };
         let callee = self.cg.declare_func_in_func(id, self.fb.func);
         self.fb.ins().func_addr(POINTER, callee)
     }

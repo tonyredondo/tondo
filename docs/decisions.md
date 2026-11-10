@@ -5610,3 +5610,21 @@ only puts it in their list, because the code that wakes a future may hold a lock
 as h2's does; the task of each connection polls it too as it asks for the next request. TLS goes
 through tokio-rustls's adapter over the poller's socket, which needs no thread of tokio's; its
 own sans-IO connection can replace it if A3 shows the adapter costs.
+
+## The pieces of a split share one block
+
+`text.split(",")` made a string for each piece, a hundred allocations for a hundred pieces, where
+Go makes one: its strings are a pointer and a length, which point into the text, and its collector
+finds the object a pointer is in. Tondo's strings count their references in a header before their
+bytes, so a string that points into another needs a header of its own somewhere. Strings of two or
+three words, as Go's, were weighed and left: each copy of a string would be bigger or would look
+its owner up in the allocator, on the most common path of the language, and the change touches
+every native, literal and tool that reads a string. Instead the pieces of one text go into one
+block: each keeps the header and the bytes after it that every reader expects, and its count says
+that it is a piece and how far before it the block starts, whose own count holds the references
+to all its pieces. A piece is never the only owner of its block, so a change copies it first, as
+one of any shared string; an array's release drops the pieces of one block in a row with one
+operation. `split`, `lines` and `words` make them: 101 allocations become 2, the array and the
+block. What it costs is memory: a piece that is kept keeps its whole block, at most as large as
+the text it came from, as a Go substring keeps the text it points into; a piece that changes is
+copied first, and the copy keeps nothing else.

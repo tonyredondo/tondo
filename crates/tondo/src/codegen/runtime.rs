@@ -16,6 +16,7 @@ pub(super) enum Rt {
     LiveObject,
     StrRetain,
     StrRelease,
+    StrReleaseAt,
     StrEq,
     /// What the counted code of a build for `--fuzz` compares.
     FuzzCompare,
@@ -331,6 +332,7 @@ impl Rt {
         match self {
             Rt::StrRetain => ("tondo_rt_str_retain", &[I64], &[]),
             Rt::StrRelease => ("tondo_rt_str_release", &[I64], &[]),
+            Rt::StrReleaseAt => ("tondo_rt_str_release_at", &[I64], &[]),
             Rt::StrEq => ("tondo_rt_str_eq", &[I64, I64], &[I8]),
             Rt::FuzzCompare => ("tondo_rt_fuzz_compare", &[I64, I64], &[]),
             Rt::FuzzCompareText => ("tondo_rt_fuzz_compare_text", &[I64, I64], &[]),

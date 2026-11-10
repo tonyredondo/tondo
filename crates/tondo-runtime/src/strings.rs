@@ -72,15 +72,181 @@ pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
 }
 
+/// The `rc` of a piece of a block, beside how far before it the block
+/// starts: the block counts the references to all its pieces together.
+pub(crate) const PIECE: usize = 1 << 63;
+
+/// The header of a block of pieces of one text, which `split` and the like
+/// make in one allocation instead of one for each: the references to all
+/// its pieces, its size, and how much of it the pieces fill, one after
+/// another, each a string's header and its bytes. A piece is never the
+/// only owner of its block, so a change copies it first, as one of any
+/// shared string; and while one of them is held, the block is.
+#[repr(C)]
+struct Block {
+    count: AtomicUsize,
+    size: usize,
+    used: usize,
+    /// Whether a piece is long enough for its positions to be kept.
+    long: bool,
+}
+
+const BLOCK: usize = std::mem::size_of::<Block>();
+
+/// The room a piece of `len` bytes takes in a block.
+fn piece_room(len: usize) -> usize {
+    (HEADER + len).next_multiple_of(std::mem::align_of::<Str>())
+}
+
+/// The pieces of one text, written into a block as they come.
+pub(crate) struct Pieces {
+    block: *mut Block,
+}
+
+impl Pieces {
+    /// Room for `count` pieces of `bytes` bytes in all.
+    pub(crate) fn new(count: usize, bytes: usize) -> Pieces {
+        let size = BLOCK + count * piece_room(0) + bytes.next_multiple_of(8) + count * 8;
+        let layout = Layout::from_size_align(size, std::mem::align_of::<Block>()).expect("pieces too large");
+        let block = unsafe { alloc(layout) } as *mut Block;
+        if block.is_null() {
+            handle_alloc_error(layout);
+        }
+        unsafe { block.write(Block { count: AtomicUsize::new(0), size, used: BLOCK, long: false }) };
+        Pieces { block }
+    }
+
+    /// The next piece, with one reference; the empty string kept for good
+    /// when it is empty.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
+        if bytes.is_empty() {
+            return EMPTY.get();
+        }
+        unsafe {
+            let at = (*self.block).used;
+            debug_assert!(at + piece_room(bytes.len()) <= (*self.block).size, "a piece past its block's room");
+            let piece = (self.block as *mut u8).add(at) as *mut Str;
+            piece.write(Str { rc: AtomicUsize::new(PIECE | at), len: bytes.len(), cap: bytes.len() });
+            copy_short(bytes, (piece as *mut u8).add(HEADER));
+            (*self.block).used = at + piece_room(bytes.len());
+            (*self.block).long |= bytes.len() >= POSITIONED_FROM;
+            *(*self.block).count.get_mut() += 1;
+            piece
+        }
+    }
+
+    /// Done: the block holds its pieces, or goes when none needs it.
+    pub(crate) fn finish(self) {
+        unsafe {
+            if (*self.block).count.load(Ordering::Relaxed) == 0 {
+                dealloc(self.block as *mut u8, block_layout(self.block));
+            } else {
+                LIVE_OBJECTS.made();
+            }
+        }
+    }
+}
+
+unsafe fn block_layout(block: *const Block) -> Layout {
+    unsafe { Layout::from_size_align_unchecked((*block).size, std::mem::align_of::<Block>()) }
+}
+
+/// The block of a piece whose `rc` is `rc`.
+unsafe fn block_of(s: *const Str, rc: usize) -> *mut Block {
+    unsafe { (s as *mut u8).sub(rc & !PIECE) as *mut Block }
+}
+
+/// Drops `count` references to the pieces of a block, which goes with the
+/// last one.
+unsafe fn release_pieces(block: *mut Block, count: usize) {
+    unsafe {
+        let counted = &(*block).count;
+        // The last references go without the atomic operation, as an
+        // object's last one does (`dropped`).
+        let before = match counted.load(Ordering::Relaxed) {
+            held if held == count => held,
+            _ => counted.fetch_sub(count, Ordering::Release),
+        };
+        if before < count {
+            runtime_fault("string released after it was freed");
+        }
+        if before > count {
+            return;
+        }
+        fence(Ordering::Acquire);
+        LIVE_OBJECTS.gone();
+        // The long pieces' positions go first, as a string's do.
+        let mut at = if (*block).long { BLOCK } else { (*block).used };
+        while at < (*block).used {
+            let piece = (block as *const u8).add(at) as *const Str;
+            if (*piece).len >= POSITIONED_FROM {
+                forget_positions(piece);
+            }
+            at += piece_room((*piece).len);
+        }
+        dealloc(block as *mut u8, block_layout(block));
+    }
+}
+
+unsafe fn release_piece(s: *const Str, rc: usize) {
+    unsafe { release_pieces(block_of(s, rc), 1) }
+}
+
+/// `release` of the string at an address, the glue of `String` elements,
+/// which an array's release knows to release them a run at a time.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_release_at(at: *mut u8) {
+    unsafe { tondo_rt_str_release(*(at as *mut *mut Str)) }
+}
+
+/// Strings released one after another, as an array's elements are: the
+/// pieces of one block in a row drop their references with one operation.
+#[derive(Default)]
+pub(crate) struct Releasing {
+    block: Option<(*mut Block, usize)>,
+}
+
+impl Releasing {
+    pub(crate) unsafe fn release(&mut self, s: *mut Str) {
+        unsafe {
+            if s.is_null() {
+                return;
+            }
+            let rc = (*s).rc.load(Ordering::Relaxed);
+            if rc != IMMORTAL && rc & PIECE != 0 {
+                let block = block_of(s, rc);
+                match &mut self.block {
+                    Some((held, run)) if *held == block => *run += 1,
+                    _ => {
+                        self.finish();
+                        self.block = Some((block, 1));
+                    }
+                }
+                return;
+            }
+            tondo_rt_str_release(s);
+        }
+    }
+
+    pub(crate) unsafe fn finish(&mut self) {
+        if let Some((block, run)) = self.block.take() {
+            unsafe { release_pieces(block, run) };
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
     if s.is_null() {
         return;
     }
     let rc = unsafe { &(*s).rc };
-    if rc.load(Ordering::Relaxed) != IMMORTAL {
-        rc.fetch_add(1, Ordering::Relaxed);
-    }
+    let counted = match rc.load(Ordering::Relaxed) {
+        IMMORTAL => return,
+        piece if piece & PIECE != 0 => unsafe { &(*block_of(s, piece)).count },
+        _ => rc,
+    };
+    counted.fetch_add(1, Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
@@ -90,8 +256,10 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         return;
     }
     let rc = unsafe { &(*s).rc };
-    if rc.load(Ordering::Relaxed) == IMMORTAL {
-        return;
+    match rc.load(Ordering::Relaxed) {
+        IMMORTAL => return,
+        piece if piece & PIECE != 0 => return unsafe { release_piece(s, piece) },
+        _ => {}
     }
     match dropped(rc) {
         1 => {

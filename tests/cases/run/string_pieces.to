@@ -1,0 +1,84 @@
+// The pieces `split`, `lines` and `words` make share one block, which
+// counts their references together: a piece kept after its array goes, one
+// changed, which is copied first, one sent to another task, a key of a map,
+// a text for C or JSON, a long one indexed, and the pieces of a deque all
+// keep or let go of the block as a string of their own would.
+
+import std.console
+import std.ffi
+import std.json
+
+fn longest(texts: Array[String]): String {
+    var best = ""
+    for text in texts {
+        if text.length() > best.length() {
+            best = text
+        }
+    }
+    best
+}
+
+fn sendWords(out: Sender[String]) {
+    for word in "alpha beta gamma".words() {
+        out.send(word)
+    }
+    out.close()
+}
+
+fn main() {
+    // Kept after the array goes.
+    let kept = longest("ab,cdef,g".split(","))
+    console.println("{kept} {kept.length()}")
+    // Changed: the copy changes, the others as they were.
+    var parts = "one two three".split(" ")
+    var first = parts[0]
+    first = "{first}!"
+    parts[1] = "{parts[1]}?"
+    console.println("{first} {parts}")
+    // Empty pieces, and the characters.
+    console.println("{"a,,b,".split(",")} {"héllo".split("")}")
+    // Sent to another task, which lets go of them there.
+    let (out, received) = channel[String](4)
+    let sender = spawn sendWords(out)
+    var got: Array[String] = []
+    for word in received {
+        got.push(word)
+    }
+    sender.wait()
+    console.println("{got}")
+    // Keys of a map, compared and hashed as any string.
+    var counts: Map[String, Int] = [:]
+    for word in "b a b c a b".split(" ") {
+        counts[word] = counts[word].unwrapOr(0) + 1
+    }
+    console.println("{counts["a"].unwrapOr(0)} {counts["b"].unwrapOr(0)} {counts["c"].unwrapOr(0)}")
+    // To C and back, and to JSON.
+    let line = "x=1\ny=22\n".lines()[1]
+    let c = ffi.toCString(line)
+    console.println("{unsafe { ffi.fromCString(c) }} {json.encode(line.split("="))}")
+    unsafe { ffi.free(c) }
+    // A long piece, indexed after its array went.
+    let long = "{"x".repeat(70)}é{"y".repeat(10)},short".split(",")[0]
+    console.println("{long[70]} {long[75]} {long.length()}")
+    // A deque of pieces, from both ends.
+    var deque = Deque[String]()
+    for piece in "c,d,e".split(",") {
+        deque.push(piece)
+    }
+    deque.pushFront("b")
+    deque.pushFront("a")
+    _ = deque.pop()
+    console.println("{deque}")
+    // With a limit: the last piece joins the rest.
+    console.println("{"a=b=c=d".split("=", limit: 2)}")
+}
+
+// expect-stdout: cdef 4
+// expect-stdout: one! [one, two?, three]
+// expect-stdout: [a, , b, ] [h, é, l, l, o]
+// expect-stdout: [alpha, beta, gamma]
+// expect-stdout: 2 3 1
+// expect-stdout: y=22 ["y","22"]
+// expect-stdout: é y 81
+// expect-stdout: [a, b, c, d]
+// expect-stdout: [a, b=c=d]
