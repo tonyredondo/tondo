@@ -4122,7 +4122,12 @@ fn dumps_come_on_a_schedule_and_differ() {
         .output()
         .unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
-    let mut dumps: Vec<_> = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().map(|f| f.path()).collect();
+    let mut dumps: Vec<_> = std::fs::read_dir(dir.join("dumps"))
+        .unwrap()
+        .flatten()
+        .map(|f| f.path())
+        .filter(|path| path.to_string_lossy().ends_with(".dump.json.gz"))
+        .collect();
     dumps.sort_by_key(|dump| dump.metadata().unwrap().modified().unwrap());
     // One more, if the program ended as the oldest was about to go.
     assert!((2..=3).contains(&dumps.len()), "{dumps:?}");

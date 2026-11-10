@@ -439,6 +439,16 @@ pub(super) fn compressed(text: &str) -> Vec<u8> {
     written.and_then(|()| encoder.finish()).unwrap_or_default()
 }
 
+/// Writes a dump that a thread makes while the program goes on: aside, then
+/// renamed, so that a program that ends meanwhile leaves no dump half
+/// written, only, at worst, the hidden file it wrote aside.
+fn write_whole(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let aside = path.with_file_name(format!(".{name}.part"));
+    std::fs::write(&aside, bytes)?;
+    std::fs::rename(&aside, path)
+}
+
 /// `kill -QUIT` without `TONDO_DUMP`: where each task is, for whoever asks a
 /// program that seems stuck, with nothing set up beforehand.
 pub(crate) fn tasks_to_stderr() {
@@ -471,7 +481,7 @@ pub(crate) fn dump_on_signal() {
         let program = program.unwrap_or_else(|| "tondo".into());
         let path = PathBuf::from(dir).join(format!("{program}-{}-quit-{number}.dump.json.gz", std::process::id()));
         let text = dump("signal", "SIGQUIT", None, Some(std::time::Duration::from_millis(100)));
-        if std::fs::write(&path, compressed(&text)).is_ok() {
+        if write_whole(&path, &compressed(&text)).is_ok() {
             let _ = writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display());
             dumped(&path);
         }
@@ -560,7 +570,7 @@ pub(super) fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
         while !written.is_empty() && written.iter().map(|(_, size)| size).sum::<u64>() + length > room {
             forget(&mut written);
         }
-        if std::fs::write(&path, text).is_ok() {
+        if write_whole(&path, &text).is_ok() {
             written.push_back((path.clone(), length));
             while written.len() > schedule.keep.max(1) {
                 forget(&mut written);
