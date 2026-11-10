@@ -238,9 +238,10 @@ fn hold(holds: &mut Vec<super::tasks::Held>, lock: super::tasks::Held) {
 }
 
 /// Records that `task` took the cell, to change it (`exclusive`), at `at`.
+#[inline(always)]
 fn took(o: &SyncObject, task: *mut Task, exclusive: bool, at: *const Str) {
     if !exclusive {
-        return hold(held(task), (o as *const SyncObject as usize, false, at));
+        return took_to_read(o, task, at);
     }
     let locked = unsafe { &(*task).locked };
     o.owner.store(task as usize, Ordering::Relaxed);
@@ -249,9 +250,29 @@ fn took(o: &SyncObject, task: *mut Task, exclusive: bool, at: *const Str) {
     locked.store(o as *const SyncObject as usize, Ordering::Relaxed);
 }
 
+#[cold]
+#[inline(never)]
+fn took_to_read(o: &SyncObject, task: *mut Task, at: *const Str) {
+    hold(held(task), (o as *const SyncObject as usize, false, at));
+}
+
 /// Takes the cell out of what `task` holds: of its chain, where it is most
 /// often the last taken, when it held it to change it.
+#[inline(always)]
 fn gave_up(o: &SyncObject, task: *mut Task, exclusive: bool) {
+    let address = o as *const SyncObject as usize;
+    let locked = unsafe { &(*task).locked };
+    if exclusive && locked.load(Ordering::Relaxed) == address {
+        o.owner.store(0, Ordering::Relaxed);
+        return locked.store(o.below.load(Ordering::Relaxed) as usize, Ordering::Relaxed);
+    }
+    gave_up_apart(o, task, exclusive)
+}
+
+/// `gave_up` of a lock held to read, or not the last taken.
+#[cold]
+#[inline(never)]
+fn gave_up_apart(o: &SyncObject, task: *mut Task, exclusive: bool) {
     let address = o as *const SyncObject as usize;
     if !exclusive {
         let holds = held(task);
@@ -262,11 +283,7 @@ fn gave_up(o: &SyncObject, task: *mut Task, exclusive: bool) {
     }
     o.owner.store(0, Ordering::Relaxed);
     let below = o.below.load(Ordering::Relaxed);
-    let locked = unsafe { &(*task).locked };
-    if locked.load(Ordering::Relaxed) == address {
-        return locked.store(below as usize, Ordering::Relaxed);
-    }
-    let mut at = locked.load(Ordering::Relaxed) as *mut SyncObject;
+    let mut at = unsafe { (*task).locked.load(Ordering::Relaxed) } as *mut SyncObject;
     while let Some(cell) = unsafe { at.as_ref() } {
         let next = cell.below.load(Ordering::Relaxed);
         if next as usize == address {
@@ -337,6 +354,22 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
     if stops_task(task) {
         return 0;
     }
+    // Most often free, and taken at once: the rest waits apart, as its
+    // frame would cost every lock.
+    let exclusive = mode != SHARED;
+    let o = unsafe { &*object };
+    if !super::lockorder::on() && try_take(o, exclusive) {
+        took(o, task, exclusive, location);
+        return object as usize | (!exclusive) as usize;
+    }
+    unsafe { waited(object, task, mode, location) }
+}
+
+/// Takes the lock that a first try did not, or that the order of locks
+/// asks of first, waiting if it must.
+#[cold]
+#[inline(never)]
+unsafe fn waited(object: *mut SyncObject, task: *mut Task, mode: u8, location: *const Str) -> usize {
     let exclusive = mode != SHARED;
     let address = object as usize;
     let o = unsafe { &mut *object };
@@ -496,6 +529,22 @@ unsafe fn wake_lockers(o: &mut SyncObject) -> (Vec<*mut Task>, std::time::Durati
     (woken, delay)
 }
 
+/// Wakes who waits for a lock just let go, or for the change of its value.
+#[cold]
+#[inline(never)]
+unsafe fn wake_after(o: &mut SyncObject, exclusive: bool) {
+    lock(&o.queue);
+    let mut woken = if exclusive { unsafe { wake_changes(o) } } else { Vec::new() };
+    let (lockers, delay) = unsafe { wake_lockers(o) };
+    woken.extend(lockers);
+    unlock(&o.queue);
+    woken.into_iter().for_each(notify);
+    // Where the lock others waited for is let go.
+    if !delay.is_zero() {
+        super::profiling::contended(delay);
+    }
+}
+
 /// Releases the lock a guard holds; nothing for 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
@@ -521,16 +570,7 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
             o.state.fetch_sub(READER, Ordering::Release)
         };
         if before & PARKED != 0 {
-            lock(&o.queue);
-            let mut woken = if exclusive { wake_changes(o) } else { Vec::new() };
-            let (lockers, delay) = wake_lockers(o);
-            woken.extend(lockers);
-            unlock(&o.queue);
-            woken.into_iter().for_each(notify);
-            // Where the lock others waited for is let go.
-            if !delay.is_zero() {
-                super::profiling::contended(delay);
-            }
+            wake_after(o, exclusive);
         }
     }
     if super::race::on() {
