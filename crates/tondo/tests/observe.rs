@@ -2301,8 +2301,10 @@ fn a_replay_searches_the_recording_of_a_crash() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-crash");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.ffi\n\nfn main() {\n    var total = 0\n    for i in 0..5 {\n        total += i\n    }\n    \
-                   unsafe {\n        ffi.allocate[Int]().offset(1000000000).write(total)\n    }\n}\n";
+    // Far past an allocation, memory may be mapped.
+    let program = "fn main() {\n    // Address 8 is in the first page, which no process maps.\n    let nowhere: UInt64 = 8\n    \
+                   var total = 0\n    for i in 0..5 {\n        total += i\n    }\n    unsafe {\n        \
+                   nowhere.toPointer[Int]().write(total)\n    }\n}\n";
     std::fs::write(dir.join("crash.to"), program).unwrap();
     let run = |command: &str| {
         Command::new("sh").args(["-c", &format!("ulimit -c 0; {command}")]).current_dir(&dir).output().unwrap()
