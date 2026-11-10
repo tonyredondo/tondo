@@ -1471,7 +1471,19 @@ impl Codegen<'_> {
             CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function))
         });
         let labels = self.live.is_some().then(|| self.labels());
-        for (job, code) in jobs.into_iter().zip(compiled) {
+        let mut laid: Vec<_> = jobs.into_iter().zip(compiled).collect();
+        if let Some(seed) = crate::driver::layout_seed() {
+            // Another order of the functions, the same for the same seed;
+            // their tables follow it, as the runtime looks them up by address.
+            let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+            for at in (1..laid.len()).rev() {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                laid.swap(at, (state % (at as u64 + 1)) as usize);
+            }
+        }
+        for (job, code) in laid {
             let code = code?;
             if let Some(labels) = &labels {
                 let hash = code_hash(&code, labels);

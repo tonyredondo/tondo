@@ -1225,7 +1225,17 @@ pub fn fingerprint(parts: &[&[u8]]) -> String {
 pub fn compiler_identity() -> String {
     let exe = std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok());
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();
-    format!("{VERSION}:{}:{stamp}", RUNTIME_HASH)
+    let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
+    format!("{VERSION}:{}:{stamp}{layout}", RUNTIME_HASH)
+}
+
+/// `TONDO_LAYOUT_SEED`: the order a build lays the program's functions out
+/// in, other than the one they are compiled in, to tell how much of a
+/// benchmark's time is where its code happens to lie. A build with none
+/// keeps the order it always has.
+pub fn layout_seed() -> Option<u64> {
+    static SEED: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *SEED.get_or_init(|| std::env::var("TONDO_LAYOUT_SEED").ok()?.trim().parse().ok())
 }
 
 /// Writes `bytes` to `path` atomically.

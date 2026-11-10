@@ -833,3 +833,39 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     let (_, quiet, _) = tondo(&dir, &["build", "main.to", "--output", "main"]);
     assert!(!quiet.contains("== measured"), "{quiet}");
 }
+
+/// `TONDO_LAYOUT_SEED` lays a build's functions out in another order, the
+/// same for the same seed: the program does what it did, its panics name
+/// the same frames, and only where its code lies changes.
+#[test]
+fn a_layout_seed_moves_the_code_and_nothing_else() {
+    let source: &[u8] = b"fn twice(n: Int): Int {\n    n * 2\n}\n\nfn deep(n: Int): Int {\n    if n == 0 {\n        \
+        panic(\"bottom\")\n    }\n    deep(n - 1) + 1\n}\n\nfn main() {\n    let total = twice(21)\n    \
+        deep(total % 3)\n}\n";
+    let dir = project_at("layout-seed", &[("main.to", source)]);
+    let built = |seed: Option<&str>, output: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        command.args(["build", "main.to", "--output", output]).current_dir(&dir);
+        match seed {
+            Some(seed) => command.env("TONDO_LAYOUT_SEED", seed),
+            None => command.env_remove("TONDO_LAYOUT_SEED"),
+        };
+        let ran = command.output().unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        let run = Command::new(dir.join(output)).env("TONDO_DUMP", "off").output().unwrap();
+        let said = String::from_utf8_lossy(&run.stderr)
+            .lines()
+            .filter(|l| !l.contains("dump of"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (std::fs::read(dir.join(output)).unwrap(), said)
+    };
+    let (plain, said) = built(None, "plain");
+    let (one, said_one) = built(Some("1"), "one");
+    let (again, _) = built(Some("1"), "again");
+    let (two, said_two) = built(Some("2"), "two");
+    assert!(said.contains("deep") && said.contains("bottom"), "{said}");
+    assert_eq!((&said_one, &said_two), (&said, &said));
+    assert_eq!(one, again);
+    assert!(one != plain && two != one);
+}

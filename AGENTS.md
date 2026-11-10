@@ -109,7 +109,10 @@ would need to know, rather than a print to take out later.
 
 A benchmark's row moves by a third when only where its code lies moves.
 Judge a change by the instructions and cycles of a program that does the
-same rounds each time, under `perf stat`, as well as by the row's time.
+same rounds each time, under `perf stat`, as well as by the row's time;
+`TONDO_LAYOUT_SEED=<n>` in the environment of a build lays its functions
+out in another order, so that a row measured with a few seeds shows how
+much of a difference is where the code lies.
 
 The runtime is built in `target/tondo-runtime`, under a key of what makes
 it (`crates/tondo/build.rs`): every way of compiling `tondo` takes it from
