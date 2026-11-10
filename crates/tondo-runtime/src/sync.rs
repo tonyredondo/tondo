@@ -293,12 +293,22 @@ fn gave_up_apart(o: &SyncObject, task: *mut Task, exclusive: bool) {
     }
 }
 
+/// More locks to change than a task holds at once.
+const CHAIN_LIMIT: usize = 64;
+
 /// The locks a task holds, in the order it took them, for a dump, a
 /// debugger and the order of locks.
 pub(crate) fn locks_of(task: &Task) -> Vec<super::tasks::Held> {
     let mut locks = Vec::new();
     let mut at = task.locked.load(Ordering::Relaxed) as *const SyncObject;
-    while let Some(cell) = unsafe { at.as_ref() } {
+    // A dump or a profile of a running program reads another task's chain
+    // as it changes: a cell the task no longer holds ends it, and so does a
+    // length no task holds, as an old link read with a new one could go
+    // round for good.
+    while let Some(cell) = unsafe { at.as_ref() }
+        && cell.owner.load(Ordering::Relaxed) == task as *const Task as usize
+        && locks.len() < CHAIN_LIMIT
+    {
         locks.push((at as usize, true, cell.taken_at.load(Ordering::Relaxed) as *const Str));
         at = cell.below.load(Ordering::Relaxed);
     }
