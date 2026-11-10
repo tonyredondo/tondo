@@ -1,0 +1,81 @@
+// A copy of what the caller keeps alive that is only lent, as inlining
+// leaves `self` of a method, takes no reference of its own: a parameter, or
+// a capture of a task's body. One that is kept, in an array or a task,
+// still does, and so does a field of a loan the function passes on, which
+// may replace it: the values outlive the call that had them.
+
+import std.console
+import std.sync
+
+fn bump(counter: sync.Mutex[Int], times: Int) {
+    for _ in 0..times {
+        counter.update(
+            (count) {
+                count += 1
+            },
+        )
+    }
+}
+
+fn measure(text: String): Int {
+    text.length() + text.find("b").unwrapOr(-1)
+}
+
+fn lent(text: String, times: Int): Int {
+    var total = 0
+    for _ in 0..times {
+        total += measure(text)
+    }
+    total
+}
+
+fn kept(text: String, counter: sync.Mutex[Int]): (Array[String], Array[sync.Mutex[Int]]) {
+    var texts = [text]
+    texts.push(text)
+    (texts, [counter, counter])
+}
+
+pub type Holder = {
+    counter: sync.Mutex[Int]
+}
+
+fn Holder.renew(mut self) {
+    self.counter = sync.Mutex(100)
+}
+
+fn Holder.bumpTwice(mut self) {
+    self.counter.update(
+        (count) {
+            count += 1
+        },
+    )
+    self.renew()
+    self.counter.update(
+        (count) {
+            count += 1
+        },
+    )
+}
+
+fn main() {
+    let counter = sync.Mutex(0)
+    var group = Group[Unit]()
+    for _ in 0..4 {
+        group.add(spawn bump(counter, 500))
+    }
+    _ = group.wait()
+    console.println("{counter.get()}")
+    console.println("{lent("abc {counter.get()}", 10)}")
+    let (texts, counters) = kept("made {counter.get()}", counter)
+    bump(counters[1], 5)
+    console.println("{texts} {counters[0].get()}")
+    var holder = Holder { counter: sync.Mutex(0) }
+    let first = holder.counter
+    holder.bumpTwice()
+    console.println("{first.get()} {holder.counter.get()}")
+}
+
+// expect-stdout: 2000
+// expect-stdout: 90
+// expect-stdout: [made 2000, made 2000] 2005
+// expect-stdout: 1 101
