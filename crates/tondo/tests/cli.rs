@@ -862,7 +862,8 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     };
     let (plain, said) = built(None, "plain");
     let (one, said_one) = built(Some("1"), "one");
-    let (again, _) = built(Some("1"), "again");
+    // The same name, as macOS signs an executable with its name.
+    let (again, _) = built(Some("1"), "one");
     let (two, said_two) = built(Some("2"), "two");
     assert!(said.contains("deep") && said.contains("bottom"), "{said}");
     assert_eq!((&said_one, &said_two), (&said, &said));
