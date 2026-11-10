@@ -874,6 +874,19 @@ impl Prover<'_> {
             }
             Rvalue::Binary(op, a, b) | Rvalue::Exact(op, a, b) => match (self.value(a), self.value(b)) {
                 (Some(a), Some(b)) => match op {
+                    // A checked product by a positive constant went on, so it
+                    // fits: `3 * n` is below `Int.max`, and `3 * n + 1` fits.
+                    BinOp::Mul if matches!(rvalue, Rvalue::Binary(..)) && (a.0 == Node::Zero || b.0 == Node::Zero) => {
+                        let c = if a.0 == Node::Zero { a.1 } else { b.1 };
+                        let (low, high) = arithmetic(*op, facts.range(a), facts.range(b));
+                        match c >= 2 {
+                            true => {
+                                let (min, max) = (i64::MIN as i128, i64::MAX as i128);
+                                Some((low.max(min / c * c), high.min(max / c * c)))
+                            }
+                            false => Some((low, high)),
+                        }
+                    }
                     BinOp::Add | BinOp::Sub | BinOp::Mul => Some(arithmetic(*op, facts.range(a), facts.range(b))),
                     // A remainder by a positive constant is under it, and
                     // not negative when the dividend is not.

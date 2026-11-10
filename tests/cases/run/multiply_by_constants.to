@@ -1,0 +1,108 @@
+// A product by 3, 5, 7, 9 or a power of two is checked by the range of the
+// other factor, whose products fit, so that it needs no multiplication:
+// at each end of that range the product fits, one past it overflows with
+// the panic of any product, for integers of every size, signed or not, on
+// either side of the `*`; and `3 * n + 1` needs no check of its own. The
+// other factors are read from arrays, so that the products are computed
+// as the program runs.
+
+import std.console
+
+fn said[T: Display](name: String, result: T ! Panic) {
+    match result {
+        ok(value) => console.println("{name} {value}")
+        err(stopped) => console.println("{name} {stopped.message}")
+    }
+}
+
+fn main() {
+    let at2 = [Int.max / 2, Int.max / 2 + 1, Int.min / 2, Int.min / 2 - 1]
+    said("2 high", recover { at2[0] * 2 })
+    said("2 past high", recover { at2[1] * 2 })
+    said("2 low", recover { 2 * at2[2] })
+    said("2 past low", recover { 2 * at2[3] })
+    let at3 = [Int.max / 3, Int.max / 3 + 1, Int.min / 3, Int.min / 3 - 1]
+    said("3 high", recover { at3[0] * 3 })
+    said("3 past high", recover { at3[1] * 3 })
+    said("3 low", recover { 3 * at3[2] })
+    said("3 past low", recover { 3 * at3[3] })
+    let at5 = [Int.max / 5, Int.max / 5 + 1, Int.min / 5, Int.min / 5 - 1]
+    said("5 high", recover { at5[0] * 5 })
+    said("5 past high", recover { at5[1] * 5 })
+    said("5 low", recover { 5 * at5[2] })
+    said("5 past low", recover { 5 * at5[3] })
+    let at7 = [Int.max / 7, Int.max / 7 + 1, Int.min / 7, Int.min / 7 - 1]
+    said("7 high", recover { at7[0] * 7 })
+    said("7 past high", recover { at7[1] * 7 })
+    said("7 low", recover { 7 * at7[2] })
+    said("7 past low", recover { 7 * at7[3] })
+    let at8 = [Int.max / 8, Int.max / 8 + 1, Int.min / 8, Int.min / 8 - 1]
+    said("8 high", recover { at8[0] * 8 })
+    said("8 past high", recover { at8[1] * 8 })
+    said("8 low", recover { 8 * at8[2] })
+    said("8 past low", recover { 8 * at8[3] })
+    let at9 = [Int.max / 9, Int.max / 9 + 1, Int.min / 9, Int.min / 9 - 1]
+    said("9 high", recover { at9[0] * 9 })
+    said("9 past high", recover { at9[1] * 9 })
+    said("9 low", recover { 9 * at9[2] })
+    said("9 past low", recover { 9 * at9[3] })
+    let at16 = [Int.max / 16, Int.max / 16 + 1, Int.min / 16, Int.min / 16 - 1]
+    said("16 high", recover { at16[0] * 16 })
+    said("16 past high", recover { at16[1] * 16 })
+    said("16 low", recover { 16 * at16[2] })
+    said("16 past low", recover { 16 * at16[3] })
+    let small: Array[Int8] = [42, 43]
+    said("int8 3", recover { small[0] * 3 })
+    said("int8 past", recover { small[1] * 3 })
+    let wide: Array[Int32] = [268_435_455, 268_435_456]
+    said("int32 8", recover { wide[0] * 8 })
+    said("int32 past", recover { wide[1] * 8 })
+    let bytes: Array[UInt8] = [85, 86]
+    said("uint8 3", recover { bytes[0] * 3 })
+    said("uint8 past", recover { bytes[1] * 3 })
+    let unsigned: Array[UInt] = [UInt.max / 5, UInt.max / 5 + 1]
+    said("uint 5", recover { unsigned[0] * 5 })
+    said("uint past", recover { unsigned[1] * 5 })
+    let n = [Int.max / 3]
+    said("3n+1", recover { 3 * n[0] + 1 })
+    said("3n+2", recover { 3 * n[0] + 2 })
+}
+
+// expect-stdout: 2 high 9223372036854775806
+// expect-stdout: 2 past high 4611686018427387904 * 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 2 low -9223372036854775808
+// expect-stdout: 2 past low 2 * -4611686018427387905 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 3 high 9223372036854775806
+// expect-stdout: 3 past high 3074457345618258603 * 3 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 3 low -9223372036854775806
+// expect-stdout: 3 past low 3 * -3074457345618258603 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 5 high 9223372036854775805
+// expect-stdout: 5 past high 1844674407370955162 * 5 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 5 low -9223372036854775805
+// expect-stdout: 5 past low 5 * -1844674407370955162 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 7 high 9223372036854775807
+// expect-stdout: 7 past high 1317624576693539402 * 7 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 7 low -9223372036854775807
+// expect-stdout: 7 past low 7 * -1317624576693539402 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 8 high 9223372036854775800
+// expect-stdout: 8 past high 1152921504606846976 * 8 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 8 low -9223372036854775808
+// expect-stdout: 8 past low 8 * -1152921504606846977 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 9 high 9223372036854775800
+// expect-stdout: 9 past high 1024819115206086201 * 9 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 9 low -9223372036854775800
+// expect-stdout: 9 past low 9 * -1024819115206086201 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 16 high 9223372036854775792
+// expect-stdout: 16 past high 576460752303423488 * 16 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 16 low -9223372036854775808
+// expect-stdout: 16 past low 16 * -576460752303423489 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: int8 3 126
+// expect-stdout: int8 past 43 * 3 does not fit in Int8 (-128 to 127)
+// expect-stdout: int32 8 2147483640
+// expect-stdout: int32 past 268435456 * 8 does not fit in Int32 (-2147483648 to 2147483647)
+// expect-stdout: uint8 3 255
+// expect-stdout: uint8 past 86 * 3 does not fit in UInt8 (0 to 255)
+// expect-stdout: uint 5 18446744073709551615
+// expect-stdout: uint past 3689348814741910324 * 5 does not fit in UInt (0 to 18446744073709551615)
+// expect-stdout: 3n+1 9223372036854775807
+// expect-stdout: 3n+2 9223372036854775806 + 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)

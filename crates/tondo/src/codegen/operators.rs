@@ -254,6 +254,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         built
     }
 
+    /// `a * b` and whether it overflows, when one factor is a constant
+    /// that Cranelift multiplies by without a multiplication: 3, 5, 7, 9
+    /// or a power of two (`Tondo:` in its `opts/arithmetic.isle`). The
+    /// product overflows when the other factor is out of the range whose
+    /// products fit, which waits for nothing, as the flag of a
+    /// multiplication waits for it: `3 * n + 1` is then one `lea` on
+    /// x86-64.
+    fn multiplied(&mut self, a: ir::Value, b: ir::Value, int: Option<IntTy>) -> Option<(ir::Value, ir::Value)> {
+        let int = int.filter(|int| int.bits() <= 64)?;
+        let constant = |fb: &FunctionBuilder, value: ir::Value| {
+            let ir::ValueDef::Result(inst, _) = fb.func.dfg.value_def(value) else { return None };
+            match fb.func.dfg.insts[inst] {
+                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits()),
+                _ => None,
+            }
+        };
+        let (factor, c) = match (constant(&self.e.fb, a), constant(&self.e.fb, b)) {
+            (_, Some(c)) => (a, c),
+            (Some(c), _) => (b, c),
+            _ => return None,
+        };
+        if !(c >= 2 && c < 1 << (int.bits() - 2) && ((c as u64).is_power_of_two() || [3, 5, 7, 9].contains(&c))) {
+            return None;
+        }
+        let clif = self.e.fb.func.dfg.value_type(factor);
+        let out = if int.signed() {
+            let (low, high) = (int.min() / c as i128, int.max() as i128 / c as i128);
+            let low = self.e.int_const(clif, low);
+            let offset = self.e.fb.ins().isub(factor, low);
+            let span = self.e.int_const(clif, high - int.min() / c as i128);
+            self.e.fb.ins().icmp(IntCC::UnsignedGreaterThan, offset, span)
+        } else {
+            let high = self.e.int_const(clif, (int.max() / c as u128) as i128);
+            self.e.fb.ins().icmp(IntCC::UnsignedGreaterThan, factor, high)
+        };
+        Some((self.e.fb.ins().imul(a, b), out))
+    }
+
     pub(super) fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let ty = self.operand_ty(left);
         let right_ty = self.operand_ty(right);
@@ -337,8 +375,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 result
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                let constant = match op {
+                    BinOp::Mul => self.multiplied(a, b, types.as_int(ty)),
+                    _ => None,
+                };
                 let ins = self.e.fb.ins();
                 let (result, overflow) = match (op, signed) {
+                    _ if let Some(found) = constant => found,
                     (BinOp::Add, true) => ins.sadd_overflow(a, b),
                     (BinOp::Add, false) => ins.uadd_overflow(a, b),
                     (BinOp::Sub, true) => ins.ssub_overflow(a, b),
