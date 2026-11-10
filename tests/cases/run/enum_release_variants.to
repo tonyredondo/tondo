@@ -73,7 +73,12 @@ fn main() {
     }
     console.println("{total} {kept.length()}")
     console.println("{roots(1000)}")
-    let values: Array[Float ! math.MathError] = [ok(1.5), err(math.MathError.NotANumber("first")), ok(2.25), err(math.MathError.Domain)]
+    let values: Array[Float ! math.MathError] = [
+        ok(1.5),
+        err(math.MathError.NotANumber("first")),
+        ok(2.25),
+        err(math.MathError.Domain),
+    ]
     console.println("{sums(values, 1000)}")
     // A value released whole after the variant it held was read.
     var words = 0
