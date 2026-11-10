@@ -1,0 +1,47 @@
+// Readers and writers of JSON let go on a thread serve the next document
+// there with the room their buffers grew to, and nothing else: each one
+// writes as its own options say, and reads without the error, the keys or
+// the text of the one before.
+
+import std.console
+import std.json
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+fn main() {
+    let point = Point { x: 2, y: 1 }
+    console.println(json.encode(point, pretty: true))
+    console.println(json.encode(point))
+    console.println(json.encode(["b": 1, "a": 2], canonical: true))
+    console.println(json.encode("<tag>", htmlSafe: true))
+    console.println(json.encode("<tag>"))
+    match json.decode[Point]("{{\"x\": 1, \"x\": 3, \"y\": 4") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    match json.decode[Point]("{{\"x\": 5, \"y\": 6}}") {
+        ok(again) => console.println("{again.x} {again.y}")
+        err(error) => console.println("{error}")
+    }
+    // Larger than what a thread keeps: let go, not kept.
+    let many: Array[Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].repeat(10_000)
+    let text = json.encode(many)
+    console.println("{text.length()} {json.decode[Array[Int]](text).unwrapOr([]).length()}")
+    console.println(json.encode(Point { x: 7, y: 8 }))
+}
+
+// expect-stdout: {
+// expect-stdout:   "x": 2,
+// expect-stdout:   "y": 1
+// expect-stdout: }
+// expect-stdout: {"x":2,"y":1}
+// expect-stdout: {"a":2,"b":1}
+// expect-stdout: "\u003ctag\u003e"
+// expect-stdout: "<tag>"
+// expect-stdout: duplicate key "x" at $.x (line 1, column 14)
+// expect-stdout: 5 6
+// expect-stdout: 200001 100000
+// expect-stdout: {"x":7,"y":8}

@@ -160,8 +160,40 @@ pub struct ReaderObject {
     reader: Mutex<Reader>,
 }
 
+/// Readers and writers of documents let go on this thread, with the room
+/// their buffers grew to, for the next: decoding or encoding a document
+/// made one and its buffers each time, and grew them as it went.
+// The boxes are what is kept: a program holds a reader by its box.
+#[allow(clippy::vec_box)]
+struct Spare {
+    readers: Vec<Box<ReaderObject>>,
+    writers: Vec<Box<WriterObject>>,
+}
+
+thread_local! {
+    static SPARE: std::cell::RefCell<Spare> =
+        const { std::cell::RefCell::new(Spare { readers: Vec::new(), writers: Vec::new() }) };
+}
+
+/// How many of each a thread keeps, and the most room a kept buffer has.
+const SPARES: usize = 4;
+const KEPT_ROOM: usize = 64 * 1024;
+
 impl Reader {
     fn new(input: Input, source: Option<Source>, duplicates: bool) -> Reader {
+        // Room for a usual document's text and keys from the start, rather
+        // than a few allocations to grow into it.
+        let buffers =
+            (Vec::with_capacity(8), String::with_capacity(64), String::with_capacity(128), Vec::with_capacity(16));
+        Reader::with(input, source, duplicates, buffers)
+    }
+
+    fn with(
+        input: Input,
+        source: Option<Source>,
+        duplicates: bool,
+        (frames, text, keys, key_ends): (Vec<Frame>, String, String, Vec<usize>),
+    ) -> Reader {
         Reader {
             input,
             offset: 0,
@@ -171,12 +203,10 @@ impl Reader {
             lines_before: 0,
             column_carry: 0,
             pinned: None,
-            frames: Vec::with_capacity(8),
-            // Room for a usual document's text and keys from the start,
-            // rather than a few allocations to grow into it.
-            text: String::with_capacity(64),
-            keys: String::with_capacity(128),
-            key_ends: Vec::with_capacity(16),
+            frames,
+            text,
+            keys,
+            key_ends,
             integer: None,
             done: false,
             root_seen: false,
@@ -185,6 +215,30 @@ impl Reader {
             several: false,
             start: 0,
         }
+    }
+
+    /// As `new`, in a reader let go before, whose buffers keep their room.
+    fn renew(&mut self, input: Input, duplicates: bool) {
+        let (mut frames, mut text, mut keys, mut key_ends) = (
+            std::mem::take(&mut self.frames),
+            std::mem::take(&mut self.text),
+            std::mem::take(&mut self.keys),
+            std::mem::take(&mut self.key_ends),
+        );
+        frames.clear();
+        text.clear();
+        keys.clear();
+        key_ends.clear();
+        *self = Reader::with(input, None, duplicates, (frames, text, keys, key_ends));
+    }
+
+    /// What a reader let go of keeps: its buffers, if they did not grow
+    /// past what is worth keeping, and nothing it read.
+    fn spare(&mut self) -> bool {
+        self.input = Input::owned(Vec::new());
+        self.source = None;
+        self.error = None;
+        self.text.capacity() + self.keys.capacity() <= KEPT_ROOM
     }
 
     fn fail(&mut self, message: impl Into<String>) -> i64 {
@@ -615,8 +669,14 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
 /// `jsonnative.reader(text, duplicates)`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
-    let reader = Reader::new(Input::held(text as *mut Str), None, duplicates != 0);
-    reader_object(reader)
+    let input = Input::held(text as *mut Str);
+    if let Some(mut spare) = SPARE.try_with(|spare| spare.borrow_mut().readers.pop()).ok().flatten() {
+        spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(input, duplicates != 0);
+        *spare.rc.get_mut() = 1;
+        LIVE_OBJECTS.made();
+        return Box::into_raw(spare);
+    }
+    reader_object(Reader::new(input, None, duplicates != 0))
 }
 
 /// `jsonnative.streamReader(stream, duplicates)`: reads the stream as the
@@ -764,8 +824,17 @@ pub unsafe extern "C" fn tondo_rt_json_reader_release(object: *mut ReaderObject)
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
-        drop(Box::from_raw(object));
         LIVE_OBJECTS.gone();
+        let mut object = Box::from_raw(object);
+        if object.reader.get_mut().unwrap_or_else(|e| e.into_inner()).spare() {
+            // A thread that ends lets go of it as before.
+            let _ = SPARE.try_with(|spare| {
+                let mut spare = spare.borrow_mut();
+                if spare.readers.len() < SPARES {
+                    spare.readers.push(object);
+                }
+            });
+        }
     }
 }
 
@@ -1103,6 +1172,15 @@ fn writer_object(pretty: u8, canonical: u8, html: u8, sink: Option<Source>) -> *
 /// `jsonnative.writer(pretty, canonical, htmlSafe)`
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8, html: u8) -> *mut WriterObject {
+    if let Some(mut spare) = SPARE.try_with(|spare| spare.borrow_mut().writers.pop()).ok().flatten() {
+        let writer = spare.writer.get_mut().unwrap_or_else(|e| e.into_inner());
+        writer.pretty = pretty != 0 && canonical == 0;
+        writer.canonical = canonical != 0;
+        writer.html = html != 0 && canonical == 0;
+        *spare.rc.get_mut() = 1;
+        LIVE_OBJECTS.made();
+        return Box::into_raw(spare);
+    }
     writer_object(pretty, canonical, html, None)
 }
 
@@ -1230,7 +1308,13 @@ pub unsafe extern "C" fn tondo_rt_json_write_bracket(object: *mut WriterObject, 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_finish(object: *mut WriterObject) -> *mut Str {
-    str_new(writer(object).finish().as_bytes())
+    let mut writer = writer(object);
+    let mut out = writer.finish();
+    let text = str_new(out.as_bytes());
+    // The writer keeps its room, empty, as a writer let go may serve again.
+    out.clear();
+    writer.out = out;
+    text
 }
 
 #[unsafe(no_mangle)]
@@ -1243,8 +1327,23 @@ pub unsafe extern "C" fn tondo_rt_json_writer_release(object: *mut WriterObject)
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
-        drop(Box::from_raw(object));
         LIVE_OBJECTS.gone();
+        let mut object = Box::from_raw(object);
+        let writer = object.writer.get_mut().unwrap_or_else(|e| e.into_inner());
+        // Kept with its buffers' room, as one made: nothing it wrote, and
+        // no stream.
+        if writer.sink.is_none() && writer.out.capacity() <= KEPT_ROOM {
+            writer.out.clear();
+            writer.open.clear();
+            writer.stack.clear();
+            (writer.root, writer.pending_key, writer.failed) = (None, None, None);
+            let _ = SPARE.try_with(|spare| {
+                let mut spare = spare.borrow_mut();
+                if spare.writers.len() < SPARES {
+                    spare.writers.push(object);
+                }
+            });
+        }
     }
 }
 
