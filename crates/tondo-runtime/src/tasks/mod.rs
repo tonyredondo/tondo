@@ -169,9 +169,8 @@ pub(crate) struct Task {
     /// who started it, and how many it started.
     name: u64,
     started: u64,
-    /// The `std.sync` locks it holds, whether exclusively, and where it
-    /// took them.
-    pub(crate) held: Vec<(usize, bool, *const Str)>,
+    /// The `std.sync` locks it holds, in a list made at its first lock.
+    pub(crate) held: Vec<Held>,
     /// When it blocked there, in milliseconds of `inspect::millis`.
     blocked_since: AtomicU64,
     finished: bool,
@@ -368,6 +367,42 @@ struct Worker {
     /// The waits of tasks that ended here, for the next to wait with
     /// (`Wait::new`), made when first needed, as `turns` is.
     waits: Cell<*mut Vec<Arc<Wait>>>,
+    /// The room of the lists of held locks of tasks that ended here, for
+    /// the next tasks here that take a lock, made as `waits` is.
+    helds: Cell<*mut Vec<Vec<Held>>>,
+}
+
+/// A `std.sync` lock a task holds: the cell, whether exclusively, and
+/// where it took it.
+pub(crate) type Held = (usize, bool, *const Str);
+
+/// How many lists of held locks a worker keeps.
+const SPARE_HELDS: usize = 16;
+
+fn spare_helds() -> &'static mut Vec<Vec<Held>> {
+    let helds = worker(|w| {
+        if w.helds.get().is_null() {
+            w.helds.set(Box::into_raw(Box::default()));
+        }
+        w.helds.get()
+    });
+    unsafe { &mut *helds }
+}
+
+/// Room for the locks a task takes, from one that ended on this thread:
+/// each new task's first lock made a list.
+pub(crate) fn held_room() -> Vec<Held> {
+    spare_helds().pop().unwrap_or_default()
+}
+
+/// What a task that ended leaves: the room of its list of held locks.
+fn left_held(task: &mut Task) {
+    let mut held = std::mem::take(&mut task.held);
+    let spare = spare_helds();
+    if held.capacity() > 0 && spare.len() < SPARE_HELDS {
+        held.clear();
+        spare.push(held);
+    }
 }
 
 thread_local! {
@@ -384,6 +419,7 @@ thread_local! {
             turns: Cell::new(std::ptr::null_mut()),
             events: Cell::new(std::ptr::null_mut()),
             waits: Cell::new(std::ptr::null_mut()),
+            helds: Cell::new(std::ptr::null_mut()),
         }
     };
 }

@@ -371,6 +371,7 @@ pub(super) fn run(task: *mut Task) {
                 recycle(stack);
             }
             Wait::left(&mut *task);
+            left_held(&mut *task);
             unregister(task);
             (*task).mark = 0;
             // A spawned task lives in its join's block.

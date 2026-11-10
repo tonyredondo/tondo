@@ -1,0 +1,100 @@
+// A cell's value lives in the cell's own allocation, of any size, and the
+// list of the locks a task holds keeps its room for the next task on its
+// thread: tasks that take one or two locks, one inside the other, many
+// after one another, see only their own, so that taking again a lock a
+// task holds still panics, and a cell holding what refers to it is freed
+// as before.
+
+import std.console
+import std.sync
+
+type Big = {
+    name: String
+    values: Array[Int]
+    a: Int
+    b: Int
+    c: Int
+}
+
+type Holder = {
+    again: (fn(): Int)?
+}
+
+fn twice(outer: sync.Mutex[Int], inner: sync.RwLock[Big], turns: Int) {
+    for _ in 0..turns {
+        outer.update(
+            (n) {
+                n += inner.update(
+                    (big) {
+                        big.a += 1
+                        big.values.push(big.a)
+                        1
+                    },
+                )
+            },
+        )
+    }
+}
+
+fn again(cell: sync.Mutex[Int]): Int {
+    match recover {
+        cell.update(
+            (n) {
+                n += cell.get()
+            },
+        )
+    } {
+        ok(_) => 0
+        err(stopped) => stopped.message.length()
+    }
+}
+
+fn main() {
+    let outer = sync.Mutex(0)
+    let inner = sync.RwLock(Big { name: "big", values: [], a: 0, b: 0, c: 0 })
+    for _ in 0..20 {
+        var tasks: Array[Join[Unit]] = []
+        for _ in 0..4 {
+            tasks.push(spawn twice(outer, inner, 25))
+        }
+        for task in tasks {
+            task.wait()
+        }
+    }
+    let big = inner.get()
+    console.println(
+        "{outer.get()} {big.a} {big.values.length()} {inner.read((shown) { shown.name })}",
+    )
+
+    // Taking again a lock it holds, in tasks that came after many others.
+    let cell = sync.Mutex(1)
+    var caught = 0
+    for _ in 0..8 {
+        caught += (spawn again(cell)).wait()
+    }
+    console.println("caught {caught > 0} {cell.get()}")
+
+    // Cells of nothing, of text, and one holding a closure that holds it.
+    let nothing = sync.Mutex(())
+    nothing.set(())
+    nothing.get()
+    let text = sync.Mutex("a")
+    text.update(
+        (t) {
+            t = "{t}b"
+        },
+    )
+    for _ in 0..100 {
+        let holder = sync.Mutex(Holder { again: none })
+        holder.update(
+            (h) {
+                h.again = some(() { if holder.get().again.isSome() { 1 } else { 0 } })
+            },
+        )
+    }
+    console.println(text.get())
+}
+
+// expect-stdout: 2000 2000 2000 big
+// expect-stdout: caught true 1
+// expect-stdout: ab

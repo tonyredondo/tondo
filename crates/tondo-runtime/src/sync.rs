@@ -32,9 +32,13 @@ pub struct SyncObject {
     waiting: VecDeque<(*const Wait, bool, std::time::Instant)>,
     /// Tasks in `updateWhen` waiting for the value to change.
     changes: Vec<*const Wait>,
+    /// The value: after the cell, in its allocation, until a reload puts
+    /// one of another type on the heap.
     value: *mut u8,
     size: usize,
     align: usize,
+    /// The size and alignment the cell was made with room for.
+    room: (usize, usize),
     release: Option<Glue>,
     /// Visits the state for the cycle collector, when it may refer back
     /// to the cell, which is then registered with it.
@@ -42,6 +46,22 @@ pub struct SyncObject {
     /// The task that last let go of the lock to change the value, which
     /// the debugger's watch of the cell stops.
     writer: std::sync::atomic::AtomicU64,
+}
+
+/// A cell's allocation with room for a value of `size` bytes after it, and
+/// where the value starts.
+fn cell_layout((size, align): (usize, usize)) -> (std::alloc::Layout, usize) {
+    let value = std::alloc::Layout::from_size_align(size.max(1), align).unwrap();
+    std::alloc::Layout::new::<SyncObject>().extend(value).unwrap()
+}
+
+/// Frees a value a reload put on the heap; the one in the cell's room goes
+/// with the cell.
+unsafe fn free_value(o: &SyncObject, value: *mut u8, size: usize, align: usize) {
+    let room = unsafe { (o as *const SyncObject as *mut u8).add(cell_layout(o.room).1) };
+    if value != room {
+        unsafe { std::alloc::dealloc(value, std::alloc::Layout::from_size_align(size.max(1), align).unwrap()) };
+    }
 }
 
 /// The task that last changed the cell's value, or 0.
@@ -75,21 +95,28 @@ pub extern "C" fn tondo_rt_sync_new(
     visit: Option<Visit>,
 ) -> *mut SyncObject {
     let align = align.max(8);
-    let layout = std::alloc::Layout::from_size_align(size.max(1), align).unwrap();
+    let (layout, offset) = cell_layout((size, align));
     LIVE_OBJECTS.made();
-    let cell = Box::into_raw(Box::new(SyncObject {
-        rc: AtomicUsize::new(1),
-        state: AtomicUsize::new(0),
-        queue: AtomicBool::new(false),
-        waiting: VecDeque::new(),
-        changes: Vec::new(),
-        value: unsafe { std::alloc::alloc(layout) },
-        size,
-        align,
-        release,
-        visit,
-        writer: std::sync::atomic::AtomicU64::new(0),
-    }));
+    let cell = unsafe { std::alloc::alloc(layout) } as *mut SyncObject;
+    if cell.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    unsafe {
+        cell.write(SyncObject {
+            rc: AtomicUsize::new(1),
+            state: AtomicUsize::new(0),
+            queue: AtomicBool::new(false),
+            waiting: VecDeque::new(),
+            changes: Vec::new(),
+            value: (cell as *mut u8).add(offset),
+            size,
+            align,
+            room: (size, align),
+            release,
+            visit,
+            writer: std::sync::atomic::AtomicU64::new(0),
+        })
+    };
     if visit.is_some() {
         cycles::remember(cell as *const u8, Kind::Sync);
     }
@@ -139,7 +166,7 @@ pub(crate) unsafe fn sync_commit(
         if let Some(release) = old_release {
             release(old);
         }
-        std::alloc::dealloc(old, std::alloc::Layout::from_size_align(old_size.max(1), old_align).unwrap());
+        free_value(o, old, old_size, old_align);
     }
 }
 
@@ -184,8 +211,17 @@ fn try_take(o: &SyncObject, exclusive: bool) -> bool {
 
 /// The locks a task holds, read once for each operation: finding the
 /// running task costs a call.
-fn held(task: *mut Task) -> &'static mut Vec<(usize, bool, *const Str)> {
+fn held(task: *mut Task) -> &'static mut Vec<super::tasks::Held> {
     unsafe { &mut (*task).held }
+}
+
+/// Records a lock the task took, in room a task that ended left at its
+/// first.
+fn hold(holds: &mut Vec<super::tasks::Held>, lock: super::tasks::Held) {
+    if holds.capacity() == 0 {
+        *holds = super::tasks::held_room();
+    }
+    holds.push(lock);
 }
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
@@ -243,7 +279,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
     let mut woken = false;
     loop {
         if try_take(o, exclusive) {
-            holds.push((address, exclusive, location));
+            hold(holds, (address, exclusive, location));
             return guard;
         }
         if mode == TRY {
@@ -262,7 +298,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         if try_take(o, exclusive) {
             unlock(&o.queue);
-            held(current()).push((address, exclusive, location));
+            hold(held(current()), (address, exclusive, location));
             return guard;
         }
         // A task woken before goes first, and starves the lock once it
@@ -286,7 +322,7 @@ unsafe fn taken(object: *mut SyncObject, mode: u8, location: *const Str) -> usiz
                 return 0;
             }
             HANDED => {
-                held(current()).push((address, exclusive, location));
+                hold(held(current()), (address, exclusive, location));
                 return guard;
             }
             _ => {
@@ -514,11 +550,14 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
         if super::race::on() {
             super::race::forget(object as usize);
         }
-        let o = Box::from_raw(object);
+        let o = &*object;
         if let Some(release) = o.release {
             release(o.value);
         }
-        std::alloc::dealloc(o.value, std::alloc::Layout::from_size_align(o.size.max(1), o.align).unwrap());
+        free_value(o, o.value, o.size, o.align);
+        let layout = cell_layout(o.room).0;
+        std::ptr::drop_in_place(object);
+        std::alloc::dealloc(object as *mut u8, layout);
         LIVE_OBJECTS.gone();
     }
 }
