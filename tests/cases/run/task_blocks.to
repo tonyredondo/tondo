@@ -1,0 +1,105 @@
+// The block of a task that ended, its join and the task itself, serves the
+// next task its thread starts: results of every size, the big ones beside
+// it, one never taken, a panic, joins kept long after their tasks ended,
+// detached tasks and groups are each as they were in a block of their own.
+
+import std.console
+
+type Big = {
+    a: Int
+    b: Int
+    c: Int
+    d: String
+}
+
+fn nothing() {}
+
+fn number(n: Int): Int {
+    n * 2
+}
+
+fn ratio(n: Int): Float {
+    Float(n) / 4.0
+}
+
+fn big(n: Int): Big {
+    Big { a: n, b: n + 1, c: n + 2, d: "big {n}" }
+}
+
+fn text(n: Int): String {
+    "text {n}"
+}
+
+fn failing(n: Int): Int {
+    if n % 2 == 1 {
+        panic("odd {n}")
+    }
+    n
+}
+
+fn report(out: Sender[Int], n: Int) {
+    out.send(n)
+}
+
+fn main() {
+    var total = 0
+    for round in 0..200 {
+        (spawn nothing()).wait()
+        total += (spawn number(round)).wait()
+        total += Int.saturating((spawn ratio(round)).wait())
+        let made = (spawn big(round)).wait()
+        total += made.a + made.c + made.d.length()
+        // Never waited for: its result goes with the join.
+        _ = spawn text(round)
+    }
+    console.println("total {total}")
+
+    // Joins kept while many tasks start and end after theirs.
+    var kept: Array[Join[String]] = []
+    for n in 0..20 {
+        kept.push(spawn text(n))
+        for _ in 0..5 {
+            (spawn nothing()).wait()
+        }
+    }
+    var lengths = 0
+    for job in kept {
+        lengths += job.wait().length()
+    }
+    console.println("kept {lengths}")
+
+    var caught = 0
+    for n in 0..10 {
+        match recover { (spawn failing(n)).wait() } {
+            ok(value) => total += value
+            err(stopped) => caught += stopped.message.length()
+        }
+    }
+    console.println("caught {caught}")
+
+    let (out, inbox) = channel[Int](16)
+    for n in 0..10 {
+        spawn detached report(out.copy(), n)
+    }
+    var reported = 0
+    for _ in 0..10 {
+        reported += inbox.receive().unwrapOr(1000)
+    }
+    console.println("reported {reported}")
+
+    var group = Group[Int]()
+    for n in 0..30 {
+        group.add(spawn number(n))
+    }
+    var grouped = 0
+    for value in group.wait() {
+        grouped += value
+    }
+    console.println("grouped {grouped}")
+}
+
+// expect-stdout: total 86190
+// expect-stdout: kept 130
+// expect-stdout: caught 25
+// expect-stdout: reported 45
+// expect-stdout: grouped 870

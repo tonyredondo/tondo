@@ -76,8 +76,29 @@ pub(super) struct Spawned {
     pub(super) result: [u64; 2],
 }
 
+/// The blocks of tasks that ended, which this thread's next spawns take,
+/// as Go keeps a goroutine that ended for the next: every block has the
+/// same size, and making one was an allocation of every spawn. A thread
+/// that ends frees them.
+struct SpareBlocks(std::cell::RefCell<Vec<*mut Spawned>>);
+
+impl Drop for SpareBlocks {
+    fn drop(&mut self) {
+        for block in self.0.get_mut().drain(..) {
+            unsafe { std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>()) };
+        }
+    }
+}
+
+thread_local! {
+    static SPARE_BLOCKS: SpareBlocks = const { SpareBlocks(std::cell::RefCell::new(Vec::new())) };
+}
+
+/// How many blocks a thread keeps.
+const SPARE_BLOCK_LIMIT: usize = 64;
+
 /// Lets go of a spawned task's block for the program or for the task; the
-/// last frees it.
+/// last frees it, or keeps it for the next spawn.
 pub(super) unsafe fn let_go(join: *mut JoinObject) {
     unsafe {
         if (*join).holders.fetch_sub(1, Ordering::AcqRel) != 1 {
@@ -88,7 +109,19 @@ pub(super) unsafe fn let_go(join: *mut JoinObject) {
         if !result.is_null() && result != (&raw mut (*block).result).cast() {
             std::alloc::dealloc(result, std::alloc::Layout::from_size_align((*join).size, (*join).align).unwrap());
         }
-        drop(Box::from_raw(block));
+        std::ptr::drop_in_place(block);
+        // A thread that ends frees it as before.
+        let kept = SPARE_BLOCKS.try_with(|spare| {
+            let mut spare = spare.0.borrow_mut();
+            let room = spare.len() < SPARE_BLOCK_LIMIT;
+            if room {
+                spare.push(block);
+            }
+            room
+        });
+        if !kept.unwrap_or(false) {
+            std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>());
+        }
     }
 }
 
@@ -107,7 +140,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     start_workers();
     let align = align.max(8);
     LIVE_OBJECTS.made();
-    let block = Box::into_raw(Box::new(Spawned {
+    let spawned = Spawned {
         join: JoinObject {
             rc: AtomicUsize::new(1),
             lock: AtomicBool::new(false),
@@ -128,7 +161,14 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         },
         task: std::mem::MaybeUninit::uninit(),
         result: [0; 2],
-    }));
+    };
+    let block = match SPARE_BLOCKS.try_with(|spare| spare.0.borrow_mut().pop()).ok().flatten() {
+        Some(block) => unsafe {
+            block.write(spawned);
+            block
+        },
+        None => Box::into_raw(Box::new(spawned)),
+    };
     let join = block as *mut JoinObject;
     unsafe {
         (*join).result = match size {

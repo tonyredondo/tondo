@@ -23,6 +23,11 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("fs.rs", "HOST_ERROR", "the threads that do a task's blocking work, which run no task"),
     ("io.rs", "HELD", "set while a future is polled, which never waits: what it lets go waits for the poll's end"),
     ("json.rs", "SPARE", "readers and writers let go, taken and given back by calls that never wait, on any thread"),
+    (
+        "tasks/join.rs",
+        "SPARE_BLOCKS",
+        "blocks of tasks that ended, taken and given back by calls that never wait, on any thread",
+    ),
     ("heap.rs", "UNTIL", "a sample of the heap per thread, whichever task allocates"),
     ("heap.rs", "SEED", "a sample of the heap per thread, whichever task allocates"),
     ("heap.rs", "TRACKING", "set inside the registry of objects, which never waits"),
