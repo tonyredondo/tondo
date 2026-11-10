@@ -1,0 +1,28 @@
+// The function `update` calls is inlined where `update` is, as a closure a
+// local holds a copy of: a panic in it still names its frame, and the
+// lock is let go as the code unwinds.
+import std.console
+import std.sync
+
+fn scale(cell: sync.Mutex[Int], factor: Int) {
+    cell.update((n) { n *= factor })
+}
+
+fn main() {
+    let cell = sync.Mutex(9_223_372_036_854_775)
+    scale(cell, 3)
+    match recover { scale(cell, 1000) } {
+        ok(_) => console.println("scaled")
+        err(stopped) => console.println("{stopped.code}, and {cell.get()} as it was")
+    }
+    scale(cell, 1_000_000)
+}
+
+// expect-stdout: P0005, and 27670116110564325 as it was
+// expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 27670116110564325 * 1000000 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stderr:  --> panic_in_update_trace.to:8:23
+// expect-stderr: stack:
+// expect-stderr:   closure in scale  panic_in_update_trace.to:8:23
+// expect-stderr:   scale             panic_in_update_trace.to:8:5
+// expect-stderr:   main              panic_in_update_trace.to:18:5

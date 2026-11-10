@@ -1,0 +1,49 @@
+// A small function that assigns a `var` parameter whole is inlined, the
+// parameter being the place lent: a binding, a field, an element, a cell's
+// value, a counted text that the old value of is let go, and a loan passed
+// on, each changed as the call would.
+
+import std.console
+import std.sync
+
+type Pair = {
+    count: Int
+    name: String
+}
+
+fn bump(n: var Int) {
+    n += 1
+}
+
+fn shout(text: var String) {
+    text = "{text}!"
+}
+
+fn twice(n: var Int) {
+    bump(var n)
+    bump(var n)
+}
+
+fn main() {
+    var local = 1
+    bump(var local)
+    var pair = Pair { count: 10, name: "pair" }
+    bump(var pair.count)
+    shout(var pair.name)
+    var numbers = [5, 6, 7]
+    bump(var numbers[1])
+    twice(var numbers[2])
+    var words = ["a", "b"]
+    shout(var words[0])
+    var name = "x".repeat(40)
+    shout(var name)
+    let cell = sync.Mutex(100)
+    cell.update((n) { twice(var n) })
+    let texts = sync.Mutex("cell")
+    texts.update((t) { shout(var t) })
+    console.println(
+        "{local} {pair.count} {pair.name} {numbers} {words} {name.length()} {cell.get()} {texts.get()}",
+    )
+}
+
+// expect-stdout: 2 11 pair! [5, 7, 9] [a!, b] 41 102 cell!

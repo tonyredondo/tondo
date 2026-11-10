@@ -271,8 +271,10 @@ fn small(body: &Body) -> bool {
     if cost > SMALL {
         return false;
     }
-    // A loan becomes the place lent, which cannot be an index or defined.
-    let mut named = defined(body);
+    // A loan becomes the place lent, which cannot be an index or a local
+    // a statement defines whole; a place can be assigned, as
+    // `(count) { count += 1 }` does a cell's value.
+    let mut named = bound(body);
     let mut copy = body.blocks.clone();
     for block in &mut copy {
         let mut indexes = |place: &mut Place| {
@@ -294,25 +296,34 @@ fn loan(body: &Body, index: usize) -> bool {
     body.loans.get(index).copied().unwrap_or(false)
 }
 
-/// The locals a body defines whole.
-fn defined(body: &Body) -> HashSet<Local> {
+/// The locals a body's statements bind, which take a local and not a
+/// place: what it lends, clears, and what a `select` receives into.
+fn bound(body: &Body) -> HashSet<Local> {
     let mut named = HashSet::new();
-    for block in &body.blocks {
-        for statement in &block.stmts {
-            match statement {
-                Statement::Lend(local, _) | Statement::Clear(local) | Statement::LendAt(local, _) => {
-                    named.insert(*local);
-                }
-                Statement::Assign(place, rvalue, _) => {
-                    if place.path.is_empty() {
-                        named.insert(place.local);
-                    }
-                    if let Rvalue::Select(cases, ..) = &**rvalue {
-                        named.extend(cases.iter().map(|case| case.out));
-                    }
-                }
-                _ => {}
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        match statement {
+            Statement::Lend(local, _) | Statement::Clear(local) | Statement::LendAt(local, _) => {
+                named.insert(*local);
             }
+            Statement::Assign(_, rvalue, _) => {
+                if let Rvalue::Select(cases, ..) = &**rvalue {
+                    named.extend(cases.iter().map(|case| case.out));
+                }
+            }
+            _ => {}
+        }
+    }
+    named
+}
+
+/// The locals a body defines whole: those it binds, and those it assigns.
+fn defined(body: &Body) -> HashSet<Local> {
+    let mut named = bound(body);
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::Assign(place, ..) = statement
+            && place.path.is_empty()
+        {
+            named.insert(place.local);
         }
     }
     named
