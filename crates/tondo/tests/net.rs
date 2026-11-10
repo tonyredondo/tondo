@@ -55,6 +55,12 @@ fn main(): !net.NetError {
     stream.write("hello\n")?
     console.println("{stream.readLine()?}")
 
+    // More than the sockets take at once, both ways: the rest goes as they
+    // take more.
+    let long = net.connectTls("localhost", port, trust: "authority.pem")?
+    long.write("{"x".repeat(8000000)}\n")?
+    console.println("long {long.readLine()?.unwrapOr("").length()}")
+
     // The system does not trust the authority, and the name must match.
     let attempts: Array[(String, String?)] = [("localhost", none), ("127.0.0.1", some("authority.pem"))]
     for (host, trust) in attempts {
@@ -86,6 +92,7 @@ fn main(): !net.NetError {
     let (stdout, stderr, success) = run("net-tls", program, &files);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[0], "some(secure hello)", "{stdout}{stderr}");
+    assert_eq!(lines[1], "long 8000007", "{stdout}{stderr}");
     assert!(lines.iter().filter(|l| l.starts_with("refused ")).count() == 2, "{stdout}{stderr}");
     assert!(lines.iter().filter(|l| l.starts_with("server: TLS: ")).count() >= 1, "{stdout}{stderr}");
     assert_eq!(lines.iter().filter(|l| **l == "true").count(), 2, "{stdout}{stderr}");

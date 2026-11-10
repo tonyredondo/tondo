@@ -4,9 +4,9 @@
 //! is two streams of `std.io` in `Mode::Ready`, so a task waiting on the
 //! network holds neither a worker nor a thread. Sockets without TLS are the
 //! workers' own (`poll`): a task reads and writes them itself, and what a
-//! socket could not take at once goes when it can. TLS and names use the
-//! HTTP runtime's tokio, whose tasks move the bytes of a TLS stream between
-//! it and two buffers.
+//! socket could not take at once goes when it can. Over TLS too: a read
+//! decrypts and a write encrypts in the task's own operation, after a
+//! handshake of its own. Names are looked up with the HTTP runtime's tokio.
 
 use super::http::text;
 use super::native::{self, NativeObject};
@@ -19,10 +19,8 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Notify;
 
 /// How many bytes a direction of a connection holds before it waits.
 const HIGH: usize = 256 * 1024;
@@ -147,108 +145,187 @@ fn port(port: i64) -> Result<u16, Failure> {
 // Connections
 // ---------------------------------------------------------------------------
 
-/// One direction of a TLS connection: the bytes between the TLS stream and
-/// its stream of `std.io`, which the tokio task moving them and the
-/// stream's host share.
-#[derive(Default)]
-struct Pipe {
-    flow: Mutex<Flow>,
-    changed: Notify,
+/// A TLS connection whose streams read and write it in place, as TCP's do:
+/// a read decrypts what the socket has, and a write encrypts and sends what
+/// the socket takes, in the task's own operation. The handshake comes
+/// first, on its own.
+struct Secure {
+    socket: Registered<mio::net::TcpStream>,
+    session: Mutex<Session>,
 }
 
-#[derive(Default)]
-struct Flow {
-    /// Received and not read yet, or written and not sent yet.
-    bytes: Vec<u8>,
-    /// Sending: how many bytes the socket is taking now.
-    sending: usize,
-    /// Receiving, the other side ended; sending, the stream is done.
-    end: bool,
-    /// The stream let go of it: the task stops.
-    gone: bool,
-    failure: Option<Failure>,
+struct Session {
+    tls: rustls::Connection,
+    /// Until the handshake is over: the wakers of the streams that wait for
+    /// it.
+    shaking: Option<Vec<Waker>>,
+    /// Why reading, and writing, fail from now on.
+    failures: [Option<Failure>; 2],
+    /// Bytes written since TLS last sent all it held.
+    unsent: usize,
+    /// The writing stream let go with bytes to send: the connection ends its
+    /// writing after them, and holds itself until then.
+    keep: Option<Arc<Secure>>,
 }
 
-impl Pipe {
-    fn flow(&self) -> MutexGuard<'_, Flow> {
-        lock(&self.flow)
+/// The socket, as rustls reads and writes it.
+struct Raw<'a>(&'a Registered<mio::net::TcpStream>);
+
+impl Read for Raw<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.0.attempt(Direction::Read, |socket| Wire::take(socket, buffer))
+    }
+}
+
+impl Write for Raw<'_> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.attempt(Direction::Write, |socket| socket.give(data))
     }
 
-    fn change(&self, change: impl FnOnce(&mut Flow)) {
-        change(&mut self.flow());
-        self.changed.notify_waiters();
+    fn write_vectored(&mut self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        self.0.attempt(Direction::Write, |socket| socket.give_all(parts))
     }
 
-    /// Waits until `ready` holds.
-    async fn until(&self, ready: impl Fn(&Flow) -> bool) {
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Secure {
+    fn new(socket: Registered<mio::net::TcpStream>, mut tls: rustls::Connection) -> Arc<Secure> {
+        let _ = socket.io().set_nodelay(true);
+        // A write takes all it is given, as TCP's does, which `HIGH` bounds:
+        // with rustls's own limit, a write the socket could not take at once
+        // would take less.
+        tls.set_buffer_limit(None);
+        let session = Session { tls, shaking: Some(Vec::new()), failures: [None, None], unsent: 0, keep: None };
+        let secure = Arc::new(Secure { socket, session: Mutex::new(session) });
+        let weak = Arc::downgrade(&secure);
+        secure.socket.on_writable(Arc::new(move || {
+            if let Some(secure) = weak.upgrade() {
+                secure.writable();
+            }
+        }));
+        secure
+    }
+
+    /// Sends what TLS holds while the socket takes it; the rest goes when it
+    /// can take more.
+    fn push(&self, session: &mut Session) -> std::io::Result<()> {
+        while session.tls.wants_write() {
+            match session.tls.write_tls(&mut Raw(&self.socket)) {
+                Ok(_) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
+        session.unsent = 0;
+        Ok(())
+    }
+
+    /// `push`, noting a failure, which every write after says.
+    fn sent(&self, session: &mut Session) -> std::io::Result<()> {
+        self.push(session).map_err(|error| {
+            let failure = Failure::from(error);
+            session.failures[1] = Some(failure.clone());
+            std::io::Error::other(failure)
+        })
+    }
+
+    /// Takes in the records read; the alert of a failure goes out first.
+    fn process(&self, session: &mut Session) -> std::io::Result<()> {
+        match session.tls.process_new_packets() {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let _ = self.push(session);
+                Err(std::io::Error::new(ErrorKind::InvalidData, error))
+            }
+        }
+    }
+
+    /// One step of the handshake: `None` once it is over, or the direction
+    /// of the socket it waits for.
+    fn shake(&self, session: &mut Session) -> std::io::Result<Option<Direction>> {
         loop {
-            let notified = self.changed.notified();
-            let mut notified = std::pin::pin!(notified);
-            notified.as_mut().enable();
-            if ready(&self.flow()) {
-                return;
+            self.push(session)?;
+            if session.tls.wants_write() {
+                return Ok(Some(Direction::Write));
             }
-            notified.await;
+            if !session.tls.is_handshaking() {
+                return Ok(None);
+            }
+            match session.tls.read_tls(&mut Raw(&self.socket)) {
+                Ok(0) => {
+                    let why = "the other side ended the connection in the TLS handshake";
+                    return Err(std::io::Error::new(ErrorKind::UnexpectedEof, why));
+                }
+                Ok(_) => self.process(session)?,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(Some(Direction::Read)),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// The handshake is over, or failed: whoever waits for it goes on.
+    fn shaken(&self, outcome: &Result<(), Failure>) {
+        let waiting = {
+            let mut session = lock(&self.session);
+            if let Err(failure) = outcome {
+                session.failures = [Some(failure.clone()), Some(failure.clone())];
+            }
+            session.shaking.take()
+        };
+        waiting.into_iter().flatten().for_each(Waker::wake);
+    }
+
+    /// When the socket can take more: sends what TLS holds, and ends the
+    /// writing of a connection whose stream let go once nothing is left.
+    fn writable(&self) {
+        let mut session = lock(&self.session);
+        let _ = self.sent(&mut session);
+        if session.keep.is_some() && (!session.tls.wants_write() || session.failures[1].is_some()) {
+            let _ = self.socket.io().end();
+            let keep = session.keep.take();
+            drop(session);
+            drop(keep);
+        }
+    }
+
+    /// What a stream waits for, as a future.
+    fn ready(self: &Arc<Self>, awaited: Awaited) -> Ready {
+        if let Awaited::Socket(direction) = awaited {
+            return Ready::Socket(self.socket.ready(direction));
+        }
+        let secure = self.clone();
+        Ready::Other(Box::pin(std::future::poll_fn(move |context| {
+            let mut session = lock(&secure.session);
+            let Some(waiting) = session.shaking.as_mut() else { return Poll::Ready(()) };
+            if !waiting.iter().any(|waker| waker.will_wake(context.waker())) {
+                waiting.push(context.waker().clone());
+            }
+            Poll::Pending
+        })))
+    }
+}
+
+/// The handshake of a connection: in the task that connects, or at the
+/// workers' turns for one accepted.
+async fn handshake(secure: &Secure) -> Result<(), Failure> {
+    loop {
+        let step = secure.shake(&mut lock(&secure.session));
+        match step {
+            Ok(None) => return Ok(()),
+            Ok(Some(direction)) => secure.socket.ready(direction).await,
+            Err(error) => return Err(error.into()),
         }
     }
 }
 
-type Tls = tokio_rustls::TlsStream<Polled<mio::net::TcpStream>>;
-
-/// Moves what a TLS stream receives into `pipe` while it has room.
-async fn receive(mut from: tokio::io::ReadHalf<Tls>, pipe: Arc<Pipe>) {
-    let mut buffer = vec![0; 64 * 1024];
-    loop {
-        pipe.until(|flow| flow.bytes.len() < HIGH || flow.gone).await;
-        let read = tokio::select! {
-            read = from.read(&mut buffer) => read,
-            _ = pipe.until(|flow| flow.gone) => return,
-        };
-        let mut over = true;
-        pipe.change(|flow| match read {
-            Ok(0) => flow.end = true,
-            Ok(count) => {
-                flow.bytes.extend_from_slice(&buffer[..count]);
-                over = false;
-            }
-            Err(error) => flow.failure = Some(error.into()),
-        });
-        if over {
-            return;
-        }
-    }
-}
-
-/// Sends what the stream leaves in `pipe`, and ends the TLS stream after
-/// the stream is done.
-async fn send(mut to: tokio::io::WriteHalf<Tls>, pipe: Arc<Pipe>) {
-    loop {
-        pipe.until(|flow| !flow.bytes.is_empty() || flow.end).await;
-        let chunk = {
-            let mut flow = pipe.flow();
-            if flow.bytes.is_empty() {
-                break;
-            }
-            let chunk = std::mem::take(&mut flow.bytes);
-            flow.sending = chunk.len();
-            chunk
-        };
-        let sent = match to.write_all(&chunk).await {
-            Ok(()) => to.flush().await,
-            failed => failed,
-        };
-        let failed = sent.is_err();
-        pipe.change(|flow| {
-            flow.sending = 0;
-            if let Err(error) = sent {
-                flow.failure = Some(error.into());
-            }
-        });
-        if failed {
-            return;
-        }
-    }
-    let _ = to.shutdown().await;
+/// What a stream of a TLS connection waits for.
+#[derive(Clone, Copy)]
+enum Awaited {
+    Socket(Direction),
+    Handshake,
 }
 
 /// A connected socket of the workers' poll: TCP or Unix.
@@ -444,17 +521,19 @@ struct TcpOut<S: Wire> {
     gave_up: Option<ErrorKind>,
 }
 
-/// The reading half of a TLS connection as the host of a stream.
-struct Inbox {
-    pipe: Arc<Pipe>,
-    waiting: bool,
+/// The reading half of a TLS connection as the host of a stream, which
+/// decrypts what the socket has.
+struct SecureIn {
+    secure: Arc<Secure>,
+    waiting: Option<Awaited>,
     gave_up: Option<ErrorKind>,
 }
 
-/// The writing half of a TLS connection as the host of a stream.
-struct Outbox {
-    pipe: Arc<Pipe>,
-    waiting: bool,
+/// The writing half of a TLS connection as the host of a stream, which
+/// encrypts what it writes and sends what the socket takes.
+struct SecureOut {
+    secure: Arc<Secure>,
+    waiting: Option<Awaited>,
     gave_up: Option<ErrorKind>,
 }
 
@@ -464,6 +543,17 @@ fn would_block(waiting: &mut bool, gave_up: Option<ErrorKind>) -> std::io::Error
     gave_up
         .unwrap_or_else(|| {
             *waiting = true;
+            ErrorKind::WouldBlock
+        })
+        .into()
+}
+
+/// `would_block` for a stream of a TLS connection, which notes what it waits
+/// for.
+fn would_wait(waiting: &mut Option<Awaited>, gave_up: Option<ErrorKind>, awaited: Awaited) -> std::io::Error {
+    gave_up
+        .unwrap_or_else(|| {
+            *waiting = Some(awaited);
             ErrorKind::WouldBlock
         })
         .into()
@@ -493,42 +583,42 @@ impl<S: Wire> Host for TcpIn<S> {
     }
 }
 
-impl Host for Inbox {
+impl Host for SecureIn {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let mut flow = self.pipe.flow();
-        if !flow.bytes.is_empty() {
-            let count = buffer.len().min(flow.bytes.len());
-            buffer[..count].copy_from_slice(&flow.bytes[..count]);
-            flow.bytes.drain(..count);
-            drop(flow);
-            self.pipe.changed.notify_waiters();
-            super::diagnostics::NET_READ.add(count as i64);
-            return Ok(count);
+        let secure = &self.secure;
+        let mut session = lock(&secure.session);
+        if session.shaking.is_some() {
+            return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Handshake));
         }
-        failed(&flow.failure)?;
-        if flow.end {
-            return Ok(0);
+        failed(&session.failures[0])?;
+        loop {
+            match session.tls.reader().read(buffer) {
+                Ok(count) => {
+                    super::diagnostics::NET_READ.add(count as i64);
+                    return Ok(count);
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error),
+            }
+            match session.tls.read_tls(&mut Raw(&secure.socket)) {
+                Ok(_) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Read)));
+                }
+                Err(error) => return Err(error),
+            }
+            secure.process(&mut session)?;
+            // What TLS answers, as to a key update, goes out.
+            let _ = secure.sent(&mut session);
         }
-        Err(would_block(&mut self.waiting, self.gave_up))
     }
 
     fn blocked(&mut self) -> Option<Ready> {
-        let pipe = self.pipe.clone();
-        std::mem::take(&mut self.waiting).then(|| {
-            Ready::Other(Box::pin(async move {
-                pipe.until(|flow| !flow.bytes.is_empty() || flow.end || flow.failure.is_some()).await
-            }))
-        })
+        self.waiting.take().map(|awaited| self.secure.ready(awaited))
     }
 
     fn give_up(&mut self, kind: Option<ErrorKind>) {
         self.gave_up = kind;
-    }
-}
-
-impl Drop for Inbox {
-    fn drop(&mut self) {
-        self.pipe.change(|flow| flow.gone = true);
     }
 }
 
@@ -586,38 +676,41 @@ impl<S: Wire> Drop for TcpOut<S> {
     }
 }
 
-impl Host for Outbox {
+impl Host for SecureOut {
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
-        let mut flow = self.pipe.flow();
-        failed(&flow.failure)?;
-        let queued = flow.bytes.len() + flow.sending;
-        if queued == 0 || queued + data.len() <= HIGH {
-            flow.bytes.extend_from_slice(data);
-            drop(flow);
-            super::diagnostics::NET_WRITTEN.add(data.len() as i64);
-            self.pipe.changed.notify_waiters();
-            return Ok(());
+        let secure = &self.secure;
+        let mut session = lock(&secure.session);
+        if session.shaking.is_some() {
+            return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Handshake));
         }
-        Err(would_block(&mut self.waiting, self.gave_up))
+        failed(&session.failures[1])?;
+        secure.sent(&mut session)?;
+        if session.unsent > 0 && session.unsent + data.len() > HIGH {
+            return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Write)));
+        }
+        session.tls.writer().write_all(data)?;
+        super::diagnostics::NET_WRITTEN.add(data.len() as i64);
+        session.unsent += data.len();
+        secure.sent(&mut session)
     }
 
-    /// Waits until the TLS stream took everything.
+    /// Waits until the socket took everything.
     fn flush(&mut self) -> std::io::Result<()> {
-        let flow = self.pipe.flow();
-        failed(&flow.failure)?;
-        if flow.bytes.is_empty() && flow.sending == 0 {
-            return Ok(());
+        let secure = &self.secure;
+        let mut session = lock(&secure.session);
+        if session.shaking.is_some() {
+            return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Handshake));
         }
-        Err(would_block(&mut self.waiting, self.gave_up))
+        failed(&session.failures[1])?;
+        secure.sent(&mut session)?;
+        if session.tls.wants_write() {
+            return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Write)));
+        }
+        Ok(())
     }
 
     fn blocked(&mut self) -> Option<Ready> {
-        let pipe = self.pipe.clone();
-        std::mem::take(&mut self.waiting).then(|| {
-            Ready::Other(Box::pin(async move {
-                pipe.until(|flow| (flow.bytes.is_empty() && flow.sending == 0) || flow.failure.is_some()).await
-            }))
-        })
+        self.waiting.take().map(|awaited| self.secure.ready(awaited))
     }
 
     fn give_up(&mut self, kind: Option<ErrorKind>) {
@@ -625,9 +718,19 @@ impl Host for Outbox {
     }
 }
 
-impl Drop for Outbox {
+/// Letting go ends the writing, after what TLS holds and its close.
+impl Drop for SecureOut {
     fn drop(&mut self) {
-        self.pipe.change(|flow| flow.end = true);
+        let mut session = lock(&self.secure.session);
+        if session.shaking.is_none() {
+            session.tls.send_close_notify();
+            let _ = self.secure.sent(&mut session);
+        }
+        if session.shaking.is_some() || !session.tls.wants_write() || session.failures[1].is_some() {
+            let _ = self.secure.socket.io().end();
+        } else {
+            session.keep = Some(self.secure.clone());
+        }
     }
 }
 
@@ -724,24 +827,12 @@ fn link<S: Wire>(socket: Registered<S>, local: Endpoint, remote: Endpoint) -> Co
     Connection { upgraded, ..Connection::new(Box::new(reader), Box::new(writer), local, remote) }
 }
 
-/// A connection over TLS, and the pipes `secure` moves its bytes through
-/// once the handshake is over.
-fn tls(stream: &mio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pipe>), Failure> {
-    let _ = stream.set_nodelay(true);
-    let (local, remote) = (stream.local_addr()?, stream.peer_addr()?);
-    let (inbox, outbox) = (Arc::new(Pipe::default()), Arc::new(Pipe::default()));
-    let reader = Inbox { pipe: inbox.clone(), waiting: false, gave_up: None };
-    let writer = Outbox { pipe: outbox.clone(), waiting: false, gave_up: None };
-    Ok((Connection::new(Box::new(reader), Box::new(writer), local.into(), remote.into()), inbox, outbox))
-}
-
-/// Starts what moves the bytes of a TLS stream: futures the workers poll at
-/// their turns, as the socket's events and the stream's writes wake them,
-/// without a thread of tokio's between the program and the socket.
-fn secure(stream: Tls, inbox: Arc<Pipe>, outbox: Arc<Pipe>) {
-    let (from, to) = tokio::io::split(stream);
-    let _ = super::server::detach(receive(from, inbox));
-    let _ = super::server::detach(send(to, outbox));
+/// A connection over TLS, from its handshake on.
+fn secured(secure: Arc<Secure>) -> Result<Connection, Failure> {
+    let (local, remote) = (secure.socket.io().local_addr()?, secure.socket.io().peer_addr()?);
+    let reader = SecureIn { secure: secure.clone(), waiting: None, gave_up: None };
+    let writer = SecureOut { secure, waiting: None, gave_up: None };
+    Ok(Connection::new(Box::new(reader), Box::new(writer), local.into(), remote.into()))
 }
 
 /// Connects to each address of `host` in turn, until one answers.
@@ -790,30 +881,32 @@ fn verifier(
     cert: &str,
     key: &str,
     minimum: i64,
-) -> Result<(tokio_rustls::TlsConnector, rustls_pki_types::ServerName<'static>), Failure> {
+) -> Result<(Arc<rustls::ClientConfig>, rustls_pki_types::ServerName<'static>), Failure> {
     let mut config = super::http::tls(trust, cert, key, minimum).map_err(|problem| failure(TLS, problem))?;
     config.alpn_protocols.clear();
     let name = rustls_pki_types::ServerName::try_from(host.to_string())
         .map_err(|_| failure(INVALID_ADDRESS, format!("`{host}` is not a name TLS can verify")))?;
-    Ok((tokio_rustls::TlsConnector::from(Arc::new(config)), name))
+    Ok((Arc::new(config), name))
 }
 
 /// The handshake of a client over `socket`, and its connection.
-async fn handshake(
+async fn client(
     socket: Registered<mio::net::TcpStream>,
-    connector: tokio_rustls::TlsConnector,
+    config: Arc<rustls::ClientConfig>,
     name: rustls_pki_types::ServerName<'static>,
 ) -> Result<Connection, Failure> {
-    let (connection, inbox, outbox) = tls(socket.io())?;
-    let stream = connector.connect(name, Polled::from(socket)).await.map_err(|error| {
-        let mut why = Failure::from(&error).detail;
+    let tls = rustls::ClientConnection::new(config, name).map_err(|error| failure(TLS, error.to_string()))?;
+    let secure = Secure::new(socket, tls.into());
+    let shaken = handshake(&secure).await.map_err(|error| {
+        let mut why = error.detail;
         if why.contains("UnknownIssuer") {
             why.push_str("; if an authority of your own signed it, pass its PEM as `trust:`");
         }
         failure(TLS, why)
-    })?;
-    secure(stream.into(), inbox, outbox);
-    Ok(connection)
+    });
+    secure.shaken(&shaken);
+    shaken?;
+    secured(secure)
 }
 
 /// `connect` and `connectTls` (`tls` 1): a connection, or why there is
@@ -837,8 +930,8 @@ pub unsafe extern "C" fn tondo_rt_net_connect(
             _ => Some(verifier(&host, &text(trust), &text(cert), &text(key), minimum)?),
         };
         waited(within(deadline, async move {
-            let Some((connector, name)) = verify else { return tcp(open(&host, port, connect).await?) };
-            handshake(open(&host, port, connect).await?, connector, name).await
+            let Some((config, name)) = verify else { return tcp(open(&host, port, connect).await?) };
+            client(open(&host, port, connect).await?, config, name).await
         }))
     });
     native::new(Net::from(connected.map(Net::Connection)))
@@ -865,7 +958,7 @@ pub unsafe extern "C" fn tondo_rt_net_start_tls(
         return native::new(Net::Failed(failure(TLS, "only a plain TCP connection starts TLS")));
     };
     let host = text(host);
-    let upgraded = verifier(&host, &text(trust), &text(cert), &text(key), minimum).and_then(|(connector, name)| {
+    let upgraded = verifier(&host, &text(trust), &text(cert), &text(key), minimum).and_then(|(config, name)| {
         // The socket goes on under a descriptor of its own; the plain
         // connection closes its own without ending the socket.
         let duplicate = unsafe { libc::dup(fd) };
@@ -876,7 +969,7 @@ pub unsafe extern "C" fn tondo_rt_net_start_tls(
         let socket = unsafe { std::net::TcpStream::from_raw_fd(duplicate) };
         socket.set_nonblocking(true)?;
         let socket = Registered::new(mio::net::TcpStream::from_std(socket))?;
-        waited(within(deadline(timeout_ms), handshake(socket, connector, name)))
+        waited(within(deadline(timeout_ms), client(socket, config, name)))
     });
     native::new(Net::from(upgraded.map(Net::Connection)))
 }
@@ -1071,10 +1164,11 @@ pub unsafe extern "C" fn tondo_rt_net_writer(object: *mut NativeObject) -> *mut 
 // Listeners
 // ---------------------------------------------------------------------------
 
-/// A listener, until it is closed, and a TLS acceptor when it has one.
+/// A listener, until it is closed, and the TLS of its connections when it
+/// has one.
 struct Listener {
     listener: Mutex<Option<Acceptor>>,
-    tls: Option<tokio_rustls::TlsAcceptor>,
+    tls: Option<Arc<rustls::ServerConfig>>,
     local: Endpoint,
     closed: Arc<tokio::sync::watch::Sender<bool>>,
 }
@@ -1142,7 +1236,9 @@ pub unsafe extern "C" fn tondo_rt_net_listen(
             true => None,
             false => Some(
                 super::server::acceptor(&cert, &key, &clients, minimum, false)
-                    .map_err(|problem| failure(TLS, problem))?,
+                    .map_err(|problem| failure(TLS, problem))?
+                    .config()
+                    .clone(),
             ),
         };
         let listener = waited(async move {
@@ -1191,7 +1287,7 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
     let Some(socket) = lock(&listener.listener).clone() else {
         return native::new(Net::Failed(failure(CLOSED, "closed")));
     };
-    let (acceptor, closed) = (listener.tls.clone(), listener.closed.clone());
+    let (config, closed) = (listener.tls.clone(), listener.closed.clone());
     let accepted = waited(within(deadline(timeout_ms), async move {
         let mut closing = closed.subscribe();
         loop {
@@ -1216,21 +1312,16 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             Accepted::Unix(stream) => return unix(Registered::new(stream)?).map(Net::Connection),
             Accepted::Tcp(stream) => stream,
         };
-        let Some(acceptor) = acceptor else { return tcp(Registered::new(stream)?).map(Net::Connection) };
-        let (connection, inbox, outbox) = tls(&stream)?;
-        let stream = Polled::new(stream)?;
+        let Some(config) = config else { return tcp(Registered::new(stream)?).map(Net::Connection) };
+        let tls = rustls::ServerConnection::new(config).map_err(|error| failure(TLS, error.to_string()))?;
+        let secure = Secure::new(Registered::new(stream)?, tls.into());
+        let connection = secured(secure.clone())?;
         // The handshake happens on its own, at the workers' turns, so a
         // slow client does not hold up the next one; its failure is the
-        // first read's.
+        // first read's and write's.
         let _ = super::server::detach(async move {
-            match acceptor.accept(stream).await {
-                Ok(stream) => secure(stream.into(), inbox, outbox),
-                Err(error) => {
-                    let why = failure(TLS, Failure::from(&error).detail);
-                    inbox.change(|flow| flow.failure = Some(why.clone()));
-                    outbox.change(|flow| flow.failure = Some(why));
-                }
-            }
+            let shaken = handshake(&secure).await.map_err(|why| failure(TLS, why.detail));
+            secure.shaken(&shaken);
         });
         Ok(Net::Connection(connection))
     });
