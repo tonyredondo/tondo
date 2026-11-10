@@ -12,12 +12,46 @@ pub struct GroupObject {
     pub(super) rc: AtomicUsize,
     pub(super) lock: AtomicBool,
     pub(super) fallible: bool,
-    pub(super) joins: Vec<*mut JoinObject>,
-    pub(super) taken: Vec<bool>,
-    pub(super) finished: VecDeque<usize>,
+    pub(super) entries: Vec<Entry>,
+    /// The tasks that finished and `next` has not returned, first to last,
+    /// linked through their entries.
+    finished: (usize, usize),
+    /// How many results are not taken, and the first entry that may not be.
+    left: usize,
+    first_left: usize,
     pub(super) running: usize,
     pub(super) failed: Option<usize>,
     pub(super) waiter: Option<(*const Wait, usize)>,
+}
+
+/// A task of a group: its join, whether its result was taken, and the one
+/// that finished after it.
+pub(super) struct Entry {
+    pub(super) join: *mut JoinObject,
+    taken: bool,
+    next: usize,
+}
+
+const NO_ENTRY: usize = usize::MAX;
+
+impl GroupObject {
+    /// Marks the result of the entry at `index` taken.
+    fn take(&mut self, index: usize) -> *mut JoinObject {
+        let entry = &mut self.entries[index];
+        if !entry.taken {
+            entry.taken = true;
+            self.left -= 1;
+        }
+        entry.join
+    }
+
+    /// The first entry whose result is not taken.
+    fn first_left(&mut self) -> Option<usize> {
+        while self.first_left < self.entries.len() && self.entries[self.first_left].taken {
+            self.first_left += 1;
+        }
+        (self.first_left < self.entries.len()).then_some(self.first_left)
+    }
 }
 
 /// `Group[T]()`; `fallible` when `T` is `R ! E`, whose results start
@@ -29,9 +63,10 @@ pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
         fallible: fallible != 0,
-        joins: Vec::new(),
-        taken: Vec::new(),
-        finished: VecDeque::new(),
+        entries: Vec::new(),
+        finished: (NO_ENTRY, NO_ENTRY),
+        left: 0,
+        first_left: 0,
         running: 0,
         failed: None,
         waiter: None,
@@ -45,9 +80,9 @@ pub unsafe extern "C" fn tondo_rt_group_add(group: *mut GroupObject, join: *mut 
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
-        let index = g.joins.len();
-        g.joins.push(join);
-        g.taken.push(false);
+        let index = g.entries.len();
+        g.entries.push(Entry { join, taken: false, next: NO_ENTRY });
+        g.left += 1;
         g.running += 1;
         unlock(&g.lock);
         let j = &mut *join;
@@ -70,9 +105,15 @@ pub(super) unsafe fn group_completed(group: *mut GroupObject, index: usize) -> O
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
-        g.finished.push_back(index);
+        match g.finished {
+            (NO_ENTRY, _) => g.finished = (index, index),
+            (_, last) => {
+                g.entries[last].next = index;
+                g.finished.1 = index;
+            }
+        }
         g.running -= 1;
-        let join = g.joins[index];
+        let join = g.entries[index].join;
         if g.fallible && g.failed.is_none() && *(*join).result != 0 {
             g.failed = Some(index);
         }
@@ -102,7 +143,7 @@ pub unsafe extern "C" fn tondo_rt_group_length(group: *mut GroupObject) -> i64 {
     unsafe {
         let g = &*group;
         lock(&g.lock);
-        let count = g.taken.iter().filter(|t| !**t).count();
+        let count = g.left;
         unlock(&g.lock);
         count as i64
     }
@@ -112,17 +153,24 @@ pub unsafe extern "C" fn tondo_rt_group_length(group: *mut GroupObject) -> i64 {
 /// `Some(true)` when there was one, `Some(false)` when no task is left, and
 /// `None` when it must wait.
 pub(super) unsafe fn group_try_next(g: &mut GroupObject, out: *mut u8) -> Option<bool> {
-    if g.taken.iter().all(|t| *t) {
+    if g.left == 0 {
         return Some(false);
     }
-    while let Some(index) = g.finished.pop_front() {
-        if !g.taken[index] {
-            g.taken[index] = true;
-            unsafe { take(g.joins[index], out) };
+    loop {
+        let (index, last) = g.finished;
+        if index == NO_ENTRY {
+            return None;
+        }
+        g.finished = match index == last {
+            true => (NO_ENTRY, NO_ENTRY),
+            false => (g.entries[index].next, last),
+        };
+        if !g.entries[index].taken {
+            let join = g.take(index);
+            unsafe { take(join, out) };
             return Some(true);
         }
     }
-    None
 }
 
 /// `group.next()`: moves the result of the next task to finish into `out`
@@ -159,7 +207,7 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
                 unlock(&g.lock);
                 return -2;
             }
-            if let Some(index) = g.failed.filter(|&i| !g.taken[i]) {
+            if let Some(index) = g.failed.filter(|&i| !g.entries[i].taken) {
                 unlock(&g.lock);
                 tondo_rt_group_cancel(group);
                 return index as i64;
@@ -180,8 +228,8 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_cancel(group: *mut GroupObject) {
     unsafe {
-        for index in 0..(*group).joins.len() {
-            cancel_join((&(*group).joins)[index]);
+        for index in 0..(*group).entries.len() {
+            cancel_join((&(*group).entries)[index].join);
         }
     }
 }
@@ -194,13 +242,12 @@ pub unsafe extern "C" fn tondo_rt_group_take(group: *mut GroupObject, index: i64
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
-        let found = if index >= 0 { Some(index as usize) } else { g.taken.iter().position(|t| !*t) };
+        let found = if index >= 0 { Some(index as usize) } else { g.first_left() };
         let Some(index) = found else {
             unlock(&g.lock);
             return 0;
         };
-        g.taken[index] = true;
-        let join = g.joins[index];
+        let join = g.take(index);
         unlock(&g.lock);
         finish(join, true);
         take(join, out);
@@ -221,9 +268,9 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         // Each join finishes before it is freed, and with it the last use
-        // of the group by its task; tasks still running read `joins`.
-        for index in 0..(*group).joins.len() {
-            free_join((&(*group).joins)[index]);
+        // of the group by its task; tasks still running read `entries`.
+        for index in 0..(*group).entries.len() {
+            free_join((&(*group).entries)[index].join);
         }
         drop(Box::from_raw(group));
         LIVE_OBJECTS.gone();

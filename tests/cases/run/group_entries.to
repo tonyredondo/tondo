@@ -1,0 +1,76 @@
+// A group keeps its tasks in one list, with those that finished linked in
+// the order they did: a group of thousands waits in time that grows with
+// them, `next` gives each result once in the order the tasks ended, and
+// `length`, a failure and a group let go with results not taken count only
+// what is left.
+
+import std.console
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn gated(gate: Receiver[Int]): Int {
+    gate.receive().unwrapOr(-1)
+}
+
+fn checked(n: Int): Int ! String {
+    if n == 3 {
+        fail "three"
+    }
+    n
+}
+
+fn text(n: Int): String {
+    "text {n}"
+}
+
+fn main() {
+    var many = Group[Int]()
+    for n in 0..5000 {
+        many.add(spawn square(n))
+    }
+    var total = 0
+    for value in many.wait() {
+        total += value
+    }
+    console.println("many {total}")
+
+    // Results in the order the tasks end, which the gates decide.
+    var gates: Array[Sender[Int]] = []
+    var ordered = Group[Int]()
+    for _ in 0..4 {
+        let (gate, opened) = channel[Int](1)
+        gates.push(gate)
+        ordered.add(spawn gated(opened))
+    }
+    var order: Array[Int] = []
+    for n in [3, 1, 4, 2] {
+        gates[n - 1].send(n)
+        order.push(ordered.next().unwrapOr(0))
+        order.push(ordered.length())
+    }
+    console.println("{order} {ordered.next()}")
+
+    var failing = Group[Int ! String]()
+    for n in 1..=5 {
+        failing.add(spawn checked(n))
+    }
+    match failing.wait() {
+        ok(values) => console.println("ok {values}")
+        err(error) => console.println("failed: {error}")
+    }
+
+    // Let go with results nobody took.
+    var dropped = Group[String]()
+    for n in 0..10 {
+        dropped.add(spawn text(n))
+    }
+    _ = dropped.next()
+    console.println("left {dropped.length()}")
+}
+
+// expect-stdout: many 41654167500
+// expect-stdout: [3, 3, 1, 2, 4, 1, 2, 0] none
+// expect-stdout: failed: three
+// expect-stdout: left 9

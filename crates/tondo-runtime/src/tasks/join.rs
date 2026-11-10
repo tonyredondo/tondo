@@ -445,8 +445,8 @@ pub(crate) unsafe fn visit_group(visitor: &mut Visitor, group: *mut u8) {
     if g.running > 0 {
         visitor.hold();
     }
-    for &join in &g.joins {
-        visitor.edge(join as *const u8, Kind::Join, 0, 0);
+    for entry in &g.entries {
+        visitor.edge(entry.join as *const u8, Kind::Join, 0, 0);
     }
 }
 
