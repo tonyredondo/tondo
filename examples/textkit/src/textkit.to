@@ -1,0 +1,64 @@
+// What C sees of the library: each `pub extern fn` is a function of
+// `textkit.h`, with this documentation as its comment. They turn C's
+// pointers into Tondo's values, call the module `text`, and turn the
+// result back; nothing else is unsafe.
+
+import std.ffi
+import textkit.text
+
+/// Writes the slug of `source` into `out`, which has room for `capacity`
+/// bytes, and ends it with a zero. Gives the length of the whole slug: one
+/// that is not under `capacity` was cut to fit.
+pub extern fn textkit_slug(
+    source: ffi.CString,
+    out: Pointer[ffi.CChar],
+    capacity: ffi.CSize,
+): ffi.CSize {
+    let bytes = text.slug(unsafe { ffi.fromCString(source) }).bytes()
+    let room = Int(capacity).unwrapOr(0)
+    if room > 0 {
+        let fits = bytes.length().min(room - 1)
+        unsafe {
+            for index in 0..fits {
+                out.offset(index).write(bytes[index])
+            }
+            out.offset(fits).write(Byte(0u8))
+        }
+    }
+    UInt64(bytes.length()).unwrapOr(0u64)
+}
+
+/// How many characters must be added, removed or changed to make `right`
+/// of `left`.
+pub extern fn textkit_distance(left: ffi.CString, right: ffi.CString): ffi.CLong {
+    unsafe { text.distance(ffi.fromCString(left), ffi.fromCString(right)) }
+}
+
+/// Counts the characters, words and lines of `source` into the three
+/// places given.
+pub extern fn textkit_count(
+    source: ffi.CString,
+    characters: Pointer[ffi.CLong],
+    words: Pointer[ffi.CLong],
+    lines: Pointer[ffi.CLong],
+) {
+    let counted = text.stats(unsafe { ffi.fromCString(source) })
+    unsafe {
+        characters.write(counted.characters)
+        words.write(counted.words)
+        lines.write(counted.lines)
+    }
+}
+
+/// Calls `each` with every word of `source` and how many times it appears,
+/// the most frequent first, and with `context` as it was given. The word
+/// is good until `each` returns.
+pub extern fn textkit_words(
+    source: ffi.CString,
+    each: extern fn(ffi.CString, ffi.CLong, Pointer[ffi.Void]),
+    context: Pointer[ffi.Void],
+) {
+    for (word, count) in text.frequencies(unsafe { ffi.fromCString(source) }) {
+        unsafe { each(word, count, context) }
+    }
+}

@@ -1,0 +1,64 @@
+import std.testing
+
+test aSlugIsLowerCaseWithoutAccents {
+    assert(slug("Crème Brûlée, 2 ways!") == "creme-brulee-2-ways")
+    assert(slug("  Hello,   World  ") == "hello-world")
+    assert(slug("Ñandú & Çedilla") == "nandu-cedilla")
+    assert(slug("¿¡...!?") == "")
+    assert(slug("日本語 text") == "日本語-text")
+    assert(slug("İstanbul") == "istanbul")
+}
+
+test aSlugOfASlugIsItself {
+    testing.fuzz(
+        "slug",
+        ["Crème Brûlée", "a--b", "", "É"],
+        (words: String) {
+            let once = slug(words)
+            assert(slug(once) == once)
+        },
+    )
+}
+
+test distanceCountsTheChanges {
+    assert(distance("kitten", "sitting") == 3)
+    assert(distance("", "abc") == 3)
+    assert(distance("same", "same") == 0)
+    assert(distance("café", "cafe") == 1)  // a character, whatever bytes it takes
+    assert(distance("flaw", "lawn") == 2)
+}
+
+test distanceIsTheSameBothWays {
+    testing.fuzz(
+        "distance",
+        [("kitten", "sitting"), ("", "a"), ("é", "e")],
+        (pair: (String, String)) {
+            let (left, right) = pair
+            assert(distance(left, right) == distance(right, left))
+            assert(distance(left, left) == 0)
+            assert(distance(left, right) <= left.chars().count().max(right.chars().count()))
+        },
+    )
+}
+
+test countsCharactersWordsAndLines {
+    assert(stats("to be or not\nto be") == Stats { characters: 18, words: 6, lines: 2 })
+    assert(stats("") == Stats { characters: 0, words: 0, lines: 0 })
+    assert(stats("añil") == Stats { characters: 4, words: 1, lines: 1 })
+}
+
+test theMostFrequentWordsComeFirst {
+    assert(
+        frequencies("To be, or not to be: that is the question.") ==
+            [
+                ("to", 2),
+                ("be", 2),
+                ("or", 1),
+                ("not", 1),
+                ("that", 1),
+                ("is", 1),
+                ("the", 1),
+                ("question", 1),
+            ],
+    )
+}
