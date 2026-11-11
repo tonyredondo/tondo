@@ -685,8 +685,10 @@ pub fn annotate(profile: &Profile, kind: Option<&str>, function: Option<&str>) -
     let bytes = std::fs::read(&profile.program)
         .map_err(|e| format!("cannot read the program the profile is of, {}: {e}", profile.program))?;
     let file = object::File::parse(&*bytes).map_err(|e| format!("{} is not a program: {e}", profile.program))?;
-    // Where the file's first byte is in its own addresses.
-    let image = file.segments().find(|s| s.file_range().0 == 0).map_or(0, |s| s.address());
+    // Where the file's first byte is in its own addresses: the segment that
+    // holds it, not one that starts there with nothing of the file, as
+    // macOS's `__PAGEZERO`.
+    let image = file.segments().find(|s| s.file_range().0 == 0 && s.file_range().1 > 0).map_or(0, |s| s.address());
     // The instruction a sample stopped at is one before what it keeps.
     let address = |at: u64| at.wrapping_sub(1).wrapping_sub(profile.base).wrapping_add(image);
     // Where each of the function's samples was, what it took, its line.
