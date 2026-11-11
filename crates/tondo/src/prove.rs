@@ -404,29 +404,37 @@ impl Prover<'_> {
                 predecessors[to].push(from);
             }
         }
-        // A loop's blocks: its head, and what the head reaches that reaches
-        // an edge back to it without passing it.
+        // A loop's blocks: its head, and the blocks it rules, which only
+        // ways through the head reach, that reach an edge back to it without
+        // passing it. A loop around this one goes back to the head through
+        // blocks the entry reaches without it, which are not this loop's.
         let blocks_of = |head: usize| -> Vec<bool> {
-            let mut reached = vec![false; count];
-            let mut stack = vec![head];
-            reached[head] = true;
-            while let Some(block) = stack.pop() {
-                for &to in &successors[block] {
-                    if !reached[to] {
-                        reached[to] = true;
-                        stack.push(to);
+            let reach = |from: usize, stop: Option<usize>| {
+                let mut reached = vec![false; count];
+                let mut stack = vec![from];
+                reached[from] = true;
+                while let Some(block) = stack.pop() {
+                    for &to in &successors[block] {
+                        if !reached[to] && Some(to) != stop {
+                            reached[to] = true;
+                            stack.push(to);
+                        }
                     }
                 }
-            }
+                reached
+            };
+            let reached = reach(head, None);
+            let outside = if head == 0 { vec![false; count] } else { reach(0, Some(head)) };
+            let ruled = |block: usize| reached[block] && !outside[block];
             let mut inside = vec![false; count];
             inside[head] = true;
-            let mut stack: Vec<usize> = predecessors[head].iter().copied().filter(|&from| reached[from]).collect();
+            let mut stack: Vec<usize> = predecessors[head].iter().copied().filter(|&from| ruled(from)).collect();
             for &from in &stack {
                 inside[from] = true;
             }
             while let Some(block) = stack.pop() {
                 for &from in &predecessors[block] {
-                    if reached[from] && !inside[from] {
+                    if ruled(from) && !inside[from] {
                         inside[from] = true;
                         stack.push(from);
                     }

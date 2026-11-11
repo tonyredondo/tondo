@@ -101,6 +101,32 @@ fn cubes(count: Int): Int {
     total
 }
 
+// A sum that starts again inside a loop around it: what one entry adds is
+// bounded, whatever the loop around did before.
+fn restarted(rounds: Int): Int {
+    var last = 0
+    for _ in 0..rounds {
+        var total = 0
+        for i in 0..1000 {
+            total += i % 7
+        }
+        last = total
+    }
+    last
+}
+
+// A sum that goes on across the turns of the loop around it: one entry's
+// bound is no bound.
+fn across(rounds: Int): Int {
+    var total = 0
+    for _ in 0..rounds {
+        for _ in 0..10 {
+            total += 100_000_000_000_000_000
+        }
+    }
+    total
+}
+
 fn main() {
     console.println("{squares(2000)} {squares(10)}")
     console.println("{alternating()}")
@@ -126,6 +152,11 @@ fn main() {
         ok(total) => console.println("{total}")
         err(caught) => console.println("caught {caught.message}")
     }
+    console.println("{restarted(3)}")
+    match recover { across(10) } {
+        ok(total) => console.println("{total}")
+        err(caught) => console.println("caught {caught.message}")
+    }
 }
 
 // expect-stdout: 2001 21
@@ -138,7 +169,11 @@ fn main() {
 // expect-stdout: 249500250000
 // expect-stdout: caught 9223193340756366400 + 473384830201856 does not fit in Int (-9223372036854775808 to 9223372036854775807)
 // expect-stdout: caught 9200000000000000000 + 100000000000000000 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 2997
+// expect-stdout: caught 9200000000000000000 + 100000000000000000 does not fit in Int (-9223372036854775808 to 9223372036854775807)
 // expect-optimization: 14:9 unchecked in one copy of the code
 // expect-optimization: 28:9 unchecked in one copy of the code
 // expect-optimization: 38:9 checked
 // expect-optimization: 50:9 checked
+// expect-optimization: 111:13 unchecked in one copy of the code
+// expect-optimization: 124:13 checked
