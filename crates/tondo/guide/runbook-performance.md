@@ -45,6 +45,15 @@ optimizations {"path": "slow.to"}
 => `isPrime(number)` is inlined
 ```
 
+`asm` shows what the processor runs for a function, instruction by
+instruction, under the lines of the program they are of: here `main`, with
+`isPrime` inlined in it and the division of its hot line.
+
+```mcp
+asm {"path": "slow.to", "function": "main"}
+=> slow.to:5  if number % divisor == 0 {
+```
+
 For a number to compare, a benchmark is a test that calls `testing.bench`.
 
 ```sh

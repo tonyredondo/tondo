@@ -5703,3 +5703,16 @@ The report, the baselines and the reports for people carry the instructions and 
 time is what users feel, and a change that only adds cache misses moves no instruction, so the
 choice is the caller's; judging by instructions where a side did not count them fails, with why,
 rather than pass a gate that checked nothing.
+
+## `tondo asm` shows a function's machine code under its lines
+
+What a loop costs was read with `objdump` and `perf annotate`, after finding the symbol a build
+gave the function, and Cranelift's IR, where the rules of its fork apply, could not be seen at all.
+The maintainer approved on 2026-11-11 a command for it. Codegen keeps, when asked, the bytes of the
+functions named, the names its relocations give, where each statement's code starts and, with
+`--clif`, the IR before and after Cranelift optimizes it; `tondo asm` decodes them with the
+debugger's decoder, for this machine, under the lines of the program, each line with what `tondo
+optimizations` tells of it. The constants Cranelift leaves after the code end where the last code
+with a place in the source ends, so they are counted rather than read as instructions. With
+`--against`, a diff of the instructions with a revision's, a jump without its distance, which code
+before it moves, and a call by what it calls.

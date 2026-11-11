@@ -68,6 +68,8 @@ tondo check --performance          a copy a loop makes on every turn (W1009)
 tondo optimizations                what a release build inlines, makes without the heap
                                    and checks, place by place; --kind heap, --function
 tondo optimizations --against main what it makes differently from a git revision
+tondo asm sum                      the machine code of a function, under its lines;
+                                   --clif its IR, --against main what changed
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build

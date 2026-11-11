@@ -31,7 +31,9 @@ source and stack, as data.
 
 Tools: `check`, `fix`, `format`, `compact`, `expand`, `api`, `guide`,
 `graph` (modules, files and imports), `optimizations` (what a release build
-inlines, makes without the heap and checks, place by place), `explain`, and
+inlines, makes without the heap and checks, place by place), `asm` (the
+machine code of a function, under its lines, and with `clif` Cranelift's
+IR), `explain`, and
 `model`, which checks a
 state machine of the program, a function `fn(state: S, event: E): S`, with
 no model to write (`tondo guide models`).

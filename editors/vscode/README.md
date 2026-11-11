@@ -131,7 +131,9 @@ project, running, debugging and testing it.
   check` in a loop or `a call stays`, and over the line is everything the
   compiler did there, what it inlined, made without the heap or stopped
   checking, and why it did not. Saving tells it again; *Clear the
-  Optimizations* takes it away.
+  Optimizations* takes it away. *Show the Machine Code of This Function*
+  opens beside the code what `tondo asm` says of the function at the
+  cursor: its instructions under the lines they are of.
 - **Running programs**, those started with `TONDO_DIAGNOSTICS=1` and debug
   builds: *Attach* picks them by name; *Watch a Running Program's
   Counters* shows them in the *Tondo Counters* view as they change; *Trace

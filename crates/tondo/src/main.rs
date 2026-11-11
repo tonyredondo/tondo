@@ -82,6 +82,7 @@ fn main() -> ExitCode {
         "bind" => bind_command(&args[1..]),
         "graph" => graph_command(&args[1..]),
         "optimizations" => optimizations_command(&args[1..]),
+        "asm" => asm_command(&args[1..]),
         "new" | "init" => create_command(command, &args[1..]),
         "add" => add_command(&args[1..]),
         "remove" => remove_command(&args[1..]),
@@ -1956,6 +1957,64 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if found.is_empty() {
         println!("nothing to tell of the program's own code");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Writes the machine code a release build makes of a function (toolchain
+/// 7.19), with the lines of the program it is at and what the passes said
+/// of them; its IR with `--clif`; what changed since a revision with
+/// `--against`.
+fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let (json, ir) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"));
+    let against = match args.iter().position(|a| a == "--against") {
+        Some(at) => {
+            let reference = args.get(at + 1).and_then(|r| r.to_str()).map(str::to_string);
+            let reference =
+                reference.filter(|r| !r.starts_with('-')).ok_or(format!("--against takes a revision\n{USAGE}"))?;
+            args.drain(at..at + 2);
+            Some(reference)
+        }
+        None => None,
+    };
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
+        return Err(format!("asm does not take {}\n{USAGE}", flag.display()));
+    }
+    let (path, function) = match args.as_slice() {
+        [function] => (PathBuf::from("."), function.to_string_lossy().to_string()),
+        [path, function] => (PathBuf::from(path), function.to_string_lossy().to_string()),
+        _ => return Err(format!("asm takes a function, as `tondo asm main` or `tondo asm app.to sum`\n{USAGE}")),
+    };
+    if let Some(reference) = against {
+        let (commit, changes) = driver::assembly_against(&path, &reference, &function)?;
+        if json {
+            let changes: Vec<serde_json::Value> =
+                changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
+            let against = serde_json::json!({ "ref": reference, "commit": commit });
+            print_json("asm", true, serde_json::json!({ "against": against, "changes": changes }));
+        } else {
+            print!("{}", driver::assembly_changes_text(&reference, &commit, &changes));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let analysis = driver::analyze(&path)?;
+    if analysis.program.is_none() {
+        if json {
+            let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+            print_json("asm", false, serde_json::json!({ "diagnostics": diagnostics }));
+        } else {
+            show(&analysis, Shown::Human);
+        }
+        return Ok(ExitCode::FAILURE);
+    }
+    let assemblies = driver::assembly(&analysis, &function, ir)?;
+    if json {
+        let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
+        print_json("asm", true, serde_json::json!({ "functions": functions }));
+    } else {
+        let texts: Vec<String> = assemblies.iter().map(driver::Assembly::text).collect();
+        print!("{}", texts.join("\n"));
     }
     Ok(ExitCode::SUCCESS)
 }

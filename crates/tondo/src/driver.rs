@@ -1419,6 +1419,264 @@ pub fn changed_text(reference: &str, commit: &str, gone: &[Optimization], new: &
     text
 }
 
+/// An instruction of a function a release build made (toolchain 7.19):
+/// where it is in the function, its bytes and text, what it calls or
+/// reads when a relocation names it, and the place of the program its
+/// statement is at.
+pub struct Instruction {
+    pub offset: usize,
+    pub bytes: String,
+    pub text: String,
+    pub target: Option<String>,
+    pub at: Option<(String, usize)>,
+}
+
+/// The machine code a release build makes of a function, by instruction,
+/// with what the passes said of its lines, and its IR before and after
+/// Cranelift optimizes it when asked.
+pub struct Assembly {
+    pub function: String,
+    pub size: usize,
+    /// The bytes of constants after its instructions, which they read.
+    pub constants: usize,
+    pub instructions: Vec<Instruction>,
+    /// The code of each line its instructions are at, and what `tondo
+    /// optimizations` tells of it.
+    pub lines: Vec<((String, usize), String, Vec<String>)>,
+    pub ir: Option<(String, String)>,
+}
+
+/// The machine code a release build of a checked program makes of the
+/// functions named `function`, or, when none is, of those whose names hold
+/// it, without linking it; with their IR when `ir` asks.
+pub fn assembly(analysis: &Analysis, function: &str, ir: bool) -> Result<Vec<Assembly>, String> {
+    crate::codegen::keep_code(Some((function.to_string(), ir)));
+    let built = compile(analysis, false, None, None);
+    crate::codegen::keep_code(None);
+    built?;
+    let mut kept = crate::codegen::kept_code();
+    if kept.iter().any(|k| k.name == function) {
+        kept.retain(|k| k.name == function);
+    }
+    if kept.is_empty() {
+        return Err(format!(
+            "a release build has no code of a function named `{function}`: no function holds that name, or every call of it is inlined, which `tondo optimizations` tells"
+        ));
+    }
+    kept.sort_by(|a, b| a.name.cmp(&b.name));
+    let sources = &analysis.sources;
+    let told = optimizations(analysis, None, None)?;
+    let mut assemblies = Vec::new();
+    for kept in kept {
+        let place = |start: u32| {
+            let (file, line, _) = sources.position(start);
+            (file, line)
+        };
+        let at = |offset: usize| {
+            let run = kept.lines.partition_point(|&(start, _)| start as usize <= offset).checked_sub(1)?;
+            kept.lines[run].1.map(place)
+        };
+        let code = &kept.bytes[..kept.code_end.min(kept.bytes.len())];
+        let instructions: Vec<Instruction> = crate::disassembly::decode(code)
+            .into_iter()
+            .map(|(offset, length, text)| Instruction {
+                offset,
+                bytes: kept.bytes[offset..offset + length].iter().map(|b| format!("{b:02x}")).collect(),
+                text,
+                target: kept
+                    .targets
+                    .iter()
+                    .find(|(at, _)| (offset..offset + length).contains(&(*at as usize)))
+                    .map(|(_, name)| name.clone()),
+                at: at(offset),
+            })
+            .collect();
+        let mut lines: Vec<((String, usize), String, Vec<String>)> = Vec::new();
+        for start in kept.lines.iter().filter_map(|&(_, start)| start) {
+            let (file, line) = place(start);
+            if lines.iter().any(|(at, ..)| *at == (file.clone(), line)) {
+                continue;
+            }
+            let code = sources.file_of(start).line_text(line).trim().to_string();
+            let remarks = told
+                .iter()
+                .filter(|o| o.file == file && o.line == line && o.functions.contains(&kept.name))
+                .map(|o| format!("`{}` {}", o.source, o.text))
+                .collect();
+            lines.push(((file, line), code, remarks));
+        }
+        let constants = kept.bytes.len() - code.len();
+        let (function, size, ir) = (kept.name, kept.bytes.len(), kept.ir);
+        assemblies.push(Assembly { function, size, constants, instructions, lines, ir });
+    }
+    Ok(assemblies)
+}
+
+/// A function whose code changed, and the lines of its diff.
+pub type Changed = (String, Vec<String>);
+
+/// What changed in the machine code of the functions named `function`
+/// since the git revision `reference`, function by function, as the lines
+/// of a diff: ` ` the same, `-` only in the revision, `+` only now. The
+/// distance of a jump is left out, which code before it moves.
+pub fn assembly_against(path: &Path, reference: &str, function: &str) -> Result<(String, Vec<Changed>), String> {
+    let compiled = |path: &Path, what: &str| -> Result<Vec<Assembly>, String> {
+        let analysis = analyze(path)?;
+        if analysis.program.is_none() {
+            return Err(format!("{what} does not compile, so there is nothing to compare"));
+        }
+        assembly(&analysis, function, false)
+    };
+    let now = compiled(path, "the code")?;
+    let (commit, dir) = revision(path, reference)?;
+    let then = compiled(&dir, &format!("the code of {reference}"))?;
+    let listing = |assembly: Option<&Assembly>| -> Vec<String> {
+        assembly.map_or(Vec::new(), |assembly| assembly.instructions.iter().map(normalized).collect())
+    };
+    let mut names: Vec<&String> = now.iter().chain(&then).map(|a| &a.function).collect();
+    names.sort();
+    names.dedup();
+    let changes = names
+        .into_iter()
+        .map(|name| {
+            let before = listing(then.iter().find(|a| &a.function == name));
+            let after = listing(now.iter().find(|a| &a.function == name));
+            (name.clone(), line_diff(&before, &after))
+        })
+        .filter(|(_, lines)| lines.iter().any(|line| !line.starts_with(' ')))
+        .collect();
+    Ok((commit, changes))
+}
+
+/// An instruction as a diff compares it: a jump without its distance, a
+/// call by what it calls.
+fn normalized(instruction: &Instruction) -> String {
+    let mnemonic = instruction.text.split_whitespace().next().unwrap_or("");
+    let jumps = mnemonic.starts_with('j')
+        || mnemonic.starts_with("b.")
+        || matches!(mnemonic, "b" | "bl" | "cbz" | "cbnz" | "tbz" | "tbnz" | "call");
+    match (&instruction.target, jumps) {
+        (Some(target), _) => format!("{mnemonic} {target}"),
+        (None, true) => mnemonic.to_string(),
+        (None, false) => instruction.text.clone(),
+    }
+}
+
+/// The lines of a diff of two listings, by their longest common part.
+fn line_diff(before: &[String], after: &[String]) -> Vec<String> {
+    let (n, m) = (before.len(), after.len());
+    if n.saturating_mul(m) > 50_000_000 {
+        let mut lines: Vec<String> = before.iter().map(|l| format!("-{l}")).collect();
+        lines.extend(after.iter().map(|l| format!("+{l}")));
+        return lines;
+    }
+    let mut common = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            common[i][j] =
+                if before[i] == after[j] { common[i + 1][j + 1] + 1 } else { common[i + 1][j].max(common[i][j + 1]) };
+        }
+    }
+    let (mut i, mut j, mut lines) = (0, 0, Vec::new());
+    while i < n || j < m {
+        if i < n && j < m && before[i] == after[j] {
+            lines.push(format!(" {}", before[i]));
+            (i, j) = (i + 1, j + 1);
+        } else if j < m && (i == n || common[i][j + 1] >= common[i + 1][j]) {
+            lines.push(format!("+{}", after[j]));
+            j += 1;
+        } else {
+            lines.push(format!("-{}", before[i]));
+            i += 1;
+        }
+    }
+    lines
+}
+
+/// What `tondo asm --against` writes: each function that changed, its
+/// diff with a few lines around each change.
+pub fn assembly_changes_text(reference: &str, commit: &str, changes: &[Changed]) -> String {
+    let short = &commit[..commit.len().min(12)];
+    if changes.is_empty() {
+        return format!("a release build makes the same code as of {reference} ({short})\n");
+    }
+    let mut out = String::new();
+    for (name, lines) in changes {
+        out.push_str(&format!("{name}, since {reference} ({short}):\n"));
+        let near =
+            |at: usize| lines[at.saturating_sub(3)..(at + 4).min(lines.len())].iter().any(|l| !l.starts_with(' '));
+        let mut skipped = false;
+        for (at, line) in lines.iter().enumerate() {
+            if near(at) {
+                out.push_str(&format!("  {line}\n"));
+                skipped = false;
+            } else if !skipped {
+                out.push_str("  ...\n");
+                skipped = true;
+            }
+        }
+    }
+    out
+}
+
+impl Assembly {
+    /// As `tondo asm` writes it: each line of the program the code is at,
+    /// with what the passes said of it, then its instructions.
+    pub fn text(&self) -> String {
+        let constants = match self.constants {
+            0 => String::new(),
+            n => format!(", {n} of them constants"),
+        };
+        let mut out = format!("{} ({} bytes{constants})\n", self.function, self.size);
+        let mut line = None;
+        for instruction in &self.instructions {
+            if instruction.at.is_some() && instruction.at != line {
+                line = instruction.at.clone();
+                let (file, number) = instruction.at.clone().unwrap_or_default();
+                let found = self.lines.iter().find(|(at, ..)| *at == (file.clone(), number));
+                let code = found.map_or("", |(_, code, _)| code.as_str());
+                out.push_str(&format!("{file}:{number}  {code}\n"));
+                for remark in found.map_or(&[][..], |(.., remarks)| remarks.as_slice()) {
+                    out.push_str(&format!("        ; {remark}\n"));
+                }
+            }
+            let target = instruction.target.as_ref().map_or(String::new(), |name| format!("  ; {name}"));
+            out.push_str(&format!("  {:>5x}  {}{target}\n", instruction.offset, instruction.text));
+        }
+        if let Some((before, after)) = &self.ir {
+            out.push_str(&format!("\nIR before Cranelift optimizes it:\n{before}\nIR after:\n{after}"));
+        }
+        out
+    }
+
+    /// As data (toolchain 7.12).
+    pub fn json(&self) -> serde_json::Value {
+        let instructions: Vec<serde_json::Value> = self
+            .instructions
+            .iter()
+            .map(|i| {
+                let (file, line) = i.at.clone().map_or((None, None), |(file, line)| (Some(file), Some(line)));
+                serde_json::json!({
+                    "offset": i.offset, "bytes": i.bytes, "instruction": i.text, "target": i.target,
+                    "file": file, "line": line,
+                })
+            })
+            .collect();
+        let lines: Vec<serde_json::Value> = self
+            .lines
+            .iter()
+            .map(|((file, line), code, remarks)| {
+                serde_json::json!({ "file": file, "line": line, "source": code, "optimizations": remarks })
+            })
+            .collect();
+        serde_json::json!({
+            "function": self.function, "size": self.size, "constants": self.constants,
+            "instructions": instructions, "lines": lines,
+            "ir_before": self.ir.as_ref().map(|ir| &ir.0), "ir_after": self.ir.as_ref().map(|ir| &ir.1),
+        })
+    }
+}
+
 /// Whether this tondo can build for `target`: its own machine's, or one
 /// whose pack it finds; asked before compiling, which the error saves.
 pub fn ready(target: Option<Target>) -> Result<(), String> {

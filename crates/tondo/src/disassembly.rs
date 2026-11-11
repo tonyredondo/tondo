@@ -1,6 +1,7 @@
 //! The instructions of a stopped program, around an address: its code as
 //! the program's memory has it, by function, with the line of each, for
-//! `disassemble` in `tondo debug` and the editor's disassembly view.
+//! `disassemble` in `tondo debug` and the editor's disassembly view; and
+//! the instructions of a function a build made, for `tondo asm`.
 
 use serde_json::{Value, json};
 use yaxpeax_arch::{Decoder, LengthedInstruction, U8Reader};
@@ -38,6 +39,19 @@ fn decoded(code: &[u8]) -> (String, usize) {
     }
 }
 
+/// The instructions of `code`, as their offset in it, length and text.
+pub(crate) fn decode(code: &[u8]) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < code.len() {
+        let (text, length) = decoded(&code[at..]);
+        let length = length.clamp(1, code.len() - at);
+        out.push((at, length, text));
+        at += length;
+    }
+    out
+}
+
 /// The instructions of the function at `address`, by what the program says
 /// of it; none when no function of the program is there.
 fn function_at(ask: &mut dyn FnMut(&str) -> Result<Value, String>, address: u64) -> Option<Vec<Instruction>> {
@@ -53,21 +67,19 @@ fn function_at(ask: &mut dyn FnMut(&str) -> Result<Value, String>, address: u64)
         let line = &lines[index.checked_sub(1)?];
         Some((line[1].as_str()?.to_string(), line[2].as_u64()?))
     };
-    let mut out = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        let (text, length) = decoded(&bytes[at..]);
-        let length = length.min(bytes.len() - at);
-        let address = start + at as u64;
-        out.push(Instruction {
-            address,
-            bytes: bytes[at..at + length].iter().map(|b| format!("{b:02x}")).collect(),
-            text,
-            symbol: (at == 0).then(|| code["function"].as_str().unwrap_or_default().to_string()),
-            line: line_of(address),
-        });
-        at += length;
-    }
+    let out = decode(&bytes)
+        .into_iter()
+        .map(|(at, length, text)| {
+            let address = start + at as u64;
+            Instruction {
+                address,
+                bytes: bytes[at..at + length].iter().map(|b| format!("{b:02x}")).collect(),
+                text,
+                symbol: (at == 0).then(|| code["function"].as_str().unwrap_or_default().to_string()),
+                line: line_of(address),
+            }
+        })
+        .collect();
     Some(out)
 }
 

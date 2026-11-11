@@ -255,6 +255,7 @@ tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--pr
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision>] [--json]
+tondo asm [<project>|<file.to>] <function> [--clif] [--against <revision>] [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -337,7 +338,8 @@ tondo version [--json]
   con sus archivos y lo que importa cada uno (sección 7.11).
 - `optimizations` dice qué hace un build de release con el código del
   programa: lo que inlinea, lo que hace sin el heap y las comprobaciones que
-  quita y las que deja (sección 7.18).
+  quita y las que deja (sección 7.18); `asm`, el código máquina de una
+  función (sección 7.19).
 - `explain` dice qué significa el código de un error, un warning o un pánico
   (sección 7.13); `new`, `init`, `add`, `remove`, `fix` y `clean` hacen un
   proyecto, cambian sus dependencias, aplican las reparaciones seguras y
@@ -1602,7 +1604,7 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
   `expand`, `api` (también de una declaración, y `search`), `graph`, `guide`,
-  `explain` y `optimizations` (sección 7.18).
+  `explain`, `optimizations` (sección 7.18) y `asm` (sección 7.19).
 - Navegación: `definition`, `references`, `implementations`, `calls`,
   `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos, con
   lo mismo que el servidor de lenguaje da de cada declaración, las anotaciones
@@ -1935,6 +1937,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
+| `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before` e `ir_after`, o `diagnostics` si no compila; con `--against`, `against` y `changes`, cada una con `function` y `diff` (sección 7.19) |
 | `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
@@ -1963,7 +1966,7 @@ campos de su resultado:
 | `dump diff` | `tondo-dump-diff-0.1/1` | `seconds`, `memory`, `started`, `ended`, `moved`, `bindings` y `counters` |
 | `dump plugin` | `tondo-dump-plugin-0.1/1` | `file`, el script, y `load`, la orden que lo carga |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays`, `stay_lines`, `again`, `retried` y `converted`; si no puede, `ok` falso, `message` y `restart` |
-| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `optimizations`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `optimizations`, `asm`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |
 | `fix` | `tondo-fix-0.1/1` | `applied` y `skipped`, cada reparación con su `id` y su `title`, `compiles` y los `diagnostics` de después; `ok` si compila |
@@ -2173,6 +2176,47 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   que mira una herramienta; `text` es para leer, y `source`, el código del
   sitio.
 - `tondo mcp` lo ofrece como la herramienta `optimizations` (sección 7.9).
+
+### 7.19 `tondo asm`
+
+`tondo asm` da el código máquina que hace un build de release de una
+función, para esta máquina, sin enlazarlo: cada instrucción bajo la línea del
+programa de la que es, con lo que `tondo optimizations` dice de esa línea, y
+lo que llama o lee cuando una relocation lo nombra. Para ver qué cuesta un
+bucle instrucción a instrucción: un check que queda es su salto, un
+desenrollado sus copias, una llamada al runtime su nombre.
+
+~~~text
+$ tondo asm sum
+sum (1272 bytes, 17 of them constants)
+      0  push rbp
+src/main.to:6  total += values[i]
+        ; `total += values[i]` keeps its overflow check, in a loop
+     64  mov r8, qword [rdi + rdx * 8 + 0x20]
+     69  add rax, r8
+     6c  jo $+0x241
+...
+~~~
+
+- El argumento opcional es un proyecto o un archivo, como el de `tondo
+  build`, y el segundo, la función: las que se llaman así, o si ninguna, las
+  que contienen el nombre en el suyo, como `said` las instancias de
+  `said[Int]`. Una función sin código propio, porque se inlinea en cada
+  llamada, o que no existe, es un error del toolchain (estado 3).
+- El código de las instrucciones es el de esta máquina, x86-64 o arm64; las
+  constantes que Cranelift deja tras ellas no se desensamblan, y la cabecera
+  dice cuántos bytes son.
+- `--clif` añade el IR de Cranelift de la función antes y después de que su
+  optimizador lo cambie, donde se ve si una regla `Tondo:` del generador de
+  código (`vendor/`) se aplicó.
+- `--against <revisión>` compara con el código de esa revisión de git,
+  extraída como en 7.18, función a función: da un diff de sus instrucciones,
+  ` ` iguales, `-` solo de la revisión y `+` solo de ahora, con la distancia
+  de los saltos fuera, que mueve el código de antes, y una llamada por lo que
+  llama; o que el código es el mismo.
+- Con `--json` da `tondo-asm-0.1/1` (sección 7.12). `tondo mcp` lo ofrece
+  como la herramienta `asm`, y el editor como *Show the Machine Code of This
+  Function*, de la función donde está el cursor.
 
 ## 8. Determinismo
 

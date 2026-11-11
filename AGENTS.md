@@ -167,6 +167,11 @@ Ask the toolchain before guessing why code is slow or allocates:
   <name>` one function, and `--against <commit>` only what a change made
   different. A pass that decides something the author of the
   code could change says so there, with `mir_text::remark`.
+- `tondo asm <function>`, or the MCP tool `asm`, gives the machine code a
+  release build makes of a function under the lines it is of, with what
+  `tondo optimizations` says of each; `--clif` adds Cranelift's IR before
+  and after it optimizes, where a `Tondo:` rule shows whether it applied,
+  and `--against <commit>` diffs the code with a revision's.
 - `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
   every function whose name holds `<name>` after lowering and after each
   pass, with what the passes decided and why; `TONDO_DUMP_MIR=<name>@<pass>`

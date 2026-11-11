@@ -144,6 +144,8 @@ const tests: [string, () => Promise<void>][] = [
       const told = await vscode.commands.executeCommand<number | undefined>('tondo.showOptimizations');
       assert.ok(told && told > 0, `${told} lines told`);
       await execute('tondo.clearOptimizations');
+      const machine = await vscode.commands.executeCommand<string | undefined>('tondo.showMachineCode', 'main');
+      assert.match(machine ?? '', /^main \(\d+ bytes/);
     },
   ],
   [

@@ -731,6 +731,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.showMachineCode",
+        "title": "Show the Machine Code of This Function",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.guide",
         "title": "Read the Guide",
         "category": "Tondo"
@@ -979,6 +984,10 @@
         {
           "command": "tondo.clearOptimizations",
           "when": "tondo.optimized"
+        },
+        {
+          "command": "tondo.showMachineCode",
+          "when": "resourceLangId == tondo"
         },
         {
           "command": "tondo.bisectTest",

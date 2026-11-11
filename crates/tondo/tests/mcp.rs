@@ -814,5 +814,9 @@ fn says_what_a_release_build_makes_of_the_code() {
     let (same, text) = agent.call("optimizations", json!({ "path": "main.to", "against": "HEAD" }));
     assert_eq!((&same["gone"], &same["new"]), (&json!([]), &json!([])), "{same}");
     assert!(text.contains("what it made of HEAD"), "{text}");
+    // And the machine code of a function, under its lines.
+    let (code, text) = agent.call("asm", json!({ "path": "main.to", "function": "sum", "clif": true }));
+    assert_eq!(code["functions"][0]["function"], "sum", "{code}");
+    assert!(text.contains("main.to:6  total += values[i]") && text.contains("IR after:"), "{text}");
     agent.stop();
 }

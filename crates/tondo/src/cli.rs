@@ -374,6 +374,15 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        name: "asm",
+        usage: &["tondo asm [<project>|<file.to>] <function> [--clif] [--against <rev>] [--json]"],
+        summary: &[
+            "the machine code a release build makes of a function, by",
+            "the lines of the program, with what the passes did there;",
+            "its IR before and after Cranelift optimizes it",
+        ],
+    },
+    Command {
         name: "target",
         usage: &["tondo target pack [<dir>] [--json]"],
         summary: &["write this machine's target, for a tondo elsewhere", "to build for it (TONDO_TARGETS=<dir>)"],
@@ -416,6 +425,7 @@ pub const FEATURES: &[&str] = &[
     "test-fuzz",
     "profile",
     "optimizations",
+    "asm",
     "lsp-tests",
     "lsp-lenses",
     "explain",

@@ -221,6 +221,27 @@ impl Server {
                 };
                 Ok(Reply::new(text, graph.json(view == View::Packages)))
             }
+            "asm" => {
+                let function = args.need("function")?;
+                if let Some(reference) = args.text("against") {
+                    let (commit, changes) = driver::assembly_against(&args.path(), &reference, &function)?;
+                    let text = driver::assembly_changes_text(&reference, &commit, &changes);
+                    let changes: Vec<Value> =
+                        changes.iter().map(|(name, lines)| json!({ "function": name, "diff": lines })).collect();
+                    let against = json!({ "ref": reference, "commit": commit });
+                    return Ok(Reply::new(text, json!({ "against": against, "changes": changes })));
+                }
+                let analysis = driver::analyze(&args.path())?;
+                if analysis.program.is_none() {
+                    let diagnostics = diagnostics(&analysis);
+                    let data = json!({ "compiles": false, "diagnostics": diagnostics });
+                    return Ok(Reply::new(report(&analysis, &diagnostics), data));
+                }
+                let assemblies = driver::assembly(&analysis, &function, args.flag("clif"))?;
+                let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
+                let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
+                Ok(Reply::new(text, json!({ "functions": functions })))
+            }
             "optimizations" => {
                 let (function, kind) = (args.text("function"), args.text("kind"));
                 if let Some(reference) = args.text("against") {
@@ -2159,6 +2180,20 @@ checks more than it should, before measuring it.",
             ("function", "string", "Only the functions whose names hold this."),
             ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
+        ],
+    },
+    Tool {
+        name: "asm",
+        description: "The machine code a release build makes of a function, under the lines of the program it is \
+at, with what the passes did there and what each call calls; with clif, Cranelift's IR before and after it \
+optimizes the function; with against, only what changed since a git revision. To see what a loop costs, \
+instruction by instruction.",
+        kind: Kind::Reads,
+        params: &[
+            ("path", "string", "A project or a .to file; the server's directory by default."),
+            ("function", "string", "The function, by its name, or a part of the names of several."),
+            ("clif", "boolean", "Cranelift's IR of it too, before and after Cranelift optimizes it."),
+            ("against", "string", "A git revision, as main: what changed in the code since it."),
         ],
     },
     Tool {

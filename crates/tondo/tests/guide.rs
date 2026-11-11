@@ -174,6 +174,7 @@ fn the_command_line_is_in_the_tools_and_the_editor() {
         ("api", "api", "tondo.showApi"),
         ("graph", "graph", "tondo.exportGraph"),
         ("optimizations", "optimizations", "tondo.showOptimizations"),
+        ("asm", "asm", "tondo.showMachineCode"),
         ("guide", "guide", "tondo.guide"),
         ("explain", "explain", "tondo.runCommand"),
         ("model", "model", "tondo.modelTests"),

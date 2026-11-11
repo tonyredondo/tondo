@@ -871,6 +871,45 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert!(one != plain && two != one);
 }
 
+/// `tondo asm` writes the machine code a release build makes of a
+/// function, under the lines of the program it is of, with its IR before
+/// and after Cranelift optimizes it with `--clif`, as data with `--json`,
+/// and with `--against` what changed since a git revision.
+#[test]
+fn the_machine_code_of_a_function() {
+    let source = "fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\
+        fn main() {\n    _ = fib(20)\n}\n";
+    let dir = project_at("machine-code", &[("main.to", source.as_bytes())]);
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "fib"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.starts_with("fib ("), "{said}");
+    assert!(said.contains("\nmain.to:2  if n < 2 {\n"), "{said}");
+    assert!(said.lines().any(|line| line.trim_end().ends_with("ret")), "{said}");
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "fib", "--clif"]);
+    assert!(said.contains("IR before Cranelift optimizes it:") && said.contains("block0"), "{said}");
+    let (found, status) = json(&dir, &["asm", "main.to", "fib", "--json"]);
+    assert_eq!(status, 0);
+    let fib = &found["functions"][0];
+    assert_eq!(fib["function"], "fib");
+    assert!(fib["instructions"].as_array().unwrap().len() > 5, "{found}");
+    assert!(fib["lines"].as_array().unwrap().iter().any(|l| l["source"] == "fib(n - 1) + fib(n - 2)"), "{found}");
+    let (_, stderr, status) = tondo(&dir, &["asm", "main.to", "nobody"]);
+    assert_eq!(status, 3, "{stderr}");
+    assert!(stderr.contains("no code of a function named `nobody`"), "{stderr}");
+    // Since a revision: the same code, then the calls the other way round.
+    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    git(&["init", "-q"]);
+    git(&["add", "main.to"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD"]);
+    assert!(said.starts_with("a release build makes the same code as of HEAD"), "{said}");
+    std::fs::write(dir.join("main.to"), source.replace("fib(n - 1) + fib(n - 2)", "fib(n - 2) * 3 + fib(n - 1)"))
+        .unwrap();
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD"]);
+    assert!(said.starts_with("fib, since HEAD ("), "{said}");
+    assert!(said.lines().any(|l| l.starts_with("  +")) && said.lines().any(|l| l.starts_with("  -")), "{said}");
+}
+
 /// `tondo optimizations --against` says what changed since a git revision:
 /// what only it has, and what only the code has, each place known by its
 /// code rather than its line, so that code moved down a line is no change.

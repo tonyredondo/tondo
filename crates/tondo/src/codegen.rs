@@ -667,6 +667,10 @@ struct Job {
 /// A function's machine code, its relocations, and its size and calls for
 /// stack traces.
 struct Compiled {
+    /// The IR as it was and as Cranelift left it, when `tondo asm` asks.
+    ir: Option<(String, String)>,
+    /// Where its instructions end and the constants they read start.
+    code_end: u32,
     alignment: u64,
     bytes: Vec<u8>,
     relocs: Vec<cranelift_module::ModuleReloc>,
@@ -760,21 +764,55 @@ fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32
     out
 }
 
-/// Compiles a function's IR to machine code.
+/// The functions whose code `tondo asm` asks codegen to keep, by what
+/// their names hold, and whether with their IR (toolchain 7.19).
+static ASKED: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
+
+/// The code of a function `tondo asm` asked for: its machine code, what
+/// each relocation in it names, where each run of a statement's code
+/// starts with where the statement starts in the source, and its IR before
+/// and after Cranelift optimizes it.
+pub struct Kept {
+    pub name: String,
+    pub bytes: Vec<u8>,
+    /// Where the instructions end, and the constants they read start.
+    pub code_end: usize,
+    pub targets: Vec<(u32, String)>,
+    pub lines: Vec<(u32, Option<u32>)>,
+    pub ir: Option<(String, String)>,
+}
+
+/// Asks the next builds to keep the code of the functions whose names hold
+/// `name`, with their IR when `ir`; or no longer.
+pub fn keep_code(asked: Option<(String, bool)>) {
+    *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = asked;
+}
+
+/// The code kept since it was asked for.
+pub fn kept_code() -> Vec<Kept> {
+    std::mem::take(&mut *KEPT.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// Compiles a function's IR to machine code, keeping its IR as it was and
+/// as Cranelift left it when `ir` asks.
 fn compile_one(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     context: &mut cranelift_codegen::Context,
     id: FuncId,
     function: ir::Function,
+    ir: bool,
 ) -> Result<Compiled, String> {
     context.clear();
     let dumps = function.dfg.values_labels.is_some();
+    let before = ir.then(|| function.display().to_string());
     context.func = function;
     // What a latent site calls is the runtime, in the same image.
     for (_, callee) in context.func.dfg.ext_funcs.iter_mut() {
         callee.colocated |= callee.patchable;
     }
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
+    let ir = before.map(|before| (before, context.func.display().to_string()));
     let code = context.compiled_code().expect("compiled code");
     let sources = code.buffer.get_srclocs_sorted();
     let site_of = |at: u32| {
@@ -826,6 +864,8 @@ fn compile_one(
         }
     }
     Ok(Compiled {
+        ir,
+        code_end: sources.iter().map(|s| s.end).max().unwrap_or(code.buffer.data().len() as u32),
         latent,
         alignment: code.buffer.min_alignment as u64,
         bytes,
@@ -1459,19 +1499,32 @@ impl Codegen<'_> {
     /// the object is the same each time.
     fn compile_all(&mut self, mut jobs: Vec<Job>) -> Result<(), String> {
         let isa = self.module.isa();
+        let asked = ASKED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let wanted = |job: &Job| match (&asked, &job.traced) {
+            (Some((name, ir)), Some(traced)) if traced.contains(name.as_str()) => Some(*ir),
+            _ => None,
+        };
         // Each function goes to the thread that compiles it.
-        let functions: Vec<(FuncId, std::sync::Mutex<Option<ir::Function>>)> = jobs
+        let functions: Vec<(FuncId, std::sync::Mutex<Option<ir::Function>>, bool)> = jobs
             .iter_mut()
-            .map(|job| (job.id, std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())))))
+            .map(|job| {
+                let ir = wanted(job) == Some(true);
+                (job.id, std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new()))), ir)
+            })
             .collect();
-        let compiled = crate::parallel::map(&functions, 1, |(id, function)| {
+        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir)| {
             thread_local! {
                 static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
                     std::cell::RefCell::new(cranelift_codegen::Context::new());
             }
             let function = function.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a function");
-            CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function))
+            CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir))
         });
+        // What a call in kept code calls, by the program's names.
+        let names: HashMap<u32, String> = match asked.is_some() {
+            true => jobs.iter().filter_map(|job| Some((job.id.as_u32(), job.traced.clone()?))).collect(),
+            false => HashMap::new(),
+        };
         let labels = self.live.is_some().then(|| self.labels());
         let mut laid: Vec<_> = jobs.into_iter().zip(compiled).collect();
         if let Some(seed) = crate::driver::layout_seed() {
@@ -1486,7 +1539,28 @@ impl Codegen<'_> {
             }
         }
         for (job, code) in laid {
-            let code = code?;
+            let mut code = code?;
+            if wanted(&job).is_some() {
+                let target = |reloc: &cranelift_module::ModuleReloc| match reloc.name {
+                    cranelift_module::ModuleRelocTarget::User { namespace: 0, index } => names
+                        .get(&index)
+                        .cloned()
+                        .or_else(|| self.module.declarations().get_function_decl(FuncId::from_u32(index)).name.clone()),
+                    cranelift_module::ModuleRelocTarget::User { namespace: 1, index } => {
+                        self.module.declarations().get_data_decl(DataId::from_u32(index)).name.clone()
+                    }
+                    _ => None,
+                };
+                let site = |site: u32| job.sites.get((site as usize).checked_sub(1)?).map(|site| site.0);
+                KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(Kept {
+                    name: job.traced.clone().unwrap_or_default(),
+                    bytes: code.bytes.clone(),
+                    code_end: code.code_end as usize,
+                    targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),
+                    lines: code.lines.iter().map(|&(at, site_index)| (at, site(site_index))).collect(),
+                    ir: code.ir.take(),
+                });
+            }
             if let Some(labels) = &labels {
                 let hash = code_hash(&code, labels);
                 self.live.as_mut().expect("a live build").code.insert(job.id, hash);
