@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1200" viewBox="0 0 1440 1200" role="img" aria-labelledby="title description">
   <title id="title">Tondo logo proposals</title>
-  <desc id="description">The recommended to ligature with outlined lettering on light and dark backgrounds, followed by a circular t, the to ligature and code brackets, with file list mockups and size samples at 16, 24 and 32 pixels.</desc>
+  <desc id="description">The name, whose first two letters are the to ligature, on light and dark backgrounds, followed by a circular t, the to ligature and code brackets, with file list mockups and size samples at 16, 24 and 32 pixels.</desc>
   <defs>
     <symbol id="seal" viewBox="0 0 64 64">
       <path fill-rule="evenodd" d="M32 4a28 28 0 1 0 0 56 28 28 0 0 0 0-56Zm-5 10h10v9h10v9H37v6a5 5 0 0 0 5 5h5v9h-6a14 14 0 0 1-14-14v-6H17v-9h10Z" />
@@ -17,44 +17,32 @@
       <path d="m21 10 7 8-15 14 15 14-7 8L0 34v-4Zm22 0-7 8 15 14-15 14 7 8 21-20v-4Z" />
       <circle cx="32" cy="32" r="6" />
     </symbol>
-    <symbol id="wordmark" viewBox="0 0 332 76">
-      <g transform="translate(6 6)">
-        <path d="M12 8h10v14h16v10H22v8c0 6 3 8 8 8h3v10h-4c-11 0-17-6-17-17v-9H4V22h8Z" />
-        <path fill-rule="evenodd" d="M44 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
-      </g>
-      <g transform="translate(96 6)">
-        <path d="M10 2h10v14h14v10H20v15q0 7 7 7h7v10h-9Q10 58 10 42V26H2V16h8Z" />
-        <path fill-rule="evenodd" d="M60 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-        <path d="M89 19h10v5c3-4 7-6 12-6 12 0 19 8 19 21v19h-10V39c0-7-3-11-10-11s-11 4-11 11v19H89Z" />
-        <path d="M167 0h10v39h-10Z" />
-        <path fill-rule="evenodd" d="M157 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-        <path fill-rule="evenodd" d="M205 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-      </g>
+    <symbol id="wordmark" viewBox="0 0 199 66">
+      <path d="M12 8h10v14h16v10H22v8c0 6 3 8 8 8h3v10h-4c-11 0-17-6-17-17v-9H4V22h8Z" />
+      <path fill-rule="evenodd" d="M44 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
+      <path d="M71 21h10v5c3-4 7-5 11-5 10 0 15 7 15 18v18H97V39c0-5-3-8-8-8s-8 3-8 8v18H71Z" />
+      <path d="M141 8h10v31h-10Z" />
+      <path fill-rule="evenodd" d="M133 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
+      <path fill-rule="evenodd" d="M177 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
     </symbol>
-    <symbol id="wordmark-dark" viewBox="0 0 332 76">
-      <g transform="translate(6 6)">
-        <path d="M12 8h10v14h16v10H22v8c0 6 3 8 8 8h3v10h-4c-11 0-17-6-17-17v-9H4V22h8Z" />
-        <path fill-rule="evenodd" d="M44 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
-      </g>
-      <g transform="translate(96 6)">
-        <path d="M10 2h10v14h14v10H20v15q0 7 7 7h7v10h-9Q10 58 10 42V26H2V16h8Z" />
-        <path fill-rule="evenodd" d="M60 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-        <path d="M89 19h10v5c3-4 7-6 12-6 12 0 19 8 19 21v19h-10V39c0-7-3-11-10-11s-11 4-11 11v19H89Z" />
-        <path d="M167 0h10v39h-10Z" />
-        <path fill-rule="evenodd" d="M157 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-        <path fill-rule="evenodd" d="M205 19a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 10a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z" />
-      </g>
+    <symbol id="wordmark-dark" viewBox="0 0 199 66">
+      <path d="M12 8h10v14h16v10H22v8c0 6 3 8 8 8h3v10h-4c-11 0-17-6-17-17v-9H4V22h8Z" />
+      <path fill-rule="evenodd" d="M44 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
+      <path d="M71 21h10v5c3-4 7-5 11-5 10 0 15 7 15 18v18H97V39c0-5-3-8-8-8s-8 3-8 8v18H71Z" />
+      <path d="M141 8h10v31h-10Z" />
+      <path fill-rule="evenodd" d="M133 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
+      <path fill-rule="evenodd" d="M177 21a18 18 0 1 0 0 36 18 18 0 0 0 0-36Zm0 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" />
     </symbol>
   </defs>
   <rect x="0" y="0" width="1440" height="1200" fill="#f4f1f8" rx="0" />
   <text x="48" y="64" font-family="sans-serif" font-size="28" fill="#262032">Tondo / logo proposals</text>
-  <text x="48" y="98" font-family="sans-serif" font-size="16" fill="#665f72">The .to extension, drawn as one connected mark. Purple on light and dark backgrounds.</text>
+  <text x="48" y="98" font-family="sans-serif" font-size="16" fill="#665f72">The .to extension, drawn as one connected mark, which starts the name. Purple on light and dark backgrounds.</text>
   <rect x="48" y="132" width="660" height="216" fill="#ffffff" rx="8" />
   <rect x="732" y="132" width="660" height="216" fill="#1e1e1e" rx="8" />
-  <text x="72" y="164" font-family="sans-serif" font-size="12" fill="#665f72">PROPOSED README WORDMARK</text>
+  <text x="72" y="164" font-family="sans-serif" font-size="12" fill="#665f72">README WORDMARK</text>
   <text x="756" y="164" font-family="sans-serif" font-size="12" fill="#b5adbf">DARK BACKGROUND</text>
-  <use href="#wordmark" x="126" y="206" width="504" height="115" fill="#7c3aed" />
-  <use href="#wordmark-dark" x="810" y="206" width="504" height="115" fill="#a78bfa" />
+  <use href="#wordmark" x="204" y="206" width="348" height="115" fill="#7c3aed" />
+  <use href="#wordmark-dark" x="888" y="206" width="348" height="115" fill="#a78bfa" />
   <text x="48" y="402" font-family="sans-serif" font-size="19" fill="#262032">01 / Circular seal</text>
   <text x="48" y="430" font-family="sans-serif" font-size="13" fill="#665f72">A compact t inside a single round shape.</text>
   <rect x="48" y="450" width="432" height="274" fill="#ffffff" rx="8" />
