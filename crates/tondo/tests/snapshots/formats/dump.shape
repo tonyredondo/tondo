@@ -19,6 +19,7 @@
 .heap.rate: number
 .heap.samples (varies)
 .info.arguments[]
+.info.base: number
 .info.pid: number
 .info.probes: bool
 .info.program: string
