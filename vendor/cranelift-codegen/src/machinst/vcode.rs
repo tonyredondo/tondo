@@ -1832,6 +1832,7 @@ pub struct VCodeConstants {
     pool_uses: HashMap<Constant, VCodeConstant>,
     well_known_uses: HashMap<*const [u8], VCodeConstant>,
     u64s: HashMap<[u8; 8], VCodeConstant>,
+    generated: HashMap<ConstantData, VCodeConstant>,
 }
 impl VCodeConstants {
     /// Initialize the structure with the expected number of constants.
@@ -1841,16 +1842,26 @@ impl VCodeConstants {
             pool_uses: HashMap::with_capacity(expected_num_constants),
             well_known_uses: HashMap::new(),
             u64s: HashMap::new(),
+            generated: HashMap::new(),
         }
     }
 
     /// Insert a constant; using this method indicates that a constant value will be used and thus
-    /// will be emitted to the `MachBuffer`. The current implementation can deduplicate constants
-    /// that are [VCodeConstantData::Pool] or [VCodeConstantData::WellKnown] but not
-    /// [VCodeConstantData::Generated].
+    /// will be emitted to the `MachBuffer`. Equal constants are emitted once.
+    ///
+    /// Tondo: [VCodeConstantData::Generated] too, as x64 makes one of every float constant that
+    /// an instruction reads from memory: a loop unrolled four times had four copies of `1.0`.
     pub fn insert(&mut self, data: VCodeConstantData) -> VCodeConstant {
         match data {
-            VCodeConstantData::Generated(_) => self.constants.push(data),
+            VCodeConstantData::Generated(ref bytes) => match self.generated.get(bytes) {
+                None => {
+                    let bytes = bytes.clone();
+                    let vcode_constant = self.constants.push(data);
+                    self.generated.insert(bytes, vcode_constant);
+                    vcode_constant
+                }
+                Some(&vcode_constant) => vcode_constant,
+            },
             VCodeConstantData::Pool(constant, _) => match self.pool_uses.get(&constant) {
                 None => {
                     let vcode_constant = self.constants.push(data);

@@ -193,6 +193,20 @@
 (rule (simplify (imul ty x (iconst _ (imm64_power_of_two c))))
       (ishl ty x (iconst ty (imm64 c))))
 
+;; Tondo: x*2.0 == x+x, exactly, as the sum of a float with itself is twice
+;; it, its overflow and its zeros' signs too: an addition needs no constant,
+;; which a float makes in two instructions on x86-64, and does not wait for
+;; the unit that multiplies. It subsumes the product, as the extractor, which
+;; counts `x` twice in `x+x`, would keep the product when `x` costs anything.
+(rule (simplify (fmul $F64 x (f64const _ (u64_from_ieee64 0x4000000000000000))))
+      (subsume (fadd $F64 x x)))
+(rule (simplify (fmul $F64 (f64const _ (u64_from_ieee64 0x4000000000000000)) x))
+      (subsume (fadd $F64 x x)))
+(rule (simplify (fmul $F32 x (f32const _ (u32_from_ieee32 0x40000000))))
+      (subsume (fadd $F32 x x)))
+(rule (simplify (fmul $F32 (f32const _ (u32_from_ieee32 0x40000000)) x))
+      (subsume (fadd $F32 x x)))
+
 ;; fneg(fneg(x)) == x.
 (rule (simplify (fneg ty (fneg ty x))) (subsume x))
 

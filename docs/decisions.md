@@ -2496,6 +2496,12 @@ rules: `vendor/README.md` says what changed and how to update it. On
 remainder by a constant has, a shift and an addition, as Go makes it:
 `i * i % 7` over a million integers went from 849 to 816 µs, Go's 820.
 
+On 2026-11-11 three more, for floats: a float times 2.0 is its sum with itself, as exact; a float
+constant is computed once, out of a loop, rather than made again in each block that uses it, as
+making one takes two instructions on x86-64; and equal constants that instructions read from
+memory are emitted once, where each read had its own 16 bytes. `mandelbrot` took 19% fewer
+instructions, in the same time or 3% less, as each turn waits on its multiplications, as Go's do.
+
 ## 2026-10-26 — A notified task runs next
 
 A task that wakes another, as a sender wakes a receiver or a task that

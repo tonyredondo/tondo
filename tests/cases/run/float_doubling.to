@@ -1,0 +1,43 @@
+import std.console
+
+// A float times 2.0 is the float plus itself, which the code generator
+// writes instead: a zero keeps its sign, a product past the largest float
+// is infinite, and NaN stays NaN, in Float and in Float32, with the 2.0 on
+// either side, and in a chain where each turn doubles the last.
+
+fn doubled(x: Float): Float {
+    x * 2.0
+}
+
+fn doubledLeft(x: Float): Float {
+    2.0 * x
+}
+
+fn doubled32(x: Float32): Float32 {
+    let two: Float32 = 2.0
+    x * two
+}
+
+fn chain(x: Float, n: Int): Float {
+    var value = x
+    for _ in 0..n {
+        value = value * 2.0 - 1.0
+    }
+    value
+}
+
+fn main() {
+    let zero = 0.0
+    let largest = 1.7976931348623157e308
+    console.println("{doubled(1.5)} {doubled(-zero)} {doubled(largest)} {doubled(-largest)} {doubled(zero / zero)}")
+    console.println("{doubledLeft(-zero)} {doubledLeft(largest)}")
+    let small: Float32 = 1.25
+    let large: Float32 = 3.0e38
+    let zero32: Float32 = 0.0
+    console.println("{doubled32(small)} {doubled32(-zero32)} {doubled32(large)}")
+    console.println("{chain(1.5, 10)} {chain(-0.5, 7)}")
+}
+// expect-stdout: 3.0 -0.0 inf -inf NaN
+// expect-stdout: -0.0 inf
+// expect-stdout: 2.5 -0.0 inf
+// expect-stdout: 513.0 -191.0

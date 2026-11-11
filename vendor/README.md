@@ -1,7 +1,7 @@
 # Vendored crates
 
 `cranelift-codegen/` is Cranelift's code generator 0.137.0, from crates.io,
-with three changes, which the workspace's `[patch.crates-io]` puts in place
+with these changes, which the workspace's `[patch.crates-io]` puts in place
 of the published crate. Tondo checks every addition, subtraction and
 multiplication of integers:
 
@@ -17,10 +17,19 @@ one, is a shift and an addition or a subtraction, as one by a power of
 two is a shift already: a multiplication waits for the one unit that
 multiplies.
 
+A multiplication of a float by 2.0 is its sum with itself, which needs no
+constant. A float constant is not made again in every block that uses it,
+as an integer is, which costs nothing where an instruction takes it as an
+immediate: making a float costs two instructions on x86-64, in each turn
+of a loop, where computing it once keeps it in a register. And equal
+constants that instructions read from memory, as x86-64 reads a float's,
+are emitted once, however many read them.
+
 The rules are marked `Tondo:` in `src/isa/x64/inst.isle`,
 `src/isa/x64/lower.isle`, `src/isa/aarch64/inst.isle`,
-`src/isa/aarch64/lower.isle`, `src/opts/arithmetic.isle` and
-`src/prelude_opt.isle`.
+`src/isa/aarch64/lower.isle`, `src/opts/arithmetic.isle`,
+`src/opts/remat.isle` and `src/prelude_opt.isle`, and the constants'
+merging in `src/machinst/vcode.rs`.
 
 And a feature, `isle-rules`, marked `Tondo:` in `Cargo.toml` and
 `build.rs`, has each ISLE rule that matches log itself, as `trace-log`

@@ -25,7 +25,7 @@
       (remat x))
 (rule (simplify x @ (iconst _ _))
       (remat x))
-(rule (simplify x @ (f32const _ _))
-      (remat x))
-(rule (simplify x @ (f64const _ _))
-      (remat x))
+;; Tondo: not a float constant, which takes two instructions to make on
+;; x86-64, a move of its bits and one to a register of floats, and so is
+;; kept where it is computed once, out of a loop, rather than made again in
+;; every turn that uses it.

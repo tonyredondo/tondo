@@ -3064,7 +3064,8 @@ mod test {
         let n = 200_000;
         let mut handles = Vec::with_capacity(n);
         for i in 0..n {
-            let bytes: Vec<u8> = (0..16).map(|b| ((i + b) & 0xff) as u8).collect();
+            // Tondo: distinct, as equal constants are emitted once.
+            let bytes = (i as u128).to_le_bytes();
             let data = VCodeConstantData::Generated(ConstantData::from(&bytes[..]));
             handles.push(constants.insert(data));
         }
@@ -3100,7 +3101,8 @@ mod test {
         let n = 100_000;
         let mut handles = Vec::with_capacity(n);
         for i in 0..n {
-            let bytes: Vec<u8> = (0..16).map(|b| ((i ^ b) & 0xff) as u8).collect();
+            // Tondo: distinct, as equal constants are emitted once.
+            let bytes = (i as u128).to_le_bytes();
             handles.push(
                 constants.insert(VCodeConstantData::Generated(ConstantData::from(&bytes[..]))),
             );
