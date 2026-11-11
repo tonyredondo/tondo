@@ -1,0 +1,77 @@
+import std.text
+
+/// The slug of a text, for an address or a file name: its letters and
+/// digits in lower case and without their accents, with one `-` between
+/// what was apart. `"Crème Brûlée, 2 ways!"` gives `creme-brulee-2-ways`.
+pub fn slug(words: String): String {
+    let plain = text.normalize(words, text.Normalization.Nfd)
+    var parts: Array[String] = []
+    var part: Array[Char] = []
+    for letter in plain.chars() {
+        if letter.isMark() {
+            continue
+        }
+        if letter.isAlphanumeric() {
+            part.push(letter.toLower())
+        } else if not part.isEmpty() {
+            parts.push(part.join(""))
+            part = []
+        }
+    }
+    if not part.isEmpty() {
+        parts.push(part.join(""))
+    }
+    parts.join("-")
+}
+
+/// How many characters must be added, removed or changed to make one text
+/// of another: 3 between `kitten` and `sitting`.
+pub fn distance(left: String, right: String): Int {
+    let from: Array[Char] = left.chars().collect()
+    let to: Array[Char] = right.chars().collect()
+    // One row of the table at a time: the cost of reaching each prefix of
+    // `to` from the prefix of `from` read so far.
+    var row: Array[Int] = (0..=to.length()).collect()
+    for (i, a) in from.enumerate() {
+        var diagonal = row[0]
+        row[0] = i + 1
+        for (j, b) in to.enumerate() {
+            let change = diagonal + (if a == b { 0 } else { 1 })
+            diagonal = row[j + 1]
+            row[j + 1] = change.min(row[j] + 1).min(row[j + 1] + 1)
+        }
+    }
+    row[to.length()]
+}
+
+/// What a text holds.
+pub type Stats = {
+    characters: Int
+    words: Int
+    lines: Int
+}
+
+pub fn stats(words: String): Stats {
+    Stats {
+        characters: words.chars().count()
+        words: words.words().length()
+        lines: words.lines().length()
+    }
+}
+
+/// How many times each word of a text appears, whatever its case, the most
+/// frequent first and those that appear as often in the order they came.
+pub fn frequencies(words: String): Array[(String, Int)] {
+    var counts: Map[String, Int] = [:]
+    for word in words.words() {
+        let key = slug(word)
+        if not key.isEmpty() {
+            counts[key] = counts.get(key).unwrapOr(0) + 1
+        }
+    }
+    var pairs: Array[(String, Int)] = []
+    for (word, count) in counts {
+        pairs.push((word, count))
+    }
+    pairs.sortedBy((pair) { -pair.1 })
+}

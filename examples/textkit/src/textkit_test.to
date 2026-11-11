@@ -1,0 +1,74 @@
+// The functions C calls, called the way C would: with pointers to memory
+// that the caller allocates and frees.
+
+import std.ffi
+import std.sync
+
+/// The text C would read at a pointer: the bytes up to the first zero.
+fn textAt(out: Pointer[ffi.CChar], room: Int): String {
+    let bytes = unsafe { ffi.bytes(out, room) }
+    let end = bytes.findIndex((byte) { byte == Byte(0u8) }).unwrapOr(room)
+    String.fromBytes(bytes[:end]).unwrapOr("not text")
+}
+
+test theSlugIsWrittenWithItsEndingZero {
+    let title = ffi.toCString("Hello, World")
+    let out = ffi.allocate[ffi.CChar](32)
+    assert(textkit_slug(title, out, 32u64) == 11u64)
+    assert(textAt(out, 32) == "hello-world")
+    unsafe {
+        ffi.free(out)
+        ffi.free(title)
+    }
+}
+
+test aSlugThatDoesNotFitIsCutAndItsWholeLengthGiven {
+    let title = ffi.toCString("Hello, World")
+    let out = ffi.allocate[ffi.CChar](8)
+    assert(textkit_slug(title, out, 8u64) == 11u64)
+    assert(textAt(out, 8) == "hello-w")
+    assert(textkit_slug(title, out, 0u64) == 11u64)  // no room: nothing is written
+    assert(textAt(out, 8) == "hello-w")
+    unsafe {
+        ffi.free(out)
+        ffi.free(title)
+    }
+}
+
+test countsIntoThePlacesGiven {
+    let words = ffi.toCString("to be or not\nto be")
+    let counts = ffi.allocate[ffi.CLong](3)
+    unsafe {
+        textkit_count(words, counts, counts.offset(1), counts.offset(2))
+        assert([counts.read(), counts.offset(1).read(), counts.offset(2).read()] == [18, 6, 2])
+        ffi.free(counts)
+        ffi.free(words)
+    }
+}
+
+/// What C would give `textkit_words` to call: it keeps each word in the
+/// stack that `context` holds.
+unsafe fn keep(word: ffi.CString, count: ffi.CLong, context: Pointer[ffi.Void]) {
+    ffi.fromContext[sync.Stack[String]](context).push("{ffi.fromCString(word)}={count}")
+}
+
+test callsBackWithEachWord {
+    let seen = sync.Stack[String]()
+    let words = ffi.toCString("the cat and the hat")
+    let context = ffi.context(seen)
+    textkit_words(words, keep, context)
+    assert(seen.snapshot() == ["the=2", "cat=1", "and=1", "hat=1"])
+    unsafe {
+        ffi.freeContext[sync.Stack[String]](context)
+        ffi.free(words)
+    }
+}
+
+test measuresTheDistance {
+    let (left, right) = (ffi.toCString("kitten"), ffi.toCString("sitting"))
+    assert(textkit_distance(left, right) == 3)
+    unsafe {
+        ffi.free(left)
+        ffi.free(right)
+    }
+}
