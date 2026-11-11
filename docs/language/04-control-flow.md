@@ -138,7 +138,9 @@ o
 ```
 
 There is no C-style `for (init; condition; step)`. The start goes before
-the loop and the step inside it.
+the loop and the step inside it. A record literal in the header of a `for`,
+an `if` or a `match` goes in parentheses, `for n in (Countdown { from: 3 })`,
+since its `{` would otherwise open the body.
 
 ## Looping over a collection in place
 
