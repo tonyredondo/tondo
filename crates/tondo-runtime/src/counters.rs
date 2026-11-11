@@ -147,13 +147,12 @@ impl Drop for Counters {
 mod tests {
     use super::*;
 
-    /// Where the system lets a program count itself, work counts.
+    /// Where the system lets a program count itself, work counts: where a
+    /// counter of this thread opens, as a container's filter of system
+    /// calls may refuse whatever `perf_event_paranoid` says.
     #[test]
     fn counts_the_instructions_of_work() {
-        let allowed = std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
-            .ok()
-            .and_then(|level| level.trim().parse::<i32>().ok())
-            .is_some_and(|level| level <= 2);
+        let allowed = linux::open(0, linux::EVENTS[0]).map(|file| unsafe { libc::close(file) }).is_some();
         let Some(counters) = Counters::start() else {
             assert!(!allowed, "the system lets the program count itself");
             return;

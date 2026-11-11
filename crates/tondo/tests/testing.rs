@@ -1672,6 +1672,35 @@ test plain {
     assert!(stderr.contains("error[E2006]"), "{stderr}");
 }
 
+/// Whether the system lets a program count its own instructions as the
+/// runtime asks it to, with `perf_event_open` on the calling thread, which
+/// a container's filter of system calls may refuse whatever
+/// `perf_event_paranoid` says.
+fn counts_itself() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        /// `perf_event_attr` as its first version lays it out.
+        #[repr(C)]
+        #[derive(Default)]
+        struct Attr {
+            kind: u32,
+            size: u32,
+            config: u64,
+            sample: [u64; 3],
+            flags: u64,
+            wakeup: [u32; 2],
+            config1: u64,
+        }
+        let attr = Attr { size: size_of::<Attr>() as u32, config: 1, flags: 1 << 5 | 1 << 6, ..Attr::default() };
+        let file = unsafe { libc::syscall(libc::SYS_perf_event_open, &attr as *const Attr, 0, -1i32, -1i32, 8u64) };
+        if file >= 0 {
+            unsafe { libc::close(file as i32) };
+            return true;
+        }
+    }
+    false
+}
+
 /// Where the system lets a program count itself, a benchmark counts the
 /// instructions and cycles of a run, and `--regression-by instructions`
 /// judges them: the same code passes however its time moves, and three
@@ -1690,9 +1719,7 @@ fn judges_benchmarks_by_their_instructions() {
     let bench = ["test", "--bench", "--bench-time", "0.2"];
     let (stdout, stderr, status) = tondo(&dir, &[&bench[..], &["--save-baseline", "main"]].concat());
     assert_eq!(status, 0, "{stderr}");
-    let counts = cfg!(target_os = "linux")
-        && std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
-            .is_ok_and(|level| level.trim().parse::<i32>().is_ok_and(|level| level <= 2));
+    let counts = counts_itself();
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();
     let judged =
