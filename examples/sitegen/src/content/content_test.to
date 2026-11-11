@@ -1,0 +1,40 @@
+test readsAPage {
+    let page =
+        parse(
+            "tea.md",
+            "---\ntitle: Tea\ndate: 2026-11-10\ntags: [drinks]\n---\nHot water, mostly.\n",
+        )?
+    assert(page.slug == "tea")
+    assert(page.meta == Meta { title: "Tea", date: "2026-11-10", tags: ["drinks"] })
+    assert(page.body == "Hot water, mostly.")
+}
+
+test aPageNeedsItsFrontMatter {
+    assert("{parse("bare.md", "just text").err()}".contains("bare.md: a page starts with"))
+    assert(parse("open.md", "---\ntitle: Open\n").isErr())
+    match parse("untitled.md", "---\ndate: 2026-01-01\n---\ntext") {
+        err(ContentError.BadFrontMatter(name, why)) => assert(
+            name == "untitled.md" and why.contains("title"),
+        )
+        other => assert(other.isErr(), "a page with no title was read")
+    }
+}
+
+test writesTitlesListsAndParagraphs {
+    let text = "# Title\n\nFirst line\nsecond line.\n\n- one\n- two\n\n## Smaller\nLast."
+    let expected = [
+        "<h2>Title</h2>",
+        "<p>First line second line.</p>",
+        "<ul><li>one</li><li>two</li></ul>",
+        "<h3>Smaller</h3>",
+        "<p>Last.</p>",
+    ]
+    assert(html(text) == expected.join("\n"))
+}
+
+test whatThePageHoldsIsWrittenAsText {
+    assert(
+        html("a <b>bold</b> claim & more") == "<p>a &lt;b&gt;bold&lt;/b&gt; claim &amp; more</p>",
+    )
+    assert(html("") == "")
+}

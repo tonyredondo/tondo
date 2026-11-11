@@ -1,0 +1,135 @@
+import sitegen.content
+import std.fs
+import std.template
+
+/// Why a site could not be built.
+pub enum BuildError {
+    Files(fs.FsError)
+    Content(content.ContentError)
+    Template(template.TemplateError)
+}
+
+impl Display for BuildError {
+    fn display(self): String {
+        match self {
+            BuildError.Files(error) => "{error}"
+            BuildError.Content(error) => "{error}"
+            BuildError.Template(error) => "{error}"
+        }
+    }
+}
+
+/// What the template of a page is given.
+pub type PostView = {
+    site: String
+    title: String
+    date: String
+    tags: Array[String]
+    /// The page's text as HTML, which the template writes as it is.
+    body: template.Html
+}
+
+/// A page in a list of them.
+pub type PostLink = {
+    title: String
+    date: String
+    url: String
+}
+
+/// What the template of a list of pages is given.
+pub type IndexView = {
+    site: String
+    heading: String
+    posts: Array[PostLink]
+}
+
+/// What a build wrote.
+pub type Built = {
+    pages: Int
+    drafts: Int
+    files: Array[String]
+}
+
+/// The pages of `content/`, newest first.
+pub fn load(site: fs.FileSystem): Array[content.Page] ! BuildError {
+    var pages: Array[content.Page] = []
+    for path in site.glob("content/*.md").mapErr((e) { BuildError.Files(e) })? {
+        let text = site.readText(path).mapErr((e) { BuildError.Files(e) })?
+        let name = path.removePrefix("content/")
+        pages.push(content.parse(name, text).mapErr((e) { BuildError.Content(e) })?)
+    }
+    pages.sortedBy((page) { page.meta.date }).reversed()
+}
+
+/// One page as HTML.
+fn renderPost(
+    theme: template.Set,
+    name: String,
+    page: content.Page,
+): String ! template.TemplateError {
+    theme.render(
+        "post.html",
+        PostView {
+            site: name
+            title: page.meta.title
+            date: page.meta.date
+            tags: page.meta.tags
+            body: template.Html { value: content.html(page.body) }
+        },
+    )
+}
+
+/// Builds a site into `out`: a page for each one that is not a draft, the
+/// list of them all, and a list for each tag.
+pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! BuildError {
+    var theme = template.Set.html()
+    theme.addFiles(site.sub("theme"), "**/*.html").mapErr((e) { BuildError.Template(e) })?
+    let all = load(site)?
+    let pages = all.filter((page) { not page.meta.draft })
+
+    // Each page is rendered in a task of its own; the first that fails
+    // cancels the rest.
+    var rendering = Group[String ! template.TemplateError]()
+    for page in pages {
+        rendering.add(spawn renderPost(theme, name, page))
+    }
+    let rendered = rendering.wait().mapErr((e) { BuildError.Template(e) })?
+
+    var files: Array[String] = []
+    for (page, html) in pages.zip(rendered) {
+        files.push(write(out, "posts/{page.slug}.html", html)?)
+    }
+
+    let links = pages.map((page) { link(page) })
+    let index = theme.render("index.html", IndexView { site: name, heading: "Posts", posts: links })
+    files.push(write(out, "index.html", index.mapErr((e) { BuildError.Template(e) })?)?)
+
+    let byTag = pages
+        .flatMap((page) { page.meta.tags.map((tag) { (tag, page) }) })
+        .groupBy((pair) { pair.0 })
+    for (tag, tagged) in byTag {
+        let view = IndexView {
+            site: name
+            heading: "Tagged {tag}"
+            posts: tagged.map((pair) { link(pair.1) })
+        }
+        let html = theme.render("index.html", view).mapErr((e) { BuildError.Template(e) })?
+        files.push(write(out, "tags/{tag}.html", html)?)
+    }
+    Built { pages: pages.length(), drafts: all.length() - pages.length(), files }
+}
+
+fn link(page: content.Page): PostLink {
+    PostLink { title: page.meta.title, date: page.meta.date, url: "/posts/{page.slug}.html" }
+}
+
+/// Writes a file of the site, making its directory, and gives its path.
+fn write(out: fs.FileSystem, path: String, html: String): String ! BuildError {
+    match path.splitOnce("/") {
+        some((directory, _)) if not out.exists(directory) =>
+            out.createDirectory(directory).mapErr((e) { BuildError.Files(e) })?
+        _ => {}
+    }
+    out.writeText(path, html).mapErr((e) { BuildError.Files(e) })?
+    path
+}

@@ -1,0 +1,44 @@
+import sitegen.build
+import std.cli
+import std.console
+import std.fs
+import std.process
+
+/// Builds a site of pages and templates into HTML.
+pub type Sitegen = {
+    /// The directory of the site, with `content/` and `theme/`.
+    @cli.Argument
+    site: String = "site"
+    /// Where to write the HTML.
+    @cli.Option(short: "o")
+    output: String = "public"
+    /// The name of the site, in every page.
+    name: String = "A Tondo site"
+}
+
+fn main() {
+    let options = cli.parse[Sitegen]()
+    if not fs.exists(options.output) {
+        match fs.createDirectory(options.output) {
+            ok(_) => {}
+            err(error) => {
+                console.eprintln(cli.markup("[red]cannot make {options.output}:[/] {error}"))
+                process.exit(1)
+            }
+        }
+    }
+    match build.build(fs.disk(options.site), fs.disk(options.output), options.name) {
+        ok(built) => {
+            for file in built.files {
+                console.println("  {options.output}/{file}")
+            }
+            console.println(
+                cli.markup("[green]built[/] {built.pages} pages, left out {built.drafts} drafts"),
+            )
+        }
+        err(error) => {
+            console.eprintln(cli.markup("[red]the site was not built:[/] {error}"))
+            process.exit(1)
+        }
+    }
+}
