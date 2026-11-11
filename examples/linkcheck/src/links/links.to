@@ -1,0 +1,62 @@
+import std.regex
+import std.url
+
+/// What this module sets up once and every task then shares: the pattern of
+/// an attribute that holds a link.
+context Patterns = {
+    attribute: regex.Regex = regex.Regex.compile(
+        r"""(?i)\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+    )?
+}
+
+/// The links of a page of HTML as they are written in it, in its `href`s
+/// and `src`s, in the order they appear.
+pub fn written(html: String): Array[String] ! regex.RegexError {
+    var links: Array[String] = []
+    for found in Patterns.attribute.findAll(html)? {
+        let attribute = found?
+        match attribute.capture(1).orElse(attribute.capture(2)) {
+            some(value) => links.push(value.text)
+            none => {}
+        }
+    }
+    links
+}
+
+/// The address a link written in a page points to, whole and without its
+/// fragment. `none` is a link that is no address to ask for: one to a place
+/// in the same page, `mailto:`, `tel:`, `javascript:`, or text that is no
+/// address at all.
+pub fn target(page: url.Url, link: String): String? {
+    let address = match link.trim().splitOnce("#") {
+        some((before, _)) => before
+        none => link.trim()
+    }
+    if address.isEmpty() {
+        return none
+    }
+    match page.resolve(address) {
+        ok(resolved) if resolved.scheme == "http" or resolved.scheme == "https" =>
+            some("{resolved}")
+        _ => none
+    }
+}
+
+/// The addresses a page links to: each once, in the order found.
+pub fn targets(page: url.Url, html: String): Array[String] ! regex.RegexError {
+    var seen = Set[String]()
+    var found: Array[String] = []
+    for link in written(html)? {
+        match target(page, link) {
+            some(address) if seen.insert(address) => found.push(address)
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Whether an address is of the same site as another: the same scheme, host
+/// and port.
+pub fn sameSite(home: url.Url, other: url.Url): Bool {
+    home.scheme == other.scheme and home.host == other.host and home.port == other.port
+}

@@ -1,0 +1,43 @@
+import std.url
+
+test findsWhatAPageLinksTo {
+    let html = r"""
+        <a href="/docs">Docs</a> <A HREF = 'guide.html#install'>Guide</A>
+        <img src="logo.svg"> <a name="top">no link</a>
+        <a href="mailto:hello@example.com">Write</a>
+    """
+    assert(
+        written(html)? == ["/docs", "guide.html#install", "logo.svg", "mailto:hello@example.com"],
+    )
+}
+
+test resolvesALinkFromItsPage {
+    let page = url.parse("https://example.com/blog/2026/post.html?draft=1")?
+    assert(target(page, "next.html") == some("https://example.com/blog/2026/next.html"))
+    assert(target(page, "../index.html") == some("https://example.com/blog/index.html"))
+    assert(target(page, "/about#team") == some("https://example.com/about"))
+    assert(target(page, "//cdn.example.com/a.js") == some("https://cdn.example.com/a.js"))
+    assert(target(page, "http://other.example/") == some("http://other.example/"))
+}
+
+test leavesOutWhatIsNoAddressToAskFor {
+    let page = url.parse("https://example.com/")?
+    assert(target(page, "#top") == none)
+    assert(target(page, "  ") == none)
+    assert(target(page, "mailto:hello@example.com") == none)
+    assert(target(page, "javascript:void(0)") == none)
+    assert(target(page, "tel:+34600000000") == none)
+}
+
+test givesEachAddressOnce {
+    let page = url.parse("http://localhost:8080/a/")?
+    let html = r"""<a href="b">1</a><a href="./b#x">2</a><a href="/a/b">3</a><a href="/c">4</a>"""
+    assert(targets(page, html)? == ["http://localhost:8080/a/b", "http://localhost:8080/c"])
+}
+
+test aSiteIsASchemeAHostAndAPort {
+    let home = url.parse("http://localhost:8080/")?
+    assert(sameSite(home, url.parse("http://localhost:8080/deep/page")?))
+    assert(not sameSite(home, url.parse("http://localhost:9090/")?))
+    assert(not sameSite(home, url.parse("https://localhost:8080/")?))
+}
