@@ -1,16 +1,46 @@
 # std.testing
 
-what a test tells the runner (testing 11.2); only in test files.
+What a test tells the runner: a line for its report, that it is skipped, a
+snapshot to compare with, a clock that does not wait, a benchmark or a
+search for inputs. It can be imported only in a file of tests, one whose
+name ends in `_test.to` or one under `tests/`.
 
 ```tondo test
 import std.testing
+import std.time
+
+fn retry(attempts: Int): Int {
+    var tries = 0
+    for tries < attempts {
+        time.sleep(time.seconds(30))
+        tries += 1
+    }
+    tries
+}
 
 test addsNumbers {
     testing.log("adding")
+    testing.tags(["area": "arithmetic"])
     assert(1 + 1 == 2)
-    testing.snapshot("sum", [1, 2, 3])
+}
+
+test retriesWithoutWaiting {
+    testing.withVirtualTime((clock) {
+        let job = spawn retry(3)
+        clock.advance(time.seconds(90))
+        assert(job.wait() == 3)
+    })
+}
+
+test isMeasured {
+    testing.bench("sum", () { [1, 2, 3].sum() })?
 }
 ```
+
+`test`, `suite` and `assert` are the language's and need no import.
+[Testing](../language/16-testing.md) explains every kind of test with
+examples, and [the toolchain](../toolchain.md) what `tondo test` does with
+them.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
