@@ -16,6 +16,10 @@
 //! other read could keep it past the frame, or past the next value made in
 //! its room. A function that calls itself makes none, as each of its frames
 //! would keep room for them.
+//!
+//! A local made from a temporary, as `let label = "{n}"` lowers to, is made
+//! by the interpolation itself, when the temporary is only moved there:
+//! the local is then made so, under the same rules.
 
 use crate::ast::BinOp;
 use crate::mir::*;
@@ -25,6 +29,7 @@ use crate::types::{Ty, Types};
 const FRAMED: usize = 8;
 
 pub fn stack(bodies: &mut [Body], types: &Types) {
+    bodies.iter_mut().for_each(made_in_place);
     let indices: Vec<usize> = (0..bodies.len()).collect();
     let framed = crate::parallel::map(&indices, 16, |&index| framed(&bodies[index], index, types));
     for (body, (framed, mut notes, remarks)) in bodies.iter_mut().zip(framed) {
@@ -38,6 +43,82 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
                 crate::mir_text::remark(body, span, "heap", || text);
             }
         }
+    }
+}
+
+/// Whether a statement makes a text by interpolation, appending to no
+/// other text, or a function's value from a closure, into a whole local.
+fn making(statement: &Statement) -> Option<(Local, &Rvalue)> {
+    let Statement::Assign(place, rvalue, _) = statement else { return None };
+    let interpolated = matches!(&**rvalue,
+        Rvalue::Concat(pieces) if !pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))))
+        || matches!(**rvalue, Rvalue::Erase(..));
+    (place.path.is_empty() && interpolated).then_some((place.local, &**rvalue))
+}
+
+/// A making into a temporary that the next statement moves to a local of
+/// its type, which the making does not read: the temporary and the local.
+fn moved_next(body: &Body, first: &Statement, second: &Statement) -> Option<(Local, Local)> {
+    let (made, rvalue) = making(first)?;
+    let Statement::Assign(to, moved, _) = second else { return None };
+    let Rvalue::Use(Operand::Copy(from)) = &**moved else { return None };
+    let mut read = Vec::new();
+    rvalue_uses(rvalue, &mut read);
+    let fits = from.local == made && from.path.is_empty() && to.path.is_empty() && to.local != made;
+    (fits
+        && body.locals[to.local.0 as usize] == body.locals[made.0 as usize]
+        && !read.contains(&to.local)
+        && !read.contains(&made))
+    .then_some((made, to.local))
+}
+
+/// Makes in the local what a temporary only moved there was made as: the
+/// temporary is mentioned nowhere but in its making and its move, each
+/// time.
+fn made_in_place(body: &mut Body) {
+    let count = body.locals.len();
+    let mut moves = vec![0usize; count];
+    for block in &body.blocks {
+        for two in block.stmts.windows(2) {
+            if let Some((made, _)) = moved_next(body, &two[0], &two[1]) {
+                moves[made.0 as usize] += 1;
+            }
+        }
+    }
+    if moves.iter().all(|&moved| moved == 0) {
+        return;
+    }
+    // How many statements and terminators mention each local.
+    let mut mentions = vec![0usize; count];
+    let (mut used, mut defined) = (Vec::new(), Vec::new());
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            statement_locals(statement, &mut used, &mut defined);
+            used.append(&mut defined);
+            used.sort_unstable_by_key(|local| local.0);
+            used.dedup();
+            used.drain(..).for_each(|local| mentions[local.0 as usize] += 1);
+        }
+        terminator_uses(&block.terminator, &mut used);
+        used.drain(..).for_each(|local| mentions[local.0 as usize] += 1);
+    }
+    body.params.iter().chain(&body.ret).for_each(|local| mentions[local.0 as usize] = usize::MAX);
+    for at in 0..body.blocks.len() {
+        let stmts = std::mem::take(&mut body.blocks[at].stmts);
+        let mut kept = Vec::with_capacity(stmts.len());
+        let mut statements = stmts.into_iter().peekable();
+        while let Some(mut statement) = statements.next() {
+            let only = statements.peek().and_then(|next| moved_next(body, &statement, next)).filter(|(made, _)| {
+                let made = made.0 as usize;
+                mentions[made] == 2 * moves[made]
+            });
+            if let (Some((_, to)), Statement::Assign(place, ..)) = (only, &mut statement) {
+                *place = Place::local(to);
+                statements.next();
+            }
+            kept.push(statement);
+        }
+        body.blocks[at].stmts = kept;
     }
 }
 
@@ -151,9 +232,7 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
         match statement {
             Statement::Release(place) if place.path.is_empty() => continue,
             Statement::Assign(place, rvalue, span) => {
-                let interpolated = matches!(&**rvalue,
-                    Rvalue::Concat(pieces) if !pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))))
-                    || matches!(**rvalue, Rvalue::Erase(..));
+                let interpolated = making(statement).is_some();
                 if place.path.is_empty() {
                     let at = place.local.0 as usize;
                     made[at] |= interpolated;
@@ -210,19 +289,20 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
     body.params.iter().for_each(|&local| told(&mut kept[local.0 as usize], "it is a parameter"));
     body.ret.iter().for_each(|&local| told(&mut kept[local.0 as usize], "it is returned"));
     // A copy keeps what its copy is kept by; one that nothing keeps names
-    // where it was copied to.
+    // where it was copied to, the first local with a name.
     let mut copied_to: Vec<Option<usize>> = vec![None; count];
     for at in 0..count {
-        let (mut local, mut steps) = (at, 0);
+        let (mut local, mut steps, mut named) = (at, 0, None);
         while kept[local] == Some(COPIED)
             && let Some(to) = copied[local]
             && steps < 16
         {
             (local, steps) = (to.0 as usize, steps + 1);
+            named = named.or(body.names.get(local).and_then(Option::as_ref).map(|_| local));
         }
         match kept[local] {
             Some(_) => kept[at] = kept[local],
-            None => copied_to[at] = Some(local),
+            None => copied_to[at] = Some(named.unwrap_or(local)),
         }
     }
     let (mut notes, mut remarks) = (Vec::new(), Vec::new());

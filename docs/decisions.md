@@ -5652,6 +5652,13 @@ go of its captures, which the count would otherwise never free. A closure that a
 that is returned, kept, sent or passed on stays on the heap. `closure 1000` takes no allocation
 instead of one, and 245 ns instead of 274, where Go takes 426.
 
+A text or a closure made into a named local, as `let label = "{n}"`, lowers to a temporary moved
+to the local, and the move kept it on the heap. When the temporary is mentioned nowhere but in
+its making and the move that follows it, the pass makes it in the local itself, which then follows
+the rules above, as `tondo optimizations` showed it should (2026-11-11). Framing the local beside
+the temporary instead would be wrong: a local copied on, as `last = now` in a loop, would still
+point at the room the next turn makes another text in.
+
 ## `tondo optimizations` says what a release build made of the code
 
 Why a program allocates or checks more than it should was found by reading the MIR the passes

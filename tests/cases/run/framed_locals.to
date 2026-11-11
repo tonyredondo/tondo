@@ -1,0 +1,45 @@
+// A text an interpolation makes into a named local, as `let label =
+// "{n}"`, that its frame only measures or compares, is made in the frame
+// too. One that is copied on to another local stays on the heap: the next
+// turn of a loop would make a new text in the same room while the other
+// local still holds the old one.
+
+import std.console
+
+fn labels(count: Int): Int {
+    var total = 0
+    for round in 0..count {
+        let label = "round {round * 1_000}"
+        total += label.length()
+    }
+    total
+}
+
+fn longest(count: Int): String {
+    var last = ""
+    var most = 0
+    for round in 0..count {
+        let now = "{round * 1_000}"
+        if now.length() > last.length() {
+            most = now.length()
+        }
+        last = now
+    }
+    "{most} {last}"
+}
+
+fn compared(a: Int, b: Int): Bool {
+    let left = "{a}-{b}"
+    let right = "{b}-{a}"
+    left < right
+}
+
+fn main() {
+    console.println("{labels(100)} {longest(20)} {compared(1, 2)}")
+}
+
+// expect-stdout: 1087 5 19000 true
+// expect-optimization: 12:21 frame
+// expect-optimization: 22:19 heap it is copied to `last`
+// expect-optimization: 32:16 frame
+// expect-optimization: 33:17 frame
