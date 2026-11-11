@@ -902,12 +902,33 @@ fn the_machine_code_of_a_function() {
     git(&["add", "main.to"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
     let (said, _, _) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD"]);
-    assert!(said.starts_with("a release build makes the same code as of HEAD"), "{said}");
+    assert!(said.starts_with("a release build makes the same code as HEAD ("), "{said}");
     std::fs::write(dir.join("main.to"), source.replace("fib(n - 1) + fib(n - 2)", "fib(n - 2) * 3 + fib(n - 1)"))
         .unwrap();
     let (said, _, _) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD"]);
-    assert!(said.starts_with("fib, since HEAD ("), "{said}");
+    assert!(said.starts_with("fib, against HEAD ("), "{said}");
     assert!(said.lines().any(|l| l.starts_with("  +")) && said.lines().any(|l| l.starts_with("  -")), "{said}");
+    assert!(said.ends_with("1 function changed, 0 the same\n"), "{said}");
+    // Every function of the program's own code, and the code another tondo
+    // makes of it: itself, the same; one that writes `nop` for `ret`, not.
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "--all"]);
+    assert!(said.contains("fib (") && said.contains("\nmain ("), "{said}");
+    let this = env!("CARGO_BIN_EXE_tondo");
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "--all", "--compiler", this]);
+    assert!(
+        said.starts_with("a release build makes the same code as the tondo at ") && said.contains(" in 2 functions"),
+        "{said}"
+    );
+    let other = dir.join("other-tondo");
+    std::fs::write(&other, format!("#!/bin/sh\n'{this}' \"$@\" | sed 's/\"ret\"/\"nop\"/'\n")).unwrap();
+    Command::new("chmod").arg("+x").arg(&other).status().unwrap();
+    let (found, status) = json(&dir, &["asm", "main.to", "--all", "--compiler", other.to_str().unwrap(), "--json"]);
+    assert_eq!(status, 0, "{found}");
+    let changes = found["changes"].as_array().unwrap();
+    assert!(!changes.is_empty() && changes.iter().all(|c| c["diff"].to_string().contains("\"+ret\"")), "{found}");
+    let (_, stderr, status) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD", "--compiler", this]);
+    assert_eq!(status, 2, "{stderr}");
+    assert!(stderr.contains("choose one"), "{stderr}");
 }
 
 /// `tondo optimizations --against` says what changed since a git revision:

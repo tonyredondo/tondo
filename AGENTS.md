@@ -172,6 +172,8 @@ Ask the toolchain before guessing why code is slow or allocates:
   `tondo optimizations` says of each; `--clif` adds Cranelift's IR before
   and after it optimizes, where a `Tondo:` rule shows whether it applied,
   and `--against <commit>` diffs the code with a revision's.
+  `--all --compiler <old tondo>` gives the functions whose code a change
+  to the compiler changes, or that it changes none.
 - `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
   every function whose name holds `<name>` after lowering and after each
   pass, with what the passes decided and why; `TONDO_DUMP_MIR=<name>@<pass>`
@@ -204,10 +206,9 @@ Ask the toolchain before guessing why code is slow or allocates:
   `TONDO_LAYOUT_SEED=<n>` in the environment of a build lays its functions
   out in another order, so that a row measured with a few seeds shows how
   much of a difference is where the code lies.
-- A change to the passes that should not change the code is proven by
-  building programs with the `tondo` before it and after it and comparing
-  the executables, which are the same but for the date and time the
-  runtime was built, which some of its C code holds.
+- A change to the passes that should not change the code is proven with
+  `tondo asm <program> --all --compiler <the tondo before it>` over the
+  programs that run what it touches.
 
 ### Where Tondo is going
 

@@ -222,14 +222,31 @@ impl Server {
                 Ok(Reply::new(text, graph.json(view == View::Packages)))
             }
             "asm" => {
-                let function = args.need("function")?;
+                let function = args.text("function");
+                if function.is_none() && !args.flag("all") {
+                    return Err("give `function`, or `all` for every function of the program".into());
+                }
+                let function = function.as_deref();
+                let listed = |changes: &[driver::Changed]| -> Vec<Value> {
+                    changes.iter().map(|(name, lines)| json!({ "function": name, "diff": lines })).collect()
+                };
                 if let Some(reference) = args.text("against") {
-                    let (commit, changes) = driver::assembly_against(&args.path(), &reference, &function)?;
-                    let text = driver::assembly_changes_text(&reference, &commit, &changes);
-                    let changes: Vec<Value> =
-                        changes.iter().map(|(name, lines)| json!({ "function": name, "diff": lines })).collect();
+                    let (commit, changes, same) = driver::assembly_against(&args.path(), &reference, function)?;
+                    let from = format!("{reference} ({})", &commit[..commit.len().min(12)]);
+                    let text = driver::assembly_changes_text(&from, &changes, same);
                     let against = json!({ "ref": reference, "commit": commit });
-                    return Ok(Reply::new(text, json!({ "against": against, "changes": changes })));
+                    return Ok(Reply::new(
+                        text,
+                        json!({ "against": against, "changes": listed(&changes), "same": same }),
+                    ));
+                }
+                if let Some(compiler) = args.text("compiler") {
+                    let (changes, same) = driver::assembly_compiler(&args.path(), Path::new(&compiler), function)?;
+                    let text = driver::assembly_changes_text(&format!("the tondo at {compiler}"), &changes, same);
+                    return Ok(Reply::new(
+                        text,
+                        json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
+                    ));
                 }
                 let analysis = driver::analyze(&args.path())?;
                 if analysis.program.is_none() {
@@ -237,7 +254,7 @@ impl Server {
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
                     return Ok(Reply::new(report(&analysis, &diagnostics), data));
                 }
-                let assemblies = driver::assembly(&analysis, &function, args.flag("clif"))?;
+                let assemblies = driver::assembly(&analysis, function, args.flag("clif"))?;
                 let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
                 let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
                 Ok(Reply::new(text, json!({ "functions": functions })))
@@ -2201,8 +2218,10 @@ instruction by instruction.",
         params: &[
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "The function, by its name, or a part of the names of several."),
+            ("all", "boolean", "Every function of the program's own code instead of one."),
             ("clif", "boolean", "Cranelift's IR of it too, before and after Cranelift optimizes it."),
             ("against", "string", "A git revision, as main: what changed in the code since it."),
+            ("compiler", "string", "Another tondo: what changed from the code it makes of the program to this one's."),
         ],
     },
     Tool {

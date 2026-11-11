@@ -2013,34 +2013,61 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// `--against`.
 fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
-    let (json, ir) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"));
-    let against = match args.iter().position(|a| a == "--against") {
-        Some(at) => {
-            let reference = args.get(at + 1).and_then(|r| r.to_str()).map(str::to_string);
-            let reference =
-                reference.filter(|r| !r.starts_with('-')).ok_or(format!("--against takes a revision\n{USAGE}"))?;
-            args.drain(at..at + 2);
-            Some(reference)
-        }
-        None => None,
+    let (json, ir, all) =
+        (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
+    let mut valued = |flag: &str| -> Result<Option<String>, String> {
+        let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
+        let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
+        let value = value.ok_or(format!("{flag} takes a value\n{USAGE}"))?;
+        args.drain(at..at + 2);
+        Ok(Some(value))
     };
+    let (against, compiler) = (valued("--against")?, valued("--compiler")?);
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
         return Err(format!("asm does not take {}\n{USAGE}", flag.display()));
     }
-    let (path, function) = match args.as_slice() {
-        [function] => (PathBuf::from("."), function.to_string_lossy().to_string()),
-        [path, function] => (PathBuf::from(path), function.to_string_lossy().to_string()),
-        _ => return Err(format!("asm takes a function, as `tondo asm main` or `tondo asm app.to sum`\n{USAGE}")),
+    if against.is_some() && compiler.is_some() {
+        return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
+    }
+    let (path, function) = match (args.as_slice(), all) {
+        ([], true) => (PathBuf::from("."), None),
+        ([path], true) => (PathBuf::from(path), None),
+        ([function], false) => (PathBuf::from("."), Some(function.to_string_lossy().to_string())),
+        ([path, function], false) => (PathBuf::from(path), Some(function.to_string_lossy().to_string())),
+        _ => {
+            return Err(format!(
+                "asm takes a function or --all, as `tondo asm main` or `tondo asm app.to --all`\n{USAGE}"
+            ));
+        }
+    };
+    let changed = |changes: &[driver::Changed]| -> Vec<serde_json::Value> {
+        changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect()
     };
     if let Some(reference) = against {
-        let (commit, changes) = driver::assembly_against(&path, &reference, &function)?;
+        let (commit, changes, same) = driver::assembly_against(&path, &reference, function.as_deref())?;
         if json {
-            let changes: Vec<serde_json::Value> =
-                changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
             let against = serde_json::json!({ "ref": reference, "commit": commit });
-            print_json("asm", true, serde_json::json!({ "against": against, "changes": changes }));
+            print_json(
+                "asm",
+                true,
+                serde_json::json!({ "against": against, "changes": changed(&changes), "same": same }),
+            );
         } else {
-            print!("{}", driver::assembly_changes_text(&reference, &commit, &changes));
+            let from = format!("{reference} ({})", &commit[..commit.len().min(12)]);
+            print!("{}", driver::assembly_changes_text(&from, &changes, same));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(compiler) = compiler {
+        let (changes, same) = driver::assembly_compiler(&path, Path::new(&compiler), function.as_deref())?;
+        if json {
+            print_json(
+                "asm",
+                true,
+                serde_json::json!({ "compiler": compiler, "changes": changed(&changes), "same": same }),
+            );
+        } else {
+            print!("{}", driver::assembly_changes_text(&format!("the tondo at {compiler}"), &changes, same));
         }
         return Ok(ExitCode::SUCCESS);
     }
@@ -2054,7 +2081,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::FAILURE);
     }
-    let assemblies = driver::assembly(&analysis, &function, ir)?;
+    let assemblies = driver::assembly(&analysis, function.as_deref(), ir)?;
     if json {
         let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
         print_json("asm", true, serde_json::json!({ "functions": functions }));

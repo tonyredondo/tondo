@@ -1448,19 +1448,31 @@ pub struct Assembly {
 
 /// The machine code a release build of a checked program makes of the
 /// functions named `function`, or, when none is, of those whose names hold
-/// it, without linking it; with their IR when `ir` asks.
-pub fn assembly(analysis: &Analysis, function: &str, ir: bool) -> Result<Vec<Assembly>, String> {
-    crate::codegen::keep_code(Some((function.to_string(), ir)));
+/// it; or with no `function`, of every function of the program's own
+/// code; without linking it, and with their IR when `ir` asks.
+pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool) -> Result<Vec<Assembly>, String> {
+    let program = analysis.program.as_ref().expect("assembly() requires a checked program");
+    let sources = &analysis.sources;
+    let own = |body: &crate::mir::Body| {
+        let file = sources.file_of(body.span.start);
+        body.span != crate::source::Span::default() && !file.dependency && !file.logical.starts_with("<std>/")
+    };
+    let bodies = lower::lower(program, false, false, None);
+    let mut names: std::collections::HashSet<String> = match function {
+        Some(name) if bodies.iter().any(|body| body.name == name) => std::iter::once(name.to_string()).collect(),
+        Some(name) => bodies.iter().filter(|body| body.name.contains(name)).map(|body| body.name.clone()).collect(),
+        None => bodies.iter().filter(|body| own(body)).map(|body| body.name.clone()).collect(),
+    };
+    names.retain(|name| !name.is_empty());
+    crate::codegen::keep_code(Some((names, ir)));
     let built = compile(analysis, false, None, None);
     crate::codegen::keep_code(None);
     built?;
     let mut kept = crate::codegen::kept_code();
-    if kept.iter().any(|k| k.name == function) {
-        kept.retain(|k| k.name == function);
-    }
     if kept.is_empty() {
+        let named = function.map_or("of the program's own".to_string(), |name| format!("named `{name}`"));
         return Err(format!(
-            "a release build has no code of a function named `{function}`: no function holds that name, or every call of it is inlined, which `tondo optimizations` tells"
+            "a release build has no code of a function {named}: no function holds that name, or every call of it is inlined, which `tondo optimizations` tells"
         ));
     }
     kept.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1519,24 +1531,93 @@ pub type Changed = (String, Vec<String>);
 /// since the git revision `reference`, function by function, as the lines
 /// of a diff: ` ` the same, `-` only in the revision, `+` only now. The
 /// distance of a jump is left out, which code before it moves.
-pub fn assembly_against(path: &Path, reference: &str, function: &str) -> Result<(String, Vec<Changed>), String> {
-    let compiled = |path: &Path, what: &str| -> Result<Vec<Assembly>, String> {
-        let analysis = analyze(path)?;
-        if analysis.program.is_none() {
-            return Err(format!("{what} does not compile, so there is nothing to compare"));
-        }
-        assembly(&analysis, function, false)
-    };
-    let now = compiled(path, "the code")?;
+pub fn assembly_against(
+    path: &Path,
+    reference: &str,
+    function: Option<&str>,
+) -> Result<(String, Vec<Changed>, usize), String> {
+    let now = compiled_assembly(path, function, "the code")?;
     let (commit, dir) = revision(path, reference)?;
-    let then = compiled(&dir, &format!("the code of {reference}"))?;
+    let then = compiled_assembly(&dir, function, &format!("the code of {reference}"))?;
+    let (changes, same) = assembly_changes(&then, &now);
+    Ok((commit, changes, same))
+}
+
+/// The machine code of the functions named, or of all the program's own,
+/// of the code at `path`, which must compile.
+fn compiled_assembly(path: &Path, function: Option<&str>, what: &str) -> Result<Vec<Assembly>, String> {
+    let analysis = analyze(path)?;
+    if analysis.program.is_none() {
+        return Err(format!("{what} does not compile, so there is nothing to compare"));
+    }
+    assembly(&analysis, function, false)
+}
+
+/// What changed in the machine code of the code at `path` from what the
+/// `tondo` at `compiler` makes of it to what this one does, function by
+/// function as `assembly_against` tells it, and how many are the same.
+pub fn assembly_compiler(
+    path: &Path,
+    compiler: &Path,
+    function: Option<&str>,
+) -> Result<(Vec<Changed>, usize), String> {
+    let now = compiled_assembly(path, function, "the code")?;
+    let mut command = std::process::Command::new(compiler);
+    command.arg("asm").arg(path);
+    match function {
+        Some(name) => command.arg(name),
+        None => command.arg("--all"),
+    };
+    let ran = command.arg("--json").output().map_err(|e| format!("cannot run {}: {e}", compiler.display()))?;
+    let told: serde_json::Value = serde_json::from_slice(&ran.stdout).map_err(|_| {
+        let said = String::from_utf8_lossy(&ran.stderr);
+        format!("{} gave no machine code: {}", compiler.display(), said.trim())
+    })?;
+    if told["ok"] != true {
+        return Err(format!(
+            "{} could not build the code: {}",
+            compiler.display(),
+            told["message"].as_str().unwrap_or("its diagnostics say why")
+        ));
+    }
+    let then: Vec<Assembly> = told["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|function| Assembly {
+            function: function["function"].as_str().unwrap_or_default().to_string(),
+            size: function["size"].as_u64().unwrap_or(0) as usize,
+            constants: function["constants"].as_u64().unwrap_or(0) as usize,
+            instructions: function["instructions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|i| Instruction {
+                    offset: i["offset"].as_u64().unwrap_or(0) as usize,
+                    bytes: i["bytes"].as_str().unwrap_or_default().to_string(),
+                    text: i["instruction"].as_str().unwrap_or_default().to_string(),
+                    target: i["target"].as_str().map(str::to_string),
+                    at: None,
+                })
+                .collect(),
+            lines: Vec::new(),
+            ir: None,
+        })
+        .collect();
+    Ok(assembly_changes(&then, &now))
+}
+
+/// The functions whose code differs from `then` to `now`, with their diffs,
+/// and how many are the same.
+fn assembly_changes(then: &[Assembly], now: &[Assembly]) -> (Vec<Changed>, usize) {
     let listing = |assembly: Option<&Assembly>| -> Vec<String> {
         assembly.map_or(Vec::new(), |assembly| assembly.instructions.iter().map(normalized).collect())
     };
-    let mut names: Vec<&String> = now.iter().chain(&then).map(|a| &a.function).collect();
+    let mut names: Vec<&String> = now.iter().chain(then).map(|a| &a.function).collect();
     names.sort();
     names.dedup();
-    let changes = names
+    let all = names.len();
+    let changes: Vec<Changed> = names
         .into_iter()
         .map(|name| {
             let before = listing(then.iter().find(|a| &a.function == name));
@@ -1545,7 +1626,8 @@ pub fn assembly_against(path: &Path, reference: &str, function: &str) -> Result<
         })
         .filter(|(_, lines)| lines.iter().any(|line| !line.starts_with(' ')))
         .collect();
-    Ok((commit, changes))
+    let same = all - changes.len();
+    (changes, same)
 }
 
 /// An instruction as a diff compares it: a jump without its distance, a
@@ -1593,16 +1675,16 @@ fn line_diff(before: &[String], after: &[String]) -> Vec<String> {
     lines
 }
 
-/// What `tondo asm --against` writes: each function that changed, its
-/// diff with a few lines around each change.
-pub fn assembly_changes_text(reference: &str, commit: &str, changes: &[Changed]) -> String {
-    let short = &commit[..commit.len().min(12)];
+/// What `tondo asm --against` and `--compiler` write: each function that
+/// changed since `from`, its diff with a few lines around each change, and
+/// how many are the same.
+pub fn assembly_changes_text(from: &str, changes: &[Changed], same: usize) -> String {
     if changes.is_empty() {
-        return format!("a release build makes the same code as of {reference} ({short})\n");
+        return format!("a release build makes the same code as {from}, in {same} functions\n");
     }
     let mut out = String::new();
     for (name, lines) in changes {
-        out.push_str(&format!("{name}, since {reference} ({short}):\n"));
+        out.push_str(&format!("{name}, against {from}:\n"));
         let near =
             |at: usize| lines[at.saturating_sub(3)..(at + 4).min(lines.len())].iter().any(|l| !l.starts_with(' '));
         let mut skipped = false;
@@ -1616,6 +1698,11 @@ pub fn assembly_changes_text(reference: &str, commit: &str, changes: &[Changed])
             }
         }
     }
+    let changed = match changes.len() {
+        1 => "1 function changed".to_string(),
+        n => format!("{n} functions changed"),
+    };
+    out.push_str(&format!("{changed}, {same} the same\n"));
     out
 }
 

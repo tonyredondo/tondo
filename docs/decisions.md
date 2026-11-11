@@ -5746,3 +5746,10 @@ less that is one of the program's file, and the reader decodes the function from
 symbols, with the debugger's decoder. The innermost frame keeps the address after its instruction,
 as the frames that called it do, which the reader takes back. The file must be the one that ran,
 and a sample often falls on the instruction that waits for a slow one rather than on it.
+
+`--all` takes every function of the program's own code, and `--compiler <tondo>` compares with
+the code another `tondo` makes of the same program, which runs `asm --json`, approved on
+2026-11-11: that a change to the compiler leaves the code as it was was proven by comparing
+executables, which differ in the date the runtime was built, and which functions a change to a
+pass touches was found by hand. Codegen keeps the functions the driver names, by their exact
+names, rather than by a part of one.

@@ -255,7 +255,7 @@ tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--pr
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision>] [--json]
-tondo asm [<project>|<file.to>] <function> [--clif] [--against <revision>] [--json]
+tondo asm [<project>|<file.to>] <function>|--all [--clif] [--against <revision> | --compiler <tondo>] [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -1937,7 +1937,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
-| `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before` e `ir_after`, o `diagnostics` si no compila; con `--against`, `against` y `changes`, cada una con `function` y `diff` (sección 7.19) |
+| `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before` e `ir_after`, o `diagnostics` si no compila; con `--against`, `against`, `changes`, cada una con `function` y `diff`, y `same`; con `--compiler`, `compiler`, `changes` y `same` (sección 7.19) |
 | `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
@@ -2216,7 +2216,8 @@ src/main.to:6  total += values[i]
 - El argumento opcional es un proyecto o un archivo, como el de `tondo
   build`, y el segundo, la función: las que se llaman así, o si ninguna, las
   que contienen el nombre en el suyo, como `said` las instancias de
-  `said[Int]`. Una función sin código propio, porque se inlinea en cada
+  `said[Int]`; o `--all`, todas las del código del programa, no las de sus
+  dependencias ni de `std`. Una función sin código propio, porque se inlinea en cada
   llamada, o que no existe, es un error del toolchain (estado 3).
 - El código de las instrucciones es el de esta máquina, x86-64 o arm64; las
   constantes que Cranelift deja tras ellas no se desensamblan, y la cabecera
@@ -2228,7 +2229,11 @@ src/main.to:6  total += values[i]
   extraída como en 7.18, función a función: da un diff de sus instrucciones,
   ` ` iguales, `-` solo de la revisión y `+` solo de ahora, con la distancia
   de los saltos fuera, que mueve el código de antes, y una llamada por lo que
-  llama; o que el código es el mismo.
+  llama; o que el código es el mismo; y cuántas funciones cambiaron y
+  cuántas no.
+- `--compiler <tondo>` compara igual con el código que otro `tondo`, uno que
+  tenga `asm`, hace del mismo programa: con `--all`, demuestra que un cambio
+  del compilador no cambia el código, o dice qué funciones cambia.
 - Con `--json` da `tondo-asm-0.1/1` (sección 7.12). `tondo mcp` lo ofrece
   como la herramienta `asm`, y el editor como *Show the Machine Code of This
   Function*, de la función donde está el cursor.

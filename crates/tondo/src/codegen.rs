@@ -766,7 +766,7 @@ fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32
 
 /// The functions whose code `tondo asm` asks codegen to keep, by what
 /// their names hold, and whether with their IR (toolchain 7.19).
-static ASKED: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+static ASKED: std::sync::Mutex<Option<(std::collections::HashSet<String>, bool)>> = std::sync::Mutex::new(None);
 static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
 
 /// The code of a function `tondo asm` asked for: its machine code, what
@@ -783,9 +783,9 @@ pub struct Kept {
     pub ir: Option<(String, String)>,
 }
 
-/// Asks the next builds to keep the code of the functions whose names hold
-/// `name`, with their IR when `ir`; or no longer.
-pub fn keep_code(asked: Option<(String, bool)>) {
+/// Asks the next builds to keep the code of the functions named, with
+/// their IR when `ir`; or no longer.
+pub fn keep_code(asked: Option<(std::collections::HashSet<String>, bool)>) {
     *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = asked;
 }
 
@@ -1501,7 +1501,7 @@ impl Codegen<'_> {
         let isa = self.module.isa();
         let asked = ASKED.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let wanted = |job: &Job| match (&asked, &job.traced) {
-            (Some((name, ir)), Some(traced)) if traced.contains(name.as_str()) => Some(*ir),
+            (Some((names, ir)), Some(traced)) if names.contains(traced) => Some(*ir),
             _ => None,
         };
         // Each function goes to the thread that compiles it.
