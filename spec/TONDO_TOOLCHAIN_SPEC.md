@@ -2189,10 +2189,15 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   y solo las del código del programa, no las de sus dependencias ni de `std`.
 - Lo que se hace en una copia de un sitio y no en otra, de un bucle
   desenrollado o de un código inlineado dos veces, se dice como no hecho si
-  es la llamada que queda o el heap; una comprobación que una copia quita y
+  es la llamada que queda, el heap, el bucle de una vuelta, el array que
+  crece o el elemento que cuenta; una comprobación que una copia quita y
   otra deja se dice de las dos, como la que quita.
 - Cada cosa es de un tipo, su `kind`: `inlined` o `call`, `frame` o `heap`,
-  `unchecked` o `checked`, o `arithmetic`. `--kind <tipo>` da solo las de ese
+  `unchecked` o `checked`, `arithmetic`; `unrolled` o `looped`, un bucle
+  contado que corre cuatro vueltas a la vez, o por qué una; `reserved` o
+  `grown`, un `push` cuyo array toma antes del bucle sitio para cada vuelta,
+  o por qué crece al empujarlo; y `lent` o `counted`, un elemento que un
+  bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta. `--kind <tipo>` da solo las de ese
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
 - `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene.

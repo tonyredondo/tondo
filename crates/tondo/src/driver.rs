@@ -1304,8 +1304,9 @@ pub struct Optimization {
     /// The functions whose code it is in: its own, and those it is inlined
     /// into.
     pub functions: Vec<String>,
-    /// `inlined` or `call`, `frame` or `heap`, `unchecked` or `checked`, or
-    /// `arithmetic`.
+    /// `inlined` or `call`, `frame` or `heap`, `unchecked` or `checked`,
+    /// `arithmetic`, `unrolled` or `looped`, `reserved` or `grown`, `lent`
+    /// or `counted`.
     pub kind: &'static str,
     /// What was done, to read after `source`.
     pub text: String,
@@ -1314,7 +1315,21 @@ pub struct Optimization {
 }
 
 /// The kinds of `Optimization`, a pass's done and its not done side by side.
-pub const OPTIMIZATION_KINDS: &[&str] = &["inlined", "call", "frame", "heap", "unchecked", "checked", "arithmetic"];
+pub const OPTIMIZATION_KINDS: &[&str] = &[
+    "inlined",
+    "call",
+    "frame",
+    "heap",
+    "unchecked",
+    "checked",
+    "arithmetic",
+    "unrolled",
+    "looped",
+    "reserved",
+    "grown",
+    "lent",
+    "counted",
+];
 
 impl Optimization {
     /// The line `tondo optimizations` writes.
@@ -1364,6 +1379,9 @@ pub fn optimizations(
             "inlined" => "call",
             "frame" => "heap",
             "checked" => "unchecked",
+            "unrolled" => "looped",
+            "reserved" => "grown",
+            "lent" => "counted",
             _ => "",
         };
         let told: std::collections::HashSet<_> =

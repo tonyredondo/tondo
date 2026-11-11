@@ -1995,6 +1995,8 @@ impl Builder<'_> {
             }
             hir::Stmt::ForRange { local, start, end, inclusive, body } => {
                 let ty = start.ty;
+                // The range's code, which the loop's test is of.
+                let range = start.span.to(end.span);
                 let start = self.expr(start);
                 let end = self.expr(end);
                 let cursor = self.new_local(ty);
@@ -2007,11 +2009,8 @@ impl Builder<'_> {
                 self.switch_to(head);
                 self.start(stmt_span(stmt));
                 let compare = if *inclusive { BinOp::Le } else { BinOp::Lt };
-                let more = self.temp(
-                    Ty::BOOL,
-                    Rvalue::Binary(compare, Operand::local(cursor), Operand::local(last)),
-                    Span::default(),
-                );
+                let more =
+                    self.temp(Ty::BOOL, Rvalue::Binary(compare, Operand::local(cursor), Operand::local(last)), range);
                 self.terminate(Terminator::Branch(more, body_block, exit));
                 self.switch_to(body_block);
                 let binding = self.bind(*local);

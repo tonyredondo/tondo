@@ -5884,3 +5884,15 @@ benchmark's code was copied into a program of its own to be looked at, where it 
 maintainer approved on 2026-11-11 that `--tests` read the tests and benchmarks instead, as `tondo
 test` builds them, with `--against` and `--compiler` too, which pass it to the revision's and to the
 other `tondo`.
+
+## The passes of loops say what they did, in `tondo optimizations`
+
+Whether `unroll` ran a loop four turns at a time, `reserve` gave an array its room before the loop
+that fills it, or `lends` read a loop's elements without counting them was found with
+`TONDO_DUMP_MIR` and `grep`, as those passes told nothing. The maintainer approved on 2026-11-11 that
+they tell it: three pairs of kinds, `unrolled` or `looped`, `reserved` or `grown`, `lent` or
+`counted`, each with why not when not, at the loop's range or array, at the push, and at the
+element. A loop over a range had no place in the code for its test, which now has the range's, as a
+loop over an array's had the array's: on the line of the `for`, which the line tables already gave
+the test. A loop only tells of the pushes that are its own, not of those of a loop inside it, which
+that one tells.

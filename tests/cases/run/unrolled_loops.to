@@ -101,3 +101,6 @@ fn main() {
 // expect-optimization: 29:12 unchecked stays within its array
 // expect-optimization: 73:9 unchecked in one copy of the code
 // expect-optimization: 83:32 frame
+// expect-optimization: 11:14 unrolled runs four turns at a time
+// expect-optimization: 39:14 unrolled
+// expect-optimization: 61:14 looped its body has

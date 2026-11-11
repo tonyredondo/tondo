@@ -112,3 +112,7 @@ fn main() {
 // expect-stdout: past memory 0 [7]
 // expect-stdout: reserved 1000 n999
 // expect-stdout: negative invalid capacity
+// expect-optimization: 16:9 reserved takes room for every turn before the loop
+// expect-optimization: 28:9 reserved
+// expect-optimization: 58:9 grown the loop pushes to it in some turns only
+// expect-optimization: 69:9 grown the loop may leave before its last turn

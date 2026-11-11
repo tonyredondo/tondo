@@ -215,6 +215,9 @@ fn lends_in(body: &mut Body) {
             }
         }
     }
+    if crate::mir_text::remarking() {
+        told(body, &uses, &gone);
+    }
     if !gone.iter().any(|&gone| gone) {
         return;
     }
@@ -296,5 +299,30 @@ fn held_elements(body: &Body, uses: &[Uses], gone: &mut [bool]) {
         if copy && loops.iter().any(held) {
             gone[element] = true;
         }
+    }
+}
+
+/// What `tondo optimizations` says of each element a loop reads that has a
+/// count: lent, or why it keeps a count of its own.
+fn told(body: &mut Body, uses: &[Uses], gone: &[bool]) {
+    let mut remarks = Vec::new();
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let Statement::Assign(target, value, span) = statement else { continue };
+        let Rvalue::Use(Operand::Copy(source)) = &**value else { continue };
+        let element = target.path.is_empty() && matches!(source.path[..], [Proj::InBounds(_) | Proj::Index(..)]);
+        let u = &uses[target.local.0 as usize];
+        if !element || u.retained != 1 {
+            continue;
+        }
+        let (kind, text) = match () {
+            _ if gone[target.local.0 as usize] => ("lent", "is lent, with no count of its own: its array holds it"),
+            _ if u.kept => ("counted", "keeps a count of its own: it is kept, as pushed, returned, captured or held"),
+            _ if u.changed => ("counted", "keeps a count of its own: it is changed"),
+            _ => ("counted", "keeps a count of its own: its array may change while it is read"),
+        };
+        remarks.push((*span, kind, text));
+    }
+    for (span, kind, text) in remarks {
+        crate::mir_text::remark(body, span, kind, || text.to_string());
     }
 }

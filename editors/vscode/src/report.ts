@@ -464,7 +464,14 @@ export interface OptimizedLine {
 }
 
 /** What costs, by the kind of a remark, as the end of its line says it. */
-const COSTS: Record<string, string> = { heap: 'allocates', checked: 'keeps a check', call: 'a call stays' };
+const COSTS: Record<string, string> = {
+  heap: 'allocates',
+  checked: 'keeps a check',
+  call: 'a call stays',
+  looped: 'a turn at a time',
+  grown: 'grows as pushed',
+  counted: 'counts each element',
+};
 
 /** The lines `tondo optimizations --json` tells of, in the order it gives
  *  them, with their files resolved against `dir`, the program's. */

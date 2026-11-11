@@ -2246,7 +2246,12 @@ checks more than it should, before measuring it.",
         params: &[
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "Only the functions whose names hold this."),
-            ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
+            (
+                "kind",
+                "string",
+                "Only one kind: inlined, call, frame, heap, unchecked, checked, arithmetic, unrolled, looped, reserved, \
+grown, lent or counted.",
+            ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
             (

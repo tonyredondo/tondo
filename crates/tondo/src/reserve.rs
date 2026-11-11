@@ -17,7 +17,12 @@ use crate::types::{Ty, TyKind, Types};
 pub fn reserve(bodies: &mut [Body], types: &Types) {
     for body in bodies {
         let noting = crate::mir_text::noting(&body.name);
-        for (before, array, last, span) in loops(body, types) {
+        let (found, grown) = loops(body, types);
+        for (span, why) in grown {
+            crate::mir_text::remark(body, span, "grown", || format!("grows as it is pushed to: {why}"));
+        }
+        for (before, array, last, span) in found {
+            crate::mir_text::remark(body, span, "reserved", || "takes room for every turn before the loop".into());
             if noting {
                 body.notes.push(format!("reserve: l{} takes room for l{} pushes after b{before}", array.0, last.0));
             }
@@ -54,11 +59,16 @@ fn abnormal(block: &BlockData) -> Option<usize> {
 /// The counted loops from 0 that push to an array once in each turn and
 /// leave only by their test or by unwinding: the block before each, the
 /// array, the bound of the counter, and where the push is.
-fn loops(body: &Body, types: &Types) -> Vec<(usize, Local, Local, Span)> {
+/// Why the pushes it leaves are, with where they are, for `tondo
+/// optimizations`.
+type Grown = Vec<(Span, &'static str)>;
+
+fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown) {
+    let mut grown = Vec::new();
     let blocks = &body.blocks;
     let pushes = |statement: &Statement| matches!(statement, Statement::Assign(_, rvalue, _) if matches!(**rvalue, Rvalue::Mutate(Mutation::Push, ..)));
     if !blocks.iter().flat_map(|block| &block.stmts).any(pushes) {
-        return Vec::new();
+        return (Vec::new(), grown);
     }
     // The statements that assign each local.
     let mut assigned: Vec<Vec<&Statement>> = vec![Vec::new(); body.locals.len()];
@@ -78,15 +88,6 @@ fn loops(body: &Body, types: &Types) -> Vec<(usize, Local, Local, Span)> {
             continue;
         }
         let members: Vec<usize> = (0..blocks.len()).filter(|&b| inside[b]).collect();
-        // Out only by the test, or by unwinding.
-        let leaves = members.iter().any(|&block| {
-            successors(&blocks[block].terminator)
-                .into_iter()
-                .any(|to| to != head && !inside[to] && abnormal(&blocks[block]) != Some(to))
-        });
-        if leaves {
-            continue;
-        }
         // Neither the counter nor its bound changed but by the step, and
         // for each array, its one push, where the loop changes it in no
         // other way.
@@ -107,37 +108,70 @@ fn loops(body: &Body, types: &Types) -> Vec<(usize, Local, Local, Span)> {
                 changed.append(&mut defined);
             }
         }
+        // A push inside a loop within this one is that loop's to tell.
+        let reached = |from: Vec<usize>, avoiding: usize| {
+            let mut seen = vec![false; blocks.len()];
+            let mut pending = from;
+            while let Some(block) = pending.pop() {
+                if block == avoiding || !inside[block] || std::mem::replace(&mut seen[block], true) {
+                    continue;
+                }
+                pending.extend(successors(&blocks[block].terminator));
+            }
+            seen
+        };
+        let repeats = |pushing: usize| {
+            let again = successors(&blocks[pushing].terminator);
+            again.contains(&pushing) || reached(again, usize::MAX)[pushing]
+        };
+        pushes.retain(|&(pushing, ..)| !repeats(pushing));
+        let arrays = |pushes: &[(usize, Local, Span)]| {
+            pushes
+                .iter()
+                .filter(|(_, array, _)| {
+                    matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_))
+                })
+                .map(|&(_, _, span)| span)
+                .collect::<Vec<_>>()
+        };
+        // Out only by the test, or by unwinding.
+        let leaves = members.iter().any(|&block| {
+            successors(&blocks[block].terminator)
+                .into_iter()
+                .any(|to| to != head && !inside[to] && abnormal(&blocks[block]) != Some(to))
+        });
+        if leaves {
+            grown.extend(arrays(&pushes).into_iter().map(|span| (span, "the loop may leave before its last turn")));
+            continue;
+        }
         let counted_once = changed.iter().filter(|&&local| local == counter).count() == 1;
         // From 0: its one assignment but the step's is `counter = 0`.
         let from_zero = assigned[counter.0 as usize].iter().any(|statement| {
             matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Use(Operand::Const(Const::Int(0, _)))))
         });
         if changed.contains(&last) || !counted_once || assigned[counter.0 as usize].len() != 2 || !from_zero {
+            let why = "the loop does not count its turns from 0 to an end it keeps";
+            grown.extend(arrays(&pushes).into_iter().map(|span| (span, why)));
             continue;
         }
         for &(pushing, array, span) in &pushes {
             let is_array = matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_));
             let once = pushes.iter().filter(|push| push.1 == array).count() == 1;
             // Once in every turn: no way from the entry to the step goes
-            // around it, nor from it back to it but through the head.
-            let reached = |from: Vec<usize>, avoiding: usize| {
-                let mut seen = vec![false; blocks.len()];
-                let mut pending = from;
-                while let Some(block) = pending.pop() {
-                    if block == avoiding || !inside[block] || std::mem::replace(&mut seen[block], true) {
-                        continue;
-                    }
-                    pending.extend(successors(&blocks[block].terminator));
-                }
-                seen
-            };
+            // around it.
             let around = reached(vec![entry], pushing)[step];
-            let again = successors(&blocks[pushing].terminator);
-            let repeats = again.contains(&pushing) || reached(again, usize::MAX)[pushing];
-            if is_array && once && !changed.contains(&array) && !around && !repeats {
-                found.push((before, array, last, span));
-            }
+            let why = match () {
+                _ if !is_array => continue,
+                _ if !once => "the loop pushes to it more than once a turn",
+                _ if changed.contains(&array) => "the loop changes it in other ways too",
+                _ if around => "the loop pushes to it in some turns only",
+                _ => {
+                    found.push((before, array, last, span));
+                    continue;
+                }
+            };
+            grown.push((span, why));
         }
     }
-    found
+    (found, grown)
 }

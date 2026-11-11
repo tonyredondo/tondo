@@ -22,10 +22,27 @@ const COPIES: usize = 4;
 pub fn unroll(bodies: &mut [Body], types: &Types) {
     for body in bodies {
         let mut done = Vec::new();
-        while let Some(found) = find(body, types, &done) {
+        // Why the loops left are run a turn at a time, as the last search
+        // found, for `tondo optimizations`.
+        let mut kept = Vec::new();
+        while let Some(found) = find(body, types, &done, &mut kept) {
             done.push(found.head);
+            let span = head_span(body, found.head);
+            crate::mir_text::remark(body, span, "unrolled", || "runs four turns at a time".to_string());
             rewrite(body, &found);
         }
+        for (head, why) in kept {
+            let span = head_span(body, head);
+            crate::mir_text::remark(body, span, "looped", || format!("runs one turn at a time: {why}"));
+        }
+    }
+}
+
+/// Where the code of a loop's head is: its test.
+fn head_span(body: &Body, head: usize) -> Span {
+    match body.blocks[head].stmts.first() {
+        Some(Statement::Assign(_, _, span)) => *span,
+        _ => Span::default(),
     }
 }
 
@@ -60,7 +77,13 @@ fn local(operand: &Operand) -> Option<Local> {
     }
 }
 
-fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
+fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, String)>) -> Option<Counted> {
+    kept.clear();
+    let mut keep = |head: usize, why: &str| {
+        if crate::mir_text::remarking() {
+            kept.push((head, why.to_string()));
+        }
+    };
     let blocks = &body.blocks;
     let mut predecessors = vec![Vec::new(); blocks.len()];
     for (block, data) in blocks.iter().enumerate() {
@@ -125,8 +148,13 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
             Some(Statement::Assign(_, value, _)) => takes(value),
             _ => None,
         };
-        let Some(elements) = first.filter(|_| statements <= SMALL) else { continue };
+        let Some(elements) = first else { continue };
+        if statements > SMALL {
+            keep(head, &format!("its body has {statements} statements, more than the {SMALL} unrolling copies"));
+            continue;
+        }
         if inner_loop(blocks, &loop_blocks, entry) {
+            keep(head, "it holds a loop");
             continue;
         }
         for &block in &loop_blocks {
@@ -141,6 +169,7 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
             // four copies of those cost more to compile than they save.
             for statement in &blocks[block].stmts {
                 if elements && calls_the_runtime(body, types, statement) {
+                    keep(head, "each turn counts a value or measures a text, which costs more than the test saved");
                     continue 'steps;
                 }
                 if let Statement::Assign(_, value, _) = statement
@@ -154,6 +183,7 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
                             | Rvalue::Select(..)
                     )
                 {
+                    keep(head, "each turn calls a function or waits, which costs more than the test saved");
                     continue 'steps;
                 }
                 let changed = match statement {
