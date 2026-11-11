@@ -114,6 +114,12 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
 /// polls without holding its worker until the future's waker notifies it;
 /// `None` when the task is cancelled first, which drops the future.
 pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Option<T> {
+    wait_in(true, future)
+}
+
+/// `wait_for`, polling in the runtime's context or, where the future needs
+/// none, as our sockets' readiness, without entering it each time.
+fn wait_in<T>(context: bool, future: impl std::future::Future<Output = T>) -> Option<T> {
     use std::task::{Poll, Waker};
     if current().is_null() {
         return Some(super::http::runtime().block_on(future));
@@ -122,7 +128,7 @@ pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Optio
     loop {
         let wait = Wait::new();
         let waker = Waker::from(wait.clone());
-        let (polled, let_go) = poll_once(future.as_mut(), &waker);
+        let (polled, let_go) = poll_once(future.as_mut(), &waker, context);
         // Not here, between the poll that gave the waker away and the wait
         // it wakes: a wait of closing would take the wake meant for that one.
         close_later(let_go);
@@ -658,7 +664,10 @@ pub(crate) fn run_until<R: Send + 'static>(
                 (result, state.host.as_mut().and_then(|host| host.blocked()))
             };
             let Some(blocked) = blocked else { return result };
-            let waited = wait_for(async move {
+            // A socket's readiness, with no deadline, needs no runtime's
+            // context to wait for.
+            let context = deadline.is_some() || !matches!(blocked, Ready::Socket(_));
+            let waited = wait_in(context, async move {
                 match deadline {
                     Some(at) => tokio::time::timeout_at(at.into(), blocked).await.is_ok(),
                     None => {
@@ -789,8 +798,9 @@ thread_local! {
 fn poll_once<F: std::future::Future>(
     future: std::pin::Pin<&mut F>,
     waker: &std::task::Waker,
+    context: bool,
 ) -> (std::task::Poll<F::Output>, Vec<usize>) {
-    let _context = super::http::runtime().enter();
+    let _context = context.then(|| super::http::runtime().enter());
     holding(|| future.poll(&mut std::task::Context::from_waker(waker)))
 }
 
