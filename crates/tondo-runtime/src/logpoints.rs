@@ -197,7 +197,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
         let near = of_file.iter().map(|site| site.3).min_by_key(|known| known.abs_diff(line));
         return error(&match (of_file.is_empty(), near) {
             (true, _) => {
-                format!("{file} has no places for a logpoint: this build has none, or the file is not its code")
+                format!(
+                    "{file} has no places for a logpoint: this build has none, as one made with \
+                     `TONDO_LOGPOINT_SITES=0` in its environment, or the file is not its code"
+                )
             }
             (_, Some(near)) => format!(
                 "line {line} has no place for a logpoint: it has no code, or is in a tight loop, which calls nothing; \

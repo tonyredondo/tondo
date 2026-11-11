@@ -62,4 +62,5 @@ run {"path": "tax.to"}
 A program that runs in production is a Release build: `debug_start` on its
 process, with `TONDO_DIAGNOSTICS=1`, stops one task while the others go on and
 costs nothing until then. `logpoint` shows what a line holds, without stopping
-anything. `catch panic` stops where a panic starts, with all its frames.
+anything, through a `nop` the build leaves at the start of each line, which
+`TONDO_LOGPOINT_SITES=0` in the environment of the build leaves out. `catch panic` stops where a panic starts, with all its frames.

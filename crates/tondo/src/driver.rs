@@ -2102,7 +2102,18 @@ pub fn compiler_identity() -> String {
     let exe = std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok());
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();
     let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
-    format!("{VERSION}:{}:{stamp}{layout}", RUNTIME_HASH)
+    let sites = if logpoint_sites() { "" } else { ":no logpoint sites" };
+    format!("{VERSION}:{}:{stamp}{layout}{sites}", RUNTIME_HASH)
+}
+
+/// `TONDO_LOGPOINT_SITES=0`: a build without probes leaves no place for a
+/// logpoint at the start of each line, which costs the instructions of a
+/// `nop` each time the line runs: a function that does little but call,
+/// as a recursive one, runs a few percent faster, and `tondo logpoint`
+/// finds no place in it.
+pub fn logpoint_sites() -> bool {
+    static SITES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SITES.get_or_init(|| std::env::var("TONDO_LOGPOINT_SITES").map_or(true, |value| value.trim() != "0"))
 }
 
 /// `TONDO_LAYOUT_SEED`: the order a build lays the program's functions out

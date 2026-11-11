@@ -1035,7 +1035,11 @@ que las demás cuestan igual. Cada vez detiene esa
 tarea mientras una copia del proceso muestra los valores, como en un volcado.
 Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambiar
 su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
-un 2 % como mucho, y el ejecutable crece menos del 1 %. El editor pone un logpoint
+un 2 % como mucho, y el ejecutable crece menos del 1 %; una función que casi solo llama,
+como una recursiva, ejecuta hasta un 16 % más de instrucciones y tarda un 6 % más. Con
+`TONDO_LOGPOINT_SITES=0` en el entorno del build, el compilador no deja esas llamadas:
+el build es otro en la caché, y `tondo logpoint` no encuentra dónde escribir en él, y lo
+dice. El editor pone un logpoint
 en la línea del cursor de un programa que elige de los que corren, con su texto y su
 condición, y muestra lo que llega en un panel. Con `--dump <archivo>` esa vez deja
 además un volcado de todo el programa tal como estaba allí, sin pararlo más que el

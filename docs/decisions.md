@@ -5971,3 +5971,12 @@ captures and what they hold are each written once and lent to nothing, and the v
 release, which the closure's copy could outlive: `prove` then finds that neither can overflow. A
 closure that comes from elsewhere, as one a benchmark's runner calls with its own captures, is the
 same as before.
+
+## A build may leave out the places of logpoints
+
+A build without probes leaves a call that is nothing, five bytes of `nop`, at the start of each line
+outside a loop that calls nothing, where `tondo logpoint` writes its call. In five programs it cost
+no more than the noise; in a function that does little but call, as `fib`, it is 16% of the
+instructions and 6% of the time. The maintainer chose on 2026-11-11 to keep them by default and let
+a build leave them out with `TONDO_LOGPOINT_SITES=0` in its environment, which is part of the key of
+the build in the cache; `tondo logpoint` then says that the build has no places, and why.

@@ -891,6 +891,38 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert!(one != plain && two != one);
 }
 
+/// `TONDO_LOGPOINT_SITES=0` builds a program without the places a logpoint
+/// writes its call at, the start of each line: its functions are smaller,
+/// it does what it did, and the build is one of its own, not the other's
+/// from the cache.
+#[test]
+fn a_build_without_logpoint_sites() {
+    let source: &[u8] = b"import std.console\n\nfn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    \
+        fib(n - 1) + fib(n - 2)\n}\n\nfn main() {\n    console.println(\"{fib(20)}\")\n}\n";
+    let dir = project_at("no-logpoint-sites", &[("main.to", source)]);
+    let tondo_with = |sites: Option<&str>, args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        command.args(args).current_dir(&dir);
+        match sites {
+            Some(sites) => command.env("TONDO_LOGPOINT_SITES", sites),
+            None => command.env_remove("TONDO_LOGPOINT_SITES"),
+        };
+        let ran = command.output().unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        String::from_utf8_lossy(&ran.stdout).into_owned()
+    };
+    let size = |said: &str| -> u64 {
+        let first = said.lines().next().unwrap_or_default();
+        let bytes = first.split('(').nth(1).and_then(|rest| rest.split(' ').next());
+        bytes.and_then(|bytes| bytes.parse().ok()).unwrap_or_else(|| panic!("{said}"))
+    };
+    let with = size(&tondo_with(None, &["asm", "main.to", "fib"]));
+    let without = size(&tondo_with(Some("0"), &["asm", "main.to", "fib"]));
+    assert!(without < with, "{without} bytes without sites, {with} with them");
+    assert_eq!(tondo_with(Some("0"), &["run", "main.to"]), "6765\n");
+    assert_eq!(tondo_with(None, &["run", "main.to"]), "6765\n");
+}
+
 /// `tondo asm` writes the machine code a release build makes of a
 /// function, under the lines of the program it is of, with its IR before
 /// and after Cranelift optimizes it with `--clif`, as data with `--json`,
