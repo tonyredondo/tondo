@@ -24,6 +24,11 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("io.rs", "HELD", "set while a future is polled, which never waits: what it lets go waits for the poll's end"),
     ("json.rs", "SPARE", "readers and writers let go, taken and given back by calls that never wait, on any thread"),
     (
+        "tasks/group.rs",
+        "SPARE_GROUPS",
+        "groups let go, taken and given back by calls that never wait, through functions never inlined, on any thread",
+    ),
+    (
         "tasks/join.rs",
         "SPARE_BLOCKS",
         "blocks of tasks that ended, taken and given back by calls that never wait, on any thread",

@@ -71,7 +71,7 @@ pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
         failed: None,
         waiter: None,
     };
-    let group = match SPARE_GROUPS.try_with(|spare| spare.borrow_mut().pop()).ok().flatten() {
+    let group = match spare_group() {
         Some(mut group) => {
             *group = fresh(std::mem::take(&mut group.entries));
             group
@@ -88,6 +88,27 @@ thread_local! {
     // The boxes are what is kept: a program holds a group by its box.
     #[allow(clippy::vec_box)]
     static SPARE_GROUPS: std::cell::RefCell<Vec<Box<GroupObject>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A group this thread let go of. Never inlined, as `worker` is not: the
+/// thread-local's address is the thread's that calls, whatever the caller
+/// waited for before.
+#[inline(never)]
+fn spare_group() -> Option<Box<GroupObject>> {
+    SPARE_GROUPS.try_with(|spare| spare.borrow_mut().pop()).ok().flatten()
+}
+
+/// Keeps a group let go of for this thread's next, as `spare_group` takes
+/// it: freeing its joins may have waited, and moved the task to another
+/// thread. A thread that ends lets go of it as before.
+#[inline(never)]
+fn keep_group(group: Box<GroupObject>) {
+    let _ = SPARE_GROUPS.try_with(|spare| {
+        let mut spare = spare.borrow_mut();
+        if spare.len() < SPARE_GROUPS_KEPT {
+            spare.push(group);
+        }
+    });
 }
 
 /// How many groups a thread keeps, and the most entries a kept one has room for.
@@ -297,13 +318,7 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
         let mut group = Box::from_raw(group);
         group.entries.clear();
         if group.entries.capacity() <= KEPT_ENTRIES {
-            // A thread that ends lets go of it as before.
-            let _ = SPARE_GROUPS.try_with(|spare| {
-                let mut spare = spare.borrow_mut();
-                if spare.len() < SPARE_GROUPS_KEPT {
-                    spare.push(group);
-                }
-            });
+            keep_group(group);
         }
     }
 }
