@@ -5819,3 +5819,19 @@ in each turn of the outer one, copies the elements no more often than pushes wou
 `Array.withCapacity`, which reserved nothing, takes its room too. `map`, `zip` and `enumerate` of
 10,000 elements make one allocation instead of 13, and a program's `for` loop that pushes in every
 turn one instead of 13, 5.7 µs instead of 7.5.
+
+## An element of an array a function was given is lent, not counted
+
+A loop over an array of texts or records that a function was given, `for name in names`, held the
+array with a reference of its own and each element too: a retain and a release for every element
+read, two calls of the runtime and two atomic operations around a measure that costs less. What a
+function is given lives, unchanged, for the whole call, which is why `lends.rs` already dropped the
+reference of a copy that is only lent; a copy of such a copy lives as long, and so does an element of
+an array that does, since nothing releases an element while its array stays as it is. Since
+2026-11-11 the pass follows copies of copies, and an element read into a local is such a copy, while
+reading an element or a length keeps nothing: an element that is kept, pushed, returned, held past
+its turn, captured or given to a task, keeps its reference as before. A function that sums the
+lengths of a thousand names it was given runs a third fewer instructions and cycles. A loop over an
+array the function made itself, or one inlined where the array is its caller's own local, is left as
+it was: whether nothing changes that array during the loop is a question of the order of its
+statements, which this pass does not ask.

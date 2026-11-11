@@ -1,0 +1,100 @@
+// An element of an array a function was given, read in a loop and only
+// measured or lent to a call, is neither retained nor released: nothing
+// releases it while the array stays as it is. One that is kept, pushed into
+// another array, returned, held past its turn, captured or given to a task,
+// is counted as before, and each is what it was.
+
+import std.console
+
+type User = {
+    name: String
+    tags: Array[String]
+}
+
+fn lengths(names: Array[String]): Int {
+    var count = 0
+    for name in names {
+        count += name.length()
+    }
+    count
+}
+
+fn kept(names: Array[String]): Array[String] {
+    var out: Array[String] = []
+    for name in names {
+        if name.length() > 3 {
+            out.push(name)
+        }
+    }
+    out
+}
+
+fn longest(names: Array[String]): String {
+    var best = ""
+    for name in names {
+        if name.length() > best.length() {
+            best = name
+        }
+    }
+    best
+}
+
+fn first(names: Array[String], wanted: Int): String {
+    for name in names {
+        if name.length() == wanted {
+            return name
+        }
+    }
+    "none"
+}
+
+fn later(names: Array[String]): Array[fn(): String] {
+    var all: Array[fn(): String] = []
+    for name in names {
+        all.push(() { name })
+    }
+    all
+}
+
+fn measured(name: String): Int {
+    name.length()
+}
+
+fn spawned(names: Array[String]): Int {
+    var total = 0
+    for name in names {
+        let job = spawn measured(name)
+        total += job.wait()
+    }
+    total
+}
+
+fn described(user: User): String {
+    "{user.name}:{user.tags.length()}"
+}
+
+fn users(all: Array[User]): Int {
+    var total = 0
+    for user in all {
+        total += described(user).length() + user.tags.length()
+    }
+    total
+}
+
+fn main() {
+    var names: Array[String] = []
+    for i in 0..8 {
+        names.push("n{"x".repeat(i)}")
+    }
+    console.println("{lengths(names)} {kept(names)} {longest(names)} {first(names, 3)} {first(names, 30)}")
+    console.println("{later(names).map((f) { f() })} {spawned(names)}")
+    var all: Array[User] = []
+    for i in 0..4 {
+        all.push(User { name: "user {i}", tags: names.take(i) })
+    }
+    console.println("{users(all)} {names.length()} {all[3].tags}")
+}
+
+// expect-stdout: 36 [nxxx, nxxxx, nxxxxx, nxxxxxx, nxxxxxxx] nxxxxxxx nxx none
+// expect-stdout: [n, nx, nxx, nxxx, nxxxx, nxxxxx, nxxxxxx, nxxxxxxx] 36
+// expect-stdout: 38 8 [n, nx, nxx]

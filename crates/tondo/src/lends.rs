@@ -13,6 +13,13 @@
 //! released, cleared, moved nor lent, nor a loan of the caller's place. The
 //! copy must take its value once, retained at once, and be read nowhere
 //! else.
+//!
+//! Such a copy then lives unchanged for the whole call too, and so does an
+//! element of an array that does, which nothing releases while the array
+//! stays as it is: `for name in names`, as inlining leaves a loop over a
+//! parameter, held the array and each name with a reference of its own, a
+//! retain and a release for each name read. Reading an element or a length
+//! keeps nothing.
 
 use crate::mir::*;
 
@@ -78,6 +85,14 @@ fn lends_in(body: &mut Body) {
                             uses[target.local.0 as usize].copy_of = Some(source.clone());
                             uses[source.local.0 as usize].kept = true;
                         }
+                        // An element, which the array keeps.
+                        Rvalue::Use(Operand::Copy(source))
+                            if target.path.is_empty()
+                                && matches!(source.path[..], [Proj::InBounds(_) | Proj::Index(..)]) =>
+                        {
+                            uses[target.local.0 as usize].copy_of = Some(source.clone());
+                        }
+                        Rvalue::Length(_) => {}
                         // The program's functions and `fn` values borrow their
                         // arguments, and a lock borrows what it locks; what the
                         // runtime does with others, as a channel's send, may
@@ -137,23 +152,25 @@ fn lends_in(body: &mut Body) {
         let loan = body.loans.get(index).copied().unwrap_or(false);
         alive[param.0 as usize] = u.written == 0 && unchanged(u) && !(loan && u.passed);
     }
-    for local in 0..body.locals.len() {
-        let u = &uses[local];
-        if u.written == 1 && unchanged(u) && u.copy_of.as_ref().is_some_and(|source| alive[source.local.0 as usize]) {
-            alive[local] = true;
+    // A copy of what lives that needs no reference of its own lives too,
+    // and an element of it: as far as copies of copies go.
+    let mut gone = vec![false; body.locals.len()];
+    for _ in 0..3 {
+        for local in 0..body.locals.len() {
+            let u = &uses[local];
+            if alive[local] || u.written != 1 || u.changed {
+                continue;
+            }
+            if !u.copy_of.as_ref().is_some_and(|source| alive[source.local.0 as usize]) {
+                continue;
+            }
+            if unchanged(u) {
+                alive[local] = true;
+            } else if u.retained == 1 && u.released > 0 && !u.kept {
+                (alive[local], gone[local]) = (true, true);
+            }
         }
     }
-    let mut gone: Vec<bool> = uses
-        .iter()
-        .map(|u| {
-            u.written == 1
-                && u.retained == 1
-                && u.released > 0
-                && !u.changed
-                && !u.kept
-                && u.copy_of.as_ref().is_some_and(|source| alive[source.local.0 as usize])
-        })
-        .collect();
     // The retain must follow the copy at once: nothing between them may
     // release what it took.
     for block in &body.blocks {
