@@ -6038,3 +6038,16 @@ the flag of attention says at once, is one compare and swap and the note of who 
 last lock a task took to change, let go of with nobody waiting, one subtraction. Everything else
 goes on in a function apart, as before. The program of the mutex row does a quarter fewer
 instructions.
+
+## A closure made with constants reads them as constants
+
+A closure's body takes its captures from the closure it is given, a parameter wherever nothing
+inlines the body: the closure a benchmark's runner calls, or one a function that calls itself takes,
+kept the check of `x + step` with `let step = 3`, and of the sum it fed. Since 2026-11-12 a pass
+before the inliner, `captured`, finds the closures whose every maker gives a capture the same
+constant, a number, a character or a boolean assigned once and lent to nothing, where the closure
+is made, copied or called and its code is used in no other way; the body, which alone may change
+what it was given, reads such a capture from a local assigned the constant, unless it changes it,
+lends it or passes it to a call. A closure made inside another learns its captures once the outer
+one's are known, a round later. The closure row lost its two checks, and Cranelift folds the four
+additions of a turn the unrolled loop makes: 5.8k instructions a run became 2.6k.

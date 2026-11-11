@@ -7,6 +7,7 @@ pub mod ast;
 pub mod bind;
 pub mod bisect;
 pub mod built;
+pub mod captured;
 pub mod check;
 pub mod cli;
 pub mod codegen;

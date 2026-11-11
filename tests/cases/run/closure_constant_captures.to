@@ -1,0 +1,60 @@
+// A closure's captures that are the same constant wherever it is made are
+// read as that constant in its body, which a call through a `fn` value
+// does not inline: a sum of them is bounded as it would be inlined. One made
+// with different values, or with one a sum can overflow by, keeps its checks
+// and panics where it overflows.
+
+import std.console
+
+// Calls itself, so that nothing inlines it, nor the closure it calls.
+fn repeat(f: fn(): Int, times: Int): Int {
+    if times == 0 {
+        return 0
+    }
+    f() + repeat(f, times - 1)
+}
+
+fn sums(step: Int): fn(): Int {
+    () {
+        var total = 0
+        for i in 0..1000 {
+            total += i + step
+        }
+        total
+    }
+}
+
+fn main() {
+    let step = 3
+    let known = () {
+        var total = 0
+        for i in 0..1000 {
+            total += i + step
+        }
+        total
+    }
+    console.println("{repeat(known, 2)}")
+    // Made with 2 and with 5: no constant.
+    console.println("{repeat(sums(2), 1)} {repeat(sums(5), 1)}")
+    let big = 9_223_372_036_854_775_000
+    let huge = () {
+        var total = 0
+        for i in 0..1000 {
+            total += i + big
+        }
+        total
+    }
+    match recover { repeat(huge, 1) } {
+        ok(total) => console.println("{total}")
+        err(caught) => console.println("caught {caught.message}")
+    }
+}
+
+// expect-stdout: 1005000
+// expect-stdout: 501500 504500
+// expect-stdout: caught 9223372036854775000 + 9223372036854775001 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-optimization: 32:13 unchecked
+// expect-no-optimization: 32:13 checked
+// expect-no-optimization: 32:22 checked
+// expect-optimization: 21:13 checked
+// expect-optimization: 43:13 checked

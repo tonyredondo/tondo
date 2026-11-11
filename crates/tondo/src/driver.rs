@@ -1266,6 +1266,8 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
 /// The MIR passes of a release build, in their order, each followed by
 /// what `after` does.
 fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sources: &SourceMap) {
+    crate::captured::captured(bodies, types);
+    after("captured", bodies, types, sources);
     crate::inline::inline(bodies);
     after("inline", bodies, types, sources);
     crate::elide::elide(bodies, types);
