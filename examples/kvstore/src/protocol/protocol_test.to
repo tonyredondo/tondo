@@ -1,0 +1,45 @@
+import std.testing
+
+test readsEachCommand {
+    assert(parse("SET name Ada Lovelace") == ok(Command.Set { key: "name", value: "Ada Lovelace" }))
+    assert(parse("get name") == ok(Command.Get("name")))
+    assert(parse("DEL name") == ok(Command.Delete("name")))
+    assert(parse("INCR hits") == ok(Command.Increment { key: "hits", by: 1 }))
+    assert(parse("INCR hits -5") == ok(Command.Increment { key: "hits", by: -5 }))
+    assert(parse("  KEYS  ") == ok(Command.Keys))
+    assert(parse("quit") == ok(Command.Quit))
+}
+
+test saysWhatIsWrongWithALine {
+    assert(parse("") == err(ProtocolError.Empty))
+    assert(parse("PUSH a b") == err(ProtocolError.Unknown("PUSH")))
+    assert(parse("SET lonely") == err(ProtocolError.Usage("SET", "SET key value")))
+    assert(parse("GET a b") == err(ProtocolError.Usage("GET", "GET key")))
+    assert(parse("INCR hits many") == err(ProtocolError.NotANumber("many")))
+    assert("{ProtocolError.Usage("GET", "GET key")}" == "`GET` is written `GET key`")
+}
+
+test repliesAreOneLineEach {
+    assert(format(Reply.Ok) == "OK")
+    assert(format(Reply.Value("Ada")) == "VALUE Ada")
+    assert(format(Reply.Missing) == "NONE")
+    assert(format(Reply.Keys(["a", "b"])) == "KEYS a b")
+    assert(format(Reply.Keys([])) == "KEYS")
+    assert(format(Reply.Error("no")) == "ERROR no")
+}
+
+/// No line makes the parser panic, and a reply never spans two lines,
+/// whatever was stored. `tondo test --fuzz` looks for a line that does.
+test anyLineIsACommandOrAnError {
+    testing.fuzz(
+        "parse",
+        ["SET a 1", "GET a", "INCR a 99999999999999999999", "", "KEYS now"],
+        (line: String) {
+            match parse(line) {
+                ok(Command.Set { key, .. }) => assert(not key.isEmpty())
+                ok(_) => {}
+                err(error) => assert(not "{error}".isEmpty())
+            }
+        },
+    )
+}

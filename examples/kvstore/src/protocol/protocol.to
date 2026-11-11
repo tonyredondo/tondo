@@ -1,0 +1,99 @@
+/// What a client can ask, a line each.
+pub enum Command {
+    /// `SET key value`: keeps the value under the key.
+    Set { key: String, value: String }
+    /// `GET key`: the value of the key.
+    Get(String)
+    /// `DEL key`: forgets the key.
+    Delete(String)
+    /// `INCR key` or `INCR key 5`: adds to the number under the key.
+    Increment { key: String, by: Int }
+    /// `KEYS`: every key there is.
+    Keys
+    /// `QUIT`: ends the connection.
+    Quit
+}
+
+/// What the server answers, a line each.
+pub enum Reply {
+    Ok
+    Value(String)
+    Missing
+    Keys(Array[String])
+    Bye
+    Error(String)
+}
+
+/// Why a line is not a command.
+pub enum ProtocolError {
+    Empty
+    Unknown(String)
+    /// A command with other arguments than it takes: its name and its usage.
+    Usage(String, String)
+    NotANumber(String)
+}
+
+impl Display for ProtocolError {
+    fn display(self): String {
+        match self {
+            ProtocolError.Empty => "an empty line"
+            ProtocolError.Unknown(name) => "unknown command `{name}`"
+            ProtocolError.Usage(name, usage) => "`{name}` is written `{usage}`"
+            ProtocolError.NotANumber(text) => "`{text}` is not a number"
+        }
+    }
+}
+
+/// The command a line holds. The name is in any case; a value is the rest
+/// of the line, spaces included.
+pub fn parse(line: String): Command ! ProtocolError {
+    let trimmed = line.trim()
+    if trimmed.isEmpty() {
+        fail ProtocolError.Empty
+    }
+    let (name, rest) = match trimmed.splitOnce(" ") {
+        some((first, after)) => (first.toUpper(), after.trim())
+        none => (trimmed.toUpper(), "")
+    }
+    match name {
+        "SET" => match rest.splitOnce(" ") {
+            some((key, value)) => Command.Set { key, value: value.trim() }
+            none => fail ProtocolError.Usage("SET", "SET key value")
+        }
+        "GET" => Command.Get(one(name, rest)?)
+        "DEL" => Command.Delete(one(name, rest)?)
+        "INCR" => match rest.words() {
+            [key] => Command.Increment { key, by: 1 }
+            [key, amount] => match Int.parse(amount) {
+                ok(by) => Command.Increment { key, by }
+                err(_) => fail ProtocolError.NotANumber(amount)
+            }
+            _ => fail ProtocolError.Usage("INCR", "INCR key [amount]")
+        }
+        "KEYS" if rest.isEmpty() => Command.Keys
+        "QUIT" if rest.isEmpty() => Command.Quit
+        "KEYS" => fail ProtocolError.Usage("KEYS", "KEYS")
+        "QUIT" => fail ProtocolError.Usage("QUIT", "QUIT")
+        _ => fail ProtocolError.Unknown(name)
+    }
+}
+
+/// The one key a command takes.
+fn one(name: String, rest: String): String ! ProtocolError {
+    match rest.words() {
+        [key] => key
+        _ => fail ProtocolError.Usage(name, "{name} key")
+    }
+}
+
+/// The line that says a reply.
+pub fn format(reply: Reply): String {
+    match reply {
+        Reply.Ok => "OK"
+        Reply.Value(value) => "VALUE {value}"
+        Reply.Missing => "NONE"
+        Reply.Keys(keys) => "KEYS {keys.join(" ")}".trim()
+        Reply.Bye => "BYE"
+        Reply.Error(message) => "ERROR {message}"
+    }
+}

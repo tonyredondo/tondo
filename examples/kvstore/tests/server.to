@@ -1,0 +1,60 @@
+import kvstore.server
+import std.net
+import std.time
+
+/// A connection to a server.
+fn connect(running: server.Running): net.Stream ! net.NetError {
+    net.connect("127.0.0.1", running.port(), timeout: time.seconds(5))
+}
+
+/// Sends a line and gives the answer.
+fn ask(client: net.Stream, line: String): String ! net.NetError {
+    client.write("{line}\n")?
+    client.readLine(timeout: time.seconds(5))?.unwrapOr("(closed)")
+}
+
+test answersOverTcp {
+    let running = server.start("127.0.0.1", 0)?
+    defer running.stop()
+    let client = connect(running)?
+    assert(ask(client, "SET name Ada Lovelace")? == "OK")
+    assert(ask(client, "GET name")? == "VALUE Ada Lovelace")
+    assert(ask(client, "GET nobody")? == "NONE")
+    assert(ask(client, "INCR hits 5")? == "VALUE 5")
+    assert(ask(client, "KEYS")? == "KEYS name hits")
+    assert(ask(client, "FLY away")? == "ERROR unknown command `FLY`")
+    assert(ask(client, "QUIT")? == "BYE")
+    assert(ask(client, "GET name")? == "(closed)")
+}
+
+test connectionsShareTheStore {
+    let running = server.start("127.0.0.1", 0)?
+    defer running.stop()
+    let writer = connect(running)?
+    let reader = connect(running)?
+    assert(ask(writer, "SET color blue")? == "OK")
+    assert(ask(reader, "GET color")? == "VALUE blue")
+    assert(running.snapshot().values == ["color": "blue"])
+    _ = ask(writer, "QUIT")?
+    _ = ask(reader, "QUIT")?
+}
+
+/// A hundred increments from ten connections at once: none is lost.
+fn count(running: server.Running, times: Int): !net.NetError {
+    let client = connect(running)?
+    for _ in 0..times {
+        _ = ask(client, "INCR hits")?
+    }
+    _ = ask(client, "QUIT")?
+}
+
+test noIncrementIsLost {
+    let running = server.start("127.0.0.1", 0)?
+    defer running.stop()
+    var clients = Group[!net.NetError]()
+    for _ in 0..10 {
+        clients.add(spawn count(running, 10))
+    }
+    _ = clients.wait()?
+    assert(running.snapshot().values["hits"] == some("100"))
+}
