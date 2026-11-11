@@ -1,0 +1,93 @@
+import std.fs
+
+/// A few notes, in memory.
+fn shelf(): fs.FileSystem ! NoteError {
+    let files = fs.memory()
+    save(
+        files,
+        Note {
+            name: "green-tea"
+            tags: ["tea", "shopping"]
+            text: "Buy sencha.\nBrew it at 70 degrees, never boiling."
+        },
+    )?
+    save(
+        files,
+        Note { name: "black-tea", tags: ["tea"], text: "Assam takes boiling water and milk." },
+    )?
+    save(files, Note { name: "bread", text: "# Bread\n\nFlour, water, salt and time." })?
+    files
+}
+
+test aNoteIsAFileOfMarkdown {
+    let files = shelf()?
+    assert(
+        files.readText("green-tea.md").unwrapOr("") ==
+            "tags: tea, shopping\n\nBuy sencha.\nBrew it at 70 degrees, never boiling.\n",
+    )
+    assert(files.readText("bread.md").unwrapOr("") == "# Bread\n\nFlour, water, salt and time.\n")
+}
+
+test readsBackWhatItWrote {
+    let files = shelf()?
+    let note = load(files, "green-tea")?
+    assert(note.tags == ["tea", "shopping"])
+    assert(note.text == "Buy sencha.\nBrew it at 70 degrees, never boiling.")
+    assert(load(files, "bread")?.tags.isEmpty())
+}
+
+test listsEveryNoteByName {
+    assert(all(shelf()?)?.map((note) { note.name }) == ["black-tea", "bread", "green-tea"])
+}
+
+test aNoteThatIsNotThereIsNotFound {
+    let files = shelf()?
+    match load(files, "coffee") {
+        err(error) => assert("{error}" == "there is no note `coffee`")
+        ok(_) => assert(false, "found a note that is not there")
+    }
+    assert(remove(files, "coffee").isErr())
+}
+
+test aNameCannotLeaveTheDirectory {
+    let files = shelf()?
+    for name in ["../secrets", "a/b", "Tea", "tea.md", "", "té"] {
+        match save(files, Note { name, text: "x" }) {
+            err(NoteError.BadName(_)) => {}
+            _ => assert(false, "`{name}` was taken as a name")
+        }
+        assert(load(files, name).isErr())
+    }
+}
+
+test removesANote {
+    let files = shelf()?
+    remove(files, "bread")?
+    assert(not files.exists("bread.md"))
+    assert(all(files)?.length() == 2)
+}
+
+test findsTheNotesThatSayTheMost {
+    let files = shelf()?
+    let found = search(files, "Sencha boiling")?
+    assert(found.map((each) { (each.name, each.score) }) == [("green-tea", 2), ("black-tea", 1)])
+    assert(found[0].line == "Buy sencha.")
+}
+
+test aWordInTheNameOrTheTagsCountsMore {
+    let files = shelf()?
+    save(files, Note { name: "kettle", text: "For tea, tea and more tea." })?
+    let found = search(files, "tea")?
+    // Three for the name and two for the tag, against three in the text.
+    assert(
+        found.map((each) { (each.name, each.score) }) ==
+            [("black-tea", 5), ("green-tea", 5), ("kettle", 3)],
+    )
+}
+
+test aSearchHasALimitAndMayFindNothing {
+    let files = shelf()?
+    assert(search(files, "tea", limit: 1)?.length() == 1)
+    assert(search(files, "coffee")?.isEmpty())
+    assert(search(files, "   ")?.isEmpty())
+}

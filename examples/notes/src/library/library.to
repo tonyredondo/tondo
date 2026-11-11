@@ -1,0 +1,140 @@
+import std.fs
+
+/// A note: a Markdown file, `<name>.md`, whose first line may say its tags
+/// as `tags: tea, shopping`.
+pub type Note = {
+    name: String
+    tags: Array[String] = []
+    text: String
+}
+
+/// Why something could not be done with a note.
+pub enum NoteError {
+    NotFound(String)
+    /// A name that is not lower-case letters, digits and `-`.
+    BadName(String)
+    /// The files could not be read or written: why.
+    Files(String)
+}
+
+impl Display for NoteError {
+    fn display(self): String {
+        match self {
+            NoteError.NotFound(name) => "there is no note `{name}`"
+            NoteError.BadName(name) =>
+                "`{name}` is not a name: use lower-case letters, digits and `-`"
+            NoteError.Files(error) => "the notes cannot be reached: {error}"
+        }
+    }
+}
+
+/// What the file system said, as a `NoteError`.
+fn unreachable(error: fs.FsError): NoteError {
+    NoteError.Files("{error}")
+}
+
+/// A name is what a file can be called anywhere, and nothing that could
+/// leave the directory of the notes.
+fn checked(name: String): String ! NoteError {
+    let fine = name
+        .chars()
+        .all((c) { (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-' })
+    if not fine or name.isEmpty() {
+        fail NoteError.BadName(name)
+    }
+    name
+}
+
+/// A note as the text of its file.
+fn written(note: Note): String {
+    if note.tags.isEmpty() {
+        "{note.text.trim()}\n"
+    } else {
+        "tags: {note.tags.join(", ")}\n\n{note.text.trim()}\n"
+    }
+}
+
+/// The note the text of a file holds.
+fn parsed(name: String, content: String): Note {
+    match content.splitOnce("\n") {
+        some((first, rest)) if first.startsWith("tags:") => {
+            let tags = first
+                .removePrefix("tags:")
+                .split(",")
+                .map((tag) { tag.trim() })
+                .filter((tag) { not tag.isEmpty() })
+            Note { name, tags, text: rest.trim() }
+        }
+        _ => Note { name, text: content.trim() }
+    }
+}
+
+/// Writes a note, replacing the one of that name.
+pub fn save(files: fs.FileSystem, note: Note): !NoteError {
+    let name = checked(note.name)?
+    files.writeText("{name}.md", written(note)).mapErr(unreachable)?
+}
+
+/// The note of a name.
+pub fn load(files: fs.FileSystem, name: String): Note ! NoteError {
+    let file = "{checked(name)?}.md"
+    if not files.exists(file) {
+        fail NoteError.NotFound(name)
+    }
+    parsed(name, files.readText(file).mapErr(unreachable)?)
+}
+
+/// Every note, by name.
+pub fn all(files: fs.FileSystem): Array[Note] ! NoteError {
+    var notes: Array[Note] = []
+    for file in files.glob("*.md").mapErr(unreachable)?.sorted() {
+        notes.push(load(files, file.removeSuffix(".md"))?)
+    }
+    notes
+}
+
+/// Deletes a note.
+pub fn remove(files: fs.FileSystem, name: String): !NoteError {
+    let file = "{checked(name)?}.md"
+    if not files.exists(file) {
+        fail NoteError.NotFound(name)
+    }
+    files.remove(file).mapErr(unreachable)?
+}
+
+/// A note that says something of what was looked for.
+pub type Match = {
+    name: String
+    /// How much it says of it: more is better.
+    score: Int
+    /// Its first line that has one of the words.
+    line: String
+}
+
+/// The words of a text, in lower case.
+fn terms(words: String): Array[String] {
+    words.toLower().split(" ").map((word) { word.trim() }).filter((word) { not word.isEmpty() })
+}
+
+/// The notes that say the most of some words, the best first. A word in a
+/// note's name counts three times and one in its tags twice.
+pub fn search(files: fs.FileSystem, query: String, limit: Int = 5): Array[Match] ! NoteError {
+    let wanted = terms(query)
+    var found: Array[Match] = []
+    for note in all(files)? {
+        let body = note.text.toLower()
+        var score = 0
+        for word in wanted {
+            score += body.count(word)
+            score += 3 * note.name.count(word)
+            score += 2 * note.tags.filter((tag) { tag.toLower() == word }).length()
+        }
+        if score > 0 {
+            let line = note.text
+                .lines()
+                .find((each) { wanted.any((word) { each.toLower().contains(word) }) })
+            found.push(Match { name: note.name, score, line: line.unwrapOr("") })
+        }
+    }
+    found.sortedBy((each) { -each.score }).take(limit)
+}

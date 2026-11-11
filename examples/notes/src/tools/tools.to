@@ -1,0 +1,100 @@
+import notes.library
+import std.fs
+import std.mcp
+import std.validate
+
+// Each `pub` method of `Notes` is a tool of the Model Context Protocol. Its
+// documentation is what the model reads to decide when to call it, the
+// fields of its record are its arguments, and the documentation of the type
+// is what the server says of itself.
+
+/// Notes kept as Markdown files in a directory: a memory to write to,
+/// search and read back. A note has a name, as `green-tea`, and is read at
+/// `notes://green-tea`.
+pub type Notes = {
+    /// The directory of the notes.
+    directory: String
+}
+
+/// The files of the notes. It is not `pub`, so it is no tool.
+fn Notes.files(self): fs.FileSystem {
+    fs.disk(self.directory)
+}
+
+pub type WriteInput = {
+    /// The note's name: lower-case letters, digits and `-`, as `green-tea`.
+    @validate.Matches("[a-z0-9-]+")
+    name: String
+    /// Its text, in Markdown.
+    @validate.Length(min: 1, max: 20000)
+    text: String
+    /// Words to find it by.
+    tags: Array[String] = []
+}
+
+/// Writes a note, replacing the one of that name.
+pub fn Notes.write(self, input: WriteInput): String ! library.NoteError {
+    library.save(
+        self.files(),
+        library.Note { name: input.name, tags: input.tags, text: input.text },
+    )?
+    "wrote notes://{input.name}"
+}
+
+pub type SearchInput = {
+    /// The words to look for.
+    query: String
+    /// How many notes to give, the best first.
+    @validate.Min(1)
+    @validate.Max(20)
+    limit: Int = 5
+}
+
+/// Finds the notes that say the most about some words, each with the line
+/// where it first says one.
+pub fn Notes.search(self, input: SearchInput): Array[library.Match] ! library.NoteError {
+    library.search(self.files(), input.query, limit: input.limit)
+}
+
+/// A note in a list of them.
+pub type Listed = {
+    name: String
+    tags: Array[String]
+    /// Its first line.
+    title: String
+}
+
+/// Lists the notes: all of them, or those with a tag.
+pub fn Notes.list(self, tag: String?): Array[Listed] ! library.NoteError {
+    var listed: Array[Listed] = []
+    for note in library.all(self.files())? {
+        if tag.isNone() or note.tags.contains(tag.unwrapOr("")) {
+            listed.push(
+                Listed {
+                    name: note.name
+                    tags: note.tags
+                    title: note.text.lines().first().unwrapOr("")
+                },
+            )
+        }
+    }
+    listed
+}
+
+/// Deletes a note.
+pub fn Notes.remove(self, name: String): String ! library.NoteError {
+    library.remove(self.files(), name)?
+    "removed {name}"
+}
+
+/// A note, as the Markdown it was written in.
+@mcp.Resource(uri: r"notes://{name}", mime: "text/markdown")
+pub fn Notes.note(self, name: String): String ! library.NoteError {
+    library.load(self.files(), name)?.text
+}
+
+/// Asks for a note to be reviewed.
+@mcp.Prompt
+pub fn Notes.review(self, name: String): String {
+    "Read the note at notes://{name}. Say what is unclear or out of date in it, and propose a version that fixes that, keeping its tags."
+}
