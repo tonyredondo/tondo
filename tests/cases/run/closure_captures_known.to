@@ -1,0 +1,24 @@
+import std.console
+
+// What a closure made here captured is read where it was captured, once
+// the closure is inlined: `x + step`, with `step` 3 and `x` below a
+// thousand, cannot overflow, nor can the sum of a thousand of them.
+
+fn apply(f: fn(Int): Int, times: Int): Int {
+    var total = 0
+    for i in 0..times {
+        total += f(i)
+    }
+    total
+}
+
+fn run(): Int {
+    let step = 3
+    apply((x: Int): Int { x + step }, 1000)
+}
+
+fn main() {
+    console.println("{run()}")
+}
+// expect-stdout: 502500
+// expect-optimization: 17:27 unchecked cannot overflow

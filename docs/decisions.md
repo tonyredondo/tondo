@@ -5961,3 +5961,13 @@ parts hold nothing to release, and only ever released: its releases and what mad
 them the value's trip through memory. `sqrt` ran 36% fewer instructions, in the same time, bound by
 the square roots. A binding of the program stays, as a dump shows it; one of inlined code that
 nothing writes then a dump leaves out, as an argument the inliner found unused.
+
+## A closure's capture is read where it was captured
+
+Inlining a closure leaves its body reading its captures out of the closure, `f.captures.0`, which
+`prove` knows nothing of: `apply((x) { x + step }, 1000)` with `step = 3` kept the check of `x + step`
+and of the sum. Since 2026-11-11 `elide` reads what was captured instead, when the closure, its
+captures and what they hold are each written once and lent to nothing, and the value needs no
+release, which the closure's copy could outlive: `prove` then finds that neither can overflow. A
+closure that comes from elsewhere, as one a benchmark's runner calls with its own captures, is the
+same as before.

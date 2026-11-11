@@ -19,7 +19,95 @@ pub fn elide(bodies: &mut [Body], types: &Types) {
                 break;
             }
         }
+        forward_captures(body, types);
     });
+}
+
+/// A closure's capture read where the closure is made, as inlining leaves
+/// it, reads what was captured instead: `f.captures.0`, with `f = closure
+/// of env` and `env = (step)`, is `step`, whose value `prove` then knows, as
+/// `x + step` with `step = 3` cannot overflow for `x` below a thousand. The
+/// closure, its captures and what they hold are each written once and lent
+/// to nothing, so that what was captured is what is read; and only a value
+/// that needs no release, which the closure's could outlive.
+fn forward_captures(body: &mut Body, types: &Types) {
+    let count = body.locals.len();
+    let erases = |statement: &Statement| matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Erase(..)));
+    if !body.blocks.iter().flat_map(|block| &block.stmts).any(erases) {
+        return;
+    }
+    let (mut writes, mut lent) = (vec![0u32; count], vec![false; count]);
+    let mut made: Vec<Option<Rvalue>> = vec![None; count];
+    for local in &body.params {
+        writes[local.0 as usize] += 1;
+    }
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        match statement {
+            Statement::Assign(place, rvalue, _) => {
+                writes[place.local.0 as usize] += 1;
+                if place.path.is_empty() {
+                    made[place.local.0 as usize] = Some((**rvalue).clone());
+                }
+                match &**rvalue {
+                    Rvalue::Select(cases, ..) => cases.iter().for_each(|case| writes[case.out.0 as usize] += 1),
+                    Rvalue::Mutate(_, place, ..) | Rvalue::AssignSlice(place, ..) => {
+                        writes[place.local.0 as usize] += 1
+                    }
+                    _ => {}
+                }
+            }
+            Statement::Clear(local) => writes[local.0 as usize] += 1,
+            Statement::Moved(place) => writes[place.local.0 as usize] += 1,
+            Statement::Lend(alias, place) => {
+                writes[alias.0 as usize] += 1;
+                lent[alias.0 as usize] = true;
+                lent[place.local.0 as usize] = true;
+            }
+            Statement::LendAt(alias, operand) => {
+                writes[alias.0 as usize] += 1;
+                lent[alias.0 as usize] = true;
+                if let Operand::Copy(place) = operand {
+                    lent[place.local.0 as usize] = true;
+                }
+            }
+            // A live build's frame comes back from its old code whole.
+            Statement::OsrLoad(_) => return,
+            _ => {}
+        }
+    }
+    let fixed = |local: Local| {
+        let index = local.0 as usize;
+        writes[index] == 1 && !lent[index] && made[index].is_some() && !body.params.contains(&local)
+    };
+    // The captures of each closure made once of captures made once.
+    let mut captures: Vec<Option<Vec<Operand>>> = vec![None; count];
+    for local in 0..count {
+        let Some(Rvalue::Erase(Operand::Copy(env), ..)) = &made[local] else { continue };
+        if !fixed(Local(local as u32)) || !env.path.is_empty() || !fixed(env.local) {
+            continue;
+        }
+        if let Some(Rvalue::Aggregate(operands)) = &made[env.local.0 as usize] {
+            captures[local] = Some(operands.clone());
+        }
+    }
+    if captures.iter().all(Option::is_none) {
+        return;
+    }
+    let locals = body.locals.clone();
+    let mut forward = |place: &mut Place| {
+        let Some(operands) = &captures[place.local.0 as usize] else { return };
+        let [Proj::Captures(_), Proj::Field(index), ..] = place.path[..] else { return };
+        let Some(Operand::Copy(captured)) = operands.get(index as usize) else { return };
+        if captured.path.is_empty() && fixed(captured.local) && !types.needs_drop(locals[captured.local.0 as usize]) {
+            *place = Place { local: captured.local, path: place.path[2..].to_vec() };
+        }
+    };
+    for block in &mut body.blocks {
+        for statement in &mut block.stmts {
+            crate::inline::visit_statement(statement, &mut forward);
+        }
+        crate::inline::visit_terminator(&mut block.terminator, &mut forward);
+    }
 }
 
 /// A value kept in memory, whose copies cost: what Cranelift holds in
