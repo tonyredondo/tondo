@@ -118,6 +118,10 @@ struct Worker<'w, 's, 't> {
     shapes: Shapes<'t>,
     current: usize,
     asked: Vec<Asked>,
+    /// What was asked of the texts and of the flag of attention, each once:
+    /// the same data, declared once in the function, has one address.
+    strings: HashMap<String, u32>,
+    attention: Option<u32>,
     func_refs: Vec<(ir::FuncRef, usize)>,
     data_refs: Vec<(ir::GlobalValue, usize)>,
     site_constants: Vec<(ir::Inst, usize)>,
@@ -138,6 +142,8 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize) -> Built {
         shapes: Shapes::new(shared.types, shared.isa),
         current: index,
         asked: Vec::new(),
+        strings: HashMap::new(),
+        attention: None,
         func_refs: Vec::new(),
         data_refs: Vec::new(),
         site_constants: Vec::new(),
@@ -241,7 +247,12 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         value
     }
     fn string(&mut self, text: &str) -> DataId {
-        DataId::from_u32(self.ask(Asked::String(text.to_string())))
+        if let Some(&id) = self.strings.get(text) {
+            return DataId::from_u32(id);
+        }
+        let id = self.ask(Asked::String(text.to_string()));
+        self.strings.insert(text.to_string(), id);
+        DataId::from_u32(id)
     }
     fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId {
         DataId::from_u32(self.ask(Asked::StaticArray(size, elements)))
@@ -265,7 +276,12 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         DataId::from_u32(self.ask(Asked::MapGlue(ty)))
     }
     fn attention(&mut self) -> DataId {
-        DataId::from_u32(self.ask(Asked::Attention))
+        let id = match self.attention {
+            Some(id) => id,
+            None => self.ask(Asked::Attention),
+        };
+        self.attention = Some(id);
+        DataId::from_u32(id)
     }
     fn closure_code(&mut self, body: FnId) -> FuncId {
         // Without a live build, a closure keeps its body itself.

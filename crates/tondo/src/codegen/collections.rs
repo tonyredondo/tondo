@@ -31,7 +31,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // first change makes it one of its own.
                 let size = self.e.cg.layout(element_of(ty)).size as usize;
                 let id = self.e.cg.static_array(size, Vec::new());
-                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                let global = self.e.global(id);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             ArrayOp::WithCapacity => {

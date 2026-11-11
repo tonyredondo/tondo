@@ -542,7 +542,7 @@ pub(super) fn define_adapter(
     let (offsets, size) = cg.callback_frame(callback.ty);
     let plan = cg.c_plan(&params, params.len(), result);
     let fb = FunctionBuilder::new(func, fbc);
-    let mut e = Emit { cg, fb };
+    let mut e = Emit::new(cg, fb);
     let entry = e.fb.create_block();
     e.fb.append_block_params_for_function_params(entry);
     e.fb.switch_to_block(entry);
@@ -640,7 +640,7 @@ pub(super) fn define_inner(
     let TyKind::CFn(params, result, _) = cg.types.kind(callback.ty).clone() else { unreachable!() };
     let (offsets, _) = cg.callback_frame(callback.ty);
     let fb = FunctionBuilder::new(func, fbc);
-    let mut e = Emit { cg, fb };
+    let mut e = Emit::new(cg, fb);
     let entry = e.fb.create_block();
     e.fb.append_block_params_for_function_params(entry);
     e.fb.switch_to_block(entry);

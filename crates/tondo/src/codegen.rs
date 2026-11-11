@@ -1764,9 +1764,28 @@ impl Emit<'_, Codegen<'_>> {
 struct Emit<'a, G: ?Sized> {
     cg: &'a mut G,
     fb: FunctionBuilder<'a>,
+    /// The data the function has declared, each once, so that Cranelift
+    /// takes the uses of one for the same address.
+    data: HashMap<DataId, ir::GlobalValue>,
+}
+
+impl<'a, G: ?Sized> Emit<'a, G> {
+    fn new(cg: &'a mut G, fb: FunctionBuilder<'a>) -> Self {
+        Emit { cg, fb, data: HashMap::new() }
+    }
 }
 
 impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
+    /// The data `id` declared in the function, once.
+    fn global(&mut self, id: DataId) -> ir::GlobalValue {
+        if let Some(&global) = self.data.get(&id) {
+            return global;
+        }
+        let global = self.cg.declare_data_in_func(id, self.fb.func);
+        self.data.insert(id, global);
+        global
+    }
+
     fn call_rt(&mut self, rt: Rt, args: &[ir::Value]) -> Option<ir::Value> {
         if self.cg.testing() && rt.outside() {
             let id = self.cg.runtime(Rt::Outside);
@@ -1809,7 +1828,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     fn map_glue_address(&mut self, ty: Ty) -> ir::Value {
         let id = self.cg.map_glue(ty);
-        let global = self.cg.declare_data_in_func(id, self.fb.func);
+        let global = self.global(id);
         self.fb.ins().symbol_value(POINTER, global)
     }
 
@@ -2289,7 +2308,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     fn string_ptr(&mut self, text: &str) -> ir::Value {
         let id = self.cg.string(text);
-        let global = self.cg.declare_data_in_func(id, self.fb.func);
+        let global = self.global(id);
         self.fb.ins().symbol_value(POINTER, global)
     }
 
@@ -3023,7 +3042,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             DebugFrame { function, first, shown, captured, alive, addresses, line: None, before: None, site: 0 }
         });
         FnCodegen {
-            e: Emit { cg, fb },
+            e: Emit::new(cg, fb),
             body,
             bodies,
             blocks,
@@ -3165,8 +3184,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let returns = matches!(block.terminator, Terminator::Return(_));
             let last_resume = block.stmts.iter().rposition(resumes);
             let mut quiet = false;
+            // A check of the runtime that ends the block and the branch on
+            // it are one, emitted after the rest (`fused_branch`).
+            let fused = self.fused_check(block);
+            let first = fused.as_ref().map(|fused| block.stmts.len() - fused.statements);
+            let mut check_quiet = false;
             for (at, stmt) in block.stmts.iter().enumerate() {
                 self.count_ways(index, at);
+                if first == Some(at) {
+                    check_quiet = quiet;
+                    break;
+                }
                 // The panic goes to the caller from the last `UnwindResume`
                 // of a block that returns.
                 self.returns = returns && last_resume.is_none_or(|last| last <= at);
@@ -3181,6 +3209,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 quiet |= self.tried;
             }
             self.unwind_to = None;
+            for at in first.map_or(block.stmts.len(), |first| first + 1)..block.stmts.len() {
+                self.count_ways(index, at);
+            }
             self.count_ways(index, block.stmts.len());
             // A jump back to an earlier block closes a loop: a step.
             let back = match &block.terminator {
@@ -3190,6 +3221,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             };
             if back && self.e.cg.meta() {
                 self.e.call_rt(Rt::MetaStep, &[]);
+            }
+            if let Some(fused) = fused {
+                self.fused_branch(fused, check_quiet);
+                ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
+                continue;
             }
             match self.loop_test(index, &block.terminator) {
                 // The loop's test again at its end, so that a turn takes one

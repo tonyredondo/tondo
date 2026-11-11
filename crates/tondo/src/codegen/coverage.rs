@@ -20,7 +20,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let index = self.e.cg.counter(counted);
         let counters = match self.counters {
             Some(counters) => counters,
-            None => *self.counters.insert(self.e.cg.declare_data_in_func(counters, self.e.fb.func)),
+            None => *self.counters.insert(self.e.global(counters)),
         };
         let base = self.e.fb.ins().symbol_value(POINTER, counters);
         let offset = self.e.cg.counter_offset(&mut self.e.fb, index);

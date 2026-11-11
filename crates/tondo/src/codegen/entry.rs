@@ -153,7 +153,7 @@ impl Codegen<'_> {
         context.func.signature = signature;
         context.func.name = UserFuncName::user(1, 2);
         let fb = FunctionBuilder::new(&mut context.func, fbc);
-        let mut e = Emit { cg: self, fb };
+        let mut e = Emit::new(self, fb);
         let block = e.fb.create_block();
         e.fb.switch_to_block(block);
         let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
@@ -196,7 +196,7 @@ impl Codegen<'_> {
         context.func.signature = signature;
         context.func.name = UserFuncName::user(1, 1);
         let fb = FunctionBuilder::new(&mut context.func, fbc);
-        let mut e = Emit { cg: self, fb };
+        let mut e = Emit::new(self, fb);
         let block = e.fb.create_block();
         e.fb.append_block_params_for_function_params(block);
         e.fb.switch_to_block(block);
@@ -256,7 +256,7 @@ impl Codegen<'_> {
         context.func.name = UserFuncName::user(1, 0);
         {
             let fb = FunctionBuilder::new(&mut context.func, fbc);
-            let mut e = Emit { cg: self, fb };
+            let mut e = Emit::new(self, fb);
             let block = e.fb.create_block();
             e.fb.switch_to_block(block);
             let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);

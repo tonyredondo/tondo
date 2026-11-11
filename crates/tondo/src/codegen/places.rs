@@ -443,7 +443,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Operand::Const(Const::Str(text)) => Val::Scalar(self.e.string_ptr(text)),
             Operand::Const(Const::Bytes(bytes, _)) => {
                 let id = self.e.cg.bytes(bytes);
-                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                let global = self.e.global(id);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             Operand::Const(Const::Unit) => Val::Zero,

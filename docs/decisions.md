@@ -6005,3 +6005,15 @@ waited 20 µs, and left the task of another domain to wait for good behind one t
 A worker that looks for tasks now keeps looking while one waits that is not yet its to take. A
 machine with a cache for every core, or that says nothing of its caches, or with more than sixteen
 domains, is one domain, as before; `TONDO_CACHE_DOMAINS=0` makes it one on any machine.
+
+## A check after a call is one load and one branch
+
+After every call that may panic, compiled code read the runtime's flag of attention, made its answer
+0 when the flag was clear, and then branched on that answer, a block's parameter that Cranelift does
+not thread a jump through: a clear flag cost a test and a branch more than it needed, after every
+call, and the check for a cancellation after a wait a comparison with 1 too. A release build now
+emits each check with its branch: a clear flag goes on at once, and only a set one calls the
+runtime, whose answer picks the way. Each function also declares the data it uses once, the flag
+and its texts, which Cranelift took for as many addresses as uses, each in a register of its own
+through a loop. In the loop of a `Mutex.update`, the code after the call to lock went from 13
+instructions to 6, and a register freed kept the loop's bound out of the stack.

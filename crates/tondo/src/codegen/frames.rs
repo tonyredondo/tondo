@@ -8,7 +8,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     pub(super) fn debug_place(&mut self, debug: &DebugFrame) -> (ir::Value, ir::Value, ir::Value) {
         let site = match debug.first {
             Some((first, number)) => {
-                let first = self.e.cg.declare_data_in_func(first, self.e.fb.func);
+                let first = self.e.global(first);
                 let first = self.e.fb.ins().symbol_value(POINTER, first);
                 let first = self.e.fb.ins().load(types::I64, flags(), first, 0);
                 self.e.fb.ins().iadd_imm_s(first, (debug.site - number) as i64)
@@ -175,7 +175,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let identity = self.e.cg.identity(holds);
-        let identity = self.e.cg.declare_data_in_func(identity, self.e.fb.func);
+        let identity = self.e.global(identity);
         let identity = self.e.fb.ins().symbol_value(POINTER, identity);
         // A `Ref`'s value is released with the glue of its type then, which
         // a reload changes.

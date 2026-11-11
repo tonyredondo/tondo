@@ -47,6 +47,88 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         false
     }
 
+    /// A check of the runtime that ends a block, and the branch on it, in a
+    /// build that only runs: for a panic, `asked = Unwinding` and a branch
+    /// on `asked`; for a cancellation, `asked = Cancelled`, `cancelled =
+    /// asked == 1` and a branch on `cancelled`.
+    pub(super) fn fused_check(&self, block: &'a crate::mir::BlockData) -> Option<Fused<'a>> {
+        let plain = self.debug.is_none() && self.e.cg.coverage().is_none() && !self.e.cg.meta() && !self.e.cg.live();
+        let Terminator::Branch(Operand::Copy(condition), then, otherwise) = &block.terminator else { return None };
+        if !plain || !condition.path.is_empty() {
+            return None;
+        }
+        let (then, otherwise) = (*then, *otherwise);
+        let Statement::Assign(last, rvalue, span) = block.stmts.last()? else { return None };
+        if !last.path.is_empty() || last.local != condition.local {
+            return None;
+        }
+        if matches!(**rvalue, Rvalue::Unwinding) {
+            return Some(Fused { statements: 1, asked: last, cancelled: None, span: *span, then, otherwise });
+        }
+        let Rvalue::Binary(BinOp::Eq, Operand::Copy(read), Operand::Const(Const::Int(1, _))) = &**rvalue else {
+            return None;
+        };
+        let Statement::Assign(asked, rvalue, span) = block.stmts.get(block.stmts.len().checked_sub(2)?)? else {
+            return None;
+        };
+        (matches!(**rvalue, Rvalue::Cancelled) && asked.path.is_empty() && *read == *asked).then_some(Fused {
+            statements: 2,
+            asked,
+            cancelled: Some(last),
+            span: *span,
+            then,
+            otherwise,
+        })
+    }
+
+    /// The check and its branch as one: the flag that something asks for
+    /// the runtime's attention goes on to `otherwise` when it is clear,
+    /// and only a set one calls the runtime, whose answer says where to go.
+    /// The check for a panic that asks nothing, after a statement whose
+    /// panics went to `then` themselves, is a jump.
+    pub(super) fn fused_branch(&mut self, fused: Fused, quiet: bool) {
+        let Fused { asked, cancelled, span, then, otherwise, .. } = fused;
+        self.probed = None;
+        self.at_typed(span, Some(self.body.place_ty(self.e.cg.types(), asked)));
+        self.probe(span);
+        let (then, otherwise) = (self.blocks[then.0 as usize], self.blocks[otherwise.0 as usize]);
+        let no = self.e.fb.ins().iconst(types::I8, 0);
+        self.write(asked, Val::Scalar(no));
+        if let Some(cancelled) = cancelled {
+            self.write(cancelled, Val::Scalar(no));
+        }
+        if quiet && cancelled.is_none() {
+            self.e.fb.ins().jump(otherwise, &[]);
+            return;
+        }
+        let reasons = self.attention();
+        let ask = self.e.fb.create_block();
+        self.e.fb.ins().brif(reasons, ask, &[], otherwise, &[]);
+        self.e.fb.set_cold_block(ask);
+        self.e.fb.switch_to_block(ask);
+        let rt = if cancelled.is_some() { Rt::Cancelled } else { Rt::Unwinding };
+        let answer = self.e.call_rt(rt, &[]).unwrap();
+        self.write(asked, Val::Scalar(answer));
+        let condition = match cancelled {
+            Some(cancelled) => {
+                let is = self.e.fb.ins().icmp_imm_s(IntCC::Equal, answer, 1);
+                self.write(cancelled, Val::Scalar(is));
+                is
+            }
+            None => answer,
+        };
+        self.e.fb.ins().brif(condition, then, &[], otherwise, &[]);
+    }
+
+    /// The reasons the runtime has to be asked, as the flag of attention
+    /// holds them now.
+    pub(super) fn attention(&mut self) -> ir::Value {
+        let id = self.e.cg.attention();
+        let attention = self.e.global(id);
+        let address = self.e.fb.ins().symbol_value(POINTER, attention);
+        self.e.fb.ins().load(types::I32, flags(), address, 0)
+    }
+
     pub(super) fn terminator(&mut self, terminator: &Terminator) {
         match terminator {
             Terminator::Goto(target) => {
@@ -254,4 +336,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             _ => true,
         }
     }
+}
+
+/// A check of the runtime and the branch on it, emitted as one
+/// (`fused_check`).
+pub(super) struct Fused<'a> {
+    /// The statements it is, at the end of its block.
+    pub(super) statements: usize,
+    asked: &'a Place,
+    /// For a cancellation, the comparison of its answer with 1.
+    cancelled: Option<&'a Place>,
+    span: Span,
+    then: crate::mir::BlockId,
+    otherwise: crate::mir::BlockId,
 }

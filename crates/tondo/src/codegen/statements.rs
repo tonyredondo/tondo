@@ -350,7 +350,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // Made once, in the program's data, rather than each time.
                 let size = self.e.cg.layout(element).size as usize;
                 let id = self.e.cg.static_array(size, elements);
-                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                let global = self.e.global(id);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             Rvalue::Array(values, retain) => {
@@ -579,7 +579,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Reflect(op, ty, operands, retain) => {
                 let identity = self.e.cg.identity(*ty);
-                let global = self.e.cg.declare_data_in_func(identity, self.e.fb.func);
+                let global = self.e.global(identity);
                 let identity = self.e.fb.ins().symbol_value(POINTER, global);
                 match op {
                     ReflectOp::Box => {
@@ -632,7 +632,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::FnValue(id) => {
                 let data = self.e.cg.fn_value(*id, &self.bodies[id.0 as usize]);
-                let global = self.e.cg.declare_data_in_func(data, self.e.fb.func);
+                let global = self.e.global(data);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             Rvalue::Erase(closure, body, retain) => {
@@ -703,10 +703,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Unwinding if self.quiet_check => Val::Scalar(self.e.fb.ins().iconst(types::I8, 0)),
             Rvalue::Unwinding => {
-                let id = self.e.cg.attention();
-                let attention = self.e.cg.declare_data_in_func(id, self.e.fb.func);
-                let address = self.e.fb.ins().symbol_value(POINTER, attention);
-                let reasons = self.e.fb.ins().load(types::I32, flags(), address, 0);
+                let reasons = self.attention();
                 let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
                 let answer = self.e.fb.append_block_param(done, types::I8);
                 let none = self.e.fb.ins().iconst(types::I8, 0);
@@ -720,10 +717,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Cancelled => {
                 // Without a reason to ask the runtime, nearly always, no call.
-                let id = self.e.cg.attention();
-                let attention = self.e.cg.declare_data_in_func(id, self.e.fb.func);
-                let address = self.e.fb.ins().symbol_value(POINTER, attention);
-                let reasons = self.e.fb.ins().load(types::I32, flags(), address, 0);
+                let reasons = self.attention();
                 let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
                 let answer = self.e.fb.append_block_param(done, types::I8);
                 let none = self.e.fb.ins().iconst(types::I8, 0);
