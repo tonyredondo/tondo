@@ -1,0 +1,64 @@
+import std.fs
+
+/// A site that lives in memory: two pages, a draft and a theme.
+fn sample(): fs.FileSystem ! fs.FsError {
+    let files = fs.memory()
+    files.createDirectory("content")?
+    files.createDirectory("theme")?
+    files.writeText("content/old.md", "---\ntitle: Old\ndate: 2026-01-05\ntags: [tea]\n---\nFirst.")?
+    files.writeText(
+        "content/new.md",
+        "---\ntitle: New & shiny\ndate: 2026-03-01\ntags: [tea, news]\n---\n# Hi\n",
+    )?
+    files.writeText(
+        "content/later.md",
+        "---\ntitle: Later\ndate: 2026-09-09\ndraft: true\n---\nNot yet.",
+    )?
+    files.writeText(
+        "theme/post.html",
+        r"""<h1>{{ title }}</h1>{{ body }}<p>{{ tags.join(",") }}</p>""",
+    )?
+    files.writeText(
+        "theme/index.html",
+        r"<h1>{{ heading }}</h1>{{ for post in posts }}[{{ post.title }}|{{ post.url }}]{{ end }}",
+    )?
+    files
+}
+
+test buildsEveryPageThatIsNotADraft {
+    let out = fs.memory()
+    let built = build(sample()?, out, "Test")?
+    assert(built.pages == 2 and built.drafts == 1)
+    assert(
+        built.files ==
+            ["posts/new.html", "posts/old.html", "index.html", "tags/tea.html", "tags/news.html"],
+    )
+    assert(not out.exists("posts/later.html"))
+}
+
+test pagesAreEscapedAndTheirBodyIsNot {
+    let out = fs.memory()
+    _ = build(sample()?, out, "Test")?
+    assert(out.readText("posts/new.html")? == "<h1>New &amp; shiny</h1><h2>Hi</h2><p>tea,news</p>")
+}
+
+test listsAreNewestFirst {
+    let out = fs.memory()
+    _ = build(sample()?, out, "Test")?
+    assert(
+        out.readText("index.html")? ==
+            "<h1>Posts</h1>[New &amp; shiny|/posts/new.html][Old|/posts/old.html]",
+    )
+    assert(
+        out.readText("tags/news.html")? == "<h1>Tagged news</h1>[New &amp; shiny|/posts/new.html]",
+    )
+}
+
+test aPageThatIsNotOneStopsTheBuild {
+    let files = sample()?
+    files.writeText("content/broken.md", "no front matter")?
+    match build(files, fs.memory(), "Test") {
+        err(BuildError.Content(error)) => assert("{error}".startsWith("broken.md"))
+        other => assert(other.isErr(), "a broken page was built")
+    }
+}

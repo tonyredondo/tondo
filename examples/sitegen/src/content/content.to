@@ -1,0 +1,82 @@
+import std.encoding
+import std.yaml
+
+/// What a page says of itself, in YAML between two lines of `---` at its top.
+pub type Meta = {
+    title: String
+    date: String
+    tags: Array[String] = []
+    draft: Bool = false
+}
+
+/// A page of the site: what it says of itself, and its text.
+pub type Page = {
+    /// Its name in addresses: `hello-tondo` for `hello-tondo.md`.
+    slug: String
+    meta: Meta
+    body: String
+}
+
+/// Why a file is not a page.
+pub enum ContentError {
+    /// It does not start with `---`, or the second `---` is missing.
+    NoFrontMatter(String)
+    /// Its front matter is not what a page says: where, and why.
+    BadFrontMatter(String, String)
+}
+
+impl Display for ContentError {
+    fn display(self): String {
+        match self {
+            ContentError.NoFrontMatter(name) =>
+                "{name}: a page starts with its title and date between two lines of `---`"
+            ContentError.BadFrontMatter(name, why) => "{name}: {why}"
+        }
+    }
+}
+
+/// The page a file holds.
+pub fn parse(name: String, text: String): Page ! ContentError {
+    let rest = match text.trimStart().splitOnce("---\n") {
+        some(("", after)) => after
+        _ => fail ContentError.NoFrontMatter(name)
+    }
+    let (front, body) = match rest.splitOnce("\n---") {
+        some(parts) => parts
+        none => fail ContentError.NoFrontMatter(name)
+    }
+    let meta =
+        yaml.decode[Meta](front).mapErr((error) { ContentError.BadFrontMatter(name, "{error}") })?
+    Page { slug: name.removeSuffix(".md"), meta, body: body.trim() }
+}
+
+/// The HTML of a page's text: titles (`#`, `##`), lists (`-`) and
+/// paragraphs, with everything the text holds written as text.
+pub fn html(body: String): String {
+    var out: Array[String] = []
+    var paragraph: Array[String] = []
+    var items: Array[String] = []
+    for line in body.lines().concat([""]) {
+        let text = line.trim()
+        // A block ends where another kind of line begins.
+        if not text.startsWith("- ") and not items.isEmpty() {
+            out.push("<ul>{items.map((item) { "<li>{item}</li>" }).join("")}</ul>")
+            items = []
+        }
+        let plain = not text.isEmpty() and not text.startsWith("#") and not text.startsWith("- ")
+        if not plain and not paragraph.isEmpty() {
+            out.push("<p>{paragraph.join(" ")}</p>")
+            paragraph = []
+        }
+        if text.startsWith("## ") {
+            out.push("<h3>{encoding.htmlEscape(text.removePrefix("## "))}</h3>")
+        } else if text.startsWith("# ") {
+            out.push("<h2>{encoding.htmlEscape(text.removePrefix("# "))}</h2>")
+        } else if text.startsWith("- ") {
+            items.push(encoding.htmlEscape(text.removePrefix("- ")))
+        } else if plain {
+            paragraph.push(encoding.htmlEscape(text))
+        }
+    }
+    out.join("\n")
+}
