@@ -1,9 +1,10 @@
 //! Small counted loops, four turns at a time. A loop over a range of
-//! `Int`s, as the lowering makes `for i in a..b`, whose body is short and
-//! holds no loop, runs its body four times, one after another, while four
-//! turns remain, and as before for the last ones: a turn then tests the
-//! range and jumps a quarter of the times, and `prove`, which runs after,
-//! sees each copy's index under the length that bounds the loop.
+//! `Int`s or over an array's elements, as the lowering makes `for i in
+//! a..b` and `for item in items`, whose body is short and holds no loop,
+//! runs its body four times, one after another, while four turns remain,
+//! and as before for the last ones: a turn then tests the range and jumps
+//! a quarter of the times, and `prove`, which runs after, sees each copy's
+//! index under the length that bounds the loop.
 //!
 //! `continue` in a copy goes to the loop's own step, and `break` out of
 //! it, so a turn means what it meant.
@@ -109,13 +110,22 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
         }
         let loop_blocks: Vec<usize> = (0..blocks.len()).filter(|&b| inside[b] && b != step).collect();
         // Short, without a loop of its own, and its first statement takes
-        // the counter.
+        // the counter, as `for i in a..b` does, or the element at it, as
+        // `for item in items` does.
         let statements: usize = loop_blocks.iter().map(|&b| blocks[b].stmts.len()).sum();
-        if statements > SMALL
-            || !matches!(blocks[entry].stmts.first(), Some(Statement::Assign(_, value, _)) if matches!(&**value, Rvalue::Use(o) if local(o) == Some(counter)))
-        {
-            continue;
-        }
+        let takes = |value: &Rvalue| match value {
+            Rvalue::Use(Operand::Copy(Place { local, path })) => match path[..] {
+                [] if *local == counter => Some(false),
+                [Proj::InBounds(index)] if index == counter => Some(true),
+                _ => None,
+            },
+            _ => None,
+        };
+        let first = match blocks[entry].stmts.first() {
+            Some(Statement::Assign(_, value, _)) => takes(value),
+            _ => None,
+        };
+        let Some(elements) = first.filter(|_| statements <= SMALL) else { continue };
         if inner_loop(blocks, &loop_blocks, entry) {
             continue;
         }
@@ -126,7 +136,13 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
             // Neither the counter nor the bound changes in the body, which
             // calls nothing and starts no task: a turn that does costs more
             // than its test, and four in a row change how tasks share out.
+            // Over elements, it calls the runtime neither, to count a value
+            // or measure a text, as most loops of the standard library do:
+            // four copies of those cost more to compile than they save.
             for statement in &blocks[block].stmts {
+                if elements && calls_the_runtime(body, types, statement) {
+                    continue 'steps;
+                }
                 if let Statement::Assign(_, value, _) = statement
                     && matches!(
                         &**value,
@@ -153,6 +169,18 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
         return Some(Counted { head, step, entry, counter, last, blocks: loop_blocks });
     }
     None
+}
+
+/// Whether a statement counts a value or measures a text, which calls the
+/// runtime.
+fn calls_the_runtime(body: &Body, types: &Types, statement: &Statement) -> bool {
+    match statement {
+        Statement::Retain(place) | Statement::Release(place) => types.needs_drop(body.place_ty(types, place)),
+        Statement::Assign(_, value, _) => {
+            matches!(&**value, Rvalue::Length(Operand::Copy(text)) if types.repr(body.place_ty(types, text)) == Ty::STRING)
+        }
+        _ => false,
+    }
 }
 
 /// Whether the blocks of a loop's body, from its entry, hold a loop.

@@ -2563,6 +2563,14 @@ length that bounds the loop, and only where `prove` does. A closure
 applied a thousand times took 36% less, and summing integers by index
 10%. Cranelift does not unroll, nor does Go's compiler.
 
+A loop over an array's elements, `for item in items`, is the same counted loop, whose first
+statement reads the element at the counter, known to be within the array, rather than the counter
+itself; it runs four turns at a time too since 2026-11-11, which `sum` and a program's own loop
+over 10,000 integers took in half the instructions and half the time, and `map filter sum` in 21%
+fewer. A loop over elements whose turns call the runtime, to count a value or measure a text, as
+most loops of the standard library do, is not: it gained nothing, and four copies of each made
+compiling a large program cost 8 to 10% more instructions, where without them it costs the same.
+
 ## 2026-10-27 — What inlining hands around is not made twice
 
 Inlining leaves a call's result in the callee's result local, copied into
