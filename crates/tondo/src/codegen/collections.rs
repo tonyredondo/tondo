@@ -19,6 +19,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             _ => unreachable!("not an array or deque"),
         };
         Some(match op {
+            // In a live build, whose patches' data goes with them, the
+            // runtime's.
+            ArrayOp::New if self.e.cg.live() => {
+                let size = self.e.element_size(element_of(ty));
+                let zero = self.e.fb.ins().iconst(POINTER, 0);
+                Val::Scalar(self.e.call_rt(Rt::ArrayNew, &[size, zero]).unwrap())
+            }
             ArrayOp::New => {
                 // The empty array in the program's data, as `[]` is: the
                 // first change makes it one of its own.
