@@ -14,6 +14,15 @@ Each side measures a run as the median of its samples; Go's `-benchmem`
 and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.
 
+Where `perf` counts on the machine, the table also has the instructions
+and cycles of a run on each side, outside the kernel and on every thread:
+Tondo's from `--bench`, Go's from its test program run under `perf stat`
+so many times and twice as many, whose difference leaves out the start of
+the program and Go's first run. The instructions do not move with where
+the code lies, as the time does: a row slower in time with fewer
+instructions than Go is slower for its cache misses, branches or layout,
+and one with more instructions does more work.
+
 The rows of `http/` and `net/` run a server and its clients in one
 process, so a row mixes the two sides of each request, which a profile
 tells apart: HTTP/1.1 in the clear and HTTP/2 over TLS, as Tondo's client

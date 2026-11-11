@@ -2,7 +2,9 @@
 // `tondo test --bench` and those of bench/go with `go test -bench`, and
 // writes a Markdown table: for each benchmark, the time a run takes on each
 // side, Tondo's time over Go's, and the allocations of a run, the slowest
-// against Go first.
+// against Go first; and, where `perf` counts them, the instructions and
+// cycles of a run on each side, which where the code lies does not move as
+// it moves the time.
 //
 //   tondo run bench/compare.to [--time <seconds>] [--output <file>]
 //
@@ -26,6 +28,8 @@ import std.process
 type Measure = {
     nanoseconds: Float
     allocations: Float
+    instructions: Float?
+    cycles: Float?
 }
 
 type Row = {
@@ -64,7 +68,9 @@ fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
                     .asFloat()
                     .unwrapOr(0.0)
                 let allocations = benchmark.field("allocations_per_op").asFloat().unwrapOr(0.0)
-                measured[key] = Measure { nanoseconds: nanoseconds, allocations: allocations }
+                let instructions = benchmark.field("instructions_per_op").asFloat()
+                let cycles = benchmark.field("cycles_per_op").asFloat()
+                measured[key] = Measure { nanoseconds, allocations, instructions, cycles }
             }
         }
     }
@@ -113,9 +119,112 @@ fn goSide(seconds: String): Map[String, Measure] ! String {
         let key = "{parts[0].toLower()}/{benchmark}"
         let nanoseconds = Float.parse(words[2]).unwrapOr(0.0)
         let allocations = Float.parse(words[6]).unwrapOr(0.0)
-        measured[key] = Measure { nanoseconds: nanoseconds, allocations: allocations }
+        measured[key] = Measure { nanoseconds, allocations, instructions: none, cycles: none }
     }
     measured
+}
+
+/// What `perf stat` counted of a program's instructions and cycles outside
+/// the kernel, from what it writes with `-x ,`.
+fn perfCounts(text: String): (Float, Float) {
+    var (instructions, cycles) = (0.0, 0.0)
+    for line in text.lines() {
+        let fields = line.split(",")
+        if fields.length() < 3 {
+            continue
+        }
+        let value = Float.parse(fields[0]).unwrapOr(0.0)
+        if fields[2].startsWith("instructions") {
+            instructions = value
+        } else if fields[2].startsWith("cycles") {
+            cycles = value
+        }
+    }
+    (instructions, cycles)
+}
+
+/// The instructions and cycles of a run of each of Go's benchmarks, where
+/// `perf` counts them: its test program runs each benchmark so many times,
+/// about a fifth of a second, and twice as many, under `perf stat`, and the
+/// difference leaves out what does not repeat, the start of the program and
+/// Go's first run.
+fn goCounts(measured: Map[String, Measure]): Map[String, Measure] ! String {
+    let probe = process.command("perf", "stat", "-x", ",", "-e", "instructions:u", "true").output()
+    let works = match probe {
+        ok(out) => out.statuses.length() > 0 and out.statuses[0].success
+        err(_) => false
+    }
+    if not works {
+        console.eprintln("perf does not count here, so Go's instructions are left out")
+        return measured
+    }
+    let dir =
+        fs
+            .createTemporaryDirectory(pattern: "go-bench-*")
+            .mapErr((e) { "cannot make a directory: {e}" })?
+    let binary = "{dir}/bench.test"
+    _ =
+        process
+            .command("go", "test", "-c", "-o", binary)
+            .directory("bench/go")
+            .check()
+            .mapErr((e) { "cannot build Go's benchmarks: {e}" })?
+    var counted: Map[String, Measure] = [:]
+    for (key, measure) in measured {
+        let parts = key.split("/")
+        if parts.length() != 2 or measure.nanoseconds <= 0.0 {
+            counted[key] = measure
+            continue
+        }
+        let pattern = "^(?i)benchmark{parts[0]}$/^{parts[1].replace(" ", "_")}$"
+        let runs = Int.saturating(2.0e8 / measure.nanoseconds).max(1)
+        let count = (times: Int) {
+            let ran = process
+                .command(
+                    "perf",
+                    "stat",
+                    "-x",
+                    ",",
+                    "-e",
+                    "instructions:u,cycles:u",
+                    "--",
+                    binary,
+                    "-test.run",
+                    "^$",
+                    "-test.bench",
+                    pattern,
+                    "-test.benchtime",
+                    "{times}x",
+                )
+                .directory("bench/go")
+                .output()
+            match ran {
+                ok(out) => perfCounts(String.fromBytes(out.stderr).unwrapOr(""))
+                err(_) => (0.0, 0.0)
+            }
+        }
+        let (once, twice) = (count(runs), count(runs * 2))
+        let per = (Float(runs))
+        let (instructions, cycles) = ((twice.0 - once.0) / per, (twice.1 - once.1) / per)
+        counted[key] = Measure {
+            nanoseconds: measure.nanoseconds
+            allocations: measure.allocations
+            instructions: if instructions > 0.0 { some(instructions) } else { none }
+            cycles: if cycles > 0.0 { some(cycles) } else { none }
+        }
+    }
+    counted
+}
+
+/// A count of a run, in thousands, millions or billions, or a dash.
+fn many(value: Float?): String {
+    match value {
+        some(v) if v >= 1.0e9 => "{(v / 1.0e9).toFixed(2)}G"
+        some(v) if v >= 1.0e6 => "{(v / 1.0e6).toFixed(2)}M"
+        some(v) if v >= 1.0e3 => "{(v / 1.0e3).toFixed(1)}k"
+        some(v) => v.toFixed(0)
+        none => "—"
+    }
 }
 
 /// A time, in the unit that reads best.
@@ -168,7 +277,12 @@ fn againstOld(
                 none => {}
             }
         }
-        Measure { nanoseconds: median(times), allocations: median(allocations) }
+        Measure {
+            nanoseconds: median(times)
+            allocations: median(allocations)
+            instructions: none
+            cycles: none
+        }
     }
     var rows: Array[(String, Measure, Measure)] = []
     for (name, _) in news.first().unwrapOr([:]) {
@@ -230,7 +344,10 @@ fn main(): !String {
         return
     }
     let ours = tondoSide(tondo, seconds)?
-    let theirs = goSide(seconds)?
+    let theirs = match goCounts(goSide(seconds)?) {
+        ok(counted) => counted
+        err(error) => fail error
+    }
     var rows: Array[Row] = []
     for (name, measure) in ours {
         match theirs.get(name) {
@@ -241,22 +358,30 @@ fn main(): !String {
     // The slowest against Go first.
     rows.sortBy((row) { -row.tondo.nanoseconds / row.go.nanoseconds })
     var lines: Array[String] = [
-        "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    var slower = 0
+    var (slower, more) = (0, 0)
     for row in rows {
         let ratio = row.tondo.nanoseconds / row.go.nanoseconds
         if ratio > 1.0 {
             slower += 1
         }
+        match (row.tondo.instructions, row.go.instructions) {
+            (some(own), some(go)) if own > go => more += 1
+            _ => {}
+        }
         let mark = if ratio > 1.0 { " ⚠" } else { "" }
+        let counts =
+            "{many(row.tondo.instructions)} | {many(row.go.instructions)} | {many(row.tondo.cycles)} | {many(row.go.cycles)}"
         lines.push(
-            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)} | {row.go.allocations.toFixed(0)} |",
+            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)} | {row.go.allocations.toFixed(0)} | {counts} |",
         )
     }
     lines.push("")
-    lines.push("{slower} of {rows.length()} benchmarks are slower than Go.")
+    lines.push(
+        "{slower} of {rows.length()} benchmarks are slower than Go; {more} run more instructions than Go.",
+    )
     let table = lines.join("\n")
     console.println(table)
     if output != "" {
