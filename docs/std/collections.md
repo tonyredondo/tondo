@@ -1,0 +1,49 @@
+# std.collections
+
+the error of collection operations. The methods of `Array`, `Deque`, `Map` and `Set` are in the prelude: `tondo api prelude`.
+
+```tondo
+import std.collections
+import std.console
+
+match [1, 2, 3].slice(1, 9) {
+    ok(part) => console.println("{part}")
+    err(collections.CollectionError.InvalidIndex) => console.println("past the end")
+    err(other) => console.println("{other}")
+}
+```
+
+<!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
+
+## Reference
+
+`tondo api std.collections` shows the same in a terminal.
+
+- [CollectionError](#collectionerror)
+
+### CollectionError
+
+```tondo
+pub enum CollectionError {
+    InvalidCapacity
+    InvalidIndex
+    InvalidStep
+    ResourceLimit
+}
+```
+
+Why a collection operation failed: a capacity or a step that is not
+allowed, an index outside the collection, or a limit reached.
+
+```tondo
+import std.collections
+import std.console
+
+match [1, 2, 3].slice(2, 1) {
+    ok(part) => console.println("{part}")
+    err(error) => {
+        let failure: collections.CollectionError = error
+        console.println("{failure}")
+    }
+}
+```

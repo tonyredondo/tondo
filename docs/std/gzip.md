@@ -1,0 +1,63 @@
+# std.gzip
+
+data compressed in the gzip format of RFC 1952, whole or as streams of std.io.
+
+```tondo
+import std.console
+import std.gzip
+
+let packed = gzip.compress("hello ".repeat(100).bytes())
+let unpacked = gzip.decompress(packed)?
+console.println("{packed.length()} bytes for {unpacked.length()}")
+```
+
+<!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
+
+## Reference
+
+`tondo api std.gzip` shows the same in a terminal.
+
+- [Functions](#functions): [`compress`](#compress), [`decompress`](#decompress), [`writer`](#writer), [`reader`](#reader)
+
+### Functions
+
+#### compress
+
+```tondo
+pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte]
+```
+
+The data compressed at `level`, from 0, which does not compress, to 9,
+the smallest and slowest; 6 is the one of the `gzip` tool and of Go.
+
+#### decompress
+
+```tondo
+pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+```
+
+The data of one gzip member or several after one another;
+`IoError.InvalidData` when it is not gzip, is cut short or its checksum
+does not match.
+
+#### writer
+
+```tondo
+pub fn writer(to: io.Writer, level: Int = 6): io.Writer
+```
+
+A stream that compresses what it is given into `to`: `flush()` writes
+what is compressed so far, and `close()` writes the end of the format and
+lets go of `to`, which closes with its last copy. So a writer over
+`file.writer()` closes the file when it closes, and one over
+`console.stdout()` leaves the console open.
+
+#### reader
+
+```tondo
+pub fn reader(from: io.Reader): io.Reader
+```
+
+A stream of what `from` holds, decompressed as it is read; closing it
+lets go of `from`, which closes with its last copy. Data that is
+not gzip fails as `IoError.InvalidData` in the read that reaches it.
