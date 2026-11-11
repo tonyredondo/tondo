@@ -2169,7 +2169,9 @@ fn finds_the_commit_that_slowed_a_benchmark() {
     .unwrap();
     let by = if counts_itself() { "instructions" } else { "time" };
     let bisect = ["test", "--bisect", &commits[0], "--filter", "fibonacci", "--bench", "--bench-time", "0.1"];
-    let judged = [&bisect[..], &["--max-regression", "50", "--regression-by", by, "--json"]].concat();
+    // Step 2 does thousands of times the work of step 1, which is step 0's:
+    // a margin of 200%, which a runner's noise in time does not reach.
+    let judged = [&bisect[..], &["--max-regression", "200", "--regression-by", by, "--json"]].concat();
     let (out, err, code) = tondo(&dir, &judged);
     assert_eq!(code, 0, "{out}{err}");
     let found: serde_json::Value = serde_json::from_str(&out).unwrap();
