@@ -1,0 +1,46 @@
+import std.sql
+
+/// A database that lives in the test.
+fn fresh(): sql.Database ! sql.SqlError {
+    open("sqlite::memory:")
+}
+
+test addsAndLists {
+    let db = fresh()?
+    let first = add(db, NewTask { title: "write the manual" })?
+    let second = add(db, NewTask { title: "read it again" })?
+    assert(first.id != second.id)
+    assert(list(db)? == [first, second])
+}
+
+test filtersByDone {
+    let db = fresh()?
+    let task = add(db, NewTask { title: "ship" })?
+    _ = add(db, NewTask { title: "rest" })?
+    _ = change(db, task.id, TaskChange { done: some(true) })?
+    assert(list(db, done: some(true))?.map((item) { item.title }) == ["ship"])
+    assert(list(db, done: some(false))?.map((item) { item.title }) == ["rest"])
+}
+
+test changesOnlyWhatIsNamed {
+    let db = fresh()?
+    let task = add(db, NewTask { title: "draft" })?
+    let renamed = change(db, task.id, TaskChange { title: some("final") })?
+    assert(renamed == some(Task { id: task.id, title: "final", done: false }))
+    let finished = change(db, task.id, TaskChange { done: some(true) })?
+    assert(finished == some(Task { id: task.id, title: "final", done: true }))
+}
+
+test aMissingTaskIsNone {
+    let db = fresh()?
+    assert(find(db, 99)? == none)
+    assert(change(db, 99, TaskChange { done: some(true) })? == none)
+    assert(remove(db, 99)? == false)
+}
+
+test removes {
+    let db = fresh()?
+    let task = add(db, NewTask { title: "temporary" })?
+    assert(remove(db, task.id)?)
+    assert(list(db)?.isEmpty())
+}

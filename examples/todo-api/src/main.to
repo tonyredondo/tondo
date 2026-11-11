@@ -1,0 +1,15 @@
+import std.console
+import std.env
+import std.http
+import std.sql
+import todo.api
+import todo.store
+
+/// Serves the API: `tondo run -- [port] [database]`.
+fn main(): !(sql.SqlError | http.HttpError) {
+    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(8080)
+    let url = env.args().get(1).unwrapOr("sqlite:tasks.db")
+    let db = store.open(url)?
+    console.println("tasks on http://localhost:{port}, kept in {url}")
+    api.routes(db).listen(port: port)?
+}

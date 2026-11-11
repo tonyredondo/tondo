@@ -1,0 +1,104 @@
+import std.http
+import std.log
+import std.sql
+import std.time
+import std.uuid
+import todo.store
+
+/// What belongs to the request being answered. Any function reads it, and
+/// every line of the log carries the identifier.
+pub context Request = {
+    @log("request_id")
+    id: String = ""
+}
+
+/// What `GET /tasks` can be asked for.
+type Filter = {
+    done: Bool? = none
+}
+
+/// The routes of the API over a database.
+pub fn routes(db: sql.Database): http.App {
+    var app = http.App()
+    app.use(traced)
+
+    // The query read into a type: `/tasks?done=true`. The array the store
+    // gives is written as JSON.
+    app.get(
+        "/tasks",
+        (request) {
+            let filter = request.queryAs[Filter]()?
+            http.Reply.json(store.list(db, filter.done).mapErr(failed)?)
+        },
+    )
+
+    // A typed handler: the route's `id` arrives as an `Int`, the task it
+    // gives is written as JSON, and `none` is a 404.
+    app.get("/tasks/:id", (id: Int) { store.find(db, id) })
+
+    // A handler that builds its own reply: 201, with where the task is.
+    app.post(
+        "/tasks",
+        (request) {
+            let input = request.json[store.NewTask]()?
+            let task = store.add(db, input).mapErr(failed)?
+            http.Reply.json(task, status: 201).header("Location", "/tasks/{task.id}")
+        },
+    )
+
+    app.patch(
+        "/tasks/:id",
+        (request) {
+            let id = request.intParam("id")?
+            let edit = request.json[store.TaskChange]()?
+            match store.change(db, id, edit).mapErr(failed)? {
+                some(task) => http.Reply.json(task)
+                none => fail http.Problem.notFound("there is no task {id}")
+            }
+        },
+    )
+
+    app.delete(
+        "/tasks/:id",
+        (request) {
+            let id = request.intParam("id")?
+            if not store.remove(db, id).mapErr(failed)? {
+                fail http.Problem.notFound("there is no task {id}")
+            }
+            http.Reply.empty()
+        },
+    )
+
+    app.openApi(title: "Tasks", version: "0.1.0")
+    app
+}
+
+/// A failure of the database, logged in full and answered without detail.
+fn failed(error: sql.SqlError): http.Problem {
+    log.error("the database failed", ["error": "{error}"])
+    http.Problem(500, "the task could not be saved")
+}
+
+/// Gives each request an identifier, and logs what it was and how long it took.
+fn traced(
+    request: http.Request,
+    next: fn(http.Request): http.Reply ! http.Problem,
+): http.Reply ! http.Problem {
+    with Request { id: request.header("x-request-id").unwrapOr("{uuid.Uuid.v7()}") }
+    let started = time.now()
+    let reply = next(request)
+    let status = match reply {
+        ok(answer) => answer.status()
+        err(problem) => problem.status
+    }
+    log.info(
+        "request",
+        [
+            "method": request.method(),
+            "route": request.route().unwrapOr(request.path()),
+            "status": "{status}",
+            "ms": "{started.elapsed().milliseconds()}",
+        ],
+    )
+    reply.map((answer) { answer.header("X-Request-Id", Request.id) })
+}
