@@ -254,8 +254,9 @@ tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
-tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision>] [--json]
-tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo>] [--json]
+tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -1951,7 +1952,8 @@ campos de su resultado:
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
 | `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before`, `ir_after` y `rules` (`term`, `rule`, `count` y `tondo`), o `diagnostics` si no compila; con `--against`, `against`, `changes`, cada una con `function` y `diff`, y `same`; con `--compiler`, `compiler`, `changes` y `same` (sección 7.19) |
-| `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma |
+| `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma; con `--compiler`, `compiler`, `gone` y `new` |
+| `compiler` | `tondo-compiler-0.1/1` | `compiler`, el commit o la ruta del `tondo`, y `path`, dónde está (sección 7.19) |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
 | `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
@@ -2201,6 +2203,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   reconoce por su archivo, su código, su tipo, su texto y sus funciones, no
   por su línea, que un cambio mueve. Para revisar lo que un cambio del
   compilador o del programa hace a su código antes de medirlo.
+- `--compiler <tondo|revisión>` compara igual con lo que otro `tondo` hace
+  del mismo código, uno que tenga `optimizations --json`, o el de una revisión
+  del repositorio de tondo (sección 7.19): para ver qué hizo un cambio del
+  compilador en un programa.
 - Con `--json` da `tondo-optimizations-0.1/1` (sección 7.12): `kind` es lo
   que mira una herramienta; `text` es para leer, y `source`, el código del
   sitio.
@@ -2254,6 +2260,13 @@ src/main.to:6  total += values[i]
 - `--compiler <tondo>` compara igual con el código que otro `tondo`, uno que
   tenga `asm`, hace del mismo programa: con `--all`, demuestra que un cambio
   del compilador no cambia el código, o dice qué funciones cambia.
+- `--compiler` toma también una revisión del repositorio de tondo, donde se
+  ejecuta, como `HEAD~1` o `main`: extrae sus archivos como `--against`, y
+  construye su `tondo` en release una vez, con `cargo`, en la caché, donde lo
+  usan después `asm`, `optimizations` y `tondo test --compiler` (10.4 de
+  testing). `tondo compiler <tondo|revisión>` dice dónde está, construido si
+  hace falta, para un script, como `bench/compile.to --old`; con `--json` da
+  `tondo-compiler-0.1/1`, con `compiler`, el commit o la ruta, y `path`.
 - Con `--json` da `tondo-asm-0.1/1` (sección 7.12). `tondo mcp` lo ofrece
   como la herramienta `asm`, y el editor como *Show the Machine Code of This
   Function*, de la función donde está el cursor.

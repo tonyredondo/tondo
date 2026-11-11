@@ -694,6 +694,29 @@ fn arrays_a_loop_fills_allocate_once() {
     assert!(allocations[4].1 > 1.0, "{report}");
 }
 
+/// `--compiler` measures the same benchmarks with another tondo and compares
+/// with what it measured, as with a baseline it saved.
+#[test]
+fn compares_benchmarks_with_another_compiler() {
+    let tests = "import std.testing\n\nfn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    \
+        fib(n - 1) + fib(n - 2)\n}\n\ntest fibonacci {\n    testing.bench(\"fib 15\", () { fib(15) })\n}\n";
+    let dir = project("compiler-bench", tests);
+    let other = env!("CARGO_BIN_EXE_tondo");
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--test-format", "json"];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["bench"]["baseline"]["kind"], "compiler", "{report}");
+    let benchmark = &report["tests"][0]["attempts"][0]["benchmarks"][0];
+    assert!(benchmark["baseline"].is_object(), "{benchmark}");
+    assert!(stderr.contains("measuring the benchmarks with the tondo of"), "{stderr}");
+    // It is one more thing to compare with.
+    let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--compiler", other, "--baseline", "main"]);
+    assert_eq!(status, 2, "{stderr}");
+    let (_, stderr, status) = tondo(&dir, &["test", "--compiler", other]);
+    assert!(status == 2 && stderr.contains("it goes with --bench"), "{stderr}");
+}
+
 /// An update tasks lose is a warning of the test that shows it, in the report
 /// of the tools and the editor, and a test that does it well has none.
 #[test]

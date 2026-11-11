@@ -1170,13 +1170,12 @@ pub fn revision(path: &Path, reference: &str) -> Result<(String, PathBuf), Strin
     };
     let given = path.canonicalize().map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let place = if given.is_file() { given.parent().unwrap_or(&given).to_path_buf() } else { given.clone() };
-    let root = git(&place, &["rev-parse", "--show-toplevel"]).map(PathBuf::from).ok_or(format!(
-        "--against compares with a revision of the project's git repository, and {} is in none",
-        path.display()
-    ))?;
+    let root = git(&place, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .ok_or(format!("a revision is one of a git repository's, and {} is in none", path.display()))?;
     let commit = git(&root, &["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
         .filter(|c| !c.is_empty())
-        .ok_or(format!("git knows no revision {reference}: give a branch, a tag or a commit, as `--against main`"))?;
+        .ok_or(format!("git knows no revision {reference}: give a branch, a tag or a commit, as `main`"))?;
     let within = given.strip_prefix(root.canonicalize().unwrap_or(root.clone())).unwrap_or(Path::new("")).to_path_buf();
     let tree = cache_entry("revision", &commit);
     if !tree.join(".complete").is_file() {
@@ -1199,6 +1198,60 @@ pub fn revision(path: &Path, reference: &str) -> Result<(String, PathBuf), Strin
         std::fs::write(tree.join(".complete"), &commit).map_err(|e| e.to_string())?;
     }
     Ok((commit, tree.join(within)))
+}
+
+/// A `tondo` to compare with (toolchain 7.19): an executable, as given, or
+/// a revision of tondo's own repository, where `near` is, built once in
+/// release and kept in the cache. What names it, its commit or its path,
+/// and where it is.
+pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), String> {
+    use std::process::{Command, Stdio};
+    let given = Path::new(reference);
+    if given.is_file() {
+        let path = given.canonicalize().map_err(|e| format!("cannot read {reference}: {e}"))?;
+        return Ok((path.display().to_string(), path));
+    }
+    let place = near.canonicalize().unwrap_or(near.to_path_buf());
+    let place = if place.is_file() { place.parent().unwrap_or(&place).to_path_buf() } else { place };
+    let toplevel = Command::new("git").arg("-C").arg(&place).args(["rev-parse", "--show-toplevel"]).output().ok();
+    let root = toplevel
+        .filter(|output| output.status.success())
+        .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+        .ok_or(format!(
+            "{reference} is no tondo executable, nor a revision: {} is in no git repository",
+            near.display()
+        ))?;
+    let (commit, tree) = revision(&root, reference)?;
+    if !tree.join("crates/tondo/Cargo.toml").is_file() {
+        return Err(format!(
+            "{reference} is a revision of {}, which is not tondo's repository: give a tondo executable, or run this in tondo's",
+            root.display()
+        ));
+    }
+    let kept = cache_entry("compiler", &commit);
+    let executable = kept.join("tondo");
+    if executable.is_file() {
+        return Ok((commit, executable));
+    }
+    eprintln!("tondo: building the tondo of {reference} ({}), once", &commit[..commit.len().min(12)]);
+    // One target for every revision, which builds again only what differs.
+    let target = cache_dir().join("compiler-target");
+    let built = Command::new("cargo")
+        .args(["build", "--release", "--locked", "--quiet", "-p", "tondo"])
+        .current_dir(&tree)
+        .env("CARGO_TARGET_DIR", &target)
+        .env_remove("TONDO_RUNTIME_FAST")
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| format!("building the tondo of {reference} needs cargo, from https://rustup.rs: {e}"))?;
+    if !built.success() {
+        return Err(format!("the tondo of {reference} does not build: cargo says why above"));
+    }
+    std::fs::create_dir_all(&kept).map_err(|e| format!("cannot create {}: {e}", kept.display()))?;
+    let partial = kept.join(format!("tondo.{}", std::process::id()));
+    std::fs::copy(target.join("release/tondo"), &partial).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
+    std::fs::rename(&partial, &executable).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
+    Ok((commit, executable))
 }
 
 /// The MIR passes of a release build, in their order, each followed by
@@ -1382,6 +1435,13 @@ pub fn optimizations_against(
             optimization.file = format!("{given}{rest}");
         }
     }
+    let (gone, new) = optimization_changes(then, now);
+    Ok((commit, gone, new))
+}
+
+/// What a release build made that it no longer makes, and what it makes
+/// that it did not, of the same places.
+fn optimization_changes(then: Vec<Optimization>, now: Vec<Optimization>) -> (Vec<Optimization>, Vec<Optimization>) {
     let key = |o: &Optimization| (o.file.clone(), o.source.clone(), o.kind, o.text.clone(), o.functions.clone());
     let only = |these: Vec<Optimization>, others: &[Optimization]| {
         let mut left: std::collections::HashMap<_, usize> = std::collections::HashMap::new();
@@ -1399,7 +1459,52 @@ pub fn optimizations_against(
     };
     let gone = only(then.clone(), &now);
     let new = only(now, &then);
-    Ok((commit, gone, new))
+    (gone, new)
+}
+
+/// What another `tondo` makes of the code and this one does not, and the
+/// other way round (toolchain 7.18): it says what it made with `--json`.
+pub fn optimizations_compiler(
+    path: &Path,
+    compiler: &Path,
+    function: Option<&str>,
+    kind: Option<&str>,
+) -> Result<(Vec<Optimization>, Vec<Optimization>), String> {
+    let now = analyze(path)?;
+    if now.program.is_none() {
+        return Err(format!("{} does not compile: `tondo check` says why", path.display()));
+    }
+    let now = optimizations(&now, function, kind)?;
+    let mut command = std::process::Command::new(compiler);
+    command.arg("optimizations").arg(path).arg("--json");
+    function.map(|name| command.args(["--function", name]));
+    kind.map(|kind| command.args(["--kind", kind]));
+    let ran = command.output().map_err(|e| format!("cannot run {}: {e}", compiler.display()))?;
+    let told: serde_json::Value = serde_json::from_slice(&ran.stdout).map_err(|_| {
+        format!("{} said nothing of the code: {}", compiler.display(), String::from_utf8_lossy(&ran.stderr).trim())
+    })?;
+    if told["ok"] != true {
+        return Err(format!("{} could not build the code: its diagnostics say why", compiler.display()));
+    }
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
+    let then = told["optimizations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let kind = OPTIMIZATION_KINDS.iter().find(|k| **k == o["kind"].as_str().unwrap_or_default())?;
+            Some(Optimization {
+                file: text(&o["file"]),
+                line: o["line"].as_u64().unwrap_or(0) as usize,
+                column: o["column"].as_u64().unwrap_or(0) as usize,
+                functions: o["functions"].as_array().into_iter().flatten().map(text).collect(),
+                kind,
+                text: text(&o["text"]),
+                source: text(&o["source"]),
+            })
+        })
+        .collect();
+    Ok(optimization_changes(then, now))
 }
 
 /// What changed against a revision, as `tondo optimizations --against`
@@ -1408,10 +1513,13 @@ pub fn changed_text(reference: &str, commit: &str, gone: &[Optimization], new: &
     if gone.is_empty() && new.is_empty() {
         return format!("a release build makes of the code what it made of {reference}\n");
     }
-    let short = &commit[..commit.len().min(12)];
+    let short = match commit.len() {
+        0 => String::new(),
+        _ => format!(" ({})", &commit[..commit.len().min(12)]),
+    };
     let mut text = String::new();
     if !gone.is_empty() {
-        text.push_str(&format!("only in {reference} ({short}):\n"));
+        text.push_str(&format!("only in {reference}{short}:\n"));
         gone.iter().for_each(|o| text.push_str(&format!("  {}\n", o.line())));
     }
     if !new.is_empty() {

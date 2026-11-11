@@ -5862,3 +5862,16 @@ and the like apart; `tondo help <command>` gives a command's usage as before, an
 every usage. The groups are a table beside the commands', which a test holds to every command being
 in exactly one, and to no group being named as a command, so that `tondo help <name>` means one
 thing.
+
+## `--compiler` takes a revision, built once
+
+Judging a change to the compiler meant building the `tondo` before it by hand, in a clone, and
+comparing what each made with scripts: the benchmarks' rows, the optimizations, the machine code.
+The maintainer asked on 2026-11-11 for the toolchain to do it. `--compiler`, which `tondo asm` took
+as an executable, takes a revision of tondo's repository too, in `tondo asm`, `tondo optimizations`
+and `tondo test --bench`: its files extracted as `--against` extracts them, and its `tondo` built in
+release with cargo, once, in the cache, beside one target for every revision so that a second builds
+only what differs; `tondo compiler <revision>` says where it is, for scripts. With `--bench`, the
+other `tondo` runs the same tests as asked and saves a baseline, which this one compares with as with
+`--baseline`: running both executables in turns, as `--against` does, would hold the runner and the
+other's executable to the same protocol, which changes between revisions.

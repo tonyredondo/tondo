@@ -135,6 +135,14 @@ pub struct Fuzz {
 pub enum Baseline {
     Saved(PathBuf),
     Revision(Revision),
+    /// What another `tondo` measured of the same benchmarks, `--compiler`:
+    /// what names it, its commit when it is a revision, and the baseline
+    /// it saved.
+    Compiler {
+        name: String,
+        commit: String,
+        saved: PathBuf,
+    },
 }
 
 /// The tests of a revision, built: its name and commit, where its project
@@ -600,6 +608,16 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let mut printer = human::Printer::new(tree, &plan, options);
     printer.baselines = match &options.baseline {
         Some(Baseline::Saved(path)) => bench::read_baseline(path).map_err(Failure::Input)?,
+        Some(Baseline::Compiler { name, commit, saved }) => {
+            let mut read = bench::read_baseline(saved).map_err(Failure::Input)?;
+            let _ = std::fs::remove_file(saved);
+            read.source = Some(json::obj(vec![
+                ("kind", json::str("compiler")),
+                ("compiler", json::str(name.clone())),
+                ("commit", json::str(commit.clone())),
+            ]));
+            read
+        }
         Some(Baseline::Revision(revision)) => bench::Baselines {
             measures: Default::default(),
             source: Some(json::obj(vec![
@@ -839,6 +857,10 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         machine: options.bench.map(bench::machine),
         baseline: options.baseline.as_ref().map(|baseline| match baseline {
             Baseline::Saved(path) => format!("the baseline {}", path.display()),
+            Baseline::Compiler { name, commit, .. } if commit.is_empty() => format!("the tondo at {name}"),
+            Baseline::Compiler { name, commit, .. } => {
+                format!("the tondo of {name} ({})", &commit[..commit.len().min(12)])
+            }
             Baseline::Revision(r) => format!("{} ({}), run alongside", r.name, &r.commit[..r.commit.len().min(12)]),
         }),
         max_regression: options.max_regression,

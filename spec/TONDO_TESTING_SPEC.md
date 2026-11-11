@@ -2236,7 +2236,7 @@ tondo test [<project> | --project <dir>]
            [--report <json|junit|coverage|lcov|markdown|html>=<path>]...
            [--coverage]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
-                    [--baseline <name|path> | --against <revision>]
+                    [--baseline <name|path> | --against <revision> | --compiler <tondo|revision>]
                     [--max-regression <percent> [--regression-by <time|instructions>]]
                     [--layouts <n>]]
            [--profile <cpu|memory>]
@@ -2502,6 +2502,13 @@ Las medidas se comparan con una línea base:
   las muestras de cada lado se juntan, así que una máquina que se acelera o se
   frena pesa en los dos. Es la comparación para un gate de CI, que no depende
   de dónde se midió antes. Un benchmark que la revisión no tiene es nuevo.
+- `--compiler <tondo|revision>` compara con lo que otro `tondo` mide de los
+  mismos tests: un ejecutable, o una revisión del repositorio de tondo, que
+  construye una vez (7.19 del toolchain). Ese `tondo` los ejecuta como se
+  pidió, con `--save-baseline` a un archivo de la caché, y estos se comparan
+  con ella como con `--baseline`; el reporte la nombra `compiler`. Es la
+  comparación de un cambio del compilador, con `--regression-by instructions`
+  para no depender del ruido de la máquina.
 
 Con una línea base, cada benchmark dice cuánto cambió la mediana, el intervalo
 en que está ese cambio con un 95% de confianza (de mil remuestreos con

@@ -895,6 +895,35 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
 /// function, under the lines of the program it is of, with its IR before
 /// and after Cranelift optimizes it with `--clif`, as data with `--json`,
 /// and with `--against` what changed since a git revision.
+/// `tondo compiler` says where a tondo to compare with is: an executable as
+/// given, or a revision of tondo's repository, which is built once; and
+/// `optimizations --compiler` what another tondo makes of the same code.
+#[test]
+fn compares_with_another_compiler() {
+    let source = "import std.console\n\nfn main() {\n    var all: Array[String] = []\n    for i in 0..3 {\n        \
+        all.push(\"{i}\")\n    }\n    console.println(\"{all.length()}\")\n}\n";
+    let dir = project_at("compiler", &[("main.to", source.as_bytes())]);
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let (said, stderr, status) = tondo(&dir, &["compiler", tondo_bin]);
+    assert_eq!(status, 0, "{stderr}");
+    let canonical = Path::new(tondo_bin).canonicalize().unwrap();
+    assert_eq!(said.trim(), canonical.display().to_string());
+    let (data, _) = json(&dir, &["compiler", tondo_bin, "--json"]);
+    assert_eq!(data["path"], canonical.display().to_string(), "{data}");
+    // Neither a tondo nor a revision.
+    let (_, stderr, status) = tondo(&dir, &["compiler", "nothing"]);
+    assert_eq!(status, 3, "{stderr}");
+    assert!(stderr.contains("no revision nothing") || stderr.contains("nor a revision"), "{stderr}");
+    // The same compiler makes the same of the code.
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("makes of the code what the tondo of"), "{said}");
+    let (data, _) = json(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--json"]);
+    assert_eq!((&data["gone"], &data["new"]), (&json!([]), &json!([])), "{data}");
+    let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--against", "HEAD"]);
+    assert_eq!(status, 2, "{stderr}");
+}
+
 #[test]
 fn the_machine_code_of_a_function() {
     let source = "fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\

@@ -83,6 +83,7 @@ fn main() -> ExitCode {
         "graph" => graph_command(&args[1..]),
         "optimizations" => optimizations_command(&args[1..]),
         "asm" => asm_command(&args[1..]),
+        "compiler" => compiler_command(&args[1..]),
         "new" | "init" => create_command(command, &args[1..]),
         "add" => add_command(&args[1..]),
         "remove" => remove_command(&args[1..]),
@@ -354,6 +355,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut fuzz = runner::Fuzz { time: None, timeout: std::time::Duration::from_secs(1), memory: 2048, corpus: None };
     let mut fuzzing = false;
     let (mut save, mut baseline, mut against) = (None, None, None);
+    let mut compiler: Option<String> = None;
     let mut layouts = 1u64;
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
@@ -449,6 +451,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--save-baseline" => save = Some(value()?),
             "--baseline" => baseline = Some(value()?),
             "--against" => against = Some(value()?),
+            "--compiler" => compiler = Some(value()?),
             "--max-regression" => {
                 let percent = value()?
                     .trim_end_matches('%')
@@ -682,24 +685,33 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if given("--bench-time") && !bench {
         return Err(usage("--bench-time is how long each benchmark measures for: it goes with --bench".into()));
     }
-    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression", "--regression-by", "--layouts"];
+    let comparing = [
+        "--save-baseline",
+        "--baseline",
+        "--against",
+        "--compiler",
+        "--max-regression",
+        "--regression-by",
+        "--layouts",
+    ];
     if !bench && let Some(flag) = comparing.iter().find(|f| given(f)) {
         return Err(usage(format!("{flag} is about benchmarks: it goes with --bench")));
     }
-    if given("--layouts") && against.is_some() {
+    if given("--layouts") && (against.is_some() || compiler.is_some()) {
         return Err(usage(
             "--layouts measures this code's tests in several layouts, --against another revision's: compare layouts with --baseline".into(),
         ));
     }
-    if baseline.is_some() && against.is_some() {
-        return Err(usage("--baseline and --against are two things to compare with: choose one".into()));
+    if [baseline.is_some(), against.is_some(), compiler.is_some()].iter().filter(|&&given| given).count() > 1 {
+        return Err(usage("--baseline, --against and --compiler are things to compare with: choose one".into()));
     }
     if given("--regression-by") && !given("--max-regression") {
         return Err(usage("--regression-by says what --max-regression judges: add --max-regression <percent>".into()));
     }
-    if given("--max-regression") && baseline.is_none() && against.is_none() {
+    if given("--max-regression") && baseline.is_none() && against.is_none() && compiler.is_none() {
         return Err(usage(
-            "--max-regression compares with a baseline: add --baseline <name> or --against <revision>".into(),
+            "--max-regression compares with a baseline: add --baseline <name>, --against <revision> or --compiler <tondo>"
+                .into(),
         ));
     }
     if options.list
@@ -779,6 +791,9 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if let Some(reference) = against {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
     }
+    if let Some(reference) = compiler {
+        options.baseline = Some(compiler_baseline(&reference, &path, args)?);
+    }
     // The same tests with their functions in other orders.
     for seed in 1..layouts {
         driver::set_layout_seed(Some(Some(seed)));
@@ -806,6 +821,49 @@ fn baseline_path(project: &Path, name: &str) -> Result<PathBuf, String> {
     }
     let root = if project.is_file() { project.parent().unwrap_or(project) } else { project };
     Ok(root.join("target/bench").join(format!("{name}.json")))
+}
+
+/// What another `tondo` measures of the same benchmarks, for `--compiler`
+/// (testing 10.4): it runs them as asked, saving a baseline, which these
+/// are compared with.
+fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<tondo::runner::Baseline, String> {
+    let (name, executable) = driver::compiler(reference, path)?;
+    let saved = driver::cache_dir().join(format!("compiler-baseline-{}.json", std::process::id()));
+    // The same tests and measures, but what compares, reports or writes.
+    const OURS: [&str; 9] = [
+        "--compiler",
+        "--baseline",
+        "--against",
+        "--save-baseline",
+        "--max-regression",
+        "--regression-by",
+        "--report",
+        "--test-format",
+        "--profile",
+    ];
+    let mut forwarded = Vec::new();
+    let mut given = args.iter();
+    while let Some(arg) = given.next() {
+        if OURS.iter().any(|flag| arg == *flag) {
+            given.next();
+        } else if arg != "--json" {
+            forwarded.push(arg.clone());
+        }
+    }
+    eprintln!("tondo: measuring the benchmarks with the tondo of {reference}, to compare with");
+    let ran = std::process::Command::new(&executable)
+        .arg("test")
+        .args(&forwarded)
+        .arg("--save-baseline")
+        .arg(&saved)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("cannot run {}: {e}", executable.display()))?;
+    if !saved.is_file() {
+        return Err(format!("the tondo of {reference} measured nothing (it ended with {ran}): run it to see why"));
+    }
+    let commit = if Path::new(reference).is_file() { String::new() } else { name };
+    Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, saved })
 }
 
 /// The tests of the project as a git revision has it, for `--against`
@@ -1993,12 +2051,35 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         Ok(Some(value))
     };
     let (function, kind, against) = (valued("--function")?, valued("--kind")?, valued("--against")?);
+    let compiler = valued("--compiler")?;
+    if against.is_some() && compiler.is_some() {
+        return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
+    }
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-') && *a != "--project") {
         return Err(format!("optimizations does not take {}\n{USAGE}", flag.display()));
     }
     let (path, rest) = source_argument(&args);
     if !rest.is_empty() {
         return Err(format!("optimizations takes one project or file\n{USAGE}"));
+    }
+    if let Some(reference) = compiler {
+        let (compiler, executable) = driver::compiler(&reference, &path)?;
+        let (gone, new) = driver::optimizations_compiler(&path, &executable, function.as_deref(), kind.as_deref())?;
+        if json {
+            let list = |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
+            print_json(
+                "optimizations",
+                true,
+                serde_json::json!({ "compiler": compiler, "gone": list(&gone), "new": list(&new) }),
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        let commit = if Path::new(&reference).is_file() { String::new() } else { compiler };
+        match gone.is_empty() && new.is_empty() {
+            true => println!("a release build makes of the code what the tondo of {reference} makes of it"),
+            false => print!("{}", driver::changed_text(&format!("the tondo of {reference}"), &commit, &gone, &new)),
+        }
+        return Ok(ExitCode::SUCCESS);
     }
     if let Some(reference) = against {
         let (commit, gone, new) =
@@ -2037,6 +2118,24 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if found.is_empty() {
         println!("nothing to tell of the program's own code");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo compiler <revision|tondo>` (toolchain 7.19): where the `tondo`
+/// of a revision of tondo's repository is, built once, as the commands
+/// that take `--compiler` use it, for a script to use too.
+fn compiler_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let [reference] = &args[..] else {
+        return Err(format!("compiler takes a revision of tondo's repository, or a tondo\n{USAGE}"));
+    };
+    let reference = reference.to_string_lossy();
+    let (name, executable) = driver::compiler(&reference, Path::new("."))?;
+    match json {
+        true => print_json("compiler", true, serde_json::json!({ "compiler": name, "path": executable })),
+        false => println!("{}", executable.display()),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2093,8 +2192,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    if let Some(compiler) = compiler {
-        let (changes, same) = driver::assembly_compiler(&path, Path::new(&compiler), function.as_deref())?;
+    if let Some(reference) = compiler {
+        let (compiler, executable) = driver::compiler(&reference, &path)?;
+        let (changes, same) = driver::assembly_compiler(&path, &executable, function.as_deref())?;
         if json {
             print_json(
                 "asm",

@@ -240,9 +240,10 @@ impl Server {
                         json!({ "against": against, "changes": listed(&changes), "same": same }),
                     ));
                 }
-                if let Some(compiler) = args.text("compiler") {
-                    let (changes, same) = driver::assembly_compiler(&args.path(), Path::new(&compiler), function)?;
-                    let text = driver::assembly_changes_text(&format!("the tondo at {compiler}"), &changes, same);
+                if let Some(reference) = args.text("compiler") {
+                    let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                    let (changes, same) = driver::assembly_compiler(&args.path(), &executable, function)?;
+                    let text = driver::assembly_changes_text(&format!("the tondo of {reference}"), &changes, same);
                     return Ok(Reply::new(
                         text,
                         json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
@@ -261,6 +262,27 @@ impl Server {
             }
             "optimizations" => {
                 let (function, kind) = (args.text("function"), args.text("kind"));
+                if let Some(reference) = args.text("compiler") {
+                    let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                    let (gone, new) = driver::optimizations_compiler(
+                        &args.path(),
+                        &executable,
+                        function.as_deref(),
+                        kind.as_deref(),
+                    )?;
+                    let text = match gone.is_empty() && new.is_empty() {
+                        true => {
+                            format!("a release build makes of the code what the tondo of {reference} makes of it\n")
+                        }
+                        false => driver::changed_text(&format!("the tondo of {reference}"), "", &gone, &new),
+                    };
+                    let list =
+                        |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
+                    return Ok(Reply::new(
+                        text,
+                        json!({ "compiler": compiler, "gone": list(&gone), "new": list(&new) }),
+                    ));
+                }
                 if let Some(reference) = args.text("against") {
                     let (commit, gone, new) =
                         driver::optimizations_against(&args.path(), &reference, function.as_deref(), kind.as_deref())?;
@@ -1309,6 +1331,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--save-baseline", "save_baseline");
             option(&mut argv, "--baseline", "baseline");
             option(&mut argv, "--against", "against");
+            option(&mut argv, "--compiler", "compiler");
             if let Some(percent) = args.number("max_regression") {
                 argv.extend(["--max-regression".to_string(), percent.to_string()]);
             }
@@ -2217,6 +2240,11 @@ checks more than it should, before measuring it.",
             ("function", "string", "Only the functions whose names hold this."),
             ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
+            (
+                "compiler",
+                "string",
+                "Another tondo, or a revision of tondo's repository, built once: what it makes differently.",
+            ),
         ],
     },
     Tool {
@@ -2237,7 +2265,11 @@ instruction by instruction.",
                 "The ISLE rules Cranelift applied to it, Tondo's marked; in a tondo built with its feature `rules`.",
             ),
             ("against", "string", "A git revision, as main: what changed in the code since it."),
-            ("compiler", "string", "Another tondo: what changed from the code it makes of the program to this one's."),
+            (
+                "compiler",
+                "string",
+                "Another tondo, or a revision of tondo's repository, built once: what changed from the code it makes.",
+            ),
         ],
     },
     Tool {
@@ -2483,6 +2515,11 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             ("save_baseline", "string", "With `bench`: keep the measures under this name, as `main`."),
             ("baseline", "string", "With `bench`: compare with the measures kept under this name."),
             ("against", "string", "With `bench`: compare with this git revision, built and run alongside."),
+            (
+                "compiler",
+                "string",
+                "With `bench`: compare with what another tondo, or a revision of tondo's repository, measures.",
+            ),
             (
                 "max_regression",
                 "number",

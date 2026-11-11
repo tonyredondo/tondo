@@ -147,7 +147,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>",
             "                    | html=<path>]... [--coverage]",
-            "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev>]",
+            "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev> | --compiler <tondo|rev>]",
             "                   [--max-regression <percent> [--regression-by time|instructions]] [--layouts <n>]]",
             "          [--profile cpu|memory]",
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
@@ -368,7 +368,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "optimizations",
         usage: &[
-            "tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <rev>] [--json]",
+            "tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <rev> | --compiler <tondo|rev>]",
+            "          [--json]",
         ],
         summary: &[
             "what a release build makes of the code: the calls it",
@@ -379,13 +380,21 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "asm",
         usage: &[
-            "tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo>]",
+            "tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
             "          [--json]",
         ],
         summary: &[
             "the machine code a release build makes of a function, by",
             "the lines of the program, with what the passes did there;",
             "its IR before and after Cranelift optimizes it",
+        ],
+    },
+    Command {
+        name: "compiler",
+        usage: &["tondo compiler <tondo|rev> [--json]"],
+        summary: &[
+            "where the tondo of a revision of tondo's repository is,",
+            "built once in release, as --compiler takes it",
         ],
     },
     Command {
@@ -490,7 +499,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         name: "performance",
         purpose: "where time and memory go, and what the compiler made",
-        commands: &["profile", "optimizations", "asm"],
+        commands: &["profile", "optimizations", "asm", "compiler"],
     },
     Group {
         name: "tools",

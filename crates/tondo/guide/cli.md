@@ -74,6 +74,9 @@ tondo asm sum                      the machine code of a function, under its lin
                                    --clif its IR, --against main what changed
 tondo asm --all --compiler <tondo> the functions another tondo makes other code of;
                                    --rules, in a tondo built with them, Cranelift's rules
+tondo compiler HEAD~1              the tondo of a revision of tondo's repository, built once;
+                                   --compiler takes a revision as it takes a tondo
+tondo test --bench --compiler HEAD~1   the benchmarks, against what that tondo measures
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build

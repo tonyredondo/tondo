@@ -209,6 +209,8 @@ fn the_command_line_is_in_the_tools_and_the_editor() {
         ("relay", NONE, NONE),
         ("completions", NONE, NONE),
         ("help", NONE, NONE),
+        // What `--compiler` takes in the tools, for a script.
+        ("compiler", NONE, NONE),
     ];
     for command in tondo::cli::COMMANDS {
         let Some((_, tool, editor)) = reached.iter().find(|(name, ..)| *name == command.name) else {

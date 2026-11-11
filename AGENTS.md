@@ -177,6 +177,13 @@ Ask the toolchain before guessing why code is slow or allocates:
   with `--features rules`, `--rules` lists the ISLE rules applied to it,
   Tondo's marked; check a change to `vendor/` with `cargo test -p tondo
   --features rules --test cli the_rules` too.
+- `--compiler <revision>` in `tondo asm`, `tondo optimizations` and `tondo
+  test --bench` compares with the `tondo` of that revision of this
+  repository, built once in the cache, as `--compiler HEAD` with what the
+  working tree changed: `tondo test bench/tondo --bench --compiler HEAD
+  --regression-by instructions --max-regression 2` judges a change to the
+  compiler by every benchmark. `tondo compiler <revision>` gives its path,
+  for a script, as `bench/compile.to --old`.
 - `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
   every function whose name holds `<name>` after lowering and after each
   pass, with what the passes decided and why; `TONDO_DUMP_MIR=<name>@<pass>`
@@ -214,8 +221,8 @@ Ask the toolchain before guessing why code is slow or allocates:
   out in another order, so that a row measured with a few seeds shows how
   much of a difference is where the code lies.
 - A change to the passes that should not change the code is proven with
-  `tondo asm <program> --all --compiler <the tondo before it>` over the
-  programs that run what it touches.
+  `tondo asm <program> --all --compiler HEAD` over the programs that run
+  what it touches.
 
 ### Where Tondo is going
 

@@ -10,7 +10,8 @@
 //
 //   tondo run bench/compile.to -- [--runs 5] [--sizes 3000,24000,192000] [--output <file>]
 //
-// With `--old <tondo>` it compares that `tondo` with this one: the two
+// With `--old <tondo>`, or a revision of tondo's repository, which
+// `tondo compiler` builds once, it compares that `tondo` with this one: the two
 // measure in turns, each first in every other round, and it fails when a
 // row costs more than `--max` percent, 5 by default, in instructions, or in
 // time where `perf` cannot count.
@@ -373,6 +374,14 @@ fn main(): !String {
         return
     }
     if old != "" {
+        // A revision of tondo's repository, built once, or a `tondo`.
+        if not fs.exists(old) {
+            let built = process.command(tondo, "compiler", old).output().mapErr((e) { "no tondo of {old}: {e}" })?
+            old = String.fromBytes(built.stdout).unwrapOr("").trim()
+            if not fs.exists(old) {
+                fail "no tondo of the revision: {String.fromBytes(built.stderr).unwrapOr("").trim()}"
+            }
+        }
         againstOld(old, tondo, sizes, runs, max, counting, scratch, output)?
         return
     }
