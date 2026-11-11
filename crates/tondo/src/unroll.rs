@@ -173,15 +173,11 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
                     continue 'steps;
                 }
                 if let Statement::Assign(_, value, _) = statement
-                    && matches!(
-                        &**value,
-                        Rvalue::Call(..)
-                            | Rvalue::CallIndirect(..)
-                            | Rvalue::CallOsr(..)
-                            | Rvalue::Spawn(..)
-                            | Rvalue::TaskOp(..)
-                            | Rvalue::Select(..)
-                    )
+                    && (calls(value)
+                        || matches!(
+                            &**value,
+                            Rvalue::CallOsr(..) | Rvalue::Spawn(..) | Rvalue::TaskOp(..) | Rvalue::Select(..)
+                        ))
                 {
                     keep(head, "each turn calls a function or waits, which costs more than the test saved");
                     continue 'steps;

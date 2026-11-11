@@ -2570,6 +2570,8 @@ over 10,000 integers took in half the instructions and half the time, and `map f
 fewer. A loop over elements whose turns call the runtime, to count a value or measure a text, as
 most loops of the standard library do, is not: it gained nothing, and four copies of each made
 compiling a large program cost 8 to 10% more instructions, where without them it costs the same.
+A square root, a floor or a rounding, which the processor does in one instruction, calls nothing,
+and a loop of them runs four turns at a time too.
 
 ## 2026-10-27 — What inlining hands around is not made twice
 

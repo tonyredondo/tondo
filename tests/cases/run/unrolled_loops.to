@@ -1,10 +1,11 @@
 import std.console
+import std.math
 
 // Short counted loops run four turns at a time while four remain, over a
 // range or over an array's elements: every count of turns, `continue`,
-// `break`, a `return` from inside, bounds at the ends of `Int` and a closure
-// made in each turn all mean what they mean in a loop that runs one turn at
-// a time.
+// `break`, a `return` from inside, bounds at the ends of `Int`, a closure
+// made in each turn and a square root, which calls no function, all mean
+// what they mean in a loop that runs one turn at a time.
 
 fn sum(from: Int, to: Int): Int {
     var total = 0
@@ -56,6 +57,14 @@ fn counted(xs: Array[Int]): (Int, Int) {
     (count, last)
 }
 
+fn roots(n: Int): Float {
+    var total = 0.0
+    for i in 0..n {
+        total += math.sqrt(Float(i - 2)).unwrapOr(-1.0)
+    }
+    total
+}
+
 fn main() {
     var counts: Array[Int] = []
     for n in 0..9 {
@@ -91,6 +100,7 @@ fn main() {
         seen.push(counted(xs))
     }
     console.println("{seen}")
+    console.println("{roots(0)} {roots(2)} {roots(6)} {roots(11)}")
 }
 
 // expect-stdout: [0, 0, 1, 3, 6, 10, 15, 21, 28]
@@ -98,9 +108,11 @@ fn main() {
 // expect-stdout: (5, 9223372036854775806) (3, -9223372036854775806) (7, -9223372036854775802)
 // expect-stdout: [0, 10, 20, 30, 40, 50]
 // expect-stdout: [(0, 0), (0, -1), (1, 0), (1, 0), (1, 0), (2, 3), (2, 6), (3, 6), (2, 6), (4, 9), (3, 18), (5, 12), (3, 18), (6, 15), (4, 36), (7, 18), (4, 36), (8, 21), (5, 60), (9, 24)]
-// expect-optimization: 29:12 unchecked stays within its array
-// expect-optimization: 73:9 unchecked in one copy of the code
-// expect-optimization: 83:32 frame
-// expect-optimization: 11:14 unrolled runs four turns at a time
-// expect-optimization: 39:14 unrolled
-// expect-optimization: 61:14 looped its body has
+// expect-stdout: 0.0 -2.0 2.1462643699419726 14.306000526035719
+// expect-optimization: 30:12 unchecked stays within its array
+// expect-optimization: 82:9 unchecked in one copy of the code
+// expect-optimization: 92:32 frame
+// expect-optimization: 12:14 unrolled runs four turns at a time
+// expect-optimization: 40:14 unrolled
+// expect-optimization: 62:14 unrolled
+// expect-optimization: 70:14 looped its body has

@@ -514,6 +514,18 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
     found
 }
 
+/// Whether an rvalue calls a function: a native the processor does in one
+/// instruction, as a square root, calls nothing.
+pub fn calls(rvalue: &Rvalue) -> bool {
+    match rvalue {
+        Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
+            !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
+        }
+        Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
+        _ => false,
+    }
+}
+
 /// The blocks of the loops of a body that hold no other loop, and, unless
 /// `calling`, call nothing.
 pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {
@@ -566,14 +578,7 @@ pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {
         })
         .collect();
     let calls = |block: &BlockData| {
-        let call = |rvalue: &Rvalue| match rvalue {
-            Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
-                !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
-            }
-            Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
-            _ => false,
-        };
-        block.stmts.iter().any(|stmt| matches!(stmt, Statement::Assign(_, rvalue, _) if call(rvalue)))
+        block.stmts.iter().any(|stmt| matches!(stmt, Statement::Assign(_, rvalue, _) if calls(rvalue)))
     };
     let mut tight = vec![false; blocks.len()];
     for (head, inside) in &loops {
