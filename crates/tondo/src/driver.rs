@@ -1662,10 +1662,23 @@ fn normalized(instruction: &Instruction) -> String {
     }
 }
 
-/// The lines of a diff of two listings, by their longest common part.
+/// The lines of a diff of two listings: what they start and end with
+/// alike, and between, their longest common part.
 fn line_diff(before: &[String], after: &[String]) -> Vec<String> {
+    let start = before.iter().zip(after).take_while(|(a, b)| a == b).count();
+    let (before_rest, after_rest) = (&before[start..], &after[start..]);
+    let end = before_rest.iter().rev().zip(after_rest.iter().rev()).take_while(|(a, b)| a == b).count();
+    let mut lines: Vec<String> = before[..start].iter().map(|l| format!(" {l}")).collect();
+    lines.extend(common_diff(&before_rest[..before_rest.len() - end], &after_rest[..after_rest.len() - end]));
+    lines.extend(before_rest[before_rest.len() - end..].iter().map(|l| format!(" {l}")));
+    lines
+}
+
+/// The lines of a diff by the longest common part, or, for parts too long
+/// to compare so, all of the one taken out and all of the other put in.
+fn common_diff(before: &[String], after: &[String]) -> Vec<String> {
     let (n, m) = (before.len(), after.len());
-    if n.saturating_mul(m) > 50_000_000 {
+    if n.saturating_mul(m) > 10_000_000 {
         let mut lines: Vec<String> = before.iter().map(|l| format!("-{l}")).collect();
         lines.extend(after.iter().map(|l| format!("+{l}")));
         return lines;
@@ -2080,6 +2093,21 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, SystemTime};
+
+    /// Two long listings alike show no change, and one instruction changed
+    /// in the middle of them shows as that one alone.
+    #[test]
+    fn diffs_long_listings_by_what_changed() {
+        let listing: Vec<String> = (0..12_000).map(|i| format!("add rax, {i}")).collect();
+        let changed =
+            |lines: &[String]| lines.iter().filter(|line| !line.starts_with(' ')).cloned().collect::<Vec<_>>();
+        assert!(changed(&super::line_diff(&listing, &listing)).is_empty());
+        let mut other = listing.clone();
+        other[6_000] = "sub rax, 1".to_string();
+        let diff = super::line_diff(&listing, &other);
+        assert_eq!(changed(&diff), ["+sub rax, 1", "-add rax, 6000"]);
+        assert_eq!(diff.len(), 12_001);
+    }
 
     #[test]
     fn sweeps_entries_unused_for_30_days() {
