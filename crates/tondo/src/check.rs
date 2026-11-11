@@ -845,9 +845,25 @@ fn std_alias(module: &str, member: &str) -> String {
         ("time", "secs") => "seconds",
         ("process", "run" | "exec" | "spawn" | "cmd" | "new") => "command",
         ("process", "sh" | "system") => "shell",
-        _ => return String::new(),
+        _ => return elsewhere(module, member),
     };
     format!("; use `{module}.{function}`")
+}
+
+/// What another module offers in place of a function a module lacks, as
+/// another language keeps it there: a program's arguments are `env.args()`.
+fn elsewhere(module: &str, member: &str) -> String {
+    let function = match (module, member) {
+        ("process" | "os" | "sys", "args" | "argv" | "arguments") => "env.args",
+        ("process" | "os", "env" | "getenv" | "getEnv") => "env.get",
+        ("process" | "os", "pid" | "getpid" | "id" | "processId") => "env.processId",
+        ("process" | "os", "cwd" | "getcwd" | "currentDirectory") => "env.currentDirectory",
+        ("process" | "os", "chdir" | "setCurrentDirectory") => "env.setCurrentDirectory",
+        ("process" | "os", "hostname") => "env.hostname",
+        ("env", "exit") => "process.exit",
+        _ => return String::new(),
+    };
+    format!("; use `{function}`, from `import std.{}`", function.split('.').next().unwrap_or_default())
 }
 
 /// The variant of `Tree` in `std/files.to` that holds the files of

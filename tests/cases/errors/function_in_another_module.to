@@ -1,0 +1,15 @@
+// A function another language keeps in one module and Tondo in another:
+// the error names it, and what to import for it.
+
+import std.console
+import std.env
+import std.process
+
+fn main() {
+    console.println("{process.args()} {process.pid()} {env.hostname()}")
+    env.exit(1)
+}
+
+// expect-error: E1001 module `process` has no function `args`; use `env.args`, from `import std.env`
+// expect-error: E1001 module `process` has no function `pid`; use `env.processId`, from `import std.env`
+// expect-error: E1001 module `env` has no function `exit`; use `process.exit`, from `import std.process`
