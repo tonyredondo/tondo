@@ -949,6 +949,15 @@ impl<'a> Checker<'a> {
                             ));
                         } else if let TyKind::Handle(Handle::Ref, _) = self.types.kind(value.ty) {
                             message.push_str(": an identity has no text; show what it identifies with `.value`");
+                        } else if self.iterator_element(value.ty).is_some() {
+                            message.push_str(
+                                ": it is an iterator, and `collect()` makes an array of its elements, which shows them",
+                            );
+                            let end = Span::new(value.span.end, value.span.end);
+                            self.diags.error("E1105", value.span, message);
+                            self.diags.fix("show `collect()`", false, vec![(end, ".collect()".into())]);
+                            out.push(hir::Segment::Value(value));
+                            continue;
                         } else if matches!(self.types.kind(value.ty), TyKind::Adt(_))
                             && self.owner(value.ty).is_some_and(|o| o.module == self.module)
                         {

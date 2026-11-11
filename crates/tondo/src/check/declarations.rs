@@ -77,10 +77,13 @@ impl<'a> Checker<'a> {
                 (CursorKind::Values, _) => "MapValues",
             };
             let template = self.types.declare_template(name.into(), params.clone());
+            // Private to every module: a cursor's representation is no part
+            // of what a program means (language 8.13).
             let fields = vec![
-                Field { name: "collection".into(), ty: collection, private: false, secret: false },
-                Field { name: "position".into(), ty: Ty::INT, private: false, secret: false },
+                Field { name: "collection".into(), ty: collection, private: true, secret: false },
+                Field { name: "position".into(), ty: Ty::INT, private: true, secret: false },
             ];
+            self.owners.insert(name.into(), Owner { module: u32::MAX, public: true, private_fields: vec![true, true] });
             self.types.define_template(template, AdtKind::Record(fields));
             self.types.declare_cursor(template, kind);
             let element = match (kind, set) {

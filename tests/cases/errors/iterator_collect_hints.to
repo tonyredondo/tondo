@@ -1,13 +1,18 @@
 // An iterator's adapters are lazy, and an array has the rest of what one
-// would call on it: the error says to `collect()` it first.
+// would call on it or show of it: the error says to `collect()` it first.
+// A map's cursor keeps what it is made of to itself.
 
 fn main() {
     let counts = ["b": 2, "a": 1]
     let keys = counts.keys().sorted()
     let values = counts.values().toArray()
     let evens = (0..10).filter((n) { n % 2 == 0 }).reversed()
+    let shown = "{counts.keys()}"
+    let at = counts.keys().position
 }
 
 // expect-error: E1001 `sorted`: it is an iterator, and `collect()` makes an array of its elements, which has `sorted`
 // expect-error: E1001 `toArray`: it is an iterator, and `collect()` makes an array of its elements
 // expect-error: E1001 `reversed`: it is an iterator
+// expect-error: E1105 `MapKeys[String, Int]` does not implement `Display`: it is an iterator, and `collect()` makes an array of its elements, which shows them
+// expect-error: E1501 field `position` of `MapKeys[String, Int]` is private to its module

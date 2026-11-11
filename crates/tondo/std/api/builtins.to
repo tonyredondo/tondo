@@ -134,6 +134,77 @@ pub fn Map.values(self): MapValues[K, V]
 /// of them.
 pub fn Map.entries(self): MapEntries[K, V]
 
+/// The keys of a map, one after another in insertion order, as
+/// `map.keys()` gives them: an iterator, whose adapters are lazy, and
+/// `collect()` makes an array of them.
+///
+/// ```tondo
+/// import std.console
+///
+/// let ages = ["leo": 41, "ana": 36]
+/// for name in ages.keys() {
+///     console.println(name)
+/// }
+/// console.println("{ages.keys().collect().sorted()}")
+/// ```
+pub type MapKeys[K, V] = {
+    // private fields
+}
+
+impl[K: Key, V] Iterator[K] for MapKeys[K, V]
+
+/// The values of a map, one after another in the insertion order of their
+/// keys, as `map.values()` gives them: an iterator, whose adapters are
+/// lazy, and `collect()` makes an array of them.
+///
+/// ```tondo
+/// import std.console
+///
+/// let stock = ["lamp": 3, "desk": 0, "chair": 8]
+/// let total = stock.values().reduce(0, (sum, count) { sum + count })
+/// console.println("{total} {stock.values().filter((count) { count > 0 }).count()}")
+/// ```
+pub type MapValues[K, V] = {
+    // private fields
+}
+
+impl[K: Key, V] Iterator[V] for MapValues[K, V]
+
+/// Each key of a map with its value, in insertion order, as
+/// `map.entries()` gives them: an iterator, whose adapters are lazy, and
+/// `collect()` makes an array of the pairs.
+///
+/// ```tondo
+/// import std.console
+///
+/// let ages = ["ana": 36, "leo": 41]
+/// for (name, age) in ages.entries().filter((entry) { entry.1 > 40 }) {
+///     console.println("{name} {age}")
+/// }
+/// console.println("{ages.entries().collect()}")
+/// ```
+pub type MapEntries[K, V] = {
+    // private fields
+}
+
+impl[K: Key, V] Iterator[(K, V)] for MapEntries[K, V]
+
+/// The values of a set, one after another in insertion order, as
+/// `set.values()` gives them: an iterator, whose adapters are lazy, and
+/// `collect()` makes an array of them.
+///
+/// ```tondo
+/// import std.console
+///
+/// let tags = Set["home", "light", "desk"]
+/// console.println("{tags.values().filter((tag) { tag.length() == 4 }).collect()}")
+/// ```
+pub type SetValues[T] = {
+    // private fields
+}
+
+impl[T: Key] Iterator[T] for SetValues[T]
+
 /// The number of values.
 pub fn Set.length(self): Int
 
