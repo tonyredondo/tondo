@@ -4037,6 +4037,81 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
     assert!(text.contains("session = <secret>"), "{text}");
 }
 
+/// `TONDO_WAKES=1` keeps each task's last waits and wakes, which `blocked`
+/// shows of the tasks that wait: where each parked, who handed it a value
+/// and what ended each wait.
+#[test]
+fn a_dump_keeps_each_task_s_waits_and_wakes() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-wakes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A task takes two values and waits for a third, which comes after a
+    // long sleep.
+    let waits = "import std.time\n\n\
+        fn take(values: Receiver[Int]) {\n    var count = 0\n    for count < 3 {\n        \
+        _ = values.receive()\n        count += 1\n    }\n}\n\n\
+        fn main() {\n    let (sender, values) = channel[Int]()\n    let taker = spawn take(values)\n    \
+        sender.send(1)\n    time.sleep(time.milliseconds(20))\n    sender.send(2)\n    \
+        time.sleep(time.seconds(60))\n    sender.send(3)\n    taker.wait()\n}\n";
+    std::fs::write(dir.join("waits.to"), waits).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built = Command::new(tondo_bin)
+        .args(["build", "waits.to", "--debug", "--output", "waits"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let blocked = |wakes: bool| {
+        let mut child = Command::new(dir.join("waits"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .env("TONDO_WAKES", if wakes { "1" } else { "0" })
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id().to_string();
+        // Until the task waits for its third value.
+        let mut graph = Value::Null;
+        for _ in 0..500 {
+            let asked = Command::new(tondo_bin).args(["blocked", &pid, "--json"]).output().unwrap();
+            if asked.status.success() {
+                graph = serde_json::from_slice(&asked.stdout).unwrap();
+                let waits = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
+                let taker = waits.iter().find(|t| t["id"] == 2);
+                let parked = |t: &Value| t["wakes"].as_array().unwrap().iter().filter(|w| w["did"] == "parked").count();
+                if taker.is_some_and(|t| {
+                    !wakes || parked(t) >= 2 && t["wakes"].as_array().unwrap().last().unwrap()["did"] == "parked"
+                }) {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let text = Command::new(tondo_bin).args(["blocked", &pid]).output().unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        (graph["waits"].clone(), String::from_utf8_lossy(&text.stdout).into_owned())
+    };
+    let (waits, text) = blocked(true);
+    let taker = waits.as_array().unwrap().iter().find(|t| t["id"] == 2).unwrap_or_else(|| panic!("{waits}"));
+    assert_eq!(taker["woken"], false, "{taker}");
+    let wakes = taker["wakes"].as_array().unwrap();
+    let did = |what: &str| wakes.iter().filter(|w| w["did"] == what).collect::<Vec<_>>();
+    let parked = did("parked");
+    assert!(parked.iter().all(|w| w["for"] == "a value of a channel"), "{taker}");
+    assert!(parked.iter().all(|w| w["at"].as_str().unwrap().contains("waits.to:6 in take")), "{taker}");
+    assert_eq!(did("handed")[0]["from"], 1, "{taker}");
+    assert!(did("ran").iter().any(|w| w["by"] == "a wake"), "{taker}");
+    assert_eq!(wakes.last().unwrap()["did"], "parked", "{taker}");
+    assert!(text.contains("task 1 handed it a value") && text.contains("it ran again, after a wake"), "{text}");
+    // Without it, nothing is kept.
+    let (waits, text) = blocked(false);
+    assert!(waits.as_array().unwrap().iter().all(|t| t["wakes"] == json!([])), "{waits}");
+    assert!(!text.contains("its last waits and wakes"), "{text}");
+}
+
 #[test]
 fn a_dump_says_who_waits_for_whom() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {

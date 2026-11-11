@@ -36,6 +36,8 @@ pub(crate) struct Config {
     /// tasks take locks: `fail` fails where a cycle closes, `off` does not
     /// look, anything else says it on stderr.
     pub(crate) lock_order: Option<String>,
+    /// `TONDO_WAKES`: `1` keeps each task's last waits and wakes, for a dump.
+    pub(crate) wakes: Option<OsString>,
     /// `TONDO_ZONES`: `builtin` uses the time zones built into the program,
     /// not the system's.
     pub(crate) zones: Option<String>,
@@ -131,6 +133,7 @@ pub(crate) fn config() -> &'static Config {
             heap_rate: text("TONDO_HEAP_RATE"),
             lock_order: text("TONDO_LOCK_ORDER"),
             zones: text("TONDO_ZONES"),
+            wakes: os("TONDO_WAKES"),
             debug: os("TONDO_DEBUG"),
             trace: os("TONDO_TRACE"),
             race: os("TONDO_RACE"),

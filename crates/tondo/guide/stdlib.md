@@ -767,7 +767,9 @@ many tasks in one place, the oldest requests, where the memory is. `stacks`
 groups the tasks by their stack, `requests` lists the HTTP and gRPC requests in
 flight, `events` what the program did last, and `find <text>` looks for a user
 or request in every value.
-`tondo blocked <pid|name>` shows who waits for whom in a running program.
+`tondo blocked <pid|name>` shows who waits for whom in a running program, and
+with `TONDO_WAKES=1` in its environment each waiting task's last waits and
+wakes, for a wake that was lost.
 `tondo logpoint <pid|name> app.to:12 "order {order.id}"` says what a line holds
 each time it goes by, without stopping the program or a new build, up to
 `--max 100` times, and with `--if "order.total > 100"` only when that holds: on

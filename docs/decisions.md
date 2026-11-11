@@ -5772,3 +5772,16 @@ to a log, which costs every rule a check while compiling, so it is a feature of 
 for those who work on the code generator: the `tondo` that ships pays nothing and says how to build
 one that counts. A logger counts the rules by the function the thread compiles, and a rule is
 Tondo's when a comment above it, back to the rule before, says `Tondo:`.
+
+## `TONDO_WAKES=1` keeps each task's last waits and wakes
+
+A program that hangs now and then has most often lost a wake, and finding which one meant
+counting with atomics by hand. The maintainer approved on 2026-11-11 a log the runtime keeps when
+`TONDO_WAKES=1` is in a program's environment: of each task, its last 16 waits and wakes, which a
+dump and `tondo blocked` show, and in every dump whether the wait a task is parked in was claimed,
+which, for a task still parked, is a wake lost on its way. It costs a program without it nothing:
+it hears the scheduler through the tools' hooks, which a program already pays a load for, in their
+cold functions, where a task runs and stops. Which operation claimed a wait is read there too, from
+the wait the task resumes in, and who handed a value through a channel with no buffer from the hook
+of the debugger's scan, by its mask. Who claimed any other wait is not kept: that is a check where
+every wake notifies, which a program without the log would pay.

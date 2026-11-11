@@ -1203,7 +1203,8 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
         "frames",
         "objects",
     ];
-    const OF_TASK: [&str; 9] = ["id", "main", "state", "cancelled", "stack", "spawned", "locks", "contexts", "wait"];
+    const OF_TASK: [&str; 11] =
+        ["id", "main", "state", "cancelled", "stack", "spawned", "locks", "contexts", "wait", "woken", "wakes"];
     if let Some(object) = dump.as_object_mut() {
         object.retain(|key, _| KEPT.contains(&key.as_str()));
     }
@@ -2200,11 +2201,30 @@ fn tasks(dump: &Value) -> Vec<Value> {
                 }));
             }
         }
+        // Its last waits and wakes, under `TONDO_WAKES=1`: where it parked
+        // each time, in the program's code.
+        let wakes: Vec<Value> = task["wakes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|wake| {
+                let stack = wake["stack"].as_array().map_or(&[][..], Vec::as_slice);
+                let at = stack.iter().find(|a| compiled(dump, a)).and_then(|a| frame_text(dump, a));
+                let mut wake = wake.clone();
+                if let Some(at) = at {
+                    wake["at"] = json!(at);
+                }
+                if let Some(fields) = wake.as_object_mut() {
+                    fields.remove("stack");
+                }
+                wake
+            })
+            .collect();
         out.push(json!({
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
             "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
-            "frames": frames, "wait": task["wait"], "request": task["request"],
+            "frames": frames, "wait": task["wait"], "woken": task["woken"], "wakes": wakes, "request": task["request"],
         }));
     }
     out
@@ -2224,6 +2244,7 @@ fn task_text(task: &Value, whole: bool) -> String {
         let waited = duration(task["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
         out.push_str(&format!("  waited {waited} for {wait}\n"));
     }
+    out.push_str(&wakes_text(task));
     // A short view shows the program's frames; the whole one, every frame.
     let lines: Vec<&str> = task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     let shown: Vec<&&str> = lines.iter().filter(|l| whole || l.contains(" in ")).collect();
@@ -2751,6 +2772,37 @@ pub(crate) fn blocked(answer: &Value) -> Value {
     graph
 }
 
+/// What a dump says of a task's wake: that something woke it and it has
+/// not run since, and its last waits and wakes, under `TONDO_WAKES=1`.
+fn wakes_text(task: &Value) -> String {
+    let mut out = String::new();
+    if task["woken"] == true && task["state"] == "waits" {
+        out.push_str(
+            "  its wait was claimed to wake it, but it is still parked: a wake lost, unless it is on its way\n",
+        );
+    }
+    let wakes = task["wakes"].as_array().map_or(&[][..], Vec::as_slice);
+    if !wakes.is_empty() {
+        out.push_str("  its last waits and wakes:\n");
+    }
+    for wake in wakes {
+        let ago = duration(wake["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+        let line = match wake["did"].as_str().unwrap_or_default() {
+            "parked" => {
+                let at = wake["at"].as_str().map_or(String::new(), |at| format!(" at {at}"));
+                format!("it waited for {}{at}", wake["for"].as_str().unwrap_or("time or input"))
+            }
+            "handed" => format!("task {} handed it a value", wake["from"]),
+            _ => match wake["by"].as_str() {
+                Some(by) => format!("it ran again, after {by}"),
+                None => "it ran".to_string(),
+            },
+        };
+        out.push_str(&format!("    {ago} ago {line}\n"));
+    }
+    out
+}
+
 /// `blocked` as text: each wait, then what they add up to.
 pub(crate) fn blocked_text(graph: &Value) -> String {
     let list = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
@@ -2758,9 +2810,15 @@ pub(crate) fn blocked_text(graph: &Value) -> String {
         return "no task waits for another".to_string();
     }
     let lines = list.iter().map(|t| {
-        let waited = duration(t["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
-        let (at, wanted) = (t["at"].as_str().unwrap_or("nowhere known"), t["wait"]["for"].as_str().unwrap_or_default());
-        format!("task {} at {at} has waited {waited} for {wanted}", t["id"])
+        let at = t["at"].as_str().unwrap_or("nowhere known");
+        let line = match t["wait"]["for"].as_str() {
+            Some(wanted) => {
+                let waited = duration(t["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
+                format!("task {} at {at} has waited {waited} for {wanted}", t["id"])
+            }
+            None => format!("task {} at {at} waits for time or input", t["id"]),
+        };
+        format!("{line}\n{}", wakes_text(t)).trim_end().to_string()
     });
     format!("{}\n{}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
 }
@@ -2906,7 +2964,9 @@ pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
     name_frames(&mut dump);
     let tasks = tasks(&dump);
     let mut graph = wait_graph(&tasks);
-    graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object()).cloned().collect();
+    // The tasks that wait for another, and those a wake did not reach.
+    let lost = |t: &Value| t["woken"] == true && t["state"] == "waits";
+    graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object() || lost(t)).cloned().collect();
     match as_json {
         true => crate::cli::print_json("blocked", true, graph),
         false => println!("{}", blocked_text(&graph)),
@@ -3459,6 +3519,16 @@ mod tests {
         }
         assert!(!super::alive(child.id()));
         child.wait().unwrap();
+    }
+
+    /// A task parked in a wait that something claimed has lost its wake;
+    /// one that is ready to run has not.
+    #[test]
+    fn tells_a_lost_wake() {
+        let task = serde_json::json!({ "state": "waits", "woken": true, "wakes": [] });
+        assert!(super::wakes_text(&task).contains("a wake lost"));
+        let ready = serde_json::json!({ "state": "ready", "woken": true, "wakes": [] });
+        assert_eq!(super::wakes_text(&ready), "");
     }
 
     #[test]

@@ -80,6 +80,14 @@ run {"path": "worker.to", "timeout": 300}
 A program no tool can reach, without `TONDO_DIAGNOSTICS`, still answers
 `kill -QUIT`: it writes where each task is and ends.
 
+A hang that comes only now and then, under load, is most often a wake lost: a
+task waits, and what should wake it never reaches it. With `TONDO_WAKES=1` in
+the program's environment, `blocked` and a dump give each waiting task's last
+waits and wakes: when it parked, for what and where, which task handed it a
+value, and what ended each wait. A task whose wait was claimed but that is
+still parked lost its wake on the way; one whose last wait nothing claimed was
+never woken. Without it the program pays nothing.
+
 With `beat` still running this ends with `main`, so the run ends too. For a test
 that hangs, `test` takes `flags` with `--timeout <seconds>`; `lock_order` finds
 locks taken in opposite orders, which only sometimes hang.

@@ -35,3 +35,6 @@
 .tasks[].wait.on[]
 .tasks[].wait.on[]: number
 .tasks[].wait: null
+.tasks[].wakes[]
+.tasks[].woken: bool
+.tasks[].woken: null

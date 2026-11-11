@@ -27,6 +27,8 @@ pub(crate) const DEBUGGER: u32 = 1 << 3;
 pub(crate) const FOLLOWING: u32 = 1 << 4;
 /// `profile.startBlocking`.
 pub(crate) const BLOCKING: u32 = 1 << 5;
+/// `TONDO_WAKES=1`: each task's last waits and wakes (`wakes.rs`).
+pub(crate) const WAKES: u32 = 1 << 6;
 
 /// Whether `tool` listens.
 #[inline]
@@ -53,6 +55,9 @@ pub(super) fn running(task: *mut Task) -> bool {
 #[inline(never)]
 fn told_running(task: *mut Task) -> bool {
     note(|| format!("s {}\n", unsafe { (*task).name }));
+    if listens(WAKES) {
+        wakes::ran(task);
+    }
     let traced = listens(RECORDER);
     if traced {
         recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
@@ -73,6 +78,13 @@ pub(super) fn stopped(task: *mut Task, traced: bool) {
 #[inline(never)]
 fn told_stopped(task: *mut Task, traced: bool) {
     let (id, finished) = unsafe { ((*task).id, (*task).finished) };
+    if listens(WAKES) {
+        match finished {
+            true => wakes::ended(id),
+            false if unsafe { (*task).state.load(Ordering::Acquire) } == PARKING => wakes::parked(task),
+            false => {}
+        }
+    }
     if traced {
         // Nothing runs the task until it is parked or scheduled again.
         let why = match finished {
@@ -194,8 +206,19 @@ pub(super) fn channel_used(kind: u8, channel: usize) {
 /// A value went from task `from` to task `to` with no buffer between.
 #[inline]
 pub(super) fn handed(from: u64, to: u64) {
+    if listens(FOLLOWING | WAKES) {
+        told_handed(from, to);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn told_handed(from: u64, to: u64) {
     if listens(FOLLOWING) {
         crate::debugger::handed(from, to);
+    }
+    if listens(WAKES) {
+        wakes::handed(from, to);
     }
 }
 

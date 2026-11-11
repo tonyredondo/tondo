@@ -243,6 +243,11 @@ holds to these rules:
 - State that two threads change, as "polled now" and "woken meanwhile",
   is one atomic, changed with read-modify-writes on every side.
 
+`TONDO_WAKES=1` in the environment of a program keeps each task's last
+waits and wakes, which `tondo blocked` and a dump show: a task whose wait
+was claimed but that is still parked lost the notification; one whose last
+wait nothing claimed lost the wake before it.
+
 Such a hang is found under load, as the benchmarks of `bench/tondo` give,
 by counting with atomics and printing from a thread of its own what stops
 moving: a lock or a print on the path changes the timing that loses the

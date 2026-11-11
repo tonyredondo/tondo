@@ -81,6 +81,7 @@ mod channels;
 pub(crate) use channels::*;
 
 pub(crate) mod tools;
+pub(crate) mod wakes;
 
 // ---------------------------------------------------------------------------
 // Tasks and the scheduler

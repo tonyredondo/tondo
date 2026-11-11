@@ -101,13 +101,7 @@ impl Wait {
         if task.flight == 0 {
             return self.parked();
         }
-        let on = match task.blocked_kind.load(Ordering::Acquire) {
-            LOCK => "a lock",
-            RECEIVING => "a value of a channel",
-            SENDING => "room in a channel",
-            JOIN => "a task",
-            _ => "time or input",
-        };
+        let on = super::wakes::waiting_on(task.blocked_kind.load(Ordering::Acquire));
         let since = Instant::now();
         let fired = self.parked();
         let took = since.elapsed().as_millis();

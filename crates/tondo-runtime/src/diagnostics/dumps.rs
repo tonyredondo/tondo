@@ -3,6 +3,7 @@
 //! and the command that takes each one away.
 
 use super::*;
+use crate::tasks::wakes::{Did, waiting_on, woken_by};
 
 /// The contexts of a dump's task with a field a `with` set, with those
 /// fields.
@@ -78,9 +79,27 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
                 on.join(",")
             )
         });
+        let woken = task.woken.map_or(String::new(), |woken| format!(",\"woken\":{woken}"));
+        let wakes: Vec<String> = task
+            .wakes
+            .iter()
+            .map(|(ago, did)| match did {
+                Did::Parked { on, frames: stack } => format!(
+                    "{{\"did\":\"parked\",\"ms\":{ago},\"for\":{},\"stack\":{}}}",
+                    quoted(waiting_on(*on)),
+                    frames.list(stack)
+                ),
+                Did::Ran { by } => match woken_by(*by) {
+                    Some(by) => format!("{{\"did\":\"ran\",\"ms\":{ago},\"by\":{}}}", quoted(by)),
+                    None => format!("{{\"did\":\"ran\",\"ms\":{ago}}}"),
+                },
+                Did::Handed { from } => format!("{{\"did\":\"handed\",\"ms\":{ago},\"from\":{from}}}"),
+            })
+            .collect();
+        let wakes = if wakes.is_empty() { String::new() } else { format!(",\"wakes\":[{}]", wakes.join(",")) };
         let _ = write!(
             out,
-            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}{wait}}}",
+            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}{wait}{woken}{wakes}}}",
             task.id,
             task.main,
             task.state,

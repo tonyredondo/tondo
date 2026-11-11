@@ -36,6 +36,9 @@ pub(crate) fn start() {
     if on(&config.race) {
         crate::race::start();
     }
+    if on(&config.wakes) {
+        crate::tasks::wakes::start();
+    }
     let live = crate::live::on() && config.diagnostics.as_ref().is_none_or(|value| value != "0");
     // `cpu`: a profile of processor time, which counting the memory would
     // change.

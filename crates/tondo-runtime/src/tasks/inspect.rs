@@ -24,6 +24,11 @@ pub(crate) struct Shot {
     /// object, which tasks that wait for the same one share; and for how
     /// many milliseconds.
     pub wait: Option<(String, Vec<u64>, usize, u64)>,
+    /// For a task parked in a wait, whether an operation claimed it to wake
+    /// the task: one that waits so has lost its wake.
+    pub woken: Option<bool>,
+    /// Its last waits and wakes, under `TONDO_WAKES=1` (`wakes.rs`).
+    pub wakes: Vec<(u64, super::wakes::Did)>,
 }
 
 /// In the handler of `SIGPROF`: answers a dump that asked this thread where
@@ -139,9 +144,29 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
                 request: crate::diagnostics::flight_text(shown.flight),
                 wait: crate::debugger::waits_for(shown.id)
                     .map(|(text, on)| (text, on, shown.blocked.load(Ordering::Relaxed), blocked_for(shown.id))),
+                woken: woken(shown),
+                wakes: if tools::listens(tools::WAKES) { super::wakes::of(shown.id) } else { Vec::new() },
             }
         })
         .collect()
+}
+
+/// Whether an operation claimed the wait `task` is parked in, when it is.
+fn woken(task: &Task) -> Option<bool> {
+    // A dump of a crash may come while this thread holds the lock: it then
+    // says nothing of the wait, rather than wait for itself.
+    let mut tries = 0;
+    while task.waiting_lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        tries += 1;
+        if tries == 10_000 {
+            return None;
+        }
+        std::hint::spin_loop();
+    }
+    // The task holds its wait until it clears this, under the same lock.
+    let woken = unsafe { task.waiting.as_ref() }.map(|wait| wait.fired.load(Ordering::Acquire) != NONE);
+    unlock(&task.waiting_lock);
+    woken
 }
 
 /// Each task's number and the part of its stack in use, for a dump that
@@ -286,7 +311,7 @@ pub(super) const LONG_WAIT: u128 = 100;
 /// Milliseconds of a clock the system advances a tick at a time, which
 /// costs less to read than the exact one: enough to say how long a task has
 /// been blocked, read at every wait.
-fn millis() -> u64 {
+pub(super) fn millis() -> u64 {
     #[cfg(target_os = "macos")]
     const CLOCK: libc::clockid_t = libc::CLOCK_UPTIME_RAW_APPROX;
     #[cfg(not(target_os = "macos"))]

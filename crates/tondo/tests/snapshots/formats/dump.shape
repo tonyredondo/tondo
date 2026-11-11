@@ -49,6 +49,7 @@
 .tasks[].wait.object: string
 .tasks[].wait.on[]
 .tasks[].wait.on[]: number
+.tasks[].woken: bool
 .time_ms: number
 .values[]
 .values[].at: string

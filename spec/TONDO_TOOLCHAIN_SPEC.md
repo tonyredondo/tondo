@@ -968,7 +968,15 @@ vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON, en
 `tondo-dump-read-0.1/1` (sección 7.12).
 
 Cada tarea del volcado que espera un lock, un canal o a otra tarea lleva qué
-espera, las tareas que pueden acabar la espera y cuánto lleva. `why` diagnostica
+espera, las tareas que pueden acabar la espera y cuánto lleva. Una tarea parada
+en una espera dice además si algo la reclamó para despertarla (`woken`): parada
+y reclamada, su despertar se perdió, salvo que vaya de camino. Con
+`TONDO_WAKES=1` en el entorno del programa, el runtime guarda de cada tarea sus
+últimas 16 esperas y despertares (`wakes`), que dan `dump read tasks` y `tondo
+blocked`: cuándo se paró, qué esperaba y dónde; qué tarea le pasó un valor por
+un canal sin búfer; y cuándo volvió a correr y qué acabó la espera, un
+despertar, una cancelación o su plazo. Los oye por los enganches del
+depurador, así que un programa sin ella no paga nada. `why` diagnostica
 con eso: el mensaje, las tareas que se esperan en ciclo, las que retienen a otras
 y a cuántas, directa o indirectamente, la espera más larga, los grupos de tareas
 en una misma pila y dónde está la memoria; es también lo primero que `tondo dap`
@@ -1078,8 +1086,9 @@ tomó cada uno, aunque las tareas nunca coincidan. `tondo test` lo mira siempre,
 al medir con `--bench`, y lo da como aviso del test que lo cierra, y `tondo test
 --lock-order` hace fallar ese test con `P0019`, también al medir. Dos lectores no se esperan, y no cuentan.
 
-`tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, y el
-comando `blocked` del depurador el de un programa parado.
+`tondo blocked <pid|nombre>` da ese mismo grafo de un programa que corre, con
+las tareas cuyo despertar se perdió y las esperas y despertares de cada una, y
+el comando `blocked` del depurador el de un programa parado.
 
 El código seguro no tiene carreras de datos, pero una actualización se puede perder: una
 tarea lee una celda de `std.sync` y la escribe después, y entre medias otra tarea la
@@ -2113,6 +2122,7 @@ significan lo de siempre.
 | `TONDO_PANIC_FORMAT` | Quien lo ejecuta | `json` da en stderr un fallo como JSON. |
 | `TONDO_HEAP_RATE` | Quien lo ejecuta | Los bytes entre dos muestras del heap. |
 | `TONDO_LOCK_ORDER` | Quien lo ejecuta | Si mira en qué orden toman las tareas los locks: `fail` falla donde se cierra un ciclo, `off` no mira, otro valor lo dice en stderr. |
+| `TONDO_WAKES` | Quien lo ejecuta | `1` guarda las últimas esperas y despertares de cada tarea para un volcado y `tondo blocked`. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
 | `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |
