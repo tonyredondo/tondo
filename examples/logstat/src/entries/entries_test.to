@@ -1,0 +1,46 @@
+import std.testing
+import std.time
+
+test readsAnEntry {
+    let entry = parse("2026-11-11T10:00:01Z GET /users/7 200 12ms")?
+    assert(
+        entry ==
+            Entry {
+                at: "2026-11-11T10:00:01Z"
+                method: "GET"
+                path: "/users/7"
+                status: 200
+                took: time.milliseconds(12)
+            },
+    )
+}
+
+test saysWhyALineIsNotAnEntry {
+    assert("{parse("not an entry").err()}" == "some(it has 3 words, and an entry has 5)")
+    assert(parse("t GET / 999 1ms").err() == some(ParseError.Status("999")))
+    assert(parse("t GET / 200 fast").err() == some(ParseError.Took("fast")))
+    assert(parse("t GET / 200 12").err() == some(ParseError.Took("12")))
+}
+
+test routesLeaveOutNumbersAndQueries {
+    assert(route("/users/7") == "/users/:id")
+    assert(route("/users/7/orders/12") == "/users/:id/orders/:id")
+    assert(route("/search?q=tea") == "/search")
+    assert(route("/health") == "/health")
+}
+
+/// Whatever a line holds, reading it gives an entry or says why not: it
+/// never panics. `tondo test --fuzz` searches for a line that does.
+test anyLineIsReadOrRefused {
+    let seeds = ["2026-11-11T10:00:01Z GET /users/7 200 12ms", "", "a b c d e", "t GET / 200 -5ms"]
+    testing.fuzz(
+        "parse",
+        seeds,
+        (line: String) {
+            match parse(line) {
+                ok(entry) => assert(entry.status >= 100 and entry.status <= 599)
+                err(_) => {}
+            }
+        },
+    )
+}

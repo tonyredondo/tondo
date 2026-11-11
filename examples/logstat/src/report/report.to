@@ -1,0 +1,60 @@
+import logstat.entries
+import std.time
+
+/// A row of the table of routes.
+pub type RouteRow = {
+    route: String
+    requests: Int
+    errors: Int
+    slowest: String
+    mean: String
+}
+
+/// What every route did: how many requests, how many failed, and how long
+/// they took, the busiest first.
+pub fn byRoute(found: Array[entries.Entry]): Array[RouteRow] {
+    let groups = found.groupBy((entry) { entries.route(entry.path) })
+    var rows: Array[RouteRow] = []
+    for (route, group) in groups {
+        let times = group.map((entry) { entry.took.milliseconds() })
+        rows.push(
+            RouteRow {
+                route
+                requests: group.length()
+                errors: group.count((entry) { entry.status >= 500 })
+                slowest: milliseconds(times.max().unwrapOr(0))
+                mean: milliseconds(times.sum() / group.length())
+            },
+        )
+    }
+    rows.sortedBy((row) { -row.requests })
+}
+
+/// The entries that took longer than a limit, the slowest first.
+pub fn slowerThan(found: Array[entries.Entry], limit: time.Duration): Array[entries.Entry] {
+    found
+        .filter((entry) { limit.isLessThan(entry.took) })
+        .sortedBy((entry) { -entry.took.milliseconds() })
+}
+
+/// How many entries each class of status has: `2xx`, `4xx`, `5xx`.
+pub fn byClass(found: Array[entries.Entry]): Map[String, Int] {
+    var classes: Map[String, Int] = [:]
+    for entry in found {
+        let class = "{entry.status / 100}xx"
+        classes[class] = classes.getOr(class, 0) + 1
+    }
+    classes
+}
+
+/// A bar of a histogram: as many marks as `count` is of `most`, up to `width`.
+pub fn bar(count: Int, most: Int, width: Int = 30): String {
+    if most == 0 {
+        return ""
+    }
+    "#".repeat((count * width + most - 1) / most)
+}
+
+fn milliseconds(count: Int): String {
+    "{count} ms"
+}
