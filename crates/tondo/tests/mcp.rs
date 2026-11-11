@@ -789,7 +789,9 @@ fn reaches_what_the_command_line_does() {
 fn says_what_a_release_build_makes_of_the_code() {
     let code = "import std.console\n\nfn sum(values: Array[Int]): Int {\n    var total = 0\n    \
         for i in 0..values.length() {\n        total += values[i]\n    }\n    total\n}\n\n\
-        fn main() {\n    let values = [1, 2, 3]\n    console.println(\"{sum(values)}\")\n}\n";
+        fn main() {\n    let values = [1, 2, 3]\n    console.println(\"{sum(values)} {named(2).length()}\")\n}\n\n\
+        fn named(count: Int): Array[String] {\n    var all: Array[String] = []\n    for i in 0..count {\n        \
+        all.push(\"name {i}\")\n    }\n    all\n}\n";
     let dir = project("mcp_optimizations", &[("main.to", code), ("wrong.to", "fn main() {\n    nothing()\n}\n")]);
     let mut agent = Agent::start(&dir);
     let (found, text) = agent.call("optimizations", json!({ "path": "main.to" }));

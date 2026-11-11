@@ -1008,7 +1008,9 @@ fn what_a_release_build_makes_of_the_code() {
         fn quarter(value: Int): Int {\n    if value < 0 {\n        return 0\n    }\n    value / 4\n}\n\n\
         fn main() {\n    let values = [1, 2, 3, 4]\n    for round in 0..3 {\n        \
         console.println(\"{sum(values)} {fib(round)} {\"{round * 1000}\".length()} {quarter(values[round])}\")\n        \
-        console.println(\"{3 * values[round]}\")\n    }\n}\n";
+        console.println(\"{3 * values[round]} {named(round).length()}\")\n    }\n}\n\n\
+        fn named(count: Int): Array[String] {\n    var all: Array[String] = []\n    for i in 0..count {\n        \
+        all.push(\"name {i}\")\n    }\n    all\n}\n";
     let dir = project_at("optimizations", &[("main.to", source)]);
     let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to"]);
     assert_eq!(status, 0, "{stderr}");
@@ -1021,10 +1023,13 @@ fn what_a_release_build_makes_of_the_code() {
         "main.to:28:27: `sum(values)` is inlined: the body of `sum` is copied here (in main)",
         "main.to:28:54: `\"{round * 1000}\"` is made in the frame, without the heap (in main)",
         "main.to:29:27: `3 * values[round]` is checked by the range of the other factor, not by the product (in main)",
+        // A text the console copies is made in the frame; one a collection
+        // takes, on the heap.
+        "main.to:29:25: `\"{3 * values[round]} {named(round).length()}\"` is made in the frame, without the heap (in main)",
     ] {
         assert!(said.lines().any(|said| said == line), "{line}\n{said}");
     }
-    assert!(said.contains("is made on the heap: it is passed to a call that may keep it (in main)"), "{said}");
+    assert!(said.contains("`\"name {i}\"` is made on the heap: a collection takes it"), "{said}");
     // The copies of a place: a recursion inlined into `main` then kept as
     // a call is told as a call there, and the standard library is not told.
     assert!(!said.contains("`fib(n - 1)` is inlined"), "{said}");
