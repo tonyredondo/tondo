@@ -73,6 +73,9 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
         ("bytes_per_op", decimal(benchmark.bytes)),
         ("instructions_per_op", counted(benchmark.instructions)),
         ("cycles_per_op", counted(benchmark.cycles)),
+        ("branch_misses_per_op", counted(benchmark.branch_misses)),
+        ("l1d_misses_per_op", counted(benchmark.l1d_misses)),
+        ("l1i_misses_per_op", counted(benchmark.l1i_misses)),
         ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
     ];
     let baseline = compared.map_or(Value::Null, |c| {
@@ -82,6 +85,14 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
             ("bytes_per_op", decimal(c.bytes)),
             ("instructions_per_op", counted(c.instructions)),
             ("instructions_change_percent", counted(c.instructions_change.map(|change| change * 100.0))),
+            (
+                "counters_change_percent",
+                obj(c
+                    .counters
+                    .iter()
+                    .map(|&(name, change)| (name, counted(change.map(|change| change * 100.0))))
+                    .collect()),
+            ),
             ("change_percent", decimal(c.change * 100.0)),
             ("interval_percent", Value::Array(vec![decimal(c.low * 100.0), decimal(c.high * 100.0)])),
             ("verdict", str(c.verdict)),
@@ -113,6 +124,10 @@ pub(super) struct Compared {
     pub bytes: f64,
     pub instructions: Option<f64>,
     pub instructions_change: Option<f64>,
+    /// How cycles, mispredicted branches and first-cache misses changed,
+    /// by their names in the report, where both sides counted them and an
+    /// event comes once in a thousand instructions or more.
+    pub counters: [(&'static str, Option<f64>); 4],
     pub change: f64,
     pub low: f64,
     pub high: f64,
@@ -137,10 +152,24 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_in
         _ => "same",
     };
     let grew = |now: f64, before: f64, max: f64| now > before * (1.0 + max) + 1e-9;
-    let instructions_change = match (new.instructions, base.instructions) {
+    let changed = |now: Option<f64>, before: Option<f64>| match (now, before) {
         (Some(now), Some(before)) if before > 0.0 => Some(now / before - 1.0),
         _ => None,
     };
+    let instructions_change = changed(new.instructions, base.instructions);
+    // An event rarer than one in a thousand instructions costs little,
+    // and its change, of a few, says nothing.
+    let often = |now: Option<f64>, before: Option<f64>| {
+        let instructions = new.instructions.unwrap_or_default().max(base.instructions.unwrap_or_default());
+        changed(now, before)
+            .filter(|_| now.unwrap_or_default().max(before.unwrap_or_default()) * 1000.0 >= instructions)
+    };
+    let counters = [
+        ("cycles", changed(new.cycles, base.cycles)),
+        ("branch_misses", often(new.branch_misses, base.branch_misses)),
+        ("l1d_misses", often(new.l1d_misses, base.l1d_misses)),
+        ("l1i_misses", often(new.l1i_misses, base.l1i_misses)),
+    ];
     let regressed = max.and_then(|max| {
         let more = |change: f64| format!("{:.1}% more instructions", change * 100.0);
         if by_instructions && instructions_change.is_none() {
@@ -163,6 +192,7 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_in
         bytes: base.bytes,
         instructions: base.instructions,
         instructions_change,
+        counters,
         change,
         low,
         high,
@@ -217,6 +247,9 @@ pub(super) fn baseline(environment: Value, measured: &[(String, &Benchmark)]) ->
                 ("bytes_per_op", decimal(benchmark.bytes)),
                 ("instructions_per_op", counted(benchmark.instructions)),
                 ("cycles_per_op", counted(benchmark.cycles)),
+                ("branch_misses_per_op", counted(benchmark.branch_misses)),
+                ("l1d_misses_per_op", counted(benchmark.l1d_misses)),
+                ("l1i_misses_per_op", counted(benchmark.l1i_misses)),
                 ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
             ])
         })
@@ -252,6 +285,9 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
             bytes: number("bytes_per_op"),
             instructions: entry["instructions_per_op"].as_f64(),
             cycles: entry["cycles_per_op"].as_f64(),
+            branch_misses: entry["branch_misses_per_op"].as_f64(),
+            l1d_misses: entry["l1d_misses_per_op"].as_f64(),
+            l1i_misses: entry["l1i_misses_per_op"].as_f64(),
         };
         measures.insert((test.to_string(), name.to_string()), benchmark);
     }
@@ -357,7 +393,17 @@ pub(super) fn lines(
                 let percent = |change: f64| if (change * 100.0).abs() < 0.05 { 0.0 } else { change * 100.0 };
                 let instructions =
                     compared.instructions_change.map_or(String::new(), |c| format!(", {:+.1}% ins", percent(c)));
-                format!("  {:+.1}% {}{instructions}{regressed}", compared.change * 100.0, compared.verdict)
+                // What else the processor counted, where it moved: why a
+                // time changed when the instructions did not.
+                let moved: String = compared
+                    .counters
+                    .iter()
+                    .filter_map(|&(name, change)| {
+                        let change = change.filter(|change| change.abs() >= 0.05)?;
+                        Some(format!(", {} {:+.1}%", name.replace('_', " "), change * 100.0))
+                    })
+                    .collect();
+                format!("  {:+.1}% {}{instructions}{moved}{regressed}", compared.change * 100.0, compared.verdict)
             }
             None if baselines.source.is_some() => "  new".to_string(),
             None => String::new(),
@@ -420,6 +466,7 @@ mod tests {
             bytes: 8.0 * allocations,
             instructions: Some(1000.0),
             cycles: Some(400.0),
+            ..Benchmark::default()
         };
         let base = measured((0..50).map(|i| 100.0 + (i % 5) as f64).collect(), 2.0);
         let slower = measured((0..50).map(|i| 120.0 + (i % 5) as f64).collect(), 2.0);
@@ -452,6 +499,8 @@ mod tests {
             bytes: 16.0,
             instructions,
             cycles: instructions.map(|i| i / 2.0),
+            branch_misses: instructions.map(|i| i / 100.0),
+            ..Benchmark::default()
         };
         let base = measured((0..50).map(|i| 100.0 + (i % 5) as f64).collect(), Some(1000.0));
         let slower = measured((0..50).map(|i| 120.0 + (i % 5) as f64).collect(), Some(1001.0));
@@ -460,6 +509,9 @@ mod tests {
         assert!((compared.instructions_change.unwrap() - 0.001).abs() < 1e-9);
         let more = measured(base.samples.clone(), Some(1100.0));
         assert_eq!(compare(&more, &base, Some(0.05), true).regressed.as_deref(), Some("10.0% more instructions"));
+        let counters = compare(&more, &base, None, false).counters;
+        assert_eq!(counters[1].0, "branch_misses");
+        assert!((counters[1].1.unwrap() - 0.1).abs() < 1e-9 && counters[2].1.is_none(), "{counters:?}");
         assert!(compare(&more, &base, Some(0.05), false).regressed.is_none());
         let uncounted = measured(base.samples.clone(), None);
         let why = compare(&uncounted, &base, Some(0.05), true).regressed.unwrap();

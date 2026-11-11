@@ -376,9 +376,11 @@ pub struct FuzzInput {
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a
-/// run took by sample, the allocations of a run and their bytes, and the
-/// instructions and cycles of a run, where the system let them be counted.
-#[derive(Clone, Debug)]
+/// run took by sample, the allocations of a run and their bytes, and what
+/// the processor counted of a run where the system let it count:
+/// instructions, cycles, mispredicted branches, and reads that missed the
+/// first cache of data and of instructions.
+#[derive(Clone, Debug, Default)]
 pub struct Benchmark {
     pub name: String,
     pub runs: u64,
@@ -387,6 +389,9 @@ pub struct Benchmark {
     pub bytes: f64,
     pub instructions: Option<f64>,
     pub cycles: Option<f64>,
+    pub branch_misses: Option<f64>,
+    pub l1d_misses: Option<f64>,
+    pub l1i_misses: Option<f64>,
 }
 
 /// Where a virtual clock got, and how many times it moved by itself, by
@@ -1149,7 +1154,8 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
 fn joined(kept: &mut Benchmark, more: Benchmark) {
     kept.samples.extend(more.samples);
     (kept.runs, kept.allocations, kept.bytes) = (more.runs, more.allocations, more.bytes);
-    (kept.instructions, kept.cycles) = (more.instructions, more.cycles);
+    (kept.instructions, kept.cycles, kept.branch_misses) = (more.instructions, more.cycles, more.branch_misses);
+    (kept.l1d_misses, kept.l1i_misses) = (more.l1d_misses, more.l1i_misses);
 }
 
 fn top(tree: &Tree, mut node: u32) -> u32 {

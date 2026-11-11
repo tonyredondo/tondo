@@ -2448,9 +2448,12 @@ reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
 3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones. En Linux,
    si el sistema deja que un programa se cuente a sí mismo
    (`kernel.perf_event_paranoid` de 2 o menos), cuenta también, durante las
-   muestras, las instrucciones y los ciclos del procesador que ejecuta el
-   programa fuera del kernel, en todos los hilos que tiene al empezarlas.
-   Las instrucciones no cambian con dónde cae el código, como sí el tiempo.
+   muestras, lo que el procesador ejecuta del programa fuera del kernel, en
+   todos los hilos que tiene al empezarlas: las instrucciones y los ciclos,
+   los saltos que predice mal y las lecturas que fallan en la primera caché
+   de datos y en la de instrucciones, las que el procesador cuenta. Las
+   instrucciones no cambian con dónde cae el código, como sí el tiempo; los
+   fallos dicen por qué cambió el tiempo cuando ellas no.
 4. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
 
 Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
@@ -2496,7 +2499,12 @@ repetición de las muestras de cada lado, con una semilla fija) y su veredicto:
 `slower` si todo el intervalo es mayor que cero y el cambio pasa del 2%,
 `faster` si todo es menor y el cambio baja del −2%, y `same` en otro caso; y
 cuánto cambiaron sus instrucciones por ejecución, si los dos lados las
-contaron.
+contaron, y los ciclos y los fallos que se movieron un 5% o más, de un evento
+que pasa al menos una vez cada mil instrucciones:
+
+~~~text
+  collatz 10000   1.137 ms/op  ±1.5%  0 allocs/op  0 B/op  7.43M ins/op  +25.8% slower, +0.0% ins, cycles +23.6%, branch misses +41.2%
+~~~
 
 `--max-regression <percent>` hace fallar la invocación (9.6) si un benchmark
 es `slower` en más de ese porcentaje, o si sus asignaciones o sus bytes por
@@ -4265,6 +4273,9 @@ benchmark de un intento tiene esta forma:
   "bytes_per_op": 0.000,
   "instructions_per_op": 61.000,
   "cycles_per_op": 72.412,
+  "branch_misses_per_op": 0.012,
+  "l1d_misses_per_op": 0.004,
+  "l1i_misses_per_op": 0.001,
   "samples_ns_per_op": [16.890, 16.478, 16.310],
   "baseline": {
     "ns_per_op": 15.020,
@@ -4272,6 +4283,9 @@ benchmark de un intento tiene esta forma:
     "bytes_per_op": 0.000,
     "instructions_per_op": 61.000,
     "instructions_change_percent": 0.000,
+    "counters_change_percent": {
+      "cycles": 7.120, "branch_misses": null, "l1d_misses": null, "l1i_misses": null
+    },
     "change_percent": 7.443,
     "interval_percent": [6.210, 8.115],
     "verdict": "slower",
@@ -4287,8 +4301,10 @@ mediana. `baseline` es `null` sin línea base o para un benchmark que no tiene;
 da la mediana, las asignaciones, los bytes y las instrucciones de la línea
 base, el cambio de las instrucciones y el de la mediana y su intervalo en
 porcentaje, el veredicto y, con `--max-regression`, por qué empeoró, o `null`.
-`instructions_per_op` y `cycles_per_op`, y el cambio de las instrucciones,
-son `null` donde no se contaron (10.4). Las medidas, en nanosegundos,
+`instructions_per_op`, `cycles_per_op`, `branch_misses_per_op`,
+`l1d_misses_per_op` y `l1i_misses_per_op`, y sus cambios, son `null` donde no
+se contaron (10.4); en `counters_change_percent`, también el de un evento que
+pasa menos de una vez cada mil instrucciones. Las medidas, en nanosegundos,
 asignaciones, bytes o porcentajes, son números decimales con exactamente tres
 decimales, sin exponente.
 
@@ -4319,6 +4335,9 @@ orden del reporte:
       "bytes_per_op": 0.000,
       "instructions_per_op": 61.000,
       "cycles_per_op": 72.412,
+      "branch_misses_per_op": 0.012,
+      "l1d_misses_per_op": 0.004,
+      "l1i_misses_per_op": 0.001,
       "samples_ns_per_op": [16.890, 16.478, 16.310]
     }
   ]

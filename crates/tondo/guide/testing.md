@@ -147,7 +147,9 @@ test parsing {
   slower, or allocating more, fails the run: a gate for CI. With
   `--regression-by instructions` it judges the instructions of a run
   rather than its time, which moves with where the code lies and with
-  what else runs on the machine.
+  what else runs on the machine. A comparison also says which of cycles,
+  mispredicted branches and first-cache misses moved, which explains a
+  time that changed while the instructions did not.
 
 ## Fuzzing
 

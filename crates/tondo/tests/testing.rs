@@ -1706,6 +1706,9 @@ fn judges_benchmarks_by_their_instructions() {
     }
     let instructions = saved["benchmarks"][0]["instructions_per_op"].as_f64().unwrap();
     assert!(instructions > 1000.0 && saved["benchmarks"][0]["cycles_per_op"].as_f64().unwrap() > 0.0, "{saved}");
+    for counter in ["branch_misses_per_op", "l1d_misses_per_op", "l1i_misses_per_op"] {
+        assert!(saved["benchmarks"][0].get(counter).is_some(), "{counter}: {saved}");
+    }
     assert!(stdout.contains(" ins/op\n"), "{stdout}");
     let (stdout, _, status) = tondo(&dir, &judged);
     assert_eq!(status, 0, "{stdout}");
@@ -1717,6 +1720,7 @@ fn judges_benchmarks_by_their_instructions() {
     assert_eq!(report["bench"]["regression_by"], "instructions");
     let compared = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"];
     assert!(compared["instructions_change_percent"].as_f64().unwrap() > 50.0, "{compared}");
+    assert!(compared["counters_change_percent"]["cycles"].as_f64().unwrap() > 50.0, "{compared}");
     assert!(compared["regressed"].as_str().unwrap().ends_with("% more instructions"), "{compared}");
     // What goes with what.
     let (_, stderr, status) =

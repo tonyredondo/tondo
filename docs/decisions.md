@@ -5697,6 +5697,12 @@ counts cost nothing more, and the batch that counts allocations, slower for it, 
 A thread started during the samples is not counted, which a benchmark that starts threads of its
 own, rare in Tondo, would show as fewer instructions.
 
+On 2026-11-11 the maintainer approved counting, with them, the branches the processor
+mispredicts and the reads that miss its first caches of data and of instructions, each left out
+where the processor does not count it: when a time moves and the instructions do not, as where code
+lies moves it, they say why, and a comparison tells those that moved 5% or more, of an event that
+comes once in a thousand instructions or more, as a few misses that come and go say nothing.
+
 The report, the baselines and the reports for people carry the instructions and cycles of a run,
 `null` or a dash where they were not counted, and a comparison says how the instructions changed.
 `--max-regression` keeps judging time unless `--regression-by instructions` asks for them: the

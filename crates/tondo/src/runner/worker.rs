@@ -692,7 +692,7 @@ impl Session<'_> {
             }
             "bench" => {
                 let parts: Vec<&str> = text.split('\0').collect();
-                if let [name, runs, samples, allocations, bytes, instructions, cycles] = parts[..]
+                if let [name, runs, samples, allocations, bytes, instructions, cycles, branches, data, code] = parts[..]
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
                 {
                     entry.0.benchmarks.push(Benchmark {
@@ -703,6 +703,9 @@ impl Session<'_> {
                         bytes: bytes.parse().unwrap_or_default(),
                         instructions: instructions.parse().ok(),
                         cycles: cycles.parse().ok(),
+                        branch_misses: branches.parse().ok(),
+                        l1d_misses: data.parse().ok(),
+                        l1i_misses: code.parse().ok(),
                     });
                     // The timeout is each benchmark's: its time starts again.
                     if let Some(started) = entry.2.as_mut() {

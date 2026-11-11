@@ -1,13 +1,22 @@
-//! The processor's counts of instructions and cycles in user space, of
-//! every thread of the program, which `tondo test --bench` reads over the
-//! samples of a benchmark (testing 10.4): they do not move with where the
-//! code lies, as its time does. Linux's `perf_event_open`, where the
-//! system lets a program count itself; none elsewhere.
+//! The processor's counts of what the program runs outside the kernel, on
+//! every thread it has, which `tondo test --bench` reads over the samples
+//! of a benchmark (testing 10.4): instructions and cycles, and the branches
+//! it mispredicts and the reads that miss the first caches of data and of
+//! instructions, which explain a time that moves while the instructions do
+//! not, as where the code lies moves it. Linux's `perf_event_open`, where
+//! the system lets a program count itself; none elsewhere.
 
-/// The counters of each thread: instructions, then cycles.
+/// What the counters count, in the order `Counted` holds them.
+pub(crate) const EVENTS: usize = 5;
+
+/// What was counted of each event, scaled to the time it counted; `None`
+/// for an event the processor does not count.
+pub(crate) type Counted = [Option<f64>; EVENTS];
+
+/// The counters of each thread, by event.
 pub(crate) struct Counters {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    files: Vec<i32>,
+    files: [Vec<i32>; EVENTS],
 }
 
 #[cfg(target_os = "linux")]
@@ -30,8 +39,11 @@ mod linux {
     }
 
     const HARDWARE: u32 = 0;
-    pub(super) const CYCLES: u64 = 0;
-    pub(super) const INSTRUCTIONS: u64 = 1;
+    const CACHE: u32 = 3;
+    /// Instructions, cycles, mispredicted branches, and reads that miss the
+    /// first cache of data and of instructions, by their kind and number.
+    pub(super) const EVENTS: [(u32, u64); super::EVENTS] =
+        [(HARDWARE, 1), (HARDWARE, 0), (HARDWARE, 5), (CACHE, 1 << 16), (CACHE, 1 | 1 << 16)];
     /// The time the counter was on, and the time it counted, which a
     /// processor with more counters asked than it has shares.
     const TIMES: u64 = 1 | 2;
@@ -39,12 +51,12 @@ mod linux {
     const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
     const CLOSE_ON_EXEC: u64 = 8;
 
-    /// A counter of the thread `tid`, counting from now.
-    pub(super) fn open(tid: i32, event: u64) -> Option<i32> {
+    /// A counter of `event` on the thread `tid`, counting from now.
+    pub(super) fn open(tid: i32, (kind, config): (u32, u64)) -> Option<i32> {
         let attr = Attr {
-            kind: HARDWARE,
+            kind,
             size: size_of::<Attr>() as u32,
-            config: event,
+            config,
             read_format: TIMES,
             flags: EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR,
             ..Attr::default()
@@ -71,19 +83,32 @@ mod linux {
 
 impl Counters {
     /// Counters of every thread the program has, counting from now; none
-    /// when the system does not let it count.
+    /// when the system does not let it count its instructions. An event
+    /// the processor does not count is left out.
     #[cfg(target_os = "linux")]
     pub(crate) fn start() -> Option<Counters> {
-        let mut counters = Counters { files: Vec::new() };
+        let mut counters = Counters { files: Default::default() };
+        let mut counts = [true; EVENTS];
         for task in std::fs::read_dir("/proc/self/task").ok()?.flatten() {
             let Some(tid) = task.file_name().to_str().and_then(|tid| tid.parse().ok()) else { continue };
-            for event in [linux::INSTRUCTIONS, linux::CYCLES] {
-                // A thread that ended meanwhile counts nothing.
-                match linux::open(tid, event) {
-                    Some(file) => counters.files.push(file),
-                    None if std::path::Path::new(&format!("/proc/self/task/{tid}")).exists() => return None,
-                    None => {}
+            for (at, &event) in linux::EVENTS.iter().enumerate() {
+                if !counts[at] {
+                    continue;
                 }
+                match linux::open(tid, event) {
+                    Some(file) => counters.files[at].push(file),
+                    // A thread that ended meanwhile counts nothing.
+                    None if !std::path::Path::new(&format!("/proc/self/task/{tid}")).exists() => {}
+                    None if at == 0 => return None,
+                    None => counts[at] = false,
+                }
+            }
+        }
+        for (files, counts) in counters.files.iter_mut().zip(counts) {
+            if !counts {
+                files.drain(..).for_each(|file| unsafe {
+                    libc::close(file);
+                });
             }
         }
         Some(counters)
@@ -94,27 +119,25 @@ impl Counters {
         None
     }
 
-    /// The instructions and the cycles counted since the start.
+    /// What each event counted since the start, on every thread.
     #[cfg(target_os = "linux")]
-    pub(crate) fn read(&self) -> Option<(f64, f64)> {
-        let mut total = (0.0, 0.0);
-        for pair in self.files.chunks(2) {
-            total.0 += linux::read(pair[0])?;
-            total.1 += linux::read(*pair.get(1)?)?;
-        }
-        Some(total)
+    pub(crate) fn read(&self) -> Counted {
+        self.files.each_ref().map(|files| match files.is_empty() {
+            true => None,
+            false => files.iter().map(|&file| linux::read(file)).sum(),
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn read(&self) -> Option<(f64, f64)> {
-        None
+    pub(crate) fn read(&self) -> Counted {
+        [None; EVENTS]
     }
 }
 
 impl Drop for Counters {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
-        for &file in &self.files {
+        for &file in self.files.iter().flatten() {
             unsafe { libc::close(file) };
         }
     }
@@ -139,7 +162,8 @@ mod tests {
         for i in 0..1_000_000u64 {
             sum = std::hint::black_box(sum.wrapping_add(i * i));
         }
-        let (instructions, cycles) = counters.read().unwrap();
-        assert!(instructions > 1_000_000.0 && cycles > 0.0, "{instructions} {cycles} {sum}");
+        let [instructions, cycles, branches, ..] = counters.read();
+        assert!(instructions.unwrap() > 1_000_000.0 && cycles.unwrap() > 0.0, "{instructions:?} {cycles:?} {sum}");
+        assert!(branches.is_none_or(|branches| branches < 1_000_000.0), "{branches:?}");
     }
 }

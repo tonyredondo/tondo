@@ -3,8 +3,9 @@
 //! body next, until it says none. In a plain test run that is once. Under
 //! `tondo test --bench`, which sets `TONDO_TEST_BENCH` to the seconds each
 //! benchmark measures for, it warms up, finds how many runs make a sample,
-//! takes the samples, counting the processor's instructions and cycles
-//! where the system lets it, then runs one more batch counting
+//! takes the samples, counting the processor's instructions, cycles,
+//! mispredicted branches and first-cache misses where the system lets it,
+//! then runs one more batch counting
 //! allocations, and reports the samples to `tondo test` in a `bench`
 //! frame.
 
@@ -43,7 +44,7 @@ struct Bench {
     /// runs they took; what a run took of them, once they are done.
     counters: Option<super::counters::Counters>,
     sampled: u64,
-    counted: Option<(f64, f64)>,
+    counted: Option<super::counters::Counted>,
 }
 
 struct State {
@@ -162,8 +163,8 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
                 true => Phase::Sampling(count),
                 false => {
                     let runs = bench.sampled.max(1) as f64;
-                    let counted = bench.counters.take().and_then(|counters| counters.read());
-                    bench.counted = counted.map(|(instructions, cycles)| (instructions / runs, cycles / runs));
+                    let counted = bench.counters.take().map(|counters| counters.read());
+                    bench.counted = counted.map(|counted| counted.map(|count| count.map(|count| count / runs)));
                     crate::profiling::pause();
                     let before = (ALLOCATIONS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
                     crate::diagnostics::hook(crate::diagnostics::MEASURED);
@@ -191,8 +192,9 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
 /// Ends the benchmark that runs: when it measured and its body did not
 /// fail, tells `tondo test` its samples, as `name`, the runs of each
 /// sample, the nanoseconds of a run by sample, the allocations of a run
-/// and their bytes, and the instructions and cycles of a run, empty when
-/// not counted, separated by NUL.
+/// and their bytes, and the instructions, cycles, mispredicted branches
+/// and first-cache misses of data and of instructions of a run, each empty
+/// when not counted, separated by NUL.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_bench_end(completed: u8) {
     let bench = STATE.lock().unwrap_or_else(|e| e.into_inner()).bench.take();
@@ -200,13 +202,15 @@ pub extern "C" fn tondo_rt_bench_end(completed: u8) {
     let Some(bench) = bench.filter(|b| completed != 0 && !b.samples.is_empty()) else { return };
     crate::profiling::write(crate::testing::current(), Some(&bench.name));
     let samples: Vec<String> = bench.samples.iter().map(|s| format!("{s:.3}")).collect();
-    let (instructions, cycles) = match bench.counted {
-        Some((instructions, cycles)) => (format!("{instructions:.3}"), format!("{cycles:.3}")),
-        None => (String::new(), String::new()),
-    };
+    let counted: Vec<String> = bench
+        .counted
+        .unwrap_or_default()
+        .iter()
+        .map(|count| count.map_or(String::new(), |count| format!("{count:.3}")))
+        .collect();
     let (name, batch, allocations, bytes) = (&bench.name, bench.batch, bench.allocations, bench.bytes);
     let payload =
-        format!("{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{instructions}\0{cycles}", samples.join(" "));
+        format!("{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{}", samples.join(" "), counted.join("\0"));
     crate::testing::report("bench", payload.as_bytes());
 }
 
