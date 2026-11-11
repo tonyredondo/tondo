@@ -347,6 +347,33 @@ fn reentrant(o: &SyncObject, task: *mut Task, exclusive: bool, location: *const 
 /// in a way that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
+    // Most often a lock to change, free, that no tool watches, in a task
+    // nothing stops: one compare and swap, and the note of who took it.
+    if mode != SHARED && !watched() {
+        let o = unsafe { &*object };
+        let state = o.state.load(Ordering::Relaxed);
+        if state & !PARKED == 0
+            && o.state.compare_exchange_weak(state, state | WRITER, Ordering::Acquire, Ordering::Relaxed).is_ok()
+        {
+            took(o, current(), true, location);
+            return object as usize;
+        }
+    }
+    unsafe { lock_apart(object, mode, location) }
+}
+
+/// Whether a tool watches the locks, or something asks for attention, as a
+/// task that must stop does (`stops_task`): the lock is taken apart.
+#[inline(always)]
+fn watched() -> bool {
+    super::tasks::attended() || super::race::on() || super::lockorder::on()
+}
+
+/// `tondo_rt_sync_lock` of a lock to read, taken, watched, or in a task that
+/// may have to stop.
+#[cold]
+#[inline(never)]
+unsafe fn lock_apart(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
     // One that has to wait touches it as much as one that takes it.
     super::tasks::touch(object as usize);
     let guard = unsafe { taken(object, mode, location) };
@@ -558,6 +585,29 @@ unsafe fn wake_after(o: &mut SyncObject, exclusive: bool) {
 /// Releases the lock a guard holds; nothing for 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
+    // Most often the last lock its task took to change, which no tool
+    // watches: the task lets go of it, and wakes those who wait, if any do.
+    if guard & 1 == 0 && guard != 0 && !super::race::on() && !super::debugger::watching() {
+        let o = unsafe { &mut *object(guard) };
+        let task = o.owner.load(Ordering::Relaxed) as *mut Task;
+        let locked = unsafe { &(*task).locked };
+        if locked.load(Ordering::Relaxed) == guard {
+            o.owner.store(0, Ordering::Relaxed);
+            locked.store(o.below.load(Ordering::Relaxed) as usize, Ordering::Relaxed);
+            if o.state.fetch_sub(WRITER, Ordering::Release) & PARKED != 0 {
+                unsafe { wake_after(o, true) };
+            }
+            return;
+        }
+    }
+    unsafe { unlock_apart(guard) }
+}
+
+/// `tondo_rt_sync_unlock` of a lock held to read, or not the last taken,
+/// or watched.
+#[cold]
+#[inline(never)]
+unsafe fn unlock_apart(guard: usize) {
     if guard == 0 {
         return;
     }

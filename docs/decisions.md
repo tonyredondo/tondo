@@ -6026,3 +6026,15 @@ a task, a cancellation, its group's `recover` or its deadline, counts in the fla
 before it holds, the flag compiled code reads after every call that may wait; the runtime now reads
 it first too, and looks for the task only when it is set. With the check after a call made one load
 and one branch, the mutex row does 7 % fewer instructions, `select` 4 % and the channel's 11 %.
+
+## A free lock to change is taken apart from the rest
+
+`tondo_rt_sync_lock` and `tondo_rt_sync_unlock` did all their work in one function each: the
+modes, the notes of the tools, the order of locks, the checks of a stopped task, and the lock
+itself, so that a free lock to change cost about 50 instructions to take and 38 to let go, most of
+them saving registers and testing what is nearly always off. Each now tries first what nearly
+always happens: a lock to change, free, that no tool watches, in a task that nothing stops, which
+the flag of attention says at once, is one compare and swap and the note of who took it; and the
+last lock a task took to change, let go of with nobody waiting, one subtraction. Everything else
+goes on in a function apart, as before. The program of the mutex row does a quarter fewer
+instructions.
