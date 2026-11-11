@@ -896,7 +896,8 @@ fn profiled(
         let samples = collected["samples"].as_array().cloned().unwrap_or_default();
         let memory = serde_json::json!({ "memory": { "rate": collected["rate"], "samples": [], "allocated": collected["allocated"] } });
         let program = executable.display().to_string();
-        let (builder, count) = crate::profile::build(kind, &program, frames, labels, &samples, Some(&memory))?;
+        let (mut builder, count) = crate::profile::build(kind, &program, frames, labels, &samples, Some(&memory))?;
+        builder.base(collected["base"].as_u64().unwrap_or(0));
         // A test too short to be sampled has no profile.
         if count == 0 {
             continue;

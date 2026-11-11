@@ -1,7 +1,8 @@
 // Profiles in the editor: `tondo profile` of a program, `tondo test
 // --profile` of tests and benchmarks, or any pprof file opened. The share
 // of each hot line of the program shows at its end, and the flame graph of
-// `tondo profile show --html` in a panel.
+// `tondo profile show --html` in a panel; the instructions of the hottest
+// function, each with its share, from `tondo profile show --asm`.
 
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -21,6 +22,8 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
   // The lines of the profile shown, by file.
   let shown = new Map<string, { line: number; text: string }[]>();
   let panel: vscode.WebviewPanel | undefined;
+  // The profile shown last, and the project it is of.
+  let last: { dir: string; file: string } | undefined;
   const decorate = (editors: readonly vscode.TextEditor[]) => {
     for (const editor of editors) {
       const lines = shown.get(editor.document.uri.fsPath) ?? [];
@@ -37,6 +40,7 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
   };
 
   const show: ShowProfile = async (dir, file) => {
+    last = { dir, file };
     const html = path.join(os.tmpdir(), `tondo-flame-${process.pid}.html`);
     const ran = await exec(['profile', 'show', file, '--json', '--top', '500', '--html', html], dir);
     let hot;
@@ -98,6 +102,20 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
         const folder = vscode.workspace.getWorkspaceFolder(picked[0])?.uri.fsPath ?? path.dirname(picked[0].fsPath);
         await show(folder, picked[0].fsPath);
       }
+    }),
+    vscode.commands.registerCommand('tondo.showProfileInstructions', async () => {
+      if (!last) {
+        void vscode.window.showInformationMessage('Profile a program or a test first, or show a profile.');
+        return undefined;
+      }
+      const ran = await exec(['profile', 'show', last.file, '--asm'], last.dir);
+      if (ran.code !== 0) {
+        void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo profile show --asm failed');
+        return undefined;
+      }
+      const document = await vscode.workspace.openTextDocument({ content: ran.stdout, language: 'plaintext' });
+      await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+      return ran.stdout;
     }),
     vscode.commands.registerCommand('tondo.clearProfile', () => {
       shown = new Map();

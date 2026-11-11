@@ -124,7 +124,9 @@ project, running, debugging and testing it.
   hot line of the program then shows its share at its end, as `🔥 64.4%
   (94ms)`, and the flame graph opens beside the code. *Show a Profile…*
   opens any pprof file, a CI artifact or one `std.profile` wrote, and
-  *Clear the Profile* takes it away.
+  *Clear the Profile* takes it away. *Show the Hot Instructions of the
+  Profile* opens beside the code the instructions of the function that
+  took the most, each with its share.
 - **Optimizations**: *Show the Optimizations* tells, from `tondo
   optimizations`, what a release build makes of the program of the file
   open: the end of each line says what costs there, `⚙ allocates`, `keeps a

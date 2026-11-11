@@ -1495,16 +1495,28 @@ fn profile_command(args: &[OsString]) -> Result<ExitCode, String> {
     tondo::profile::profile(target, kind.unwrap_or(Kind::Cpu), duration, output, json).map(|()| ExitCode::SUCCESS)
 }
 
-/// `tondo profile show <file> [--top <n>] [--lines] [--sample <type>]
-/// [--html <file>] [--json]`.
+/// `tondo profile show <file> [--top <n>] [--lines | --asm [<function>]]
+/// [--sample <type>] [--html <file>] [--json]`.
 fn profile_show(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut file, mut top, mut lines, mut sample, mut html, mut json) = (None, 20, false, None, None, false);
-    let mut rest = args.iter();
+    let mut asm: Option<Option<String>> = None;
+    let mut rest = args.iter().peekable();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
             "--json" => json = true,
             "--lines" => lines = true,
+            // A function after it, unless it is the profile.
+            "--asm" => {
+                let named = rest
+                    .peek()
+                    .and_then(|next| next.to_str())
+                    .filter(|next| !next.starts_with('-') && (file.is_some() || !Path::new(next).exists()));
+                asm = Some(named.map(str::to_string));
+                if asm.as_ref().is_some_and(Option::is_some) {
+                    rest.next();
+                }
+            }
             "--top" => {
                 top = rest
                     .next()
@@ -1520,6 +1532,18 @@ fn profile_show(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let file = file.ok_or_else(|| usage("profile show takes a profile, as `tondo profile show app.cpu.pprof`"))?;
     let sample = sample.map(|s| s.to_string_lossy().into_owned());
+    if let Some(function) = asm {
+        if lines || html.is_some() {
+            return Err(usage("--asm shows one function's instructions; it does not go with --lines or --html"));
+        }
+        let profile = tondo::profile::read(&file)?;
+        let annotated = tondo::profile::annotate(&profile, sample.as_deref(), function.as_deref())?;
+        match json {
+            true => tondo::cli::print_json("profile-show", true, serde_json::json!({ "asm": annotated.json() })),
+            false => print!("{}", annotated.text()),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     tondo::profile::show(&file, sample.as_deref(), top, lines, html.as_deref(), json).map(|()| ExitCode::SUCCESS)
 }
 

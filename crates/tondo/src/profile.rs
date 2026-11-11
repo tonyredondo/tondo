@@ -68,8 +68,9 @@ pub fn profile(
     }
     let program = recorded.info["program"].as_str().unwrap_or_default().to_string();
     let recording = &recorded.recording;
-    let (builder, count) =
+    let (mut builder, count) =
         build(kind, &program, &frames, &recording.labels, &recording.samples, recorded.asked.as_ref())?;
+    builder.base(recorded.info["base"].as_u64().unwrap_or(0));
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let elapsed = recorded.started.elapsed();
     let bytes = builder.finish((now - elapsed).as_nanos() as i64, elapsed.as_nanos() as i64);
@@ -230,6 +231,14 @@ pub struct Profile {
     /// its values and its labels.
     pub samples: Vec<Sampled>,
     pub duration: i64,
+    /// The program the profile is of, and where it was loaded.
+    pub program: String,
+    pub base: u64,
+    /// Where each sample was, by its innermost frame, one past the
+    /// instruction it stopped at as the frames after it name the call
+    /// before them; and the function whose code that is, the one its
+    /// inlined code is in.
+    pub at: Vec<(u64, String)>,
 }
 
 /// Reads a profile in pprof's format, gzipped or not.
@@ -305,8 +314,9 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
     let mut types = Vec::new();
     let mut samples = Vec::new();
     let mut locations: HashMap<u64, Vec<(u64, i64)>> = HashMap::new();
+    let mut addresses: HashMap<u64, u64> = HashMap::new();
     let mut functions: HashMap<u64, (u64, u64)> = HashMap::new();
-    let (mut duration, mut default_type) = (0, 0);
+    let (mut duration, mut default_type, mut program, mut base) = (0, 0, 0, 0);
     for (field, value, data) in fields(bytes)? {
         match field {
             1 => {
@@ -330,11 +340,17 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
                 }
                 samples.push((ids, values, labels));
             }
+            3 => {
+                let parts = fields(data)?;
+                let get = |n| parts.iter().find(|(f, ..)| *f == n).map_or(0, |(_, v, _)| *v);
+                (base, program) = (get(2), get(5));
+            }
             4 => {
-                let (mut id, mut lines) = (0, Vec::new());
+                let (mut id, mut lines, mut address) = (0, Vec::new(), 0);
                 for (field, value, data) in fields(data)? {
                     match field {
                         1 => id = value,
+                        3 => address = value,
                         4 => {
                             let parts = fields(data)?;
                             let get = |n| parts.iter().find(|(f, ..)| *f == n).map_or(0, |(_, v, _)| *v);
@@ -344,6 +360,7 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
                     }
                 }
                 locations.insert(id, lines);
+                addresses.insert(id, address);
             }
             5 => {
                 let parts = fields(data)?;
@@ -358,6 +375,18 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
     }
     let text = |index: u64| strings.get(index as usize).cloned().unwrap_or_default();
     let sample_types: Vec<(String, String)> = types.iter().map(|&(t, u)| (text(t), text(u))).collect();
+    // A frame's inlined calls are locations of the same address after it,
+    // the last of them the function whose code it is.
+    let at = samples
+        .iter()
+        .map(|(ids, ..)| {
+            let address = |id: &u64| addresses.get(id).copied().unwrap_or(0);
+            let Some(first) = ids.first() else { return (0, String::new()) };
+            let last = ids.iter().take_while(|id| address(id) == address(first)).last().unwrap_or(first);
+            let outer = locations.get(last).and_then(|lines| lines.last()).map_or(0, |&(function, _)| function);
+            (address(first), text(functions.get(&outer).map_or(0, |f| f.0)))
+        })
+        .collect();
     let samples = samples
         .into_iter()
         .map(|(ids, values, labels)| {
@@ -379,7 +408,7 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
         0 => sample_types.last().map(|(t, _)| t.clone()).unwrap_or_default(),
         index => text(index),
     };
-    Some(Profile { sample_types, default_type, samples, duration })
+    Some(Profile { sample_types, default_type, samples, duration, program: text(program), base, at })
 }
 
 /// What takes the most in a profile, by one of its sample types: the
@@ -597,6 +626,155 @@ pub fn show(
     }
     print!("{out}");
     Ok(())
+}
+
+/// The instructions of a function of the profiled program, with what each
+/// took as the innermost frame of the samples (toolchain 7.15): its
+/// offset, its text, what it took, and the place of the program its
+/// samples were at.
+pub struct Annotated {
+    pub function: String,
+    pub unit: String,
+    /// What the function took, and what the whole profile did.
+    pub took: i64,
+    pub total: i64,
+    pub instructions: Vec<Instruction>,
+}
+
+/// An instruction's offset in its function, its text, what it took, and
+/// the place of the program its samples were at.
+pub type Instruction = (u64, String, i64, Option<(String, i64)>);
+
+/// Where a sample of a function was, what it took, and its line.
+type Hit = (u64, i64, Option<(String, i64)>);
+
+/// The function of the profiled program `function` names, or the one whose
+/// own code took the most, decoded from the program's file, each
+/// instruction with what the samples that were there took. The file must
+/// be the one that ran.
+pub fn annotate(profile: &Profile, kind: Option<&str>, function: Option<&str>) -> Result<Annotated, String> {
+    use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
+    let wanted = kind.unwrap_or(&profile.default_type);
+    let index =
+        profile.sample_types.iter().position(|(t, _)| t == wanted).ok_or(format!("the profile has no `{wanted}`"))?;
+    let unit = profile.sample_types[index].1.clone();
+    let value = |sample: &Sampled| sample.1.get(index).copied().unwrap_or(0);
+    let total: i64 = profile.samples.iter().map(value).sum();
+    // What each function's own code took.
+    let mut own: HashMap<&str, i64> = HashMap::new();
+    for (sample, (_, name)) in profile.samples.iter().zip(&profile.at) {
+        *own.entry(name.as_str()).or_default() += value(sample);
+    }
+    let name = match function {
+        Some(asked) if own.contains_key(asked) => asked.to_string(),
+        Some(asked) => own
+            .iter()
+            .filter(|(name, _)| name.contains(asked))
+            .max_by_key(|(_, took)| **took)
+            .map(|(name, _)| name.to_string())
+            .ok_or(format!("no sample of the profile is in a function named `{asked}`"))?,
+        None => own
+            .iter()
+            .max_by_key(|(_, took)| **took)
+            .map(|(name, _)| name.to_string())
+            .ok_or("the profile has no samples")?,
+    };
+    if profile.program.is_empty() || profile.base == 0 {
+        return Err("the profile does not say where its program was loaded: profile it again with this tondo".into());
+    }
+    let bytes = std::fs::read(&profile.program)
+        .map_err(|e| format!("cannot read the program the profile is of, {}: {e}", profile.program))?;
+    let file = object::File::parse(&*bytes).map_err(|e| format!("{} is not a program: {e}", profile.program))?;
+    // Where the file's first byte is in its own addresses.
+    let image = file.segments().find(|s| s.file_range().0 == 0).map_or(0, |s| s.address());
+    // The instruction a sample stopped at is one before what it keeps.
+    let address = |at: u64| at.wrapping_sub(1).wrapping_sub(profile.base).wrapping_add(image);
+    // Where each of the function's samples was, what it took, its line.
+    let samples: Vec<Hit> = profile
+        .samples
+        .iter()
+        .zip(&profile.at)
+        .filter(|(_, (_, function))| *function == name)
+        .map(|(sample, &(at, _))| {
+            let line =
+                sample.0.first().filter(|(_, file, _)| !file.is_empty()).map(|(_, file, line)| (file.clone(), *line));
+            (address(at), value(sample), line)
+        })
+        .collect();
+    let hottest = samples.iter().max_by_key(|s| s.1).map(|s| s.0).ok_or("no sample is in that function")?;
+    // The symbol the hottest sample is in, and where the next one starts.
+    let mut symbols: Vec<(u64, u64)> = file
+        .symbols()
+        .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0)
+        .map(|s| (s.address(), s.size()))
+        .collect();
+    symbols.sort();
+    let at = symbols.partition_point(|&(start, _)| start <= hottest).checked_sub(1).ok_or(format!(
+        "{} has no symbol where `{name}` is: was it stripped, or built again since?",
+        profile.program
+    ))?;
+    let (start, size) = symbols[at];
+    let end = match size {
+        0 => symbols.get(at + 1).map_or(start, |next| next.0),
+        size => start + size,
+    };
+    let section = file
+        .sections()
+        .find(|s| s.address() <= start && end <= s.address() + s.size())
+        .ok_or(format!("{} has no code where `{name}` is", profile.program))?;
+    let data = section.data().map_err(|e| e.to_string())?;
+    let code = &data[(start - section.address()) as usize..(end - section.address()) as usize];
+    let instructions = crate::disassembly::decode(code)
+        .into_iter()
+        .map(|(offset, _, text)| {
+            let here = start + offset as u64;
+            let took = samples.iter().filter(|s| s.0 == here).map(|s| s.1).sum();
+            let line = samples.iter().find(|s| s.0 == here).and_then(|s| s.2.clone());
+            (offset as u64, text, took, line)
+        })
+        .collect();
+    let took = samples.iter().map(|s| s.1).sum();
+    Ok(Annotated { function: name, unit, took, total, instructions })
+}
+
+impl Annotated {
+    /// As `tondo profile show --asm` writes it: each instruction, what it
+    /// took of the function, and the line its samples were at.
+    pub fn text(&self) -> String {
+        let share = |value: i64, of: i64| if of == 0 { 0.0 } else { value as f64 * 100.0 / of as f64 };
+        let mut out = format!(
+            "{}, {} of {} ({:.1}%), by instruction:\n",
+            self.function,
+            amount(self.took, &self.unit),
+            amount(self.total, &self.unit),
+            share(self.took, self.total)
+        );
+        for (offset, text, took, line) in &self.instructions {
+            let took = match *took {
+                0 => String::new(),
+                took => format!("{:.1}%", share(took, self.took)),
+            };
+            let line = line.as_ref().map_or(String::new(), |(file, line)| format!("  {file}:{line}"));
+            out.push_str(&format!("  {took:>6}  {offset:>5x}  {text}{line}\n"));
+        }
+        out
+    }
+
+    /// As data (toolchain 7.12).
+    pub fn json(&self) -> Value {
+        let instructions: Vec<Value> = self
+            .instructions
+            .iter()
+            .map(|(offset, text, took, line)| {
+                let (file, line) = line.clone().map_or((None, None), |(file, line)| (Some(file), Some(line)));
+                json!({ "offset": offset, "instruction": text, "value": took, "file": file, "line": line })
+            })
+            .collect();
+        json!({
+            "function": self.function, "unit": self.unit, "value": self.took, "total": self.total,
+            "instructions": instructions,
+        })
+    }
 }
 
 pub(crate) fn escape(text: &str) -> String {

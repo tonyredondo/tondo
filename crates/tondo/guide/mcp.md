@@ -69,7 +69,9 @@ one out, and `update` fetches them again.
   declarations for C headers, and `target_pack` this machine's target.
 - `clean` empties the cache of builds, `setup` sets up agents and editors
   again, `version` says which `tondo` this is, and `dump_plugin` writes the
-  command for lldb or gdb. `profile_show` reads a profile already written.
+  command for lldb or gdb. `profile_show` reads a profile already written,
+  and with `asm` gives the instructions of its hottest function, each with
+  its share.
 
 ## Programs that keep running
 

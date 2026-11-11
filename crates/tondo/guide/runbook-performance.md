@@ -33,7 +33,9 @@ profile {"path": "slow.to"}
 ```
 
 `kind` asks `memory`, what it allocates, or `tasks`, where they wait. `top` gives
-more lines, and `profile_show` reads a profile written before.
+more lines, and `profile_show` reads a profile written before; with `asm`, the
+instructions of the function that took the most, each with its share. A
+sample often falls on the instruction after the slow one, which waits for it.
 
 `optimizations` says what a release build made of that code: the calls it
 inlined and those it kept, with why; the texts and closures it made without the

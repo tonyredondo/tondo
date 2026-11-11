@@ -21,6 +21,7 @@ mod serving;
 mod tracing;
 pub(crate) use dumps::*;
 pub(crate) use serving::*;
+pub(crate) use tracing::program_base;
 use tracing::*;
 
 /// What allocations and the counts of objects do beyond their work, a bit

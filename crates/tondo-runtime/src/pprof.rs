@@ -28,6 +28,9 @@ pub struct Builder {
     period: (i64, i64, i64),
     samples: Vec<u8>,
     program: i64,
+    /// Where the program was loaded, so that an address of a sample, less
+    /// it, is one of the program's file.
+    base: u64,
 }
 
 impl Builder {
@@ -46,11 +49,17 @@ impl Builder {
             period: (0, 0, period),
             samples: Vec::new(),
             program: 0,
+            base: 0,
         };
         builder.program = builder.string(program);
         builder.sample_types = sample_types.iter().map(|(t, u)| (builder.string(t), builder.string(u))).collect();
         builder.period = (builder.string(period_type.0), builder.string(period_type.1), period);
         builder
+    }
+
+    /// Where the program was loaded, which its mapping starts at.
+    pub fn base(&mut self, base: u64) {
+        self.base = base;
     }
 
     /// The sample type a reader shows first, as `inuse_space`.
@@ -116,6 +125,9 @@ impl Builder {
         // One mapping, of the program, whose functions and lines are known.
         let mut mapping = Vec::new();
         varint_field(&mut mapping, 1, 1);
+        if self.base != 0 {
+            varint_field(&mut mapping, 2, self.base);
+        }
         varint_field(&mut mapping, 3, u64::MAX);
         varint_field(&mut mapping, 5, self.program as u64);
         for field in [7, 8, 9] {

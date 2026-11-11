@@ -5734,3 +5734,15 @@ median of each order. Against a baseline measured in several orders too, slower 
 every order than in any before, by more than the noise of 2%: a change the orders explain is no
 change. Two revisions measured side by side with `--against` would need each built in every order,
 so `--layouts` goes with `--baseline`, which is also how two compilers are compared.
+
+## `profile show --asm` takes a profile down to the instruction
+
+A profile says which line takes the time, but a line is a dozen instructions, and which of them is
+slow, a division, a mispredicted branch or a read that misses, was read with `perf annotate`. The
+maintainer approved on 2026-11-11 `tondo profile show --asm`: the instructions of the function that
+took the most, or one named, each with its share. The samples already kept where they were; a
+profile now also says where its program was loaded, as pprof's mapping does, so that an address
+less that is one of the program's file, and the reader decodes the function from the file by its
+symbols, with the debugger's decoder. The innermost frame keeps the address after its instruction,
+as the frames that called it do, which the reader takes back. The file must be the one that ran,
+and a sample often falls on the instruction that waits for a slow one rather than on it.

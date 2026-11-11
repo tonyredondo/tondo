@@ -270,6 +270,12 @@ impl Server {
             "definition" | "references" | "hover" | "complete" | "rename" | "refactor" | "symbols"
             | "implementations" | "calls" => language(name, args),
             "profile" => profile(args),
+            "profile_show" if args.flag("asm") => {
+                let read = crate::profile::read(Path::new(&args.need("file")?))?;
+                let annotated =
+                    crate::profile::annotate(&read, args.text("sample").as_deref(), args.text("function").as_deref())?;
+                Ok(Reply::new(annotated.text(), json!({ "asm": annotated.json() })))
+            }
             "explain" => {
                 let code = args.need("code")?;
                 let explained = crate::explain::explain(&code)
@@ -2285,6 +2291,13 @@ the lines, that take the most.",
             ("file", "string!", "The profile."),
             ("top", "number", "How many to give: 15 by default."),
             ("lines", "boolean", "By line, instead of by function."),
+            (
+                "asm",
+                "boolean",
+                "The instructions of one function, each with what it took: the one whose own code took the most, \
+or `function`. A sample often falls on the instruction after the slow one, which waits for it.",
+            ),
+            ("function", "string", "With asm: the function, by its name or a part of it."),
             ("sample", "string", "Which of the profile's samples to read, as `alloc_space`."),
             ("html", "string", "Also write it as a page here."),
         ],

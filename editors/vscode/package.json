@@ -721,6 +721,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.showProfileInstructions",
+        "title": "Show the Hot Instructions of the Profile",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.showOptimizations",
         "title": "Show the Optimizations",
         "category": "Tondo"
@@ -975,6 +980,10 @@
         },
         {
           "command": "tondo.clearProfile",
+          "when": "tondo.profiled"
+        },
+        {
+          "command": "tondo.showProfileInstructions",
           "when": "tondo.profiled"
         },
         {

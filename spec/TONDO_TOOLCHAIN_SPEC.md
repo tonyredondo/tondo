@@ -278,7 +278,7 @@ tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]
 tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
 tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]
 tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
-tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]
+tondo profile show <profile> [--top <n>] [--lines | --asm [<function>]] [--sample <type>] [--html <path>] [--json]
 tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | locals [<task> [<frame>]] | print <path> [<task> [<frame>]]
                        | heap | objects | object <address>] [--json]
@@ -1948,7 +1948,7 @@ campos de su resultado:
 | `ps` | `tondo-ps-0.1/1` | `programs` |
 | `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
-| `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
+| `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html`; con `--asm`, `asm`: `function`, `unit`, `value`, `total` e `instructions` (`offset`, `instruction`, `value`, `file` y `line`) |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
 | `dump group` | `tondo-dump-group-0.1/1` | `groups`: cada fallo con su `signature`, `count`, `reason`, `message`, `at`, `stack`, `lock_orders`, `times`, `file`, sus tiempos y `first_commit` y `last_commit` |
@@ -2052,7 +2052,10 @@ tiene memoria viva; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, 
 tareas, `state`; las de CPU llevan también los labels de la tarea que
 corría (`profile.withLabels`, 14.26 de la librería estándar). En un perfil de
 memoria, el asignador y su muestreo no cuentan como marcos: el más interno es
-lo que pidió la memoria.
+lo que pidió la memoria. El mapping del programa empieza donde se cargó, así
+que una dirección menos ese inicio es la del archivo del programa; la de un
+marco es la siguiente a su instrucción, como la de retorno de los marcos que
+lo llamaron, también la del más interno.
 
 `tondo profile show <profile>` lee un perfil de pprof, de Tondo o no: el
 tipo de muestra que el perfil muestra primero, u otro con `--sample`, en
@@ -2066,6 +2069,18 @@ HTML sin scripts: cada función, una caja tan ancha como su parte sobre la de
 quien la llamó, cuyo título dice cuánto, y la tabla de funciones. Con
 labels, dice además cuánto tomó cada valor de cada uno, salvo `thread`. Con
 `--json`, `tondo-profile-show-0.1/1` (7.12).
+
+`--asm [<función>]` baja de la línea a la instrucción: da el código máquina de
+la función, la que nombra o, sin nombre, la que más tomó con su propio
+código, cada instrucción con su parte de lo que tomó la función y la línea
+del programa de sus muestras, como `tondo asm` (7.19) pero de lo que corrió.
+Lo lee del archivo del programa que se perfiló, que debe seguir siendo el
+mismo, por su tabla de símbolos; uno sin símbolos, o hecho de nuevo, es un
+error. Una muestra cae a menudo en la instrucción que sigue a la lenta, que
+espera su resultado, como el almacenamiento tras una raíz cuadrada: señala
+la zona más que la instrucción. No va con `--lines` ni con `--html`. `tondo
+mcp` lo ofrece en `profile_show` con `asm`, y el editor como *Show the Hot
+Instructions of the Profile* tras mostrar uno.
 
 ### 7.16 `tondo model`
 

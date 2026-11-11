@@ -1929,6 +1929,17 @@ test joining {
     let shown: serde_json::Value = serde_json::from_str(&shown).unwrap_or_else(|_| panic!("{stderr}"));
     assert_eq!(shown["functions"][0]["function"], "fib", "{shown}");
     assert_eq!(shown["lines"][0]["file"], "src/main_test.to", "{shown}");
+    // Its instructions, each with what it took, the function's own whole.
+    let slow = "target/profiles/app.unit.app.slow.cpu.pprof";
+    let (asm, stderr, status) = tondo(&dir, &["profile", "show", slow, "--asm"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(asm.starts_with("fib, "), "{asm}");
+    let (data, _, _) = tondo(&dir, &["profile", "show", slow, "--asm", "fib", "--json"]);
+    let data: serde_json::Value = serde_json::from_str(&data).unwrap();
+    let instructions = data["asm"]["instructions"].as_array().unwrap();
+    let took: i64 = instructions.iter().map(|i| i["value"].as_i64().unwrap()).sum();
+    assert!(took > 0 && took == data["asm"]["value"].as_i64().unwrap(), "{data}");
+    assert!(instructions.iter().any(|i| i["value"].as_i64().unwrap() > 0 && i["file"] == "src/main_test.to"), "{data}");
     // A benchmark's profile covers what it measures.
     let args = ["test", "--bench", "--bench-time", "0.2", "--profile", "memory", "--test-format", "json"];
     let (stdout, _, _) = tondo(&dir, &args);

@@ -355,7 +355,7 @@ pub const COMMANDS: &[Command] = &[
         usage: &[
             "tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--via <command>] [--json]",
             "tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]",
-            "tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]",
+            "tondo profile show <profile> [--top <n>] [--lines | --asm [<function>]] [--sample <type>] [--html <path>] [--json]",
         ],
         summary: &[
             "where a program spends its time, what it allocates and",

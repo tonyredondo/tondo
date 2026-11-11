@@ -192,6 +192,12 @@ pub(super) fn loaded(address: usize) -> Option<(String, usize)> {
     Some((image, address.wrapping_sub(info.dli_fbase as usize)))
 }
 
+/// Where the program itself was loaded: where its file's first byte is.
+pub(crate) fn program_base() -> usize {
+    let here = program_base as *const () as usize;
+    loaded(here).map_or(0, |(_, offset)| here.wrapping_sub(offset))
+}
+
 pub(super) fn uptime_ms() -> u128 {
     STARTED.get().map_or(0, |started| started.elapsed().as_millis())
 }
@@ -200,9 +206,10 @@ pub(super) fn info() -> String {
     let program = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     let arguments: Vec<String> = crate::env::arguments().iter().skip(1).map(|a| quoted(&a.to_string_lossy())).collect();
     format!(
-        "{{\"pid\":{},\"program\":{},\"arguments\":[{}],\"uptime_ms\":{},\"probes\":{}}}",
+        "{{\"pid\":{},\"program\":{},\"base\":{},\"arguments\":[{}],\"uptime_ms\":{},\"probes\":{}}}",
         std::process::id(),
         quoted(&program),
+        program_base(),
         arguments.join(","),
         uptime_ms(),
         crate::debugger::has_probes()

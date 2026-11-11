@@ -439,6 +439,11 @@ fn profiles_for_agents() {
     let line = profile["lines"].as_array().unwrap().iter().find(|l| l["line"] == 7).expect("fib's call");
     assert_eq!((&line["file"], &line["source"]), (&json!("src/main.to"), &json!("fib(n - 1) + fib(n - 2)")));
     assert!(text.contains("src/main.to:7 in fib  fib(n - 1) + fib(n - 2)"), "{text}");
+    // And the instructions of the function that took the most.
+    let file = dir.join(profile["profile"].as_str().unwrap());
+    let (asm, text) = agent.call("profile_show", json!({ "file": file, "asm": true }));
+    assert_eq!(asm["asm"]["function"], "fib", "{asm}");
+    assert!(text.starts_with("fib, ") && text.contains('%'), "{text}");
     let (profiled, _) = agent.call("profile", json!({ "test": "app::unit::app::slow" }));
     assert_eq!(profiled["profiles"][0]["functions"][0]["function"], "fib", "{profiled}");
     let (profiled, _) = agent.call("profile", json!({ "bench": true, "kind": "memory" }));

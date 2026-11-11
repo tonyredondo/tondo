@@ -115,7 +115,8 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
     pause();
     let mut frames = Frames::default();
     let bench = bench.map_or("null".to_string(), super::diagnostics::quoted);
-    let mut out = format!("{{\"node\":{node},\"bench\":{bench},");
+    let base = super::diagnostics::program_base();
+    let mut out = format!("{{\"node\":{node},\"bench\":{bench},\"base\":{base},");
     if settings.memory {
         let allocated = ALLOCATED.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default();
         let _ = write!(out, "\"kind\":\"memory\",\"rate\":{},\"allocated\":[", super::heap::rate());
@@ -302,6 +303,7 @@ fn made_from(kept: Kept) -> Made {
     let kinds: Vec<(&str, &str)> = kept.kinds.iter().map(|(k, u)| (k.as_str(), u.as_str())).collect();
     let mut builder =
         super::pprof::Builder::new(&program, &kinds, (kept.period.0.as_str(), kept.period.1.as_str()), kept.period.2);
+    builder.base(super::diagnostics::program_base() as u64);
     if let Some(default) = &kept.default {
         builder.default_type(default);
     }

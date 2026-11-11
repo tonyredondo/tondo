@@ -188,6 +188,9 @@ Ask the toolchain before guessing why code is slow or allocates:
   run beside its time; `--regression-by instructions` with
   `--max-regression` judges a change by them, which where code lies does
   not move.
+- `tondo profile show <profile> --asm [<function>]` gives the instructions
+  of the function that took the most, each with its share of the samples:
+  which instruction of a hot line the time goes to.
 - `tondo test --exact <id> --bench --profile memory` writes where a
   benchmark allocates, every allocation with `TONDO_HEAP_RATE=1` in its
   environment; `tondo profile show <profile> --sample alloc_objects
