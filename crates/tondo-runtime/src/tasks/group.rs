@@ -59,19 +59,40 @@ impl GroupObject {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
     LIVE_OBJECTS.made();
-    Box::into_raw(Box::new(GroupObject {
+    let fresh = |entries| GroupObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
         fallible: fallible != 0,
-        entries: Vec::new(),
+        entries,
         finished: (NO_ENTRY, NO_ENTRY),
         left: 0,
         first_left: 0,
         running: 0,
         failed: None,
         waiter: None,
-    }))
+    };
+    let group = match SPARE_GROUPS.try_with(|spare| spare.borrow_mut().pop()).ok().flatten() {
+        Some(mut group) => {
+            *group = fresh(std::mem::take(&mut group.entries));
+            group
+        }
+        None => Box::new(fresh(Vec::new())),
+    };
+    Box::into_raw(group)
 }
+
+thread_local! {
+    /// Groups let go on this thread, with the room their entries grew to,
+    /// for the next: making a group and its first entries took two
+    /// allocations each time.
+    // The boxes are what is kept: a program holds a group by its box.
+    #[allow(clippy::vec_box)]
+    static SPARE_GROUPS: std::cell::RefCell<Vec<Box<GroupObject>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many groups a thread keeps, and the most entries a kept one has room for.
+const SPARE_GROUPS_KEPT: usize = 8;
+const KEPT_ENTRIES: usize = 1024;
 
 /// `group.add(job)`: the group takes over the join's reference, which the
 /// caller retained for it.
@@ -272,8 +293,18 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
         for index in 0..(*group).entries.len() {
             free_join((&(*group).entries)[index].join);
         }
-        drop(Box::from_raw(group));
         LIVE_OBJECTS.gone();
+        let mut group = Box::from_raw(group);
+        group.entries.clear();
+        if group.entries.capacity() <= KEPT_ENTRIES {
+            // A thread that ends lets go of it as before.
+            let _ = SPARE_GROUPS.try_with(|spare| {
+                let mut spare = spare.borrow_mut();
+                if spare.len() < SPARE_GROUPS_KEPT {
+                    spare.push(group);
+                }
+            });
+        }
     }
 }
 
