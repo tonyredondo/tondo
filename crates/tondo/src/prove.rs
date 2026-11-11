@@ -951,6 +951,10 @@ impl Prover<'_> {
             return;
         }
         // Otherwise only the values it may hold.
+        let constant = |operand: &Operand| match self.value(operand) {
+            Some((Node::Zero, c)) => Some(c),
+            _ => None,
+        };
         let range = match rvalue {
             Rvalue::Length(Operand::Copy(Place { local: array, path })) if path.is_empty() && self.array(*array) => {
                 forget_local(facts, tests, local);
@@ -961,21 +965,20 @@ impl Prover<'_> {
                 facts.add(length, node, 0);
                 return;
             }
+            // A checked product by a constant went on, so it fits, a
+            // multiple of the constant: `3 * n` is below `Int.max`, and `3 * n
+            // + 1` fits, whatever `n` is, an element or a capture too.
+            Rvalue::Binary(BinOp::Mul, a, b) if constant(a).or(constant(b)).is_some_and(|c| c.abs() >= 2) => {
+                let c = constant(a).or(constant(b)).map_or(1, i128::abs);
+                let (low, high) = match (self.value(a), self.value(b)) {
+                    (Some(a), Some(b)) => arithmetic(BinOp::Mul, facts.range(a), facts.range(b)),
+                    _ => (-LIMIT, LIMIT),
+                };
+                let (min, max) = (i64::MIN as i128, i64::MAX as i128);
+                Some((low.max(min / c * c), high.min(max / c * c)))
+            }
             Rvalue::Binary(op, a, b) | Rvalue::Exact(op, a, b) => match (self.value(a), self.value(b)) {
                 (Some(a), Some(b)) => match op {
-                    // A checked product by a positive constant went on, so it
-                    // fits: `3 * n` is below `Int.max`, and `3 * n + 1` fits.
-                    BinOp::Mul if matches!(rvalue, Rvalue::Binary(..)) && (a.0 == Node::Zero || b.0 == Node::Zero) => {
-                        let c = if a.0 == Node::Zero { a.1 } else { b.1 };
-                        let (low, high) = arithmetic(*op, facts.range(a), facts.range(b));
-                        match c >= 2 {
-                            true => {
-                                let (min, max) = (i64::MIN as i128, i64::MAX as i128);
-                                Some((low.max(min / c * c), high.min(max / c * c)))
-                            }
-                            false => Some((low, high)),
-                        }
-                    }
                     BinOp::Add | BinOp::Sub | BinOp::Mul => Some(arithmetic(*op, facts.range(a), facts.range(b))),
                     // A remainder by a positive constant is under it, and
                     // not negative when the dividend is not.
