@@ -1,0 +1,79 @@
+import linkcheck.crawl
+import std.cli
+import std.console
+import std.json
+import std.process
+import std.time
+
+/// Checks that the links of a site lead somewhere.
+pub type Linkcheck = {
+    /// A page of the site to start from, as `https://example.com`.
+    @cli.Argument
+    url: String
+    /// How many requests are out at a time.
+    @cli.Option(short: "w")
+    workers: Int = 8
+    /// The most requests in a second.
+    rate: Int = 50
+    /// How long one request may take, as `500ms` or `5s`.
+    timeout: time.Duration = time.seconds(5)
+    /// The most addresses to check.
+    limit: Int = 1000
+    /// How long the whole check may take, as `30s` or `2m`.
+    deadline: time.Duration?
+    /// Writes everything that was found as JSON.
+    json: Bool = false
+}
+
+/// A row of the table of links that lead nowhere.
+type Row = {
+    link: String
+    answer: String
+    linkedFrom: String
+}
+
+fn main() {
+    let options = cli.parse[Linkcheck]()
+    let settings = crawl.Options {
+        workers: options.workers
+        rate: options.rate
+        timeout: options.timeout
+        limit: options.limit
+    }
+    let started = time.now()
+    // A deadline is not a parameter of the crawl: it holds for the block,
+    // for all it calls and for every task it starts, and ends them all.
+    let result =
+        within options.deadline.unwrapOr(time.hours(24)) { crawl.crawl(options.url, settings) }
+    let report = match result {
+        ok(found) => found
+        err(error) => {
+            console.eprintln(cli.markup("[red]the site was not checked:[/] {error}"))
+            process.exit(2)
+        }
+    }
+
+    let broken = report.broken()
+    if options.json {
+        console.println(json.encode(report, pretty: true))
+    } else {
+        let took = started.elapsed()
+        console.println(
+            "checked {report.checked.length()} addresses in {took.milliseconds()} ms: {report.pages} pages read, {broken.length()} links that lead nowhere",
+        )
+        if report.cut {
+            console.println(
+                cli.markup("[yellow]stopped at the limit of {options.limit} addresses[/]"),
+            )
+        }
+        if not broken.isEmpty() {
+            let rows = broken.map(
+                (link) { Row { link: link.url, answer: "{link.outcome}", linkedFrom: link.from } },
+            )
+            console.println(cli.table(rows.sortedBy((row) { row.link })))
+        }
+    }
+    if not broken.isEmpty() {
+        process.exit(1)
+    }
+}

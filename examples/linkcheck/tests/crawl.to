@@ -1,0 +1,195 @@
+import linkcheck.crawl
+import std.http
+import std.sync
+import std.time
+
+/// Another site, which the one under test links to. It keeps what it was
+/// asked for, as `HEAD /there`.
+fn elsewhere(asked: sync.Stack[String]): http.Server ! http.HttpError {
+    var app = http.App()
+    app.use(
+        (request, next) {
+            asked.push("{request.method()} {request.path()}")
+            next(request)?
+        },
+    )
+    app.get("/there", (_) { http.Reply.html(r"""<a href="/deeper">deeper</a>""") })
+    app.get("/deeper", (_) { http.Reply.html("the end") })
+    app.start()?
+}
+
+/// A site of three pages, an image and an address that moved, with links
+/// that are fine, links that are not, and links that are no address.
+fn small(outside: String): http.Server ! http.HttpError {
+    var app = http.App()
+    app.get(
+        "/",
+        (_) {
+            http.Reply.html(
+                """
+            <a name="top"></a>
+            <a href="/guide">Guide</a> <a href="about.html">About</a>
+            <a href="/missing">Missing</a> <a href="#top">Top</a>
+            <a href="mailto:hello@example.com">Write</a>
+            <a href="{outside}/there">There</a> <a href="{outside}/gone">Gone</a>
+        """,
+            )
+        },
+    )
+    app.get(
+        "/guide",
+        (_) {
+            http.Reply.html(
+                r"""<a href="/">Home</a> <a href="/about.html#us">About</a> <a href="/old">Old</a>""",
+            )
+        },
+    )
+    app.get(
+        "/about.html",
+        (_) { http.Reply.html(r"""<img src="/logo.svg"> <a href="/guide">Guide</a>""") },
+    )
+    app.get(
+        "/logo.svg",
+        (_) {
+            http.Reply
+                .text(r"""<svg><a href="/not-read"/></svg>""")
+                .header("Content-Type", "image/svg+xml")
+        },
+    )
+    app.get("/old", (_) { http.Reply.redirect("/guide") })
+    app.start()?
+}
+
+/// What a report says of each address, without the times.
+fn outcomes(report: crawl.Report, home: String, outside: String): Map[String, String] {
+    var said: Map[String, String] = [:]
+    for link in report.checked {
+        let name = link.url.replace(outside, "outside").replace(home, "")
+        said[name] = "{link.outcome}"
+    }
+    said
+}
+
+test checksEveryLinkOfTheSiteOnce {
+    let asked = sync.Stack[String]()
+    let other = elsewhere(asked)?
+    defer other.stop()
+    let server = small(other.url())?
+    defer server.stop()
+
+    let report = crawl.crawl("{server.url()}/")?
+    assert(
+        outcomes(report, server.url(), other.url()) ==
+            [
+                "/": "200",
+                "/guide": "200",
+                "/about.html": "200",
+                "/missing": "404",
+                "outside/there": "200",
+                "outside/gone": "404",
+                "/old": "200",
+                "/logo.svg": "200",
+            ],
+    )
+    assert(report.checked.length() == 8)
+    assert(report.pages == 4)
+    assert(not report.cut)
+}
+
+test saysWhereABrokenLinkIs {
+    let other = elsewhere(sync.Stack[String]())?
+    defer other.stop()
+    let server = small(other.url())?
+    defer server.stop()
+
+    let broken = crawl.crawl("{server.url()}/")?.broken().sortedBy((link) { link.url })
+    assert(broken.map((link) { link.from }) == ["{server.url()}/", "{server.url()}/"])
+    assert(broken.map((link) { "{link.outcome}" }) == ["404", "404"])
+}
+
+test onlyAsksWhetherAnotherSiteIsThere {
+    let asked = sync.Stack[String]()
+    let other = elsewhere(asked)?
+    defer other.stop()
+    let server = small(other.url())?
+    defer server.stop()
+
+    _ = crawl.crawl("{server.url()}/")?
+    assert(asked.snapshot().sorted() == ["HEAD /gone", "HEAD /there"])
+}
+
+/// How many requests a server is answering, and the most it ever was.
+type Load = {
+    now: Int = 0
+    peak: Int = 0
+}
+
+test keepsToItsWorkers {
+    let load = sync.Mutex(Load {})
+    var app = http.App()
+    app.get(
+        "/",
+        (_) {
+            http.Reply.html(
+                (1..=12).map((n) { "<a href=\"/page/{n}\">{n}</a>" }).collect().join(" "),
+            )
+        },
+    )
+    app.get(
+        "/page/:n",
+        (_) {
+            load.update(
+                (busy) {
+                    busy.now += 1
+                    busy.peak = busy.peak.max(busy.now)
+                },
+            )
+            time.sleep(time.milliseconds(20))
+            load.update(
+                (busy) {
+                    busy.now -= 1
+                },
+            )
+            http.Reply.html("a page")
+        },
+    )
+    let server = app.start()?
+    defer server.stop()
+
+    let report = crawl.crawl("{server.url()}/", crawl.Options { workers: 3 })?
+    assert(report.pages == 13)
+    assert(load.get().peak <= 3, "{load.get().peak} requests at a time")
+}
+
+test anAddressThatDoesNotAnswerInTimeIsUnreachable {
+    var app = http.App()
+    app.get("/", (_) { http.Reply.html(r"""<a href="/slow">Slow</a>""") })
+    app.get(
+        "/slow",
+        (_) {
+            time.sleep(time.milliseconds(400))
+            http.Reply.html("at last")
+        },
+    )
+    let server = app.start()?
+    defer server.stop()
+
+    let report = crawl.crawl("{server.url()}/", crawl.Options { timeout: time.milliseconds(100) })?
+    assert(report.broken().map((link) { "{link.outcome}" }) == ["no answer in time"])
+}
+
+test stopsAtItsLimit {
+    let other = elsewhere(sync.Stack[String]())?
+    defer other.stop()
+    let server = small(other.url())?
+    defer server.stop()
+
+    let report = crawl.crawl("{server.url()}/", crawl.Options { limit: 3 })?
+    assert(report.cut)
+    assert(report.checked.length() == 3)
+}
+
+test startsAtAnAddressOfTheWeb {
+    assert(crawl.crawl("ftp://example.com/").isErr())
+    assert(crawl.crawl("guide.html").isErr())
+}

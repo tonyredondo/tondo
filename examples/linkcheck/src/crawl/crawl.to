@@ -1,0 +1,219 @@
+import linkcheck.links
+import std.http
+import std.sync
+import std.time
+import std.url
+
+/// How a site is checked.
+pub type Options = {
+    /// How many requests are out at a time.
+    workers: Int = 8
+    /// The most requests in a second.
+    rate: Int = 50
+    /// How long one request may take.
+    timeout: time.Duration = time.seconds(5)
+    /// The most addresses to check.
+    limit: Int = 1000
+}
+
+/// What asking for an address gave.
+pub enum Outcome {
+    /// It answered, with this status.
+    Fine(Int)
+    /// It answered that there is nothing to give: 404, 500.
+    Broken(Int)
+    /// It did not answer: why.
+    Unreachable(String)
+}
+
+impl Display for Outcome {
+    fn display(self): String {
+        match self {
+            Outcome.Fine(status) => "{status}"
+            Outcome.Broken(status) => "{status}"
+            Outcome.Unreachable(why) => why
+        }
+    }
+}
+
+/// An address that was asked for.
+pub type Checked = {
+    url: String
+    /// The page it was first found in: empty for where the crawl began.
+    from: String
+    outcome: Outcome
+    /// How long the answer took, in milliseconds.
+    ms: Int
+}
+
+pub fn Checked.isFine(self): Bool {
+    match self.outcome {
+        Outcome.Fine(_) => true
+        _ => false
+    }
+}
+
+/// What a crawl found.
+pub type Report = {
+    /// Every address asked for, in the order the answers came.
+    checked: Array[Checked] = []
+    /// How many of them were pages of the site, read for their links.
+    pages: Int = 0
+    /// Whether the limit was reached with links still to check.
+    cut: Bool = false
+}
+
+/// The addresses that are not there, or that did not answer.
+pub fn Report.broken(self): Array[Checked] {
+    self.checked.filter((link) { not link.isFine() })
+}
+
+/// Why a crawl could not start.
+pub enum CrawlError {
+    /// Where to start is no address: why.
+    NoAddress(url.UrlError)
+    /// It is an address, but not one of the web.
+    NotTheWeb(String)
+}
+
+impl Display for CrawlError {
+    fn display(self): String {
+        match self {
+            CrawlError.NoAddress(error) => "{error}"
+            CrawlError.NotTheWeb(address) =>
+                "`{address}` is not an address of the web, as `https://example.com`"
+        }
+    }
+}
+
+/// An address to ask for.
+type Job = {
+    url: String
+    from: String
+    /// Whether it is of the site, and so read for its links.
+    inside: Bool
+}
+
+/// What a worker found at an address.
+type Visit = {
+    checked: Checked
+    page: Bool
+    links: Array[String]
+}
+
+/// Checks a site from one of its pages: follows the links of every page of
+/// the same site, and asks whether what they link to elsewhere is there.
+pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError {
+    let home = url.parse(start).mapErr((error) { CrawlError.NoAddress(error) })?
+    if home.scheme != "http" and home.scheme != "https" {
+        fail CrawlError.NotTheWeb(start)
+    }
+    let client = http.Client(timeout: some(options.timeout))
+    let pace = sync.RateLimiter(options.rate)
+    let (jobs, queue) = channel[Job]()
+    let (visits, inbox) = channel[Visit]()
+    var workers = Group[Unit]()
+    for _ in 0..options.workers {
+        workers.add(spawn work(queue, visits.copy(), client, pace, home))
+    }
+
+    // Only this task knows what has been seen and how much is still out.
+    // The workers share the two channels and nothing else, so there is no
+    // lock here to forget.
+    var seen = Set[start]
+    var out = 1
+    jobs.send(Job { url: start, from: "", inside: true })
+    var report = Report {}
+    for out > 0 {
+        let answer = match inbox.receive() {
+            some(arrived) => arrived
+            none => break
+        }
+        out -= 1
+        report.checked.push(answer.checked)
+        if answer.page {
+            report.pages += 1
+        }
+        for link in answer.links {
+            if seen.contains(link) {
+                continue
+            }
+            if seen.length() >= options.limit {
+                report.cut = true
+                break
+            }
+            _ = seen.insert(link)
+            out += 1
+            let inside = match url.parse(link) {
+                ok(address) => links.sameSite(home, address)
+                err(_) => false
+            }
+            jobs.send(Job { url: link, from: answer.checked.url, inside })
+        }
+    }
+    jobs.close()  // the workers' loops end, and they with them
+    _ = workers.wait()
+    report
+}
+
+/// A worker: asks for the addresses it is given until there are no more.
+fn work(
+    jobs: Receiver[Job],
+    visits: Sender[Visit],
+    client: http.Client,
+    pace: sync.RateLimiter,
+    home: url.Url,
+) {
+    for job in jobs {
+        pace.wait()
+        visits.send(visit(client, home, job))
+    }
+}
+
+/// Asks for one address. A page of the site is read, for its links; of
+/// anything else, only whether it is there is asked.
+fn visit(client: http.Client, home: url.Url, job: Job): Visit {
+    let started = time.now()
+    let reply = if job.inside { client.get(job.url) } else { client.head(job.url) }
+    var found: Array[String] = []
+    var page = false
+    let outcome = match reply {
+        ok(response) => {
+            // The answer may come from another address, after a redirect:
+            // its links are read from there, when it is still the site.
+            match url.parse(response.url()) {
+                ok(address) if job.inside and links.sameSite(home, address) and isHtml(response) => {
+                    page = true
+                    found = linksOf(address, response)
+                }
+                _ => {}
+            }
+            Outcome.Fine(response.status())
+        }
+        err(http.HttpError.Status(response)) => Outcome.Broken(response.status())
+        err(http.HttpError.Timeout) => Outcome.Unreachable("no answer in time")
+        err(other) => Outcome.Unreachable("{other}")
+    }
+    Visit {
+        checked: Checked {
+            url: job.url
+            from: job.from
+            outcome
+            ms: started.elapsed().milliseconds()
+        }
+        page
+        links: found
+    }
+}
+
+fn isHtml(response: http.Response): Bool {
+    response.header("Content-Type").unwrapOr("").startsWith("text/html")
+}
+
+/// The links of a page that answered. A body that cannot be read has none.
+fn linksOf(address: url.Url, response: http.Response): Array[String] {
+    match response.text() {
+        ok(html) => links.targets(address, html).unwrapOr([])
+        err(_) => []
+    }
+}
