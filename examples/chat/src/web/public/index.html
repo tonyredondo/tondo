@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <form id="door">
+    <h1>Chat</h1>
+    <label>Your name <input id="name" required maxlength="24" autofocus></label>
+    <label>Room <input id="room" required maxlength="24" value="lobby"></label>
+    <button>Come in</button>
+  </form>
+
+  <main id="chat" hidden>
+    <header><strong id="title"></strong> <span id="people"></span></header>
+    <ol id="lines"></ol>
+    <form id="say">
+      <input id="text" maxlength="500" autocomplete="off" placeholder="Say something">
+      <button>Send</button>
+    </form>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

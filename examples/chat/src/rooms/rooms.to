@@ -1,0 +1,186 @@
+import std.json
+
+/// What happened in a room.
+pub enum Kind {
+    /// What a newcomer is told: who is there.
+    @name("welcome")
+    Welcome
+    @name("joined")
+    Joined
+    @name("said")
+    Said
+    @name("left")
+    Left
+    /// What someone who could not keep up is told: how many lines went by
+    /// without them.
+    @name("missed")
+    Missed
+}
+
+/// What the people of a room are told, a line of JSON each time.
+pub type Event = {
+    kind: Kind
+    room: String
+    /// Who it is about: who came, spoke or left.
+    from: String = ""
+    text: String = ""
+    /// Who is in the room now, in the order they came.
+    people: Array[String] = []
+}
+
+/// Someone in a room.
+type Member = {
+    name: String
+    room: String
+    /// The lines their connection has not taken yet.
+    waiting: Array[String] = []
+    /// The lines that found `waiting` full.
+    missed: Int = 0
+}
+
+/// Every room and who is in it. It is a value: each thing that happens is a
+/// function that changes it, and nothing here waits, locks or sends.
+pub type Rooms = {
+    priv members: Map[Int, Member] = [:]
+    /// The last things said in each room, for who comes later.
+    priv recent: Map[String, Array[String]] = [:]
+}
+
+/// How much of what was said a room keeps.
+pub const Kept: Int = 20
+
+/// How many lines wait for a connection before the next ones are lost.
+pub const Waiting: Int = 64
+
+/// The longest name, and the longest message.
+const NameLimit: Int = 24
+
+const TextLimit: Int = 500
+
+/// A connection comes into a room under a name. It is told who is there
+/// and what was said, and the others that it came.
+pub fn Rooms.enter(var self, id: Int, room: String, name: String) {
+    let member = Member { name: tidy(name, NameLimit), room: tidy(room, NameLimit) }
+    self.members[id] = member
+    let now = self.people(member.room)
+    self.deliver(id, line(Event { kind: Kind.Welcome, room: member.room, people: now }))
+    for said in self.recent.get(member.room).unwrapOr([]) {
+        self.deliver(id, said)
+    }
+    let joined = Event { kind: Kind.Joined, room: member.room, from: member.name, people: now }
+    self.broadcast(member.room, line(joined), except: some(id))
+}
+
+/// A connection says something to its room.
+pub fn Rooms.say(var self, id: Int, text: String) {
+    let member = match self.members.get(id) {
+        some(found) => found
+        none => return
+    }
+    let words = tidy(text, TextLimit)
+    if words.isEmpty() {
+        return
+    }
+    let said = line(Event { kind: Kind.Said, room: member.room, from: member.name, text: words })
+    var kept = self.recent.get(member.room).unwrapOr([])
+    kept.push(said)
+    if kept.length() > Kept {
+        _ = kept.removeAt(0)
+    }
+    self.recent[member.room] = kept
+    self.broadcast(member.room, said)
+}
+
+/// A connection goes, and its room is told. An empty room forgets what was
+/// said in it.
+pub fn Rooms.leave(var self, id: Int) {
+    let member = match self.members.remove(id) {
+        some(found) => found
+        none => return
+    }
+    let now = self.people(member.room)
+    if now.isEmpty() {
+        _ = self.recent.remove(member.room)
+    }
+    let left = Event { kind: Kind.Left, room: member.room, from: member.name, people: now }
+    self.broadcast(member.room, line(left))
+}
+
+/// Whether lines wait for a connection.
+pub fn Rooms.hasLinesFor(self, id: Int): Bool {
+    match self.members.get(id) {
+        some(member) => not member.waiting.isEmpty() or member.missed > 0
+        none => false
+    }
+}
+
+/// Takes the lines that wait for a connection. When some were lost, the
+/// last one says how many.
+pub fn Rooms.take(var self, id: Int): Array[String] {
+    var member = match self.members.get(id) {
+        some(found) => found
+        none => return []
+    }
+    var lines = member.waiting
+    if member.missed > 0 {
+        lines.push(line(Event { kind: Kind.Missed, room: member.room, text: "{member.missed}" }))
+    }
+    member.waiting = []
+    member.missed = 0
+    self.members[id] = member
+    lines
+}
+
+/// How many people each room has.
+pub fn Rooms.counts(self): Map[String, Int] {
+    var counts: Map[String, Int] = [:]
+    for member in self.members.values() {
+        counts[member.room] = counts.get(member.room).unwrapOr(0) + 1
+    }
+    counts
+}
+
+/// The names of who is in a room, in the order they came.
+fn Rooms.people(self, room: String): Array[String] {
+    self.members
+        .values()
+        .filter((member) { member.room == room })
+        .map((member) { member.name })
+        .collect()
+}
+
+/// Leaves a line for everyone in a room.
+fn Rooms.broadcast(var self, room: String, text: String, except: Int? = none) {
+    for (id, member) in self.members {
+        if member.room == room and some(id) != except {
+            self.deliver(id, text)
+        }
+    }
+}
+
+/// Leaves a line for one connection. One that already has `Waiting` lines
+/// loses it, and is told how many it lost when it next takes its lines: a
+/// reader that cannot keep up costs a bounded amount of memory, and never
+/// holds up its room.
+fn Rooms.deliver(var self, id: Int, text: String) {
+    var member = match self.members.get(id) {
+        some(found) => found
+        none => return
+    }
+    if member.waiting.length() < Waiting {
+        member.waiting.push(text)
+    } else {
+        member.missed += 1
+    }
+    self.members[id] = member
+}
+
+/// A name, a room or a message as it is kept: without the space around it
+/// and no longer than its limit.
+fn tidy(text: String, limit: Int): String {
+    text.trim().chars().take(limit).collect().join("")
+}
+
+fn line(event: Event): String {
+    json.encode(event)
+}
