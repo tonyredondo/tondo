@@ -1,0 +1,80 @@
+import std.embed
+import std.fs
+import std.sql
+import std.validate
+
+/// The schema, a file for each change, kept inside the executable.
+const Migrations: fs.FileSystem = embed.files("migrations")
+
+/// A task to do.
+pub type Task = {
+    id: Int
+    title: String
+    done: Bool
+}
+
+/// What a client sends to add a task.
+pub type NewTask = {
+    /// What there is to do.
+    @validate.Length(min: 1, max: 200)
+    title: String
+}
+
+/// What a client sends to change a task: only what it names changes.
+pub type TaskChange = {
+    @validate.Length(min: 1, max: 200)
+    title: String? = none
+    done: Bool? = none
+}
+
+/// Opens the database and brings its schema up to date.
+pub fn open(url: String): sql.Database ! sql.SqlError {
+    var db = sql.open(url)?
+    db.migrate(Migrations)?
+    db
+}
+
+/// The tasks, oldest first: all of them, or those done or still to do.
+pub fn list(db: sql.Database, done: Bool? = none): Array[Task] ! sql.SqlError {
+    match done {
+        some(state) =>
+            db.query[Task]("SELECT id, title, done FROM tasks WHERE done = {state} ORDER BY id")?
+        none => db.query[Task]("SELECT id, title, done FROM tasks ORDER BY id")?
+    }
+}
+
+/// The task with that identifier, if there is one.
+pub fn find(db: sql.Database, id: Int): Task? ! sql.SqlError {
+    db.queryOne[Task?]("SELECT id, title, done FROM tasks WHERE id = {id}")
+}
+
+/// Adds a task, which starts not done.
+pub fn add(db: sql.Database, input: NewTask): Task ! sql.SqlError {
+    db.queryOne[Task]("INSERT INTO tasks (title) VALUES ({input.title}) RETURNING id, title, done")
+}
+
+/// Changes a task and gives it as it is now, or `none` when there is none.
+pub fn change(db: sql.Database, id: Int, edit: TaskChange): Task? ! sql.SqlError {
+    db.transaction(
+        (tx): Task? ! sql.SqlError {
+            let current = match find(tx, id)? {
+                some(task) => task
+                none => return none
+            }
+            let next = current with {
+                title: edit.title.unwrapOr(current.title)
+                done: edit.done.unwrapOr(current.done)
+            }
+            _ =
+                tx.execute(
+                    "UPDATE tasks SET title = {next.title}, done = {next.done} WHERE id = {id}",
+                )?
+            some(next)
+        },
+    )
+}
+
+/// Removes a task, and says whether there was one.
+pub fn remove(db: sql.Database, id: Int): Bool ! sql.SqlError {
+    db.execute("DELETE FROM tasks WHERE id = {id}")?.affected > 0
+}

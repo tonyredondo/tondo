@@ -1,0 +1,88 @@
+import std.http
+import std.sql
+import todo.api
+import todo.store
+
+/// The API over a database of its own, served on a free port.
+fn serve(): http.Server ! (http.HttpError | sql.SqlError) {
+    let db = store.open("sqlite::memory:")?
+    api.routes(db).start()?
+}
+
+test addsATaskAndFindsIt {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+
+    let created =
+        client.post("/tasks", body: http.Body.json(store.NewTask { title: "write tests" }))?
+    assert(created.status() == 201)
+    assert(created.header("location") == some("/tasks/1"))
+    let task: store.Task = created.json()?
+    assert(task == store.Task { id: 1, title: "write tests", done: false })
+
+    let found: store.Task = client.get("/tasks/1")?.json()?
+    assert(found == task)
+}
+
+test listsAndFilters {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "one" }))?
+    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "two" }))?
+    _ = client.patch("/tasks/2", body: http.Body.json(store.TaskChange { done: some(true) }))?
+
+    let all: Array[store.Task] = client.get("/tasks")?.json()?
+    let done: Array[store.Task] = client.get("/tasks", query: ["done": "true"])?.json()?
+    assert(all.map((task) { task.title }) == ["one", "two"])
+    assert(done.map((task) { task.title }) == ["two"])
+}
+
+test aMissingTaskIsA404 {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+    for path in ["/tasks/9", "/tasks/x"] {
+        match client.get(path) {
+            err(http.HttpError.Status(response)) => assert(
+                response.status() == 404 or response.status() == 400,
+            )
+            other => assert(other.isErr(), "{path} answered")
+        }
+    }
+    match client.delete("/tasks/9") {
+        err(http.HttpError.Status(response)) => assert(response.status() == 404)
+        other => assert(other.isErr(), "it deleted nothing and said so")
+    }
+}
+
+test anEmptyTitleIsRefused {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+    match client.post("/tasks", body: http.Body.json(store.NewTask { title: "" })) {
+        err(http.HttpError.Status(response)) => {
+            assert(response.status() == 422)
+            assert(response.text()?.contains("title"))
+        }
+        other => assert(other.isErr(), "it took an empty title")
+    }
+}
+
+test removesATask {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "temporary" }))?
+    assert(client.delete("/tasks/1")?.status() == 204)
+    let left: Array[store.Task] = client.get("/tasks")?.json()?
+    assert(left.isEmpty())
+}
+
+test everyReplyCarriesItsRequestId {
+    let server = serve()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url(), headers: ["X-Request-Id": "abc-123"])
+    assert(client.get("/tasks")?.header("x-request-id") == some("abc-123"))
+}
