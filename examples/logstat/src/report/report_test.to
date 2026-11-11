@@ -1,0 +1,46 @@
+import logstat.entries
+import std.time
+
+fn sample(): Array[entries.Entry] {
+    let lines = [
+        "t GET /users/7 200 10ms",
+        "t GET /users/9 200 30ms",
+        "t POST /orders 500 900ms",
+        "t GET /health 200 1ms",
+    ]
+    lines.map((line) { entries.parse(line).expect("a sample line") })
+}
+
+test routesAreCountedTogether {
+    let rows = byRoute(sample())
+    assert(
+        rows[0] ==
+            RouteRow {
+                route: "/users/:id"
+                requests: 2
+                errors: 0
+                slowest: "30 ms"
+                mean: "20 ms"
+            },
+    )
+    assert(rows.map((row) { row.route }) == ["/users/:id", "/orders", "/health"])
+    assert(rows[1].errors == 1)
+}
+
+test slowRequestsComeSlowestFirst {
+    let slow = slowerThan(sample(), time.milliseconds(20))
+    assert(slow.map((entry) { entry.path }) == ["/orders", "/users/9"])
+    assert(slowerThan(sample(), time.seconds(5)).isEmpty())
+}
+
+test statusesAreCountedByClass {
+    assert(byClass(sample()) == ["2xx": 3, "5xx": 1])
+}
+
+test barsAreInProportion {
+    assert(bar(10, 10, width: 20) == "#".repeat(20))
+    assert(bar(5, 10, width: 20) == "#".repeat(10))
+    assert(bar(1, 1000) == "#")
+    assert(bar(0, 10) == "")
+    assert(bar(3, 0) == "")
+}

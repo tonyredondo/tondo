@@ -1,0 +1,103 @@
+import std.fs
+import std.regex
+import std.time
+
+/// A request a server logged.
+pub type Entry = {
+    at: String
+    method: String
+    path: String
+    status: Int
+    took: time.Duration
+}
+
+/// Why a line is not an entry.
+pub enum ParseError {
+    /// It has other than five words.
+    Shape(Int)
+    /// Its status is not a number from 100 to 599.
+    Status(String)
+    /// Its time is not a number of milliseconds, as `12ms`.
+    Took(String)
+}
+
+impl Display for ParseError {
+    fn display(self): String {
+        match self {
+            ParseError.Shape(words) => "it has {words} words, and an entry has 5"
+            ParseError.Status(text) => "`{text}` is not a status"
+            ParseError.Took(text) => "`{text}` is not a time, as `12ms`"
+        }
+    }
+}
+
+/// The patterns the program compiles once, the first time it needs them.
+context Patterns = {
+    number: regex.Regex = regex.Regex.compile(r"/\d+")?
+}
+
+/// The entry a line holds: `2026-11-11T10:00:01Z GET /users/7 200 12ms`.
+pub fn parse(line: String): Entry ! ParseError {
+    let words = line.words()
+    if words.length() != 5 {
+        fail ParseError.Shape(words.length())
+    }
+    let status = match Int.parse(words[3]) {
+        ok(code) if code >= 100 and code <= 599 => code
+        _ => fail ParseError.Status(words[3])
+    }
+    let took = match Int.parse(words[4].removeSuffix("ms")) {
+        ok(milliseconds) if words[4].endsWith("ms") and milliseconds >= 0 => time.milliseconds(
+            milliseconds,
+        )
+        _ => fail ParseError.Took(words[4])
+    }
+    Entry { at: words[0], method: words[1], path: words[2], status, took }
+}
+
+/// The route of a path: without its query, and with `:id` for each number,
+/// so that `/users/7` and `/users/9` count as one.
+pub fn route(path: String): String {
+    let plain = match path.splitOnce("?") {
+        some((before, _)) => before
+        none => path
+    }
+    Patterns.number.replaceAll(plain, "/:id").unwrapOr(plain)
+}
+
+/// What a file of a log gave: its entries, and the lines that are not one.
+pub type Read = {
+    entries: Array[Entry]
+    skipped: Int
+}
+
+/// Reads a file, leaving out the lines that are not entries.
+pub fn read(path: String): Read ! fs.FsError {
+    var entries: Array[Entry] = []
+    var skipped = 0
+    for line in fs.readText(path)?.lines() {
+        if line.trim().isEmpty() {
+            continue
+        }
+        match parse(line) {
+            ok(entry) => entries.push(entry)
+            err(_) => skipped += 1
+        }
+    }
+    Read { entries, skipped }
+}
+
+/// Reads several files at once, a task for each, and gives all they hold in
+/// the order the files were named.
+pub fn readAll(paths: Array[String]): Read ! fs.FsError {
+    var reading = Group[Read ! fs.FsError]()
+    for path in paths {
+        reading.add(spawn read(path))
+    }
+    var all = Read { entries: [], skipped: 0 }
+    for part in reading.wait()? {
+        all.entries.extend(part.entries)
+        all.skipped += part.skipped
+    }
+    all
+}

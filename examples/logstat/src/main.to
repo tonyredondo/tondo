@@ -1,0 +1,106 @@
+import logstat.entries
+import logstat.report
+import std.cli
+import std.console
+import std.process
+import std.time
+
+/// Says what the requests of a server's log were.
+pub enum Logstat {
+    /// The routes, with their requests, errors and times, the busiest first.
+    Routes(Routes)
+    /// The requests that took longer than a limit.
+    Slow(Slow)
+    /// How many requests each class of status has.
+    Status(Files)
+}
+
+pub type Routes = {
+    /// The files of the log.
+    @cli.Argument
+    files: Array[String]
+    /// How many routes to show.
+    @cli.Option(short: "n")
+    limit: Int = 10
+}
+
+pub type Slow = {
+    /// The files of the log.
+    @cli.Argument
+    files: Array[String]
+    /// The time a request may take, as `250ms` or `2s`.
+    over: time.Duration = time.milliseconds(250)
+}
+
+pub type Files = {
+    /// The files of the log.
+    @cli.Argument
+    files: Array[String]
+}
+
+/// A row of the table of slow requests.
+type SlowRow = {
+    at: String
+    request: String
+    status: Int
+    took: String
+}
+
+fn load(files: Array[String]): Array[entries.Entry] {
+    match entries.readAll(files) {
+        ok(read) => {
+            if read.skipped > 0 {
+                console.eprintln(
+                    cli.markup("[yellow]skipped {read.skipped} lines that are not entries[/]"),
+                )
+            }
+            read.entries
+        }
+        err(error) => {
+            console.eprintln(cli.markup("[red]cannot read the log:[/] {error}"))
+            process.exit(1)
+        }
+    }
+}
+
+fn routes(options: Routes) {
+    let rows = report.byRoute(load(options.files)).take(options.limit)
+    console.println(cli.table(rows))
+}
+
+fn slow(options: Slow) {
+    let found = report.slowerThan(load(options.files), options.over)
+    if found.isEmpty() {
+        console.println(
+            cli.markup("[green]no request took longer than {options.over.milliseconds()} ms[/]"),
+        )
+        return
+    }
+    let rows = found.map(
+        (entry) {
+            SlowRow {
+                at: entry.at
+                request: "{entry.method} {entry.path}"
+                status: entry.status
+                took: "{entry.took.milliseconds()} ms"
+            }
+        },
+    )
+    console.println(cli.table(rows))
+}
+
+fn status(options: Files) {
+    let classes = report.byClass(load(options.files))
+    let most = classes.values().collect().max().unwrapOr(0)
+    for (class, count) in classes {
+        console.println("{class} {count:>6} {report.bar(count, most)}")
+    }
+}
+
+fn main() {
+    match cli.parse[Logstat]() {
+        Logstat.Routes(options) => routes(options)
+        Logstat.Slow(options) => slow(options)
+        Logstat.Status(options) => status(options)
+    }
+}
