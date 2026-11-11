@@ -1777,7 +1777,14 @@ impl<'a> Checker<'a> {
                     }
                     "snapshot" => return self.snapshot(cx, args, span),
                     _ => {
-                        let message = format!("module `testing` has no function `{member}`");
+                        let mut message = format!("module `testing` has no function `{member}`");
+                        let lowered = member.to_ascii_lowercase();
+                        if ["assert", "check", "expect", "ensure", "verify"]
+                            .iter()
+                            .any(|word| lowered.starts_with(word))
+                        {
+                            message.push_str(": a test checks a condition with `assert(condition)`, or `assert(condition, \"message\")`, which needs no import");
+                        }
                         self.diags.error("E1001", segments[1].span, message);
                         return Self::error_expr(span);
                     }

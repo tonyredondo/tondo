@@ -2477,6 +2477,9 @@ fn foreign_word(word: &str, next: &Tok) -> Option<String> {
             format!("a function is `fn {name}(value: Type): Result {{ ... }}`")
         }
         ("elif" | "elsif", _) => "write `} else if condition {`".into(),
+        ("assert", Tok::Ident(_) | Tok::Int { .. } | Tok::Bang | Tok::Minus) => {
+            "`assert` is called as a function: `assert(condition)`, or `assert(condition, \"message\")`".into()
+        }
         _ => return None,
     };
     Some(hint)

@@ -655,6 +655,23 @@ fn workers_run_their_tests_at_once() {
     assert!(stdout.contains("2 passed"), "{stdout}");
 }
 
+/// A test that asserts as another language's tests do is told what to
+/// write: `assert(condition)`, which needs no import.
+#[test]
+fn assertions_of_other_languages_say_what_to_write() {
+    let dir = project(
+        "foreign-asserts",
+        "import std.testing\n\ntest checked {\n    testing.check(1 > 0)\n    testing.assertEqual(1, 1)\n}\n",
+    );
+    let (_, stderr, status) = tondo(&dir, &["check"]);
+    assert_ne!(status, 0, "{stderr}");
+    for name in ["check", "assertEqual"] {
+        let told =
+            format!("module `testing` has no function `{name}`: a test checks a condition with `assert(condition)`");
+        assert!(stderr.contains(&told), "{stderr}");
+    }
+}
+
 fn project(name: &str, tests: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);

@@ -1,0 +1,9 @@
+// `assert` is a function, called with parentheses, as other languages'
+// statement is not: the error says how to write it.
+
+fn main() {
+    let total = 3
+    assert total > 0
+}
+
+// expect-error: E0004 expected end of line, found identifier `total`: `assert` is called as a function: `assert(condition)`
