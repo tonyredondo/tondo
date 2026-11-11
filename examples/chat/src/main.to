@@ -1,0 +1,10 @@
+import chat.web
+import std.console
+import std.env
+import std.http
+
+fn main(): !http.HttpError {
+    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(8080)
+    console.println("the chat is at http://localhost:{port}")
+    web.routes().listen(port: port)?
+}

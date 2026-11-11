@@ -1,0 +1,64 @@
+import chat.rooms
+import std.embed
+import std.http
+import std.sync
+import std.time
+
+/// The server of the chat: the page, kept inside the executable; who is in
+/// each room, as JSON; and a WebSocket for each person in a room.
+pub fn routes(): http.App {
+    // Every connection shares the rooms, behind one lock.
+    let all = sync.Mutex(rooms.Rooms {})
+    let ids = sync.Atomic(0)
+    var app = http.App()
+    app.get("/rooms", (_) { http.Reply.json(all.get().counts()) })
+    app.websocket("/ws/:room", (request, socket) { talk(all, ids.add(1), request, socket)? })
+    app.files("", embed.files("public"))
+    app
+}
+
+/// One connection, from the moment it opens until it closes.
+fn talk(
+    all: sync.Mutex[rooms.Rooms],
+    id: Int,
+    request: http.Request,
+    socket: http.WebSocket,
+): !http.HttpError {
+    let room = request.param("room")
+    let name = request.query("name").unwrapOr("guest")
+    all.update((now) { now.enter(id, room, name) })
+    // This task reads what the browser sends, and another writes what the
+    // room says. Whichever way the connection ends, the writer is stopped
+    // and the room is told.
+    let writer = spawn write(all, id, socket)
+    defer {
+        writer.cancel()
+        leave(all, id)
+    }
+    for message in socket {
+        match message? {
+            http.Message.Text(text) => all.update((now) { now.say(id, text) })
+            http.Message.Binary(_) => {}
+        }
+    }
+}
+
+/// Takes a connection out of its room. This runs as a connection ends,
+/// which may be in a task cancelled because the server is stopping, and a
+/// cancelled task does not wait, not even for a lock: `within` gives it the
+/// time to.
+fn leave(all: sync.Mutex[rooms.Rooms], id: Int) {
+    _ = within time.seconds(1) { all.update((now) { now.leave(id) }) }
+}
+
+/// Sends a connection its lines as they come. It waits, without polling,
+/// until the rooms have some for it; a browser that is slow to take them
+/// holds up this task and no other.
+fn write(all: sync.Mutex[rooms.Rooms], id: Int, socket: http.WebSocket): !http.HttpError {
+    for {
+        let lines = all.updateWhen((now) { now.hasLinesFor(id) }, (now) { now.take(id) })
+        for text in lines {
+            socket.sendText(text)?
+        }
+    }
+}

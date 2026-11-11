@@ -1,0 +1,103 @@
+import chat.rooms
+import chat.web
+import std.http
+import std.json
+import std.time
+
+/// Comes into a room of a server, as a browser would.
+fn enter(server: http.Server, room: String, name: String): http.WebSocket ! http.HttpError {
+    http.WebSocket.connect(
+        "ws://{server.address()}/ws/{room}?name={name}",
+        timeout: some(time.seconds(5)),
+    )
+}
+
+/// The next thing a connection is told, waiting a few seconds for it.
+fn told(socket: http.WebSocket): rooms.Event ! (http.HttpError | json.JsonError | time.TimedOut) {
+    let message = within time.seconds(5) { socket.receive() }?
+    match message {
+        some(http.Message.Text(text)) => json.decode[rooms.Event](text)?
+        _ => fail http.HttpError.Protocol("the connection closed")
+    }
+}
+
+test twoPeopleTalk {
+    let server = web.routes().start()?
+    defer server.stop()
+    let ada = enter(server, "tea", "ada")?
+    assert(told(ada)? == rooms.Event { kind: rooms.Kind.Welcome, room: "tea", people: ["ada"] })
+
+    let leo = enter(server, "tea", "leo")?
+    assert(
+        told(leo)? == rooms.Event { kind: rooms.Kind.Welcome, room: "tea", people: ["ada", "leo"] },
+    )
+    assert(
+        told(ada)? ==
+            rooms.Event {
+                kind: rooms.Kind.Joined
+                room: "tea"
+                from: "leo"
+                people: ["ada", "leo"]
+            },
+    )
+
+    ada.sendText("hello, leo")?
+    let said = rooms.Event { kind: rooms.Kind.Said, room: "tea", from: "ada", text: "hello, leo" }
+    assert(told(ada)? == said)
+    assert(told(leo)? == said)
+
+    leo.close()?
+    assert(
+        told(ada)? ==
+            rooms.Event { kind: rooms.Kind.Left, room: "tea", from: "leo", people: ["ada"] },
+    )
+    let counts: Map[String, Int] = http.get("{server.url()}/rooms")?.json()?
+    assert(counts == ["tea": 1])
+}
+
+test roomsAreApart {
+    let server = web.routes().start()?
+    defer server.stop()
+    let ada = enter(server, "tea", "ada")?
+    let zoe = enter(server, "coffee", "zoe")?
+    assert(told(ada)?.kind == rooms.Kind.Welcome)
+    assert(told(zoe)?.kind == rooms.Kind.Welcome)
+
+    ada.sendText("anyone for tea?")?
+    assert(told(ada)?.text == "anyone for tea?")
+    zoe.sendText("espresso")?
+    assert(told(zoe)?.text == "espresso")  // the first thing zoe hears since the welcome
+}
+
+test aNewcomerHearsWhatWasSaid {
+    let server = web.routes().start()?
+    defer server.stop()
+    let ada = enter(server, "tea", "ada")?
+    _ = told(ada)?
+    ada.sendText("one")?
+    ada.sendText("two")?
+    assert(told(ada)?.text == "one" and told(ada)?.text == "two")
+
+    let leo = enter(server, "tea", "leo")?
+    assert(told(leo)?.kind == rooms.Kind.Welcome)
+    assert(told(leo)?.text == "one" and told(leo)?.text == "two")
+}
+
+test aNameWithSpacesAndAccents {
+    let server = web.routes().start()?
+    defer server.stop()
+    let guest = enter(server, "caf%C3%A9", "Mar%C3%ADa%20Jos%C3%A9")?
+    assert(
+        told(guest)? ==
+            rooms.Event { kind: rooms.Kind.Welcome, room: "café", people: ["María José"] },
+    )
+}
+
+test thePageComesFromTheExecutable {
+    let server = web.routes().start()?
+    defer server.stop()
+    let page = http.get("{server.url()}/")?
+    assert(page.header("Content-Type").unwrapOr("").startsWith("text/html"))
+    assert(page.text()?.contains("<title>Chat</title>"))
+    assert(http.get("{server.url()}/app.js")?.text()?.contains("new WebSocket"))
+}

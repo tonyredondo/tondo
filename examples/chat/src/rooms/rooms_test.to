@@ -1,0 +1,119 @@
+import std.json
+
+/// What a connection is told, a few words for each line it takes.
+fn heard(rooms: var Rooms, id: Int): Array[String] ! json.JsonError {
+    var words: Array[String] = []
+    for text in rooms.take(id) {
+        let event = json.decode[Event](text)?
+        words.push(
+            match event.kind {
+                Kind.Welcome => "welcome to {event.room} with {event.people}"
+                Kind.Joined => "{event.from} joined: {event.people}"
+                Kind.Said => "{event.from}: {event.text}"
+                Kind.Left => "{event.from} left: {event.people}"
+                Kind.Missed => "missed {event.text}"
+            },
+        )
+    }
+    words
+}
+
+test aRoomHearsWhoComesSpeaksAndGoes {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    rooms.enter(2, "tea", "leo")
+    rooms.say(1, "  hello  ")
+    rooms.say(2, "hi")
+    rooms.leave(2)
+
+    assert(
+        heard(var rooms, 1)? ==
+            [
+                "welcome to tea with [ada]",
+                "leo joined: [ada, leo]",
+                "ada: hello",
+                "leo: hi",
+                "leo left: [ada]",
+            ],
+    )
+    assert(rooms.counts() == ["tea": 1])
+    assert(heard(var rooms, 1)? == [])  // taken is taken
+}
+
+test roomsDoNotHearEachOther {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    rooms.enter(2, "coffee", "zoe")
+    rooms.say(1, "anyone for tea?")
+
+    assert(heard(var rooms, 1)? == ["welcome to tea with [ada]", "ada: anyone for tea?"])
+    assert(heard(var rooms, 2)? == ["welcome to coffee with [zoe]"])
+    assert(rooms.counts() == ["tea": 1, "coffee": 1])
+}
+
+test aNewcomerHearsWhatWasSaid {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    for n in 1..=25 {
+        rooms.say(1, "message {n}")
+    }
+    rooms.enter(2, "tea", "leo")
+
+    let lines = heard(var rooms, 2)?
+    assert(lines.length() == 1 + Kept)
+    assert(lines[0] == "welcome to tea with [ada, leo]")
+    assert(lines[1] == "ada: message 6" and lines[-1] == "ada: message 25")
+}
+
+test anEmptyRoomForgets {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    rooms.say(1, "a secret")
+    rooms.leave(1)
+    rooms.enter(2, "tea", "leo")
+
+    assert(heard(var rooms, 2)? == ["welcome to tea with [leo]"])
+    assert(heard(var rooms, 1)? == [])  // who left has nothing waiting
+}
+
+test namesAndMessagesAreCut {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "  {"a".repeat(40)}  ")
+    rooms.say(1, "é".repeat(600))
+    rooms.say(1, "   ")
+
+    let short = "a".repeat(24)
+    assert(heard(var rooms, 1)? == ["welcome to tea with [{short}]", "{short}: {"é".repeat(500)}"])
+}
+
+test aSlowReaderLosesLinesAndIsToldHowMany {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    rooms.enter(2, "tea", "leo")
+    _ = rooms.take(2)  // leo reads the welcome, and then nothing
+    for n in 1..=Waiting + 3 {
+        rooms.say(1, "message {n}")
+        _ = rooms.take(1)  // ada keeps up
+    }
+
+    let lines = heard(var rooms, 2)?
+    assert(lines.length() == Waiting + 1)
+    assert(lines[0] == "ada: message 1" and lines[-2] == "ada: message {Waiting}")
+    assert(lines[-1] == "missed 3")
+
+    rooms.say(1, "still here?")
+    assert(heard(var rooms, 2)? == ["ada: still here?"])
+}
+
+test onlyWhoHasLinesIsWoken {
+    var rooms = Rooms {}
+    rooms.enter(1, "tea", "ada")
+    rooms.enter(2, "coffee", "zoe")
+    _ = rooms.take(1)
+    _ = rooms.take(2)
+    rooms.say(2, "espresso")
+
+    assert(not rooms.hasLinesFor(1))
+    assert(rooms.hasLinesFor(2))
+    assert(not rooms.hasLinesFor(99))
+}

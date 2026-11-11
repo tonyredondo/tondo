@@ -1,0 +1,11 @@
+body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+label { display: block; margin: 0.75rem 0; }
+input { font: inherit; padding: 0.4rem; }
+button { font: inherit; padding: 0.4rem 1rem; }
+header { border-bottom: 1px solid #ccc; padding-bottom: 0.5rem; }
+#people { color: #666; }
+#lines { list-style: none; padding: 0; height: 60vh; overflow-y: auto; }
+#lines li { padding: 0.2rem 0; }
+#lines .note { color: #666; font-style: italic; }
+#say { display: flex; gap: 0.5rem; }
+#say input { flex: 1; }
