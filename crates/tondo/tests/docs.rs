@@ -1,6 +1,8 @@
 //! The manual in `docs/`: the reference of the standard library is what
-//! `tondo api` gives, every example compiles, and an example followed by a
-//! block of `text output` prints exactly that when it runs.
+//! `tondo api` gives, every example compiles, an example followed by a block
+//! of `text output` prints exactly that when it runs, and the tests of an
+//! example pass, or fail when it says `tondo test failing`, as one that shows
+//! what a failure looks like.
 //!
 //! `TONDO_UPDATE_DOCS=1 cargo test -p tondo --test docs` writes the reference
 //! and the outputs again, after a change to the standard library's API or
@@ -100,7 +102,7 @@ enum Outcome {
 
 fn check(tondo: &str, job: &Job) -> Outcome {
     std::fs::create_dir_all(&job.case).unwrap();
-    let test = job.info == "tondo test";
+    let test = job.info.starts_with("tondo test");
     if test {
         std::fs::create_dir_all(job.case.join("src")).unwrap();
         std::fs::write(job.case.join("tondo.toml"), "[package]\nname = \"guide\"\n").unwrap();
@@ -126,6 +128,17 @@ fn check(tondo: &str, job: &Job) -> Outcome {
     };
     if !ok {
         return Outcome::Failed(format!("{}:\n{}\n{stderr}", job.name, job.code));
+    }
+    if test {
+        // The tests run too: an example that only compiled could fail unseen.
+        let ran = run(&["test"]);
+        let fails = job.info == "tondo test failing";
+        if ran.status.success() == fails {
+            let said = String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
+            let expected = if fails { "fail, as `tondo test failing` says" } else { "pass" };
+            return Outcome::Failed(format!("the tests of {} should {expected}:\n{said}", job.name));
+        }
+        return Outcome::Fine;
     }
     let Some((_, says)) = &job.output else { return Outcome::Fine };
     let ran = run(&["run", "main.to"]);

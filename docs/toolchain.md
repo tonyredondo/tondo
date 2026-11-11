@@ -150,7 +150,7 @@ passes proves little. `tondo test` runs a test that starts tasks again in
 every order of them that differs, and two orders differ only when two tasks
 touch the same thing the other way around: a lock, an `Atomic`, a channel.
 
-```tondo test
+```tondo test failing
 import std.sync
 
 fn deposit(balance: sync.Mutex[Int], amount: Int) {
@@ -200,7 +200,7 @@ code yet, can reach, and gives the steps to the state that breaks a rule. A
 function that gives the next state for an event needs no model written for
 it: the function is the model.
 
-```tondo test
+```tondo test failing
 import std.model
 
 enum Event {
