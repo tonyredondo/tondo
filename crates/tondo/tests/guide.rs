@@ -1,6 +1,6 @@
-//! Every example of `tondo guide` compiles, as a library for C when its
-//! info string says `library`, and every example of a mistake fails with
-//! the error it names.
+//! Every example of `tondo guide`, of the README and of the documents of
+//! `docs/` compiles, as a library for C when its info string says `library`,
+//! and every example of a mistake fails with the error it names.
 
 use std::path::Path;
 use std::process::Command;
@@ -24,8 +24,13 @@ fn examples_compile() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guide");
     let _ = std::fs::remove_dir_all(&dir);
     let mut jobs = Vec::new();
-    let readme = ("readme", include_str!("../../../README.md"));
-    for (topic, text) in tondo::guide::TOPICS.iter().copied().chain([readme]) {
+    let documents = [
+        ("readme", include_str!("../../../README.md")),
+        ("tour", include_str!("../../../docs/tour.md")),
+        ("toolchain", include_str!("../../../docs/toolchain.md")),
+        ("comparison", include_str!("../../../docs/comparison.md")),
+    ];
+    for (topic, text) in tondo::guide::TOPICS.iter().copied().chain(documents) {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();
