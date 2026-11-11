@@ -1,8 +1,8 @@
 # A tour of Tondo
 
 This is the language by example, for someone who already programs. Every
-example is a whole program: save it as a `.to` file and `tondo run` it. The
-tests compile them all, so they stay true.
+example is whole, with nothing left out: save one as a `.to` file and
+`tondo run` it. The tests compile them all, so they stay true.
 
 `tondo guide` is the reference this tour points to: each topic it names, as
 `tondo guide types`, goes further than the section here.
@@ -217,8 +217,8 @@ nobody
 - `main` may fail: the program prints the error and exits with 1.
 
 A bug is a panic, not an error: an index out of range, an overflow, a failed
-`assert`. It stops the program with a code, the values and the stack, through
-the task that spawned it:
+`assert`. It stops the program with a code, the values that broke the rule
+and the stack:
 
 ```text
 panic[P0005]: checked-overflow: 9223372036854775807 + 1 does not fit in Int (-9223372036854775808 to 9223372036854775807)
