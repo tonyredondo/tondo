@@ -5851,3 +5851,14 @@ a few did. A copy of a field with a reference of its own needs nothing of the re
 without lives only while the record does, which the chain of copies already asks; an interpolation
 reads its values and keeps none, but the text it appends to. A loop over a thousand records that
 reads and interpolates their fields took 20% fewer instructions and 24% fewer cycles.
+
+## `tondo help` lists the commands by group
+
+With 44 commands, `tondo help` wrote 172 lines of usages, which a person reads past and a model
+spends its context on. The maintainer asked on 2026-11-11 for a help to explore instead: `tondo
+help` names eight groups, by what their commands are for, each with its commands on a line; `tondo
+help <group>` says what each command of a group does, a line each, with the subcommands of `dump`
+and the like apart; `tondo help <command>` gives a command's usage as before, and `tondo help --all`
+every usage. The groups are a table beside the commands', which a test holds to every command being
+in exactly one, and to no group being named as a command, so that `tondo help <name>` means one
+thing.

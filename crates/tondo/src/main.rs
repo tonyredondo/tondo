@@ -142,12 +142,16 @@ fn main() -> ExitCode {
                 println!("{}", tondo::cli::usage());
                 Ok(ExitCode::SUCCESS)
             }
-            Some(name) => match tondo::cli::help(name) {
+            Some("--all") => {
+                print!("{}", tondo::cli::all());
+                Ok(ExitCode::SUCCESS)
+            }
+            Some(name) => match tondo::cli::group(name).or_else(|| tondo::cli::help(name)) {
                 Some(help) => {
                     print!("{help}");
                     Ok(ExitCode::SUCCESS)
                 }
-                None => Err(format!("no command `{name}`\n{USAGE}")),
+                None => Err(format!("no group or command `{name}`\n{USAGE}")),
             },
         },
         "completions" => match args.get(1).and_then(|a| a.to_str()).and_then(tondo::cli::completions) {

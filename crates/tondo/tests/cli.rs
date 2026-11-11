@@ -29,9 +29,29 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn every_command_has_its_help() {
     let dir = scratch("cli-help");
+    // Without a command, the groups of commands; every usage with --all.
     let (_, usage, status) = tondo(&dir, &[]);
     assert_eq!(status, 2);
-    assert!(usage.contains("usage:\n  tondo run ") && usage.contains("  tondo graph "), "{usage}");
+    assert!(usage.contains("  observe ") && usage.contains("tondo help <group>"), "{usage}");
+    let (all, _, status) = tondo(&dir, &["help", "--all"]);
+    assert_eq!(status, 0);
+    assert!(all.contains("usage:\n  tondo run ") && all.contains("  tondo graph "), "{all}");
+    // Each command is in one group, which says what it does, and no group
+    // has a command's name.
+    let names = tondo::cli::names();
+    for name in &names {
+        let groups: Vec<&str> =
+            tondo::cli::GROUPS.iter().filter(|g| g.commands.contains(name)).map(|g| g.name).collect();
+        assert_eq!(groups.len(), 1, "{name} is in {groups:?}");
+        let (listed, _, status) = tondo(&dir, &["help", groups[0]]);
+        assert_eq!(status, 0);
+        assert!(listed.lines().any(|line| line.trim_start().starts_with(name)), "{name}: {listed}");
+        assert!(usage.contains(name), "{name}: {usage}");
+    }
+    for group in tondo::cli::GROUPS {
+        assert!(!names.contains(&group.name), "the group {} has a command's name", group.name);
+        assert!(group.commands.iter().all(|c| names.contains(c)), "{} lists no such command", group.name);
+    }
     for name in tondo::cli::names() {
         let (help, stderr, status) = tondo(&dir, &[name, "--help"]);
         assert_eq!(status, 0, "{name} --help: {stderr}");

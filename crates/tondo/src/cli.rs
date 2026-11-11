@@ -1,6 +1,7 @@
-//! The commands of `tondo`, as one table: what `tondo help` shows, what
-//! `tondo <command> --help` shows of one, and what a shell completes
-//! (`tondo completions`). Each command's flags are those its usage names.
+//! The commands of `tondo`, as one table: what `tondo help` shows, by
+//! groups and then by command, what `tondo <command> --help` shows of one,
+//! and what a shell completes (`tondo completions`). Each command's flags
+//! are those its usage names.
 
 /// A command: its name, the lines of its usage, and what it does.
 pub struct Command {
@@ -407,8 +408,8 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "help",
-        usage: &["tondo help [<command>]"],
-        summary: &["what tondo, or one of its commands, does"],
+        usage: &["tondo help [<group> | <command> | --all]"],
+        summary: &["the groups of commands; what a group's commands do;", "a command's usage; every usage"],
     },
     Command {
         name: "version",
@@ -452,28 +453,146 @@ pub fn print_json(command: &str, ok: bool, fields: serde_json::Value) {
     println!("{}", serde_json::Value::Object(object));
 }
 
+/// A group of commands, by what they are for, as `tondo help` lists them.
+pub struct Group {
+    pub name: &'static str,
+    pub purpose: &'static str,
+    pub commands: &'static [&'static str],
+}
+
+pub const GROUPS: &[Group] = &[
+    Group {
+        name: "write",
+        purpose: "make, check and build programs",
+        commands: &["new", "init", "run", "build", "check", "fix", "fmt"],
+    },
+    Group { name: "testing", purpose: "test programs and documents", commands: &["test", "doc-test", "model"] },
+    Group {
+        name: "learn",
+        purpose: "learn the language, the library and a program",
+        commands: &["guide", "api", "explain", "expand", "graph"],
+    },
+    Group {
+        name: "projects",
+        purpose: "dependencies, the cache, C headers and targets",
+        commands: &["add", "remove", "update", "clean", "bind", "target"],
+    },
+    Group {
+        name: "observe",
+        purpose: "see what a running program does, without stopping it",
+        commands: &["ps", "counters", "requests", "blocked", "logpoint", "trace", "dump"],
+    },
+    Group {
+        name: "debugging",
+        purpose: "stop, step through and change programs, live or recorded",
+        commands: &["debug", "dap", "relay", "source", "reload", "values", "eval"],
+    },
+    Group {
+        name: "performance",
+        purpose: "where time and memory go, and what the compiler made",
+        commands: &["profile", "optimizations", "asm"],
+    },
+    Group {
+        name: "tools",
+        purpose: "editors, agents, shells and tondo itself",
+        commands: &["lsp", "mcp", "setup", "completions", "help", "version"],
+    },
+];
+
 /// Where a summary starts, after the usage.
 const COLUMN: usize = 55;
 
 const INTRODUCTION: &str = "New to Tondo, or a model writing it? Start with `tondo guide`.";
 
 const NOTES: &str = "\
-`tondo <file.to> [<argument>...]` runs a script (for #! lines). A project is
-a directory with src/main.to, or with main.to or tondo.toml, given as
-<project> or with --project <dir>; the current directory by default. --link
-links a native library by name (-l) or file, besides a project's [native]
-libraries. `tondo <command> --help` shows one command; with --json, a command
-writes its result as one JSON object.";
+`tondo help <group>` says what each command of a group does, `tondo help
+<command>` or `tondo <command> --help` gives a command's usage, and `tondo
+help --all` every usage. `tondo <file.to> [<argument>...]` runs a script (for
+#! lines). A project is a directory with src/main.to, or with main.to or
+tondo.toml, given as <project> or with --project <dir>; the current
+directory by default. With --json, a command writes its result as one JSON
+object.";
 
-/// What `tondo help` shows: every command.
+/// What `tondo help` shows: the groups of commands, each with its own.
 pub fn usage() -> String {
-    let mut text = format!("{INTRODUCTION}\n\nusage:\n");
-    for command in COMMANDS {
-        text.push_str(&entry(command));
+    let mut text = format!("{INTRODUCTION}\n\ncommands, by what they are for:\n");
+    let width = GROUPS.iter().map(|group| group.name.len()).max().unwrap_or(0) + 2;
+    for group in GROUPS {
+        text.push_str(&format!("  {:width$}{}\n", group.name, group.purpose));
+        text.push_str(&format!("  {:width$}{}\n", "", group.commands.join(", ")));
     }
     text.push('\n');
     text.push_str(NOTES);
     text
+}
+
+/// What `tondo help --all` shows: every command's usage.
+pub fn all() -> String {
+    let mut text = format!("{INTRODUCTION}\n\nusage:\n");
+    for command in COMMANDS {
+        text.push_str(&entry(command));
+    }
+    text
+}
+
+/// What `tondo help <group>` shows: what each of its commands does, one
+/// line each; `None` for no such group.
+pub fn group(name: &str) -> Option<String> {
+    let group = GROUPS.iter().find(|group| group.name == name)?;
+    let entries: Vec<(String, String)> = group
+        .commands
+        .iter()
+        .flat_map(|name| COMMANDS.iter().filter(move |command| command.name == *name))
+        .map(|command| (label(command), command.summary.join(" ")))
+        .collect();
+    let width = entries.iter().map(|(label, _)| label.len()).max().unwrap_or(0) + 2;
+    let mut text = format!("{}: {}\n\n", group.name, group.purpose);
+    for (label, summary) in entries {
+        for (index, line) in wrapped(&summary, WIDTH - width - 2).into_iter().enumerate() {
+            let label = if index == 0 { label.as_str() } else { "" };
+            text.push_str(&format!("  {label:width$}{line}\n"));
+        }
+    }
+    text.push_str("\n`tondo help <command>` gives a command's usage.\n");
+    Some(text)
+}
+
+/// How wide `tondo help <group>` writes.
+const WIDTH: usize = 100;
+
+/// The words of `text` in lines of `width` at most, but for a longer word.
+fn wrapped(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if line.len() + 1 + word.len() <= width => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
+    }
+    lines
+}
+
+/// A command as a group lists it: its name and the words of its usage
+/// that name what it does, as `dump read` or `build --library`.
+fn label(command: &Command) -> String {
+    let words = command.usage[0].split_whitespace().skip(2);
+    let mut label = String::from(command.name);
+    for (index, word) in words.enumerate() {
+        let plain = word.chars().all(|c| c.is_ascii_lowercase() || c == '-') && !word.starts_with('-');
+        if plain || (index == 0 && word.starts_with("--")) {
+            label.push(' ');
+            label.push_str(word);
+        } else {
+            break;
+        }
+        if word.starts_with("--") {
+            break;
+        }
+    }
+    label
 }
 
 /// What `tondo <command> --help` shows; `None` for no such command.

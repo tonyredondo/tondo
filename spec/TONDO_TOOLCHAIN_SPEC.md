@@ -289,7 +289,7 @@ tondo debug [--json] --test <id> [<project>]
 tondo dap
 tondo reload <pid|name> [--json]
 tondo completions bash|zsh|fish
-tondo help [<command>]
+tondo help [<group> | <command> | --all]
 tondo version [--json]
 ~~~
 
@@ -355,8 +355,12 @@ tondo version [--json]
   (sección 7.5), y `profile` dice dónde gastan su tiempo y su memoria
   (sección 7.15); `debug` depura uno, y `dap` hace lo mismo para un editor
   (sección 7.6).
-- `help` y `<comando> --help` muestran el uso de un comando, o de todos;
-  `completions` escribe el script que completa los comandos y sus opciones en
+- `help` lista los comandos por grupos, según para qué son (escribir,
+  probar, aprender, proyectos, observar, depurar, rendimiento y
+  herramientas), cada grupo con los suyos; `help <grupo>` dice qué hace cada
+  comando del grupo, en una línea; `help <comando>` y `<comando> --help`
+  muestran su uso, y `help --all` el de todos. Ningún grupo se llama como un
+  comando; `completions` escribe el script que completa los comandos y sus opciones en
   `bash`, `zsh` o `fish`; `version` dice la versión, el target y el backend.
 - Con `--json`, un comando escribe su resultado como un objeto JSON, y
   `--diagnostic-format json` da los diagnósticos de lo que compila como JSON

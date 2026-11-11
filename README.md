@@ -111,7 +111,8 @@ target/release/tondo new app                     # a project; `tondo add`, `remo
 target/release/tondo script.to args              # for #!/usr/bin/env tondo
 ```
 
-`tondo help` lists the commands and `tondo <command> --help` explains one;
+`tondo help` lists the commands by group, `tondo help <group>` says what
+each of a group does, and `tondo <command> --help` explains one;
 `tondo completions bash|zsh|fish` completes them in a shell. With `--json`,
 every command writes its result as one JSON object for tools.
 

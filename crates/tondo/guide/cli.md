@@ -1,9 +1,11 @@
 # The command line
 
 `tondo` is one binary: compiler, runner, test runner, formatter, language
-server, MCP server, debugger and profiler. `tondo help` lists every
-command, and `tondo help <command>` or `tondo <command> --help` explains
-one. A path is a `.to` file or a project, a directory with `tondo.toml` or
+server, MCP server, debugger and profiler. `tondo help` lists the
+commands by what they are for, `tondo help <group>` what each command of a
+group does, as `tondo help performance`, and `tondo help <command>` or
+`tondo <command> --help` gives a command's usage; `tondo help --all` every
+usage. A path is a `.to` file or a project, a directory with `tondo.toml` or
 `src/main.to`; without one, the current directory.
 
 ## Start
