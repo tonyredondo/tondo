@@ -924,6 +924,27 @@ fn compares_with_another_compiler() {
     assert_eq!(status, 2, "{stderr}");
 }
 
+/// With `--tests`, `optimizations` and `asm` read the code of the tests and
+/// benchmarks, as `tondo test --bench` builds it.
+#[test]
+fn sees_the_code_of_tests() {
+    let tests = b"import std.testing\n\nfn doubled(values: Array[Int]): Int {\n    var total = 0\n    \
+        for value in values {\n        total += value * 2\n    }\n    total\n}\n\n\
+        test sums {\n    testing.bench(\"doubled\", () { doubled([1, 2, 3]) })\n}\n";
+    let dir = project_at("tests_code", &[("main.to", b"fn main() {}\n"), ("main_test.to", tests)]);
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "--tests"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("main_test.to:12:") && said.contains("is inlined: the body of `doubled`"), "{said}");
+    let (data, _) = json(&dir, &["optimizations", "--tests", "--json"]);
+    let test_file = |o: &Value| o["file"].as_str().is_some_and(|file| file.ends_with("main_test.to"));
+    assert!(data["optimizations"].as_array().unwrap().iter().any(test_file), "{data}");
+    let (said, _, _) = tondo(&dir, &["optimizations"]);
+    assert!(!said.contains("main_test.to"), "{said}");
+    let (said, stderr, status) = tondo(&dir, &["asm", "--tests", "doubled"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.starts_with("doubled ("), "{said}");
+}
+
 #[test]
 fn the_machine_code_of_a_function() {
     let source = "fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\

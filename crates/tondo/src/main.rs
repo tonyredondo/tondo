@@ -2042,7 +2042,7 @@ fn graph_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// 7.18): each place, the functions it is in, its code and what was done.
 fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
-    let json = take_flag(&mut args, "--json");
+    let (json, tests) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--tests"));
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2064,7 +2064,8 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if let Some(reference) = compiler {
         let (compiler, executable) = driver::compiler(&reference, &path)?;
-        let (gone, new) = driver::optimizations_compiler(&path, &executable, function.as_deref(), kind.as_deref())?;
+        let (gone, new) =
+            driver::optimizations_compiler(&path, &executable, function.as_deref(), kind.as_deref(), tests)?;
         if json {
             let list = |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
             print_json(
@@ -2083,7 +2084,7 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if let Some(reference) = against {
         let (commit, gone, new) =
-            driver::optimizations_against(&path, &reference, function.as_deref(), kind.as_deref())?;
+            driver::optimizations_against(&path, &reference, function.as_deref(), kind.as_deref(), tests)?;
         if json {
             let list = |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
             let against = serde_json::json!({ "ref": reference, "commit": commit });
@@ -2097,7 +2098,7 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         print!("{}", driver::changed_text(&reference, &commit, &gone, &new));
         return Ok(ExitCode::SUCCESS);
     }
-    let analysis = driver::analyze(&path)?;
+    let analysis = driver::analyzed(&path, tests)?;
     if analysis.program.is_none() {
         if json {
             let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
@@ -2148,7 +2149,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
     let (json, ir, all) =
         (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
-    let rules = take_flag(&mut args, "--rules");
+    let (rules, tests) = (take_flag(&mut args, "--rules"), take_flag(&mut args, "--tests"));
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2178,7 +2179,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect()
     };
     if let Some(reference) = against {
-        let (commit, changes, same) = driver::assembly_against(&path, &reference, function.as_deref())?;
+        let (commit, changes, same) = driver::assembly_against(&path, &reference, function.as_deref(), tests)?;
         if json {
             let against = serde_json::json!({ "ref": reference, "commit": commit });
             print_json(
@@ -2194,7 +2195,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if let Some(reference) = compiler {
         let (compiler, executable) = driver::compiler(&reference, &path)?;
-        let (changes, same) = driver::assembly_compiler(&path, &executable, function.as_deref())?;
+        let (changes, same) = driver::assembly_compiler(&path, &executable, function.as_deref(), tests)?;
         if json {
             print_json(
                 "asm",
@@ -2206,7 +2207,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let analysis = driver::analyze(&path)?;
+    let analysis = driver::analyzed(&path, tests)?;
     if analysis.program.is_none() {
         if json {
             let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);

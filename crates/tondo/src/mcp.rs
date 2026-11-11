@@ -231,7 +231,8 @@ impl Server {
                     changes.iter().map(|(name, lines)| json!({ "function": name, "diff": lines })).collect()
                 };
                 if let Some(reference) = args.text("against") {
-                    let (commit, changes, same) = driver::assembly_against(&args.path(), &reference, function)?;
+                    let (commit, changes, same) =
+                        driver::assembly_against(&args.path(), &reference, function, args.flag("tests"))?;
                     let from = format!("{reference} ({})", &commit[..commit.len().min(12)]);
                     let text = driver::assembly_changes_text(&from, &changes, same);
                     let against = json!({ "ref": reference, "commit": commit });
@@ -242,14 +243,15 @@ impl Server {
                 }
                 if let Some(reference) = args.text("compiler") {
                     let (compiler, executable) = driver::compiler(&reference, &args.path())?;
-                    let (changes, same) = driver::assembly_compiler(&args.path(), &executable, function)?;
+                    let (changes, same) =
+                        driver::assembly_compiler(&args.path(), &executable, function, args.flag("tests"))?;
                     let text = driver::assembly_changes_text(&format!("the tondo of {reference}"), &changes, same);
                     return Ok(Reply::new(
                         text,
                         json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
                     ));
                 }
-                let analysis = driver::analyze(&args.path())?;
+                let analysis = driver::analyzed(&args.path(), args.flag("tests"))?;
                 if analysis.program.is_none() {
                     let diagnostics = diagnostics(&analysis);
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
@@ -269,6 +271,7 @@ impl Server {
                         &executable,
                         function.as_deref(),
                         kind.as_deref(),
+                        args.flag("tests"),
                     )?;
                     let text = match gone.is_empty() && new.is_empty() {
                         true => {
@@ -284,15 +287,20 @@ impl Server {
                     ));
                 }
                 if let Some(reference) = args.text("against") {
-                    let (commit, gone, new) =
-                        driver::optimizations_against(&args.path(), &reference, function.as_deref(), kind.as_deref())?;
+                    let (commit, gone, new) = driver::optimizations_against(
+                        &args.path(),
+                        &reference,
+                        function.as_deref(),
+                        kind.as_deref(),
+                        args.flag("tests"),
+                    )?;
                     let text = driver::changed_text(&reference, &commit, &gone, &new);
                     let list =
                         |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
                     let against = json!({ "ref": reference, "commit": commit });
                     return Ok(Reply::new(text, json!({ "against": against, "gone": list(&gone), "new": list(&new) })));
                 }
-                let analysis = driver::analyze(&args.path())?;
+                let analysis = driver::analyzed(&args.path(), args.flag("tests"))?;
                 if analysis.program.is_none() {
                     let diagnostics = diagnostics(&analysis);
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
@@ -2239,6 +2247,7 @@ checks more than it should, before measuring it.",
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "Only the functions whose names hold this."),
             ("kind", "string", "Only one kind: inlined, call, frame, heap, unchecked, checked or arithmetic."),
+            ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
             (
                 "compiler",
@@ -2258,6 +2267,7 @@ instruction by instruction.",
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "The function, by its name, or a part of the names of several."),
             ("all", "boolean", "Every function of the program's own code instead of one."),
+            ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             ("clif", "boolean", "Cranelift's IR of it too, before and after Cranelift optimizes it."),
             (
                 "rules",

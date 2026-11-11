@@ -165,8 +165,10 @@ Ask the toolchain before guessing why code is slow or allocates:
   frame, and what keeps the others on the heap; the checks dropped, and
   those a loop keeps. `--kind heap` gives only what allocates, `--function
   <name>` one function, and `--against <commit>` only what a change made
-  different. A pass that decides something the author of the
-  code could change says so there, with `mir_text::remark`.
+  different; `--tests` reads the tests and benchmarks instead, as
+  `bench/tondo`, whose benchmarks are tests. A pass that decides something
+  the author of the code could change says so there, with
+  `mir_text::remark`.
 - `tondo asm <function>`, or the MCP tool `asm`, gives the machine code a
   release build makes of a function under the lines it is of, with what
   `tondo optimizations` says of each; `--clif` adds Cranelift's IR before

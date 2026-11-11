@@ -401,6 +401,15 @@ pub fn analyze_library(path: &Path) -> Result<Analysis, String> {
 /// sources are checked first on their own, as a library for C or with no
 /// need of `main` (testing 6.3), so tests cannot make code that is wrong
 /// without them build.
+/// The program at `path`, or, with `tests`, its tests as `tondo test`
+/// builds them, as `tondo optimizations` and `tondo asm` read them.
+pub fn analyzed(path: &Path, tests: bool) -> Result<Analysis, String> {
+    match tests {
+        true => analyze_tests(path, false),
+        false => analyze(path),
+    }
+}
+
 pub fn analyze_tests(path: &Path, library: bool) -> Result<Analysis, String> {
     if !path.is_dir() {
         return Err(format!("{} is not a project: `tondo test` runs the tests of a project directory", path.display()));
@@ -1416,14 +1425,15 @@ pub fn optimizations_against(
     reference: &str,
     function: Option<&str>,
     kind: Option<&str>,
+    tests: bool,
 ) -> Result<(String, Vec<Optimization>, Vec<Optimization>), String> {
-    let now = analyze(path)?;
+    let now = analyzed(path, tests)?;
     if now.program.is_none() {
         return Err(format!("{} does not compile: `tondo check` says why", path.display()));
     }
     let now = optimizations(&now, function, kind)?;
     let (commit, dir) = revision(path, reference)?;
-    let then = analyze(&dir)?;
+    let then = analyzed(&dir, tests)?;
     if then.program.is_none() {
         return Err(format!("the code of {reference} does not compile, so there is nothing to compare with"));
     }
@@ -1469,14 +1479,18 @@ pub fn optimizations_compiler(
     compiler: &Path,
     function: Option<&str>,
     kind: Option<&str>,
+    tests: bool,
 ) -> Result<(Vec<Optimization>, Vec<Optimization>), String> {
-    let now = analyze(path)?;
+    let now = analyzed(path, tests)?;
     if now.program.is_none() {
         return Err(format!("{} does not compile: `tondo check` says why", path.display()));
     }
     let now = optimizations(&now, function, kind)?;
     let mut command = std::process::Command::new(compiler);
     command.arg("optimizations").arg(path).arg("--json");
+    if tests {
+        command.arg("--tests");
+    }
     function.map(|name| command.args(["--function", name]));
     kind.map(|kind| command.args(["--kind", kind]));
     let ran = command.output().map_err(|e| format!("cannot run {}: {e}", compiler.display()))?;
@@ -1662,18 +1676,19 @@ pub fn assembly_against(
     path: &Path,
     reference: &str,
     function: Option<&str>,
+    tests: bool,
 ) -> Result<(String, Vec<Changed>, usize), String> {
-    let now = compiled_assembly(path, function, "the code")?;
+    let now = compiled_assembly(path, function, "the code", tests)?;
     let (commit, dir) = revision(path, reference)?;
-    let then = compiled_assembly(&dir, function, &format!("the code of {reference}"))?;
+    let then = compiled_assembly(&dir, function, &format!("the code of {reference}"), tests)?;
     let (changes, same) = assembly_changes(&then, &now);
     Ok((commit, changes, same))
 }
 
 /// The machine code of the functions named, or of all the program's own,
 /// of the code at `path`, which must compile.
-fn compiled_assembly(path: &Path, function: Option<&str>, what: &str) -> Result<Vec<Assembly>, String> {
-    let analysis = analyze(path)?;
+fn compiled_assembly(path: &Path, function: Option<&str>, what: &str, tests: bool) -> Result<Vec<Assembly>, String> {
+    let analysis = analyzed(path, tests)?;
     if analysis.program.is_none() {
         return Err(format!("{what} does not compile, so there is nothing to compare"));
     }
@@ -1687,10 +1702,14 @@ pub fn assembly_compiler(
     path: &Path,
     compiler: &Path,
     function: Option<&str>,
+    tests: bool,
 ) -> Result<(Vec<Changed>, usize), String> {
-    let now = compiled_assembly(path, function, "the code")?;
+    let now = compiled_assembly(path, function, "the code", tests)?;
     let mut command = std::process::Command::new(compiler);
     command.arg("asm").arg(path);
+    if tests {
+        command.arg("--tests");
+    }
     match function {
         Some(name) => command.arg(name),
         None => command.arg("--all"),

@@ -368,8 +368,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "optimizations",
         usage: &[
-            "tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <rev> | --compiler <tondo|rev>]",
-            "          [--json]",
+            "tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]",
+            "          [--against <rev> | --compiler <tondo|rev>] [--json]",
         ],
         summary: &[
             "what a release build makes of the code: the calls it",
@@ -380,7 +380,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "asm",
         usage: &[
-            "tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
+            "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
             "          [--json]",
         ],
         summary: &[

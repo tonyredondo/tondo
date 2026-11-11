@@ -5875,3 +5875,12 @@ only what differs; `tondo compiler <revision>` says where it is, for scripts. Wi
 other `tondo` runs the same tests as asked and saves a baseline, which this one compares with as with
 `--baseline`: running both executables in turns, as `--against` does, would hold the runner and the
 other's executable to the same protocol, which changes between revisions.
+
+## `--tests` shows what a release build makes of the tests
+
+The benchmarks are tests, and `tondo optimizations` and `tondo asm` read only the program, so a
+benchmark's code was copied into a program of its own to be looked at, where it was not quite what
+`tondo test --bench` builds: there its body is inlined into the test that measures it. The
+maintainer approved on 2026-11-11 that `--tests` read the tests and benchmarks instead, as `tondo
+test` builds them, with `--against` and `--compiler` too, which pass it to the revision's and to the
+other `tondo`.

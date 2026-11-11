@@ -70,6 +70,7 @@ tondo check --performance          a copy a loop makes on every turn (W1009)
 tondo optimizations                what a release build inlines, makes without the heap
                                    and checks, place by place; --kind heap, --function
 tondo optimizations --against main what it makes differently from a git revision
+tondo optimizations --tests        the same of the tests and benchmarks; asm --tests too
 tondo asm sum                      the machine code of a function, under its lines;
                                    --clif its IR, --against main what changed
 tondo asm --all --compiler <tondo> the functions another tondo makes other code of;

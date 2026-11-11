@@ -254,8 +254,8 @@ tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
-tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
-tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
@@ -2196,6 +2196,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
 - `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene.
+- `--tests` lee el código de los tests y los benchmarks del proyecto, como
+  `tondo test --bench` lo compila, en vez del programa: los benchmarks son
+  tests (10 de testing). `asm --tests` hace lo mismo.
 - `--against <revisión>` compara con lo que hace un build de release del
   código de esa revisión de git, que extrae como `tondo test --against` (10.4
   de testing): da lo que solo tiene ella, bajo `only in <revisión>`, y lo que
