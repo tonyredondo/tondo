@@ -41,16 +41,7 @@ struct Way {
 /// Makes the branches it can choices; whether it made any. The control flow
 /// graph is what it was before.
 pub(crate) fn run(func: &mut Function, cfg: &ControlFlowGraph) -> bool {
-    // How many times each value is used, as the branches made choices leave
-    // it or use it less: whether a block passes its parameters on alone.
-    let mut uses: SecondaryMap<Value, u32> = SecondaryMap::new();
-    for block in func.layout.blocks() {
-        for inst in func.layout.block_insts(block) {
-            for value in func.dfg.inst_values(inst) {
-                uses[value] += 1;
-            }
-        }
-    }
+    let uses = Uses::default();
     let mut touched: SecondaryMap<Block, bool> = SecondaryMap::new();
     let mut changed = false;
     let blocks: Vec<Block> = func.layout.blocks().collect();
@@ -92,7 +83,7 @@ pub(crate) fn run(func: &mut Function, cfg: &ControlFlowGraph) -> bool {
 fn follow(
     func: &Function,
     cfg: &ControlFlowGraph,
-    uses: &SecondaryMap<Value, u32>,
+    uses: &Uses,
     from: Block,
     start: Block,
     args: Vec<BlockArg>,
@@ -160,12 +151,7 @@ fn follow(
 /// that only pass values on, as MIR leaves where it copied a branch into the
 /// ways of another: their latent sites aside, a jump with their parameters
 /// or values from before them, which come before the branch too.
-fn forwarded(
-    func: &Function,
-    uses: &SecondaryMap<Value, u32>,
-    mut block: Block,
-    mut args: Vec<BlockArg>,
-) -> (Block, Vec<BlockArg>) {
+fn forwarded(func: &Function, uses: &Uses, mut block: Block, mut args: Vec<BlockArg>) -> (Block, Vec<BlockArg>) {
     for _ in 0..2 {
         let Some(last) = func.layout.last_inst(block) else { break };
         let InstructionData::Jump { destination, .. } = func.dfg.insts[last] else { break };
@@ -198,12 +184,32 @@ fn forwarded(
 
 /// Whether the parameters of `block` are used only by its last instruction,
 /// which passes them on: a way that goes past it then needs none of them.
-fn only_passed(func: &Function, uses: &SecondaryMap<Value, u32>, block: Block, last: Inst) -> bool {
-    func.dfg.block_params(block).iter().all(|&param| {
+fn only_passed(func: &Function, uses: &Uses, block: Block, last: Inst) -> bool {
+    let params = func.dfg.block_params(block);
+    if params.is_empty() {
+        return true;
+    }
+    let uses = uses.0.get_or_init(|| {
+        let mut uses: SecondaryMap<Value, u32> = SecondaryMap::new();
+        for block in func.layout.blocks() {
+            for inst in func.layout.block_insts(block) {
+                for value in func.dfg.inst_values(inst) {
+                    uses[value] += 1;
+                }
+            }
+        }
+        uses
+    });
+    params.iter().all(|&param| {
         let passed = func.dfg.inst_values(last).filter(|&value| value == param).count() as u32;
         uses[param] == passed
     })
 }
+
+/// How many times each value of a function is used, counted once a round
+/// needs it, as the branches it made choices leave it or use it less.
+#[derive(Default)]
+struct Uses(core::cell::OnceCell<SecondaryMap<Value, u32>>);
 
 /// What running an instruction whichever way a branch goes costs, in
 /// instructions besides constants; `None` when it may not run so: it does
