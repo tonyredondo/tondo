@@ -1,0 +1,159 @@
+import std.grpc
+import std.http
+import std.time
+import warehouse.api.stock
+import warehouse.server
+import warehouse.shelves
+
+/// A warehouse with two items, served on a free port. Its key is `secret`.
+fn open(): http.Server ! http.HttpError {
+    let stockroom = shelves.Shelves(
+        [
+            stock.Item { sku: "TEA-001", name: "Green tea", available: 5 },
+            stock.Item { sku: "CUP-007", name: "Cup", available: 2 },
+        ],
+    )
+    server.app(stockroom, "secret").start()?
+}
+
+/// What a call that changes the shelves carries.
+fn signed(): Map[String, String] {
+    ["authorization": "Bearer secret"]
+}
+
+/// What a call failed with, or `Ok` when it did not fail.
+fn code[T](result: T ! grpc.Status): grpc.Code {
+    match result {
+        ok(_) => grpc.Code.Ok
+        err(status) => status.code
+    }
+}
+
+test getsAnItemOverTheWire {
+    let running = open()?
+    defer running.stop()
+    let client = stock.StockServiceClient.connect(running.url())?
+    let item = client.get(stock.GetItem { sku: "TEA-001" })?
+    assert(item == stock.Item { sku: "TEA-001", name: "Green tea", available: 5 })
+}
+
+test aStatusCrossesTheWireWithItsMessage {
+    let running = open()?
+    defer running.stop()
+    let client = stock.StockServiceClient.connect(running.url())?
+    match client.get(stock.GetItem { sku: "NOPE" }) {
+        err(status) => assert(
+            status.code == grpc.Code.NotFound and status.message == "there is no item `NOPE`",
+        )
+        ok(_) => assert(false, "found an item that is not there")
+    }
+}
+
+test changingTheShelvesNeedsTheKey {
+    let running = open()?
+    defer running.stop()
+    let client = stock.StockServiceClient.connect(running.url())?
+    let order = stock.Units { sku: "CUP-007", quantity: 1 }
+    assert(code(client.reserve(order)) == grpc.Code.Unauthenticated)
+    assert(
+        code(client.reserve(order, metadata: ["authorization": "Bearer guess"])) ==
+            grpc.Code.Unauthenticated,
+    )
+    assert(client.get(stock.GetItem { sku: "CUP-007" })?.available == 2)
+
+    assert(client.reserve(order, metadata: signed())?.available == 1)
+    assert(
+        code(client.reserve(order with { quantity: 5 }, metadata: signed())) ==
+            grpc.Code.FailedPrecondition,
+    )
+}
+
+test aDeliveryIsSentALineAtATime {
+    let running = open()?
+    defer running.stop()
+    let client = stock.StockServiceClient.connect(running.url())?
+    let upload = client.restock(metadata: signed())
+    upload.send(stock.Units { sku: "TEA-001", quantity: 40 })?
+    upload.send(stock.Units { sku: "CUP-007", quantity: 12 })?
+    assert(upload.finish()? == stock.Restocked { items: 2, units: 52 })
+    assert(client.get(stock.GetItem { sku: "TEA-001" })?.available == 45)
+}
+
+test aLineThatIsWrongEndsTheDelivery {
+    let running = open()?
+    defer running.stop()
+    let client = stock.StockServiceClient.connect(running.url())?
+    let upload = client.restock(metadata: signed())
+    upload.send(stock.Units { sku: "TEA-001", quantity: 10 })?
+    upload.send(stock.Units { sku: "SOFA-01", quantity: 1 })?
+    assert(code(upload.finish()) == grpc.Code.NotFound)
+}
+
+/// The next change of a stream: the item's code, how many are left and by
+/// how much it changed.
+fn following(changes: var grpc.Stream[stock.Change]): String ! grpc.Status {
+    match changes.next() {
+        some(each) => {
+            let change = each?
+            let item = change.item.unwrapOr(stock.Item {})
+            "{item.sku} {item.available} {change.delta}"
+        }
+        none => "the stream ended"
+    }
+}
+
+test changesArriveAsTheyHappen {
+    let running = open()?
+    defer running.stop(grace: time.milliseconds(100))
+    let client = stock.StockServiceClient.connect(running.url())?
+    var changes = client.watch(stock.WatchItems { skus: ["CUP-007"] })
+    assert(following(var changes)? == "CUP-007 2 0")
+
+    _ = client.reserve(stock.Units { sku: "TEA-001", quantity: 1 }, metadata: signed())?
+    _ = client.reserve(stock.Units { sku: "CUP-007", quantity: 2 }, metadata: signed())?
+    assert(following(var changes)? == "CUP-007 0 -2")
+}
+
+fn countChanges(client: stock.StockServiceClient): Int ! grpc.Status {
+    var count = 0
+    for each in client.watch(stock.WatchItems {}) {
+        _ = each?
+        count += 1
+    }
+    count
+}
+
+test aDeadlineEndsAStream {
+    let running = open()?
+    defer running.stop(grace: time.milliseconds(100))
+    let client = stock.StockServiceClient.connect(running.url())?
+    // The stream has no end of its own: the deadline is what ends it.
+    match within time.milliseconds(200) { countChanges(client) } {
+        err(time.TimedOut(_)) => {}
+        err(grpc.Status(status)) => assert(status.code == grpc.Code.DeadlineExceeded, "{status}")
+        ok(count) => assert(false, "the stream ended after {count} changes")
+    }
+}
+
+test aPlainPostIsACallToo {
+    let running = open()?
+    defer running.stop()
+    let call = "{running.url()}/warehouse.v1.StockService/Get"
+    let reply =
+        http.post(
+            call,
+            body: http.Body.text("{{\"sku\": \"TEA-001\"}}", contentType: "application/json"),
+        )?
+    assert(reply.text()? == "{{\"sku\":\"TEA-001\",\"name\":\"Green tea\",\"available\":\"5\"}}")
+}
+
+test theServerSaysItIsServing {
+    let running = open()?
+    defer running.stop()
+    let call = "{running.url()}/grpc.health.v1.Health/Check"
+    let body = http.Body.text(
+        "{{\"service\": \"warehouse.v1.StockService\"}}",
+        contentType: "application/json",
+    )
+    assert(http.post(call, body: body)?.text()? == "{{\"status\":\"SERVING\"}}")
+}

@@ -1,0 +1,51 @@
+// The contract of the warehouse: what is on its shelves, and how it changes.
+syntax = "proto3";
+
+package warehouse.v1;
+
+// Something the warehouse keeps.
+message Item {
+  string sku = 1;
+  string name = 2;
+  int64 available = 3;
+}
+
+message GetItem {
+  string sku = 1;
+}
+
+// Units of an item, to take from the shelves or to put on them.
+message Units {
+  string sku = 1;
+  int64 quantity = 2;
+}
+
+// What a delivery added.
+message Restocked {
+  int64 items = 1;
+  int64 units = 2;
+}
+
+// Which items to watch: all of them when none is named.
+message WatchItems {
+  repeated string skus = 1;
+}
+
+// An item after it changed, and by how much.
+message Change {
+  Item item = 1;
+  int64 delta = 2;
+}
+
+service StockService {
+  // An item of the shelves.
+  rpc Get(GetItem) returns (Item) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  // Takes units of an item for an order.
+  rpc Reserve(Units) returns (Item);
+  // Puts a delivery on the shelves, a line at a time.
+  rpc Restock(stream Units) returns (Restocked);
+  // Every change of the items watched, as it happens.
+  rpc Watch(WatchItems) returns (stream Change);
+}

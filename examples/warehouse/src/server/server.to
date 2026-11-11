@@ -1,0 +1,51 @@
+import std.grpc
+import std.http
+import std.log
+import std.time
+import warehouse.api.stock
+import warehouse.shelves
+
+/// The warehouse as a server: the stock service, behind a key for the
+/// calls that change the shelves; gRPC's health service, which load
+/// balancers ask; and reflection, with which `grpcurl` lists and calls a
+/// server without its `.proto` files.
+pub fn app(stockroom: shelves.Shelves, key: String): http.App {
+    let service = stock.stockService(stockroom).onCall((call, next) { guard(key, call, next)? })
+    let health = grpc.Health()
+    health.set("warehouse.v1.StockService", grpc.ServingStatus.Serving)
+    var routes = http.App()
+    routes.grpc(service)
+    routes.grpc(health.service())
+    routes.grpc(grpc.reflection([service, health.service()]))
+    routes
+}
+
+/// Runs around every call of the service: only who has the key changes the
+/// shelves, and each call leaves a line in the log.
+fn guard(key: String, call: grpc.Call, next: fn(): !grpc.Status): !grpc.Status {
+    let started = time.now()
+    let changes = call.method.endsWith("/Reserve") or call.method.endsWith("/Restock")
+    let allowed = not changes or call.metadata.get("authorization") == some("Bearer {key}")
+    let result: !grpc.Status = if allowed {
+        next()
+    } else {
+        err(grpc.Status {
+            code: grpc.Code.Unauthenticated
+            message: "this call needs the warehouse's key"
+        })
+    }
+    let code = match result {
+        ok(_) => grpc.Code.Ok
+        err(status) => status.code
+    }
+    log.info(
+        "call",
+        [
+            "method": call.method,
+            "peer": call.peer,
+            "code": "{code}",
+            "ms": "{started.elapsed().milliseconds()}",
+        ],
+    )
+    result?
+}

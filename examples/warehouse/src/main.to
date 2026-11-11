@@ -1,0 +1,126 @@
+import std.cli
+import std.console
+import std.grpc
+import std.http
+import std.process
+import std.time
+import warehouse.api.stock
+import warehouse.server
+import warehouse.shelves
+
+/// A warehouse served over gRPC, and its client.
+pub type Warehouse = {
+    /// Where the warehouse is, for the commands that call it.
+    @cli.Option(short: "s")
+    server: String = "http://localhost:50051"
+    /// The key that the calls that change the shelves carry.
+    @cli.Option(env: ["WAREHOUSE_KEY"])
+    key: String = "dev-key"
+    @cli.Argument
+    command: Command
+}
+
+pub enum Command {
+    /// Serves the warehouse.
+    Serve {
+        @cli.Option(short: "p", default: "50051")
+        port: Int
+    }
+    /// Shows an item.
+    Get {
+        @cli.Argument
+        sku: String
+    }
+    /// Takes units of an item for an order.
+    Reserve {
+        @cli.Argument
+        sku: String
+        @cli.Argument(default: "1")
+        quantity: Int
+    }
+    /// Puts a delivery on the shelves: `restock TEA-001=40 CUP-007=12`.
+    Restock {
+        /// What arrived, as `SKU=units`.
+        @cli.Argument
+        lines: Array[String]
+    }
+    /// Prints the items and then every change, as it happens.
+    Watch {
+        /// The items to watch: all of them when none is named.
+        @cli.Argument
+        skus: Array[String]
+    }
+}
+
+/// What the warehouse has when it opens.
+fn opening(): Array[stock.Item] {
+    [
+        stock.Item { sku: "TEA-001", name: "Green tea, 100 g", available: 40 },
+        stock.Item { sku: "TEA-002", name: "Black tea, 100 g", available: 25 },
+        stock.Item { sku: "CUP-007", name: "Porcelain cup", available: 3 },
+    ]
+}
+
+fn show(item: stock.Item) {
+    console.println("{item.sku}  {item.name}: {item.available} available")
+}
+
+fn run(options: Warehouse): !(http.HttpError | grpc.Status | time.TimedOut) {
+    // What says who calls: the calls that change the shelves need it.
+    let signed = ["authorization": "Bearer {options.key}"]
+    match options.command {
+        Command.Serve { port } => {
+            console.println("the warehouse is at http://localhost:{port}")
+            server.app(shelves.Shelves(opening()), options.key).listen(port: port)?
+        }
+        Command.Get { sku } => {
+            let client = stock.StockServiceClient.connect(options.server)?
+            // A call made inside `within` carries its deadline to the
+            // server, which stops working on it when the time passes.
+            show(within time.seconds(5) { client.get(stock.GetItem { sku }) }?)
+        }
+        Command.Reserve { sku, quantity } => {
+            let client = stock.StockServiceClient.connect(options.server)?
+            show(client.reserve(stock.Units { sku, quantity }, metadata: signed)?)
+        }
+        Command.Restock { lines } => {
+            let client = stock.StockServiceClient.connect(options.server)?
+            let upload = client.restock(metadata: signed)
+            for text in lines {
+                match text.splitOnce("=") {
+                    some((sku, units)) =>
+                        upload.send(stock.Units { sku, quantity: Int.parse(units).unwrapOr(0) })?
+                    none => fail grpc.Status {
+                        code: grpc.Code.InvalidArgument
+                        message: "`{text}` is not `SKU=units`"
+                    }
+                }
+            }
+            let done = upload.finish()?
+            console.println("restocked {done.items} items with {done.units} units")
+        }
+        Command.Watch { skus } => {
+            let client = stock.StockServiceClient.connect(options.server)?
+            for each in client.watch(stock.WatchItems { skus }) {
+                let change = each?
+                let item = change.item.unwrapOr(stock.Item {})
+                let sign = if change.delta > 0 { "+" } else { "" }
+                console.println("{item.sku}  {item.available} available ({sign}{change.delta})")
+            }
+        }
+    }
+}
+
+fn main() {
+    match run(cli.parse[Warehouse]()) {
+        ok(_) => {}
+        err(grpc.Status(status)) => {
+            console.eprintln(cli.markup("[red]{status.code}:[/] {status.message}"))
+            process.exit(1)
+        }
+        err(error) => {
+            console.eprintln(cli.markup("[red]error:[/] {error}"))
+            process.exit(1)
+        }
+    }
+}

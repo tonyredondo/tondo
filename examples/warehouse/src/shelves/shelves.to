@@ -1,0 +1,148 @@
+import std.grpc
+import std.sync
+import warehouse.api.stock
+
+/// How many changes are kept for the watchers that are a little behind.
+const Kept: Int = 256
+
+/// What the shelves hold, and what changed lately.
+type State = {
+    items: Map[String, stock.Item] = [:]
+    /// The last changes, the newest last.
+    changes: Array[stock.Change] = []
+    /// How many changes there have ever been.
+    version: Int = 0
+}
+
+/// The warehouse's shelves. It is a handle: its copies are the same shelves,
+/// which is what lets every call of the service have one.
+pub type Shelves = {
+    priv state: sync.Mutex[State]
+}
+
+/// Shelves that start with some items on them.
+pub fn Shelves(items: Array[stock.Item]): Shelves {
+    var state = State {}
+    for item in items {
+        state.items[item.sku] = item
+    }
+    Shelves { state: sync.Mutex(state) }
+}
+
+fn missing(sku: String): grpc.Status {
+    grpc.Status { code: grpc.Code.NotFound, message: "there is no item `{sku}`" }
+}
+
+fn invalid(message: String): grpc.Status {
+    grpc.Status { code: grpc.Code.InvalidArgument, message }
+}
+
+/// Changes how many units of an item there are, and notes it for whoever
+/// watches. Units that are not there cannot be taken.
+fn State.change(var self, sku: String, delta: Int): stock.Item ! grpc.Status {
+    let item = match self.items.get(sku) {
+        some(found) => found
+        none => fail missing(sku)
+    }
+    if item.available + delta < 0 {
+        fail grpc.Status {
+            code: grpc.Code.FailedPrecondition
+            message: "only {item.available} of `{sku}` left"
+        }
+    }
+    let changed = item with { available: item.available + delta }
+    self.items[sku] = changed
+    self.changes.push(stock.Change { item: some(changed), delta })
+    if self.changes.length() > Kept {
+        _ = self.changes.removeAt(0)
+    }
+    self.version += 1
+    changed
+}
+
+/// The changes made after the first `seen` of them, or `none` when some of
+/// those are no longer kept.
+fn State.since(self, seen: Int): Array[stock.Change]? {
+    let behind = self.version - seen
+    if behind > self.changes.length() {
+        return none
+    }
+    some(self.changes[self.changes.length() - behind:])
+}
+
+/// Whether a change is one a watcher asked for.
+fn wanted(request: stock.WatchItems, change: stock.Change): Bool {
+    match change.item {
+        some(item) => request.skus.isEmpty() or request.skus.contains(item.sku)
+        none => false
+    }
+}
+
+/// The service of the `.proto` file is a trait, and these are its calls.
+impl stock.StockService for Shelves {
+    fn get(self, request: stock.GetItem): stock.Item ! grpc.Status {
+        match self.state.get().items.get(request.sku) {
+            some(item) => item
+            none => fail missing(request.sku)
+        }
+    }
+
+    fn reserve(self, request: stock.Units): stock.Item ! grpc.Status {
+        if request.quantity <= 0 {
+            fail invalid("a reservation takes at least one unit")
+        }
+        // Reading how many there are and taking them is one step: two
+        // orders for the last unit cannot both get it.
+        self.state.update((now) { now.change(request.sku, -request.quantity) })
+    }
+
+    /// The client sends lines until it is done, and is told the total.
+    fn restock(self, input: grpc.Stream[stock.Units]): stock.Restocked ! grpc.Status {
+        var done = stock.Restocked {}
+        for line in input {
+            let units = line?
+            if units.quantity <= 0 {
+                fail invalid("a delivery of `{units.sku}` brings at least one unit")
+            }
+            _ = self.state.update((now) { now.change(units.sku, units.quantity) })?
+            done.items += 1
+            done.units += units.quantity
+        }
+        done
+    }
+
+    /// Sends the items asked for as they are, and then every change of
+    /// them, until the client goes: that cancels the call and ends its wait.
+    fn watch(self, request: stock.WatchItems, out: Sender[stock.Change]): !grpc.Status {
+        // A copy of the state is all of it at one moment: what is sent
+        // first and where the changes go on from cannot disagree.
+        let start = self.state.get()
+        for item in start.items.values() {
+            let first = stock.Change { item: some(item), delta: 0 }
+            if wanted(request, first) {
+                out.send(first)
+            }
+        }
+        var seen = start.version
+        for {
+            // Waits, with no polling, for a change this watcher has not seen.
+            let (version, news) = self.state.updateWhen(
+                (now) { now.version > seen },
+                (now) { (now.version, now.since(seen)) },
+            )
+            let changes = match news {
+                some(kept) => kept
+                none => fail grpc.Status {
+                    code: grpc.Code.Aborted
+                    message: "fell too far behind: watch again"
+                }
+            }
+            for change in changes {
+                if wanted(request, change) {
+                    out.send(change)
+                }
+            }
+            seen = version
+        }
+    }
+}
