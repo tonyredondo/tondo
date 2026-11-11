@@ -245,6 +245,9 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
                     Rvalue::Concat(_) | Rvalue::Erase(..) => statement_locals(statement, &mut read, &mut defined),
                     // Borrows that keep nothing.
                     Rvalue::Length(operand) => borrowed(&[operand], &mut read),
+                    Rvalue::Call(crate::hir::Callee::Std(callee), operands) if reads_only(*callee) => {
+                        borrowed(&operands.iter().collect::<Vec<_>>(), &mut read)
+                    }
                     Rvalue::Binary(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, a, b) => {
                         borrowed(&[a, b], &mut read)
                     }
@@ -307,7 +310,16 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
     }
     let (mut notes, mut remarks) = (Vec::new(), Vec::new());
     let mut framed = Vec::new();
-    for at in 0..count {
+    // Those made in a loop first, which would take the heap in every turn.
+    let looping = inner_loops(&body.blocks, true);
+    let mut looped = vec![false; count];
+    for (_, data) in body.blocks.iter().enumerate().filter(|(block, _)| looping[*block]) {
+        for (local, _) in data.stmts.iter().filter_map(making) {
+            looped[local.0 as usize] = true;
+        }
+    }
+    let order = (0..count).filter(|&at| looped[at]).chain((0..count).filter(|&at| !looped[at]));
+    for at in order {
         if !made[at] || !(erased[at] || types.repr(body.locals[at]) == Ty::STRING) {
             continue;
         }
@@ -361,6 +373,20 @@ fn borrowed_function(statement: &Statement, local: Local) -> bool {
         }
     });
     only
+}
+
+/// Whether a call of the runtime only reads the texts it is given, while it
+/// runs: console output copies them, and a socket's write sends them before
+/// it returns.
+fn reads_only(callee: crate::hir::StdFn) -> bool {
+    use crate::hir::StdFn;
+    match callee {
+        StdFn::ConsolePrint | StdFn::ConsolePrintln | StdFn::ConsoleEprint | StdFn::ConsoleEprintln => true,
+        StdFn::Native(index) => {
+            crate::hir::NATIVES.get(index as usize).is_some_and(|n| n.symbol == "tondo_rt_net_write")
+        }
+        _ => false,
+    }
 }
 
 /// The locals the operands read, but a whole local, which they only borrow.

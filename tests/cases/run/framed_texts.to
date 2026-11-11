@@ -4,7 +4,8 @@
 // fit and goes on the heap, or grows past its room as it is built. A text
 // that leaves the frame, returned, kept in a collection, captured, sent,
 // passed on or appended to, is made on the heap as before, and is what it
-// was after the frame that made it ends.
+// was after the frame that made it ends. One written to the console or to a
+// socket, which copy it before they return, is made in the frame too.
 
 import std.console
 
@@ -85,6 +86,7 @@ fn main() {
 // expect-stdout: 528 equal less 152
 // expect-stdout: 10 true
 // expect-stdout: n is 123456 [item 0, item 1000, item 2000] captured 5000 some(sent 7000) a010002000 11
-// expect-optimization: 19:18 frame
-// expect-optimization: 38:17 heap the frame holds as many as it keeps
-// expect-optimization: 43:16 heap it is returned
+// expect-optimization: 20:18 frame
+// expect-optimization: 70:21 frame
+// expect-optimization: 39:17 heap the frame holds as many as it keeps
+// expect-optimization: 44:16 heap it is returned

@@ -5660,6 +5660,12 @@ go of its captures, which the count would otherwise never free. A closure that a
 that is returned, kept, sent or passed on stays on the heap. `closure 1000` takes no allocation
 instead of one, and 245 ns instead of 274, where Go takes 426.
 
+A text written to the console or to a socket was made on the heap, as passed to a call that may
+keep it, though those calls of the runtime copy it, or send it, before they return: since
+2026-11-11 the pass knows them, by name, and such a text is made in the frame. `net/echo 1x1000`
+takes 3,000 allocations instead of 4,000, where Go takes 3,744. As the frame keeps room for eight
+texts, those made in a loop take it first, which would take the heap in every turn.
+
 A text or a closure made into a named local, as `let label = "{n}"`, lowers to a temporary moved
 to the local, and the move kept it on the heap. When the temporary is mentioned nowhere but in
 its making and the move that follows it, the pass makes it in the local itself, which then follows
