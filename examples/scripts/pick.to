@@ -1,0 +1,23 @@
+#!/usr/bin/env tondo
+
+// Prints the part of a JSON document at a path, reading the document from
+// its input: a small `jq`.
+//
+//     curl -s https://api.example.com/items | tondo pick.to 'items[0].name'
+//     tondo pick.to version < package.json
+
+import std.console
+import std.env
+import std.json
+import std.process
+
+let path = env.args().get(0).unwrapOr("")
+let document = json.parse(console.stdin().readText()?)?
+match document.find(path) {
+    // A text is printed as it is, anything else as JSON.
+    some(found) => console.println(found.asText().unwrapOr(json.encode(found, pretty: true)))
+    none => {
+        console.eprintln("nothing at `{path}`")
+        process.exit(1)
+    }
+}

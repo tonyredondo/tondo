@@ -1,0 +1,51 @@
+#!/usr/bin/env tondo
+
+// Adds up a column of a CSV file for each value of another.
+//
+//     tondo csvsum.to sales.csv region amount
+//
+// The file is read a record at a time, so one of any size goes through.
+
+import std.cli
+import std.console
+import std.csv
+import std.env
+import std.fs
+import std.io
+import std.process
+
+type Row = {
+    group: String
+    rows: Int
+    total: String
+}
+
+let arguments = env.args()
+if arguments.length() != 3 {
+    console.eprintln("usage: tondo csvsum.to <file.csv> <column to group by> <column to add up>")
+    process.exit(2)
+}
+let (file, by, amount) = (arguments[0], arguments[1], arguments[2])
+
+var totals: Map[String, (Int, Float)] = [:]
+var skipped = 0
+for record in csv.records(io.reader(fs.readText(file)?)) {
+    let fields = record?
+    match (fields.get(by), fields.get(amount).andThen((text) { Float.parse(text.trim()).ok() })) {
+        (some(key), some(value)) => {
+            let (rows, sum) = totals.get(key).unwrapOr((0, 0.0))
+            totals[key] = (rows + 1, sum + value)
+        }
+        _ => skipped += 1
+    }
+}
+
+var rows: Array[Row] = []
+for (key, (count, sum)) in totals {
+    rows.push(Row { group: key, rows: count, total: "{sum:.2}" })
+}
+console.println("{amount} by {by}")
+console.println(cli.table(rows.sortedBy((row) { row.group })))
+if skipped > 0 {
+    console.eprintln("{skipped} rows without a `{by}` or a number in `{amount}` were left out")
+}

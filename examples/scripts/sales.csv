@@ -1,0 +1,9 @@
+date,region,product,amount
+2026-10-01,north,tea,120.50
+2026-10-01,south,tea,80.00
+2026-10-02,north,cups,45.25
+2026-10-02,east,tea,210.00
+2026-10-03,south,cups,15.75
+2026-10-03,north,tea,99.90
+2026-10-04,east,"cups, large",60.00
+2026-10-04,south,tea,n/a

@@ -1,0 +1,52 @@
+#!/usr/bin/env tondo
+
+// Finds the files of a directory that have the same content, by hashing
+// them, several at a time.
+//
+//     tondo dupes.to [<directory>]
+
+import std.console
+import std.env
+import std.fs
+import std.hash
+
+/// The hash of a file's content, or `none` for one that cannot be read.
+fn fingerprint(file: String): (String, String)? {
+    match fs.readBytes(file) {
+        ok(bytes) => some((hash.sha256(bytes).hex(), file))
+        err(_) => none
+    }
+}
+
+let root = env.args().get(0).unwrapOr(".")
+let files = fs.walk(root, skipUnreadable: true)?.filter((entry) { entry.kind == fs.FileKind.File })
+
+// A task for each file: they read and hash at once, on every core, and the
+// results come back in the order of the files.
+var hashing = Group[(String, String)?]()
+for entry in files {
+    hashing.add(spawn fingerprint(entry.path))
+}
+
+var same: Map[String, Array[String]] = [:]
+for found in hashing.wait() {
+    match found {
+        some((digest, file)) => {
+            var group = same.get(digest).unwrapOr([])
+            group.push(file)
+            same[digest] = group
+        }
+        none => {}
+    }
+}
+
+var groups = 0
+for (_, group) in same {
+    if group.length() > 1 {
+        groups += 1
+        console.println(group.join("\n"))
+        console.println("")
+    }
+}
+let sets = if groups == 1 { "1 set" } else { "{groups} sets" }
+console.println("{files.length()} files, {sets} with the same content")

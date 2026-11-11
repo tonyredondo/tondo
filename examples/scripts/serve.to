@@ -1,6 +1,8 @@
+#!/usr/bin/env tondo
+
 // Serves a directory over HTTP, to look at a site before publishing it.
 //
-//     tondo run serve.to -- [<directory>] [<port>]
+//     tondo serve.to [<directory>] [<port>]
 
 import std.console
 import std.env
