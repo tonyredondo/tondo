@@ -1,0 +1,83 @@
+import kvstore.protocol
+import kvstore.store
+import std.log
+import std.net
+import std.sync
+import std.time
+
+/// A server that is running: where it listens, and how to stop it.
+pub type Running = {
+    listener: net.Listener
+    priv state: sync.Mutex[store.Store]
+}
+
+/// Starts serving on a port, or on a free one with port 0, in tasks of its
+/// own. The store is one value behind a lock, which every connection shares.
+pub fn start(host: String, port: Int): Running ! net.NetError {
+    let listener = net.listen(host, port)?
+    let state = sync.Mutex(store.Store {})
+    spawn detached accept(listener, state)
+    Running { listener, state }
+}
+
+/// The port it listens on.
+pub fn Running.port(self): Int {
+    self.listener.address().port
+}
+
+/// What it keeps now.
+pub fn Running.snapshot(self): store.Store {
+    self.state.get()
+}
+
+/// Stops taking connections.
+pub fn Running.stop(self) {
+    self.listener.close()
+}
+
+/// A task for each connection, which nobody waits for.
+fn accept(listener: net.Listener, state: sync.Mutex[store.Store]) {
+    for connection in listener {
+        spawn detached serve(connection, state)
+    }
+}
+
+/// Answers a connection's lines until it quits, goes away or says nothing
+/// for a minute.
+fn serve(connection: net.Stream, state: sync.Mutex[store.Store]) {
+    match converse(connection, state) {
+        ok(_) => {}
+        err(error) => log.warn("a connection ended badly", ["error": "{error}"])
+    }
+    _ = connection.close()
+}
+
+fn converse(connection: net.Stream, state: sync.Mutex[store.Store]): !net.NetError {
+    for {
+        let line = match connection.readLine(timeout: time.minutes(1))? {
+            some(text) => text
+            none => return
+        }
+        let reply = match protocol.parse(line) {
+            ok(command) => answer(state, command)
+            err(error) => protocol.Reply.Error("{error}")
+        }
+        connection.write("{protocol.format(reply)}\n")?
+        if reply == protocol.Reply.Bye {
+            return
+        }
+    }
+}
+
+/// Applies a command to the shared store. Reading the store, computing the
+/// next one and writing it back happen in one `update`, so two connections
+/// that count the same key never lose a count.
+fn answer(state: sync.Mutex[store.Store], command: protocol.Command): protocol.Reply {
+    state.update(
+        (current) {
+            let applied = store.apply(current, command)
+            current = applied.store
+            applied.reply
+        },
+    )
+}

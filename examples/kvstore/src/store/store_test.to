@@ -1,0 +1,78 @@
+import kvstore.protocol
+import std.model
+
+/// A store after several lines, and what the last one answered.
+fn run(lines: Array[String]): Applied {
+    var applied = Applied { store: Store {}, reply: protocol.Reply.Ok }
+    for line in lines {
+        applied = apply(applied.store, protocol.parse(line).expect("a line of the test"))
+    }
+    applied
+}
+
+test setsAndGets {
+    assert(run(["SET name Ada", "GET name"]).reply == protocol.Reply.Value("Ada"))
+    assert(run(["GET name"]).reply == protocol.Reply.Missing)
+    assert(
+        run(["SET name Ada", "SET name Grace", "GET name"]).reply == protocol.Reply.Value("Grace"),
+    )
+}
+
+test deletes {
+    assert(run(["SET a 1", "DEL a", "GET a"]).reply == protocol.Reply.Missing)
+    assert(run(["DEL a"]).reply == protocol.Reply.Missing)
+}
+
+test counts {
+    assert(run(["INCR hits", "INCR hits", "INCR hits 10"]).reply == protocol.Reply.Value("12"))
+    assert(
+        run(["SET name Ada", "INCR name"]).reply ==
+            protocol.Reply.Error("`name` does not hold a number"),
+    )
+    let top = run(["SET big {Int.max}", "INCR big"])
+    assert(top.reply == protocol.Reply.Error("`big` would overflow"))
+}
+
+test listsKeysInTheOrderTheyCame {
+    assert(run(["SET b 1", "SET a 2", "KEYS"]).reply == protocol.Reply.Keys(["b", "a"]))
+}
+
+/// The commands that can come in a state, over two keys and a few values:
+/// enough for every way of setting, replacing, deleting and counting.
+fn commands(store: Store): Array[protocol.Command] {
+    var out: Array[protocol.Command] = [protocol.Command.Keys]
+    for key in ["a", "b"] {
+        out.push(protocol.Command.Set { key, value: "text" })
+        out.push(protocol.Command.Set { key, value: "1" })
+        out.push(protocol.Command.Get(key))
+        out.push(protocol.Command.Delete(key))
+        // Counting up to 2 keeps the states finite.
+        let small = store.values[key].andThen((text) { Int.parse(text).ok() }).unwrapOr(0) < 2
+        if small {
+            out.push(protocol.Command.Increment { key, by: 1 })
+        }
+    }
+    out
+}
+
+/// The store after a command: what the model follows.
+fn after(store: Store, command: protocol.Command): Store {
+    apply(store, command).store
+}
+
+/// `numbers` is kept as values change. In every state the store can reach,
+/// by any commands in any order, it is the number of values that are
+/// numbers: the model goes through all of them.
+test theCountOfNumbersIsAlwaysRight {
+    let counted = model.always(
+        (store: Store) {
+            store.numbers ==
+                store.values.values().collect().count((text) { Int.parse(text).isOk() })
+        },
+        name: "numbers counts the numeric values",
+    )
+    let checked = model.expect(
+        model.machine(Store {}, after, events: some(commands), holds: [counted]),
+    )
+    assert(checked.states > 10)
+}

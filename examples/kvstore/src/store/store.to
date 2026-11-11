@@ -1,0 +1,83 @@
+import kvstore.protocol
+
+/// Everything the server keeps: the values, and how many of them are numbers.
+pub type Store = {
+    values: Map[String, String] = [:]
+    /// How many of the values are numbers, kept as they change so that
+    /// asking does not walk them all.
+    numbers: Int = 0
+}
+
+/// A store after a command, and what to answer.
+pub type Applied = {
+    store: Store
+    reply: protocol.Reply
+}
+
+/// What a command does to a store. It is the whole of the server's logic,
+/// and it does nothing else: no clock, no network, no shared state. The same
+/// store and command always give the same answer, which is what lets a test
+/// go through every state it can reach.
+pub fn apply(store: Store, command: protocol.Command): Applied {
+    match command {
+        protocol.Command.Set { key, value } => {
+            Applied { store: put(store, key, value), reply: protocol.Reply.Ok }
+        }
+        protocol.Command.Get(key) => match store.values[key] {
+            some(value) => Applied { store, reply: protocol.Reply.Value(value) }
+            none => Applied { store, reply: protocol.Reply.Missing }
+        }
+        protocol.Command.Delete(key) => match store.values[key] {
+            some(_) => Applied { store: without(store, key), reply: protocol.Reply.Ok }
+            none => Applied { store, reply: protocol.Reply.Missing }
+        }
+        protocol.Command.Increment { key, by } => {
+            let current = match store.values[key] {
+                some(text) => match Int.parse(text) {
+                    ok(number) => number
+                    err(_) => return Applied {
+                        store
+                        reply: protocol.Reply.Error("`{key}` does not hold a number")
+                    }
+                }
+                none => 0
+            }
+            match current.checkedAdd(by) {
+                some(next) => Applied {
+                    store: put(store, key, "{next}")
+                    reply: protocol.Reply.Value("{next}")
+                }
+                none => Applied { store, reply: protocol.Reply.Error("`{key}` would overflow") }
+            }
+        }
+        protocol.Command.Keys => Applied {
+            store
+            reply: protocol.Reply.Keys(store.values.keys().collect())
+        }
+        protocol.Command.Quit => Applied { store, reply: protocol.Reply.Bye }
+    }
+}
+
+fn isNumber(text: String): Bool {
+    Int.parse(text).isOk()
+}
+
+/// The store with a value under a key.
+fn put(store: Store, key: String, value: String): Store {
+    var next = without(store, key)
+    next.values[key] = value
+    if isNumber(value) {
+        next.numbers += 1
+    }
+    next
+}
+
+/// The store without a key.
+fn without(store: Store, key: String): Store {
+    var next = store
+    match next.values.remove(key) {
+        some(old) if isNumber(old) => next.numbers -= 1
+        _ => {}
+    }
+    next
+}
