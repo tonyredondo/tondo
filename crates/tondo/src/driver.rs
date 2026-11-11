@@ -1444,6 +1444,9 @@ pub struct Assembly {
     /// optimizations` tells of it.
     pub lines: Vec<((String, usize), String, Vec<String>)>,
     pub ir: Option<(String, String)>,
+    /// The ISLE rules Cranelift applied to it, with `--rules`: the term,
+    /// where the rule is, how many times, and whether it is Tondo's.
+    pub rules: Vec<(String, String, u64, bool)>,
 }
 
 /// The machine code a release build of a checked program makes of the
@@ -1451,6 +1454,20 @@ pub struct Assembly {
 /// it; or with no `function`, of every function of the program's own
 /// code; without linking it, and with their IR when `ir` asks.
 pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool) -> Result<Vec<Assembly>, String> {
+    assembly_with(analysis, function, ir, false)
+}
+
+/// As `assembly`, with the ISLE rules Cranelift applied to each function
+/// when `rules` asks, in a `tondo` built with its feature `rules`.
+pub fn assembly_with(
+    analysis: &Analysis,
+    function: Option<&str>,
+    ir: bool,
+    rules: bool,
+) -> Result<Vec<Assembly>, String> {
+    if rules && !cfg!(feature = "rules") {
+        return Err("this tondo does not log the rules Cranelift applies: build one that does with `cargo build --release -p tondo --features rules`".into());
+    }
     let program = analysis.program.as_ref().expect("assembly() requires a checked program");
     let sources = &analysis.sources;
     let own = |body: &crate::mir::Body| {
@@ -1464,7 +1481,7 @@ pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool) -> Result
         None => bodies.iter().filter(|body| own(body)).map(|body| body.name.clone()).collect(),
     };
     names.retain(|name| !name.is_empty());
-    crate::codegen::keep_code(Some((names, ir)));
+    crate::codegen::keep_code(Some(crate::codegen::Asked { names, ir, rules }));
     let built = compile(analysis, false, None, None);
     crate::codegen::keep_code(None);
     built?;
@@ -1518,8 +1535,8 @@ pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool) -> Result
             lines.push(((file, line), code, remarks));
         }
         let constants = kept.bytes.len() - code.len();
-        let (function, size, ir) = (kept.name, kept.bytes.len(), kept.ir);
-        assemblies.push(Assembly { function, size, constants, instructions, lines, ir });
+        let (function, size, ir, rules) = (kept.name, kept.bytes.len(), kept.ir, kept.rules);
+        assemblies.push(Assembly { function, size, constants, instructions, lines, ir, rules });
     }
     Ok(assemblies)
 }
@@ -1602,6 +1619,7 @@ pub fn assembly_compiler(
                 .collect(),
             lines: Vec::new(),
             ir: None,
+            rules: Vec::new(),
         })
         .collect();
     Ok(assembly_changes(&then, &now))
@@ -1733,6 +1751,13 @@ impl Assembly {
         if let Some((before, after)) = &self.ir {
             out.push_str(&format!("\nIR before Cranelift optimizes it:\n{before}\nIR after:\n{after}"));
         }
+        if !self.rules.is_empty() {
+            out.push_str("\nISLE rules Cranelift applied, the most first:\n");
+            for (term, place, count, tondo) in &self.rules {
+                let own = if *tondo { "  Tondo" } else { "" };
+                out.push_str(&format!("  {count:>6}  {place}  {term}{own}\n"));
+            }
+        }
         out
     }
 
@@ -1760,6 +1785,9 @@ impl Assembly {
             "function": self.function, "size": self.size, "constants": self.constants,
             "instructions": instructions, "lines": lines,
             "ir_before": self.ir.as_ref().map(|ir| &ir.0), "ir_after": self.ir.as_ref().map(|ir| &ir.1),
+            "rules": self.rules.iter().map(|(term, place, count, tondo)| {
+                serde_json::json!({ "term": term, "rule": place, "count": count, "tondo": tondo })
+            }).collect::<Vec<_>>(),
         })
     }
 }

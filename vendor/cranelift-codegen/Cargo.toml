@@ -97,6 +97,9 @@ std = [
 ]
 timing = []
 trace-log = ["regalloc2/trace-log"]
+# Tondo: each ISLE rule that matches logs itself, without the rest of
+# `trace-log`, for `tondo asm --rules`.
+isle-rules = []
 unwind = ["gimli"]
 x86 = []
 

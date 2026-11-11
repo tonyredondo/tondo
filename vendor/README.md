@@ -22,6 +22,11 @@ The rules are marked `Tondo:` in `src/isa/x64/inst.isle`,
 `src/isa/aarch64/lower.isle`, `src/opts/arithmetic.isle` and
 `src/prelude_opt.isle`.
 
+And a feature, `isle-rules`, marked `Tondo:` in `Cargo.toml` and
+`build.rs`, has each ISLE rule that matches log itself, as `trace-log`
+does but without regalloc2's logs: `tondo asm --rules`, in a `tondo` built
+with its feature `rules`, counts them by function.
+
 Only the code of x86-64 and arm64 is kept; the build still compiles every
 target's ISLE, so the `.isle` files of the others stay.
 

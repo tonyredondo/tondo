@@ -61,6 +61,8 @@ pub mod project;
 pub mod proto;
 pub mod protobuf;
 pub mod prove;
+#[cfg(feature = "rules")]
+pub mod rules;
 pub mod stack;
 pub mod verify;
 // Its kinds of error are the runtime's; the compiler reads only their names.

@@ -213,7 +213,9 @@ fn run_compilation(compilation: &IsleCompilation) -> Result<(), Errors> {
         // When `cranelift-codegen` is built with detailed tracing enabled, also
         // ask the ISLE compiler to emit `log::{debug,trace}!` invocations in
         // the generated code to help debug rule matching.
-        options.emit_logging = std::env::var("CARGO_FEATURE_TRACE_LOG").is_ok();
+        // Tondo: or with `isle-rules` alone, for `tondo asm --rules`.
+        options.emit_logging =
+            std::env::var("CARGO_FEATURE_TRACE_LOG").is_ok() || std::env::var("CARGO_FEATURE_ISLE_RULES").is_ok();
 
         // Enable optional match-arm splitting in iterator terms for
         // faster compile times in release builds.

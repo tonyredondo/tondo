@@ -5764,3 +5764,11 @@ are, where time would take chance for a change. Looking for the change to the co
 a benchmark slower needs each commit's compiler, not this one: `--bisect-with <command>` runs a
 command in each commit's worktree that builds the `tondo` to measure with and names it on its last
 line, and a commit where it fails says nothing, as one that does not compile.
+
+`--rules` lists the ISLE rules Cranelift applied to a function, approved on 2026-11-11: whether a
+rule of `vendor/` matches was guessed from the code it made. ISLE can write each rule that matches
+to a log, which costs every rule a check while compiling, so it is a feature of the vendored crate,
+`isle-rules`, which leaves out regalloc2's logs that `trace-log` brings, and of `tondo`, `rules`,
+for those who work on the code generator: the `tondo` that ships pays nothing and says how to build
+one that counts. A logger counts the rules by the function the thread compiles, and a rule is
+Tondo's when a comment above it, back to the rule before, says `Tondo:`.

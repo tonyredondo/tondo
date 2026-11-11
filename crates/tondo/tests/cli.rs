@@ -931,6 +931,28 @@ fn the_machine_code_of_a_function() {
     assert!(stderr.contains("choose one"), "{stderr}");
 }
 
+/// `tondo asm --rules` lists the ISLE rules Cranelift applied, Tondo's own
+/// marked, in a tondo built with its feature `rules`; another says how to
+/// build one.
+#[test]
+fn the_rules_cranelift_applied() {
+    let source = b"fn triple(n: Int): Int {\n    3 * n + 1\n}\n\nfn main() {\n    var total = 1\n    \
+        for i in 0..100 {\n        total += triple(i)\n    }\n    _ = total\n}\n";
+    let dir = project_at("asm-rules", &[("main.to", source)]);
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "main", "--rules"]);
+    if !cfg!(feature = "rules") {
+        assert_eq!(status, 3, "{said}");
+        assert!(stderr.contains("--features rules"), "{stderr}");
+        return;
+    }
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("ISLE rules Cranelift applied, the most first:"), "{said}");
+    assert!(
+        said.lines().any(|line| line.contains("src/opts/arithmetic.isle line ") && line.ends_with("  Tondo")),
+        "{said}"
+    );
+}
+
 /// `tondo optimizations --against` says what changed since a git revision:
 /// what only it has, and what only the code has, each place known by its
 /// code rather than its line, so that code moved down a line is no change.

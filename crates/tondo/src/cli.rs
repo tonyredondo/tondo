@@ -378,7 +378,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "asm",
         usage: &[
-            "tondo asm [<project>|<file.to>] <function>|--all [--clif] [--against <rev> | --compiler <tondo>] [--json]",
+            "tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo>]",
+            "          [--json]",
         ],
         summary: &[
             "the machine code a release build makes of a function, by",

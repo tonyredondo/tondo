@@ -255,7 +255,7 @@ tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--pr
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--function <name>] [--kind <kind>] [--against <revision>] [--json]
-tondo asm [<project>|<file.to>] <function>|--all [--clif] [--against <revision> | --compiler <tondo>] [--json]
+tondo asm [<project>|<file.to>] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo>] [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
 tondo new <name> [--json]
@@ -1937,7 +1937,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
-| `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before` e `ir_after`, o `diagnostics` si no compila; con `--against`, `against`, `changes`, cada una con `function` y `diff`, y `same`; con `--compiler`, `compiler`, `changes` y `same` (sección 7.19) |
+| `asm` | `tondo-asm-0.1/1` | `functions`, cada una con `function`, `size`, `constants`, `instructions` (`offset`, `bytes`, `instruction`, `target`, `file` y `line`), `lines` (`file`, `line`, `source` y `optimizations`), `ir_before`, `ir_after` y `rules` (`term`, `rule`, `count` y `tondo`), o `diagnostics` si no compila; con `--against`, `against`, `changes`, cada una con `function` y `diff`, y `same`; con `--compiler`, `compiler`, `changes` y `same` (sección 7.19) |
 | `optimizations` | `tondo-optimizations-0.1/1` | `optimizations`, cada una con `file`, `line`, `column`, `functions`, `kind`, `text` y `source` (sección 7.18), o `diagnostics` si no compila; con `--against`, `against` (`ref` y `commit`), `gone` y `new`, de la misma forma |
 | `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
@@ -2231,6 +2231,12 @@ src/main.to:6  total += values[i]
   de los saltos fuera, que mueve el código de antes, y una llamada por lo que
   llama; o que el código es el mismo; y cuántas funciones cambiaron y
   cuántas no.
+- `--rules` añade las reglas de ISLE que Cranelift aplicó a la función, cada
+  una con su término, dónde está, cuántas veces, y marcadas las de Tondo
+  (`Tondo:` en `vendor/`). Solo un `tondo` construido con su feature `rules`,
+  `cargo build --release -p tondo --features rules`, las cuenta, pues cada
+  regla paga entonces su registro; otro lo dice, como error del toolchain
+  (estado 3).
 - `--compiler <tondo>` compara igual con el código que otro `tondo`, uno que
   tenga `asm`, hace del mismo programa: con `--all`, demuestra que un cambio
   del compilador no cambia el código, o dice qué funciones cambia.

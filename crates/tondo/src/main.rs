@@ -2045,6 +2045,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
     let (json, ir, all) =
         (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
+    let rules = take_flag(&mut args, "--rules");
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2111,7 +2112,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::FAILURE);
     }
-    let assemblies = driver::assembly(&analysis, function.as_deref(), ir)?;
+    let assemblies = driver::assembly_with(&analysis, function.as_deref(), ir, rules)?;
     if json {
         let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
         print_json("asm", true, serde_json::json!({ "functions": functions }));

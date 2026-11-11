@@ -766,7 +766,16 @@ fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32
 
 /// The functions whose code `tondo asm` asks codegen to keep, by what
 /// their names hold, and whether with their IR (toolchain 7.19).
-static ASKED: std::sync::Mutex<Option<(std::collections::HashSet<String>, bool)>> = std::sync::Mutex::new(None);
+static ASKED: std::sync::Mutex<Option<Asked>> = std::sync::Mutex::new(None);
+
+/// What `tondo asm` asks codegen to keep: the functions, by name, whether
+/// with their IR, and whether with the ISLE rules applied to them.
+#[derive(Clone)]
+pub struct Asked {
+    pub names: std::collections::HashSet<String>,
+    pub ir: bool,
+    pub rules: bool,
+}
 static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
 
 /// The code of a function `tondo asm` asked for: its machine code, what
@@ -781,11 +790,15 @@ pub struct Kept {
     pub targets: Vec<(u32, String)>,
     pub lines: Vec<(u32, Option<u32>)>,
     pub ir: Option<(String, String)>,
+    /// The ISLE rules applied to it, with `rules` (`crate::rules`).
+    pub rules: Vec<(String, String, u64, bool)>,
 }
 
-/// Asks the next builds to keep the code of the functions named, with
-/// their IR when `ir`; or no longer.
-pub fn keep_code(asked: Option<(std::collections::HashSet<String>, bool)>) {
+/// Asks the next builds to keep the code of the functions named; or no
+/// longer.
+pub fn keep_code(asked: Option<Asked>) {
+    #[cfg(feature = "rules")]
+    crate::rules::counting(asked.as_ref().is_some_and(|asked| asked.rules));
     *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = asked;
 }
 
@@ -1501,24 +1514,34 @@ impl Codegen<'_> {
         let isa = self.module.isa();
         let asked = ASKED.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let wanted = |job: &Job| match (&asked, &job.traced) {
-            (Some((names, ir)), Some(traced)) if names.contains(traced) => Some(*ir),
+            (Some(asked), Some(traced)) if asked.names.contains(traced) => Some(asked.ir),
             _ => None,
         };
-        // Each function goes to the thread that compiles it.
-        let functions: Vec<(FuncId, std::sync::Mutex<Option<ir::Function>>, bool)> = jobs
+        // Each function goes to the thread that compiles it, which says
+        // which it compiles when the rules it gets are counted.
+        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>);
+        let functions: Vec<Compiling> = jobs
             .iter_mut()
             .map(|job| {
                 let ir = wanted(job) == Some(true);
-                (job.id, std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new()))), ir)
+                let counted =
+                    asked.as_ref().filter(|asked| asked.rules && wanted(job).is_some()).and(job.traced.clone());
+                let function = std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())));
+                (job.id, function, ir, counted)
             })
             .collect();
-        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir)| {
+        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted)| {
             thread_local! {
                 static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
                     std::cell::RefCell::new(cranelift_codegen::Context::new());
             }
             let function = function.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a function");
-            CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir))
+            #[cfg(feature = "rules")]
+            crate::rules::compiling(_counted.as_deref());
+            let compiled = CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir));
+            #[cfg(feature = "rules")]
+            crate::rules::compiling(None);
+            compiled
         });
         // What a call in kept code calls, by the program's names.
         let names: HashMap<u32, String> = match asked.is_some() {
@@ -1559,6 +1582,10 @@ impl Codegen<'_> {
                     targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),
                     lines: code.lines.iter().map(|&(at, site_index)| (at, site(site_index))).collect(),
                     ir: code.ir.take(),
+                    #[cfg(feature = "rules")]
+                    rules: job.traced.as_deref().map_or(Vec::new(), crate::rules::applied),
+                    #[cfg(not(feature = "rules"))]
+                    rules: Vec::new(),
                 });
             }
             if let Some(labels) = &labels {

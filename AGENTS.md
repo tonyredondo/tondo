@@ -173,7 +173,10 @@ Ask the toolchain before guessing why code is slow or allocates:
   and after it optimizes, where a `Tondo:` rule shows whether it applied,
   and `--against <commit>` diffs the code with a revision's.
   `--all --compiler <old tondo>` gives the functions whose code a change
-  to the compiler changes, or that it changes none.
+  to the compiler changes, or that it changes none. In a `tondo` built
+  with `--features rules`, `--rules` lists the ISLE rules applied to it,
+  Tondo's marked; check a change to `vendor/` with `cargo test -p tondo
+  --features rules --test cli the_rules` too.
 - `TONDO_DUMP_MIR=<name>` in the environment of a build writes the MIR of
   every function whose name holds `<name>` after lowering and after each
   pass, with what the passes decided and why; `TONDO_DUMP_MIR=<name>@<pass>`

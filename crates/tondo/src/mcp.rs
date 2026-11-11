@@ -254,7 +254,7 @@ impl Server {
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
                     return Ok(Reply::new(report(&analysis, &diagnostics), data));
                 }
-                let assemblies = driver::assembly(&analysis, function, args.flag("clif"))?;
+                let assemblies = driver::assembly_with(&analysis, function, args.flag("clif"), args.flag("rules"))?;
                 let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
                 let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
                 Ok(Reply::new(text, json!({ "functions": functions })))
@@ -2231,6 +2231,11 @@ instruction by instruction.",
             ("function", "string", "The function, by its name, or a part of the names of several."),
             ("all", "boolean", "Every function of the program's own code instead of one."),
             ("clif", "boolean", "Cranelift's IR of it too, before and after Cranelift optimizes it."),
+            (
+                "rules",
+                "boolean",
+                "The ISLE rules Cranelift applied to it, Tondo's marked; in a tondo built with its feature `rules`.",
+            ),
             ("against", "string", "A git revision, as main: what changed in the code since it."),
             ("compiler", "string", "Another tondo: what changed from the code it makes of the program to this one's."),
         ],
