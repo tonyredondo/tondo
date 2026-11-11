@@ -42,6 +42,11 @@ impl Codegen<'_> {
     /// each element's bytes, a string's the address of its literal. Its
     /// count is written to as it is shared, never freed.
     pub(super) fn static_array(&mut self, size: usize, elements: &[Const]) -> DataId {
+        if elements.is_empty()
+            && let Some(id) = self.empty_array
+        {
+            return id;
+        }
         let mut bytes = Vec::with_capacity(ARRAY_HEADER as usize + size * elements.len());
         let length = elements.len() as u64;
         for word in [SHARED_FOREVER, length, length, 0] {
@@ -81,6 +86,9 @@ impl Codegen<'_> {
             data.write_data_addr(at as u32, text, 0);
         }
         self.module.define_data(id, &data).expect("array definition");
+        if elements.is_empty() {
+            self.empty_array = Some(id);
+        }
         id
     }
 

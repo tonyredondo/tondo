@@ -20,9 +20,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         };
         Some(match op {
             ArrayOp::New => {
-                let size = self.e.element_size(element_of(ty));
-                let zero = self.e.fb.ins().iconst(POINTER, 0);
-                Val::Scalar(self.e.call_rt(Rt::ArrayNew, &[size, zero]).unwrap())
+                // The empty array in the program's data, as `[]` is: the
+                // first change makes it one of its own.
+                let size = self.e.cg.layout(element_of(ty)).size as usize;
+                let id = self.e.cg.static_array(size, Vec::new());
+                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             ArrayOp::WithCapacity => {
                 let TyKind::Result(array_ty, _) = *types.kind(ty) else { unreachable!() };

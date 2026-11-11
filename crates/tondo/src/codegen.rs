@@ -231,6 +231,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         runtime: HashMap::new(),
         strings: HashMap::new(),
         arrays: 0,
+        empty_array: None,
         byte_arrays: HashMap::new(),
         shapes,
         glue: HashMap::new(),
@@ -474,6 +475,8 @@ struct Codegen<'a> {
     strings: HashMap<String, DataId>,
     /// How many static arrays there are, which names the next.
     arrays: usize,
+    /// The one empty array, of any element type, that `[]` and `Array[T]()` are.
+    empty_array: Option<DataId>,
     /// The static arrays of embedded files, by their bytes.
     byte_arrays: HashMap<std::sync::Arc<[u8]>, DataId>,
     shapes: Shapes<'a>,
