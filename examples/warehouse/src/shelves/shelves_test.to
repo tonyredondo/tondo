@@ -1,0 +1,113 @@
+import std.grpc
+import warehouse.api.stock
+
+fn stocked(): Shelves {
+    Shelves(
+        [
+            stock.Item { sku: "TEA-001", name: "Green tea", available: 5 },
+            stock.Item { sku: "CUP-007", name: "Cup", available: 2 },
+        ],
+    )
+}
+
+/// What a call failed with, or `Ok` when it did not fail.
+fn code[T](result: T ! grpc.Status): grpc.Code {
+    match result {
+        ok(_) => grpc.Code.Ok
+        err(status) => status.code
+    }
+}
+
+test givesAnItem {
+    let item = stocked().get(stock.GetItem { sku: "TEA-001" })?
+    assert(item == stock.Item { sku: "TEA-001", name: "Green tea", available: 5 })
+}
+
+test anItemThatIsNotThereIsNotFound {
+    match stocked().get(stock.GetItem { sku: "NOPE" }) {
+        err(status) => assert(
+            status.code == grpc.Code.NotFound and status.message == "there is no item `NOPE`",
+        )
+        ok(_) => assert(false, "found an item that is not there")
+    }
+}
+
+test reservingTakesUnits {
+    let shelves = stocked()
+    assert(shelves.reserve(stock.Units { sku: "TEA-001", quantity: 2 })?.available == 3)
+    assert(shelves.get(stock.GetItem { sku: "TEA-001" })?.available == 3)
+}
+
+test unitsThatAreNotThereCannotBeTaken {
+    let shelves = stocked()
+    match shelves.reserve(stock.Units { sku: "CUP-007", quantity: 3 }) {
+        err(status) => {
+            assert(status.code == grpc.Code.FailedPrecondition)
+            assert(status.message == "only 2 of `CUP-007` left")
+        }
+        ok(_) => assert(false, "took three cups of two")
+    }
+    assert(shelves.get(stock.GetItem { sku: "CUP-007" })?.available == 2)
+}
+
+test aReservationTakesAtLeastOneUnit {
+    let shelves = stocked()
+    assert(
+        code(shelves.reserve(stock.Units { sku: "TEA-001", quantity: 0 })) ==
+            grpc.Code.InvalidArgument,
+    )
+    assert(
+        code(shelves.reserve(stock.Units { sku: "TEA-001", quantity: -4 })) ==
+            grpc.Code.InvalidArgument,
+    )
+    assert(code(shelves.reserve(stock.Units { sku: "NOPE", quantity: 1 })) == grpc.Code.NotFound)
+}
+
+fn takesOne(shelves: Shelves): Bool {
+    shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 }).isOk()
+}
+
+test ordersForTheLastUnitsCannotAllGetThem {
+    let shelves = stocked()
+    var orders = Group[Bool]()
+    for _ in 0..5 {
+        orders.add(spawn takesOne(shelves))
+    }
+    assert(orders.wait().filter((won) { won }).length() == 2)
+    assert(shelves.get(stock.GetItem { sku: "CUP-007" })?.available == 0)
+}
+
+/// The next change a watcher is sent: the item's code, how many are left
+/// and by how much it changed.
+fn next(changes: Receiver[stock.Change]): String {
+    match changes.receive() {
+        some(change) => {
+            let item = change.item.unwrapOr(stock.Item {})
+            "{item.sku} {item.available} {change.delta}"
+        }
+        none => "nothing"
+    }
+}
+
+test aWatcherIsSentWhatThereIsAndThenWhatChanges {
+    let shelves = stocked()
+    let (out, changes) = channel[stock.Change]()
+    let watching = spawn shelves.watch(stock.WatchItems { skus: ["TEA-001"] }, out)
+    assert(next(changes) == "TEA-001 5 0")
+
+    _ = shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?  // not watched
+    _ = shelves.reserve(stock.Units { sku: "TEA-001", quantity: 2 })?
+    assert(next(changes) == "TEA-001 3 -2")
+    watching.cancel()
+}
+
+test aWatcherOfEverythingIsSentEverything {
+    let shelves = stocked()
+    let (out, changes) = channel[stock.Change]()
+    let watching = spawn shelves.watch(stock.WatchItems {}, out)
+    assert([next(changes), next(changes)] == ["TEA-001 5 0", "CUP-007 2 0"])
+
+    _ = shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?
+    assert(next(changes) == "CUP-007 1 -1")
+    watching.cancel()
+}
