@@ -18,8 +18,8 @@
 //! element of an array that does, which nothing releases while the array
 //! stays as it is: `for name in names`, as inlining leaves a loop over a
 //! parameter, held the array and each name with a reference of its own, a
-//! retain and a release for each name read. Reading an element or a length
-//! keeps nothing.
+//! retain and a release for each name read. Reading an element, a field
+//! or a length keeps nothing, nor does interpolating a value.
 //!
 //! An array the function made itself is held for a loop over it by a copy,
 //! retained before the loop and released after: an element read in the
@@ -83,10 +83,17 @@ fn lends_in(body: &mut Body) {
                         mine.changed = true;
                     }
                     match &**value {
+                        // A copy of a field: one with a reference of its own
+                        // needs nothing of what it copies, and one without
+                        // lives only while that does.
                         Rvalue::Use(Operand::Copy(source))
                             if target.path.is_empty()
+                                && !source.path.is_empty()
                                 && source.path.iter().all(|projection| matches!(projection, Proj::Field(_))) =>
                         {
+                            uses[target.local.0 as usize].copy_of = Some(source.clone());
+                        }
+                        Rvalue::Use(Operand::Copy(source)) if target.path.is_empty() && source.path.is_empty() => {
                             uses[target.local.0 as usize].copy_of = Some(source.clone());
                             uses[source.local.0 as usize].kept = true;
                         }
@@ -98,6 +105,23 @@ fn lends_in(body: &mut Body) {
                             uses[target.local.0 as usize].copy_of = Some(source.clone());
                         }
                         Rvalue::Length(_) => {}
+                        // An interpolation reads its values and keeps none,
+                        // but the text it takes to append to.
+                        Rvalue::Concat(pieces) => {
+                            for piece in pieces {
+                                let (operand, taken) = match piece {
+                                    Piece::Value(operand, _) => (operand.clone(), false),
+                                    Piece::Taken(place) => (Operand::Copy(place.clone()), true),
+                                    Piece::Text(_) => continue,
+                                };
+                                let mut read = Vec::new();
+                                operand_uses(&operand, &mut read);
+                                for local in read {
+                                    uses[local.0 as usize].kept |= taken;
+                                    uses[local.0 as usize].passed = true;
+                                }
+                            }
+                        }
                         // The program's functions and `fn` values borrow their
                         // arguments, and a lock borrows what it locks; what the
                         // runtime does with others, as a channel's send, may

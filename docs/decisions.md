@@ -5839,3 +5839,9 @@ only out of it. An element read in the loop and used there alone lives while tha
 it needs no reference either; the copy keeps its own, which the order of the blocks shows to cover
 every use of the element, though the array's local may be replaced meanwhile. The same sum over
 names built in `main` took 34% fewer instructions and 37% fewer cycles.
+
+Copying a field of such an element, or interpolating it, kept the element counted, as any read but
+a few did. A copy of a field with a reference of its own needs nothing of the record, and one
+without lives only while the record does, which the chain of copies already asks; an interpolation
+reads its values and keeps none, but the text it appends to. A loop over a thousand records that
+reads and interpolates their fields took 20% fewer instructions and 24% fewer cycles.
