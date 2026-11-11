@@ -52,12 +52,15 @@ impl Next {
 /// soon.
 pub(super) fn steal() -> Result<(*mut Task, bool), bool> {
     let Some(own) = own_next() else { return Err(false) };
-    let now = nanos();
+    // The clock is read once a worker has tasks to take, which is seldom
+    // when this one looks for them.
+    let mut clock = None;
     let mut young = false;
     for other in nexts().filter(|other| !std::ptr::eq(*other, own)) {
         if other.count.load(Ordering::Relaxed) == 0 {
             continue;
         }
+        let now = *clock.get_or_insert_with(nanos);
         let since = other.waiting.load(Ordering::Relaxed);
         if now.saturating_sub(since) < NEXT_WAIT.as_nanos() as u64 {
             young = true;
@@ -157,13 +160,14 @@ pub(super) fn waiting_next() -> Vec<*mut Task> {
 /// from it; and whether one waits there for less.
 pub(super) fn take_next() -> (Option<*mut Task>, bool) {
     let mine = own_next().map(|next| next as *const Next);
-    let now = nanos();
+    let mut clock = None;
     let mut young = false;
     for next in nexts().filter(|next| Some(*next as *const Next) != mine) {
         let task = next.task.load(Ordering::Acquire);
         if task.is_null() {
             continue;
         }
+        let now = *clock.get_or_insert_with(nanos);
         if now.saturating_sub(next.since.load(Ordering::Relaxed)) < NEXT_WAIT.as_nanos() as u64 {
             young = true;
         } else if next.task.compare_exchange(task, std::ptr::null_mut(), Ordering::AcqRel, Ordering::Acquire).is_ok() {
