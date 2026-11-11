@@ -1,0 +1,449 @@
+// Writes the reference of the standard library, docs/std: a page for each
+// module and for the types of the prelude, with every public declaration as
+// `tondo api` gives it, its documentation and its examples.
+//
+//   tondo run docs/std/generate.to              write the pages
+//   tondo run docs/std/generate.to -- --check   fail when a page is not what it would write
+//
+// A page is written by hand down to the line of `Marker`, and by this program
+// from there: it keeps what is above the line, and makes a page that does not
+// exist with the module's summary and example above it.
+//
+// It runs from the repository's root; `TONDO` names the `tondo` to ask,
+// `tondo` on PATH by default.
+
+import std.console
+import std.env
+import std.fs
+import std.json
+import std.process
+
+/// Where the part this program writes begins.
+const Marker: String = "<!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->"
+
+/// One declaration, as `tondo api --json` gives it.
+type Declaration = {
+    name: String
+    kind: String
+    declaration: String
+    doc: String = ""
+}
+
+/// What `tondo api <target> --json` gives of a module or a type.
+type Listing = {
+    declarations: Array[Declaration]
+    summary: String = ""
+    example: String = ""
+}
+
+/// A page: its file under docs/std, its title, what the top of a new page
+/// says, and what it asks `tondo api` for.
+type Page = {
+    file: String
+    title: String
+    about: String
+    targets: Array[String]
+}
+
+/// What a page shows under one heading: a type with its methods and the
+/// traits it implements, or what has no type.
+type Section = {
+    name: String
+    own: Declaration? = none
+    members: Array[Declaration] = []
+    traits: Array[Declaration] = []
+}
+
+/// The pages of the prelude, which `tondo api --list` does not name one by
+/// one: its types, and the tasks' and the traits' together.
+fn preludePages(): Array[Page] {
+    [
+        Page {
+            file: "prelude/string.md"
+            title: "String"
+            about: "Text: a sequence of Unicode characters, a value like any other."
+            targets: ["String"]
+        },
+        Page {
+            file: "prelude/char.md"
+            title: "Char and Byte"
+            about: "`Char` is one Unicode scalar and `Byte` one byte, which has no arithmetic."
+            targets: ["Char", "Byte"]
+        },
+        Page {
+            file: "prelude/bool.md"
+            title: "Bool"
+            about: "`true` or `false`: what a condition is, since nothing else is truthy."
+            targets: ["Bool"]
+        },
+        Page {
+            file: "prelude/int.md"
+            title: "Int and the integers of every width"
+            about: "`Int` is 64 bits and its overflow panics. `UInt` is its unsigned twin, and `Int8` to `Int128` and `UInt8` to `UInt128` have the same operations, shown here for `Int` and `UInt`."
+            targets: ["Int", "UInt"]
+        },
+        Page {
+            file: "prelude/float.md"
+            title: "Float and Float32"
+            about: "`Float` is a 64-bit IEEE 754 number and `Float32` a 32-bit one."
+            targets: ["Float", "Float32"]
+        },
+        Page {
+            file: "prelude/option.md"
+            title: "Option"
+            about: "`T?` is `Option[T]`: `some(value)` or `none`."
+            targets: ["Option"]
+        },
+        Page {
+            file: "prelude/result.md"
+            title: "Result, Failure and Panic"
+            about: "`T ! E` is `Result[T, E]`: `ok(value)` or `err(error)`. `Failure` says what the program was doing and keeps the cause, and `Panic` is what a `recover` gives of a bug."
+            targets: ["Result", "Failure", "Panic"]
+        },
+        Page {
+            file: "prelude/array.md"
+            title: "Array"
+            about: "`Array[T]` is a sequence that grows, and a value: assigning one copies it."
+            targets: ["Array"]
+        },
+        Page {
+            file: "prelude/map.md"
+            title: "Map"
+            about: "`Map[K, V]` keeps its entries in the order they were added."
+            targets: ["Map"]
+        },
+        Page {
+            file: "prelude/set.md"
+            title: "Set and Deque"
+            about: "`Set[T]` holds each value once, in the order they were added. `Deque[T]` is a queue with two ends."
+            targets: ["Set", "Deque"]
+        },
+        Page {
+            file: "prelude/range.md"
+            title: "Range and Iterator"
+            about: "`0..10` is a `Range[Int]`, and an `Iterator[T]` is what `for` goes through: its adapters are lazy."
+            targets: ["Range", "Iterator"]
+        },
+        Page {
+            file: "prelude/tasks.md"
+            title: "Join, Group and channels"
+            about: "What `spawn` gives, a group of tasks, and the two ends of a channel."
+            targets: ["Join", "Group", "Sender", "Receiver"]
+        },
+        Page {
+            file: "prelude/ref.md"
+            title: "Ref, WeakRef and Contexts"
+            about: "`Ref[T]` gives a value an identity its copies share, `WeakRef[T]` refers to it without keeping it alive, and `Contexts` is every context as it is at one place."
+            targets: ["Ref", "WeakRef", "Contexts"]
+        },
+        Page {
+            file: "prelude/traits.md"
+            title: "The prelude's traits"
+            about: "`Ordered` gives `<` and its kin, `Additive` gives `+` and `-`, `Number` adds `*` and `/`, and `Integer` is every integer of every width."
+            targets: ["Ordered", "Additive", "Number", "Integer"]
+        },
+    ]
+}
+
+/// What `tondo api <target> --json` says.
+fn ask(tondo: String, target: String): Listing ! String {
+    let ran =
+        process
+            .command(tondo, "api", target, "--json")
+            .output()
+            .mapErr((e) { "cannot run {tondo}: {e}" })?
+    let text = ran.text().mapErr((e) { "what `{tondo} api {target}` gave is not text: {e}" })?
+    json.decode[Listing](text).mapErr((e) { "`{tondo} api {target} --json`: {e}" })
+}
+
+/// The modules `tondo api --list` names, but the prelude, whose pages are
+/// its types'.
+fn modules(tondo: String): Array[String] ! String {
+    let ran =
+        process.command(tondo, "api", "--list").output().mapErr((e) { "cannot run {tondo}: {e}" })?
+    let text = ran.text().mapErr((e) { "what `{tondo} api --list` gave is not text: {e}" })?
+    text.lines().filter((line) { line.startsWith("std.") })
+}
+
+/// The name without what follows its first `[`: `Values` of `Values[T]`.
+fn bare(name: String): String {
+    match name.splitOnce("[") {
+        some((before, _)) => before
+        none => name
+    }
+}
+
+/// The type a declaration belongs to: the receiver of a method, what an
+/// `impl` is for, or none for what stands alone.
+fn owner(declaration: Declaration): String? {
+    if declaration.kind == "impl" {
+        return declaration.name.splitOnce(" for ").map((parts) { bare(parts.1) })
+    }
+    if declaration.kind == "fn" {
+        return declaration.name.splitOnce(".").map((parts) { parts.0 })
+    }
+    none
+}
+
+/// Whether a declaration is a type of some kind, which has a section of its own.
+fn isType(declaration: Declaration): Bool {
+    ["type", "enum", "alias", "trait", "annotation", "context"].contains(declaration.kind)
+}
+
+/// The sections of a listing, in the order it gives them: first what has no
+/// type, then each type with its methods and traits, and last the traits
+/// given to types of other modules.
+fn sections(listing: Listing): Array[Section] {
+    var free = Section { name: "Functions" }
+    var foreign = Section { name: "For other types" }
+    var byName: Map[String, Section] = [:]
+    for declaration in listing.declarations {
+        if isType(declaration) {
+            byName[declaration.name] = Section { name: declaration.name, own: some(declaration) }
+        }
+    }
+    // A method names its type even when the listing does not declare it, as
+    // those of the prelude's types.
+    for declaration in listing.declarations {
+        if declaration.kind == "fn" {
+            match owner(declaration) {
+                some(name) if not byName.contains(name) => byName[name] = Section { name }
+                _ => {}
+            }
+        }
+    }
+    for declaration in listing.declarations {
+        if isType(declaration) {
+            continue
+        }
+        match owner(declaration) {
+            some(name) => match byName.get(name) {
+                some(found) => {
+                    var section = found
+                    if declaration.kind == "impl" {
+                        section.traits.push(declaration)
+                    } else {
+                        section.members.push(declaration)
+                    }
+                    byName[name] = section
+                }
+                none => foreign.traits.push(declaration)
+            }
+            // A function named as a type builds it: `Group[Int]()`.
+            none => match byName.get(declaration.name) {
+                some(found) if declaration.kind == "fn" => {
+                    var section = found
+                    section.members.push(declaration)
+                    byName[declaration.name] = section
+                }
+                _ => free.members.push(declaration)
+            }
+        }
+    }
+    var out: Array[Section] = []
+    if not free.members.isEmpty() {
+        out.push(free)
+    }
+    for (_, section) in byName {
+        out.push(section)
+    }
+    if not foreign.traits.isEmpty() {
+        out.push(foreign)
+    }
+    out
+}
+
+/// The anchor GitHub gives a heading: its letters, digits, `-` and `_` in
+/// lowercase, with a `-` for each space, and a number after it when a
+/// heading above had the same.
+fn anchor(heading: String, seen: var Map[String, Int]): String {
+    var slug = ""
+    for character in heading.toLower().chars() {
+        if character.isAlphanumeric() or character == '-' or character == '_' {
+            slug = "{slug}{character}"
+        } else if character == ' ' {
+            slug = "{slug}-"
+        }
+    }
+    let count = seen.getOr(slug, 0)
+    seen[slug] = count + 1
+    if count == 0 { slug } else { "{slug}-{count}" }
+}
+
+/// A declaration under its heading: its signature, then its documentation.
+fn entry(declaration: Declaration, level: String, out: var Array[String]) {
+    out.push("{level} {declaration.name}")
+    out.push("")
+    out.push("```tondo")
+    out.push(declaration.declaration)
+    out.push("```")
+    out.push("")
+    if not declaration.doc.trim().isEmpty() {
+        out.push(declaration.doc.trimEnd())
+        out.push("")
+    }
+}
+
+/// The trait of an `impl`: `Display` of `Display for Value`.
+fn traitOf(declaration: Declaration): String {
+    match declaration.name.splitOnce(" for ") {
+        some((name, _)) => name
+        none => declaration.name
+    }
+}
+
+/// The part of a page this program writes: the marker and what follows.
+fn generated(page: Page, listings: Array[Listing]): String {
+    var all: Array[Section] = []
+    for listing in listings {
+        all.extend(sections(listing))
+    }
+    let commands = page.targets.map((target) { "`tondo api {target}`" })
+    let shows = if commands.length() == 1 { "shows" } else { "show" }
+    var out: Array[String] = [
+        Marker,
+        "",
+        "## Reference",
+        "",
+        "{commands.join(", ")} {shows} the same in a terminal.",
+        "",
+    ]
+    // The headings above the marker are not known here: a page's own are
+    // written so that they are not those of a declaration.
+    var seen: Map[String, Int] = [:]
+    _ = anchor("Reference", var seen)
+    for section in all {
+        let title = "[{section.name}](#{anchor(section.name, var seen)})"
+        var names: Array[String] = []
+        for member in section.members {
+            names.push("[`{member.name}`](#{anchor(member.name, var seen)})")
+        }
+        if names.isEmpty() {
+            out.push("- {title}")
+        } else {
+            out.push("- {title}: {names.join(", ")}")
+        }
+    }
+    out.push("")
+    for section in all {
+        match section.own {
+            some(declaration) => entry(declaration, "###", var out)
+            none => {
+                out.push("### {section.name}")
+                out.push("")
+            }
+        }
+        if not section.traits.isEmpty() {
+            if section.name == "For other types" {
+                out.push("```tondo")
+                for declaration in section.traits {
+                    out.push(declaration.declaration)
+                }
+                out.push("```")
+            } else {
+                let traits = section.traits.map((declaration) { "`{traitOf(declaration)}`" })
+                out.push("Implements {traits.join(", ")}.")
+            }
+            out.push("")
+        }
+        for member in section.members {
+            entry(member, "####", var out)
+        }
+    }
+    for out.last() == some("") {
+        _ = out.pop()
+    }
+    "{out.join("\n")}\n"
+}
+
+/// The top of a page nobody wrote yet: its title, what it is, and the
+/// module's example.
+fn top(page: Page, listing: Listing): String {
+    var out: Array[String] = ["# {page.title}", ""]
+    let about = if page.about.isEmpty() { listing.summary } else { page.about }
+    if not about.isEmpty() {
+        out.push(about)
+        out.push("")
+    }
+    if not listing.example.trim().isEmpty() {
+        // An example with tests in it goes in a file of tests.
+        let tests = listing.example
+            .lines()
+            .any((line) { line.startsWith("test ") or line.startsWith("suite ") })
+        out.push(if tests { "```tondo test" } else { "```tondo" })
+        out.push(listing.example.trimEnd())
+        out.push("```")
+        out.push("")
+    }
+    "{out.join("\n")}\n"
+}
+
+/// The page's file with its hand-written part kept, or made.
+fn written(page: Page, listings: Array[Listing]): String ! String {
+    let path = "docs/std/{page.file}"
+    let above = if fs.exists(path) {
+        let text = fs.readText(path).mapErr((e) { "cannot read {path}: {e}" })?
+        match text.splitOnce(Marker) {
+            some((before, _)) => before
+            none => fail "{path} has no line of the marker: this program writes below `{Marker}`"
+        }
+    } else {
+        top(page, listings[0])
+    }
+    "{above}{generated(page, listings)}"
+}
+
+fn main(): !String {
+    let check = env.args().contains("--check")
+    let tondo = env.get("TONDO").unwrapOr("tondo")
+    var pages = preludePages()
+    for module in modules(tondo)? {
+        pages.push(
+            Page {
+                file: "{module.removePrefix("std.")}.md"
+                title: module
+                about: ""
+                targets: [module]
+            },
+        )
+    }
+    // Every listing at once: each is a `tondo` of its own.
+    var asked = Group[Array[Listing] ! String]()
+    for page in pages {
+        asked.add(spawn listingsOf(tondo, page))
+    }
+    let listings = asked.wait()?
+    if not check and not fs.exists("docs/std/prelude") {
+        fs.createDirectory("docs/std/prelude").mapErr((e) { "cannot make docs/std/prelude: {e}" })?
+    }
+    var stale: Array[String] = []
+    for (index, page) in pages.enumerate() {
+        let path = "docs/std/{page.file}"
+        let text = written(page, listings[index])?
+        let current = fs.readText(path).unwrapOr("")
+        if text == current {
+            continue
+        }
+        if check {
+            stale.push(path)
+        } else {
+            fs.writeText(path, text).mapErr((e) { "cannot write {path}: {e}" })?
+            console.println("wrote {path}")
+        }
+    }
+    if not stale.isEmpty() {
+        fail "these pages are not what `tondo api` gives now: {stale.join(", ")}\nwrite them again with `tondo run docs/std/generate.to`"
+    }
+    if check {
+        console.println("{pages.length()} pages are what `tondo api` gives")
+    }
+}
+
+/// The listings of a page's targets, in their order.
+fn listingsOf(tondo: String, page: Page): Array[Listing] ! String {
+    var out: Array[Listing] = []
+    for target in page.targets {
+        out.push(ask(tondo, target)?)
+    }
+    out
+}

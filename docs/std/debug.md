@@ -1,0 +1,54 @@
+# std.debug
+
+what the debugger shows of values (toolchain 7.6): a type that implements `View` shows as the value its `view` gives.
+
+```tondo
+import std.debug
+
+type Stack = { top: Int?, below: Array[Int] }
+
+impl debug.View[Array[Int]] for Stack {
+    fn view(self): Array[Int] {
+        match self.top {
+            some(top) => self.below.concat([top])
+            none => self.below
+        }
+    }
+}
+```
+
+<!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
+
+## Reference
+
+`tondo api std.debug` shows the same in a terminal.
+
+- [View](#view)
+
+### View
+
+```tondo
+pub trait View[T] {
+    /// The value the debugger shows instead of this one.
+    fn view(self): T
+}
+```
+
+How the debugger shows a value of a type: as the value `view` gives,
+with its parts, pages and expressions, while the value as it is stays
+at hand as its `raw()`. A linked list shows as an array, a matrix as
+its rows, a money amount as its text. It runs on the stopped task while
+the program stands still, so it should only read: a view that panics
+ends the program, as any panic does.
+
+```tondo
+import std.debug
+
+type Money = { cents: Int, currency: String }
+
+impl debug.View[String] for Money {
+    fn view(self): String {
+        "{self.cents / 100}.{self.cents % 100} {self.currency}"
+    }
+}
+```
