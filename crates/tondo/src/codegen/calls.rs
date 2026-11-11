@@ -65,7 +65,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
             Callee::Std(StdFn::Native(index)) => {
-                // Arithmetic the processor does in one instruction.
+                // Arithmetic the processor does in one instruction, as
+                // `hir::IN_ONE_INSTRUCTION` lists it.
                 let ins = self.e.fb.ins();
                 match crate::hir::NATIVES[index as usize].symbol {
                     "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),

@@ -431,7 +431,8 @@ pub enum Terminator {
 }
 
 /// The blocks of the loops of a body that hold no other loop and call
-/// nothing: where each instruction counts.
+/// nothing, but what the processor does in one instruction: where each
+/// instruction counts.
 pub fn tight_loops(blocks: &[BlockData]) -> Vec<bool> {
     inner_loops(blocks, false)
 }
@@ -488,7 +489,13 @@ pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {
         })
         .collect();
     let calls = |block: &BlockData| {
-        let call = |rvalue: &Rvalue| matches!(rvalue, Rvalue::Call(..) | Rvalue::CallIndirect(..));
+        let call = |rvalue: &Rvalue| match rvalue {
+            Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
+                !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
+            }
+            Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
+            _ => false,
+        };
         block.stmts.iter().any(|stmt| matches!(stmt, Statement::Assign(_, rvalue, _) if call(rvalue)))
     };
     let mut tight = vec![false; blocks.len()];
@@ -775,5 +782,30 @@ pub(crate) fn terminator_uses(terminator: &Terminator, used: &mut Vec<Local>) {
         Terminator::Branch(o, ..) | Terminator::Return(o) => operand_uses(o, used),
         Terminator::Panic { message: Some(o), .. } => operand_uses(o, used),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A loop is tight when it calls nothing but what the processor does
+    /// in one instruction, as a square root, and not when it calls anything
+    /// else.
+    #[test]
+    fn a_loop_of_one_instruction_natives_is_tight() {
+        let native = |symbol: &str| hir::NATIVES.iter().position(|n| n.symbol == symbol).unwrap() as u16;
+        let looping = |callee: Callee| {
+            let call =
+                Statement::Assign(Place::local(Local(0)), Box::new(Rvalue::Call(callee, Vec::new())), Span::default());
+            let goto = |to: u32| BlockData { stmts: Vec::new(), terminator: Terminator::Goto(BlockId(to)) };
+            let body = BlockData { stmts: vec![call], terminator: Terminator::Goto(BlockId(1)) };
+            tight_loops(&[goto(1), body])
+        };
+        assert_eq!(looping(Callee::Std(hir::StdFn::Native(native("tondo_rt_math_sqrt")))), [false, true]);
+        assert_eq!(looping(Callee::Std(hir::StdFn::ConsolePrintln)), [false, false]);
+        // Each of them is one codegen writes in place.
+        let calls = include_str!("codegen/calls.rs");
+        assert!(hir::IN_ONE_INSTRUCTION.iter().all(|symbol| calls.contains(&format!("\"{symbol}\" =>"))));
     }
 }

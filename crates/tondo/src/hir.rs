@@ -1243,6 +1243,18 @@ pub struct Native {
     pub symbol: &'static str,
 }
 
+/// The natives the processor does in one instruction, which codegen writes
+/// in place of a call (`codegen/calls.rs`): a loop that calls only these
+/// calls nothing.
+pub const IN_ONE_INSTRUCTION: [&str; 6] = [
+    "tondo_rt_math_sqrt",
+    "tondo_rt_math_floor",
+    "tondo_rt_math_ceil",
+    "tondo_rt_math_trunc",
+    "tondo_rt_math_round",
+    "tondo_rt_model_recording",
+];
+
 pub const NATIVES: &[Native] = {
     use NativeTy::*;
     const fn f(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
