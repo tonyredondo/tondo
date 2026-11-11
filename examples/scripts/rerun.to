@@ -1,0 +1,40 @@
+#!/usr/bin/env tondo
+
+// Runs a command now, and again each time a file under a directory changes.
+//
+//     tondo rerun.to src -- cargo test
+//     tondo rerun.to . -- tondo test
+//
+// Ctrl-C ends it.
+
+import std.console
+import std.env
+import std.fs
+import std.process
+import std.time
+
+let arguments = env.args()
+let directory = arguments.get(0).unwrapOr(".")
+let command = arguments[1:].filter((word) { word != "--" })
+if command.isEmpty() {
+    console.eprintln("usage: tondo rerun.to <directory> -- <command> [<argument>...]")
+    process.exit(2)
+}
+
+fn once(command: Array[String]) {
+    let started = time.now()
+    match process.command(command[0], ...command[1:]).run() {
+        ok(status) => console.println(
+            "--- {command.join(" ")}: exit {status.code} in {started.elapsed().milliseconds()} ms",
+        )
+        err(error) => console.println("--- {command.join(" ")} did not run: {error}")
+    }
+}
+
+once(command)
+// Changes that come together, as an editor saving several files, arrive as
+// one batch once they have been quiet for a moment.
+for changes in fs.watch([directory], settle: some(time.milliseconds(200)))? {
+    console.println("--- {changes.length()} changed, first {changes[0].path}")
+    once(command)
+}

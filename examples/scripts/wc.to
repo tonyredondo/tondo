@@ -1,0 +1,47 @@
+#!/usr/bin/env tondo
+
+// Counts the lines, words and characters of files, or of what it is given
+// to read.
+//
+//     tondo wc.to notes.md todo.md
+//     cat notes.md | tondo wc.to
+
+import std.cli
+import std.console
+import std.env
+import std.fs
+
+type Count = {
+    lines: Int
+    words: Int
+    characters: Int
+    file: String
+}
+
+fn count(file: String, text: String): Count {
+    Count {
+        lines: text.lines().length()
+        words: text.words().length()
+        characters: text.chars().count()
+        file
+    }
+}
+
+var counts: Array[Count] = []
+for file in env.args() {
+    counts.push(count(file, fs.readText(file)?))
+}
+if counts.isEmpty() {
+    counts.push(count("(input)", console.stdin().readText()?))
+}
+if counts.length() > 1 {
+    counts.push(
+        Count {
+            lines: counts.map((each) { each.lines }).sum()
+            words: counts.map((each) { each.words }).sum()
+            characters: counts.map((each) { each.characters }).sum()
+            file: "total"
+        },
+    )
+}
+console.println(cli.table(counts))

@@ -1,0 +1,51 @@
+#!/usr/bin/env tondo
+
+// Lists the largest files under a directory.
+//
+//     tondo biggest.to [<directory>] [<how many>]
+
+import std.cli
+import std.console
+import std.env
+import std.fs
+
+type Found = {
+    size: String
+    file: String
+}
+
+/// A size as people read it: 1.4 MB.
+fn readable(bytes: Int): String {
+    var amount = Float(bytes)
+    for unit in ["B", "kB", "MB", "GB"] {
+        if amount < 1000.0 {
+            return if unit == "B" { "{bytes} B" } else { "{amount:.1} {unit}" }
+        }
+        amount /= 1000.0
+    }
+    "{amount:.1} TB"
+}
+
+let arguments = env.args()
+let root = arguments.get(0).unwrapOr(".")
+let wanted = arguments.get(1).andThen((text) { Int.parse(text).ok() }).unwrapOr(10)
+
+// Directories whose name starts with a dot, as `.git`, are not entered.
+let entries =
+    fs.walk(
+        root,
+        enter: some((entry) { not entry.path.split("/").last().unwrapOr("").startsWith(".") }),
+        skipUnreadable: true,
+    )?
+var sized: Array[(Int, String)] = []
+for entry in entries {
+    if entry.kind == fs.FileKind.File {
+        match fs.metadata(entry.path) {
+            ok(metadata) => sized.push((metadata.size, entry.path))
+            err(_) => {}  // gone since it was listed
+        }
+    }
+}
+let largest = sized.sortedBy((pair) { -pair.0 }).take(wanted)
+console.println(cli.table(largest.map((pair) { Found { size: readable(pair.0), file: pair.1 } })))
+console.println("{sized.length()} files, {readable(sized.map((pair) { pair.0 }).sum())} in all")

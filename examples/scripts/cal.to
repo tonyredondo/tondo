@@ -1,0 +1,45 @@
+#!/usr/bin/env tondo
+
+// Prints the calendar of a month, this one unless told another.
+//
+//     tondo cal.to [<year> <month>]
+
+import std.console
+import std.env
+import std.time
+
+/// The column of a day of the week, in a week that starts on Monday.
+fn column(day: time.Weekday): Int {
+    match day {
+        time.Weekday.Monday => 0
+        time.Weekday.Tuesday => 1
+        time.Weekday.Wednesday => 2
+        time.Weekday.Thursday => 3
+        time.Weekday.Friday => 4
+        time.Weekday.Saturday => 5
+        time.Weekday.Sunday => 6
+    }
+}
+
+let arguments = env.args()
+let today = time.localNow()
+let year = arguments.get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(today.year)
+let month = arguments.get(1).andThen((text) { Int.parse(text).ok() }).unwrapOr(today.month)
+
+let first = time.DateTime { year, month, day: 1, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+let days = first.addMonths(1).since(first).hours() / 24
+
+let title = first.format("%B %Y")
+console.println("{" ".repeat((20 - title.length()) / 2)}{title}")
+console.println("Mo Tu We Th Fr Sa Su")
+var line = "   ".repeat(column(first.weekday()))
+for day in 1..=days {
+    line = "{line}{day:>2} "
+    if first.addDays(day - 1).weekday() == time.Weekday.Sunday {
+        console.println(line.trimEnd())
+        line = ""
+    }
+}
+if not line.isEmpty() {
+    console.println(line.trimEnd())
+}
