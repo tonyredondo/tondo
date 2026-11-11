@@ -1,0 +1,45 @@
+import notes.tools
+import std.cli
+import std.console
+import std.fs
+import std.http
+import std.mcp
+import std.process
+
+/// Serves a directory of notes to an assistant, over the Model Context
+/// Protocol.
+pub type Serve = {
+    /// The directory of the notes.
+    @cli.Argument(default: "notes")
+    directory: String
+    /// Serves over HTTP on this port, at `/mcp`, and not over its input.
+    http: Int?
+}
+
+fn run(options: Serve): !(fs.FsError | mcp.McpError | http.HttpError) {
+    if not fs.exists(options.directory) {
+        fs.createDirectory(options.directory)?
+    }
+    let server = tools.Notes { directory: options.directory }
+    match options.http {
+        some(port) => {
+            var app = http.App()
+            app.post("/mcp", mcp.handler(server, name: "notes"))
+            console.println("the notes of {options.directory} are at http://localhost:{port}/mcp")
+            app.listen(port: port, host: "127.0.0.1")?
+        }
+        // A client starts the program and talks to it through its input
+        // and output. What the program prints goes to standard error.
+        none => mcp.serve(server, name: "notes")?
+    }
+}
+
+fn main() {
+    match run(cli.parse[Serve]()) {
+        ok(_) => {}
+        err(error) => {
+            console.eprintln("notes: {error}")
+            process.exit(1)
+        }
+    }
+}

@@ -1,0 +1,144 @@
+import notes.tools
+import std.fs
+import std.http
+import std.json
+import std.mcp
+
+/// The notes of a new directory, served on a free port. `mcp.handler`
+/// answers the same protocol that `mcp.serve` speaks over standard input.
+fn open(directory: String): http.Server ! http.HttpError {
+    var app = http.App()
+    app.post("/mcp", mcp.handler(tools.Notes { directory }, name: "notes"))
+    app.start()?
+}
+
+/// Sends a request of the protocol, and gives the answer.
+fn ask(
+    server: http.Server,
+    method: String,
+    params: String = "{{}}",
+): json.Value ! (http.HttpError | json.JsonError) {
+    let request = "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{method}\",\"params\":{params}}}"
+    let reply =
+        http.post(
+            "{server.url()}/mcp",
+            body: http.Body.text(request, contentType: "application/json"),
+        )?
+    json.parse(reply.text()?)?
+}
+
+/// Calls a tool, and gives what it said and whether that is an error.
+fn call(
+    server: http.Server,
+    tool: String,
+    arguments: String,
+): (String, Bool) ! (http.HttpError | json.JsonError) {
+    let answer = ask(server, "tools/call", "{{\"name\":\"{tool}\",\"arguments\":{arguments}}}")?
+    let said = answer
+        .find("result.content[0].text")
+        .andThen((text) { text.asText() })
+        .unwrapOr("no text")
+    let failed = answer.find("result.isError").andThen((flag) { flag.asBool() }).unwrapOr(true)
+    (said, failed)
+}
+
+test saysWhatItOffers {
+    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let server = open(directory)?
+    defer server.stop()
+
+    let listed = ask(server, "tools/list")?
+    let names = listed.find("result.tools").andThen((list) { list.asArray() }).unwrapOr([])
+    assert(
+        names.map((tool) { tool.field("name").asText().unwrapOr("") }) ==
+            ["write", "search", "list", "remove"],
+    )
+    // The schema of a tool is its record: the documentation, and what is required.
+    assert(
+        listed
+            .find("result.tools[0].inputSchema.properties.tags.description")
+            .andThen((text) { text.asText() }) ==
+            some("Words to find it by."),
+    )
+    assert(
+        "{listed.find("result.tools[0].inputSchema.required").unwrapOr(json.Value.Null)}" ==
+            r"""["name","text"]""",
+    )
+
+    let templates = ask(server, "resources/templates/list")?
+    assert(
+        templates.find("result.resourceTemplates[0].uriTemplate").andThen((text) { text.asText() }) ==
+            some(r"notes://{name}"),
+    )
+    let prompts = ask(server, "prompts/list")?
+    assert(
+        prompts.find("result.prompts[0].name").andThen((text) { text.asText() }) == some("review"),
+    )
+}
+
+test writesSearchesReadsAndRemoves {
+    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let server = open(directory)?
+    defer server.stop()
+
+    let note =
+        r"""{"name":"green-tea","text":"Buy sencha.\nBrew it at 70 degrees.","tags":["tea"]}"""
+    assert(call(server, "write", note)? == ("wrote notes://green-tea", false))
+    assert(
+        fs.readText("{directory}/green-tea.md")? ==
+            "tags: tea\n\nBuy sencha.\nBrew it at 70 degrees.\n",
+    )
+
+    let (found, failed) = call(server, "search", r"""{"query":"sencha"}""")?
+    assert(not failed and found == r"""[{"name":"green-tea","score":1,"line":"Buy sencha."}]""")
+
+    let read = ask(server, "resources/read", r"""{"uri":"notes://green-tea"}""")?
+    assert(
+        read.find("result.contents[0].text").andThen((text) { text.asText() }) ==
+            some("Buy sencha.\nBrew it at 70 degrees."),
+    )
+    assert(
+        read.find("result.contents[0].mimeType").andThen((text) { text.asText() }) ==
+            some("text/markdown"),
+    )
+
+    assert(call(server, "remove", r"""{"name":"green-tea"}""")? == ("removed green-tea", false))
+    assert(call(server, "list", r"{}")? == ("[]", false))
+}
+
+test aFailureIsTheToolsErrorInWords {
+    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let server = open(directory)?
+    defer server.stop()
+
+    assert(call(server, "remove", r"""{"name":"coffee"}""")? == ("there is no note `coffee`", true))
+}
+
+test argumentsThatBreakTheirRulesNeverReachTheTool {
+    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let server = open(directory)?
+    defer server.stop()
+
+    let outside = call(server, "write", r"""{"name":"../etc/passwd","text":"x"}""")?
+    assert(
+        outside ==
+            ("the arguments of `write` break their rules: name: must match `[a-z0-9-]+`", true),
+    )
+    let greedy = call(server, "search", r"""{"query":"tea","limit":99}""")?
+    assert(
+        greedy == ("the arguments of `search` break their rules: limit: must be at most 20", true),
+    )
+    assert(fs.list(directory)?.isEmpty())
+}
