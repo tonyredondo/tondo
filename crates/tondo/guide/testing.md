@@ -63,6 +63,9 @@ suite slow {
   `--test-format events` a line of JSON for each result as it comes.
 - `tondo test --affected <rev>` runs only the tests that reach what changed since a
   commit, through what they call.
+- `tondo test --bisect <commit> --filter text --bench --max-regression 5
+  --regression-by instructions` finds the first commit where a benchmark
+  started to do more work than at that one.
 - `tondo test --bisect <commit> --filter text` finds the first commit after that one
   where a test fails, in a worktree of its own, with the tests as they are here: one
   written today, as `tondo dump test` writes, finds when the bug came.

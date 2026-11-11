@@ -2059,6 +2059,65 @@ fn finds_the_commit_that_broke_a_test() {
     assert_eq!(String::from_utf8_lossy(&worktrees.stdout).lines().count(), 1);
 }
 
+/// `--bisect` with `--bench` finds the commit where a benchmark started to
+/// do more work than at the good commit, measured by this tondo or by the
+/// one `--bisect-with` names in each commit.
+#[test]
+fn finds_the_commit_that_slowed_a_benchmark() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bisect-bench");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"slowed\"\nversion = \"0.1.0\"\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    let write = |extra: &str| {
+        let source = format!(
+            "pub fn fib(n: Int): Int {{\n    if n < 2 {{\n        return n\n    }}\n    fib(n - 1) + fib(n - 2){extra}\n}}\n\nfn main() {{}}\n"
+        );
+        std::fs::write(dir.join("src/main.to"), source).unwrap();
+    };
+    git(&["init", "--quiet"]);
+    let mut commits = Vec::new();
+    let steps = ["", " + 0", " + 0 * (fib(n - 1) + fib(n - 2))", " + 0 * (fib(n - 1) + fib(n - 2)) + 0"];
+    for (index, extra) in steps.iter().enumerate() {
+        write(extra);
+        git(&["add", "-A"]);
+        git(&["commit", "--quiet", "-m", &format!("step {index}")]);
+        let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
+        commits.push(String::from_utf8_lossy(&head.stdout).trim().to_string());
+    }
+    std::fs::write(
+        dir.join("src/main_test.to"),
+        "import std.testing\n\ntest fibonacci {\n    testing.bench(\"fib 15\", () { fib(15) })\n}\n",
+    )
+    .unwrap();
+    let by = if counts_itself() { "instructions" } else { "time" };
+    let bisect = ["test", "--bisect", &commits[0], "--filter", "fibonacci", "--bench", "--bench-time", "0.1"];
+    let judged = [&bisect[..], &["--max-regression", "50", "--regression-by", by, "--json"]].concat();
+    let (out, err, code) = tondo(&dir, &judged);
+    assert_eq!(code, 0, "{out}{err}");
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(found["title"], "step 2", "{found}");
+    // Each commit measured by the tondo a command names.
+    let this = env!("CARGO_BIN_EXE_tondo");
+    let builds = format!("echo '{this}'");
+    let with = [&judged[..], &["--bisect-with", &builds]].concat();
+    let (out, err, code) = tondo(&dir, &with);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&out).unwrap()["title"], "step 2");
+    let (_, err, code) = tondo(&dir, &bisect);
+    assert_eq!(code, 2);
+    assert!(err.contains("say by how much, as --max-regression 5"), "{err}");
+}
+
 /// `check --unreached` and `api --diff`, which read what the code names.
 #[test]
 fn says_what_nothing_reaches_and_what_breaks_the_api() {

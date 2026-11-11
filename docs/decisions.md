@@ -5753,3 +5753,14 @@ the code another `tondo` makes of the same program, which runs `asm --json`, app
 executables, which differ in the date the runtime was built, and which functions a change to a
 pass touches was found by hand. Codegen keeps the functions the driver names, by their exact
 names, rather than by a part of one.
+
+## `--bisect` finds where a benchmark regressed, with any tondo
+
+`tondo test --bisect` found the commit where a test fails, run by this `tondo` on the code of each
+commit. The maintainer approved on 2026-11-11 the same search for a benchmark: with `--bench` and
+`--max-regression`, the good commit is measured first and every other compared with it, judged as
+a baseline is, so that `--regression-by instructions` makes the search as sure as the instructions
+are, where time would take chance for a change. Looking for the change to the compiler that made
+a benchmark slower needs each commit's compiler, not this one: `--bisect-with <command>` runs a
+command in each commit's worktree that builds the `tondo` to measure with and names it on its last
+line, and a commit where it fails says nothing, as one that does not compile.

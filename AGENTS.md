@@ -200,6 +200,10 @@ Ask the toolchain before guessing why code is slow or allocates:
 - `tondo test --bench --layouts <n>` measures each benchmark in n orders of
   the code's functions and gives the range; against a baseline measured so
   too, only a change past every order counts.
+- `tondo test bench/tondo --bisect <good> --filter <test> --bench
+  --max-regression 5 --regression-by instructions --bisect-with "cargo
+  build -q --release -p tondo && echo target/release/tondo"` finds the
+  commit of the compiler that made a benchmark do more work.
 - A benchmark's row moves by a third when only where its code lies moves.
   Judge a change by the instructions and cycles of a program that does the
   same rounds each time, under `perf stat`, as well as by the row's time;

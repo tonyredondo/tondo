@@ -363,6 +363,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     };
     let (mut seed, mut random, mut seen) = (None, false, Vec::new());
     let (mut schedules, mut affected, mut bisect) = (None, None, None);
+    let mut bisect_with: Option<String> = None;
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
@@ -380,6 +381,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--affected" => affected = Some(value()?),
             "--bisect" => bisect = Some(value()?),
+            "--bisect-with" => bisect_with = Some(value()?),
             "--filter" => options.selector = Selector::Filter(value()?),
             "--glob" => options.selector = Selector::Glob(Glob::parse(&value()?).map_err(usage)?),
             "--exact" => options.selector = Selector::Exact(vec![value()?]),
@@ -588,14 +590,42 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let given = |flag: &str| seen.iter().any(|s| s == flag);
+    if bisect.is_none() && bisect_with.is_some() {
+        return Err(usage("--bisect-with says how each commit builds its tondo: it goes with --bisect".into()));
+    }
     if let Some(good) = bisect {
         let selection = match &options.selector {
             Selector::Exact(ids) => ids.iter().flat_map(|id| ["--exact".to_string(), id.clone()]).collect(),
             Selector::Filter(text) => vec!["--filter".to_string(), text.clone()],
             _ => return Err(usage("--bisect takes the test to look for, with --exact or --filter".into())),
         };
+        // With --bench, what regressed from the good commit's measures.
+        let benching = match (bench, options.max_regression) {
+            (true, Some(max)) => {
+                let mut arguments = vec!["--max-regression".to_string(), format!("{}", max * 100.0)];
+                if options.by_instructions {
+                    arguments.extend(["--regression-by".to_string(), "instructions".to_string()]);
+                }
+                if given("--bench-time") {
+                    arguments.extend(["--bench-time".to_string(), bench_time.to_string()]);
+                }
+                let baseline = std::env::temp_dir().join(format!("tondo-bisect-{}-baseline.json", std::process::id()));
+                Some(tondo::bisect::Benching { arguments, baseline })
+            }
+            (true, None) => {
+                return Err(usage(
+                    "--bisect with --bench looks for where a benchmark regressed: say by how much, as --max-regression 5"
+                        .into(),
+                ));
+            }
+            (false, _) => None,
+        };
         let json = rest_json(args);
-        return tondo::bisect::bisect(&path, &good, &selection, json).map(|()| ExitCode::SUCCESS);
+        let found = tondo::bisect::bisect(&path, &good, &selection, benching.as_ref(), bisect_with.as_deref(), json);
+        if let Some(benching) = &benching {
+            let _ = std::fs::remove_file(&benching.baseline);
+        }
+        return found.map(|()| ExitCode::SUCCESS);
     }
     if let Some(rev) = affected {
         if !matches!(options.selector, Selector::All) {

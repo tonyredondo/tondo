@@ -1378,7 +1378,16 @@ El runner ofrece exactamente tres selectores:
 - `--bisect <commit>`, con `--exact` o `--filter`: busca el primer commit tras ese en el
   que el test falla, sin tocar el árbol de trabajo: en un worktree propio, con los
   archivos de tests de aquí, para que un test escrito hoy diga si un commit antiguo
-  falla. Un commit que no compila no cuenta, y se prueba el siguiente.
+  falla. Un commit que no compila no cuenta, y se prueba el siguiente. Con `--bench`
+  y `--max-regression`, busca el primero en que un benchmark de la selección
+  empeoró respecto a lo que midió el commit bueno, que se mide primero, juzgado como
+  en 10.4: con `--regression-by instructions`, por instrucciones, que no cambian con
+  dónde cae el código, y un bisect por tiempo puede tomar el azar por un cambio.
+  `--bisect-with <orden>` mide cada commit con el `tondo` que la orden de `sh`
+  construye en él y nombra en su última línea, relativo al worktree, como
+  `cargo build -q --release -p tondo && echo target/release/tondo` en el
+  repositorio de Tondo: así se busca el cambio del compilador que hizo más lento un
+  benchmark; un commit en que la orden falla no cuenta.
 - `--affected <rev>`: los tests que alcanzan lo que cambió desde ese commit, según Git:
   los que nombran, directa o indirectamente, una declaración tocada, o están en las
   líneas cambiadas. Un cambio fuera de toda declaración cuenta para todo su archivo, y

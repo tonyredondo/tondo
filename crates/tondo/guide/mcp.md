@@ -157,7 +157,7 @@ builds; `counters`, `trace`, `dump` and `dump_read` look into one by
 `ps` and `reload` reach one on another machine or in a container.
 `dump_read` with the view `why` says what went wrong, as far as the dump can
 tell, `locals` or `print` what a frame held, of any build, and `find` where a
-text is; `dump_core` makes a dump of a core of the system; `dump_test` makes a test of a failure in a dump, and `test_bisect` finds the commit that broke it; `dump_serve` writes the failures of a directory as a page, `dump_issue` one as an issue, `dump_report` a page and `dump_redact` a dump to share; `blocked` says what a running program waits for, and `requests` what each of its requests did, task by task; `dump_diff` says what changed between two dumps, and `dump_trend` what
+text is; `dump_core` makes a dump of a core of the system; `dump_test` makes a test of a failure in a dump, and `test_bisect` finds the commit that broke it, or with `bench` and `max_regression` the one that made a benchmark slower; `dump_serve` writes the failures of a directory as a page, `dump_issue` one as an issue, `dump_report` a page and `dump_redact` a dump to share; `blocked` says what a running program waits for, and `requests` what each of its requests did, task by task; `dump_diff` says what changed between two dumps, and `dump_trend` what
 keeps growing over a directory of them, and `dump_group` which failures they
 are. `logpoint` shows what a line of a running program holds as it goes by, without
 stopping it; `debug_start` on a running Release build sets real breakpoints, which stop one task. `source` gives a file of a build as it

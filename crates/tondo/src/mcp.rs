@@ -1327,6 +1327,17 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             push(&["test", &path, "--bisect", &args.need("good")?, "--json"]);
             option(&mut argv, "--filter", "filter");
             option(&mut argv, "--exact", "exact");
+            // Where a benchmark regressed, and with what tondo each commit
+            // measures (testing 10.8).
+            switch(&mut argv, "--bench", "bench");
+            if let Some(percent) = args.number("max_regression") {
+                argv.extend(["--max-regression".to_string(), percent.to_string()]);
+            }
+            option(&mut argv, "--regression-by", "regression_by");
+            if let Some(seconds) = args.number("bench_time") {
+                argv.extend(["--bench-time".to_string(), seconds.to_string()]);
+            }
+            option(&mut argv, "--bisect-with", "bisect_with");
         }
         "doc_test" => {
             push(&["doc-test"]);
@@ -2638,6 +2649,15 @@ are here, so one written today finds when a bug came. A commit that does not com
             ("good", "string!", "A commit where the test passes."),
             ("filter", "string", "The tests whose ids contain this."),
             ("exact", "string", "The test with this id."),
+            ("bench", "boolean", "Where its benchmarks regressed from good's measures, with max_regression."),
+            ("max_regression", "number", "With bench: by how many percent a benchmark regressed."),
+            ("regression_by", "string", "With bench: time, or instructions, which where code lies does not move."),
+            ("bench_time", "number", "With bench: the seconds each benchmark measures for."),
+            (
+                "bisect_with",
+                "string",
+                "A shell command that builds, in each commit, the tondo that measures it, and names it on its last line.",
+            ),
         ],
     },
     Tool {

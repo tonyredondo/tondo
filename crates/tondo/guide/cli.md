@@ -76,7 +76,8 @@ tondo run --watch --tests          reloads on each change, and runs the tests it
 tondo eval app "total(order())"    what an expression gives in a running live build
 tondo eval app "queue()" --every 1 and again each second, compiled once; --count ends it
 tondo values app app.to            what each line left, with nothing stopped
-tondo test --bisect v1.2 --filter parse   the first commit where a test fails
+tondo test --bisect v1.2 --filter parse   the first commit where a test fails; with --bench
+                                  --max-regression 5, where a benchmark regressed
 tondo test --watch                again, the tests a change affects, as files change
 tondo test --coverage             with the lines, functions and branches that ran
 tondo test --bench                the benchmarks (testing.bench), --against main
