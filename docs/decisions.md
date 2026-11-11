@@ -5896,3 +5896,12 @@ element. A loop over a range had no place in the code for its test, which now ha
 loop over an array's had the array's: on the line of the `for`, which the line tables already gave
 the test. A loop only tells of the pushes that are its own, not of those of a loop inside it, which
 that one tells.
+
+## `asm --runtime` shows the runtime's machine code
+
+Proving that a change to the runtime costs nothing where it should, as a hook that stays off,
+meant disassembling two programs with `objdump` and comparing their functions with a script. The
+maintainer approved on 2026-11-11 `tondo asm --runtime <function>`: a function of the runtime as
+this `tondo` carries it to link into programs, read from its archive by the function's demangled
+name, with what each instruction calls named by its relocation, and with `--compiler` what changed
+in it from another `tondo`'s runtime, as `asm --all --compiler` tells it of a program.

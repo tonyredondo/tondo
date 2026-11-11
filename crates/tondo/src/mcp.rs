@@ -230,6 +230,24 @@ impl Server {
                 let listed = |changes: &[driver::Changed]| -> Vec<Value> {
                     changes.iter().map(|(name, lines)| json!({ "function": name, "diff": lines })).collect()
                 };
+                // A function of the runtime, as this tondo links it.
+                if args.flag("runtime") {
+                    let function = function.ok_or("give the runtime's `function`, as tondo_rt_array_push")?;
+                    if let Some(reference) = args.text("compiler") {
+                        let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                        let (changes, same) = driver::runtime_assembly_compiler(&executable, function)?;
+                        let from = format!("the runtime of the tondo of {reference}");
+                        let text = driver::assembly_changes_text(&from, &changes, same);
+                        return Ok(Reply::new(
+                            text,
+                            json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
+                        ));
+                    }
+                    let assemblies = driver::runtime_assembly(function)?;
+                    let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
+                    let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
+                    return Ok(Reply::new(text, json!({ "functions": functions })));
+                }
                 if let Some(reference) = args.text("against") {
                     let (commit, changes, same) =
                         driver::assembly_against(&args.path(), &reference, function, args.flag("tests"))?;
@@ -2273,6 +2291,11 @@ instruction by instruction.",
             ("function", "string", "The function, by its name, or a part of the names of several."),
             ("all", "boolean", "Every function of the program's own code instead of one."),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
+            (
+                "runtime",
+                "boolean",
+                "A function of the runtime this tondo links into programs, as tondo_rt_array_push; with compiler too.",
+            ),
             ("clif", "boolean", "Cranelift's IR of it too, before and after Cranelift optimizes it."),
             (
                 "rules",

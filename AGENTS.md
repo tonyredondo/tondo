@@ -181,6 +181,10 @@ Ask the toolchain before guessing why code is slow or allocates:
   with `--features rules`, `--rules` lists the ISLE rules applied to it,
   Tondo's marked; check a change to `vendor/` with `cargo test -p tondo
   --features rules --test cli the_rules` too.
+- `tondo asm --runtime <function>` gives the machine code of a function of
+  the runtime, as `tondo` links it, and with `--compiler HEAD` what a
+  change to the runtime changed in it: that a hook costs nothing when off
+  shows there.
 - `--compiler <revision>` in `tondo asm`, `tondo optimizations` and `tondo
   test --bench` compares with the `tondo` of that revision of this
   repository, built once in the cache, as `--compiler HEAD` with what the

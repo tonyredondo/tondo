@@ -75,6 +75,7 @@ tondo asm sum                      the machine code of a function, under its lin
                                    --clif its IR, --against main what changed
 tondo asm --all --compiler <tondo> the functions another tondo makes other code of;
                                    --rules, in a tondo built with them, Cranelift's rules
+tondo asm --runtime tondo_rt_array_push   a function of the runtime; --compiler HEAD, its diff
 tondo compiler HEAD~1              the tondo of a revision of tondo's repository, built once;
                                    --compiler takes a revision as it takes a tondo
 tondo test --bench --compiler HEAD~1   the benchmarks, against what that tondo measures

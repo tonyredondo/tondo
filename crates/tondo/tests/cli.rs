@@ -945,6 +945,30 @@ fn sees_the_code_of_tests() {
     assert!(said.starts_with("doubled ("), "{said}");
 }
 
+/// `asm --runtime` gives the machine code of a function of the runtime, as
+/// this tondo links it, and what changed in it from another tondo's.
+#[test]
+fn the_machine_code_of_the_runtime() {
+    let dir = scratch("runtime-code");
+    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.starts_with("tondo_rt_array_push ("), "{said}");
+    let (data, _) = json(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--json"]);
+    let functions = data["functions"].as_array().unwrap();
+    assert_eq!(functions.len(), 1, "{data}");
+    // What it calls is named, not where it is.
+    let calls = functions[0]["instructions"].as_array().unwrap().iter().filter(|i| i["target"].is_string()).count();
+    assert!(calls > 0, "{data}");
+    let other = env!("CARGO_BIN_EXE_tondo");
+    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--compiler", other]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("makes the same code"), "{said}");
+    let (_, stderr, status) = tondo(&dir, &["asm", "--runtime", "nothing_of_the_runtime"]);
+    assert!(status == 3 && stderr.contains("has no function named"), "{stderr}");
+    let (_, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--clif"]);
+    assert_eq!(status, 2, "{stderr}");
+}
+
 #[test]
 fn the_machine_code_of_a_function() {
     let source = "fn fib(n: Int): Int {\n    if n < 2 {\n        return n\n    }\n    fib(n - 1) + fib(n - 2)\n}\n\n\

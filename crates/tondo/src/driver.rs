@@ -1561,6 +1561,90 @@ pub fn changed_text(reference: &str, commit: &str, gone: &[Optimization], new: &
     text
 }
 
+/// The machine code of the runtime's functions named `function` (toolchain
+/// 7.19), as this `tondo` links it into programs: by the name, demangled,
+/// or by a part of the names of a few. What each calls or reads is named
+/// by its relocation, so that a diff compares what it calls.
+pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
+    use object::{Object, ObjectSection, ObjectSymbol};
+    let path = carried("libtondo_runtime", RUNTIME)?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the runtime: {e}"))?;
+    let archive = object::read::archive::ArchiveFile::parse(&*bytes).map_err(|e| format!("the runtime: {e}"))?;
+    let name = |symbol: &str| format!("{:#}", rustc_demangle::demangle(symbol));
+    let mut found: Vec<Assembly> = Vec::new();
+    let mut named: Vec<String> = Vec::new();
+    for member in archive.members().flatten() {
+        let Ok(data) = member.data(&*bytes) else { continue };
+        let Ok(file) = object::File::parse(data) else { continue };
+        for symbol in file.symbols() {
+            if symbol.kind() != object::SymbolKind::Text || symbol.is_undefined() || symbol.size() == 0 {
+                continue;
+            }
+            let Ok(raw) = symbol.name() else { continue };
+            let shown = name(raw);
+            let exact = shown == function || raw == function;
+            if !exact && !shown.contains(function) {
+                continue;
+            }
+            if exact {
+                (found, named) = (Vec::new(), vec![shown.clone()]);
+            } else if named.len() == 1 && (named[0] == function) {
+                continue;
+            } else {
+                named.push(shown.clone());
+            }
+            let Some(section) = symbol.section_index().and_then(|index| file.section_by_index(index).ok()) else {
+                continue;
+            };
+            let Ok(code) = section.data() else { continue };
+            let start = symbol.address() as usize;
+            let Some(code) = code.get(start..start + symbol.size() as usize) else { continue };
+            // What each place of it calls or reads, by the relocations.
+            let targets: Vec<(usize, String)> = section
+                .relocations()
+                .filter(|(at, _)| (start..start + code.len()).contains(&(*at as usize)))
+                .filter_map(|(at, relocation)| match relocation.target() {
+                    object::RelocationTarget::Symbol(index) => {
+                        let target = file.symbol_by_index(index).ok()?;
+                        Some((at as usize - start, name(target.name().ok()?)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let instructions = crate::disassembly::decode(code)
+                .into_iter()
+                .map(|(offset, length, text)| Instruction {
+                    offset,
+                    bytes: code[offset..offset + length].iter().map(|b| format!("{b:02x}")).collect(),
+                    text,
+                    target: targets
+                        .iter()
+                        .find(|(at, _)| (offset..offset + length).contains(at))
+                        .map(|(_, name)| name.clone()),
+                    at: None,
+                })
+                .collect();
+            found.push(Assembly {
+                function: shown,
+                size: code.len(),
+                constants: 0,
+                instructions,
+                lines: Vec::new(),
+                ir: None,
+                rules: Vec::new(),
+            });
+        }
+    }
+    match found.len() {
+        0 => Err(format!("the runtime has no function named `{function}`")),
+        1..=8 => Ok(found),
+        many => Err(format!(
+            "{many} functions of the runtime hold `{function}` in their names: name one, as `{}`",
+            named.iter().take(5).cloned().collect::<Vec<_>>().join("`, `")
+        )),
+    }
+}
+
 /// An instruction of a function a release build made (toolchain 7.19):
 /// where it is in the function, its bytes and text, what it calls or
 /// reads when a relocation names it, and the place of the program its
@@ -1732,6 +1816,22 @@ pub fn assembly_compiler(
         Some(name) => command.arg(name),
         None => command.arg("--all"),
     };
+    let then = told_assembly(command, compiler)?;
+    Ok(assembly_changes(&then, &now))
+}
+
+/// What changed in the machine code of the runtime's functions named
+/// `function` from the runtime of the `tondo` at `compiler` to this one's.
+pub fn runtime_assembly_compiler(compiler: &Path, function: &str) -> Result<(Vec<Changed>, usize), String> {
+    let now = runtime_assembly(function)?;
+    let mut command = std::process::Command::new(compiler);
+    command.args(["asm", "--runtime", function]);
+    let then = told_assembly(command, compiler)?;
+    Ok(assembly_changes(&then, &now))
+}
+
+/// The machine code another `tondo` says it makes, with `asm --json`.
+fn told_assembly(mut command: std::process::Command, compiler: &Path) -> Result<Vec<Assembly>, String> {
     let ran = command.arg("--json").output().map_err(|e| format!("cannot run {}: {e}", compiler.display()))?;
     let told: serde_json::Value = serde_json::from_slice(&ran.stdout).map_err(|_| {
         let said = String::from_utf8_lossy(&ran.stderr);
@@ -1744,7 +1844,7 @@ pub fn assembly_compiler(
             told["message"].as_str().unwrap_or("its diagnostics say why")
         ));
     }
-    let then: Vec<Assembly> = told["functions"]
+    Ok(told["functions"]
         .as_array()
         .into_iter()
         .flatten()
@@ -1768,8 +1868,7 @@ pub fn assembly_compiler(
             ir: None,
             rules: Vec::new(),
         })
-        .collect();
-    Ok(assembly_changes(&then, &now))
+        .collect())
 }
 
 /// The functions whose code differs from `then` to `now`, with their diffs,

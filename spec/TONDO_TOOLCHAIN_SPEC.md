@@ -256,6 +256,7 @@ tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm --runtime <function> [--compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
@@ -2268,6 +2269,13 @@ src/main.to:6  total += values[i]
 - `--compiler <tondo>` compara igual con el código que otro `tondo`, uno que
   tenga `asm`, hace del mismo programa: con `--all`, demuestra que un cambio
   del compilador no cambia el código, o dice qué funciones cambia.
+- `--runtime <función>` da el código máquina de una función del runtime, tal
+  como este `tondo` la enlaza en los programas: por su nombre, desmanglado, o
+  por una parte del de unas pocas, ocho como mucho; lo que llama o lee se
+  nombra por su relocalización. Con `--compiler`, qué cambió en ella desde el
+  runtime de otro `tondo`: para probar que un cambio del runtime no cuesta
+  nada donde no debe. No va con lo que es del programa: `--all`, `--clif`,
+  `--rules`, `--tests` ni `--against`.
 - `--compiler` toma también una revisión del repositorio de tondo, donde se
   ejecuta, como `HEAD~1` o `main`: extrae sus archivos como `--against`, y
   construye su `tondo` en release una vez, con `cargo`, en la caché, donde lo

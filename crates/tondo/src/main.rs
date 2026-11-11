@@ -2141,6 +2141,45 @@ fn compiler_command(args: &[OsString]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `tondo asm --runtime <function>` (toolchain 7.19): the machine code of a
+/// function of the runtime this `tondo` links into programs, or what
+/// changed in it from another's with `--compiler`.
+fn runtime_asm(args: &[OsString], compiler: Option<String>, json: bool, other: bool) -> Result<ExitCode, String> {
+    let [function] = args else {
+        return Err(format!("asm --runtime takes a function of the runtime, as `tondo_rt_array_push`\n{USAGE}"));
+    };
+    if other {
+        return Err(format!(
+            "--runtime goes with --compiler and --json alone: the runtime is not the program's\n{USAGE}"
+        ));
+    }
+    let function = function.to_string_lossy();
+    if let Some(reference) = compiler {
+        let (compiler, executable) = driver::compiler(&reference, Path::new("."))?;
+        let (changes, same) = driver::runtime_assembly_compiler(&executable, &function)?;
+        if json {
+            let changes: Vec<serde_json::Value> =
+                changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
+            print_json("asm", true, serde_json::json!({ "compiler": compiler, "changes": changes, "same": same }));
+        } else {
+            print!(
+                "{}",
+                driver::assembly_changes_text(&format!("the runtime of the tondo of {reference}"), &changes, same)
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let assemblies = driver::runtime_assembly(&function)?;
+    if json {
+        let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
+        print_json("asm", true, serde_json::json!({ "functions": functions }));
+    } else {
+        let texts: Vec<String> = assemblies.iter().map(driver::Assembly::text).collect();
+        print!("{}", texts.join("\n"));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Writes the machine code a release build makes of a function (toolchain
 /// 7.19), with the lines of the program it is at and what the passes said
 /// of them; its IR with `--clif`; what changed since a revision with
@@ -2150,6 +2189,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (json, ir, all) =
         (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
     let (rules, tests) = (take_flag(&mut args, "--rules"), take_flag(&mut args, "--tests"));
+    let runtime = take_flag(&mut args, "--runtime");
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2163,6 +2203,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if against.is_some() && compiler.is_some() {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
+    }
+    if runtime {
+        return runtime_asm(&args, compiler, json, all || ir || rules || tests || against.is_some());
     }
     let (path, function) = match (args.as_slice(), all) {
         ([], true) => (PathBuf::from("."), None),
