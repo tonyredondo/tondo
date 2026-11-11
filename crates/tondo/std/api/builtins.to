@@ -124,13 +124,14 @@ pub fn Map.remove(var self, key: K): V?
 /// Removes every entry.
 pub fn Map.clear(var self)
 
-/// Lazy cursors in insertion order.
+/// The keys, as an iterator in insertion order: `collect()` makes an array of them.
 pub fn Map.keys(self): MapKeys[K, V]
 
-/// The values, as a lazy cursor in insertion order.
+/// The values, as an iterator in insertion order: `collect()` makes an array of them.
 pub fn Map.values(self): MapValues[K, V]
 
-/// Lazy cursors over each key with its value, in insertion order.
+/// Each key with its value, as an iterator in insertion order: `collect()` makes an array
+/// of them.
 pub fn Map.entries(self): MapEntries[K, V]
 
 /// The number of values.
@@ -145,7 +146,7 @@ pub fn Set.insert(var self, value: T): Bool
 /// Removes the value: `true` when the set had it.
 pub fn Set.remove(var self, value: T): Bool
 
-/// Lazy cursors over the values, in insertion order.
+/// The values, as an iterator in insertion order: `collect()` makes an array of them.
 pub fn Set.values(self): SetValues[T]
 
 /// Panics: ends the program, or the `recover { ... }` around it, which

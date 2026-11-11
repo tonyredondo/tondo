@@ -1182,6 +1182,16 @@ impl<'a> Checker<'a> {
                 "{message}: `{0}` comes from the trait `{trait_name}`; call `{trait_name}.{0}(value, ...)`",
                 method.name
             );
+        } else if let Some(element) = self.iterator_element(ty)
+            && let Some(hint) = self.collected_hint(element, &method.name)
+        {
+            // An iterator's adapters are lazy: an array has the rest.
+            let message = format!("{message}: it is an iterator, and {hint}");
+            self.diags.error("E1001", method.span, message);
+            let call =
+                if method.name == "toArray" { "collect".to_string() } else { format!("collect().{}", method.name) };
+            self.diags.fix(format!("call `{call}`"), false, vec![(method.span, call)]);
+            return Self::error_expr(span);
         } else if let Some(near) = self.closest_method(ty, &method.name) {
             message = format!("{message}; did you mean `{near}`?");
             self.diags.error("E1001", method.span, message);
@@ -1192,6 +1202,19 @@ impl<'a> Checker<'a> {
         }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
+    }
+
+    /// What to write for `name` on an iterator of `element`, when an array
+    /// has it, or it would make one: `collect()` first.
+    fn collected_hint(&mut self, element: Ty, name: &str) -> Option<String> {
+        if matches!(name, "toArray" | "toList" | "toVec" | "array" | "list") {
+            return Some("`collect()` makes an array of its elements".into());
+        }
+        let array = self.types.intern(TyKind::Array(element));
+        let key = self.owner_key(array);
+        let of_array = self.methods.keys().any(|(owner, method)| *owner == key && method == name)
+            || crate::api::builtin_methods("Array").contains(&name);
+        of_array.then(|| format!("`collect()` makes an array of its elements, which has `{name}`"))
     }
 
     /// The name `tondo api` shows a type of the prelude or of a standard
