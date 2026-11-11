@@ -18,10 +18,14 @@ use crate::mir::*;
 /// How far a way is followed, in statements, before giving up.
 const REACH: usize = 4000;
 
-pub fn moves(bodies: &mut [Body], types: &crate::types::Types) {
+pub fn moves(bodies: &mut [Body], types: &crate::types::Types, sources: &crate::source::SourceMap) {
     crate::parallel::each_mut(bodies, |body| {
         moves_in(body);
-        drop_empty_values(body, types);
+        // The calls inlined from the standard library, whose bindings a dump
+        // of the program's own code need not show.
+        let standard: Vec<bool> =
+            body.inlined.iter().map(|call| sources.file_of(call.span.start).logical.starts_with("<std>/")).collect();
+        drop_empty_values(body, types, &standard);
     });
 }
 
@@ -204,7 +208,7 @@ fn step(statement: &Statement, source: &Place) -> Step {
 /// `math.sqrt(x)`, `Float ! MathError`, whose error may hold a text, after
 /// `unwrapOr` took its value from where it was made. Its releases, which
 /// read its tag to find nothing to free, and what it is made of, go.
-fn drop_empty_values(body: &mut Body, types: &crate::types::Types) {
+fn drop_empty_values(body: &mut Body, types: &crate::types::Types, standard: &[bool]) {
     let count = body.locals.len();
     // Where each local is named, and whether a terminator names it.
     let mut named: Vec<Vec<(usize, usize)>> = vec![Vec::new(); count];
@@ -226,13 +230,19 @@ fn drop_empty_values(body: &mut Body, types: &crate::types::Types) {
             in_terminator[local.0 as usize] = true;
         }
     }
-    // The program's own bindings stay, as a dump shows them, and so do what
-    // the function is given and gives. One of inlined code that nothing
+    // The program's own bindings stay, as a dump shows them, those of its
+    // code inlined here too, and so do what the function is given and
+    // gives. One of the standard library's code inlined here that nothing
     // writes then, a dump leaves out, as an argument the inliner found
     // unused.
     let mut kept = vec![false; count];
     for local in body.params.iter().chain(&body.ret).chain(&body.framed) {
         kept[local.0 as usize] = true;
+    }
+    for (local, _, scope) in &body.scoped {
+        if !standard.get(*scope as usize).copied().unwrap_or(false) {
+            kept[local.0 as usize] = true;
+        }
     }
     for (index, name) in body.names.iter().enumerate() {
         kept[index] |= name.is_some();
