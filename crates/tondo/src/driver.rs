@@ -1570,19 +1570,30 @@ pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
     let path = carried("libtondo_runtime", RUNTIME)?;
     let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the runtime: {e}"))?;
     let archive = object::read::archive::ArchiveFile::parse(&*bytes).map_err(|e| format!("the runtime: {e}"))?;
-    let name = |symbol: &str| format!("{:#}", rustc_demangle::demangle(symbol));
     let mut found: Vec<Assembly> = Vec::new();
     let mut named: Vec<String> = Vec::new();
     for member in archive.members().flatten() {
         let Ok(data) = member.data(&*bytes) else { continue };
         let Ok(file) = object::File::parse(data) else { continue };
+        // Mach-O starts every name with `_`, and gives a function no size:
+        // it ends where the next symbol of its section starts.
+        let macho = file.format() == object::BinaryFormat::MachO;
+        let plain =
+            |raw: &'_ str| -> String { if macho { raw.strip_prefix('_').unwrap_or(raw) } else { raw }.to_string() };
+        let name = |raw: &str| format!("{:#}", rustc_demangle::demangle(&plain(raw)));
+        let mut starts: Vec<(usize, u64)> = file
+            .symbols()
+            .filter(|symbol| !symbol.is_undefined())
+            .filter_map(|symbol| Some((symbol.section_index()?.0, symbol.address())))
+            .collect();
+        starts.sort_unstable();
         for symbol in file.symbols() {
-            if symbol.kind() != object::SymbolKind::Text || symbol.is_undefined() || symbol.size() == 0 {
+            if symbol.kind() != object::SymbolKind::Text || symbol.is_undefined() {
                 continue;
             }
             let Ok(raw) = symbol.name() else { continue };
             let shown = name(raw);
-            let exact = shown == function || raw == function;
+            let exact = shown == function || plain(raw) == function;
             if !exact && !shown.contains(function) {
                 continue;
             }
@@ -1597,8 +1608,19 @@ pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
                 continue;
             };
             let Ok(code) = section.data() else { continue };
-            let start = symbol.address() as usize;
-            let Some(code) = code.get(start..start + symbol.size() as usize) else { continue };
+            let size = match symbol.size() {
+                0 => {
+                    let at = (section.index().0, symbol.address());
+                    let next = starts.iter().find(|&&other| other.0 == at.0 && other.1 > at.1).map(|other| other.1);
+                    next.unwrap_or(section.address() + section.size()).saturating_sub(symbol.address())
+                }
+                size => size,
+            };
+            if size == 0 {
+                continue;
+            }
+            let start = (symbol.address() - section.address()) as usize;
+            let Some(code) = code.get(start..start + size as usize) else { continue };
             // What each place of it calls or reads, by the relocations.
             let targets: Vec<(usize, String)> = section
                 .relocations()
