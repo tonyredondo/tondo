@@ -6017,3 +6017,12 @@ runtime, whose answer picks the way. Each function also declares the data it use
 and its texts, which Cranelift took for as many addresses as uses, each in a register of its own
 through a loop. In the loop of a `Mutex.update`, the code after the call to lock went from 13
 instructions to 6, and a register freed kept the loop's bound out of the stack.
+
+## A stopped task is looked for only when something asks for attention
+
+The operations that end at once in a stopped task, a send, a receive, a lock, found the running
+task, which costs a call, and read four of its fields, on every operation. Every reason that stops
+a task, a cancellation, its group's `recover` or its deadline, counts in the flag of attention
+before it holds, the flag compiled code reads after every call that may wait; the runtime now reads
+it first too, and looks for the task only when it is set. With the check after a call made one load
+and one branch, the mutex row does 7 % fewer instructions, `select` 4 % and the channel's 11 %.

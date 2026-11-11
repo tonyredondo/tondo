@@ -13,10 +13,17 @@ pub(super) static STOPPER: AtomicBool = AtomicBool::new(false);
 /// How many reasons there are for compiled code to call
 /// `tondo_rt_cancelled` after a call that may wait: a stop of the world, a
 /// thread that owes the collector, an exploration of orders, a task
-/// cancelled or one whose statement starts again. Compiled code reads it,
-/// and at zero, nearly always, goes on without the call.
+/// cancelled, stopped by its group's `recover` or past its deadline, or one
+/// whose statement starts again. Compiled code reads it, and at zero, nearly
+/// always, goes on without the call; so do the operations that end at once
+/// in a stopped task (`stops`). Each reason counts before it holds.
 #[unsafe(export_name = "tondo_rt_attention")]
 pub static ATTENTION: AtomicU32 = AtomicU32::new(0);
+
+/// Whether anything asks for attention now.
+pub(crate) fn attended() -> bool {
+    ATTENTION.load(Ordering::Relaxed) != 0
+}
 
 /// One more reason, or one less, to call `tondo_rt_cancelled`.
 pub(crate) fn attend(more: bool) {

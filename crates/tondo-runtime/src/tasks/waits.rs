@@ -14,8 +14,8 @@ pub(super) const DEADLINE: usize = usize::MAX - 2;
 /// check (11.17).
 pub(super) fn expire(task: &mut Task) {
     if !task.expired {
-        task.expired = true;
         attend(true);
+        task.expired = true;
     }
 }
 

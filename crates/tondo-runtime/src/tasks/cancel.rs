@@ -38,12 +38,14 @@ pub(crate) fn within_ends(task: &mut Task, level: usize) {
 /// a cancelled task, but not in its `defer`s, which do what needs no wait,
 /// and whose waits `Wait::block` ends at once (11.15).
 pub(crate) fn stops() -> bool {
-    stops_task(current())
+    // Nearly always nothing asks for attention, and the running task, which
+    // costs a call to find, is not read.
+    attended() && stops_task(current())
 }
 
 /// `stops`, for the running task already read.
 pub(crate) fn stops_task(task: *mut Task) -> bool {
-    unsafe { task.as_ref() }.is_some_and(|task| halted(task) && task.deferring == 0)
+    attended() && unsafe { task.as_ref() }.is_some_and(|task| halted(task) && task.deferring == 0)
 }
 
 /// A `defer` starts to run.
