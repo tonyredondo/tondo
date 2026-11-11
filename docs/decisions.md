@@ -5980,3 +5980,28 @@ no more than the noise; in a function that does little but call, as `fib`, it is
 instructions and 6% of the time. The maintainer chose on 2026-11-11 to keep them by default and let
 a build leave them out with `TONDO_LOGPOINT_SITES=0` in its environment, which is part of the key of
 the build in the cache; `tondo logpoint` then says that the build has no places, and why.
+
+## Workers keep to the cores that share a cache
+
+A task that `spawn` makes waits for a worker, and the worker the scheduler woke was any that slept,
+often one on the other chip of a processor with two, as the Ryzen 9 5950X, whose cores share a
+last-level cache eight at a time. The task then ran away from the data its starter had left in that
+cache. The maintainer approved on 2026-11-11 workers that know the domains of the caches, the
+cores that share one, as Linux lists them: an idle worker sleeps in the domain of the core it last
+ran on, the worker woken for a task is one of the domain where the task was made, when one sleeps
+there, and a worker takes a task waiting next to a worker of another domain only after 200 µs,
+ten times what one of the same domain waits. No worker is bound to its cores: the system keeps a
+thread near where it ran, and the scheduler follows it. The program that compares the rows with
+Go's, measured seven times in turns with Go's, took 64.9 ms on `spawn` where it took 104.7 and Go
+takes 76.7, and a little less on `mutex` and `select`; the rows of `bench/tondo` stay where they
+were.
+
+The protocol of waking changed with it, so it was modelled first, in
+`testing/models/tests/wake_domains.to`: one worker looking for tasks at a time in each domain, and
+a task nobody would run is a failure the model finds when a wake is lost. The model does not count
+how long a task waits, and the cases found what it could not: a worker woken for a task that waited
+next to a busy worker looked once more after 20 µs and slept, which was enough when every task
+waited 20 µs, and left the task of another domain to wait for good behind one that never yields.
+A worker that looks for tasks now keeps looking while one waits that is not yet its to take. A
+machine with a cache for every core, or that says nothing of its caches, or with more than sixteen
+domains, is one domain, as before; `TONDO_CACHE_DOMAINS=0` makes it one on any machine.

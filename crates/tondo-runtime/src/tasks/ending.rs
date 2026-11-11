@@ -47,7 +47,7 @@ pub(crate) fn end_all(status: i32) -> ! {
             drop(done);
             // Its thread may be working for it, and sleep.
             drop(queue());
-            READY.notify_all();
+            READY.iter().for_each(std::sync::Condvar::notify_all);
         } else if !join.is_null() {
             // Its join completes without a result, so whoever waits for
             // it goes on and nothing releases what it never made.

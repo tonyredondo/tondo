@@ -1,0 +1,500 @@
+// How workers find tasks and go to sleep when they belong to domains, the
+// cores that share a cache (crates/tondo-runtime/src/tasks/: work_until in
+// work.rs; enqueue, wake_idle and wake_one in workers.rs; step_back in
+// foreign.rs): as wake.to, with a worker looking for tasks in each domain at a
+// time, and a worker woken for tasks in its own domain, or in another when
+// its own has none asleep. Taking another worker's tasks is the same in any
+// domain here: how long they wait first, longer in another domain, is time,
+// which the model leaves out as it does for tasks too young to take. A step
+// here is what the code does with the queue's lock held, or one atomic
+// operation.
+import std.model
+
+enum Task {
+    A
+    B
+    P
+}
+
+enum Phase {
+    Spare
+    Look
+    Run
+    WakeIdle
+    Asleep
+    Retiring
+    C
+}
+
+type Worker = {
+    phase: Phase
+    own: model.Bag[Task]
+    next: Task?
+    current: Task?
+    timed: Bool
+    seeker: Bool
+    replaced: Bool
+    domain: Int
+}
+
+type Pool = {
+    workers: Array[Worker]
+    queue: model.Bag[Task]
+    parked: model.Bag[Task]
+    todo: model.Bag[Task]
+    // Whether a worker looks for tasks, in each domain.
+    seeking: Array[Bool]
+    surplus: Int
+}
+
+// What the model leaves out or puts in, to see that the check finds it.
+type Change = {
+    // A call of C returns.
+    cEnds: Bool
+    // A worker that retires wakes one that sleeps.
+    retiringWakes: Bool
+}
+
+// The tasks of both, once each.
+fn union(bag: model.Bag[Task], more: Array[Task]): model.Bag[Task] {
+    var all = bag
+    for task in more {
+        if not all.contains(task) {
+            all = all.add(task)
+        }
+    }
+    all
+}
+
+fn worker(pool: Pool, w: Int): Worker {
+    pool.workers[w]
+}
+
+fn changed(pool: Pool, w: Int, after: Worker): Pool {
+    pool with { workers: pool.workers.replaced(w, after) }
+}
+
+fn idle(pool: Pool): Array[Int] {
+    pool.workers.enumerate().filter((pair) { pair.1.phase == Phase.Asleep }).map((pair) { pair.0 })
+}
+
+fn idleIn(pool: Pool, domain: Int): Array[Int] {
+    idle(pool).filter((v) { pool.workers[v].domain == domain })
+}
+
+// Those asleep in the domain, or in any when it has none: whom a worker
+// that leaves wakes.
+fn nearest(pool: Pool, domain: Int): Array[Int] {
+    let near = idleIn(pool, domain)
+    if near.isEmpty() { idle(pool) } else { near }
+}
+
+fn seekingIn(pool: Pool, domain: Int): Bool {
+    pool.seeking[domain]
+}
+
+fn sought(pool: Pool, domain: Int, value: Bool): Pool {
+    pool with { seeking: pool.seeking.replaced(domain, value) }
+}
+
+// Some worker has tasks of its own.
+fn waiting(pool: Pool): Bool {
+    pool.workers.any((each) { not each.own.isEmpty() })
+}
+
+fn nexts(pool: Pool): Array[Int] {
+    pool.workers.enumerate().filter((pair) { pair.1.next.isSome() }).map((pair) { pair.0 })
+}
+
+fn work(pool: Pool): Bool {
+    not pool.queue.isEmpty() or waiting(pool) or not nexts(pool).isEmpty()
+}
+
+// One that sleeps, told to look.
+fn told(pool: Pool, v: Int, seeker: Bool): Pool {
+    changed(pool, v, worker(pool, v) with { phase: Phase.Look, timed: false, seeker })
+}
+
+// One that sleeps, told to look as the one that looks in its domain.
+fn toldToSeek(pool: Pool, v: Int): Pool {
+    sought(told(pool, v, true), worker(pool, v).domain, true)
+}
+
+// Found in the queue, or taken from another worker's: if it was the one
+// looking, it stops, and the next looks if more wait.
+fn found(pool: Pool, w: Int, task: Task, more: Bool): Pool {
+    let it = worker(pool, w)
+    let after = it with {
+        current: some(task)
+        seeker: false
+        phase: if more { Phase.WakeIdle } else { Phase.Run }
+    }
+    let looked = changed(pool, w, after)
+    if it.seeker { sought(looked, it.domain, false) } else { looked }
+}
+
+fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
+    var next: Array[model.Step[Pool]] = []
+    for (w, it) in pool.workers.enumerate() {
+        let free = pool.surplus == 0 or w == 0
+        match it.phase {
+            Phase.Look => {
+                for task in it.own.items() {
+                    // A task of its own, which it runs.
+                    next.push(
+                        model.step(
+                            "take own",
+                            changed(
+                                pool,
+                                w,
+                                it with {
+                                    own: it.own.remove(task)
+                                    current: some(task)
+                                    phase: Phase.Run
+                                },
+                            ),
+                        ),
+                    )
+                    // One turn in 61 its own task goes to the queue, for fairness.
+                    next.push(
+                        model.step(
+                            "turn",
+                            changed(pool, w, it with { own: it.own.remove(task) }) with {
+                                queue: union(pool.queue, [task])
+                            },
+                        ),
+                    )
+                }
+                // A worker in excess retires, leaving what it had in the queue.
+                if w != 0 and pool.surplus > 0 {
+                    var left = it.own.items()
+                    match it.next {
+                        some(task) => left.push(task)
+                        none => {}
+                    }
+                    let after = it with {
+                        own: model.Bag([])
+                        next: none
+                        seeker: false
+                        phase: if pool.queue.isEmpty() and left.isEmpty() {
+                            Phase.Spare
+                        } else {
+                            Phase.Retiring
+                        }
+                    }
+                    let retired = changed(pool, w, after) with {
+                        surplus: pool.surplus - 1
+                        queue: union(pool.queue, left)
+                    }
+                    next.push(
+                        model.step(
+                            "retire",
+                            if it.seeker { sought(retired, it.domain, false) } else { retired },
+                        ),
+                    )
+                }
+                if free {
+                    for task in pool.queue.items() {
+                        let rest = pool.queue.remove(task)
+                        next.push(
+                            model.step(
+                                "pop",
+                                found(
+                                    pool,
+                                    w,
+                                    task,
+                                    not rest.isEmpty() or it.seeker and waiting(pool),
+                                ) with { queue: rest },
+                            ),
+                        )
+                    }
+                    if pool.queue.isEmpty() {
+                        for (v, other) in pool.workers.enumerate() {
+                            for task in other.own.items() {
+                                if v != w {
+                                    let stolen = changed(
+                                        pool,
+                                        v,
+                                        other with { own: other.own.remove(task) },
+                                    )
+                                    next.push(model.step("steal", found(stolen, w, task, false)))
+                                }
+                            }
+                        }
+                    }
+                }
+                // Nothing found, or tasks too young to take: it counts itself
+                // idle, stops looking, and sleeps; for a moment only if tasks
+                // wait and nobody looks.
+                if pool.queue.isEmpty() and
+                    it.own.isEmpty() and
+                    it.next.isNone() and
+                    not (it.seeker and not nexts(pool).isEmpty()) and
+                    free {
+                    let stopped = if it.seeker { false } else { seekingIn(pool, it.domain) }
+                    let again = waiting(pool) and not stopped
+                    let asleep = changed(
+                        pool,
+                        w,
+                        it with { seeker: again, timed: again, phase: Phase.Asleep },
+                    )
+                    next.push(model.step("sleep", sought(asleep, it.domain, stopped or again)))
+                }
+                match it.next {
+                    some(task) => next.push(
+                        model.step(
+                            "take next",
+                            changed(
+                                pool,
+                                w,
+                                it with { current: some(task), next: none, phase: Phase.Run },
+                            ),
+                        ),
+                    )
+                    none => {}
+                }
+                // Only a worker told to look takes the next of another.
+                if it.seeker {
+                    for v in nexts(pool) {
+                        if v != w {
+                            let other = worker(pool, v)
+                            match other.next {
+                                some(task) => next.push(
+                                    model.step(
+                                        "take other",
+                                        found(
+                                            changed(pool, v, other with { next: none }),
+                                            w,
+                                            task,
+                                            false,
+                                        ),
+                                    ),
+                                )
+                                none => {}
+                            }
+                        }
+                    }
+                }
+            }
+            // What it leaves is another's: it wakes one that sleeps.
+            Phase.Retiring => {
+                let sleeping = if change.retiringWakes { nearest(pool, it.domain) } else { [] }
+                let spare = changed(pool, w, it with { phase: Phase.Spare })
+                for v in sleeping {
+                    next.push(model.step("retiring", told(spare, v, worker(pool, v).seeker)))
+                }
+                if sleeping.isEmpty() {
+                    next.push(model.step("retiring", spare))
+                }
+            }
+            // The end of a wait for a moment.
+            Phase.Asleep if it.timed => next.push(
+                model.step("timeout", changed(pool, w, it with { timed: false, phase: Phase.Look })),
+            )
+            // `wake_idle`, whose worker then goes on.
+            Phase.WakeIdle => {
+                let runs = changed(pool, w, it with { phase: Phase.Run })
+                // One asleep in its domain, unless one looks there; or, when
+                // its domain has none asleep, one asleep in a domain where
+                // none looks.
+                let own = idleIn(pool, it.domain)
+                let sleeping = if not own.isEmpty() {
+                    if seekingIn(pool, it.domain) { [] } else { own }
+                } else {
+                    idle(pool).filter((v) { not seekingIn(pool, worker(pool, v).domain) })
+                }
+                for v in sleeping {
+                    next.push(model.step("wake idle", toldToSeek(runs, v)))
+                }
+                if sleeping.isEmpty() {
+                    next.push(model.step("wake idle", runs))
+                }
+            }
+            Phase.Run => {
+                // A task starts another: in its worker's queue; the first that waits wakes.
+                for task in pool.todo.items() {
+                    let after = it with {
+                        own: it.own.add(task)
+                        phase: if it.own.isEmpty() { Phase.WakeIdle } else { Phase.Run }
+                    }
+                    next.push(
+                        model.step(
+                            "spawn",
+                            changed(pool, w, after) with { todo: pool.todo.remove(task) },
+                        ),
+                    )
+                }
+                // A task that runs wakes another, which runs next on its worker,
+                // and the one there goes to the worker's queue. Waking another
+                // worker is rationed.
+                for task in pool.parked.items() {
+                    let own = match it.next {
+                        some(before) => it.own.add(before)
+                        none => it.own
+                    }
+                    let woke = it with { next: some(task), own }
+                    next.push(
+                        model.step(
+                            "notify",
+                            changed(pool, w, woke with { phase: Phase.WakeIdle }) with {
+                                parked: pool.parked.remove(task)
+                            },
+                        ),
+                    )
+                    next.push(
+                        model.step(
+                            "notify",
+                            changed(pool, w, woke) with { parked: pool.parked.remove(task) },
+                        ),
+                    )
+                }
+                next.push(
+                    model.step(
+                        "finish",
+                        changed(pool, w, it with { current: none, phase: Phase.Look }),
+                    ),
+                )
+                // A long call of C, or a task a tool holds: the worker runs nothing else.
+                next.push(model.step("enter C", changed(pool, w, it with { phase: Phase.C })))
+            }
+            Phase.C => {
+                // The monitor starts another when tasks wait and nobody is
+                // idle, which is told to look.
+                if not it.replaced and idle(pool).isEmpty() and work(pool) {
+                    for (v, other) in pool.workers.enumerate() {
+                        if other.phase == Phase.Spare {
+                            let replaced = changed(pool, w, it with { replaced: true })
+                            let started = changed(
+                                replaced,
+                                v,
+                                other with {
+                                    phase: Phase.Look
+                                    seeker: not seekingIn(pool, other.domain)
+                                },
+                            )
+                            next.push(model.step("monitor", sought(started, other.domain, true)))
+                        }
+                    }
+                }
+                // And one that sleeps is told to look, even if it replaced this one already.
+                if work(pool) {
+                    for v in idle(pool) {
+                        if not seekingIn(pool, worker(pool, v).domain) {
+                            next.push(model.step("monitor wakes", toldToSeek(pool, v)))
+                        }
+                    }
+                }
+                // The call returns: a worker that was replaced makes one retire, and wakes one.
+                if change.cEnds {
+                    let back = changed(pool, w, it with { replaced: false, phase: Phase.Run }) with {
+                        surplus: if it.replaced { pool.surplus + 1 } else { pool.surplus }
+                    }
+                    let sleeping = if it.replaced { nearest(pool, it.domain) } else { [] }
+                    for v in sleeping {
+                        next.push(model.step("leave C", told(back, v, worker(pool, v).seeker)))
+                    }
+                    if sleeping.isEmpty() {
+                        next.push(model.step("leave C", back))
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    next
+}
+
+fn check(change: Change, domains: Array[Int]): model.Checked ! model.Violation {
+    let spare = Worker {
+        phase: Phase.Spare
+        own: model.Bag([])
+        next: none
+        current: none
+        timed: false
+        seeker: false
+        replaced: false
+        domain: 0
+    }
+    let count = domains.reduce(
+        0,
+        (most, domain) { if domain + 1 > most { domain + 1 } else { most } },
+    )
+    let first = domains
+        .enumerate()
+        .map(
+            (pair) {
+                spare with {
+                    domain: pair.1
+                    phase: if pair.0 == 0 { Phase.Look } else { Phase.Spare }
+                }
+            },
+        )
+    let start = Pool {
+        workers: first
+        queue: model.Bag([Task.A])
+        parked: model.Bag([Task.P])
+        todo: model.Bag([Task.B])
+        seeking: (0..count).map((_) { false }).collect()
+        surplus: 0
+    }
+    // A task runs on one worker at a time.
+    let oneWorker = model.always(
+        (pool: Pool) {
+            let workers = pool.workers
+            [Task.A, Task.B, Task.P].all(
+                (task) { workers.count((each) { each.current == some(task) }) <= 1 },
+            )
+        },
+        name: "OneWorker",
+    )
+    let allDone = (pool: Pool) {
+        pool.queue.isEmpty() and
+            nexts(pool).isEmpty() and
+            not waiting(pool) and
+            pool.workers.all(
+                (each) { each.current.isNone() or not change.cEnds and each.phase == Phase.C },
+            )
+    }
+    model.check(start, (pool) { steps(pool, change) }, holds: [oneWorker], ends: some(allDone))
+}
+
+// One domain is the protocol of wake.to, as many states as TLC finds there.
+test wakeInOneDomainAsWake {
+    assert(
+        model.expect(check(Change { cEnds: true, retiringWakes: true }, [0, 0, 0])).states == 1806,
+    )
+}
+
+// Three workers, two in one domain and one in the other: no task waits
+// with every worker that could take it asleep.
+test wakeInDomains {
+    let checked = model.expect(check(Change { cEnds: true, retiringWakes: true }, [0, 0, 1]))
+    assert(checked.states == 1610)
+}
+
+// As WakeInC.cfg: a call of C that never returns.
+test wakeInDomainsWithCForEver {
+    let checked = model.expect(check(Change { cEnds: false, retiringWakes: true }, [0, 0, 1]))
+    assert(checked.states == 170)
+}
+
+// Each worker a domain of its own.
+test wakeEachInItsDomain {
+    let checked = model.expect(check(Change { cEnds: true, retiringWakes: true }, [0, 1, 2]))
+    assert(checked.states == 1596)
+}
+
+// Two domains of two workers.
+test wakeInTwoDomainsOfTwo {
+    let checked = model.expect(check(Change { cEnds: true, retiringWakes: true }, [0, 0, 1, 1]))
+    assert(checked.states == 6845)
+}
+
+// Without the wake of a worker that retires, a task stays in the queue with
+// the last worker asleep, as in wake.to: the check sees through domains.
+test wakeInDomainsFindsATaskNobodyRuns {
+    match check(Change { cEnds: true, retiringWakes: false }, [0, 0, 1]) {
+        ok(_) => panic("a task nobody runs went unseen")
+        err(broken) => assert(broken.what.contains("nothing can follow"))
+    }
+}

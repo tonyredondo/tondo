@@ -68,15 +68,16 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
         && own_next().is_none()
         && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))
     {
+        next.domain.store(super::domains::here(), Ordering::Relaxed);
         worker(|w| w.own_next.set(Some(next)));
     }
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
     // One that starts to take another's place was woken for that.
-    let starts = std::mem::take(&mut queue().waking);
-    let (mut woken, mut waited) = (starts, false);
-    // This worker looks for tasks for `SEEKING`.
-    let mut seeker = starts;
+    let starts = queue().starting.take();
+    let (mut woken, mut waited) = (starts.is_some(), false);
+    // The domain this worker looks for tasks for, as `SEEKING` says.
+    let mut seeker: Option<usize> = starts;
     loop {
         turn_host();
         // The task made runnable by the one that ran here, but now and then
@@ -112,8 +113,8 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     return 0;
                 }
                 if !main && queue.surplus > 0 {
-                    if seeker {
-                        SEEKING.store(false, Ordering::SeqCst);
+                    if let Some(domain) = seeker {
+                        SEEKING[domain].store(false, Ordering::SeqCst);
                     }
                     queue.surplus -= 1;
                     queue.workers -= 1;
@@ -223,10 +224,19 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     queue.idle += 1;
                     IDLE.fetch_add(1, Ordering::SeqCst);
                 }
+                // The domain of the core it runs on now, which the tasks it
+                // starts or wakes next are of (`steal`).
+                let here = super::domains::here();
+                if let Some(own) = own_next() {
+                    own.domain.store(here, Ordering::Relaxed);
+                }
                 let mut next = queue.timers.peek().map(|t| t.at);
                 // A worker that looks for tasks looks again in a moment at
                 // those that wait for less, and goes on looking.
-                waited = (young && woken) || (stealing && seeker);
+                // One that looks keeps looking while tasks wait that are
+                // not yet its to take, as those of another domain wait
+                // longer for it than the moment it looks again in.
+                waited = (young && (woken || seeker.is_some())) || (stealing && seeker.is_some());
                 if !waited {
                     // Before it sleeps, one that looked for tasks stops, and
                     // then, counted idle, looks at the workers' queues once
@@ -234,13 +244,18 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     // whose worker may not come back to them soon, as one
                     // that waits in a call of C. Unless another worker looks
                     // for them, this one does again in a moment.
-                    if seeker {
-                        seeker = false;
-                        SEEKING.store(false, Ordering::SeqCst);
+                    if let Some(domain) = seeker.take() {
+                        SEEKING[domain].store(false, Ordering::SeqCst);
                     }
-                    if waiting_somewhere() && !SEEKING.swap(true, Ordering::SeqCst) {
-                        (seeker, waited) = (true, true);
+                    if waiting_somewhere() && !SEEKING[here].swap(true, Ordering::SeqCst) {
+                        (seeker, waited) = (Some(here), true);
                     }
+                }
+                // It sleeps in the domain it looks for tasks for, or in the
+                // one of the core it runs on, where a task made there wakes it.
+                let sleeps_in = seeker.unwrap_or(here);
+                if polling.is_none() {
+                    queue.idle_in[sleeps_in] += 1;
                 }
                 if waited {
                     let soon = Instant::now() + NEXT_WAIT;
@@ -293,12 +308,15 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     // program's.
                     let outside = crate::replay::Outside::enter();
                     let woken = match (delay, until) {
-                        (Some(delay), _) => READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0,
-                        (None, None) => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
+                        (Some(delay), _) => {
+                            READY[sleeps_in].wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0
+                        }
+                        (None, None) => READY[sleeps_in].wait(queue).unwrap_or_else(|e| e.into_inner()),
                         // What it waits for may come without a wake, and
                         // looking again is no turn of the worker's.
                         (None, Some(until)) => loop {
-                            let (woken, waited) = READY.wait_timeout(queue, RECHECK).unwrap_or_else(|e| e.into_inner());
+                            let (woken, waited) =
+                                READY[sleeps_in].wait_timeout(queue, RECHECK).unwrap_or_else(|e| e.into_inner());
                             if !waited.timed_out() || until() {
                                 break woken;
                             }
@@ -316,21 +334,23 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     }
                 };
                 queue.idle -= 1;
+                queue.idle_in[sleeps_in] -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
                 // Woken for a task: the first to look after a wake looks for
                 // what it was for, and one that waited a moment for a task
                 // looks again as `waited` says. A wake that found nothing
                 // must not make the next one count for nothing.
-                woken = queue.waking;
-                seeker |= std::mem::take(&mut queue.waking);
+                woken = queue.waking[sleeps_in];
+                if std::mem::take(&mut queue.waking[sleeps_in]) {
+                    seeker = Some(sleeps_in);
+                }
                 looked = false;
             }
         };
         // Found: the next worker looks, if more wait anywhere.
         let mut more = more;
-        if seeker {
-            seeker = false;
-            SEEKING.store(false, Ordering::SeqCst);
+        if let Some(domain) = seeker.take() {
+            SEEKING[domain].store(false, Ordering::SeqCst);
             more = more || waiting_somewhere() || !queue().runnable.is_empty();
         }
         if more {
@@ -387,7 +407,7 @@ pub(super) fn run(task: *mut Task) {
                 // Take the queue's lock so the main thread cannot miss
                 // the notification between its check and its wait.
                 drop(queue());
-                READY.notify_all();
+                READY.iter().for_each(Condvar::notify_all);
                 if let Some(poller) = crate::poll::poller() {
                     poller.wake();
                 }

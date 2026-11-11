@@ -21,6 +21,8 @@ pub(super) struct Next {
     /// Since when they wait: since the first was started, or since others
     /// last took some.
     pub(super) waiting: AtomicU64,
+    /// The domain of cores its worker last looked for tasks in (`domains`).
+    pub(super) domain: AtomicUsize,
 }
 
 pub(super) struct Local(pub(super) VecDeque<*mut Task>);
@@ -35,6 +37,7 @@ impl Next {
             tasks: Mutex::new(Local(VecDeque::new())),
             count: AtomicUsize::new(0),
             waiting: AtomicU64::new(0),
+            domain: AtomicUsize::new(0),
         }
     }
 
@@ -45,24 +48,29 @@ impl Next {
 
 /// Half of the tasks another worker started and has not run, the first to
 /// run here and the rest to this worker's own, and whether more wait; or
-/// whether some wait for less than `NEXT_WAIT`, to look at again in a
-/// moment. Tasks wait that long before another worker takes them, as a task
-/// next does: those that end sooner end on the worker that started them,
-/// in the caches where they were made, and the others are shared out as
-/// soon.
+/// whether some wait for less than they must, to look at again in a
+/// moment. Tasks wait `NEXT_WAIT` before another worker of their domain
+/// takes them, as a task next does: those that end sooner end on the worker
+/// that started them, in the caches where they were made, and the others
+/// are shared out as soon; and `CROSS_WAIT` before one of another domain
+/// does, as crossing to it costs their caches.
 pub(super) fn steal() -> Result<(*mut Task, bool), bool> {
     let Some(own) = own_next() else { return Err(false) };
-    // The clock is read once a worker has tasks to take, which is seldom
-    // when this one looks for them.
+    // The clock and the domain are read once a worker has tasks to take,
+    // which is seldom when this one looks for them.
     let mut clock = None;
     let mut young = false;
     for other in nexts().filter(|other| !std::ptr::eq(*other, own)) {
         if other.count.load(Ordering::Relaxed) == 0 {
             continue;
         }
-        let now = *clock.get_or_insert_with(nanos);
+        let (now, here) = *clock.get_or_insert_with(|| {
+            let here = super::domains::here();
+            own.domain.store(here, Ordering::Relaxed);
+            (nanos(), here)
+        });
         let since = other.waiting.load(Ordering::Relaxed);
-        if now.saturating_sub(since) < NEXT_WAIT.as_nanos() as u64 {
+        if now.saturating_sub(since) < wait_from(here, other) {
             young = true;
             continue;
         }
@@ -131,16 +139,61 @@ pub(super) fn own_next() -> Option<&'static Next> {
 /// How long a task waits next to a worker that runs another before an idle
 /// worker takes it, so that tasks that could run in parallel still do.
 pub(super) const NEXT_WAIT: Duration = Duration::from_micros(20);
+/// How long they wait before an idle worker of another domain of cores
+/// takes them (`domains`).
+pub(super) const CROSS_WAIT: Duration = Duration::from_micros(200);
+
+/// How long the tasks of `other` wait before a worker in domain `here`
+/// takes them.
+fn wait_from(here: usize, other: &Next) -> u64 {
+    match other.domain.load(Ordering::Relaxed) == here {
+        true => NEXT_WAIT.as_nanos() as u64,
+        false => CROSS_WAIT.as_nanos() as u64,
+    }
+}
 /// When a worker was last woken for a task waiting next.
 pub(super) static NEXT_WOKE: AtomicU64 = AtomicU64::new(0);
 /// How many workers sleep, as the queue counts them, read without its lock.
 pub(super) static IDLE: AtomicUsize = AtomicUsize::new(0);
-/// A worker was woken for tasks, or looks for them since: no other is woken
-/// until it finds one or sleeps again, and then it wakes the next if more
-/// wait, as Go's scheduler wakes a thread only when none looks for work.
-/// Workers that look at once would read what the busy ones write all the
-/// time, and slow them. Set under the queue's lock.
-pub(super) static SEEKING: AtomicBool = AtomicBool::new(false);
+/// A worker of the domain was woken for tasks, or looks for them since: no
+/// other of the domain is woken until it finds one or sleeps again, and then
+/// it wakes the next if more wait, as Go's scheduler wakes a thread only
+/// when none looks for work. Workers that look at once would read what the
+/// busy ones write all the time, and slow them. Set under the queue's lock.
+pub(super) static SEEKING: [AtomicBool; super::domains::MOST] =
+    [const { AtomicBool::new(false) }; super::domains::MOST];
+
+/// Whether a worker looks for tasks in any domain.
+pub(super) fn seeking_anywhere() -> bool {
+    SEEKING[..super::domains::count()].iter().any(|seeking| seeking.load(Ordering::SeqCst))
+}
+
+/// The domain to wake a worker in for tasks made in `here`: `here`, when one
+/// sleeps there and none of it looks; or, when none sleeps there, another
+/// where one sleeps and none looks (the model of `testing/models/tests/
+/// wake_domains.to`).
+fn domain_to_wake(queue: &Queue, here: usize) -> Option<usize> {
+    if queue.idle_in[here] > 0 {
+        return (!SEEKING[here].load(Ordering::SeqCst)).then_some(here);
+    }
+    (0..super::domains::count()).find(|&domain| queue.idle_in[domain] > 0 && !SEEKING[domain].load(Ordering::SeqCst))
+}
+
+/// Wakes a worker that sleeps in `domain` to look for tasks there.
+fn wake_in(mut queue: MutexGuard<'static, Queue>, domain: usize) {
+    queue.waking[domain] = true;
+    SEEKING[domain].store(true, Ordering::SeqCst);
+    drop(queue);
+    READY[domain].notify_one();
+}
+
+/// A domain where a worker sleeps, `here` first.
+fn domain_asleep(queue: &Queue, here: usize) -> Option<usize> {
+    if queue.idle_in[here] > 0 {
+        return Some(here);
+    }
+    (0..super::domains::count()).find(|&domain| queue.idle_in[domain] > 0)
+}
 
 pub(super) fn nanos() -> u64 {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -167,8 +220,8 @@ pub(super) fn take_next() -> (Option<*mut Task>, bool) {
         if task.is_null() {
             continue;
         }
-        let now = *clock.get_or_insert_with(nanos);
-        if now.saturating_sub(next.since.load(Ordering::Relaxed)) < NEXT_WAIT.as_nanos() as u64 {
+        let (now, here) = *clock.get_or_insert_with(|| (nanos(), super::domains::here()));
+        if now.saturating_sub(next.since.load(Ordering::Relaxed)) < wait_from(here, next) {
             young = true;
         } else if next.task.compare_exchange(task, std::ptr::null_mut(), Ordering::AcqRel, Ordering::Acquire).is_ok() {
             return (Some(task), young);
@@ -232,29 +285,30 @@ pub(super) fn enqueue(task: *mut Task) {
     }
     let mut queue = queue();
     queue.runnable.push_back(task);
-    if looks_next() || SEEKING.load(Ordering::SeqCst) {
+    // Any worker that looks takes from the queue.
+    if looks_next() || seeking_anywhere() {
         return;
     }
     // One worker woken at a time, not one for each task: the one woken
     // wakes the next if it finds more.
-    if queue.idle > 0 {
-        queue.waking = true;
-        SEEKING.store(true, Ordering::SeqCst);
+    match domain_asleep(&queue, super::domains::here()) {
+        Some(domain) => wake_in(queue, domain),
+        None => wake_one(queue),
     }
-    wake_one(queue);
 }
 
 /// Wakes a worker that sleeps to look for tasks, unless one looks already.
 pub(super) fn wake_idle() {
-    if IDLE.load(Ordering::SeqCst) == 0 || SEEKING.load(Ordering::SeqCst) {
+    if IDLE.load(Ordering::SeqCst) == 0 {
         return;
     }
-    let mut queue = queue();
-    if queue.idle > 0 && !SEEKING.load(Ordering::SeqCst) {
-        queue.waking = true;
-        SEEKING.store(true, Ordering::SeqCst);
-        drop(queue);
-        READY.notify_one();
+    let here = super::domains::here();
+    if SEEKING[here].load(Ordering::SeqCst) {
+        return;
+    }
+    let queue = queue();
+    if let Some(domain) = domain_to_wake(&queue, here) {
+        wake_in(queue, domain);
     }
 }
 
@@ -271,10 +325,10 @@ pub(crate) fn wake_worker() {
 /// Wakes a worker to look at the queue: one that sleeps, or the one that
 /// waits for the network's events if none sleeps.
 pub(super) fn wake_one(queue: MutexGuard<'static, Queue>) {
-    let (sleeping, polling) = (queue.idle > 0, queue.polling);
+    let (sleeping, polling) = (domain_asleep(&queue, super::domains::here()), queue.polling);
     drop(queue);
-    if sleeping {
-        READY.notify_one();
+    if let Some(domain) = sleeping {
+        READY[domain].notify_one();
     } else if polling && let Some(poller) = crate::poll::poller() {
         poller.wake();
     }
@@ -353,9 +407,10 @@ pub(super) fn watch() {
             std::thread::park();
             continue;
         }
+        let asleep = domain_asleep(&queue, 0);
         drop(queue);
-        if unattended {
-            READY.notify_one();
+        if unattended && let Some(domain) = asleep {
+            READY[domain].notify_one();
         }
     }
 }
@@ -372,8 +427,8 @@ mod tests {
         super::IDLE.store(1, Ordering::SeqCst);
         super::wake_idle();
         super::IDLE.store(0, Ordering::SeqCst);
-        let waking = std::mem::take(&mut super::queue().waking);
-        let seeking = super::SEEKING.swap(false, Ordering::SeqCst);
+        let waking = std::mem::take(&mut super::queue().waking).iter().any(|&waking| waking);
+        let seeking = super::SEEKING.iter().any(|seeking| seeking.swap(false, Ordering::SeqCst));
         assert!(!waking && !seeking, "marked as looking with no worker asleep");
     }
 }

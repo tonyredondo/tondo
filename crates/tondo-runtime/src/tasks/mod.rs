@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, A
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+mod domains;
 mod workers;
 pub(crate) use workers::*;
 
@@ -298,9 +299,15 @@ struct Queue {
     idle: usize,
     /// A worker waits for the network's events instead (`poll`).
     polling: bool,
-    /// A worker was woken for the tasks scheduled and has not looked at
-    /// the queue yet: the first that looks takes over `SEEKING`.
-    waking: bool,
+    /// How many of those wait in each domain of cores (`domains`).
+    idle_in: [usize; domains::MOST],
+    /// A worker of the domain was woken for the tasks scheduled and has not
+    /// looked at the queue yet: the first of the domain that looks takes
+    /// over its `SEEKING`.
+    waking: [bool; domains::MOST],
+    /// A worker started for one long in C, which looks for tasks for this
+    /// domain, as the first worker to start takes over.
+    starting: Option<usize>,
     /// Waits for the network's events, which the watcher counts.
     polls: u64,
     /// Tasks taken from the queue, to look at the network now and then.
@@ -321,14 +328,17 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     sequence: 0,
     workers: 1,
     idle: 0,
+    idle_in: [0; domains::MOST],
     polling: false,
-    waking: false,
+    waking: [false; domains::MOST],
+    starting: None,
     polls: 0,
     picks: 0,
     surplus: 0,
     pinned: Vec::new(),
 });
-static READY: Condvar = Condvar::new();
+/// Where the idle workers of each domain sleep.
+static READY: [Condvar; domains::MOST] = [const { Condvar::new() }; domains::MOST];
 static STARTED: AtomicBool = AtomicBool::new(false);
 static MAIN_STATUS: AtomicUsize = AtomicUsize::new(0);
 static MAIN_DONE: AtomicBool = AtomicBool::new(false);

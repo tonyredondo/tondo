@@ -2134,6 +2134,7 @@ significan lo de siempre.
 | `TONDO_HEAP_RATE` | Quien lo ejecuta | Los bytes entre dos muestras del heap. |
 | `TONDO_LOCK_ORDER` | Quien lo ejecuta | Si mira en qué orden toman las tareas los locks: `fail` falla donde se cierra un ciclo, `off` no mira, otro valor lo dice en stderr. |
 | `TONDO_WAKES` | Quien lo ejecuta | `1` guarda las últimas esperas y despertares de cada tarea para un volcado y `tondo blocked`. |
+| `TONDO_CACHE_DOMAINS` | Quien lo ejecuta | `0` toma todos los núcleos como un dominio: los workers no se quedan entre los núcleos que comparten una caché. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
 | `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |

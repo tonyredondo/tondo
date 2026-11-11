@@ -38,6 +38,9 @@ pub(crate) struct Config {
     pub(crate) lock_order: Option<String>,
     /// `TONDO_WAKES`: `1` keeps each task's last waits and wakes, for a dump.
     pub(crate) wakes: Option<OsString>,
+    /// `TONDO_CACHE_DOMAINS`: `0` takes every core as one domain: the
+    /// workers do not keep to the cores that share a cache.
+    pub(crate) cache_domains: Option<String>,
     /// `TONDO_ZONES`: `builtin` uses the time zones built into the program,
     /// not the system's.
     pub(crate) zones: Option<String>,
@@ -134,6 +137,7 @@ pub(crate) fn config() -> &'static Config {
             lock_order: text("TONDO_LOCK_ORDER"),
             zones: text("TONDO_ZONES"),
             wakes: os("TONDO_WAKES"),
+            cache_domains: text("TONDO_CACHE_DOMAINS"),
             debug: os("TONDO_DEBUG"),
             trace: os("TONDO_TRACE"),
             race: os("TONDO_RACE"),

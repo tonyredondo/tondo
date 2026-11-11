@@ -186,7 +186,12 @@ pub(super) fn monitor() {
                 }
                 state.replaced.store(true, Ordering::SeqCst);
                 queue.workers += 1;
-                queue.waking = !SEEKING.swap(true, Ordering::SeqCst);
+                // It looks for tasks for a domain where none looks.
+                let domain = (0..super::domains::count()).find(|&domain| !SEEKING[domain].load(Ordering::SeqCst));
+                if let Some(domain) = domain {
+                    SEEKING[domain].store(true, Ordering::SeqCst);
+                    queue.starting = Some(domain);
+                }
                 crate::diagnostics::WORKERS_REPLACED.add(1);
                 drop(queue);
                 start_worker();
