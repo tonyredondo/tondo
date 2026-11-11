@@ -115,6 +115,10 @@ TONDO_CASES_DEBUG=1 cargo test --workspace --test cases
 TONDO_CASES_REPLAY=1 cargo test --workspace --test cases cases
 ```
 
+`TONDO_CASES_ONLY=<text>` runs only the cases whose path holds it, in the
+mode the other variables of `crates/tondo/tests/cases.rs` choose: one
+case in every mode is a loop over them.
+
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
 race with little CPU, which is where a failure otherwise shows hours later.

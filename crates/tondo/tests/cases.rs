@@ -38,6 +38,9 @@
 //! leaves in a directory of its own what its counters count and their counts
 //! (docs/refactor.md, 0.1). With `TONDO_CASES_SHARD=k/n`, only the k-th of
 //! n shares of the cases runs, so that jobs of CI split a mode between them.
+//! With `TONDO_CASES_ONLY=<text>`, only the cases whose path holds it, as
+//! `framed_texts`, run: one case in each mode at once is a loop over the
+//! variables of the modes.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -396,6 +399,12 @@ fn projects() {
 fn run_all(mut paths: Vec<PathBuf>, name: &str) {
     paths.sort();
     assert!(!paths.is_empty(), "no {name} found");
+    if let Some(only) = std::env::var("TONDO_CASES_ONLY").ok().filter(|only| !only.is_empty()) {
+        paths.retain(|path| path.to_string_lossy().contains(&only));
+        if paths.is_empty() {
+            return;
+        }
+    }
     // Empty, as a workflow gives a value its job does not have, it shares
     // nothing out.
     if let Some(shard) = std::env::var("TONDO_CASES_SHARD").ok().filter(|shard| !shard.is_empty()) {
