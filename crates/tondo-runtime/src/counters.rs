@@ -51,8 +51,9 @@ mod linux {
     const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
     const CLOSE_ON_EXEC: u64 = 8;
 
-    /// A counter of `event` on the thread `tid`, counting from now.
-    pub(super) fn open(tid: i32, (kind, config): (u32, u64)) -> Option<i32> {
+    /// A counter of `event` on the thread `tid`, counting from now, or the
+    /// system's error.
+    pub(super) fn open(tid: i32, (kind, config): (u32, u64)) -> Result<i32, i32> {
         let attr = Attr {
             kind,
             size: size_of::<Attr>() as u32,
@@ -63,7 +64,10 @@ mod linux {
         };
         let file =
             unsafe { libc::syscall(libc::SYS_perf_event_open, &attr as *const Attr, tid, -1i32, -1i32, CLOSE_ON_EXEC) };
-        (file >= 0).then_some(file as i32)
+        match file >= 0 {
+            true => Ok(file as i32),
+            false => Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)),
+        }
     }
 
     /// What a counter counted, scaled to the time it was on.
@@ -96,11 +100,17 @@ impl Counters {
                     continue;
                 }
                 match linux::open(tid, event) {
-                    Some(file) => counters.files[at].push(file),
-                    // A thread that ended meanwhile counts nothing.
-                    None if !std::path::Path::new(&format!("/proc/self/task/{tid}")).exists() => {}
-                    None if at == 0 => return None,
-                    None => counts[at] = false,
+                    Ok(file) => counters.files[at].push(file),
+                    // A thread that ended meanwhile, or ends, counts nothing.
+                    Err(libc::ESRCH) => {}
+                    Err(_) if !std::path::Path::new(&format!("/proc/self/task/{tid}")).exists() => {}
+                    Err(_) if at == 0 => {
+                        counters.files.iter_mut().flat_map(|files| files.drain(..)).for_each(|file| unsafe {
+                            libc::close(file);
+                        });
+                        return None;
+                    }
+                    Err(_) => counts[at] = false,
                 }
             }
         }
@@ -152,7 +162,7 @@ mod tests {
     /// calls may refuse whatever `perf_event_paranoid` says.
     #[test]
     fn counts_the_instructions_of_work() {
-        let allowed = linux::open(0, linux::EVENTS[0]).map(|file| unsafe { libc::close(file) }).is_some();
+        let allowed = linux::open(0, linux::EVENTS[0]).map(|file| unsafe { libc::close(file) }).is_ok();
         let Some(counters) = Counters::start() else {
             assert!(!allowed, "the system lets the program count itself");
             return;
