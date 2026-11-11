@@ -1,0 +1,78 @@
+import std.console
+
+// A branch whose ways only compute a value is a choice of the value in a
+// release build, with no jump: each way's checks still fail only when that
+// way runs, and every value is the one the branch would have given, for
+// every type a choice takes, with a way that is empty, ways in ways and
+// divisions by constants.
+
+fn step(n: Int): Int {
+    if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+}
+
+fn clamp(value: Int, low: Int, high: Int): Int {
+    var result = value
+    if result < low {
+        result = low
+    }
+    if result > high {
+        result = high
+    }
+    result
+}
+
+fn sign(value: Int): Int {
+    if value < 0 { -1 } else if value == 0 { 0 } else { 1 }
+}
+
+fn halves(value: Int): Int {
+    if value > 0 { value / -2 } else { value / 3 }
+}
+
+fn small(value: Int32): Int32 {
+    if value % 2 == 0 { value / 2 } else { value * 3 + 1 }
+}
+
+fn wide(value: UInt): UInt {
+    if value > 100 { value - 100 } else { value + 7 }
+}
+
+fn odd(value: Int): Bool {
+    if value % 2 != 0 { true } else { false }
+}
+
+fn steps(start: Int): Int {
+    var n = start
+    var count = 0
+    for n != 1 {
+        n = step(n)
+        count += 1
+    }
+    count
+}
+
+fn main() {
+    console.println("{steps(27)} {steps(97)} {steps(1)}")
+    console.println("{clamp(-5, 0, 10)} {clamp(5, 0, 10)} {clamp(50, 0, 10)}")
+    console.println("{sign(-9)} {sign(0)} {sign(4)}")
+    console.println("{halves(9)} {halves(-9)} {halves(0)}")
+    console.println("{small(10)} {small(7)} {small(-7)}")
+    let large: UInt = 1000
+    let few: UInt = 3
+    console.println("{wide(large)} {wide(few)}")
+    console.println("{odd(3)} {odd(4)}")
+    // Even and past what 3 * n + 1 can hold: the odd way's check does not fail.
+    let huge = 9223372036854775806
+    console.println("{step(huge)}")
+    // Odd and past it: it does.
+    console.println("{step(huge - 1)}")
+}
+// expect-stdout: 111 118 0
+// expect-stdout: 0 5 10
+// expect-stdout: -1 0 1
+// expect-stdout: -4 -3 0
+// expect-stdout: 5 22 -20
+// expect-stdout: 900 10
+// expect-stdout: true false
+// expect-stdout: 4611686018427387903
+// expect-panic: P0005

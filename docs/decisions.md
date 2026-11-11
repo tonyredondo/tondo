@@ -2496,6 +2496,18 @@ rules: `vendor/README.md` says what changed and how to update it. On
 remainder by a constant has, a shift and an addition, as Go makes it:
 `i * i % 7` over a million integers went from 849 to 816 µs, Go's 820.
 
+On 2026-11-11 a pass of its own too, after the e-graph's: a branch whose two ways compute a few
+integers, six instructions each and ten together at most, without failing, touching memory or
+calling anything, chooses between them with `select`, `cmov` on x86-64, rather than jumping, as
+other compilers do and Cranelift does not. A jump on the data, as collatz's on whether `n` is even,
+which Go takes too, is guessed wrong often: collatz ran 7% faster, with 92% fewer branches
+mispredicted, and in six orders of its program's functions between 826 and 908 µs, where it was
+between 883 µs and 1.08 ms. A way's checks stay, failing when the way would have run and its
+condition holds; a way that runs nothing beside one that checks stays a branch, as it is most
+often a count a rare case adds to. Its instructions move to the line of the branch, and the latent
+sites of its lines go, as a loop that calls nothing has none: a logpoint on a line of a way made a
+choice has no place in a release build.
+
 On 2026-11-11 three more, for floats: a float times 2.0 is its sum with itself, as exact; a float
 constant is computed once, out of a loop, rather than made again in each block that uses it, as
 making one takes two instructions on x86-64; and equal constants that instructions read from

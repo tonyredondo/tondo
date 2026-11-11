@@ -95,6 +95,7 @@ mod remove_constant_phis;
 mod result;
 mod scoped_hash_map;
 mod take_and_replace;
+mod tondo_select;
 mod unreachable_code;
 mod value_label;
 

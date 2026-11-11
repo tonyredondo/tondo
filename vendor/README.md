@@ -25,6 +25,12 @@ of a loop, where computing it once keeps it in a register. And equal
 constants that instructions read from memory, as x86-64 reads a float's,
 are emitted once, however many read them.
 
+And a pass of its own, `src/tondo_select.rs`, which `src/context.rs` runs
+after the e-graph's: a branch whose two ways compute a few integers,
+without failing, touching memory or calling anything, chooses between
+them with `select`, `cmov` on x86-64 and `csel` on arm64, rather than
+jumping. A way's checks stay, and fail when that way would have run.
+
 The rules are marked `Tondo:` in `src/isa/x64/inst.isle`,
 `src/isa/x64/lower.isle`, `src/isa/aarch64/inst.isle`,
 `src/isa/aarch64/lower.isle`, `src/opts/arithmetic.isle`,

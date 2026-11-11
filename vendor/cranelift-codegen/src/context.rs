@@ -193,6 +193,17 @@ impl Context {
 
         if opt_level != OptLevel::None {
             self.egraph_pass(isa, ctrl_plane)?;
+            // Tondo: branches that only choose a value choose it with
+            // `select`, a few times for those a choice made short enough,
+            // once the e-graph has taken out the checks that cannot fail.
+            for _ in 0..4 {
+                if !crate::tondo_select::run(&mut self.func, &self.cfg) {
+                    break;
+                }
+                self.compute_cfg();
+                self.compute_domtree();
+                self.verify_if(isa)?;
+            }
         }
 
         Ok(())
