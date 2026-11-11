@@ -322,10 +322,11 @@ counts: Map[String, Int] = ["to": 1, "be": 1]
 word: String = "or"
 ```
 
-A recorded run keeps its input, its files, its clock, its random numbers and
-the order of its tasks, so it replays the same on another machine. In a
-replay the debugger also goes backwards, and `why` goes to the line that
-gave a binding its value, in whichever function or task that was:
+A recorded run keeps its input, the files it read, its clock, its random
+numbers and the order of its tasks, so it replays the same every time, on
+another machine of the same system too. In a replay the debugger also goes
+backwards, and `why` goes to the line that gave a binding its value, in
+whichever function or task that was:
 
 ```text
 (tondo) break src/main.to:12
@@ -340,8 +341,8 @@ task 1 stopped at src/main.to:10 in count (`counts` became ["to": 2, "be": 2, "o
 ```
 
 On Linux, `tondo test --record` keeps the runs of the tests that fail, which
-is how a failure seen once in CI is debugged afterwards. For a service, `--last 5m`
-keeps only the end of a long run.
+is how a failure seen once in CI is debugged afterwards. For a service,
+`--last 5m` keeps only the end of a long run.
 
 A running Release build is debugged too, on Linux: a breakpoint stops the one
 task that reaches it and the rest of the program goes on answering. A debug
