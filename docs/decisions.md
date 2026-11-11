@@ -5831,7 +5831,11 @@ an array that does, since nothing releases an element while its array stays as i
 2026-11-11 the pass follows copies of copies, and an element read into a local is such a copy, while
 reading an element or a length keeps nothing: an element that is kept, pushed, returned, held past
 its turn, captured or given to a task, keeps its reference as before. A function that sums the
-lengths of a thousand names it was given runs a third fewer instructions and cycles. A loop over an
-array the function made itself, or one inlined where the array is its caller's own local, is left as
-it was: whether nothing changes that array during the loop is a question of the order of its
-statements, which this pass does not ask.
+lengths of a thousand names it was given runs a third fewer instructions and cycles.
+
+A loop over an array the function made itself, as one is once inlined where the array is the
+caller's own local, holds it by a copy the loop retains in the one block that goes to it and releases
+only out of it. An element read in the loop and used there alone lives while that copy holds it, so
+it needs no reference either; the copy keeps its own, which the order of the blocks shows to cover
+every use of the element, though the array's local may be replaced meanwhile. The same sum over
+names built in `main` took 34% fewer instructions and 37% fewer cycles.

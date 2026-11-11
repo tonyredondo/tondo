@@ -1,8 +1,11 @@
 // An element of an array a function was given, read in a loop and only
 // measured or lent to a call, is neither retained nor released: nothing
-// releases it while the array stays as it is. One that is kept, pushed into
-// another array, returned, held past its turn, captured or given to a task,
-// is counted as before, and each is what it was.
+// releases it while the array stays as it is. So is one of an array the
+// function made, which the loop holds while it runs, when it is used in the
+// loop alone, also when the array is replaced in the loop or after it. One
+// that is kept, pushed into another array, returned, held past its turn,
+// captured or given to a task, is counted as before, and each is what it
+// was.
 
 import std.console
 
@@ -81,6 +84,72 @@ fn users(all: Array[User]): Int {
     total
 }
 
+fn made(count: Int): Array[String] {
+    var names: Array[String] = []
+    for i in 0..count {
+        names.push("local {i}")
+    }
+    names
+}
+
+fn localLengths(count: Int): Int {
+    let names = made(count)
+    var total = 0
+    for name in names {
+        total += name.length()
+    }
+    total
+}
+
+fn localLast(count: Int): String {
+    var names = made(count)
+    var last = ""
+    for name in names {
+        last = name
+    }
+    names = ["gone"]
+    "{last} {names}"
+}
+
+fn replaced(count: Int): Int {
+    var names = made(count)
+    var total = 0
+    for name in names {
+        names = []
+        total += name.length()
+    }
+    total + names.length()
+}
+
+fn grid(rows: Int): Int {
+    var all: Array[Array[String]] = []
+    for row in 0..rows {
+        all.push(made(row))
+    }
+    var total = 0
+    for row in all {
+        for cell in row {
+            total += cell.length()
+        }
+    }
+    total
+}
+
+fn remember(name: String, into: var Array[String]) {
+    if name.length() > 7 {
+        into.push(name)
+    }
+}
+
+fn remembered(count: Int): Array[String] {
+    let names = made(count)
+    var long: Array[String] = []
+    for name in names {
+        remember(name, var long)
+    }
+    long
+}
+
 fn main() {
     var names: Array[String] = []
     for i in 0..8 {
@@ -93,8 +162,10 @@ fn main() {
         all.push(User { name: "user {i}", tags: names.take(i) })
     }
     console.println("{users(all)} {names.length()} {all[3].tags}")
+    console.println("{localLengths(12)} {localLast(3)} {replaced(4)} {grid(5)} {remembered(12)}")
 }
 
 // expect-stdout: 36 [nxxx, nxxxx, nxxxxx, nxxxxxx, nxxxxxxx] nxxxxxxx nxx none
 // expect-stdout: [n, nx, nxx, nxxx, nxxxx, nxxxxx, nxxxxxx, nxxxxxxx] 36
 // expect-stdout: 38 8 [n, nx, nxx]
+// expect-stdout: 86 local 2 [gone] 28 70 [local 10, local 11]

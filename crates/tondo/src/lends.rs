@@ -20,6 +20,11 @@
 //! parameter, held the array and each name with a reference of its own, a
 //! retain and a release for each name read. Reading an element or a length
 //! keeps nothing.
+//!
+//! An array the function made itself is held for a loop over it by a copy,
+//! retained before the loop and released after: an element read in the
+//! loop, and used there alone, lives while that copy holds it, so it needs
+//! no reference of its own either.
 
 use crate::mir::*;
 
@@ -171,6 +176,7 @@ fn lends_in(body: &mut Body) {
             }
         }
     }
+    held_elements(body, &uses, &mut gone);
     // The retain must follow the copy at once: nothing between them may
     // release what it took.
     for block in &body.blocks {
@@ -195,5 +201,76 @@ fn lends_in(body: &mut Body) {
             }
             _ => true,
         });
+    }
+}
+
+/// Marks gone the elements a loop reads from the copy that holds its array,
+/// when they are used in the loop alone: the copy is a whole local's,
+/// written and retained in the one block that goes to the loop, changed and
+/// kept nowhere, and released only out of the loop.
+fn held_elements(body: &Body, uses: &[Uses], gone: &mut [bool]) {
+    let count = body.locals.len();
+    // Where each local is mentioned but by its releases, where it is
+    // released, and where it is written whole and retained.
+    let (mut mentioned, mut released) = (vec![Vec::new(); count], vec![Vec::new(); count]);
+    let mut written: Vec<Option<(usize, usize)>> = vec![None; count];
+    let mut retained: Vec<Option<(usize, usize)>> = vec![None; count];
+    let (mut read, mut defined) = (Vec::new(), Vec::new());
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (at, statement) in data.stmts.iter().enumerate() {
+            match statement {
+                Statement::Release(place) if place.path.is_empty() => released[place.local.0 as usize].push(block),
+                Statement::Retain(place) if place.path.is_empty() => {
+                    retained[place.local.0 as usize] = Some((block, at));
+                }
+                _ => {
+                    statement_locals(statement, &mut read, &mut defined);
+                    if let Statement::Assign(target, ..) = statement
+                        && target.path.is_empty()
+                    {
+                        written[target.local.0 as usize] = Some((block, at));
+                    }
+                    for local in read.drain(..).chain(defined.drain(..)) {
+                        mentioned[local.0 as usize].push(block);
+                    }
+                }
+            }
+        }
+        terminator_uses(&data.terminator, &mut read);
+        for local in read.drain(..) {
+            mentioned[local.0 as usize].push(block);
+        }
+    }
+    let loops = counted_loops(&body.blocks);
+    for element in 0..count {
+        let u = &uses[element];
+        let Some(source) = &u.copy_of else { continue };
+        if gone[element]
+            || !matches!(source.path[..], [Proj::InBounds(_) | Proj::Index(..)])
+            || u.written != 1
+            || u.retained != 1
+            || u.released == 0
+            || u.changed
+            || u.kept
+        {
+            continue;
+        }
+        let array = source.local.0 as usize;
+        let a = &uses[array];
+        let copy = a.written == 1
+            && a.retained == 1
+            && !a.changed
+            && !a.kept
+            && a.copy_of.as_ref().is_some_and(|whole| whole.path.is_empty());
+        let held = |counted: &Counted| {
+            let Some((block, at)) = written[array] else { return false };
+            block == counted.before
+                && retained[array] == Some((block, at + 1))
+                && released[array].iter().all(|&b| !counted.inside[b] && b != counted.head && b != counted.before)
+                && mentioned[element].iter().all(|&b| counted.inside[b])
+        };
+        if copy && loops.iter().any(held) {
+            gone[element] = true;
+        }
     }
 }

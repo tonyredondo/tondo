@@ -437,6 +437,83 @@ pub fn tight_loops(blocks: &[BlockData]) -> Vec<bool> {
     inner_loops(blocks, false)
 }
 
+/// The blocks a terminator goes to.
+pub fn successors(terminator: &Terminator) -> Vec<usize> {
+    match terminator {
+        Terminator::Goto(to) => vec![to.0 as usize],
+        Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
+        _ => Vec::new(),
+    }
+}
+
+/// A counted loop, as the lowering makes `for i in a..b` and `for item in
+/// items`: its head tests `counter < last` and goes to `entry` or out, its
+/// step adds one to the counter and goes back to the head, `before` is the
+/// one block outside it that goes to the head, and `inside` marks its
+/// blocks but the head.
+pub struct Counted {
+    pub head: usize,
+    pub step: usize,
+    pub entry: usize,
+    pub before: usize,
+    pub counter: Local,
+    pub last: Local,
+    pub inside: Vec<bool>,
+}
+
+/// The counted loops of a body.
+pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
+    let local = |operand: &Operand| match operand {
+        Operand::Copy(Place { local, path }) if path.is_empty() => Some(*local),
+        _ => None,
+    };
+    let mut predecessors = vec![Vec::new(); blocks.len()];
+    for (block, data) in blocks.iter().enumerate() {
+        for to in successors(&data.terminator) {
+            predecessors[to].push(block);
+        }
+    }
+    let mut found = Vec::new();
+    for (step, data) in blocks.iter().enumerate() {
+        // The step: `counter = counter + 1`, back to the head.
+        let (Terminator::Goto(head), [Statement::Assign(place, increment, _)]) = (&data.terminator, &data.stmts[..])
+        else {
+            continue;
+        };
+        let Rvalue::Increment(counted) = &**increment else { continue };
+        let (head, counter) = (head.0 as usize, place.local);
+        if !place.path.is_empty() || local(counted) != Some(counter) {
+            continue;
+        }
+        // The head: `test = counter < last`, then the loop or out.
+        let (Terminator::Branch(test, entry, _), [Statement::Assign(tested, comparison, _)]) =
+            (&blocks[head].terminator, &blocks[head].stmts[..])
+        else {
+            continue;
+        };
+        let Rvalue::Binary(crate::ast::BinOp::Lt, left, right) = &**comparison else { continue };
+        let (Some(last), true) = (local(right), local(left) == Some(counter)) else { continue };
+        let entry = entry.0 as usize;
+        if local(test) != Some(tested.local) {
+            continue;
+        }
+        // Its blocks: those that reach the step without the head.
+        let mut inside = vec![false; blocks.len()];
+        let mut pending = vec![step];
+        while let Some(block) = pending.pop() {
+            if block == head || std::mem::replace(&mut inside[block], true) {
+                continue;
+            }
+            pending.extend(&predecessors[block]);
+        }
+        let outside: Vec<usize> = predecessors[head].iter().copied().filter(|&p| !inside[p]).collect();
+        if let (&[before], true) = (&outside[..], inside[entry]) {
+            found.push(Counted { head, step, entry, before, counter, last, inside });
+        }
+    }
+    found
+}
+
 /// The blocks of the loops of a body that hold no other loop, and, unless
 /// `calling`, call nothing.
 pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {

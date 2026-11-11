@@ -31,21 +31,6 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
     }
 }
 
-fn successors(terminator: &Terminator) -> Vec<usize> {
-    match terminator {
-        Terminator::Goto(to) => vec![to.0 as usize],
-        Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
-        _ => Vec::new(),
-    }
-}
-
-fn local(operand: &Operand) -> Option<Local> {
-    match operand {
-        Operand::Copy(Place { local, path }) if path.is_empty() => Some(*local),
-        _ => None,
-    }
-}
-
 /// Where a block goes when its task unwinds a panic or is cancelled, as the
 /// checks that end it say, rather than on.
 fn abnormal(block: &BlockData) -> Option<usize> {
@@ -83,49 +68,10 @@ fn loops(body: &Body, types: &Types) -> Vec<(usize, Local, Local, Span)> {
         used.clear();
         defined.drain(..).for_each(|local| assigned[local.0 as usize].push(statement));
     }
-    let mut predecessors = vec![Vec::new(); blocks.len()];
-    for (block, data) in blocks.iter().enumerate() {
-        for to in successors(&data.terminator) {
-            predecessors[to].push(block);
-        }
-    }
     let mut found = Vec::new();
-    for (step, data) in blocks.iter().enumerate() {
-        // The step: `counter = counter + 1`, back to the head.
-        let (Terminator::Goto(head), [Statement::Assign(place, increment, _)]) = (&data.terminator, &data.stmts[..])
-        else {
-            continue;
-        };
-        let Rvalue::Increment(counted) = &**increment else { continue };
-        let (head, counter) = (head.0 as usize, place.local);
-        if !place.path.is_empty() || local(counted) != Some(counter) {
-            continue;
-        }
-        // The head: `test = counter < last`, then the loop or out.
-        let (Terminator::Branch(test, entry, _), [Statement::Assign(tested, comparison, _)]) =
-            (&blocks[head].terminator, &blocks[head].stmts[..])
-        else {
-            continue;
-        };
-        let Rvalue::Binary(BinOp::Lt, left, right) = &**comparison else { continue };
-        let (Some(last), true) = (local(right), local(left) == Some(counter)) else { continue };
-        let entry = entry.0 as usize;
-        if local(test) != Some(tested.local) {
-            continue;
-        }
-        // The loop's blocks: those that reach the step without the head.
-        let mut inside = vec![false; blocks.len()];
-        let mut pending = vec![step];
-        while let Some(block) = pending.pop() {
-            if block == head || std::mem::replace(&mut inside[block], true) {
-                continue;
-            }
-            pending.extend(&predecessors[block]);
-        }
-        // One way in, from a block that goes to the loop alone, with a
-        // bound that is an `Int`, as the runtime takes it.
-        let outside: Vec<usize> = predecessors[head].iter().copied().filter(|&p| !inside[p]).collect();
-        let (&[before], true) = (&outside[..], inside[entry]) else { continue };
+    for Counted { head, step, entry, before, counter, last, inside } in counted_loops(blocks) {
+        // A way in from a block that goes to the loop alone, with a bound
+        // that is an `Int`, as the runtime takes it.
         if !matches!(blocks[before].terminator, Terminator::Goto(_))
             || types.repr(body.locals[last.0 as usize]) != Ty::INT
         {
