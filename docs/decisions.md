@@ -5950,3 +5950,14 @@ million divisions by 19,991 divisors confirmed. `sum`, `i * i % 7` over a millio
 from 821 to 615 µs, Go's 724, in 41% fewer instructions, and across six orders of its program's
 functions from between 783 and 856 µs to between 612 and 616. `tondo optimizations` says that it
 "divides without signs".
+
+## A result with nothing to release is not released
+
+After inlining, `math.sqrt(x).unwrapOr(0.0)` built a `Float ! MathError` in memory, its tag and its
+value, and released it after `unwrapOr` had taken the value, which read the tag back to find that a
+`Float`, or the `Domain` error, holds nothing to free: `MathError` may hold a text, so the type needs
+releasing. Since 2026-11-11 the `moves` pass drops a temporary only ever made of variants whose
+parts hold nothing to release, and only ever released: its releases and what made it go, and with
+them the value's trip through memory. `sqrt` ran 36% fewer instructions, in the same time, bound by
+the square roots. A binding of the program stays, as a dump shows it; one of inlined code that
+nothing writes then a dump leaves out, as an argument the inliner found unused.

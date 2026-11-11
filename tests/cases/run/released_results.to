@@ -1,0 +1,30 @@
+import std.console
+import std.math
+
+// A result that inlining builds and `unwrapOr` takes apart, released when
+// it goes: one whose error holds nothing is not released, as nothing is in
+// it to free, and one whose error holds a text still frees it, as the
+// check of leaks this case runs under says.
+
+fn roots(count: Int): Float {
+    var total = 0.0
+    for i in 0..count {
+        total += math.sqrt(Float(i - 3)).unwrapOr(-1.0)
+    }
+    total
+}
+
+fn parsed(texts: Array[String]): Int {
+    var total = 0
+    for text in texts {
+        total += Int.parse(text).unwrapOr(-1)
+    }
+    total
+}
+
+fn main() {
+    console.println("{roots(10)}")
+    console.println("{parsed(["1", "x", "20", "", "300", "nope"])}")
+}
+// expect-stdout: 7.83182209022494
+// expect-stdout: 318

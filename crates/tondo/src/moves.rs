@@ -18,8 +18,11 @@ use crate::mir::*;
 /// How far a way is followed, in statements, before giving up.
 const REACH: usize = 4000;
 
-pub fn moves(bodies: &mut [Body]) {
-    crate::parallel::each_mut(bodies, moves_in);
+pub fn moves(bodies: &mut [Body], types: &crate::types::Types) {
+    crate::parallel::each_mut(bodies, |body| {
+        moves_in(body);
+        drop_empty_values(body, types);
+    });
 }
 
 fn moves_in(body: &mut Body) {
@@ -194,6 +197,112 @@ fn step(statement: &Statement, source: &Place) -> Step {
     });
     let cleared = matches!(statement, Statement::Clear(local) if local == source.local);
     if conflict || cleared { Step::Conflict } else { Step::Unrelated }
+}
+
+/// A temporary only ever made of variants that hold nothing to release, and
+/// then released, with nothing reading it: as inlining leaves the result of
+/// `math.sqrt(x)`, `Float ! MathError`, whose error may hold a text, after
+/// `unwrapOr` took its value from where it was made. Its releases, which
+/// read its tag to find nothing to free, and what it is made of, go.
+fn drop_empty_values(body: &mut Body, types: &crate::types::Types) {
+    let count = body.locals.len();
+    // Where each local is named, and whether a terminator names it.
+    let mut named: Vec<Vec<(usize, usize)>> = vec![Vec::new(); count];
+    let mut in_terminator = vec![false; count];
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (at, statement) in data.stmts.iter().enumerate() {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(statement, &mut used, &mut defined);
+            used.extend(defined);
+            used.sort_by_key(|local| local.0);
+            used.dedup();
+            for local in used {
+                named[local.0 as usize].push((block, at));
+            }
+        }
+        let mut used = Vec::new();
+        terminator_uses(&data.terminator, &mut used);
+        for local in used {
+            in_terminator[local.0 as usize] = true;
+        }
+    }
+    // The program's own bindings stay, as a dump shows them, and so do what
+    // the function is given and gives. One of inlined code that nothing
+    // writes then, a dump leaves out, as an argument the inliner found
+    // unused.
+    let mut kept = vec![false; count];
+    for local in body.params.iter().chain(&body.ret).chain(&body.framed) {
+        kept[local.0 as usize] = true;
+    }
+    for (index, name) in body.names.iter().enumerate() {
+        kept[index] |= name.is_some();
+    }
+    let free = |local: usize| !kept[local] && !in_terminator[local];
+    fn statement(body: &Body, (block, at): (usize, usize)) -> &Statement {
+        &body.blocks[block].stmts[at]
+    }
+    // A temporary named, besides at `held`, only where it is made of a
+    // variant without anything: the one thing another variant holds.
+    let bare = |body: &Body, local: usize, held: (usize, usize)| {
+        free(local)
+            && named[local].iter().filter(|&&at| at == held).count() == 1
+            && named[local].iter().filter(|&&at| at != held).count() >= 1
+            && named[local].iter().filter(|&&at| at != held).all(|&at| match statement(body, at) {
+                Statement::Assign(place, rvalue, _) => {
+                    *place == Place::local(Local(local as u32))
+                        && matches!(&**rvalue, Rvalue::Variant(_, operands) if operands.is_empty())
+                }
+                _ => false,
+            })
+    };
+    let mut gone: Vec<(usize, usize)> = Vec::new();
+    for local in 0..count {
+        let ty = body.locals[local];
+        if !free(local) || !types.needs_drop(ty) || named[local].is_empty() {
+            continue;
+        }
+        let mut parts = Vec::new();
+        let empty = named[local].iter().all(|&at| match statement(body, at) {
+            Statement::Release(place) => *place == Place::local(Local(local as u32)),
+            Statement::Assign(place, rvalue, _) if *place == Place::local(Local(local as u32)) => {
+                let Rvalue::Variant(_, operands) = &**rvalue else { return false };
+                operands.iter().all(|operand| match operand {
+                    Operand::Const(_) => true,
+                    Operand::Copy(place) if !place.path.is_empty() => false,
+                    Operand::Copy(place) if !types.needs_drop(body.locals[place.local.0 as usize]) => true,
+                    Operand::Copy(place) => {
+                        let part = place.local.0 as usize;
+                        let ok = part != local && bare(body, part, at);
+                        if ok {
+                            parts.push(part);
+                        }
+                        ok
+                    }
+                })
+            }
+            _ => false,
+        });
+        if !empty {
+            continue;
+        }
+        gone.extend(named[local].iter().copied());
+        for part in parts {
+            gone.extend(named[part].iter().copied().filter(
+                |&at| matches!(statement(body, at), Statement::Assign(place, ..) if place.local.0 as usize == part),
+            ));
+        }
+    }
+    if gone.is_empty() {
+        return;
+    }
+    gone.sort_unstable();
+    gone.dedup();
+    for &(block, at) in gone.iter().rev() {
+        body.blocks[block].stmts.remove(at);
+    }
+    crate::mir_text::note(body, "moves", || {
+        format!("dropped {} statements of values with nothing to release", gone.len())
+    });
 }
 
 /// A whole local moved and then released, with nothing naming it in
