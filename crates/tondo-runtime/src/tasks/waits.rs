@@ -56,7 +56,11 @@ impl Wait {
             kept.fired.store(NONE, Ordering::Relaxed);
             return kept.clone();
         }
-        let mut wait = spare_waits().pop().unwrap_or_else(|| Arc::new(Wait { task, fired: AtomicUsize::new(NONE) }));
+        let spare = spare_waits();
+        let mut wait = spare
+            .pop()
+            .or_else(|| SHARED_WAITS.try_lock().ok().and_then(|mut shared| shared.pop()))
+            .unwrap_or_else(|| Arc::new(Wait { task, fired: AtomicUsize::new(NONE) }));
         match Arc::get_mut(&mut wait) {
             Some(only) => {
                 only.task = task;
@@ -72,9 +76,16 @@ impl Wait {
     /// on this thread, when nothing else holds it.
     pub(super) fn left(task: &mut Task) {
         let Some(wait) = task.kept_wait.take() else { return };
+        if Arc::strong_count(&wait) != 1 {
+            return;
+        }
         let spare = spare_waits();
-        if Arc::strong_count(&wait) == 1 && spare.len() < SPARE_WAITS {
+        if spare.len() < SPARE_WAITS {
             spare.push(wait);
+        } else if let Ok(mut shared) = SHARED_WAITS.try_lock()
+            && shared.len() < SHARED_WAITS_KEPT
+        {
+            shared.push(wait);
         }
     }
 
@@ -171,6 +182,12 @@ impl Wait {
 
 /// How many waits of tasks that ended a worker keeps.
 const SPARE_WAITS: usize = 16;
+
+/// The waits a worker with its own full left, for one with none: tasks
+/// that start waiting on one worker and end on another would take theirs
+/// from where they start and leave them where they end.
+static SHARED_WAITS: std::sync::Mutex<Vec<Arc<Wait>>> = std::sync::Mutex::new(Vec::new());
+const SHARED_WAITS_KEPT: usize = 256;
 
 fn spare_waits() -> &'static mut Vec<Arc<Wait>> {
     let waits = worker(|w| {
