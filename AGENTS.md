@@ -192,6 +192,9 @@ Ask the toolchain before guessing why code is slow or allocates:
   benchmark allocates, every allocation with `TONDO_HEAP_RATE=1` in its
   environment; `tondo profile show <profile> --sample alloc_objects
   --lines` gives the lines that allocate most often.
+- `tondo test --bench --layouts <n>` measures each benchmark in n orders of
+  the code's functions and gives the range; against a baseline measured so
+  too, only a change past every order counts.
 - A benchmark's row moves by a third when only where its code lies moves.
   Judge a change by the instructions and cycles of a program that does the
   same rounds each time, under `perf stat`, as well as by the row's time;

@@ -1737,7 +1737,20 @@ pub fn compiler_identity() -> String {
 /// keeps the order it always has.
 pub fn layout_seed() -> Option<u64> {
     static SEED: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    if let Some(seed) = *LAYOUT.lock().unwrap_or_else(|e| e.into_inner()) {
+        return seed;
+    }
     *SEED.get_or_init(|| std::env::var("TONDO_LAYOUT_SEED").ok()?.trim().parse().ok())
+}
+
+/// The layout the next builds use instead of `TONDO_LAYOUT_SEED`'s, as
+/// `tondo test --layouts` builds the tests in several (testing 10.4).
+static LAYOUT: std::sync::Mutex<Option<Option<u64>>> = std::sync::Mutex::new(None);
+
+/// Builds in the layout of `seed`, `Some(None)` the usual one, from now
+/// on; `None`, as `TONDO_LAYOUT_SEED` says again.
+pub fn set_layout_seed(seed: Option<Option<u64>>) {
+    *LAYOUT.lock().unwrap_or_else(|e| e.into_inner()) = seed;
 }
 
 /// Writes `bytes` to `path` atomically.

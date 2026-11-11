@@ -706,6 +706,7 @@ impl Session<'_> {
                         branch_misses: branches.parse().ok(),
                         l1d_misses: data.parse().ok(),
                         l1i_misses: code.parse().ok(),
+                        layouts: Vec::new(),
                     });
                     // The timeout is each benchmark's: its time starts again.
                     if let Some(started) = entry.2.as_mut() {

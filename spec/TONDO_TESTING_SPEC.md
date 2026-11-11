@@ -2228,7 +2228,8 @@ tondo test [<project> | --project <dir>]
            [--coverage]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
                     [--baseline <name|path> | --against <revision>]
-                    [--max-regression <percent> [--regression-by <time|instructions>]]]
+                    [--max-regression <percent> [--regression-by <time|instructions>]]
+                    [--layouts <n>]]
            [--profile <cpu|memory>]
            [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>]
                    [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
@@ -2528,6 +2529,23 @@ o de un gate en máquinas compartidas, donde el tiempo se mueve con dónde cae
 el código o con lo que corre al lado. Un benchmark cuyas instrucciones no
 contó uno de los lados empeora con esa razón. `--regression-by time`, el
 valor por defecto, juzga el tiempo.
+
+`--layouts <n>`, de 2 a 16, compila además los tests con sus funciones en
+otros `n - 1` órdenes y mide cada benchmark también en cada uno, con
+`--bench-time` cada vez: el tiempo de un benchmark se mueve hasta un tercio
+solo con dónde cae su código. Sus medidas siguen siendo las del orden de
+siempre, y la línea para personas añade el rango de las medianas de los
+órdenes; el reporte las da en `layouts_ns_per_op`, la de siempre primero.
+Comparado con una línea base que también se midió en varios órdenes, un
+benchmark es `slower` solo si su mediana en cada orden pasa de la de todos
+los de la línea base en más del 2%, `faster` si queda por debajo de todas en
+más del 2%, y `same` en otro caso: un cambio que el orden explica no es del
+cambio. No admite `--against`, que mide los tests de otra revisión; para
+comparar dos compiladores, uno guarda la línea base y el otro la compara.
+
+~~~text
+  collatz 10000   879.1 µs/op  ±0.5%  0 allocs/op  0 B/op  7.43M ins/op  3 layouts 879.1 µs–1.126 ms
+~~~
 
 ### 10.5 Perfiles
 
@@ -4276,6 +4294,7 @@ benchmark de un intento tiene esta forma:
   "branch_misses_per_op": 0.012,
   "l1d_misses_per_op": 0.004,
   "l1i_misses_per_op": 0.001,
+  "layouts_ns_per_op": null,
   "samples_ns_per_op": [16.890, 16.478, 16.310],
   "baseline": {
     "ns_per_op": 15.020,
@@ -4301,6 +4320,7 @@ mediana. `baseline` es `null` sin línea base o para un benchmark que no tiene;
 da la mediana, las asignaciones, los bytes y las instrucciones de la línea
 base, el cambio de las instrucciones y el de la mediana y su intervalo en
 porcentaje, el veredicto y, con `--max-regression`, por qué empeoró, o `null`.
+`layouts_ns_per_op` son las medianas de cada orden con `--layouts`, o `null`.
 `instructions_per_op`, `cycles_per_op`, `branch_misses_per_op`,
 `l1d_misses_per_op` y `l1i_misses_per_op`, y sus cambios, son `null` donde no
 se contaron (10.4); en `counters_change_percent`, también el de un evento que
@@ -4338,6 +4358,7 @@ orden del reporte:
       "branch_misses_per_op": 0.012,
       "l1d_misses_per_op": 0.004,
       "l1i_misses_per_op": 0.001,
+      "layouts_ns_per_op": null,
       "samples_ns_per_op": [16.890, 16.478, 16.310]
     }
   ]

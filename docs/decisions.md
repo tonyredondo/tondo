@@ -5722,3 +5722,15 @@ optimizations` tells of it. The constants Cranelift leaves after the code end wh
 with a place in the source ends, so they are counted rather than read as instructions. With
 `--against`, a diff of the instructions with a revision's, a jump without its distance, which code
 before it moves, and a call by what it calls.
+
+## `--layouts` measures a benchmark in several orders of the code
+
+The same code at other addresses changes a benchmark's time by up to a third, so a change that
+moved the functions could look like a regression or a gain it was not. `TONDO_LAYOUT_SEED` showed
+it by hand; on 2026-11-11 the maintainer approved `tondo test --bench --layouts <n>`, which builds
+the tests in n - 1 more orders, each build kept apart in the cache, and measures each benchmark in
+each. Its own measures stay those of the usual order, the one a program runs in, and it adds the
+median of each order. Against a baseline measured in several orders too, slower means slower in
+every order than in any before, by more than the noise of 2%: a change the orders explain is no
+change. Two revisions measured side by side with `--against` would need each built in every order,
+so `--layouts` goes with `--baseline`, which is also how two compilers are compared.

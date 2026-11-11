@@ -46,6 +46,15 @@ pub(super) fn decimal(value: f64) -> Value {
     Value::Number(format!("{value:.3}"))
 }
 
+/// The median time of a run in each layout, or `null` without
+/// `--layouts`.
+fn layouts(medians: &[f64]) -> Value {
+    match medians.is_empty() {
+        true => Value::Null,
+        false => Value::Array(medians.iter().map(|&median| decimal(median)).collect()),
+    }
+}
+
 /// A measure the processor's counters gave, or `null` without them.
 fn counted(value: Option<f64>) -> Value {
     value.map_or(Value::Null, decimal)
@@ -76,6 +85,7 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
         ("branch_misses_per_op", counted(benchmark.branch_misses)),
         ("l1d_misses_per_op", counted(benchmark.l1d_misses)),
         ("l1i_misses_per_op", counted(benchmark.l1i_misses)),
+        ("layouts_ns_per_op", layouts(&benchmark.layouts)),
         ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
     ];
     let baseline = compared.map_or(Value::Null, |c| {
@@ -146,10 +156,18 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_in
     let change = if before > 0.0 { now / before - 1.0 } else { 0.0 };
     let seed = new.name.bytes().fold(0x9e37_79b9_7f4a_7c15u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
     let (low, high) = interval(&new.samples, &base.samples, seed);
-    let verdict = match change {
-        c if low > 0.0 && c > NOISE => "slower",
-        c if high < 0.0 && c < -NOISE => "faster",
-        _ => "same",
+    // Measured in several layouts on both sides, a change is one the
+    // layouts do not make: every layout now past every one before.
+    let span = |layouts: &[f64]| layouts.iter().fold((f64::MAX, 0.0f64), |(low, high), &l| (low.min(l), high.max(l)));
+    let verdict = match (new.layouts.len() > 1 && base.layouts.len() > 1, span(&new.layouts), span(&base.layouts)) {
+        (true, (now_low, _), (_, before_high)) if now_low > before_high * (1.0 + NOISE) => "slower",
+        (true, (_, now_high), (before_low, _)) if now_high < before_low * (1.0 - NOISE) => "faster",
+        (true, ..) => "same",
+        _ => match change {
+            c if low > 0.0 && c > NOISE => "slower",
+            c if high < 0.0 && c < -NOISE => "faster",
+            _ => "same",
+        },
     };
     let grew = |now: f64, before: f64, max: f64| now > before * (1.0 + max) + 1e-9;
     let changed = |now: Option<f64>, before: Option<f64>| match (now, before) {
@@ -250,6 +268,7 @@ pub(super) fn baseline(environment: Value, measured: &[(String, &Benchmark)]) ->
                 ("branch_misses_per_op", counted(benchmark.branch_misses)),
                 ("l1d_misses_per_op", counted(benchmark.l1d_misses)),
                 ("l1i_misses_per_op", counted(benchmark.l1i_misses)),
+                ("layouts_ns_per_op", layouts(&benchmark.layouts)),
                 ("samples_ns_per_op", Value::Array(benchmark.samples.iter().map(|&s| decimal(s)).collect())),
             ])
         })
@@ -288,6 +307,7 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
             branch_misses: entry["branch_misses_per_op"].as_f64(),
             l1d_misses: entry["l1d_misses_per_op"].as_f64(),
             l1i_misses: entry["l1i_misses_per_op"].as_f64(),
+            layouts: entry["layouts_ns_per_op"].as_array().into_iter().flatten().filter_map(|l| l.as_f64()).collect(),
         };
         measures.insert((test.to_string(), name.to_string()), benchmark);
     }
@@ -409,8 +429,15 @@ pub(super) fn lines(
             None => String::new(),
         };
         let instructions = benchmark.instructions.map_or(String::new(), |i| format!("  {} ins/op", many(i)));
+        let layouts = match benchmark.layouts.len() > 1 {
+            true => {
+                let (low, high) = benchmark.layouts.iter().fold((f64::MAX, 0.0f64), |(l, h), &x| (l.min(x), h.max(x)));
+                format!("  {} layouts {}–{}", benchmark.layouts.len(), time(low), time(high))
+            }
+            false => String::new(),
+        };
         text.push_str(&format!(
-            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op  {} B/op{instructions}{compared}\n",
+            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op  {} B/op{instructions}{layouts}{compared}\n",
             benchmark.name,
             time(stats.median),
             amount(benchmark.allocations),
@@ -483,6 +510,27 @@ mod tests {
         let allocating = measured(base.samples.clone(), 3.0);
         assert_eq!(compare(&allocating, &base, Some(0.05), false).regressed.as_deref(), Some("3 allocs/op, was 2"));
         let faster = measured((0..50).map(|i| 50.0 + (i % 5) as f64).collect(), 2.0);
+        assert_eq!(compare(&faster, &base, None, false).verdict, "faster");
+    }
+
+    /// Measured in several layouts on both sides, a change within what
+    /// the layouts make is the same, and one past every layout is not.
+    #[test]
+    fn judges_by_layouts() {
+        let measured = |median: f64, layouts: Vec<f64>| Benchmark {
+            name: "loop".into(),
+            runs: 10,
+            samples: (0..50).map(|i| median + (i % 3) as f64).collect(),
+            layouts,
+            ..Benchmark::default()
+        };
+        let base = measured(100.0, vec![100.0, 130.0, 110.0]);
+        let lucky = measured(125.0, vec![125.0, 104.0, 128.0]);
+        assert_eq!(compare(&lucky, &base, None, false).verdict, "same");
+        assert_eq!(compare(&lucky, &measured(100.0, Vec::new()), None, false).verdict, "slower");
+        let slower = measured(150.0, vec![150.0, 160.0, 140.0]);
+        assert_eq!(compare(&slower, &base, None, false).verdict, "slower");
+        let faster = measured(60.0, vec![60.0, 70.0, 80.0]);
         assert_eq!(compare(&faster, &base, None, false).verdict, "faster");
     }
 

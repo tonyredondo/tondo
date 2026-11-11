@@ -1719,6 +1719,20 @@ fn judges_benchmarks_by_their_instructions() {
     let bench = ["test", "--bench", "--bench-time", "0.2"];
     let (stdout, stderr, status) = tondo(&dir, &[&bench[..], &["--save-baseline", "main"]].concat());
     assert_eq!(status, 0, "{stderr}");
+    // In two layouts of the code, each benchmark gives the time of each.
+    let (laid, _, status) = tondo(&dir, &[&bench[..], &["--layouts", "2", "--test-format", "json"]].concat());
+    assert_eq!(status, 0, "{laid}");
+    let report: serde_json::Value = serde_json::from_str(&laid).unwrap();
+    let layouts = &report["tests"][0]["attempts"][0]["benchmarks"][0]["layouts_ns_per_op"];
+    assert_eq!(layouts.as_array().map(Vec::len), Some(2), "{report}");
+    let (laid, _, _) = tondo(&dir, &[&bench[..], &["--layouts", "2"]].concat());
+    assert!(laid.contains("  2 layouts "), "{laid}");
+    let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--layouts", "2", "--against", "HEAD"]].concat());
+    assert_eq!(status, 2);
+    assert!(stderr.contains("compare layouts with --baseline"), "{stderr}");
+    let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--layouts", "1"]].concat());
+    assert_eq!(status, 2);
+    assert!(stderr.contains("--layouts takes how many layouts"), "{stderr}");
     let counts = counts_itself();
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();

@@ -109,6 +109,10 @@ pub struct Options {
     /// `--regression-by instructions`: slower is more instructions a run,
     /// which where the code lies does not move, rather than more time.
     pub by_instructions: bool,
+    /// `--layouts`: the tests built with their functions in other orders,
+    /// in which each benchmark measures too, to tell how much of its time
+    /// is where its code lies.
+    pub layouts: Vec<PathBuf>,
     /// `--profile`: a profile of each test, or of each benchmark (10.5).
     pub profile: Option<crate::profile::Kind>,
     /// `--fuzz`: searches for inputs that fail the calls of
@@ -392,6 +396,9 @@ pub struct Benchmark {
     pub branch_misses: Option<f64>,
     pub l1d_misses: Option<f64>,
     pub l1i_misses: Option<f64>,
+    /// With `--layouts`, the median time of a run in each layout, this
+    /// build's first.
+    pub layouts: Vec<f64>,
 }
 
 /// Where a virtual clock got, and how many times it moved by itself, by
@@ -652,6 +659,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     interrupt::listen();
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
+        _ if !options.layouts.is_empty() => (layouts(&run, &plan, &mut printer), Vec::new()),
         _ if let Some(searching) = &options.fuzz => (fuzz::campaign(&run, &plan, &mut printer, searching), Vec::new()),
         _ if let Some(orders) = &options.orders => (explore(&run, &plan, &mut printer, orders, None), Vec::new()),
         _ => campaign(&run, &plan, &mut printer),
@@ -1150,6 +1158,44 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
     attempts
 }
 
+/// `--layouts` (10.4): each unit of the plan runs in these tests, then in
+/// the same tests built in each other layout, each benchmark keeping the
+/// median time of a run in each.
+fn layouts(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> Vec<Attempt> {
+    let stores = worker::Stores { update: false, counts: None, ..run.stores };
+    printer.begin(1, 0, plan);
+    let context = Context { round: 0, iteration: 1, unit: None, target: None };
+    let mut attempts = Vec::new();
+    for unit in units(run.tree, plan) {
+        unit.iter().for_each(|&test| printer.note(&worker::Note::Started(test, context)));
+        let mut measured = worker::execute(run, vec![(unit.clone(), context)], |_| {});
+        for attempt in &mut measured {
+            for benchmark in &mut attempt.benchmarks {
+                benchmark.layouts.push(bench::stats(&benchmark.samples).median);
+            }
+        }
+        for executable in &run.options.layouts {
+            if interrupt::requested() {
+                return attempts;
+            }
+            let other = worker::Run { executable, stores: worker::Stores { ..stores }, targets: &[], ..*run };
+            for attempt in worker::execute(&other, vec![(unit.clone(), context)], |_| {}) {
+                let Some(kept) = measured.iter_mut().find(|a| a.node == attempt.node) else { continue };
+                for benchmark in attempt.benchmarks {
+                    if let Some(found) = kept.benchmarks.iter_mut().find(|b| b.name == benchmark.name) {
+                        found.layouts.push(bench::stats(&benchmark.samples).median);
+                    }
+                }
+            }
+        }
+        for attempt in measured {
+            printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
+            attempts.push(attempt);
+        }
+    }
+    attempts
+}
+
 /// A benchmark's samples of another round, with what it allocated last.
 fn joined(kept: &mut Benchmark, more: Benchmark) {
     kept.samples.extend(more.samples);
@@ -1503,8 +1549,10 @@ pub fn build_dir(
     target: Option<crate::target::Target>,
 ) -> Result<PathBuf, String> {
     let identity = crate::driver::compiler_identity();
+    // Each layout's build is kept beside the others (`--layouts`).
+    let layout = crate::driver::layout_seed().map_or(String::new(), |seed| format!("layout{seed}"));
     let linking = format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{layout}",
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
         if live { "live" } else { "" },

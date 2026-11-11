@@ -149,7 +149,10 @@ test parsing {
   rather than its time, which moves with where the code lies and with
   what else runs on the machine. A comparison also says which of cycles,
   mispredicted branches and first-cache misses moved, which explains a
-  time that changed while the instructions did not.
+  time that changed while the instructions did not. `--layouts 4` measures
+  each benchmark in four orders of the code's functions and gives the range
+  of their times; compared with a baseline measured so too, a change within
+  what the orders make is the `same`.
 
 ## Fuzzing
 

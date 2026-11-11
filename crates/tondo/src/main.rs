@@ -341,6 +341,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         baseline: None,
         max_regression: None,
         by_instructions: false,
+        layouts: Vec::new(),
         profile: None,
         fuzz: None,
     };
@@ -349,6 +350,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut fuzz = runner::Fuzz { time: None, timeout: std::time::Duration::from_secs(1), memory: 2048, corpus: None };
     let mut fuzzing = false;
     let (mut save, mut baseline, mut against) = (None, None, None);
+    let mut layouts = 1u64;
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
     let usage = |message: String| format!("{message}\n{USAGE}");
@@ -449,6 +451,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .filter(|p| p.is_finite() && *p >= 0.0)
                     .ok_or_else(|| usage("--max-regression takes a percent, as `--max-regression 5`".into()))?;
                 options.max_regression = Some(percent / 100.0);
+            }
+            "--layouts" => {
+                layouts = value()?
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|n| (2..=16).contains(n))
+                    .ok_or_else(|| usage("--layouts takes how many layouts to measure in, from 2 to 16".into()))?;
             }
             "--regression-by" => {
                 options.by_instructions = match value()?.as_str() {
@@ -639,9 +648,14 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if given("--bench-time") && !bench {
         return Err(usage("--bench-time is how long each benchmark measures for: it goes with --bench".into()));
     }
-    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression", "--regression-by"];
+    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression", "--regression-by", "--layouts"];
     if !bench && let Some(flag) = comparing.iter().find(|f| given(f)) {
         return Err(usage(format!("{flag} is about benchmarks: it goes with --bench")));
+    }
+    if given("--layouts") && against.is_some() {
+        return Err(usage(
+            "--layouts measures this code's tests in several layouts, --against another revision's: compare layouts with --baseline".into(),
+        ));
     }
     if baseline.is_some() && against.is_some() {
         return Err(usage("--baseline and --against are two things to compare with: choose one".into()));
@@ -730,6 +744,14 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage, fuzz, live };
     if let Some(reference) = against {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
+    }
+    // The same tests with their functions in other orders.
+    for seed in 1..layouts {
+        driver::set_layout_seed(Some(Some(seed)));
+        let built = build_tests(&path, &build);
+        driver::set_layout_seed(None);
+        let Some((executable, _)) = built? else { break };
+        options.layouts.push(executable);
     }
     if watch {
         return watch_tests(&path, &build, &mut options);
