@@ -775,6 +775,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let value = self.scalar(operand);
                 Val::Scalar(self.e.fb.ins().iadd_imm_s(value, 1))
             }
+            Rvalue::Exact(op @ (BinOp::Div | BinOp::Rem), left, Operand::Const(Const::Int(divisor, _)))
+                if *divisor > 1 && !(*divisor as u128).is_power_of_two() =>
+            {
+                let a = self.scalar(left);
+                Val::Scalar(self.divided_unsigned(*op, a, *divisor as u64))
+            }
             Rvalue::Exact(op, left, right) => {
                 let (a, b) = (self.scalar(left), self.scalar(right));
                 let ins = self.e.fb.ins();
@@ -793,5 +799,28 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         };
         self.write(place, value);
+    }
+
+    /// `a / divisor` or `a % divisor` for an `a` not below zero, as one of
+    /// its type's bits fewer than it has holds it: a multiplication by a
+    /// constant that needs no correction, as Go makes it, where one of any
+    /// unsigned value needs one (Granlund and Montgomery): with
+    /// `s = ceil(log2(divisor)) - 1` and `m = ceil(2^(bits + s) / divisor)`,
+    /// `umulhi(a, m) >> s` is the quotient of every `a` below `2^(bits - 1)`.
+    fn divided_unsigned(&mut self, op: BinOp, a: ir::Value, divisor: u64) -> ir::Value {
+        let ty = self.e.fb.func.dfg.value_type(a);
+        let bits = ty.bits();
+        let ceil_log2 = 64 - (divisor - 1).leading_zeros();
+        let shift = ceil_log2 - 1;
+        let numerator = 1u128 << (bits + shift);
+        let magic = numerator.div_ceil(divisor as u128) as u64;
+        let magic = self.e.fb.ins().iconst(ty, magic as i64);
+        let high = self.e.fb.ins().umulhi(a, magic);
+        let quotient = if shift == 0 { high } else { self.e.fb.ins().ushr_imm_u(high, shift as i64) };
+        if op == BinOp::Div {
+            return quotient;
+        }
+        let product = self.e.fb.ins().imul_imm_u(quotient, divisor as i64);
+        self.e.fb.ins().isub(a, product)
     }
 }

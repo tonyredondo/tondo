@@ -803,14 +803,19 @@ impl Prover<'_> {
             && let Rvalue::Binary(crate::ast::BinOp::Div | crate::ast::BinOp::Rem, a, b) = &**rvalue
             && let (Some(a), Some((Node::Zero, divisor))) = (self.value(a), self.value(b))
             && divisor > 0
-            && (divisor as u128).is_power_of_two()
             && facts.range(a).0 >= 0
         {
-            // A dividend not below zero by a power of two: a shift or a
-            // mask, without the work signs take.
+            // A dividend not below zero by a constant above it: unsigned,
+            // without the work signs take, a shift or a mask by a power of
+            // two and a multiplication by another.
             exact(rvalue);
             if facts.range(a).0 < facts.range(a).1 {
-                remarks.push((span, "arithmetic", "is a shift or a mask: its dividend is not negative"));
+                let said = if (divisor as u128).is_power_of_two() {
+                    "is a shift or a mask: its dividend is not negative"
+                } else {
+                    "divides without signs: its dividend is not negative"
+                };
+                remarks.push((span, "arithmetic", said));
             }
         }
     }

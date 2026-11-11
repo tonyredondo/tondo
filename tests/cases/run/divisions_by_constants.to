@@ -1,0 +1,42 @@
+import std.console
+
+// A division or a remainder of an `Int` not below zero by a constant is a
+// multiplication with no correction for signs, in a release build: every
+// quotient and remainder is the one a division gives, small and near the
+// largest `Int`, by constants of every size.
+
+fn small(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += i * i % 7 + i / 3 + i % 10 + i / 1_000_000_007
+    }
+    total
+}
+
+fn large(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        let x = 9_223_372_036_854_775_807 - i
+        total += x % 1000 + x / 999_999_937 % 1000 + x % 641 + x / 4_611_686_018_427_387_905
+    }
+    total
+}
+
+fn digits(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        var n = i * 7919
+        for n > 0 {
+            total += n % 10
+            n = n / 10
+        }
+    }
+    total
+}
+
+fn main() {
+    console.println("{small(100_000)} {large(1000)} {digits(10_000)}")
+}
+// expect-stdout: 1667266666 1397597 349056
+// expect-optimization: 11:18 arithmetic divides without signs
+// expect-optimization: 20:64 arithmetic divides without signs

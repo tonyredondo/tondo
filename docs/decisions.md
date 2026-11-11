@@ -5936,3 +5936,17 @@ maintainer approved on 2026-11-11 `tondo asm --runtime <function>`: a function o
 this `tondo` carries it to link into programs, read from its archive by the function's demangled
 name, with what each instruction calls named by its relocation, and with `--compiler` what changed
 in it from another `tondo`'s runtime, as `asm --all --compiler` tells it of a program.
+
+## A division of an `Int` not below zero by a constant, as Go makes it
+
+`prove` made a division or a remainder of an `Int` it knows not below zero by a power of two a shift
+or a mask; by another constant it stayed signed, a multiplication by a magic number with a
+correction for negative dividends, and the backend's unsigned one adds a correction of its own for
+the dividends of 64 bits. Since 2026-11-11 a division by any constant above one of such an `Int`
+is unsigned, and as one of 63 bits holds the dividend, its magic number needs no correction
+(Granlund and Montgomery; Go's is the same): with `s = ceil(log2(d)) - 1` and
+`m = ceil(2^(64 + s) / d)`, `umulhi(x, m) >> s` is `x / d` for every `x` below `2^63`, which 120
+million divisions by 19,991 divisors confirmed. `sum`, `i * i % 7` over a million integers, went
+from 821 to 615 µs, Go's 724, in 41% fewer instructions, and across six orders of its program's
+functions from between 783 and 856 µs to between 612 and 616. `tondo optimizations` says that it
+"divides without signs".
