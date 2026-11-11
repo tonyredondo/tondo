@@ -1,5 +1,65 @@
 # std.model
 
+Checks a design, or the code itself, in every state it can reach and in
+every order of its steps, and gives the steps to the state that breaks a
+rule. It runs in a test, like any other check.
+
+There are three ways in, from the least work to the most:
+
+| Function | Checks | Needs |
+| --- | --- | --- |
+| `model.machine` | a function that gives the next state for an event | nothing but the function |
+| `model.watch` | properties of concurrent code, in every order of its tasks | the code, and marks where its state is read |
+| `model.check` | a model written by hand, of a design that may have no code yet | a start state and the steps that follow each state |
+
+```tondo test
+import std.model
+
+enum Event {
+    Insert
+    Turn
+    Push
+}
+
+type Gate = { paid: Bool, open: Bool }
+
+fn apply(gate: Gate, event: Event): Gate ! String {
+    match event {
+        Event.Insert if gate.open => fail "already open"
+        Event.Insert => gate with { paid: true }
+        Event.Turn if gate.paid => gate with { open: true, paid: false }
+        Event.Turn => fail "not paid"
+        Event.Push if gate.open => gate with { open: false }
+        Event.Push => fail "closed"
+    }
+}
+
+test theGateOpensOnlyWhenPaid {
+    let start = Gate { paid: false, open: false }
+    let rule = model.always((gate: Gate) { not (gate.open and gate.paid) }, name: "never open and paid")
+    let checked = model.expect(model.machine(start, apply, holds: [rule]))
+    assert(checked.states == 3)
+}
+```
+
+`model.machine` tries every event in every state. An event the function
+fails for cannot happen there; one it panics for is a bug. When a rule
+breaks, the test fails with the events that lead to the state:
+
+```text
+panic[P0008]: explicit-panic: `never open and paid` does not hold
+  start: Gate { paid: false, open: false }
+  Insert: Gate { paid: true, open: false }
+  Turn: Gate { paid: false, open: true }
+  Insert: Gate { paid: true, open: true }
+```
+
+The properties say what must hold: `always`, `eventually`, `leadsTo`,
+`reachable`, `infinitelyOften`, `eventuallyAlways`, and `temporal` for any
+formula of linear temporal logic. `tondo model <function>` writes the test
+of a state machine and runs it, `tondo test --models` runs the tests that
+check a model, and `tondo guide models` goes through all of it.
+
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
 ## Reference
