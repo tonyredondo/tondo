@@ -99,16 +99,22 @@ pub(crate) unsafe fn visit_array(visitor: &mut cycles::Visitor, a: *mut u8, size
 
 /// Allocates an array of `len` uninitialized elements and room for `cap`.
 pub(crate) fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHeader {
+    let layout = array_layout(size, cap.max(len));
+    try_array_alloc(layout, len, cap).unwrap_or_else(|| handle_alloc_error(layout))
+}
+
+/// An array of `len` elements in room for `cap`, which `layout` holds, or
+/// none when the system has no such room.
+fn try_array_alloc(layout: Layout, len: usize, cap: usize) -> Option<*mut ArrayHeader> {
     let cap = cap.max(len);
-    let layout = array_layout(size, cap);
     unsafe {
         let ptr = alloc(layout) as *mut ArrayHeader;
         if ptr.is_null() {
-            handle_alloc_error(layout);
+            return None;
         }
         ptr.write(ArrayHeader { rc: AtomicUsize::new(1), len, cap, head: 0 });
         LIVE_OBJECTS.made();
-        ptr
+        Some(ptr)
     }
 }
 
@@ -116,6 +122,17 @@ pub(crate) fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHead
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_array_new(size: usize, len: usize) -> *mut ArrayHeader {
     array_alloc(size, len, len)
+}
+
+/// `Array.withCapacity`: an empty array with room for `capacity` elements,
+/// or for none when that room cannot be had, as the capacity is a hint and
+/// storage grows on demand.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_array_reserved(size: usize, capacity: usize) -> *mut ArrayHeader {
+    let room = size.checked_mul(capacity).and_then(|bytes| bytes.checked_add(ARRAY_HEADER));
+    room.and_then(|bytes| Layout::from_size_align(bytes, 8).ok())
+        .and_then(|layout| try_array_alloc(layout, 0, capacity))
+        .unwrap_or_else(|| array_alloc(size, 0, 0))
 }
 
 #[unsafe(no_mangle)]
@@ -220,8 +237,25 @@ pub(crate) unsafe fn reserve(
         }
         let new = array_alloc(size, len, new_cap);
         (*new).head = new_head;
+        moved_to(slot, new, size, retain, release);
+    }
+}
+
+/// Puts the elements of the array in `slot` in `new`, which takes its
+/// place: a shared array's elements are copies, retained, and a unique
+/// one's storage goes.
+unsafe fn moved_to(
+    slot: *mut *mut ArrayHeader,
+    new: *mut ArrayHeader,
+    size: usize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) {
+    unsafe {
+        let a = *slot;
+        let (len, cap) = ((*a).len, (*a).cap);
         std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, 0), len * size);
-        if shared {
+        if (*a).rc.load(Ordering::Acquire) != 1 {
             if let Some(retain) = retain {
                 for index in 0..len {
                     retain(element(new, size, index));
@@ -234,6 +268,35 @@ pub(crate) unsafe fn reserve(
             dealloc(a as *mut u8, array_layout(size, cap));
         }
         *slot = new;
+    }
+}
+
+/// Room for `extra` more elements at the end of the array in `slot`, which
+/// a loop is about to push (`reserve.rs`), as a hint: when the system has
+/// no such room, the array stays as it is and grows as it is pushed to.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_reserve(
+    slot: *mut *mut ArrayHeader,
+    size: usize,
+    extra: isize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) {
+    unsafe {
+        let a = *slot;
+        let (len, head, cap) = ((*a).len, (*a).head, (*a).cap);
+        let Some(needed) = usize::try_from(extra).ok().and_then(|extra| len.checked_add(extra)) else { return };
+        if (*a).rc.load(Ordering::Acquire) == 1 && head + needed <= cap {
+            return;
+        }
+        // Twice the length at least, as a push grows it: a loop inside
+        // another that reserves in each of its turns copies the elements
+        // as often as pushes would, not in every turn.
+        let capacity = needed.max(len.saturating_mul(2));
+        let room = size.checked_mul(capacity).and_then(|bytes| bytes.checked_add(ARRAY_HEADER));
+        let layout = room.and_then(|bytes| Layout::from_size_align(bytes, 8).ok());
+        let Some(new) = layout.and_then(|layout| try_array_alloc(layout, len, capacity)) else { return };
+        moved_to(slot, new, size, retain, release);
     }
 }
 

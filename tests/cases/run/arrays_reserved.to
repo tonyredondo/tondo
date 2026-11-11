@@ -1,0 +1,114 @@
+// An array that a counted loop pushes to in every turn, as `map`, `zip` and
+// `enumerate` build theirs, takes room for every turn when the loop starts,
+// rather than growing as it goes (crates/tondo/tests/testing.rs counts it),
+// and holds the same: with a bound below zero, over an empty array, with
+// elements before the loop, and in a loop inside another. A loop that skips
+// a push with `continue`, or leaves with `break`, grows as before.
+// `Array.withCapacity` makes an array with room. A capacity is a hint: one
+// past what memory holds gives an empty array that grows as any other, and a
+// negative one fails.
+
+import std.console
+
+fn squares(count: Int): Array[Int] {
+    var out: Array[Int] = []
+    for i in 0..count {
+        out.push(i * i)
+    }
+    out
+}
+
+fn grids(rows: Int, columns: Int): Array[Array[String]] {
+    var all: Array[Array[String]] = []
+    for row in 0..rows {
+        var line = ["row {row}"]
+        for column in 0..columns {
+            line.push("{row}.{column}")
+        }
+        all.push(line)
+    }
+    all
+}
+
+fn narrow(count: Int32): Array[Int32] {
+    var out: Array[Int32] = []
+    let zero: Int32 = 0
+    for i in zero..count {
+        out.push(i * 2)
+    }
+    out
+}
+
+fn flat(rows: Int, columns: Int): Array[Int] {
+    var out: Array[Int] = []
+    for row in 0..rows {
+        for column in 0..columns {
+            out.push(row * 10 + column)
+        }
+    }
+    out
+}
+
+fn odd(count: Int): Array[Int] {
+    var out: Array[Int] = []
+    for i in 0..count {
+        if i % 2 == 0 {
+            continue
+        }
+        out.push(i)
+    }
+    out
+}
+
+fn first(count: Int, limit: Int): Array[Int] {
+    var out: Array[Int] = []
+    for i in 0..count {
+        if i == limit {
+            break
+        }
+        out.push(i)
+    }
+    out
+}
+
+fn main() {
+    let values = [3, 1, 2]
+    console.println("{values.map((x) { x * 10 })} {values.zip(["a", "b"])}")
+    console.println("{values.enumerate()} {values.sortedBy((x) { -x })}")
+    let empty: Array[Int] = []
+    console.println("{squares(5)} {squares(-3)} {empty.map((x) { x + 1 })}")
+    console.println("{grids(2, 3)} {odd(7)} {first(1_000_000_000_000, 3)}")
+    let cells = flat(300, 40)
+    console.println("{flat(2, 3)} {cells.length()} {cells[11_999]} {narrow(4)}")
+    match Array.withCapacity[Int](Int.max) {
+        ok(huge) => {
+            var grown = huge
+            grown.push(7)
+            console.println("past memory {huge.length()} {grown}")
+        }
+        err(failed) => console.println("past memory {failed}")
+    }
+    match Array.withCapacity[String](1_000) {
+        ok(room) => {
+            var names = room
+            for i in 0..1_000 {
+                names.push("n{i}")
+            }
+            console.println("reserved {names.length()} {names[999]}")
+        }
+        err(failed) => console.println("reserved {failed}")
+    }
+    match Array.withCapacity[Int](-1) {
+        ok(_) => console.println("negative made an array")
+        err(failed) => console.println("negative {failed}")
+    }
+}
+
+// expect-stdout: [30, 10, 20] [(3, a), (1, b)]
+// expect-stdout: [(0, 3), (1, 1), (2, 2)] [3, 2, 1]
+// expect-stdout: [0, 1, 4, 9, 16] [] []
+// expect-stdout: [[row 0, 0.0, 0.1, 0.2], [row 1, 1.0, 1.1, 1.2]] [1, 3, 5] [0, 1, 2]
+// expect-stdout: [0, 1, 2, 10, 11, 12] 12000 3029 [0, 2, 4, 6]
+// expect-stdout: past memory 0 [7]
+// expect-stdout: reserved 1000 n999
+// expect-stdout: negative invalid capacity

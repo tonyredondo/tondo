@@ -830,7 +830,12 @@ impl Prover<'_> {
                 // What may change the length of an array or a local the
                 // call borrows.
                 self.calls(rvalue, facts, tests, &forget_local);
-                if let Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) = &**rvalue {
+                if let Rvalue::Mutate(mutation, target, ..) = &**rvalue
+                    && *mutation != crate::hir::Mutation::Reserve
+                {
+                    facts.forget(Node::Len(target.local));
+                }
+                if let Rvalue::AssignSlice(target, ..) = &**rvalue {
                     facts.forget(Node::Len(target.local));
                 }
                 let element = matches!(place.path.first(), Some(Proj::Index(..) | Proj::InBounds(_)));

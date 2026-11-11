@@ -5792,3 +5792,22 @@ cold functions, where a task runs and stops. Which operation claimed a wait is r
 the wait the task resumes in, and who handed a value through a channel with no buffer from the hook
 of the debugger's scan, by its mask. Who claimed any other wait is not kept: that is a check where
 every wake notifies, which a program without the log would pay.
+
+## An array a loop fills takes its room before the loop
+
+`values.map(f)` made 13 allocations for 10,000 elements, as its array grew by doubling, where Go's
+version makes its slice with the length it knows. Reserving in `map` itself, through
+`Array.withCapacity`, made its body cost more than the inliner takes, so that `map` stopped being
+inlined where it is nested and its closure went to the heap. A pass of release builds
+(`reserve.rs`, 2026-11-11) does it instead, for the standard library and for a program's own
+loops alike: an array that a counted loop from 0 pushes to once in every turn, and changes in no
+other way there, takes room for every turn before the loop, a `Mutation::Reserve` that no source
+writes. A loop that may leave before its last turn, by `break` or `return`, or that pushes in some
+turns only, as `filter` does, is left to grow, so that an array never takes much more room than
+its elements; one that leaves by unwinding or cancellation does not count, as the array goes then.
+The room is a hint: the runtime takes it when the system has it, and leaves the array as it was
+when not, and grows it to twice its length at least, so that a loop inside another, which reserves
+in each turn of the outer one, copies the elements no more often than pushes would.
+`Array.withCapacity`, which reserved nothing, takes its room too. `map`, `zip` and `enumerate` of
+10,000 elements make one allocation instead of 13, and a program's `for` loop that pushes in every
+turn one instead of 13, 5.7 µs instead of 7.5.

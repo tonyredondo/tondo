@@ -61,6 +61,7 @@ pub mod project;
 pub mod proto;
 pub mod protobuf;
 pub mod prove;
+pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;
 pub mod stack;

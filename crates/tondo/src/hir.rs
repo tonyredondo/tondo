@@ -825,6 +825,9 @@ pub enum Mutation {
     Insert,
     /// Map: `V?` with the removed value. Set: `true` when it was present.
     Remove,
+    /// Room for as many more elements of an array, before a loop that
+    /// pushes them (`reserve.rs`): a hint, which no source writes.
+    Reserve,
 }
 
 impl Mutation {

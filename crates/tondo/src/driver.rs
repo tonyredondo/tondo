@@ -1214,6 +1214,8 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     after("lends", bodies, types, sources);
     crate::moves::moves(bodies);
     after("moves", bodies, types, sources);
+    crate::reserve::reserve(bodies, types);
+    after("reserve", bodies, types, sources);
     crate::unroll::unroll(bodies, types);
     after("unroll", bodies, types, sources);
     crate::prove::prove(bodies, types);

@@ -29,9 +29,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let capacity = self.scalar(&operands[0]);
                 let size = self.e.element_size(element_of(array_ty));
                 let zero = self.e.fb.ins().iconst(POINTER, 0);
-                // The capacity is a hint; storage grows on demand.
-                let array = self.e.call_rt(Rt::ArrayNew, &[size, zero]).unwrap();
                 let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, capacity, 0);
+                // The capacity is a hint, which a negative one fails; storage
+                // grows on demand.
+                let room = self.e.fb.ins().select(negative, zero, capacity);
+                let array = self.e.call_rt(Rt::ArrayReserved, &[size, room]).unwrap();
                 let invalid = self.e.fb.ins().iconst(types::I8, 0);
                 let fine = self.e.fb.ins().iconst(types::I8, -1);
                 let error = self.e.fb.ins().select(negative, invalid, fine);
@@ -203,6 +205,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ArrayRemoveAt, &[slot, at, out, size, retain_glue, release_glue])
             }
             (Mutation::Clear, ..) => self.e.call_rt(Rt::ArrayClear, &[slot, size, release_glue]),
+            (Mutation::Reserve, ..) => {
+                let extra = self.scalar_of(values[0]);
+                self.e.call_rt(Rt::ArrayReserve, &[slot, size, extra, retain_glue, release_glue])
+            }
             _ => unreachable!("not a sequence mutation"),
         };
         if let Some(var) = spilled {
