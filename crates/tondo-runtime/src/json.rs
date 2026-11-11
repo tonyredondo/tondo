@@ -3,7 +3,7 @@
 //! root value, no trailing data, no duplicate keys, bounded depth.
 
 use super::io::{StreamObject, retain, run, tondo_rt_stream_release};
-use super::{LIVE_OBJECTS, Str, str_bytes, str_new, str_text};
+use super::{LIVE_OBJECTS, OpenPieces, POSITIONED_FROM, Str, str_bytes, str_new, str_text};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -152,7 +152,13 @@ struct Reader {
     several: bool,
     /// Where the value of the last event started.
     start: usize,
+    /// The block the short texts it gives are pieces of: one allocation
+    /// for a document's names and numbers rather than one each.
+    pieces: Option<OpenPieces>,
 }
+
+/// The most room a block of texts takes: a text kept keeps its block.
+const PIECES_ROOM: usize = 512;
 
 #[repr(C)]
 pub struct ReaderObject {
@@ -214,6 +220,7 @@ impl Reader {
             duplicates,
             several: false,
             start: 0,
+            pieces: None,
         }
     }
 
@@ -236,6 +243,7 @@ impl Reader {
     /// past what is worth keeping, and nothing it read.
     fn spare(&mut self) -> bool {
         self.input = Input::owned(Vec::new());
+        self.pieces = None;
         self.source = None;
         self.error = None;
         self.text.capacity() + self.keys.capacity() <= KEPT_ROOM
@@ -718,10 +726,24 @@ pub unsafe extern "C" fn tondo_rt_json_integer(object: *mut ReaderObject) -> i64
     reader(object).integer.unwrap_or(0)
 }
 
-/// The text of the last string, key or number.
+/// The text of the last string, key or number: a short one a piece of the
+/// reader's block, as large as the input left, up to `PIECES_ROOM`; one that
+/// follows a full block, of a document that makes more texts than that,
+/// three times as large.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_text(object: *mut ReaderObject) -> *mut Str {
-    str_new(reader(object).text.as_bytes())
+    let mut reader = reader(object);
+    let r = &mut *reader;
+    let len = r.text.len();
+    if len == 0 || len >= POSITIONED_FROM {
+        return str_new(r.text.as_bytes());
+    }
+    if !r.pieces.as_ref().is_some_and(|pieces| pieces.fits(len)) {
+        let left = if r.exhausted { r.input.len() - r.position } else { PIECES_ROOM };
+        let room = OpenPieces::room(len) + if r.pieces.is_some() { 3 * left } else { left };
+        r.pieces = Some(OpenPieces::new(room.min(PIECES_ROOM).max(OpenPieces::room(len))));
+    }
+    r.pieces.as_mut().map_or_else(|| str_new(r.text.as_bytes()), |pieces| pieces.push(r.text.as_bytes()))
 }
 
 /// Skips the rest of a value whose first event was `event`; 0 or -1.

@@ -5645,6 +5645,17 @@ block. What it costs is memory: a piece that is kept keeps its whole block, at m
 the text it came from, as a Go substring keeps the text it points into; a piece that changes is
 copied first, and the copy keeps nothing else.
 
+A JSON reader makes its short texts so, keys, strings and numbers under 64 bytes, since
+2026-11-11: pieces of a block it fills as it reads and hands out as it makes them, which holds a
+reference for each piece it may yet make and gives back the rest when it closes, so that a piece
+let go meanwhile does not free it. The block is as large as the input left, at most 512 bytes, and
+three times that after a full one, of a document that makes more texts than its size; it closes
+when it fills or the reader ends. A text kept keeps at most 512 bytes. `json.decode` of a record
+with a name, two tags and a price went from 5 allocations to 2, Go's 4, in 280 bytes to Go's 288;
+`json.parse` of an object from 32 to 17, Go's 36. A number's text, which a `Float` only parses,
+was the allocation that left decoding behind Go's: a `Number` event keeps its text, as a decimal
+needs it.
+
 ## A text only its frame reads is made in the frame
 
 `"{i}".length()` allocated a string and freed it for each number, where Go makes none for numbers

@@ -1,0 +1,93 @@
+// The short texts a JSON reader gives, keys, strings and numbers, are
+// pieces of a block it fills as it reads, which counts their references
+// together: a text kept after its reader goes, one changed, which is copied
+// first, one sent to another task while the reader reads on, more texts
+// than one block holds, a long one, which is a string of its own, the
+// texts of a stream, and those of a parsed document all keep or let go of
+// the block as a string of their own would.
+
+import std.console
+import std.io
+import std.json
+
+type Item = { name: String, tags: Array[String], price: Float }
+
+fn names(count: Int): String {
+    var parts: Array[String] = []
+    for i in 0..count {
+        parts.push("\"name {i}\"")
+    }
+    "[{parts.join(", ")}]"
+}
+
+fn lengths(texts: Receiver[String], out: Sender[Int]) {
+    var total = 0
+    for text in texts {
+        total += text.length()
+    }
+    out.send(total)
+    out.close()
+}
+
+fn lastOf(count: Int): String {
+    let all = json.decode[Array[String]](names(count)).unwrapOr([])
+    all[all.length() - 1]
+}
+
+fn main() {
+    // Kept after its reader goes, and changed.
+    let text = "{{\"name\": \"lamp\", \"tags\": [\"home\", \"light\"], \"price\": 19.5}}"
+    var item = json.decode[Item](text).unwrapOr(Item { name: "", tags: [], price: 0.0 })
+    item.tags[0] = "{item.tags[0]}!"
+    console.println("{item.name} {item.tags} {item.price}")
+    // More texts than a block holds, the last kept after the others go.
+    console.println("{lastOf(1)} {lastOf(300)}")
+    // Long ones, strings of their own, beside short and empty ones.
+    let long = "y".repeat(64)
+    let mixed = json.decode[Array[String]]("[\"{"x".repeat(63)}\", \"{long}\", \"\", \"caf\\u00e9\"]").unwrapOr([])
+    console.println("{mixed.map((t) { t.length() })} {mixed[3]}")
+    // Sent to another task, which lets go of them there, while the reader
+    // of a stream reads on into the same block.
+    let (out, texts) = channel[String](2)
+    let (done, total) = channel[Int](1)
+    let counter = spawn lengths(texts, done)
+    let reader = json.readerFrom(io.reader(names(120)))
+    var numbers: Array[String] = []
+    for {
+        match reader.next() {
+            ok(some(json.Event.Text(name))) => out.send(name)
+            ok(some(_)) => {}
+            ok(none) => break
+            err(failure) => {
+                console.println(failure.message)
+                break
+            }
+        }
+    }
+    out.close()
+    counter.wait()
+    console.println("{total.receive()}")
+    // A number's text, and the keys and texts of a parsed document.
+    let numberReader = json.reader("[19.5, 1e3, -0.25]")
+    for {
+        match numberReader.next() {
+            ok(some(json.Event.Number(number))) => numbers.push(number.text())
+            ok(some(_)) => {}
+            _ => break
+        }
+    }
+    console.println("{numbers}")
+    let value = json.parse(text).unwrapOr(json.Value.Null)
+    let object = value.asObject().unwrapOr([:])
+    var keys: Array[String] = []
+    for key in object.keys() {
+        keys.push(key)
+    }
+    console.println("{keys.sorted()} {value.find("tags[1]").map((v) { v.asText() })}")
+}
+// expect-stdout: lamp [home!, light] 19.5
+// expect-stdout: name 0 name 299
+// expect-stdout: [63, 64, 0, 4] café
+// expect-stdout: some(850)
+// expect-stdout: [19.5, 1e3, -0.25]
+// expect-stdout: [name, price, tags] some(some(light))

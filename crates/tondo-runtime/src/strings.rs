@@ -153,6 +153,64 @@ impl Pieces {
     }
 }
 
+/// A block whose pieces go out as they are made, before it is done, as a
+/// reader makes the texts of a document: it holds a reference for each
+/// piece it may yet make, which it gives back when it closes, so that a
+/// piece let go meanwhile does not free it. It closes when it is dropped.
+pub(crate) struct OpenPieces {
+    pieces: Pieces,
+}
+
+/// The references an open block holds for the pieces it may yet make.
+const UNMADE: usize = 1 << 40;
+
+// The block's owner alone writes it; the pieces it gave out change only
+// its count, atomically.
+unsafe impl Send for OpenPieces {}
+
+impl OpenPieces {
+    /// A block of `size` bytes, its header's included.
+    pub(crate) fn new(size: usize) -> OpenPieces {
+        let size = size.next_multiple_of(8).max(BLOCK);
+        let layout = Layout::from_size_align(size, std::mem::align_of::<Block>()).expect("pieces too large");
+        let block = unsafe { alloc(layout) } as *mut Block;
+        if block.is_null() {
+            handle_alloc_error(layout);
+        }
+        unsafe { block.write(Block { count: AtomicUsize::new(UNMADE), size, used: BLOCK, long: false }) };
+        LIVE_OBJECTS.made();
+        OpenPieces { pieces: Pieces { block, used: BLOCK, count: 0, long: false } }
+    }
+
+    /// The room a block needs for a piece of `len` bytes.
+    pub(crate) fn room(len: usize) -> usize {
+        BLOCK + piece_room(len)
+    }
+
+    /// Whether a piece of `len` bytes fits in what is left of the block.
+    pub(crate) fn fits(&self, len: usize) -> bool {
+        self.pieces.used + piece_room(len) <= unsafe { (*self.pieces.block).size }
+    }
+
+    /// The next piece, with one reference, which must fit.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
+        assert!(self.pieces.count < UNMADE && self.fits(bytes.len()), "a piece past its block's room");
+        self.pieces.push(bytes)
+    }
+}
+
+impl Drop for OpenPieces {
+    fn drop(&mut self) {
+        let Pieces { block, used, count, long } = self.pieces;
+        unsafe {
+            // Before the references go back, as the piece released last
+            // reads them to free the block.
+            ((*block).used, (*block).long) = (used, long);
+            release_pieces(block, UNMADE - count);
+        }
+    }
+}
+
 unsafe fn block_layout(block: *const Block) -> Layout {
     unsafe { Layout::from_size_align_unchecked((*block).size, std::mem::align_of::<Block>()) }
 }
