@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// How a function form calls what it names, given the closure's parameters
+/// and the modes they are passed in.
+type FormCall<'a> = Box<dyn Fn(Vec<ast::Expr>, &[ast::Mode]) -> ast::Expr + 'a>;
+
 impl<'a> Checker<'a> {
     /// `value.method[T](...)`: a method's own type parameters, given; its
     /// type's come from the value.
@@ -2368,80 +2372,79 @@ impl<'a> Checker<'a> {
         let ident = |name: &str| ast::Ident { name: name.to_string(), span };
         let path = |this: &[ast::Ident]| ast::Expr { kind: ast::ExprKind::Path(this.to_vec()), span };
         // What it takes: the mode of each argument of its call.
-        let (modes, call): (Vec<ast::Mode>, Box<dyn Fn(Vec<ast::Expr>, &[ast::Mode]) -> ast::Expr>) =
-            match segments.as_slice() {
-                // A function that gives `T ! E` is written in terms of its
-                // `T`: `ok` gives the value, and `err` fails with it.
-                [name] if name.name == "some" => {
-                    let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| ast::Expr {
-                        kind: ast::ExprKind::Construct("some", Box::new(values.remove(0))),
-                        span,
-                    };
-                    (vec![ast::Mode::Value], Box::new(call))
-                }
-                [name] if name.name == "ok" => {
-                    (vec![ast::Mode::Value], Box::new(|mut values: Vec<ast::Expr>, _: &[ast::Mode]| values.remove(0)))
-                }
-                [name] if name.name == "err" => {
-                    let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| {
-                        let fail = ast::Stmt { kind: ast::StmtKind::Fail(values.remove(0)), span };
-                        let block = ast::Block { stmts: vec![fail], tail: None, span };
-                        ast::Expr { kind: ast::ExprKind::Block(block), span }
-                    };
-                    (vec![ast::Mode::Value], Box::new(call))
-                }
-                [name] if matches!(self.names.get(&name.name), Some(ModuleName::Newtype(_))) => {
-                    (vec![ast::Mode::Value], Box::new(Self::calling(path(segments), span)))
-                }
-                // A method of a trait, which the function expected
-                // specializes.
-                [owner, method]
-                    if let Some(&trait_id) = self.trait_names.get(&owner.name)
-                        && self.type_named(&owner.name).is_none() =>
+        let (modes, call): (Vec<ast::Mode>, FormCall<'_>) = match segments.as_slice() {
+            // A function that gives `T ! E` is written in terms of its
+            // `T`: `ok` gives the value, and `err` fails with it.
+            [name] if name.name == "some" => {
+                let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| ast::Expr {
+                    kind: ast::ExprKind::Construct("some", Box::new(values.remove(0))),
+                    span,
+                };
+                (vec![ast::Mode::Value], Box::new(call))
+            }
+            [name] if name.name == "ok" => {
+                (vec![ast::Mode::Value], Box::new(|mut values: Vec<ast::Expr>, _: &[ast::Mode]| values.remove(0)))
+            }
+            [name] if name.name == "err" => {
+                let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| {
+                    let fail = ast::Stmt { kind: ast::StmtKind::Fail(values.remove(0)), span };
+                    let block = ast::Block { stmts: vec![fail], tail: None, span };
+                    ast::Expr { kind: ast::ExprKind::Block(block), span }
+                };
+                (vec![ast::Mode::Value], Box::new(call))
+            }
+            [name] if matches!(self.names.get(&name.name), Some(ModuleName::Newtype(_))) => {
+                (vec![ast::Mode::Value], Box::new(Self::calling(path(segments), span)))
+            }
+            // A method of a trait, which the function expected
+            // specializes.
+            [owner, method]
+                if let Some(&trait_id) = self.trait_names.get(&owner.name)
+                    && self.type_named(&owner.name).is_none() =>
+            {
+                let found = self.traits[trait_id.0 as usize].methods.iter().find(|m| m.name == method.name)?;
+                let receiver = found.signature.receiver?;
+                let mut modes = found.signature.modes.clone();
+                modes[0] = match receiver {
+                    ast::Mode::Mut | ast::Mode::Var => receiver,
+                    _ => ast::Mode::Value,
+                };
+                (modes, Box::new(Self::calling(path(segments), span)))
+            }
+            [.., _] if segments.len() >= 2 => {
+                let (method, owner) = segments.split_last()?;
+                let owner_ty = match owner {
+                    [name] => self.type_named(&name.name).or_else(|| self.intrinsic_owner(&name.name)),
+                    [module, name] => self.module_type(&module.name, &name.name),
+                    _ => None,
+                };
+                let owner_ty = owner_ty?;
+                // A variant with positional data.
+                if let TyKind::Adt(id) = self.types.kind(self.types.repr(owner_ty))
+                    && let AdtKind::Enum(variants) = &self.types.adt(*id).kind
                 {
-                    let found = self.traits[trait_id.0 as usize].methods.iter().find(|m| m.name == method.name)?;
-                    let receiver = found.signature.receiver?;
-                    let mut modes = found.signature.modes.clone();
+                    let variant = variants.iter().find(|v| v.name == method.name)?;
+                    let count = variant.payload.types().len();
+                    if count == 0 || !matches!(variant.payload, Payload::Tuple(_)) {
+                        return None;
+                    }
+                    (vec![ast::Mode::Value; count], Box::new(Self::calling(path(segments), span)))
+                } else {
+                    // A method with `self`.
+                    let key = self.owner_key(owner_ty);
+                    let id = *self.methods.get(&(key, method.name.clone()))?;
+                    let signature = &self.signatures[id.0 as usize];
+                    let receiver = signature.receiver?;
+                    let mut modes = signature.modes.clone();
                     modes[0] = match receiver {
                         ast::Mode::Mut | ast::Mode::Var => receiver,
                         _ => ast::Mode::Value,
                     };
                     (modes, Box::new(Self::calling(path(segments), span)))
                 }
-                [.., _] if segments.len() >= 2 => {
-                    let (method, owner) = segments.split_last()?;
-                    let owner_ty = match owner {
-                        [name] => self.type_named(&name.name).or_else(|| self.intrinsic_owner(&name.name)),
-                        [module, name] => self.module_type(&module.name, &name.name),
-                        _ => None,
-                    };
-                    let owner_ty = owner_ty?;
-                    // A variant with positional data.
-                    if let TyKind::Adt(id) = self.types.kind(self.types.repr(owner_ty))
-                        && let AdtKind::Enum(variants) = &self.types.adt(*id).kind
-                    {
-                        let variant = variants.iter().find(|v| v.name == method.name)?;
-                        let count = variant.payload.types().len();
-                        if count == 0 || !matches!(variant.payload, Payload::Tuple(_)) {
-                            return None;
-                        }
-                        (vec![ast::Mode::Value; count], Box::new(Self::calling(path(segments), span)))
-                    } else {
-                        // A method with `self`.
-                        let key = self.owner_key(owner_ty);
-                        let id = *self.methods.get(&(key, method.name.clone()))?;
-                        let signature = &self.signatures[id.0 as usize];
-                        let receiver = signature.receiver?;
-                        let mut modes = signature.modes.clone();
-                        modes[0] = match receiver {
-                            ast::Mode::Mut | ast::Mode::Var => receiver,
-                            _ => ast::Mode::Value,
-                        };
-                        (modes, Box::new(Self::calling(path(segments), span)))
-                    }
-                }
-                _ => return None,
-            };
+            }
+            _ => return None,
+        };
         let params: Vec<ast::ClosureParam> = (0..modes.len())
             .map(|index| ast::ClosureParam {
                 name: ident(&format!("·{index}")),
