@@ -6171,3 +6171,15 @@ a function would change shape when its signature crosses the width, so renaming 
 parameter rewrites a body that did not change; the value it gives sits at the end of a long
 signature; and a reader meets two shapes for one thing, chosen by a limit nobody sees. A
 function's body is always a block.
+
+## `??`: the value, or else this
+
+The value of an option with a default was `value.unwrapOr(fallback)`, which computes the default
+even when it is not used, and taking it or leaving the function was a `match` of two arms. `a ??
+b` gives what `a` holds, an option or a result, or else `b`, evaluated only then; `b` may be
+`return`, `fail`, `break` or `continue`, so `users.get(id) ?? fail ApiError.NotFound(id)` is one
+line. After an option, an optional `b` keeps the option, which makes `flag ?? env ?? 8080` chain.
+It binds least of all and to the right, as C#'s, so `count ?? 0 + 1` is `count ?? (0 + 1)`. The
+error of a result is dropped, as `unwrapOr` did. Two propagations stay `(value?)?`; `value??` with
+nothing after it is a lexical error that says so, and so is the type `T??`, written `(T?)?`. The
+checker makes it a `match` of the value, so nothing after it changes.

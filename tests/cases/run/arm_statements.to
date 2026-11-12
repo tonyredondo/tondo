@@ -7,7 +7,7 @@ fn bump(n: Int): Int {
 fn main() {
     var total = 0
     var names: Array[String] = []
-    for value in [some(1), none, 3] {
+    for value in [some(1), none, some(3)] {
         match value {
             some(n) => total += n
             none => names.push("missing")

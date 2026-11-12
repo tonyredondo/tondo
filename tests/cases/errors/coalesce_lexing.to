@@ -1,0 +1,13 @@
+// Written after a value with nothing following, `??` is two propagations,
+// `(value?)?`; and an option of an option is the type `(T?)?`.
+
+fn twice(value: (Int?)?): Int? {
+    let inner = value??
+    inner
+}
+
+fn nested(value: Int??) {}
+
+fn main() {}
+
+// expect-error: E0002 `??` needs what to give when there is no value, as `value ?? fallback`; to propagate twice, write `(value?)?`, and an option of an option is the type `(T?)?`

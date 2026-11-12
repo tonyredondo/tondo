@@ -949,6 +949,10 @@ impl Linker<'_> {
                 self.expr(base);
                 updates.iter_mut().filter_map(|f| f.value.as_mut()).for_each(|v| self.expr(v));
             }
+            ExprKind::Coalesce(value, fallback) => {
+                self.expr(value);
+                self.expr(fallback);
+            }
             ExprKind::Call { callee, args } => {
                 self.expr(callee);
                 args.iter_mut().for_each(|a| self.expr(&mut a.value));

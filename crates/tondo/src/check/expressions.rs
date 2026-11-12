@@ -335,6 +335,72 @@ impl<'a> Checker<'a> {
         value
     }
 
+    /// `value ?? fallback` (17.11): the `T` that an option or a result holds,
+    /// or else the fallback, evaluated only then, which may leave; after an
+    /// option, a fallback that is a `T?` keeps the option, so that `??`
+    /// chains. A `match` on the value, whose error goes unread.
+    pub(super) fn coalesce(
+        &mut self,
+        cx: &mut FnCx,
+        value: &ast::Expr,
+        fallback: &ast::Expr,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        // A call learns the success type it should give, as with `?`.
+        let hint = match &value.kind {
+            ast::ExprKind::Call { .. } => expected.filter(|t| !matches!(self.types.kind(*t), TyKind::Option(_))),
+            _ => None,
+        };
+        let value = self.expr(cx, value, hint);
+        let (present, absent, payload, error) = match self.types.kind(self.types.repr(value.ty)).clone() {
+            TyKind::Option(payload) => (SOME, NONE, payload, None),
+            TyKind::Result(payload, error) => (OK, ERR, payload, Some(error)),
+            _ if value.ty == Ty::ERROR => {
+                self.expr(cx, fallback, None);
+                return Self::error_expr(span);
+            }
+            _ => {
+                let message = format!(
+                    "`??` gives the value of an option or a result, and this is {}: write it without `?? ...`",
+                    self.display(value.ty)
+                );
+                self.diags.error("E1102", value.span, message);
+                self.expr(cx, fallback, None);
+                return Self::error_expr(span);
+            }
+        };
+        let option = error.is_none();
+        let optional = self.types.intern(TyKind::Option(payload));
+        // The fallback runs only when there is no value: what it does to
+        // the flow of the rest is not known.
+        let diverged = cx.diverged;
+        let hint = match expected {
+            Some(expected) if option && expected == optional => optional,
+            _ => payload,
+        };
+        let fallback = self.expr(cx, fallback, Some(hint));
+        cx.diverged = diverged;
+        let result = if option && fallback.ty == optional { optional } else { payload };
+        let fallback = self.coerce(fallback, result);
+        let local = self.hidden_local(cx, payload);
+        let read = Self::mk(hir::ExprKind::Local(local), payload, span);
+        let read = if result == optional {
+            Self::mk(hir::ExprKind::Variant(SOME, vec![(0, read)]), optional, span)
+        } else {
+            read
+        };
+        let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
+        let some = hir::Pattern { kind: hir::PatKind::Variant(present, vec![bound]), ty: value.ty, span };
+        let rest = error.map(|ty| hir::Pattern { kind: hir::PatKind::Wildcard, ty, span }).into_iter().collect();
+        let none = hir::Pattern { kind: hir::PatKind::Variant(absent, rest), ty: value.ty, span };
+        let arms = vec![
+            hir::Arm { pattern: some, guard: None, body: read },
+            hir::Arm { pattern: none, guard: None, body: fallback },
+        ];
+        Self::mk(hir::ExprKind::Match(Box::new(value), arms), result, span)
+    }
+
     /// Whether an expression takes its type from the one expected and is
     /// never an option: a number, a literal of a collection or a tuple, or
     /// `ok(...)` and `err(...)`.
@@ -490,6 +556,7 @@ impl<'a> Checker<'a> {
                 self.record_literal(cx, path, type_args, fields, expected, span)
             }
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
+            ast::ExprKind::Coalesce(value, fallback) => self.coalesce(cx, value, fallback, expected, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),

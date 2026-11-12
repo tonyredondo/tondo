@@ -908,6 +908,27 @@ impl Formatter<'_> {
         if simple { group(concat(docs)) } else { concat(docs) }
     }
 
+    /// What follows `??`: `return`, `fail`, `break` or `continue` alone in
+    /// a block is written without its braces.
+    fn fallback(&mut self, fallback: &Expr) -> Doc {
+        match &fallback.kind {
+            ExprKind::Block(Block { stmts, tail: None, .. })
+                if !self.parenthesized(fallback)
+                    && matches!(
+                        stmts.as_slice(),
+                        [Stmt {
+                            kind: StmtKind::Return(_) | StmtKind::Fail(_) | StmtKind::Break | StmtKind::Continue,
+                            ..
+                        }]
+                    )
+                    && !self.comments.iter().any(|c| c.start >= fallback.span.start && c.end <= fallback.span.end) =>
+            {
+                self.stmt(&stmts[0])
+            }
+            _ => self.expr(fallback),
+        }
+    }
+
     /// Whether a block holds only a value and no comments.
     fn is_simple(&self, block: &Block) -> bool {
         block.stmts.is_empty()
@@ -1111,6 +1132,25 @@ impl Formatter<'_> {
                     }
                     docs.push(text(format!(" {}", op.as_str())));
                     docs.push(indent(concat(vec![Doc::Softline, operand])));
+                }
+                group(concat(docs))
+            }
+            ExprKind::Coalesce(..) => {
+                // `a ?? b ?? c` is one chain, which breaks after each `??`.
+                let mut docs = Vec::new();
+                let mut current = expr;
+                while let ExprKind::Coalesce(value, fallback) = &current.kind {
+                    let value = self.expr(value);
+                    docs.push(if docs.is_empty() { value } else { indent(concat(vec![Doc::Softline, value])) });
+                    docs.push(text(" ??"));
+                    match &fallback.kind {
+                        ExprKind::Coalesce(..) if !self.parenthesized(fallback) => current = fallback,
+                        _ => {
+                            let last = self.fallback(fallback);
+                            docs.push(indent(concat(vec![Doc::Softline, last])));
+                            break;
+                        }
+                    }
                 }
                 group(concat(docs))
             }

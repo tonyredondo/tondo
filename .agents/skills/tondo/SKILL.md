@@ -63,7 +63,9 @@ with statements cannot be imported.
 - The last expression of a block is its value; `return` is for early exits.
 - Errors are values in the signature: `fn load(): Config ! LoadError`; `?`
   propagates and `fail Error.Variant` fails. `T?` is an optional value with
-  `some(x)` and `none`; results are `ok(x)` and `err(e)`. A bug panics;
+  `some(x)` and `none`; results are `ok(x)` and `err(e)`. `value ?? fallback`
+  gives the value or else the fallback, which may be `return`, `fail`,
+  `break` or `continue`: `ages[name] ?? 0`. A bug panics;
   `recover { ... }` stops a panic, as a `T ! Panic`, at the edge of a
   request or a job.
 - What belongs to the work that runs, as the request or the trace, goes in

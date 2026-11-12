@@ -202,10 +202,13 @@ impl<'a> Checker<'a> {
             Some(TyKind::Map(key, value)) => (Some(*key), Some(*value)),
             _ => (None, None),
         };
+        let inferring = u32::from(key.is_none());
         let mut entries = Vec::new();
         let mut constants: Vec<(hir::Literal, Span)> = Vec::new();
         for (k, v) in pairs {
+            self.inferring += inferring;
             let k = self.expr(cx, k, key);
+            self.inferring -= inferring;
             let k = match key {
                 Some(key) => self.coerce(k, key),
                 None => {
@@ -219,7 +222,9 @@ impl<'a> Checker<'a> {
                 }
                 constants.push((constant, k.span));
             }
+            self.inferring += inferring;
             let v = self.expr(cx, v, value);
+            self.inferring -= inferring;
             let v = match value {
                 Some(value) => self.coerce(v, value),
                 None => {
@@ -249,10 +254,13 @@ impl<'a> Checker<'a> {
             Some(TyKind::Set(element)) => Some(*element),
             _ => None,
         };
+        let inferring = u32::from(element.is_none());
         let mut values = Vec::new();
         let mut constants = Vec::new();
         for item in items {
+            self.inferring += inferring;
             let value = self.expr(cx, item, element);
+            self.inferring -= inferring;
             let value = match element {
                 Some(element) => self.coerce(value, element),
                 None => {
@@ -296,9 +304,13 @@ impl<'a> Checker<'a> {
             Some(TyKind::Array(element)) => Some(*element),
             _ => None,
         };
+        // Without one expected, the first element gives the others' type.
+        let inferring = u32::from(element.is_none());
         let mut values = Vec::new();
         for item in items {
+            self.inferring += inferring;
             let value = self.expr(cx, item, element);
+            self.inferring -= inferring;
             let value = match element {
                 Some(element) => self.coerce(value, element),
                 None => {

@@ -2226,6 +2226,9 @@ some(value)
 none
 ~~~
 
+El valor de una option, o una alternativa cuando no tiene, es
+`value ?? fallback` (17.13).
+
 Ejemplo:
 
 ~~~tondo
@@ -2318,6 +2321,9 @@ Constructores y patrones intrínsecos:
 ok(value)
 err(error)
 ~~~
+
+El valor de éxito, o una alternativa que descarta el error, es
+`value ?? fallback` (17.13).
 
 En una función `T ! E`, el cuerpo se escribe en términos del valor de éxito `T`:
 
@@ -7056,8 +7062,10 @@ El `?` se aplica al valor completo inmediatamente anterior.
 `?.` no es un token de navegación segura. Cuando aparece sin espacio, el lexer
 produce `?` y `.`: primero se propaga ausencia o error fuera de la función actual
 y solo en el camino presente/exitoso continúa el acceso ordinario. Por claridad,
-dos propagaciones consecutivas se parentizan como `(value?)?`; la secuencia
-adyacente `??` es error léxico y nunca significa coalescencia.
+dos propagaciones consecutivas se parentizan como `(value?)?`: la secuencia
+adyacente `??` es el operador de 17.13. Escrita tras un valor sin nada detrás,
+como `value??` al final de una línea o ante `)`, es error léxico (`E0002`) que
+nombra `(value?)?`, y en un tipo, `T??`, el mismo error nombra `(T?)?`.
 
 ### 17.3 Operaciones prefijas
 
@@ -7266,6 +7274,7 @@ De mayor a menor:
 | 12 | `and` | izquierda con short-circuit |
 | 13 | `or` | izquierda con short-circuit |
 | 14 | `with` de record | izquierda |
+| 15 | `??` | derecha |
 
 Asignaciones y declaraciones no son expresiones y quedan fuera de la tabla.
 
@@ -7286,10 +7295,39 @@ No tienen operador:
 - Potencia.
 - Producto escalar o matricial.
 - Comparación elemento a elemento.
-- Coalescencia de options.
 - Conversión de tipos.
 
 Se llaman mediante nombres que expresan intención.
+
+### 17.13 El valor o una alternativa: `??`
+
+`value ?? fallback` da el valor que tiene `value`, o `fallback` cuando no tiene
+ninguno:
+
+~~~tondo
+let name = request.query("name") ?? "guest"
+let member = state.members.get(id) ?? return
+let user = users.get(id) ?? fail ApiError.NotFound(id)
+let port = flags.port ?? env.port ?? 8080
+~~~
+
+- El operando izquierdo es un `T?` o un `T ! E`, tras resolver alias. Otro tipo
+  es `E1102`, que dice el tipo y que `??` sobra.
+- Se evalúa una sola vez. Con `some(v)` u `ok(v)` el resultado es `v`, movido si
+  no es `Copy`, y `fallback` no se evalúa. Con `none` o `err(e)` se evalúa
+  `fallback`; el error se descarta.
+- `fallback` se comprueba contra `T`, y el resultado es un `T`. Tras un `T?`,
+  un `fallback` que es un `T?` da un `T?`: así se encadenan alternativas
+  opcionales, `a ?? b ?? c`. Un `fallback` de tipo `Never` da un `T`.
+- `fallback` es una expresión, o una de las sentencias `return [expresión]`,
+  `fail expresión`, `break` o `continue`, que dejan la función o el bucle como
+  escritas solas (23.14).
+- Es el nivel más bajo de 17.11 y asocia a la derecha: `a ?? b ?? c` es
+  `a ?? (b ?? c)`, `count ?? 0 + 1` es `count ?? (0 + 1)` y
+  `flag ?? false or other` es `flag ?? (false or other)`. Como operando de otro
+  operador o de un acceso se parentiza: `(name ?? "").trim()`.
+- El formateador escribe un espacio a cada lado; una cadena que no cabe se parte
+  después de cada `??`.
 
 ---
 
@@ -9549,10 +9587,10 @@ El lexer utiliza maximal munch para operadores válidos. En particular reconoce
 carácter. Reconoce comentarios antes de tratar `/` como operador y los prefijos
 `r"`/`r"""` antes de separar un identificador `r` de un literal.
 
-Las secuencias adyacentes `--` y `??` fuera de comentarios o strings se rechazan
-según 17.2 y 17.3; no se dividen en dos operadores. Tampoco existen `++`, `&&` ni
-`||`; el diagnóstico de cada una nombra la forma Tondo (`+= 1`, `and`, `or`, o un
-`match` en lugar de coalescencia). `?.` sí se divide
+La secuencia adyacente `--` fuera de comentarios o strings se rechaza según
+17.3; no se divide en dos operadores. `??` es el operador de 17.13, salvo sin
+nada detrás, que es error según 17.2. Tampoco existen `++`, `&&` ni `||`; el
+diagnóstico de cada una nombra la forma Tondo (`+= 1`, `and`, `or`). `?.` sí se divide
 deliberadamente en propagación `?` seguida de acceso `.` y nunca es safe
 navigation.
 
@@ -9920,6 +9958,7 @@ statement_end   = NL ;
 binding_decl    = ( "let" | "var" ), irrefutable_pattern,
                   [ ":", type_expr ], [ "=", expression ] ;
 
+(* También siguen a `??` (17.13, 23.19). *)
 return_stmt     = "return", [ expression ] ;
 fail_stmt       = "fail", expression ;
 break_stmt      = "break" ;
@@ -10093,7 +10132,12 @@ expression      = if_expression
                 | match_expression
                 | select_expression
                 | closure_expression
-                | with_expression ;
+                | coalesce_expression ;
+
+coalesce_expression
+                = with_expression,
+                  [ "??", ( expression | return_stmt | fail_stmt
+                          | break_stmt | continue_stmt ) ] ;
 
 with_expression = logical_or_expression,
                   { "with", record_update_body } ;
@@ -10953,7 +10997,8 @@ No existen `while`, `do while`, `repeat until` ni C-style `for`. `for` cubre los
 
 ### 25.9 Ternario y Elvis
 
-No existen `condition ? a : b` ni `?:`. `if` es expresión. Options y Results se consumen explícitamente.
+No existen `condition ? a : b` ni `?:`. `if` es expresión. El valor de una
+option o un result, o una alternativa, es `value ?? fallback` (17.13).
 
 ### 25.10 Safe navigation
 
@@ -12142,6 +12187,8 @@ let event = select {
 
 ~~~tondo
 let value = fallible()?
+let other = fallible() ?? fallback
+let found = maybe() ?? return
 
 match fallible() {
     ok(_) => ()

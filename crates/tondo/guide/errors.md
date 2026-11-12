@@ -51,9 +51,13 @@ fn main() {
   that returns an option, it gives the value or returns `none`.
 - Different error types: declare a union, `fn run(): !(ConfigError |
   NetworkError)`, and `?` widens into it.
-- Convert with `result.mapErr((e) { ... })`, default with
-  `result.unwrapOr(value)`, and turn an option into a result with
-  `option.okOr(error)`.
+- `value ?? fallback` gives what an option or a result holds, or else the
+  fallback, which runs only then and may leave: `ages[name] ?? 0`,
+  `users.get(id) ?? fail ApiError.NotFound(id)`, `?? return`, `?? continue`.
+  After an option, an optional fallback keeps it, so `flag ?? env ?? 8080`
+  chains. It binds least of all: `(name ?? "").trim()`.
+- Convert with `result.mapErr((e) { ... })`, and turn an option into a result
+  with `option.okOr(error)`.
 - `main` fails with what its `?` and `fail` propagate, with no error to
   declare, as a script's top level does. The program then prints `error: `
   and the error's `Display` (or its variant), and exits with status 1;
@@ -108,7 +112,7 @@ fn find(names: Array[String], wanted: String): Int? {
 
 fn main() {
     let names = ["ada", "bo"]
-    console.println("{find(names, "bo")} {find(names, "cy").unwrapOr(-1)}")
+    console.println("{find(names, "bo")} {find(names, "cy") ?? -1}")
     match find(names, "ada") {
         some(index) => console.println("at {index}")
         none => console.println("absent")

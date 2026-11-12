@@ -58,6 +58,8 @@ pub enum Tok {
     Shr,
     Bang,
     Question,
+    /// `??`, the value of an option or a result, or else what follows.
+    Coalesce,
     /// `@`, which starts an annotation of a record field.
     At,
     PlusEq,
@@ -163,6 +165,7 @@ static PUNCTUATION: &[(&str, Tok)] = &[
     ("..=", Tok::DotDotEq),
     ("<<=", Tok::ShlEq),
     (">>=", Tok::ShrEq),
+    ("??", Tok::Coalesce),
     ("..", Tok::DotDot),
     ("=>", Tok::FatArrow),
     ("==", Tok::EqEq),
@@ -233,6 +236,7 @@ fn is_binary_continuation(tok: &Tok) -> bool {
             | Tok::Ge
             | Tok::EqEq
             | Tok::NotEq
+            | Tok::Coalesce
             | Tok::Kw(Kw::In | Kw::And | Kw::Or | Kw::With)
     )
 }
@@ -492,10 +496,6 @@ impl Lexer<'_> {
             ("++", "`++` is not a Tondo operator: write `value += 1`"),
             ("&&", "`&&` is not a Tondo operator: write `and`"),
             ("||", "`||` is not a Tondo operator: write `or`"),
-            (
-                "??",
-                "`??` is not a Tondo operator: for a fallback write `value.unwrapOr(fallback)`; to propagate twice, `(value?)?`; a nested option type is `(T?)?`",
-            ),
         ];
         if let Some((text, message)) = foreign.iter().find(|(text, _)| rest.starts_with(text)) {
             self.pos += text.len();
@@ -512,7 +512,7 @@ impl Lexer<'_> {
             // operands raise no further errors.
             match *text {
                 "&&" => self.push(Tok::Kw(Kw::And), start),
-                "||" | "??" => self.push(Tok::Kw(Kw::Or), start),
+                "||" => self.push(Tok::Kw(Kw::Or), start),
                 _ => {}
             }
             return;
@@ -553,6 +553,19 @@ impl Lexer<'_> {
             return;
         };
         self.pos += text.len();
+        // `value??` with nothing after it is two propagations, which are
+        // written `(value?)?`: it goes on as that.
+        if *tok == Tok::Coalesce
+            && self.rest().trim_start_matches([' ', '\t']).starts_with(['\n', '\r', ')', ']', '}', ','])
+        {
+            let message = "`??` needs what to give when there is no value, as `value ?? fallback`; to propagate twice, write `(value?)?`, and an option of an option is the type `(T?)?`";
+            self.error("E0002", start, self.pos, message);
+            self.pos = start + 1;
+            self.push(Tok::Question, start);
+            self.pos = start + 2;
+            self.push(Tok::Question, start + 1);
+            return;
+        }
         match tok {
             Tok::LParen | Tok::LBracket | Tok::LBrace => self.delims.push(tok.clone()),
             Tok::RParen | Tok::RBracket | Tok::RBrace => {
@@ -1169,7 +1182,10 @@ let c = "{"{get("http://127.0.0.1:1/")}".startsWith("err(no")}""#;
     #[test]
     fn forbidden_sequences_are_lexical_errors() {
         assert_eq!(toks("a--b").1, 1);
-        assert_eq!(toks("a ?? b").1, 1);
         assert_eq!(toks("a;").1, 1);
+        // `??` is an operator, but with nothing after it.
+        assert_eq!(toks("a ?? b").1, 0);
+        assert_eq!(toks("a??\n").1, 1);
+        assert_eq!(toks("f(a??)").1, 1);
     }
 }

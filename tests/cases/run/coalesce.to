@@ -1,0 +1,103 @@
+// `value ?? fallback` gives what an option or a result holds, or else the
+// fallback, which runs only then and may leave with `return`, `fail`,
+// `break` or `continue`. After an option, a fallback that is an option
+// keeps one, so `??` chains. It binds least of all, to the right.
+
+import std.console
+
+enum ApiError {
+    NotFound(String)
+}
+
+type Config = {
+    port: Int? = none
+    host: String = "localhost"
+}
+
+fn noisy(label: String): String {
+    console.println("ran {label}")
+    label
+}
+
+fn age(ages: Map[String, Int], name: String): Int ! ApiError {
+    ages[name] ?? fail ApiError.NotFound(name)
+}
+
+fn greeting(name: String?): String {
+    let known = name ?? return "hello, stranger"
+    "hello, {known}"
+}
+
+fn halves(values: Array[Int]): Array[Int] {
+    var out: Array[Int] = []
+    for value in values {
+        let half = (if value % 2 == 0 { some(value / 2) } else { none }) ?? continue
+        out.push(half)
+    }
+    out
+}
+
+fn main() {
+    let missing: String? = none
+    console.println(missing ?? "guest")
+    console.println(some("kept") ?? noisy("never"))
+    console.println(missing ?? noisy("needed"))
+
+    // Chains: an optional fallback keeps the option.
+    let fromFlag: Int? = none
+    let fromEnv: Int? = none
+    let fromFile: Int? = 9000
+    console.println("{fromFlag ?? fromEnv ?? fromFile ?? 8080}")
+    let stillOptional: Int? = fromFlag ?? fromEnv
+    console.println("{stillOptional}")
+
+    // Results: the error goes unread.
+    console.println("{Int.parse("12") ?? 0} {Int.parse("x") ?? 0}")
+
+    // Leaving.
+    let ages = ["ada": 36]
+    match age(ages, "bob") {
+        ok(found) => console.println("{found}")
+        err(ApiError.NotFound(name)) => console.println("no {name}")
+    }
+    console.println(
+        "{age(ages, "ada") ?? 0} {greeting(none)} {greeting("ada")} {halves([1, 2, 3, 4])}",
+    )
+    var total = 0
+    for value in [some(1), some(2), none, some(4)] {
+        total += value ?? break
+    }
+    let inner = (value: Int?) {
+        let present = value ?? return -1
+        present * 10
+    }
+    console.println("{total} {inner(none)} {inner(4)}")
+
+    // Precedence: the lowest, to the right.
+    let count: Int? = 4
+    let flag: Bool? = none
+    console.println("{count ?? 0 + 1} {(count ?? 0) + 1} {flag ?? false or true} {flag ?? 1 == 1}")
+    let config = Config { port: 80 }
+    let unset: Config? = none
+    let moved = unset ?? config with { host: "example.com" }
+    console.println("{config.port ?? 0} {moved.host}")
+
+    // A value that is not `Copy` moves out.
+    let names: Array[String]? = ["ada", "grace"]
+    let taken = names ?? []
+    console.println("{taken}")
+}
+
+// expect-stdout: guest
+// expect-stdout: kept
+// expect-stdout: ran needed
+// expect-stdout: needed
+// expect-stdout: 9000
+// expect-stdout: none
+// expect-stdout: 12 0
+// expect-stdout: no bob
+// expect-stdout: 36 hello, stranger hello, ada [1, 2]
+// expect-stdout: 3 -1 40
+// expect-stdout: 4 5 true true
+// expect-stdout: 80 example.com
+// expect-stdout: [ada, grace]

@@ -1138,8 +1138,17 @@ impl Parser<'_> {
 
     fn optional_type(&mut self) -> PResult<TypeExpr> {
         let inner = self.primary_type()?;
+        if self.at(&Tok::Coalesce) {
+            return self.error("an option of an option is written `(T?)?`");
+        }
         if self.eat(&Tok::Question) {
-            return Ok(TypeExpr { span: inner.span.to(self.prev_span()), kind: TypeKind::Optional(Box::new(inner)) });
+            let mut ty = TypeExpr { span: inner.span.to(self.prev_span()), kind: TypeKind::Optional(Box::new(inner)) };
+            // `T??`, which the lexer reported, read as `(T?)?`.
+            if self.at(&Tok::Question) && self.span().start == ty.span.end {
+                self.bump();
+                ty = TypeExpr { span: ty.span.to(self.prev_span()), kind: TypeKind::Optional(Box::new(ty)) };
+            }
+            return Ok(ty);
         }
         Ok(inner)
     }
@@ -1496,6 +1505,12 @@ impl Parser<'_> {
                     let span = expr.span.to(self.prev_span());
                     expr = Expr { kind: ExprKind::With { base: Box::new(expr), updates }, span };
                 }
+                // `??`, the lowest level, associates to the right (17.11).
+                if self.eat(&Tok::Coalesce) {
+                    let fallback = self.fallback()?;
+                    let span = expr.span.to(fallback.span);
+                    expr = Expr { kind: ExprKind::Coalesce(Box::new(expr), Box::new(fallback)), span };
+                }
                 Ok(expr)
             }
         }
@@ -1626,6 +1641,24 @@ impl Parser<'_> {
             return self.expected("a new line after the arm");
         }
         Ok(body)
+    }
+
+    /// What follows `??`: an expression, or `return`, `fail`, `break` or
+    /// `continue`, kept as a block that holds only that.
+    fn fallback(&mut self) -> PResult<Expr> {
+        if !matches!(self.tok(), Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue)) {
+            if matches!(self.tok(), Tok::Newline | Tok::RParen | Tok::RBrace | Tok::Eof | Tok::Comma) {
+                return self.error(
+                    "`??` needs what to give when there is no value, as `value ?? fallback`; to propagate twice, write `(value?)?`",
+                );
+            }
+            return self.expression();
+        }
+        let start = self.span();
+        let kind = self.transfer()?;
+        let span = start.to(self.prev_span());
+        let stmts = vec![Stmt { kind, span }];
+        Ok(Expr { kind: ExprKind::Block(Block { stmts, tail: None, span }), span })
     }
 
     /// `return`, `fail`, `break` or `continue` (shared by statements and arms).

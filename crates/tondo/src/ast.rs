@@ -640,6 +640,10 @@ pub enum ExprKind {
         base: Box<Expr>,
         updates: Vec<FieldInit>,
     },
+    /// `value ?? fallback` (17.11): the value an option or a result holds,
+    /// or else the fallback, which may be a block holding only `return`,
+    /// `fail`, `break` or `continue`, as `?? return` is written.
+    Coalesce(Box<Expr>, Box<Expr>),
     Call {
         callee: Box<Expr>,
         args: Vec<Arg>,

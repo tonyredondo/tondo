@@ -1,0 +1,7 @@
+// `??` takes an option or a result.
+
+fn main() {
+    let count = 3 ?? 4
+}
+
+// expect-error: E1102 `??` gives the value of an option or a result, and this is `Int`: write it without `?? ...`
