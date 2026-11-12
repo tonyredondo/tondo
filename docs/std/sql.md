@@ -1,21 +1,117 @@
 # std.sql
 
-databases through one API, whose queries are literals with their values as parameters, so they cannot be injected; rows read into the program's types; transactions, migrations, a pool of connections, and `use` around each statement, as `App.use` and `Client.use` do, for traces and metrics. The drivers of SQLite, PostgreSQL and MySQL are std's; a package gives another.
+One way to talk to SQLite, PostgreSQL and MySQL. A query is a string
+literal whose `{values}` are parameters, never text, so a query cannot be
+injected into. Rows are read into the program's types by the names of
+their columns, and a transaction is a closure that commits when it ends
+and rolls back when it fails.
+
+- [Queries and rows](#queries-and-rows)
+- [Transactions and migrations](#transactions-and-migrations)
+- [What to reach for](#what-to-reach-for)
+
+## Queries and rows
 
 ```tondo
 import std.console
 import std.sql
 
-type User = { id: Int, name: String }
+type Book = { id: Int, title: String, year: Int, read: Bool }
 
-let db = sql.open("sqlite::memory:")?
-_ = db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?
-let name = "Ada"
-_ = db.execute("INSERT INTO users (name) VALUES ({name})")?
-for user in db.query[User]("SELECT id, name FROM users")? {
-    console.println("{user.id} {user.name}")
+fn main(): !sql.SqlError {
+    let db = sql.open("sqlite::memory:")?
+    db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT NOT NULL, year INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0)")?
+
+    let wanted = [("Dune", 1965), ("Emma", 1815), ("Robert'); DROP TABLE books;--", 2007)]
+    for (title, year) in wanted {
+        // Each `{value}` goes to the database as a parameter.
+        db.execute("INSERT INTO books (title, year) VALUES ({title}, {year})")?
+    }
+
+    let before = 1970
+    let old = db.query[Book]("SELECT id, title, year, read FROM books WHERE year < {before} ORDER BY year")?
+    console.println("{old.map((book) { "{book.title} ({book.year})" })}")
+
+    let count = db.queryOne[Int]("SELECT count(*) FROM books")?
+    let missing = db.queryOne[Book?]("SELECT id, title, year, read FROM books WHERE id = {99}")?
+    console.println("{count} books, and number 99 is {missing.isNone()}")
 }
 ```
+
+```text output
+[Emma (1815), Dune (1965)]
+3 books, and number 99 is true
+```
+
+- A query is a [`Query`](#query), which a string literal becomes where one
+  is expected. A `{value}` in it is bound, with its type, and a string
+  built some other way is not a query: text reaches SQL only through
+  [`raw`](#raw) and [`identifier`](#identifier), where it is meant.
+- [`Database.query`](#databasequery) gives an array of a record, a tuple or
+  a single value, [`Database.queryOne`](#databasequeryone) one row, or a
+  `T?` when there may be none, and
+  [`Database.execute`](#databaseexecute) how many rows changed.
+- A column is matched to a field by name, and a value that does not fit the
+  field's type is an error, not a zero.
+- `sql.open` takes `sqlite:path`, `postgres://user:secret@host/name` or
+  `mysql://...`, and the same queries run on each.
+
+## Transactions and migrations
+
+```tondo
+import std.console
+import std.sql
+
+type Account = { name: String, balance: Int }
+
+fn move(db: sql.Database, from: String, to: String, amount: Int): !sql.SqlError {
+    db.transaction((tx): Unit ! sql.SqlError {
+        tx.execute("UPDATE accounts SET balance = balance - {amount} WHERE name = {from}")?
+        tx.execute("UPDATE accounts SET balance = balance + {amount} WHERE name = {to}")?
+        let left = tx.queryOne[Int]("SELECT balance FROM accounts WHERE name = {from}")?
+        if left < 0 {
+            // Failing rolls both updates back.
+            fail sql.SqlError.of(sql.ErrorKind.Check, "{from} has not got {amount}")
+        }
+    })
+}
+
+fn main(): !sql.SqlError {
+    let db = sql.open("sqlite::memory:")?
+    db.execute("CREATE TABLE accounts (name TEXT PRIMARY KEY, balance INTEGER NOT NULL)")?
+    db.execute("INSERT INTO accounts VALUES ('ada', 100), ('leo', 20)")?
+
+    move(db, "ada", "leo", 30)?
+    console.println("{move(db, "leo", "ada", 500).isErr()}")
+    let accounts = db.query[Account]("SELECT name, balance FROM accounts ORDER BY name")?
+    console.println("{accounts.map((account) { "{account.name} {account.balance}" })}")
+}
+```
+
+```text output
+true
+[ada 70, leo 50]
+```
+
+[`Database.migrate`](#databasemigrate) applies a directory of `.sql` files,
+each once and in order, and remembers which it applied. With
+`embed.files("migrations")` the files are inside the executable, so the
+schema travels with the program.
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Open a database | [`open`](#open) |
+| Change rows | [`Database.execute`](#databaseexecute) |
+| Read rows into a type | [`Database.query`](#databasequery), [`Database.queryOne`](#databasequeryone) |
+| Do several things or none | [`Database.transaction`](#databasetransaction) |
+| Keep the schema up to date | [`Database.migrate`](#databasemigrate) |
+| Put a name or a piece of SQL in a query, on purpose | [`identifier`](#identifier), [`raw`](#raw), [`join`](#join) |
+| Pass a list as one parameter | [`array`](#array) |
+
+The [`todo-api`](../../examples/todo-api) example keeps its tasks in SQLite,
+with migrations in the executable and tests on a database in memory.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

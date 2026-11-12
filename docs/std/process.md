@@ -1,14 +1,104 @@
 # std.process
 
-processes and pipelines. `Command` and `Pipeline` are inert plans; `|` joins them, and running one waits without blocking a worker.
+Running other programs, and what this one is to the system. A
+[`Command`](#command) is a program and its arguments, each on its own, so
+nothing is split at spaces, expanded or quoted, and a file name with a
+space or a `$` in it is only a file name. Commands join into pipelines with
+`|`, with no shell in between, and running one waits without holding a
+thread.
+
+- [Running a program](#running-a-program)
+- [Pipelines, input and where it runs](#pipelines-input-and-where-it-runs)
+- [What to reach for](#what-to-reach-for)
+
+## Running a program
 
 ```tondo
 import std.console
 import std.process
 
-let output = process.command("echo", "hello").output()?
-console.println(output.text()?)
+fn main(): !process.ProcessError {
+    let listing = process.command("printf", "%s\n", "tea", "a file with spaces", "$HOME").output()?
+    console.println("{listing.text()?.lines()}")
+
+    // `status` gives how it ended; `check` fails when it did not end well.
+    let found = process.command("test", "-d", "/").status()?
+    let missing = process.command("test", "-d", "/no/such/place").status()?
+    console.println("{found.success} {missing.success} {missing.code}")
+    match process.command("false").check() {
+        ok(_) => console.println("it worked")
+        err(error) => console.println("{error}")
+    }
+    match process.command("no-such-program").status() {
+        ok(_) => console.println("it ran")
+        err(_) => console.println("there is no such program")
+    }
+}
 ```
+
+```text output
+[tea, a file with spaces, $HOME]
+true false 1
+exited with code 1
+there is no such program
+```
+
+| | |
+| --- | --- |
+| [`run`](#run) | with this program's input and output: what the user sees |
+| [`status`](#status) | without input, discarding output: only how it ended |
+| [`output`](#output) | captures what it printed |
+| [`check`](#check) | as `output`, failing when the program failed |
+| [`start`](#start) | starts it and gives a [`Process`](#process) to write to, read from, wait for or stop |
+
+## Pipelines, input and where it runs
+
+```tondo
+import std.console
+import std.process
+
+fn main(): !process.ProcessError {
+    // `sort | uniq -c`, with no shell: each stage is a program and its arguments.
+    let words = process.command("printf", "%s\n", "tea", "cup", "tea", "pot", "tea")
+    let counted = (words | process.command("sort") | process.command("uniq", "-c")).output()?
+    console.println("{counted.text()?.lines().map((line) { line.trim() })}")
+
+    let here = process.command("pwd").directory("/").env("LANG", "C").output()?
+    console.println(here.text()?.trim())
+}
+```
+
+```text output
+[1 cup, 1 pot, 3 tea]
+/
+```
+
+- [`Command.directory`](#commanddirectory), [`Command.env`](#commandenv)
+  and [`Command.stdin`](#commandstdin) say where it runs, with what
+  environment and what input.
+- Cancelling the task that waits for a command, as a `within` does, ends
+  the command. [`Command.grace`](#commandgrace) asks it to end first and
+  stops it only after a while, as `docker stop` does, and
+  [`Command.group`](#commandgroup) makes that reach everything it started.
+- [`shell`](#shell) runs a line through the system's shell, for when that
+  is what is wanted.
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Run a program | [`command`](#command), then [`run`](#run), [`status`](#status), [`output`](#output) or [`check`](#check) |
+| Join programs | `first \| second`, a [`Pipeline`](#pipeline) |
+| Talk to a program as it runs | [`start`](#start), [`Process.stdin`](#processstdin), [`Process.stdout`](#processstdout), [`Process.wait`](#processwait) |
+| Find a program | [`which`](#which) |
+| End this program | [`exit`](#exit) |
+| Be told of Ctrl-C or a request to stop | [`signals`](#signals) |
+| Become another program | [`Command.exec`](#commandexec) |
+| Split a line as a shell would, or quote for one | [`splitWords`](#splitwords), [`quoted`](#quoted) |
+
+The program's own arguments and environment are in [`std.env`](env.md).
+The scripts [`authors.to`](../../examples/scripts/authors.to) and
+[`rerun.to`](../../examples/scripts/rerun.to) run other programs.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

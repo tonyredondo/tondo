@@ -1,17 +1,112 @@
 # std.json
 
-JSON documents as values of `Value`, and the encoding and decoding of any type through the `Encode` and `Decode` of `std.serialization`, on top of the runtime's tokenizer and emitter.
+JSON read into the program's types and written from them. Any record or
+enum is read and written by its fields, with code the compiler writes for
+it: there is nothing to derive, no reflection as the program runs, and no
+value of the wrong type in a field. JSON of no known shape is a
+[`Value`](#value), and a document too large to hold is read and written a
+piece at a time.
+
+- [Types as the schema](#types-as-the-schema)
+- [JSON of no known shape](#json-of-no-known-shape)
+- [What to reach for](#what-to-reach-for)
+
+## Types as the schema
 
 ```tondo
 import std.console
 import std.json
 
-type User = { name: String, age: Int }
+enum Status {
+    @name("in_progress")
+    InProgress
+    Done
+}
 
-let text = json.encode(User { name: "Ada", age: 36 })
-let user = json.decode[User](text)?
-console.println("{text} {user.name} {json.parse(text)?.find("age")}")
+type Task = {
+    title: String
+    status: Status = Status.InProgress
+    @name("due_on")
+    due: String?
+    tags: Array[String] = []
+}
+
+fn main() {
+    let text = r"""{"title": "Write the manual", "due_on": "2026-12-01", "tags": ["docs"]}"""
+    match json.decode[Task](text) {
+        ok(task) => {
+            console.println("{task.title}, {task.status == Status.InProgress}, {task.due}, {task.tags}")
+            console.println(json.encode(task with { status: Status.Done }))
+        }
+        err(error) => console.println("{error}")
+    }
+    for wrong in [r"""{"status": "Done"}""", r"""{"title": "x", "status": "Paused"}""", r"""{"title": 7}"""] {
+        match json.decode[Task](wrong) {
+            ok(task) => console.println(task.title)
+            err(error) => console.println("{error}")
+        }
+    }
+}
 ```
+
+```text output
+Write the manual, true, some(2026-12-01), [docs]
+{"title":"Write the manual","status":"Done","due_on":"2026-12-01","tags":["docs"]}
+missing field `title` at $ (line 1, column 19)
+unknown variant `Paused` of `Status` at $.status (line 1, column 34)
+expected a string, found a number at $.title (line 1, column 12)
+```
+
+- A field with a default is optional in the JSON, and so is a `T?` field. A
+  field with neither must be there.
+- `@name("due_on")` gives a field or a variant its name on the wire,
+  `@ignore` leaves a field out, and `@omitNone` writes nothing for a `none`
+  where `null` would be written.
+- A value of the wrong type is an error that says where: the path, the
+  line and the column.
+- `@validate` rules on a field are checked by `decode`
+  ([`std.validate`](validate.md)).
+- The same types read and write [YAML](yaml.md), [TOML](toml.md),
+  [CBOR](cbor.md) and [MessagePack](messagepack.md).
+
+## JSON of no known shape
+
+```tondo
+import std.console
+import std.json
+
+fn main(): !json.JsonError {
+    let document = json.parse(r"""{"name": "tondo", "items": [{"id": 7, "tags": ["a", "b"]}], "ratio": 0.5}""")?
+    let id = document.find("items[0].id").andThen((value) { value.asInt() })
+    let tags = document.find("items[0].tags").andThen((value) { value.asArray() }).unwrapOr([])
+    console.println("{id} {tags.length()} {document.find("missing.path").isNone()}")
+    console.println(json.encode(document.field("items").item(0), pretty: true))
+}
+```
+
+```text output
+some(7) 2 true
+{
+  "id": 7,
+  "tags": [
+    "a",
+    "b"
+  ]
+}
+```
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Read text into a type, or write a value | [`decode`](#decode), [`encode`](#encode) |
+| Read from a stream, or write to one | [`decodeFrom`](#decodefrom), [`encodeTo`](#encodeto) |
+| Read several values, one after another | [`decodeAll`](#decodeall), [`parseAll`](#parseall) |
+| Hold JSON whose shape is not known | [`parse`](#parse), [`Value.find`](#valuefind), [`Value.field`](#valuefield), [`Value.item`](#valueitem) |
+| Turn a `Value` into a type, or back | [`fromValue`](#fromvalue), [`toValue`](#tovalue) |
+| Read a huge document a piece at a time | [`reader`](#reader), [`Reader.next`](#readernext) |
+| Write one a piece at a time | [`writer`](#writer) |
+| Keep a piece of JSON as it came | [`raw`](#raw) |
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
