@@ -1,16 +1,44 @@
-# Tondo next to Go, Rust and C#
+# Tondo next to other languages
 
 Tondo was designed with other languages on the table. Its
 [specification](../spec/TONDO_LANGUAGE_SPEC.md) names what it took from each
-and what it left, and this page goes through three of them for someone who
-writes one: what will look familiar, what is different, and why.
+and what it left. This page goes through the three it is closest to, Go,
+Rust and C#, for someone who writes one: what will look familiar, what is
+different, and why. Each of them, and five more, has a page of its own that
+writes the same twelve programs in that language and in Tondo.
 
+- [A page for each language](#a-page-for-each-language)
 - [At a glance](#at-a-glance)
 - [If you write Go](#if-you-write-go)
 - [If you write Rust](#if-you-write-rust)
 - [If you write C#](#if-you-write-c)
+- [If you write Python, TypeScript, Java, Kotlin or Swift](#if-you-write-python-typescript-java-kotlin-or-swift)
 - [What the toolchain adds](#what-the-toolchain-adds)
 - [Where another is the better choice today](#where-another-is-the-better-choice-today)
+
+## A page for each language
+
+Each page takes the same twelve small programs, from copying a list to an
+HTTP server, and writes them twice. Every program was run, in both
+languages, and the page shows what it prints. Then come the two toolchains
+command by command, the habits to leave behind, and where the other
+language is the better choice.
+
+| If you write | The page | What it is mostly about |
+| --- | --- | --- |
+| Go | [Tondo for someone who writes Go](comparison/go.md) | errors that cannot be forgotten, `nil`, slices that share, goroutines with an owner, `context.Context` |
+| Rust | [Tondo for someone who writes Rust](comparison/rust.md) | what stands where the borrow checker does, `async`, and what the standard library holds |
+| C# | [Tondo for someone who writes C#](comparison/csharp.md) | exceptions, `null`, shared objects, classes, `async` and `Task` |
+| Python | [Tondo for someone who writes Python](comparison/python.md) | what stays familiar, and what a compiler finds before the program runs |
+| TypeScript | [Tondo for someone who writes TypeScript](comparison/typescript.md) | types that are still there when the program runs |
+| Java | [Tondo for someone who writes Java](comparison/java.md) | `null`, checked and unchecked exceptions, boxes, and the virtual machine |
+| Kotlin | [Tondo for someone who writes Kotlin](comparison/kotlin.md) | the language Tondo reads most like, without the JVM under it |
+| Swift | [Tondo for someone who writes Swift](comparison/swift.md) | the same values and optionals, without classes or `async` |
+
+The twelve programs are: values and copies, a value that may be missing,
+errors, a type with several shapes, traits and generics, collections,
+tasks, deadlines, shared state, JSON, tests, and an HTTP server with its
+client.
 
 ## At a glance
 
@@ -27,6 +55,19 @@ writes one: what will look familiar, what is different, and why.
 | An integer overflows | a panic, in every build | it wraps | a panic in debug builds, it wraps in release | it wraps, unless `checked` |
 | Formatting | `tondo fmt`, with no options | `gofmt`, with no options | `rustfmt`, configurable | `dotnet format`, configurable |
 | What ships | a native executable | a native executable | a native executable | an assembly for a runtime, or Native AOT |
+
+And the five others, by the same rows:
+
+| | Tondo | Python | TypeScript | Java | Kotlin | Swift |
+| --- | --- | --- | --- | --- | --- | --- |
+| A function fails | `T ! E` in the signature | an exception | an exception of any type | an exception, checked or not | an exception | `throws`, typed since Swift 6 |
+| A missing value | `T?`; no `null` | `None`, anywhere | `undefined` and `null`, checked when `strict` | `null`, anywhere | `T?`, and `null` from Java | `T?` |
+| A function that waits | like any other | `async` | `async` | like any other, on a virtual thread | `suspend` | `async` |
+| A task nobody waits for | waited for by its block | keeps running | keeps running | keeps running | waited for by its scope | waited for by its scope |
+| Assigning a list or a map | copies it | shares it | shares it | shares it | shares it | copies it |
+| Data races in safe code | rejected when compiling | possible | one thread | possible | possible | rejected when compiling, in Swift 6 |
+| Types when the program runs | there | checked then | erased | generics erased | generics erased | there |
+| What ships | a native executable | sources and an interpreter | sources and a runtime | a jar and a JVM | a jar and a JVM | a native executable |
 
 ## If you write Go
 
@@ -143,6 +184,9 @@ at or under Go's time and allocations, measured side by side. The standard
 library was sized against what porting Gin, Hugo and dd-trace-go needs, and
 `tondo guide templates` has a section for someone who knows Go's templates.
 
+[Tondo for someone who writes Go](comparison/go.md) has twelve programs in
+both languages, and the commands of one toolchain beside the other's.
+
 ## If you write Rust
 
 A Rust programmer already knows most of Tondo's types. What changes is
@@ -248,6 +292,10 @@ fn main() {
     console.println("{port("/etc/port")}")
 }
 ```
+
+[Tondo for someone who writes Rust](comparison/rust.md) has twelve programs
+in both languages, and a section on what stands where the borrow checker
+does, with its cost.
 
 ## If you write C#
 
@@ -365,6 +413,41 @@ fn main() {
 }
 ```
 
+[Tondo for someone who writes C#](comparison/csharp.md) has twelve programs
+in both languages, from a class hierarchy turned into an enum to a minimal
+API.
+
+## If you write Python, TypeScript, Java, Kotlin or Swift
+
+Tondo was not designed against these five as it was against the three
+above, but each has something in it, and someone who writes one will find
+part of Tondo already known.
+
+- **Python.** Scripts of one file, slices, negative indexes, interpolated
+  strings, maps in insertion order and a library with the batteries in it
+  are all there. What is new is that the whole program is checked before
+  its first line runs, that a list assigned is a copy, and that it runs on
+  every core. [The page](comparison/python.md) starts with what stays.
+- **TypeScript.** Unions, inference and types that say "this or nothing"
+  will feel like home. The difference is that Tondo's types are still
+  there when the program runs: what `JSON.parse` returns is checked, not
+  cast. [The page](comparison/typescript.md) follows that through.
+- **Java.** Records, sealed types and pattern matching became Tondo's
+  records, enums and `match`, and virtual threads are how every Tondo
+  function already waits. What is gone is `null`, the exceptions no
+  signature shows, and the virtual machine. [The page](comparison/java.md)
+  says where modern Java does as well.
+- **Kotlin.** `if` and `match` as expressions, `T?`, named arguments and
+  structured concurrency came to Tondo from Kotlin, and the two read
+  alike. Tondo has no `suspend`, no exceptions and no `null` arriving from
+  another language. [The page](comparison/kotlin.md) has them side by
+  side.
+- **Swift.** Values copied on write, optionals, enums with data, counted
+  memory and tasks that belong to their scope are Swift's too, and the
+  first program of [the page](comparison/swift.md) is the same in both,
+  line for line. Tondo has no classes and no `async`, and it collects the
+  cycles that Swift leaves to `weak`.
+
 ## What the toolchain adds
 
 Each of the three has good tools, and Go's and .NET's come close to complete:
@@ -403,3 +486,10 @@ depend on it. Beyond that:
 - **C#** has Windows, desktop and mobile interfaces, and a runtime that
   optimizes a program from how it actually runs, which in Tondo is still
   research.
+- **Python** has data, science and machine learning, a REPL and notebooks.
+- **TypeScript** has the browser, and one language on both sides of a web
+  application.
+- **Java** and **Kotlin** have the JVM's thirty years of libraries, and
+  Android.
+- **Swift** has Apple's platforms and everything with a user interface on
+  them.

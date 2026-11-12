@@ -98,8 +98,8 @@ from each language, and what it left:
 | **Lua** | reading that is direct, and little ceremony for a small program | dynamic typing, one table for everything |
 | **Bash** and **Nushell** | small programs run as scripts, pipelines of processes with `\|` | commands as strings, hidden expansion and quoting |
 
-[Tondo next to Go, Rust and C#](../comparison.md) goes through three of
-these in detail, with the same code in both.
+[Tondo next to other languages](../comparison.md) goes through eight of
+them in detail, with the same programs in both.
 
 ## What is not there
 

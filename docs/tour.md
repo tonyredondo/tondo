@@ -759,6 +759,11 @@ error each gives and what to write instead.
 - `tondo guide`, a topic at a time, in the terminal or in
   [`crates/tondo/guide`](../crates/tondo/guide/overview.md).
 - [The toolchain](toolchain.md): what `tondo` does besides compiling.
-- [Tondo next to Go, Rust and C#](comparison.md), for someone who comes from
-  one of them.
+- [The language](language/README.md), a chapter at a time: the whole of
+  what this tour passed through.
+- [The standard library](std/README.md), a page for each module, and
+  [the examples](../examples/README.md), programs of the size one meets at
+  work.
+- [Tondo next to other languages](comparison.md), for someone who comes
+  from Go, Rust, C#, Python, TypeScript, Java, Kotlin or Swift.
 - The [specifications](../spec), which define all of it.
