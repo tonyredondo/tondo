@@ -257,7 +257,7 @@ match yaml.decode[Array[User]]("- name: Ada\n  age: 36\n- name: Bo\n  age: old\n
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Violation
 

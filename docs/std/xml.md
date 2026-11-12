@@ -119,7 +119,7 @@ match xml.parse("<note>\n  <to>Ada</from>\n</note>") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Element
 

@@ -83,4 +83,4 @@ match app.start(port: 0, tls: acme.tls(["example.com"], email: "me@example.com")
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.

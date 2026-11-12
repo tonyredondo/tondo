@@ -16,13 +16,30 @@ console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 
 `tondo api std.math` shows the same in a terminal.
 
-- [Functions](#functions): [`sqrt`](#sqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`log10`](#log10), [`log2`](#log2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`acos`](#acos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`gcd`](#gcd), [`lcm`](#lcm)
+- [Functions](#functions): [`Pi`](#pi), [`E`](#e), [`sqrt`](#sqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`log10`](#log10), [`log2`](#log2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`acos`](#acos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`gcd`](#gcd), [`lcm`](#lcm)
 - [MathError](#matherror)
 - [BigInt](#bigint): [`BigInt.parse`](#bigintparse), [`BigInt.toInt`](#biginttoint), [`BigInt.toString`](#biginttostring), [`BigInt.abs`](#bigintabs), [`BigInt.remainder`](#bigintremainder), [`BigInt.pow`](#bigintpow), [`BigInt.modPow`](#bigintmodpow), [`BigInt.gcd`](#bigintgcd)
 - [Decimal](#decimal): [`Decimal.parse`](#decimalparse), [`Decimal.round`](#decimalround), [`Decimal.divide`](#decimaldivide), [`Decimal.scale`](#decimalscale), [`Decimal.toFloat`](#decimaltofloat)
 - [Rounding](#rounding)
 
 ### Functions
+
+#### Pi
+
+```tondo
+pub const Pi: Float = 3.141592653589793
+```
+
+π, the ratio of a circle's circumference to its diameter, as the
+nearest `Float`.
+
+#### E
+
+```tondo
+pub const E: Float = 2.718281828459045
+```
+
+e, the base of the natural logarithm, as the nearest `Float`.
 
 #### sqrt
 
@@ -227,7 +244,7 @@ match math.sqrt(-1.0) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### BigInt
 

@@ -140,4 +140,4 @@ match encoding.hexDecode("0g") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.

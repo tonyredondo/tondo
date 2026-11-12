@@ -187,7 +187,7 @@ match net.connect("127.0.0.1", 9, timeout: time.seconds(1)) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Address
 

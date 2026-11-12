@@ -140,4 +140,4 @@ match url.parse("http://[::1/") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.

@@ -161,7 +161,7 @@ match format.apply(3.14159, ".2") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Plural
 

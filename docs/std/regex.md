@@ -210,7 +210,7 @@ match search(r"[a-", "abc") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### RegexSpan
 

@@ -155,7 +155,7 @@ match archive.open("missing.zip") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Archive
 

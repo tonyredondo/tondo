@@ -23,6 +23,7 @@ console.println("{composed.length()} {text.category('A')} {text.script('λ')}")
 - [Script](#script-1)
 - [Strength](#strength)
 - [Collator](#collator-1): [`Collator.compare`](#collatorcompare)
+- [For other types](#for-other-types)
 
 ### Functions
 
@@ -426,3 +427,9 @@ pub fn Collator.compare(self, a: String, b: String): Int
 
 -1, 0 or 1 as `a` goes before `b`, with it or after it, as `sortedWith`
 takes: `names.sortedWith((a, b) { order.compare(a, b) })`.
+
+### For other types
+
+```tondo
+impl reflect.Reflect for text.TextError
+```

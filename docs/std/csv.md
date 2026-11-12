@@ -112,7 +112,7 @@ for row in csv.rows(io.reader("a,\"b\nc\n")) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Rows
 

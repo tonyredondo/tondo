@@ -216,6 +216,8 @@ match env.setCurrentDirectory("/nowhere") {
 }
 ```
 
+Implements `reflect.Reflect`.
+
 ### Build
 
 ```tondo

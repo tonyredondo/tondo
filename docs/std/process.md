@@ -408,6 +408,8 @@ match process.command("false").check() {
 }
 ```
 
+Implements `reflect.Reflect`.
+
 ### Process
 
 ```tondo

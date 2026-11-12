@@ -174,4 +174,4 @@ match uuid.Uuid.fromBytes([1, 2, 3]) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.

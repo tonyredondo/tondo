@@ -346,7 +346,7 @@ let timeout = time.seconds(90)
 console.println("{timeout} = {timeout.minutes()} min {timeout.seconds() % 60} s, twice {timeout.multiply(2)}")
 ```
 
-Implements `Additive`, `Ordered`, `reflect.Reflect`.
+Implements `Additive`, `serialization.Encode`, `serialization.Decode`, `Ordered`, `reflect.Reflect`.
 
 #### Duration.nanoseconds
 
@@ -614,6 +614,8 @@ match time.zone("Mars/Olympus") {
     err(error) => console.println("{error}")
 }
 ```
+
+Implements `reflect.Reflect`.
 
 ### TimedOut
 

@@ -191,7 +191,7 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 - [Message](#message)
 - [WebSocket](#websocket): [`WebSocket.connect`](#websocketconnect), [`WebSocket.send`](#websocketsend), [`WebSocket.sendText`](#websocketsendtext), [`WebSocket.sendBytes`](#websocketsendbytes), [`WebSocket.receive`](#websocketreceive), [`WebSocket.close`](#websocketclose)
 - [Problem](#problem): [`Problem`](#problem-1), [`Problem.badRequest`](#problembadrequest), [`Problem.unauthorized`](#problemunauthorized), [`Problem.forbidden`](#problemforbidden), [`Problem.notFound`](#problemnotfound), [`Problem.invalid`](#probleminvalid), [`Problem.conflict`](#problemconflict), [`Problem.from`](#problemfrom)
-- [Request](#request): [`Request.method`](#requestmethod), [`Request.route`](#requestroute), [`Request.path`](#requestpath), [`Request.rawQuery`](#requestrawquery), [`Request.host`](#requesthost), [`Request.scheme`](#requestscheme), [`Request.url`](#requesturl), [`Request.version`](#requestversion), [`Request.clientCertificate`](#requestclientcertificate), [`Request.remoteAddress`](#requestremoteaddress), [`Request.clientIp`](#requestclientip), [`Request.param`](#requestparam), [`Request.intParam`](#requestintparam), [`Request.query`](#requestquery), [`Request.queryValues`](#requestqueryvalues), [`Request.queryAs`](#requestqueryas), [`Request.formAs`](#requestformas), [`Request.requiredQuery`](#requestrequiredquery), [`Request.requiredIntQuery`](#requestrequiredintquery), [`Request.intQuery`](#requestintquery), [`Request.header`](#requestheader), [`Request.headerValues`](#requestheadervalues), [`Request.headers`](#requestheaders), [`Request.limitBody`](#requestlimitbody), [`Request.withBody`](#requestwithbody), [`Request.bytes`](#requestbytes), [`Request.text`](#requesttext), [`Request.json`](#requestjson), [`Request.form`](#requestform), [`Request.uploads`](#requestuploads), [`Request.body`](#requestbody), [`Request.saveTo`](#requestsaveto), [`Request.cookie`](#requestcookie), [`Request.cookies`](#requestcookies)
+- [Request](#request): [`Request.method`](#requestmethod), [`Request.route`](#requestroute), [`Request.path`](#requestpath), [`Request.rawQuery`](#requestrawquery), [`Request.host`](#requesthost), [`Request.scheme`](#requestscheme), [`Request.url`](#requesturl), [`Request.version`](#requestversion), [`Request.clientCertificate`](#requestclientcertificate), [`Request.remoteAddress`](#requestremoteaddress), [`Request.clientIp`](#requestclientip), [`Request.param`](#requestparam), [`Request.intParam`](#requestintparam), [`Request.query`](#requestquery), [`Request.queryValues`](#requestqueryvalues), [`Request.queryAs`](#requestqueryas), [`Request.formAs`](#requestformas), [`Request.requiredQuery`](#requestrequiredquery), [`Request.requiredIntQuery`](#requestrequiredintquery), [`Request.intQuery`](#requestintquery), [`Request.requiredBoolQuery`](#requestrequiredboolquery), [`Request.boolQuery`](#requestboolquery), [`Request.requiredFloatQuery`](#requestrequiredfloatquery), [`Request.floatQuery`](#requestfloatquery), [`Request.header`](#requestheader), [`Request.headerValues`](#requestheadervalues), [`Request.headers`](#requestheaders), [`Request.limitBody`](#requestlimitbody), [`Request.withBody`](#requestwithbody), [`Request.bytes`](#requestbytes), [`Request.text`](#requesttext), [`Request.json`](#requestjson), [`Request.form`](#requestform), [`Request.uploads`](#requestuploads), [`Request.body`](#requestbody), [`Request.saveTo`](#requestsaveto), [`Request.cookie`](#requestcookie), [`Request.cookies`](#requestcookies)
 - [UploadedFile](#uploadedfile)
 - [Upload](#upload): [`Upload.name`](#uploadname), [`Upload.fileName`](#uploadfilename), [`Upload.contentType`](#uploadcontenttype), [`Upload.bytes`](#uploadbytes), [`Upload.text`](#uploadtext), [`Upload.saveTo`](#uploadsaveto)
 - [Uploads](#uploads)
@@ -357,7 +357,7 @@ match app.client().get("/missing") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Body
 
@@ -1399,6 +1399,38 @@ pub fn Request.intQuery(self, name: String): Int? ! Problem
 ```
 
 A query parameter that must be an integer when it is there.
+
+#### Request.requiredBoolQuery
+
+```tondo
+pub fn Request.requiredBoolQuery(self, name: String): Bool ! Problem
+```
+
+A query parameter that must be there and be `true` or `false`.
+
+#### Request.boolQuery
+
+```tondo
+pub fn Request.boolQuery(self, name: String): Bool? ! Problem
+```
+
+A query parameter that must be `true` or `false` when it is there.
+
+#### Request.requiredFloatQuery
+
+```tondo
+pub fn Request.requiredFloatQuery(self, name: String): Float ! Problem
+```
+
+A query parameter that must be there and be a number.
+
+#### Request.floatQuery
+
+```tondo
+pub fn Request.floatQuery(self, name: String): Float? ! Problem
+```
+
+A query parameter that must be a number when it is there.
 
 #### Request.header
 

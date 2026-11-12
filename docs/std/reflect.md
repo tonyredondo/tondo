@@ -21,9 +21,9 @@ console.println(reflect.get[String, User](ada, "name")?)
 
 `tondo api std.reflect` shows the same in a terminal.
 
-- [Functions](#functions): [`valueOf`](#valueof), [`get`](#get), [`set`](#set), [`call`](#call), [`callMut`](#callmut), [`convert`](#convert), [`annotationsOf`](#annotationsof), [`typeInfo`](#typeinfo), [`typeOf`](#typeof)
+- [Functions](#functions): [`valueOf`](#valueof), [`opaqueOf`](#opaqueof), [`get`](#get), [`set`](#set), [`call`](#call), [`callMut`](#callmut), [`convert`](#convert), [`annotationsOf`](#annotationsof), [`typeInfo`](#typeinfo), [`opaqueInfo`](#opaqueinfo), [`typeOf`](#typeof)
 - [ReflectErrorKind](#reflecterrorkind)
-- [ReflectError](#reflecterror): [`ReflectError.noField`](#reflecterrornofield), [`ReflectError.noMethod`](#reflecterrornomethod), [`ReflectError.wrongType`](#reflecterrorwrongtype), [`ReflectError.arguments`](#reflecterrorarguments), [`ReflectError.privateFields`](#reflecterrorprivatefields), [`ReflectError.needsMut`](#reflecterrorneedsmut)
+- [ReflectError](#reflecterror): [`ReflectError.noField`](#reflecterrornofield), [`ReflectError.noMethod`](#reflecterrornomethod), [`ReflectError.wrongType`](#reflecterrorwrongtype), [`ReflectError.arguments`](#reflecterrorarguments), [`ReflectError.privateFields`](#reflecterrorprivatefields), [`ReflectError.opaque`](#reflecterroropaque), [`ReflectError.needsMut`](#reflecterrorneedsmut)
 - [Field](#field)
 - [Value](#value): [`Value.brokenRules`](#valuebrokenrules), [`Value.get`](#valueget), [`Value.set`](#valueset), [`Value.call`](#valuecall), [`Value.callMut`](#valuecallmut), [`Value.to`](#valueto), [`Value.typeName`](#valuetypename), [`Value.typeInfo`](#valuetypeinfo), [`Value.fields`](#valuefields), [`Value.elements`](#valueelements), [`Value.entries`](#valueentries), [`Value.variant`](#valuevariant), [`Value.optional`](#valueoptional)
 - [Reflect](#reflect)
@@ -53,6 +53,25 @@ pub fn valueOf[T: Reflect](value: T): Value
 ```
 
 A value of any type that implements `Reflect`, with its operations.
+
+#### opaqueOf
+
+```tondo
+pub fn opaqueOf[T](value: T): Value
+```
+
+A value of a type without `Reflect`, which reflection carries as it is:
+a part of a record or an enum that holds a function or a handle, as a
+`fs.FileSystem`. It shows as `<` its type `>`, and has no parts or
+methods; the type it is part of cannot be built from a `Value`.
+
+```tondo
+import std.console
+import std.reflect
+
+let value = reflect.opaqueOf((n: Int) { n + 1 })
+console.println("{value} {value.typeName()}")
+```
 
 #### get
 
@@ -117,6 +136,15 @@ pub fn typeInfo[T: Reflect](): TypeInfo
 ```
 
 The description of the type `T`.
+
+#### opaqueInfo
+
+```tondo
+pub fn opaqueInfo[T](): TypeInfo
+```
+
+The description of a type reflection carries as it is (`opaqueOf`):
+its name, and the kind `Opaque`.
 
 #### typeOf
 
@@ -188,7 +216,7 @@ match read(User { name: "Ada", age: 36 }, "agee") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `Reflect`.
 
 #### ReflectError.noField
 
@@ -238,6 +266,15 @@ pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
 ```
 
 A conversion to a type with private fields, which only it can build.
+
+#### ReflectError.opaque
+
+```tondo
+pub fn ReflectError.opaque(typeName: String, name: String, partType: String): ReflectError
+```
+
+A part reflection carries as it is (`opaqueOf`), which it cannot set
+or build the value it is part of with.
 
 #### ReflectError.needsMut
 

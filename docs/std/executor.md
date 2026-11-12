@@ -81,7 +81,7 @@ match executor.pool(0, 8) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### SubmitError
 
@@ -111,7 +111,7 @@ console.println("{first.wait()}")
 pool.shutdown()
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### SendError
 
@@ -145,7 +145,7 @@ match address.send("late") {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Pool
 

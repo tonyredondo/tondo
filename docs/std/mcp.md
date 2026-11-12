@@ -114,4 +114,4 @@ match mcp.serve(Tools {}) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.

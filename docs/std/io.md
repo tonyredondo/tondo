@@ -98,6 +98,8 @@ match writer.writeLine("nobody reads") {
 }
 ```
 
+Implements `reflect.Reflect`.
+
 ### Writer
 
 ```tondo

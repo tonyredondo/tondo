@@ -126,7 +126,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### TypeRef
 

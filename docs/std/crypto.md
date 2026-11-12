@@ -118,7 +118,7 @@ match key.open("not sealed".bytes()) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Cipher
 

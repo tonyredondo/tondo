@@ -432,6 +432,8 @@ match fs.readText("missing.txt") {
 }
 ```
 
+Implements `reflect.Reflect`.
+
 ### FileKind
 
 ```tondo

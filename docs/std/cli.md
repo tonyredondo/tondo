@@ -549,7 +549,7 @@ match cli.parseArgs[Options](["--count", "many"]) {
 }
 ```
 
-Implements `Display`.
+Implements `Display`, `reflect.Reflect`.
 
 ### Shell
 
