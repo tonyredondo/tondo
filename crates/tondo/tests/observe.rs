@@ -4539,16 +4539,30 @@ fn within(seconds: u64, gone: impl Fn() -> bool) -> bool {
     })
 }
 
-const ENDLESS: &str = "import std.time\n\nfn main() {\n    let start = time.now()\n    for start.elapsed() < time.seconds(60) {\n        time.sleep(time.milliseconds(20))\n    }\n}\n";
+/// The processes `pid` started, as `pgrep -P` lists them.
+fn children(pid: u32) -> Vec<i32> {
+    let listed = Command::new("pgrep").args(["-P", &pid.to_string()]).output().unwrap();
+    String::from_utf8_lossy(&listed.stdout).lines().filter_map(|line| line.trim().parse().ok()).collect()
+}
+
+/// Whether a process ended: no process has its pid, or one that ended
+/// and that no one reaped, as in a container whose first process does not.
+fn ended(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        return true;
+    }
+    let state = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    String::from_utf8_lossy(&state.stdout).trim_start().starts_with('Z')
+}
+
+const ENDLESS: &str = "import std.console\nimport std.time\n\nfn main() {\n    let start = time.now()\n    var round = 0\n    for start.elapsed() < time.seconds(60) {\n        round += 1\n        console.println(\"round {round}\")\n        time.sleep(time.milliseconds(20))\n    }\n}\n";
 
 /// A debugger ended by SIGTERM or SIGHUP, as a script, an editor or a
 /// closed terminal ends it, ends the program it started, as `quit` does,
-/// which would otherwise run on alone in a group of its own.
+/// which would otherwise run on alone in a group of its own; and so does
+/// the editor's adapter. A program the adapter attached to goes on.
 #[test]
 fn a_debugger_ended_by_a_signal_ends_its_program() {
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-ended");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -4559,7 +4573,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let executable = dir.join("endless");
+    // By its bare name, which is in this directory and not on PATH.
     for signal in [libc::SIGTERM, libc::SIGHUP] {
         let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .args(["debug", "endless"])
@@ -4569,21 +4583,105 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(soon(|| !running(&executable).is_empty()), "the program did not start");
+        let started = within(10, || !children(debugger.id()).is_empty());
+        let program = *children(debugger.id()).first().filter(|_| started).expect("the program did not start");
         unsafe { libc::kill(debugger.id() as i32, signal) };
         let status = debugger.wait().unwrap();
         assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(signal), "{status}");
-        assert!(soon(|| running(&executable).is_empty()), "the program runs on after signal {signal}");
+        assert!(soon(|| ended(program)), "the program runs on after signal {signal}");
     }
-    // The editor's adapter too.
+    // The editor's adapter, with what it launched.
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
     adapter.ask("launch", json!({ "program": "endless", "cwd": dir }));
     adapter.ask("configurationDone", json!({}));
-    assert!(soon(|| !running(&executable).is_empty()), "the adapter's program did not start");
+    let started = within(10, || !children(adapter.child.id()).is_empty());
+    let program = *children(adapter.child.id()).first().filter(|_| started).expect("the adapter's program");
     unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
     adapter.child.wait().unwrap();
-    assert!(soon(|| running(&executable).is_empty()), "the adapter's program runs on");
+    assert!(soon(|| ended(program)), "the adapter's program runs on");
+    // A program it attached to, stopped at a breakpoint, goes on.
+    let printed = dir.join("printed");
+    let mut running = Command::new(dir.join("endless"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(std::fs::File::create(&printed).unwrap())
+        .spawn()
+        .unwrap();
+    let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
+    assert!(within(10, || lines() > 0), "the program printed nothing");
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("attach", json!({ "processId": running.id(), "cwd": dir }));
+    let source = dir.join("endless.to");
+    adapter.ask("setBreakpoints", json!({ "source": { "path": source }, "breakpoints": [{ "line": 9 }] }));
+    adapter.ask("configurationDone", json!({}));
+    adapter.until("stopped");
+    let stopped = lines();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(lines(), stopped, "the program went on at its breakpoint");
+    unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
+    adapter.child.wait().unwrap();
+    assert!(within(10, || lines() > stopped), "the program stays stopped without its debugger");
+    assert!(running.try_wait().unwrap().is_none(), "the program the adapter attached to ended");
+    let _ = running.kill();
+    let _ = running.wait();
+}
+
+/// A task a logpoint holds goes on as soon as the tool that holds it
+/// ends, even when the logpoint ended with its last time.
+#[test]
+fn a_held_task_goes_on_when_its_tool_ends() {
+    // Only Linux lets a program change its code.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("logpoint-held");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("endless.to"), ENDLESS).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo).args(["build", "endless.to", "--output", "endless"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let printed = dir.join("printed");
+    let mut running = Command::new(dir.join("endless"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(std::fs::File::create(&printed).unwrap())
+        .spawn()
+        .unwrap();
+    let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
+    assert!(within(10, || lines() > 0), "the program printed nothing");
+    let pid = running.id().to_string();
+    // It serves the tools a moment after it starts.
+    let mut tool = None;
+    for _ in 0..200 {
+        let mut started = Command::new(tondo)
+            .args(["logpoint", &pid, "endless.to:9", "{round}", "--stop", "60"])
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut said = BufReader::new(started.stdout.take().unwrap());
+        let mut line = String::new();
+        while said.read_line(&mut line).unwrap_or(0) > 0 && !line.contains("stands here") {}
+        if line.contains("stands here") {
+            tool = Some(started);
+            break;
+        }
+        let _ = started.wait();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let mut tool = tool.expect("a logpoint that holds its task");
+    let held = lines();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(lines(), held, "the task went on while its tool held it");
+    unsafe { libc::kill(tool.id() as i32, libc::SIGTERM) };
+    tool.wait().unwrap();
+    assert!(within(10, || lines() > held), "the task stays held after its tool ended");
+    let _ = running.kill();
+    let _ = running.wait();
 }
 
 /// A replay's debugger ended by a signal ends the copies it made, and

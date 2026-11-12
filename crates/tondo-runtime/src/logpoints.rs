@@ -34,13 +34,15 @@ struct Logpoint {
 }
 
 /// Where a logpoint holds its task: its number, how long, the task, its frame,
-/// its stack's bounds and the code of the calls it is in, innermost first.
+/// its stack's bounds and the code of the calls it is in, innermost first;
+/// and the tool that holds it, which may go before the logpoint does.
 struct Holding {
     id: u64,
     seconds: u64,
     task: u64,
     fp: usize,
     code: Vec<usize>,
+    tool: Option<(u64, u64)>,
 }
 
 static HOLDING: Mutex<Option<Holding>> = Mutex::new(None);
@@ -347,8 +349,16 @@ pub(crate) fn tool_gone(client: i32) {
         mine.is_some() && mine == other
     };
     let ids: Vec<u64> = lock().iter().filter(|logpoint| same(logpoint)).map(|logpoint| logpoint.id).collect();
-    // A task it holds goes on with it.
-    ids.iter().for_each(|id| drop(go(&id.to_string())));
+    // A task it holds goes on with it, even at a logpoint that ended with
+    // its last time, which the list no longer has.
+    let gone = fd_identity(client);
+    let holding = HOLDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|h| gone.is_some() && h.tool == gone)
+        .map(|h| h.id);
+    ids.iter().chain(&holding).for_each(|id| drop(go(&id.to_string())));
     ids.into_iter().for_each(remove);
 }
 
@@ -432,7 +442,8 @@ extern "C" fn hit(saved: *const usize) {
             forget(id);
         }
         let code = std::iter::once(site).chain(super::trace::walk(fp, bounds)).collect();
-        let holding = Holding { id: shown, seconds, task, fp, code };
+        let tool = fd_identity(std::os::fd::AsRawFd::as_raw_fd(&client));
+        let holding = Holding { id: shown, seconds, task, fp, code, tool };
         *HOLDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(holding);
         held(shown, seconds);
         HOLDING.lock().unwrap_or_else(|e| e.into_inner()).take_if(|held| held.id == shown && held.task == task);
