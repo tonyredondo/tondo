@@ -94,6 +94,17 @@
 (rule iadd_base_case_32_or_64_lea -5 (lower (iadd (ty_32_or_64 ty) x y))
       (x64_lea ty (to_amode_add (mem_flags_trusted_data) x y (zero_offset))))
 
+;; Tondo: a value plus a sum with a constant is a `lea` of that sum and an
+;; `add` of the value, not one `lea` of all three: a `lea` of a base, an index
+;; and an offset takes two cycles on AMD's cores and three on older Intel
+;; ones, where a `lea` of two parts and an `add` take one each. The value
+;; outside the inner sum, as a loop's running total, waits one cycle instead
+;; of two, and no other input waits longer.
+(rule iadd_tondo_value_plus_offset_sum -1 (lower (iadd (ty_32_or_64 ty) x (iadd _ y (i32_from_iconst c))))
+      (x64_add ty (x64_lea ty (amode_imm_reg (mem_flags_trusted_data) y (i32_to_offset32 c))) x))
+(rule iadd_tondo_offset_sum_plus_value -2 (lower (iadd (ty_32_or_64 ty) (iadd _ y (i32_from_iconst c)) x))
+      (x64_add ty (x64_lea ty (amode_imm_reg (mem_flags_trusted_data) y (i32_to_offset32 c))) x))
+
 ;; APX: when the `has_apx` feature is enabled, use the NDD (new-data-
 ;; destination) form of `add` for 64-bit adds. Unlike the legacy two-operand
 ;; `add`, the NDD form writes its result to a fresh register encoded in the

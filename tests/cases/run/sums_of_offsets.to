@@ -1,0 +1,38 @@
+// A running total plus its counter and a constant, as a loop whose sum
+// cannot overflow adds, is a sum of the counter and the constant and then
+// an addition to the total: with the constant on either side, negative, and
+// with the total on either side.
+
+import std.console
+
+fn after(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += i + 3
+    }
+    total
+}
+
+fn before(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += 7 + i
+    }
+    total
+}
+
+fn behind(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total = (i - 5) + total
+    }
+    total
+}
+
+fn main() {
+    console.println("{after(1000)} {before(1000)} {behind(1000)}")
+    console.println("{after(3)} {before(1)} {behind(0)}")
+}
+
+// expect-stdout: 502500 506500 494500
+// expect-stdout: 12 7 0

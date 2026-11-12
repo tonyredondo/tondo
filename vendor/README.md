@@ -25,6 +25,12 @@ of a loop, where computing it once keeps it in a register. And equal
 constants that instructions read from memory, as x86-64 reads a float's,
 are emitted once, however many read them.
 
+A value plus a sum with a constant, as a loop's running total plus its
+counter and a step, is a `lea` of the inner sum and an `add` of the value
+on x86-64, not one `lea` of a base, an index and an offset, which takes two
+cycles on AMD's cores and three on older Intel ones: the total waits one
+cycle a turn instead of two.
+
 And a pass of its own, `src/tondo_select.rs`, which `src/context.rs` runs
 after the e-graph's: a branch whose two ways compute a few integers,
 without failing, touching memory or calling anything, chooses between
