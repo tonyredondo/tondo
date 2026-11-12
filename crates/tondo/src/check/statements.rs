@@ -833,17 +833,20 @@ impl<'a> Checker<'a> {
     pub(super) fn check_loan_overlap<'e>(&mut self, args: impl Iterator<Item = (&'e hir::Expr, bool)>, span: Span) {
         // Each loan, whether it lends a region of its place, and whether it
         // is exclusive.
-        let loans: Vec<(hir::Place, bool, bool)> = args
+        type Bounds = [Option<Box<hir::Expr>>; 3];
+        let loans: Vec<(hir::Place, bool, bool, Option<&Bounds>)> = args
             .filter_map(|(a, shared)| match &a.kind {
-                hir::ExprKind::Loan(place) => Some((place.clone(), false, true)),
-                hir::ExprKind::Region(place, _) => Some((place.clone(), true, true)),
-                hir::ExprKind::Slice(base, _) if shared => Some((hir::Place::of((**base).clone())?, true, false)),
-                _ if shared => Some((hir::Place::of(a.clone())?, false, false)),
+                hir::ExprKind::Loan(place) => Some((place.clone(), false, true, None)),
+                hir::ExprKind::Region(place, bounds) => Some((place.clone(), true, true, Some(bounds))),
+                hir::ExprKind::Slice(base, bounds) if shared => {
+                    Some((hir::Place::of((**base).clone())?, true, false, Some(bounds)))
+                }
+                _ if shared => Some((hir::Place::of(a.clone())?, false, false, None)),
                 _ => None,
             })
             .collect();
-        for (index, (first, first_region, first_exclusive)) in loans.iter().enumerate() {
-            for (second, second_region, second_exclusive) in &loans[index + 1..] {
+        for (index, (first, first_region, first_exclusive, first_bounds)) in loans.iter().enumerate() {
+            for (second, second_region, second_exclusive, second_bounds) in &loans[index + 1..] {
                 let (first_region, second_region) = (*first_region, *second_region);
                 if first.local != second.local || !first_exclusive && !second_exclusive {
                     continue;
@@ -862,7 +865,10 @@ impl<'a> Checker<'a> {
                 // Otherwise one place holds the other, which only a region
                 // may leave disjoint, decided when the call runs.
                 let overlap = parted.unwrap_or(match first.path.len().cmp(&second.path.len()) {
-                    std::cmp::Ordering::Equal => !(first_region && second_region),
+                    std::cmp::Ordering::Equal if first_region && second_region => {
+                        first_bounds.zip(*second_bounds).is_some_and(|(a, b)| regions_overlap(a, b))
+                    }
+                    std::cmp::Ordering::Equal => true,
                     std::cmp::Ordering::Less => !first_region,
                     std::cmp::Ordering::Greater => !second_region,
                 });
@@ -1508,5 +1514,34 @@ impl<'a> Checker<'a> {
 
     pub(super) fn error_expr(span: Span) -> hir::Expr {
         Self::mk(hir::ExprKind::Error, Ty::ERROR, span)
+    }
+}
+
+/// Whether two regions of one array, `[start:end:step]`, provably share an
+/// element: of constant bounds not below zero and no step but one, where an
+/// end left out is the array's length. A region that ends at a constant is
+/// valid only if the array reaches it, which the call needs.
+fn regions_overlap(a: &[Option<Box<hir::Expr>>; 3], b: &[Option<Box<hir::Expr>>; 3]) -> bool {
+    // `(start, end)`, `None` for the length; none when not constant.
+    let range = |bounds: &[Option<Box<hir::Expr>>; 3]| -> Option<(i128, Option<i128>)> {
+        let constant = |bound: &Option<Box<hir::Expr>>| -> Option<Option<i128>> {
+            match bound.as_deref().map(|e| &e.kind) {
+                None => Some(None),
+                Some(hir::ExprKind::Int(value)) if *value >= 0 => Some(Some(*value)),
+                _ => None,
+            }
+        };
+        let step = constant(&bounds[2])?;
+        if step.is_some_and(|step| step != 1) {
+            return None;
+        }
+        Some((constant(&bounds[0])?.unwrap_or(0), constant(&bounds[1])?))
+    };
+    let (Some((a_start, a_end)), Some((b_start, b_end))) = (range(a), range(b)) else { return false };
+    let from = a_start.max(b_start);
+    match (a_end, b_end) {
+        (Some(x), Some(y)) => from < x.min(y),
+        (Some(end), None) | (None, Some(end)) => from < end,
+        (None, None) => false,
     }
 }

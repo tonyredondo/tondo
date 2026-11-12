@@ -7,7 +7,10 @@ fn main() {
     pair(mut ints[:2], mut ints[2:])
     pair(mut ints[::2], mut ints[1::2])
     one(mut ints[:2], mut ints[-1])
-    pair(mut ints[:2], mut ints[1:])
+    // Known only when the call runs: bounds of constants that overlap are
+    // `E1403` (errors/overlapping_regions.to).
+    let from = ints.length() - 3
+    pair(mut ints[:2], mut ints[from:])
 }
 
 // expect-panic: P0004
