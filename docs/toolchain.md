@@ -8,6 +8,19 @@ This page goes through what it does, with the commands and what they print.
 `tondo help` lists every command, `tondo <command> --help` explains one, and
 `tondo guide cli` has them all.
 
+Each part has a chapter of its own, with the commands at work on real
+programs and what they printed:
+
+| Chapter | What it covers |
+| --- | --- |
+| [From a new project to an executable](toolchain/daily.md) | `new`, `check`, `fix`, `fmt`, `explain`, `api`, `run`, `build`, dependencies, `graph` |
+| [Testing](toolchain/testing.md) | choosing tests, reading a failure, every order of a test's tasks, models, coverage, benchmarks, fuzzing, flaky tests, reports for CI, bisecting |
+| [Debugging](toolchain/debugging.md) | a session, the commands, a recorded run debugged backwards, what a panic says, dumps and the tests they become |
+| [A running program](toolchain/observing.md) | `ps`, `counters`, `requests`, `blocked`, logpoints, profiles, dumps of a live program, traces, live builds |
+| [Performance](toolchain/performance.md) | benchmarks judged by instructions, profiles by line, what the optimizer did and why, the machine code |
+| [Editors and agents](toolchain/editors-and-agents.md) | the language server, VS Code, other editors, the MCP server and its tools, runbooks, every command as JSON |
+| [Every command](toolchain/commands.md) | each command with its options, as `tondo help --all` prints them |
+
 - [Write and check](#write-and-check)
 - [Run and build](#run-and-build)
 - [Test](#test)
