@@ -1334,6 +1334,8 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
             None => return Ok(ExitCode::FAILURE),
         }
     } else if path.is_file() {
+        // Where it is, as a bare name would be looked for on PATH.
+        let path = std::path::absolute(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         tondo::debug::Debugged::Started(path, program_args)
     } else {
         tondo::debug::Debugged::Running(target.to_string_lossy().into_owned())
