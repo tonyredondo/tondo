@@ -3572,7 +3572,11 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     adapter.ask("disconnect", json!({}));
     let before = length();
     std::thread::sleep(std::time::Duration::from_millis(200));
-    assert!(child.try_wait().unwrap().is_none(), "the program ended with the session");
+    // How it ended, and what it said, when it did.
+    if let Some(status) = child.try_wait().unwrap() {
+        let said = std::fs::read_to_string(dir.join("errors")).unwrap_or_default();
+        panic!("the program ended with the session, {status}: {said}");
+    }
     assert!(length() > before);
     let _ = child.kill();
     let _ = child.wait();
