@@ -35,7 +35,7 @@ fn main(): !(cbor.CborError | time.TimeError) {
         "bf61610161629f0203ffff", "c249010000000000000000", "c25101000000000000000000000000000000000000", "ff", "8201", "1c",
     ]
     for vector in vectors {
-        match cbor.parse(encoding.hexDecode(vector).unwrapOr([])) {
+        match cbor.parse(encoding.hexDecode(vector) ?? []) {
             ok(value) => console.println("{vector} {value}")
             err(error) => console.println("{vector} {error}")
         }

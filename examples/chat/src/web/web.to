@@ -57,7 +57,7 @@ fn talk(
         rooms.Told.Enter(
             id,
             request.param("room"),
-            request.query("name").unwrapOr("guest"),
+            request.query("name") ?? "guest",
             mailbox.reference(),
         ),
     )?

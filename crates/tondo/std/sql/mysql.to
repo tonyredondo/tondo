@@ -92,7 +92,7 @@ fn connectMySql(url: String): Connection ! SqlError {
     var at = 1
     _ = cstringAt(greeting, var at)
     at += 4
-    var nonce = greeting.slice(at, at + 8).unwrapOr([])
+    var nonce = greeting.slice(at, at + 8) ?? []
     at += 9
     var capabilities = unsigned(greeting, at, 2)
     at += 2
@@ -102,7 +102,7 @@ fn connectMySql(url: String): Connection ! SqlError {
         let length = Int(greeting[at + 5])
         at += 16
         let rest = (length - 8).max(13)
-        nonce.extend(greeting.slice(at, at + rest - 1).unwrapOr([]))
+        nonce.extend(greeting.slice(at, at + rest - 1) ?? [])
         at += rest
         plugin = cstringAt(greeting, var at)
     }
@@ -208,13 +208,13 @@ fn MySql.authenticate(
     var scramble = nonce
     for {
         let packet = self.packet()?
-        match Int(packet.get(0).unwrapOr(Byte(255u8))) {
+        match Int(packet.get(0) ?? Byte(255u8)) {
             0 => return
             255 => fail mysqlError(packet, connecting: true)
             254 => {
                 var at = 1
                 current = cstringAt(packet, var at)
-                scramble = packet.slice(at, packet.length() - 1).unwrapOr([])
+                scramble = packet.slice(at, packet.length() - 1) ?? []
                 self.send(mysqlAnswer(current, password, scramble))?
             }
             1 if packet.get(1) == Byte(3u8) => {}
@@ -225,7 +225,7 @@ fn MySql.authenticate(
                     // The server's public key, then the password sealed.
                     self.send([Byte(2u8)])?
                     let key = self.packet()?
-                    let pem = String.fromBytes(key.slice(1, key.length()).unwrapOr([])).unwrapOr("")
+                    let pem = String.fromBytes(key.slice(1, key.length()) ?? []) ?? ""
                     self.send(rsaSealed(pem, xored(cstring(password), scramble))?)?
                 }
             }
@@ -266,7 +266,7 @@ fn MySql.send(self, payload: Array[Byte]): !SqlError {
         )
         out.extend(littleEndianBytes(length, 3))
         out.push(Byte(UInt8.wrapping(sequence)))
-        out.extend(payload.slice(at, at + length).unwrapOr([]))
+        out.extend(payload.slice(at, at + length) ?? [])
         at += length
         if length < 0xffffff {
             break
@@ -291,7 +291,7 @@ fn MySql.run(self, statement: Statement): Outcome ! SqlError {
             let (more, done) = self.result(none)?
             outcome = outcome with {
                 affected: outcome.affected + done.affected
-                lastId: done.lastId.orElse(outcome.lastId)
+                lastId: done.lastId ?? outcome.lastId
             }
             if not more {
                 return outcome
@@ -384,7 +384,7 @@ fn MySql.execute(self, kept: Kept, statement: Statement): Outcome ! SqlError {
 /// whether more results follow.
 fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
     let first = self.packet()?
-    match Int(first.get(0).unwrapOr(Byte(255u8))) {
+    match Int(first.get(0) ?? Byte(255u8)) {
         0 => {
             var at = 1
             let affected = lengthEncodedAt(first, var at)
@@ -454,7 +454,7 @@ fn fieldOf(packet: Array[Byte]): Field {
         at += length
     }
     let nameLength = lengthEncodedAt(packet, var at)
-    let name = String.fromBytes(packet.slice(at, at + nameLength).unwrapOr([])).unwrapOr("")
+    let name = String.fromBytes(packet.slice(at, at + nameLength) ?? []) ?? ""
     at += nameLength
     let original = lengthEncodedAt(packet, var at)
     at += original
@@ -462,7 +462,7 @@ fn fieldOf(packet: Array[Byte]): Field {
     Field {
         name
         charset: unsigned(packet, at, 2)
-        kind: Int(packet.get(at + 6).unwrapOr(Byte(0u8)))
+        kind: Int(packet.get(at + 6) ?? Byte(0u8))
         flags: unsigned(packet, at + 7, 2)
     }
 }
@@ -554,14 +554,14 @@ fn mysqlValue(field: Field, packet: Array[Byte], at: var Int): Value {
         }
         _ => {
             let length = lengthEncodedAt(packet, var at)
-            let bytes = packet.slice(at, at + length).unwrapOr([])
+            let bytes = packet.slice(at, at + length) ?? []
             at += length
             match field.kind {
-                0 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
-                246 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+                0 => Value.Number(String.fromBytes(bytes) ?? "")
+                246 => Value.Number(String.fromBytes(bytes) ?? "")
                 16 => Value.Bytes(bytes)
                 _ if field.charset == 63 and field.kind != 245 => Value.Bytes(bytes)
-                _ => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+                _ => Value.Text(String.fromBytes(bytes) ?? "")
             }
         }
     }
@@ -610,7 +610,7 @@ fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
 fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
     let number = unsigned(packet, 1, 2)
     let start = if packet.get(3) == Byte(UInt8.wrapping('#'.code())) { 9 } else { 3 }
-    let said = String.fromBytes(packet.slice(start, packet.length()).unwrapOr([])).unwrapOr("")
+    let said = String.fromBytes(packet.slice(start, packet.length()) ?? []) ?? ""
     let quoted = (after: String, close: String): String? {
         match said.splitOnce(after) {
             some((_, rest)) => rest.splitOnce(close).map((found) { found.0 })
@@ -643,7 +643,7 @@ fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
 /// An integer of the protocol, in one byte below 251 or after a byte that
 /// says its size; `at` moves past it.
 fn lengthEncodedAt(bytes: Array[Byte], at: var Int): Int {
-    let first = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    let first = Int(bytes.get(at) ?? Byte(0u8))
     at += 1
     let size = match first {
         252 => 2
@@ -677,7 +677,7 @@ fn lengthEncodedBytes(bytes: Array[Byte]): Array[Byte] {
 
 /// `value` in `count` bytes, the least significant first.
 fn littleEndianBytes(value: Int, count: Int): Array[Byte] {
-    littleEndian(value).slice(0, count).unwrapOr([])
+    littleEndian(value).slice(0, count) ?? []
 }
 
 /// The integer of `count` bytes at `at`, the least significant first, with
@@ -691,7 +691,7 @@ fn signedLittle(bytes: Array[Byte], at: Int, count: Int): Int {
 /// MySQL takes a password without TLS.
 fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
     let body = pem.lines().filter((line) { not line.startsWith("-----") }).join("")
-    let der = __encoding.base64Decode(body).unwrapOr([])
+    let der = (__encoding.base64Decode(body) ?? [])
     // SubjectPublicKeyInfo: a sequence of the algorithm and a bit string
     // that holds the sequence of the modulus and the exponent.
     var at = 0
@@ -712,10 +712,10 @@ fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
         fail unreadable
     }
     let modulusLength = derEntered(der, var at, 0x02)
-    let modulusBytes = der.slice(at, at + modulusLength).unwrapOr([])
+    let modulusBytes = der.slice(at, at + modulusLength) ?? []
     at += modulusLength
     let exponentLength = derEntered(der, var at, 0x02)
-    let exponentBytes = der.slice(at, at + exponentLength).unwrapOr([])
+    let exponentBytes = der.slice(at, at + exponentLength) ?? []
     let (modulus, exponent) = match (bigIntOf(modulusBytes), bigIntOf(exponentBytes)) {
         (some(n), some(e)) => (n, e)
         _ => fail unreadable
@@ -739,10 +739,10 @@ fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
     let maskedBlock = xored(block, generatedMask(seed, block.length()))
     let maskedSeed = xored(seed, generatedMask(maskedBlock, hashLength))
     let encoded = [Byte(0u8)].concat(maskedSeed).concat(maskedBlock)
-    let number = bigIntOf(encoded).unwrapOr(modulus)
+    let number = bigIntOf(encoded) ?? modulus
     var hex = number.modPow(exponent, modulus).toString(radix: 16)
     hex = "{"0".repeat(size * 2 - hex.length())}{hex}"
-    __encoding.hexDecode(hex).unwrapOr([])
+    __encoding.hexDecode(hex) ?? []
 }
 
 /// The unsigned number of big-endian bytes.
@@ -761,7 +761,7 @@ fn generatedMask(seed: Array[Byte], length: Int): Array[Byte] {
         out.extend(__hash.sha1(seed.concat(bigEndianBytes(counter, 4))).bytes())
         counter += 1
     }
-    out.slice(0, length).unwrapOr([])
+    out.slice(0, length) ?? []
 }
 
 /// Enters a DER value of `tag` at `at`: moves past its tag and length and
@@ -770,7 +770,7 @@ fn derEntered(der: Array[Byte], at: var Int, tag: Int): Int {
     if der.get(at) != Byte(UInt8.wrapping(tag)) {
         return -1
     }
-    let first = Int(der.get(at + 1).unwrapOr(Byte(0u8)))
+    let first = Int(der.get(at + 1) ?? Byte(0u8))
     at += 2
     if first < 128 {
         return first

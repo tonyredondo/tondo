@@ -8,7 +8,7 @@ import std.net
 
 let connection = net.connect("example.com", 80)?
 connection.write("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n")?
-console.println(connection.readLine()?.unwrapOr(""))
+console.println(connection.readLine()? ?? "")
 connection.close()?
 ```
 
@@ -345,7 +345,7 @@ import std.net
 
 fn echo(listener: net.Listener): !net.NetError {
     let client = listener.accept()?
-    let line = client.readLine()?.unwrapOr("")
+    let line = client.readLine()? ?? ""
     client.write("echo: {line}\n")?
     client.close()?
 }
@@ -354,7 +354,7 @@ let listener = net.listen("127.0.0.1", 0)?
 let server = spawn echo(listener)
 let stream = net.connect("127.0.0.1", listener.address().port)?
 stream.write("hello\n")?
-console.println(stream.readLine()?.unwrapOr(""))
+console.println(stream.readLine()? ?? "")
 stream.close()?
 server.wait()?
 ```

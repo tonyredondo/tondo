@@ -67,7 +67,7 @@ pub fn run@(seed: Int): Int ! json.JsonError {
 
 /// Writes `text` to `file`, with the directories it is in.
 fn write(file: String, text: String): !String {
-    let directory = path.parent(file).unwrapOr(".")
+    let directory = path.parent(file) ?? "."
     fs.createDirectory(directory).mapErr((e) { "cannot create {directory}: {e}" })?
     fs.writeText(file, text).mapErr((e) { "cannot write {file}: {e}" })?
 }

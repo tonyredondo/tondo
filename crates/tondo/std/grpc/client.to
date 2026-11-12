@@ -245,7 +245,7 @@ fn Channel.intercepted(self, slot: grpcNative.Native, rpc: Call, opening: Openin
 fn Channel.layered(self, at: Int, slot: grpcNative.Native, rpc: Call, opening: Opening): !Status {
     if at == self.layers.length() {
         let ended = grpcNative.ended(self.open(rpc, opening, slot))
-        let code = Int.parse(ended[0]).unwrapOr(2)
+        let code = Int.parse(ended[0]) ?? 2
         if code != 0 {
             fail statusOf(code, ended[1], ended.drop(2))
         }

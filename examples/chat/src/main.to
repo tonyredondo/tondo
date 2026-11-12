@@ -5,7 +5,7 @@ import std.executor
 import std.http
 
 fn main(): !(http.HttpError | executor.ExecutorError) {
-    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(8080)
+    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }) ?? 8080
     let chat = web.Chat()?
     console.println("the chat is at http://localhost:{port}")
     chat.routes().listen(port: port)?

@@ -27,9 +27,9 @@ fn main(): !http.HttpError {
     app.compress()
     app.use(
         (request, next) {
-            with Who { name: request.header("x-user").unwrapOr("anon") }
+            with Who { name: request.header("x-user") ?? "anon" }
             let reply = next(request)?
-            reply.header("x-type", reply.headers().get("content-type").unwrapOr("none"))
+            reply.header("x-type", reply.headers().get("content-type") ?? "none")
         },
     )
     app.post("/small", (request) { http.Reply.text("got {request.bytes()?.length()}") })
@@ -63,7 +63,7 @@ fn main(): !http.HttpError {
     let client = http.Client(baseUrl: server.url())
     let shown = (outcome: http.Response ! http.HttpError) {
         match outcome {
-            ok(reply) => "{reply.status()} {reply.text().unwrapOr("")}"
+            ok(reply) => "{reply.status()} {reply.text() ?? ""}"
             err(http.HttpError.Status(reply)) => "{reply.status()}"
             err(error) => "{error}"
         }
@@ -87,7 +87,7 @@ fn main(): !http.HttpError {
         shown(client.post("/search", body: http.Body.form(["text": "form", "page": "1"]))),
     )
     let page = client.get("/page", headers: ["accept-encoding": "zstd"])?
-    let plain = zstd.decompress(page.bytes()?).unwrapOr([])
+    let plain = zstd.decompress(page.bytes()?) ?? []
     console.println("{page.header("content-encoding")} {plain.length()} {page.header("x-type")}")
     let socket =
         http.WebSocket.connect(

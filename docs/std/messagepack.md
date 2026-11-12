@@ -103,7 +103,7 @@ type Point = { x: Int, y: Int }
 
 let value = messagepack.parse(messagepack.encode(Point { x: 1, y: 2 }))?
 let x = value.get("x").andThen((x) { x.asInt() })
-console.println("x is {x.unwrapOr(0)}, z is set: {value.get("z").isSome()}")
+console.println("x is {x ?? 0}, z is set: {value.get("z").isSome()}")
 ```
 
 Implements `Display`, `serialization.Encode`, `serialization.Decode`.

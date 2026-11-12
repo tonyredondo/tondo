@@ -27,15 +27,15 @@ pub fn Response.cookies(self): Map[String, String] {
 fn nameAndValue(pair: String): (String, String)? {
     let text = pair.trim()
     let at = text.find("=")?
-    let name = text.slice(0, at).unwrapOr("").trim()
-    var value = text.slice(at + 1, text.length()).unwrapOr("").trim()
+    let name = (text.slice(0, at) ?? "").trim()
+    var value = (text.slice(at + 1, text.length()) ?? "").trim()
     if value.length() >= 2 and value.startsWith("\"") and value.endsWith("\"") {
-        value = value.slice(1, value.length() - 1).unwrapOr(value)
+        value = value.slice(1, value.length() - 1) ?? value
     }
     if name.isEmpty() {
         return none
     }
-    some((name, __encoding.urlDecode(value).unwrapOr(value)))
+    some((name, __encoding.urlDecode(value) ?? value))
 }
 
 /// The value of the cookie the client sent under `name`, decoded with

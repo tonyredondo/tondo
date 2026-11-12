@@ -157,6 +157,9 @@ enum Defaults {
 /// `(`; elsewhere they are ordinary names (spec 5.5).
 pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
 
+/// What a `try` block says: there is none.
+const TRY_BLOCK: &str = "there is no `try`: a function that can fail returns `T ! E`, `?` passes a failure on and `match` handles it; a chain of options is `?.`, a fallback `??`; `recover { ... }` stops a panic";
+
 /// What an `else` with no `if` before it says.
 const ELSE_WITHOUT_IF: &str = "`else` follows the block of an `if`: `if condition { ... } else { ... }`";
 
@@ -171,7 +174,7 @@ const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
 pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
     let nth = |offset: usize| &tokens[(at + offset).min(tokens.len() - 1)].tok;
     match nth(0) {
-        Tok::Ident(word) if word == "recover" || word == "try" => nth(1) == &Tok::LBrace,
+        Tok::Ident(word) if word == "recover" => nth(1) == &Tok::LBrace,
         Tok::Ident(word) if word == "context" || word == "annotation" => {
             matches!(nth(1), Tok::Ident(_)) && nth(2) == &Tok::Eq
         }
@@ -1312,9 +1315,7 @@ impl Parser<'_> {
         }
         match word.as_str() {
             "loop" => Some("a loop until `break` is `for { ... }`"),
-            "try" => Some(
-                "there is no `try`: a function that can fail returns `T ! E`; `?` passes a failure on and `match` handles it; `recover { ... }` stops a panic",
-            ),
+            "try" => Some(TRY_BLOCK),
             "do" => Some("a loop that runs at least once is `for { ... }` with `if done { break }` at its end"),
             _ => None,
         }
@@ -2334,8 +2335,7 @@ impl Parser<'_> {
             }
             // `recover` is a word of the language only before a block (15.9).
             Tok::Ident(name) if name == "try" && self.nth(1) == &Tok::LBrace => {
-                self.bump();
-                ExprKind::TryBlock(self.block()?)
+                return self.error(TRY_BLOCK.to_string());
             }
             Tok::Ident(name) if name == "recover" && self.nth(1) == &Tok::LBrace => {
                 self.bump();

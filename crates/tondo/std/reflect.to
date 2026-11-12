@@ -1307,7 +1307,7 @@ pub enum ReferenceKind {
 ///     match info.kind() {
 ///         reflect.TypeKind.Record => "a record of {info.fields().length()} fields"
 ///         reflect.TypeKind.Enum => "an enum of {info.variants().length()} variants"
-///         reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }).unwrapOr("?")}"
+///         reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }) ?? "?"}"
 ///         reflect.TypeKind.Primitive(_) => "a primitive"
 ///         _ => "another kind"
 ///     }
@@ -1495,7 +1495,7 @@ fn annotationOf[A: Reflect](annotations: Array[Value]): A? {
 /// }
 ///
 /// let info = reflect.typeInfo[User]()
-/// console.println("{info.qualifiedName()}: {info.docs().unwrapOr("")}")
+/// console.println("{info.qualifiedName()}: {info.docs() ?? ""}")
 /// console.println("fields {info.fields().map((field) { field.name() })}, methods {info.methods().map((method) { method.name() })}")
 /// console.println("{reflect.typeOf(User { name: "Ada", age: 36 }).id() == info.id()}")
 /// ```
@@ -1647,7 +1647,7 @@ impl Display for TypeInfo {
 /// }
 ///
 /// for field in reflect.typeInfo[User]().fields() {
-///     let column = field.annotation[Column]().map((column) { column.name }).unwrapOr(field.externalName())
+///     let column = field.annotation[Column]().map((column) { column.name }) ?? field.externalName()
 ///     console.println("{field.ordinal()} {field.name()} -> {column}, default {field.default()}, docs {field.docs()}")
 /// }
 /// ```
@@ -1682,7 +1682,7 @@ pub fn FieldInfo.externallyNamed(self, name: String): FieldInfo {
 /// The field's name outside the program, which formats write and read: its
 /// `@name("text")`, or its own name.
 pub fn FieldInfo.externalName(self): String {
-    self.external.unwrapOr(self.fieldName)
+    self.external ?? self.fieldName
 }
 
 /// The description with the field's default (language 9.2), as the code
@@ -1742,7 +1742,7 @@ pub fn FieldInfo.typeInfo(self): TypeInfo {
 /// }
 ///
 /// for variant in reflect.typeInfo[Level]().variants() {
-///     console.println("{variant.ordinal()} {variant.name()} as {variant.externalName()}: {variant.docs().unwrapOr("")}")
+///     console.println("{variant.ordinal()} {variant.name()} as {variant.externalName()}: {variant.docs() ?? ""}")
 /// }
 /// ```
 pub type VariantInfo = {
@@ -1785,7 +1785,7 @@ pub fn VariantInfo.externallyNamed(self, name: String): VariantInfo {
 /// The variant's name outside the program, which formats write and read:
 /// its `@name("text")`, or its own name.
 pub fn VariantInfo.externalName(self): String {
-    self.external.unwrapOr(self.variantName)
+    self.external ?? self.variantName
 }
 
 /// The description with the variant's annotations, as the code the
@@ -1860,7 +1860,7 @@ pub fn VariantInfo.fields(self): Array[FieldInfo] {
 ///
 /// for method in reflect.typeInfo[Account]().methods() {
 ///     let function = method.function()
-///     console.println("{method.name()}: {function.parameters().length()} parameters, gives {function.outcome().qualifiedName()}; {method.docs().unwrapOr("")}")
+///     console.println("{method.name()}: {function.parameters().length()} parameters, gives {function.outcome().qualifiedName()}; {method.docs() ?? ""}")
 /// }
 /// ```
 pub type MethodInfo = {
@@ -1935,7 +1935,7 @@ pub fn MethodInfo.function(self): FunctionInfo {
 ///
 /// let method = reflect.typeInfo[Volume]().methods()[0]
 /// for parameter in method.function().parameters() {
-///     let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }).unwrapOr("")
+///     let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }) ?? ""
 ///     console.println("{parameter.position()} {parameter.name()}: {parameter.typeInfo().qualifiedName()}{range}")
 /// }
 /// ```

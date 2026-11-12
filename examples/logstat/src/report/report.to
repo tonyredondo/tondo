@@ -22,7 +22,7 @@ pub fn byRoute(found: Array[entries.Entry]): Array[RouteRow] {
                 route
                 requests: group.length()
                 errors: group.count((entry) { entry.status >= 500 })
-                slowest: milliseconds(times.max().unwrapOr(0))
+                slowest: milliseconds(times.max() ?? 0)
                 mean: milliseconds(times.sum() / group.length())
             },
         )
@@ -42,7 +42,7 @@ pub fn byClass(found: Array[entries.Entry]): Map[String, Int] {
     var classes: Map[String, Int] = [:]
     for entry in found {
         let class = "{entry.status / 100}xx"
-        classes[class] = classes.getOr(class, 0) + 1
+        classes[class] = (classes[class] ?? 0) + 1
     }
     classes
 }

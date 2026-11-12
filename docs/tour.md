@@ -197,7 +197,7 @@ fn first(names: Array[String]): String? {
 fn main() {
     console.println("{address("localhost", "8080")}")
     console.println("{address("localhost", "http")}")
-    console.println(first([]).unwrapOr("nobody"))
+    console.println(first([]) ?? "nobody")
 }
 ```
 
@@ -235,7 +235,7 @@ import std.console
 
 fn main() {
     let values = [3, 4]
-    let third = recover { values[2] }.unwrapOr(0)
+    let third = recover { values[2] } ?? 0
     console.println("{third}")
 }
 ```
@@ -266,7 +266,7 @@ fn main() {
     for (name, age) in ages {                             // in the order they were added
         console.println("{name} is {age}")
     }
-    console.println("{before.length()} {ages.get("dee")} {ages.getOr("dee", 0)} {"bo" in ages}")
+    console.println("{before.length()} {ages.get("dee")} {ages["dee"] ?? 0} {"bo" in ages}")
 
     let evens = (0..10).filter((n) { n % 2 == 0 }).map((n) { n * n }).collect()
     console.println("{evens}")
@@ -557,7 +557,7 @@ context Request = {
 }
 
 fn greet(): String {
-    let user = Request.user.unwrapOr("guest")
+    let user = Request.user ?? "guest"
     "hello {user} ({Request.id})"
 }
 

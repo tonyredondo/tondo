@@ -62,7 +62,7 @@ pub fn route(path: String): String {
         some((before, _)) => before
         none => path
     }
-    Patterns.number.replaceAll(plain, "/:id").unwrapOr(plain)
+    Patterns.number.replaceAll(plain, "/:id") ?? plain
 }
 
 /// What a file of a log gave: its entries, and the lines that are not one.

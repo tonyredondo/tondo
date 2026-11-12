@@ -9,7 +9,7 @@ fn main(): !csv.CsvError {
     console.println("{csv.parse(text)?}")
     for record in csv.records(io.reader(text)) {
         let r = record?
-        console.println("{r.getOr("name", "")} is {r.getOr("age", "")}: {r.getOr("note", "")}")
+        console.println("{r["name"] ?? ""} is {r["age"] ?? ""}: {r["note"] ?? ""}")
     }
     console.println("{csv.parse("a,b\nc\"d,e")} {csv.parse("a,\"b")} {csv.parse("a,\"b\"x")}")
     console.println("{csv.parseRecords("a,b\n1,2,3")} {csv.parse("x;y\n1;2", separator: ';')?}")
@@ -20,7 +20,7 @@ fn main(): !csv.CsvError {
     let buffer = io.Buffer()
     let out = csv.Writer(buffer.writer(), separator: '\t')
     out.write(["a", "b\tc"]).expect("in memory")
-    console.print(buffer.text().unwrapOr(""))
+    console.print(buffer.text() ?? "")
     console.print(csv.formatRecords(csv.parseRecords("k,v\n1,2\n3,4")?))
     console.println("{csv.rows(io.reader("1,2\n3,4")).count()}")
 }

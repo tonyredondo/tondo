@@ -16,8 +16,8 @@ import std.http
 import std.time
 
 fn main(): !http.HttpError {
-    let directory = env.get("ACME_DIRECTORY").unwrapOr("")
-    let trust = env.get("ACME_TRUST").unwrapOr("")
+    let directory = env.get("ACME_DIRECTORY") ?? ""
+    let trust = env.get("ACME_TRUST") ?? ""
     var app = http.App()
     app.get("/", (_) { http.Reply.text("secure hello") })
     let tls = acme.tls(["localhost"], email: "me@example.com", directory: directory, cache: "cache", trust: some(trust))

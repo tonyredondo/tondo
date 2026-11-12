@@ -34,7 +34,7 @@ fn main(): !image.ImageError {
         "{turned.width()}x{turned.height()} {turned.pixel(20, 380)} {cropped.width()}x{cropped.height()} {drawn.grayscale().pixel(0, 0)}",
     )
     let photo = image.read(Turned)?
-    let top = photo.pixel(4, 1).unwrapOr(image.Color.rgb(0, 0, 0))
+    let top = photo.pixel(4, 1) ?? image.Color.rgb(0, 0, 0)
     console.println(
         "{image.info(Turned)?.width}x{image.info(Turned)?.height} {photo.width()}x{photo.height()} {top.blue > top.red}",
     )

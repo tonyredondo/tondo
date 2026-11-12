@@ -14,7 +14,7 @@ fn main() {
     request.error("failed")
     let json = log.Logger(buffer.writer(), format: log.Format.Json, timestamps: false)
     json.warn("disk \"low\"", ["free": "3%"])
-    console.print(buffer.text().unwrapOr(""))
+    console.print(buffer.text() ?? "")
     console.println("{logger.isEnabled(log.Level.Trace)} {logger.isEnabled(log.Level.Error)}")
     log.Logger(timestamps: false).info("to stderr", ["k": "v"])
 }

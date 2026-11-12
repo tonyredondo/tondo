@@ -1,7 +1,7 @@
 import std.console
 import std.math
 
-// A result that inlining builds and `unwrapOr` takes apart, released when
+// A result that inlining builds and `??` takes apart, released when
 // it goes: one whose error holds nothing is not released, as nothing is in
 // it to free, and one whose error holds a text still frees it, as the
 // check of leaks this case runs under says.
@@ -9,7 +9,7 @@ import std.math
 fn roots(count: Int): Float {
     var total = 0.0
     for i in 0..count {
-        total += math.sqrt(Float(i - 3)).unwrapOr(-1.0)
+        total += math.sqrt(Float(i - 3)) ?? -1.0
     }
     total
 }
@@ -17,7 +17,7 @@ fn roots(count: Int): Float {
 fn parsed(texts: Array[String]): Int {
     var total = 0
     for text in texts {
-        total += Int.parse(text).unwrapOr(-1)
+        total += Int.parse(text) ?? -1
     }
     total
 }

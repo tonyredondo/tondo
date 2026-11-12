@@ -11,7 +11,7 @@ import std.time as __time
 /// The message of a `GET`, in its query: `message`, in Base64 for the URL
 /// with `base64=1`.
 fn connectQuery(request: __http.Request): Array[Byte] ! __http.Problem {
-    let message = request.query("message").unwrapOr("")
+    let message = request.query("message") ?? ""
     if request.query("base64") != "1" {
         return message.bytes()
     }
@@ -80,7 +80,7 @@ fn connectError(status: Status): __json.Value {
             status.details.map(
                 (detail) {
                     let fields: Map[String, __json.Value] = [
-                        "type": __json.Value.Text(detail.typeUrl.split("/").last().unwrapOr("")),
+                        "type": __json.Value.Text(detail.typeUrl.split("/").last() ?? ""),
                         "value": __json.Value.Text(
                             __encoding.base64Encode(detail.value).trimEnd("="),
                         ),
@@ -177,8 +177,8 @@ fn timeoutOf(text: String): __time.Duration? {
     if text.length() < 2 {
         return none
     }
-    let amount = Int.parse(text.slice(0, text.length() - 1).unwrapOr("")).ok()?
-    match text.slice(text.length() - 1, text.length()).unwrapOr("") {
+    let amount = Int.parse(text.slice(0, text.length() - 1) ?? "").ok()?
+    match text.slice(text.length() - 1, text.length()) ?? "" {
         "H" => __time.seconds(amount * 3600)
         "M" => __time.seconds(amount * 60)
         "S" => __time.seconds(amount)
@@ -209,7 +209,7 @@ fn percentEncoded(text: String): String {
     for byte in text.bytes() {
         let value = Int(byte)
         out = if value >= 0x20 and value <= 0x7e and value != 0x25 {
-            "{out}{Char.from(value).unwrapOr('?')}"
+            "{out}{Char.from(value) ?? '?'}"
         } else {
             "{out}%{value.toString(16).padStart(2, "0").toUpper()}"
         }

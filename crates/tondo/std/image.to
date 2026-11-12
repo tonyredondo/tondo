@@ -283,7 +283,7 @@ pub fn info(bytes: Array[Byte]): Info ! ImageError {
 /// let bytes = fs.readBytes("photo.jpg")?
 /// match image.exif(bytes) {
 ///     some(exif) => {
-///         console.println("taken {exif.date} with {exif.camera.unwrapOr("an unknown camera")}")
+///         console.println("taken {exif.date} with {exif.camera ?? "an unknown camera"}")
 ///         match (exif.latitude, exif.longitude) {
 ///             (some(latitude), some(longitude)) => console.println("at {latitude}, {longitude}")
 ///             _ => console.println("no place")
@@ -322,7 +322,7 @@ pub fn exif(bytes: Array[Byte]): Exif? {
         latitude: given(1).andThen((written) { Float.parse(written).ok() })
         longitude: given(2).andThen((written) { Float.parse(written).ok() })
         camera: given(3)
-        orientation: Int.parse(texts[4]).unwrapOr(1)
+        orientation: Int.parse(texts[4]) ?? 1
         tags
     })
 }

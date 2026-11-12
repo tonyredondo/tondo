@@ -99,7 +99,7 @@ fn main(): !template.TemplateError {
   `removePrefix`, `removeSuffix`; of `Array` `length`, `isEmpty`, `first`,
   `last`, `get`, `take`, `drop`, `reversed`, `enumerate`, `join`, `concat`;
   of `Map` `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
-  `entries`; of optionals `isSome`, `isNone`, `unwrapOr`.
+  `entries`; of optionals `isSome` and `isNone`, and `value ?? fallback`.
 - Its functions are the `pub` methods of the values given to
   `site.functions(...)`, called as Tondo calls them, with defaults and
   variadic arguments; one that gives `T ! E` writes its value, and its

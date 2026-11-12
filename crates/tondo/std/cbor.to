@@ -78,9 +78,9 @@ pub fn Value.find(self, path: String): Value? {
     var found = self
     for step in cborcodec.pathSteps(path) {
         found = if step.startsWith(".") {
-            found.get(step.slice(1, step.length()).unwrapOr(""))?
+            found.get(step.slice(1, step.length()) ?? "")?
         } else if step.startsWith("[") {
-            found.at(Int.parse(step.slice(1, step.length()).unwrapOr("")).ok()?)?
+            found.at(Int.parse(step.slice(1, step.length()) ?? "").ok()?)?
         } else {
             return none
         }

@@ -36,7 +36,7 @@ test channelKeepsEveryValue {
     let (out, input) = channel[Int](1)
     let first = spawn sends(out.copy(), 1)
     let second = spawn sends(out.copy(), 2)
-    let got = input.receive().unwrapOr(0) + input.receive().unwrapOr(0)
+    let got = (input.receive() ?? 0) + (input.receive() ?? 0)
     first.wait()
     second.wait()
     assert(got == 3)
@@ -215,7 +215,7 @@ test queueKeepsEveryValue {
     let second = spawn pushes(queue, 2)
     first.wait()
     second.wait()
-    assert(queue.popFront().unwrapOr(0) + queue.popFront().unwrapOr(0) == 3)
+    assert((queue.popFront() ?? 0) + (queue.popFront() ?? 0) == 3)
     assert(queue.popFront() == none)
 }
 

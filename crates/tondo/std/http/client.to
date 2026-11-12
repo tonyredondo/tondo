@@ -89,7 +89,7 @@ pub fn Response.bytes(self): Array[Byte] ! HttpError {
 
 /// The body as text, in the charset its content type names (`windows1252`).
 pub fn Response.text(self): String ! HttpError {
-    let windows = match windows1252(self.header("content-type").unwrapOr("")) {
+    let windows = match windows1252(self.header("content-type") ?? "") {
         ok(windows) => windows
         err(why) => fail HttpError.Body("{why}: read its bytes with `bytes()` instead")
     }
@@ -122,7 +122,7 @@ pub fn Response.body(self): __io.Reader {
 /// The body's lines, as they arrive, in the charset `text()` reads:
 /// newline-delimited JSON, logs.
 pub fn Response.lines(self): Lines {
-    match windows1252(self.header("content-type").unwrapOr("")) {
+    match windows1252(self.header("content-type") ?? "") {
         ok(windows) => Lines {
             input: httpNative.body(self.native, windows)
             response: self.native
@@ -290,7 +290,7 @@ pub type Event = {
 /// let stream = http.get("https://stream.example.com/updates", headers: ["Accept": "text/event-stream"])?
 /// for received in stream.events() {
 ///     let event = received?
-///     console.println("{event.event} #{event.id.unwrapOr("-")}: {event.data}")
+///     console.println("{event.event} #{event.id ?? "-"}: {event.data}")
 /// }
 /// ```
 pub type Events = {
@@ -319,9 +319,9 @@ impl Iterator[Event ! HttpError] for Events {
             if line.startsWith(":") {
                 continue
             }
-            let colon = line.find(":").unwrapOr(line.length())
-            let field = line.slice(0, colon).unwrapOr("")
-            let value = line.slice(colon + 1, line.length()).unwrapOr("").removePrefix(" ")
+            let colon = line.find(":") ?? line.length()
+            let field = line.slice(0, colon) ?? ""
+            let value = (line.slice(colon + 1, line.length()) ?? "").removePrefix(" ")
             if field == "event" {
                 kind = value
             } else if field == "data" {
@@ -370,7 +370,7 @@ pub type Client = {
 /// import std.http
 ///
 /// var app = http.App()
-/// app.get("/me", (request) { http.Reply.text(request.header("Authorization").unwrapOr("anonymous")) })
+/// app.get("/me", (request) { http.Reply.text(request.header("Authorization") ?? "anonymous") })
 /// var client = app.client()
 /// // Every request of the client through this hook: logged and authorized.
 /// client.use((request, next) {
@@ -418,8 +418,8 @@ pub fn Client(
     let connection = httpNative.client(
         connect,
         redirects,
-        trust.unwrapOr(""),
-        socket.unwrapOr(""),
+        trust ?? "",
+        socket ?? "",
         cookies,
         certificate,
         key,
@@ -513,7 +513,7 @@ pub fn Client.request(
     for (name, value) in headers {
         all[name] = value
     }
-    let limit = match timeout.orElse(self.limit) {
+    let limit = match timeout ?? self.limit {
         some(limit) => limit.milliseconds()
         none => 0
     }

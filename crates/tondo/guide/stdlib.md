@@ -291,7 +291,7 @@ pub type Build = {
 fn main() {
     match cli.parse[Site]() {
         Site.Build(build) => console.println(cli.markup("[green]✓[/] built into [bold]{build.destination}[/]"))
-        Site.Serve { port } => console.println("serving on {port.unwrapOr(8080)}")
+        Site.Serve { port } => console.println("serving on {port ?? 8080}")
     }
 }
 ```
@@ -495,7 +495,7 @@ fn main(): !crypto.CryptoError {
     let key = crypto.SecretKey.generate()                    // AES-256-GCM
     let sealed = key.seal("card 4242".bytes(), context: "user 7".bytes())
     let opened = key.open(sealed, context: "user 7".bytes())?
-    console.println("{String.fromBytes(opened).unwrapOr("")}")
+    console.println("{String.fromBytes(opened) ?? ""}")
 
     let signer = crypto.PrivateKey.generate()                // Ed25519
     let signature = signer.sign("release 1.2".bytes())
@@ -525,7 +525,7 @@ fn main(): !fs.FsError {
     }
     for page in fs.glob("content/**/*.{{md,markdown}}")? {
         let packed = gzip.compress(fs.readBytes(page)?)
-        let name = path.relative("content", page).unwrapOr(page)
+        let name = path.relative("content", page) ?? page
         fs.writeBytes(path.join("public", "{name}.gz"), packed)?
     }
     let work = fs.createTemporaryDirectory()?      // the program removes it
@@ -640,7 +640,7 @@ fn main(): !(csv.CsvError | time.TimeError) {
     logger.info("starting", ["date": "{date}"])
     for record in csv.records(io.reader("name,age\nada,36\n")) {
         let row = record?
-        logger.debug("row", ["name": row.getOr("name", "")])
+        logger.debug("row", ["name": row["name"] ?? ""])
     }
     logger.info("done", ["took": "{started.elapsed()}"])
 }

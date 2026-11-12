@@ -11,7 +11,7 @@ fn square(n: Int): Int {
 }
 
 fn gated(gate: Receiver[Int]): Int {
-    gate.receive().unwrapOr(-1)
+    gate.receive() ?? -1
 }
 
 fn checked(n: Int): Int ! String {
@@ -47,7 +47,7 @@ fn main() {
     var order: Array[Int] = []
     for n in [3, 1, 4, 2] {
         gates[n - 1].send(n)
-        order.push(ordered.next().unwrapOr(0))
+        order.push(ordered.next() ?? 0)
         order.push(ordered.length())
     }
     console.println("{order} {ordered.next()}")

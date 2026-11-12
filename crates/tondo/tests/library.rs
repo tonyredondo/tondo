@@ -18,13 +18,13 @@ pub extern type Point = {
 
 /// The words of `text`, separated by spaces.
 pub extern fn words_count(text: ffi.CString): ffi.CSize {
-    UInt64(unsafe { ffi.fromCString(text) }.split(" ").length()).unwrapOr(0u64)
+    UInt64(unsafe { ffi.fromCString(text) }.split(" ").length()) ?? 0u64
 }
 
 /// The distance between two points.
 pub extern fn words_distance(a: Point, b: Point): Float {
     let (dx, dy) = (a.x - b.x, a.y - b.y)
-    (dx * dx + dy * dy).sqrt().unwrapOr(0.0)
+    (dx * dx + dy * dy).sqrt() ?? 0.0
 }
 
 /// Calls `visit` with each number from 1 to `count`.
@@ -48,7 +48,7 @@ pub extern fn words_hello(name: ffi.CString) {
 /// `capacity` bytes, and gives its length.
 pub extern fn words_dashed(text: ffi.CString, out: Pointer[ffi.CChar], capacity: ffi.CSize): ffi.CSize {
     let bytes = unsafe { ffi.fromCString(text) }.replace(" ", "-").bytes()
-    let room = Int(capacity).unwrapOr(0)
+    let room = Int(capacity) ?? 0
     if room > 0 {
         let fits = bytes.length().min(room - 1)
         unsafe {
@@ -58,7 +58,7 @@ pub extern fn words_dashed(text: ffi.CString, out: Pointer[ffi.CChar], capacity:
             out.offset(fits).write(Byte(0u8))
         }
     }
-    UInt64(bytes.length()).unwrapOr(0u64)
+    UInt64(bytes.length()) ?? 0u64
 }
 
 /// Calls `each` with each word of `text`.

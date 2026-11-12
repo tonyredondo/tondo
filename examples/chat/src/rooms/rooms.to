@@ -102,7 +102,7 @@ fn handle(state: var State, told: Told) {
                 id,
                 line(Event { kind: Kind.Welcome, room: member.room, people: now }),
             )
-            for said in state.recent.get(member.room).unwrapOr([]) {
+            for said in (state.recent.get(member.room) ?? []) {
                 deliver(var state, id, said)
             }
             let joined = Event {
@@ -125,7 +125,7 @@ fn handle(state: var State, told: Told) {
             let said = line(
                 Event { kind: Kind.Said, room: member.room, from: member.name, text: words },
             )
-            var kept = state.recent.get(member.room).unwrapOr([])
+            var kept = state.recent.get(member.room) ?? []
             kept.push(said)
             if kept.length() > Kept {
                 _ = kept.removeAt(0)

@@ -18,7 +18,7 @@ fn bump(counter: sync.Mutex[Int], times: Int) {
 }
 
 fn measure(text: String): Int {
-    text.length() + text.find("b").unwrapOr(-1)
+    text.length() + (text.find("b") ?? -1)
 }
 
 fn lent(text: String, times: Int): Int {

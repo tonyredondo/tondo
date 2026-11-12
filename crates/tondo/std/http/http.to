@@ -80,7 +80,7 @@ enum Content {
 ///
 /// var app = http.App()
 /// app.post("/echo", (request) {
-///     http.Reply.text("{request.header("Content-Type").unwrapOr("")}: {request.text()?}")
+///     http.Reply.text("{request.header("Content-Type") ?? ""}: {request.text()?}")
 /// })
 /// let client = app.client()
 /// for body in [http.Body.text("hi"), http.Body.json(["a": 1]), http.Body.form(["q": "tea & cake"])] {
@@ -127,7 +127,7 @@ pub fn Body.stream(
     length: Int? = none,
     contentType: String = "application/octet-stream",
 ): Body {
-    Body { content: Content.Stream(input, length.unwrapOr(-1), contentType) }
+    Body { content: Content.Stream(input, length ?? -1, contentType) }
 }
 
 enum Source {
@@ -194,7 +194,7 @@ pub fn Part.stream(
     contentType: String = "",
     length: Int? = none,
 ): Part {
-    Part { name, source: Source.Stream(input, length.unwrapOr(-1)), fileName, contentType }
+    Part { name, source: Source.Stream(input, length ?? -1), fileName, contentType }
 }
 
 /// An error, which reflection shows as its message, so a method that fails

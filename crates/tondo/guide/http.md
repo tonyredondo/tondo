@@ -210,7 +210,7 @@ pub type Library = { db: sql.Database }
 
 /// The books whose title has the text.
 pub fn Library.books(self, matching: String?): Array[Book] ! sql.SqlError {
-    let pattern = "%{matching.unwrapOr("")}%"
+    let pattern = "%{matching ?? ""}%"
     self.db.query[Book]("SELECT id, title FROM books WHERE title LIKE {pattern}")?
 }
 

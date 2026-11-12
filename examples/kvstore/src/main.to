@@ -6,7 +6,7 @@ import std.process
 
 /// Serves the store: `tondo run -- [port]`, and then `nc localhost 7070`.
 fn main(): !net.NetError {
-    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(7070)
+    let port = env.args().get(0).andThen((text) { Int.parse(text).ok() }) ?? 7070
     let running = server.start("127.0.0.1", port)?
     console.println("kvstore on 127.0.0.1:{running.port()}; Ctrl-C stops it")
     // Ctrl-C cancels `main`: the wait ends, and the program with it.

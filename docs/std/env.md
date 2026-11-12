@@ -6,7 +6,7 @@ the program's arguments and environment.
 import std.console
 import std.env
 
-let home = env.get("HOME").unwrapOr("/")
+let home = env.get("HOME") ?? "/"
 console.println("{env.args().length()} arguments; home is {home}")
 ```
 

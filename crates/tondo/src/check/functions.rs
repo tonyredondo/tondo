@@ -28,7 +28,6 @@ impl<'a> Checker<'a> {
             captures: Vec::new(),
             mutates: false,
             infer_result: false,
-            try_body: false,
             params: Vec::new(),
             deferred: false,
             body: false,
@@ -790,7 +789,6 @@ impl<'a> Checker<'a> {
         }
         inner.test_member = test;
         inner.deferred = deferred;
-        inner.try_body = std::mem::take(&mut self.try_body);
         inner.template = std::mem::take(&mut self.templating);
         inner.unsafe_region = is_unsafe;
         inner.unsafe_body = is_unsafe;

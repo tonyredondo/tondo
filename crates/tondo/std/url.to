@@ -86,22 +86,22 @@ pub fn parse(text: String): Url ! UrlError {
     // The fragment, then the query.
     match rest.find("#") {
         some(hash) => {
-            parsed.fragment = decoded(rest.slice(hash + 1, rest.length()).unwrapOr(""), hash + 1)?
-            rest = rest.slice(0, hash).unwrapOr(rest)
+            parsed.fragment = decoded(rest.slice(hash + 1, rest.length()) ?? "", hash + 1)?
+            rest = rest.slice(0, hash) ?? rest
         }
         none => {}
     }
     match rest.find("?") {
         some(question) => {
-            parsed.query = rest.slice(question + 1, rest.length()).unwrapOr("")
-            rest = rest.slice(0, question).unwrapOr(rest)
+            parsed.query = rest.slice(question + 1, rest.length()) ?? ""
+            rest = rest.slice(0, question) ?? rest
         }
         none => {}
     }
     // The scheme: what comes before the first `:`, if no `/` does.
     match rest.find(":") {
-        some(colon) if not rest.slice(0, colon).unwrapOr("").contains("/") => {
-            let scheme = rest.slice(0, colon).unwrapOr("")
+        some(colon) if not (rest.slice(0, colon) ?? "").contains("/") => {
+            let scheme = rest.slice(0, colon) ?? ""
             if not isScheme(scheme) {
                 fail UrlError {
                     message: "`{scheme}` is not a scheme, which is a letter then letters, digits, `+`, `-` or `.`; a relative path with a `:` starts with `./`"
@@ -109,17 +109,17 @@ pub fn parse(text: String): Url ! UrlError {
                 }
             }
             parsed.scheme = scheme.toLower()
-            rest = rest.slice(colon + 1, rest.length()).unwrapOr("")
+            rest = rest.slice(colon + 1, rest.length()) ?? ""
             at = colon + 1
         }
         _ => {}
     }
     // The authority: `//user:password@host:port`.
     if rest.startsWith("//") {
-        let after = rest.slice(2, rest.length()).unwrapOr("")
-        let end = after.find("/").unwrapOr(after.length())
-        let authority = after.slice(0, end).unwrapOr("")
-        rest = after.slice(end, after.length()).unwrapOr("")
+        let after = rest.slice(2, rest.length()) ?? ""
+        let end = after.find("/") ?? after.length()
+        let authority = after.slice(0, end) ?? ""
+        rest = (after.slice(end, after.length()) ?? "")
         // Where the authority starts, and the path after it.
         let start = at + 2
         at = start + end
@@ -127,23 +127,23 @@ pub fn parse(text: String): Url ! UrlError {
         var hostPort = authority
         match authority.findLast("@") {
             some(sign) => {
-                let info = authority.slice(0, sign).unwrapOr("")
+                let info = authority.slice(0, sign) ?? ""
                 match info.find(":") {
                     some(colon) => {
-                        parsed.user = decoded(info.slice(0, colon).unwrapOr(""), start)?
-                        let password = info.slice(colon + 1, info.length()).unwrapOr("")
+                        parsed.user = decoded(info.slice(0, colon) ?? "", start)?
+                        let password = info.slice(colon + 1, info.length()) ?? ""
                         parsed.password = decoded(password, start + colon + 1)?
                     }
                     none => parsed.user = decoded(info, start)?
                 }
-                hostPort = authority.slice(sign + 1, authority.length()).unwrapOr("")
+                hostPort = authority.slice(sign + 1, authority.length()) ?? ""
                 hostStart = start + sign + 1
             }
             none => {}
         }
         // The port: what follows the last `:`, but inside the brackets of
         // an IPv6 address.
-        let closing = hostPort.findLast("]").unwrapOr(-1)
+        let closing = hostPort.findLast("]") ?? -1
         if hostPort.startsWith("[") != (closing >= 0) {
             fail UrlError {
                 message: "an IPv6 address is written between `[` and `]`, as `http://[::1]:8080/`"
@@ -152,7 +152,7 @@ pub fn parse(text: String): Url ! UrlError {
         }
         match hostPort.findLast(":") {
             some(colon) if colon > closing => {
-                let digits = hostPort.slice(colon + 1, hostPort.length()).unwrapOr("")
+                let digits = hostPort.slice(colon + 1, hostPort.length()) ?? ""
                 if not digits.isEmpty() {
                     match Int.parse(digits) {
                         ok(port) if port >= 0 and port <= 65535 => parsed.port = port
@@ -162,13 +162,13 @@ pub fn parse(text: String): Url ! UrlError {
                         }
                     }
                 }
-                hostPort = hostPort.slice(0, colon).unwrapOr("")
+                hostPort = hostPort.slice(0, colon) ?? ""
             }
             _ => {}
         }
         if hostPort.startsWith("[") {
             if not hostPort.endsWith("]") or
-                not ipv6(hostPort.slice(1, hostPort.length() - 1).unwrapOr("")) {
+                not ipv6(hostPort.slice(1, hostPort.length() - 1) ?? "") {
                 fail UrlError {
                     message: "`{hostPort}` is not an IPv6 address between `[` and `]`, as `[::1]` or `[fe80::1%25en0]`"
                     offset: hostStart
@@ -211,7 +211,7 @@ fn isScheme(text: String): Bool {
 
 /// Whether it is an IPv6 address, with a zone after `%25` (RFC 6874).
 fn ipv6(text: String): Bool {
-    let address = text.slice(0, text.find("%25").unwrapOr(text.length())).unwrapOr("")
+    let address = text.slice(0, text.find("%25") ?? text.length()) ?? ""
     address.contains(":") and not netNative.canonicalIp(address).isEmpty()
 }
 
@@ -262,7 +262,7 @@ pub fn Url.resolve(self, reference: String): Url ! UrlError {
     } else {
         // The reference's path after the base's last `/`.
         let directory = match self.path.findLast("/") {
-            some(slash) => self.path.slice(0, slash + 1).unwrapOr("")
+            some(slash) => self.path.slice(0, slash + 1) ?? ""
             none if hasAuthority(self) => "/"
             none => ""
         }
@@ -315,8 +315,8 @@ pub fn Url.params(self, name: String): Array[String] {
         }
         let (key, value) = match pair.find("=") {
             some(equals) => (
-                pair.slice(0, equals).unwrapOr(""),
-                pair.slice(equals + 1, pair.length()).unwrapOr(""),
+                pair.slice(0, equals) ?? "",
+                pair.slice(equals + 1, pair.length()) ?? "",
             )
             none => (pair, "")
         }
@@ -329,7 +329,7 @@ pub fn Url.params(self, name: String): Array[String] {
 
 fn formDecoded(text: String): String {
     let spaced = text.replace("+", " ")
-    __encoding.urlDecode(spaced).unwrapOr(spaced)
+    __encoding.urlDecode(spaced) ?? spaced
 }
 
 /// A query of the names and values, in the map's order, as a form writes
@@ -363,9 +363,9 @@ impl Display for Url {
                 (not self.scheme.isEmpty() and path.startsWith("/"))
         // And a `:` in the first segment of a relative path, as a scheme (4.2).
         if self.scheme.isEmpty() and not authority {
-            let first = path.find("/").unwrapOr(path.length())
-            let head = path.slice(0, first).unwrapOr("")
-            path = "{head.replace(":", "%3A")}{path.slice(first, path.length()).unwrapOr("")}"
+            let first = path.find("/") ?? path.length()
+            let head = path.slice(0, first) ?? ""
+            path = "{head.replace(":", "%3A")}{path.slice(first, path.length()) ?? ""}"
         }
         if authority {
             out.push("//")

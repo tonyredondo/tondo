@@ -99,8 +99,8 @@ impl Display for XmlError {
 ///
 /// let feed = xml.parse(r"""<feed><entry id="1"><title>Tea</title></entry><entry id="2"><title>Cake</title></entry></feed>""")?
 /// for entry in feed.children("entry") {
-///     let title = entry.child("title").map((title) { title.text() }).unwrapOr("")
-///     console.println("{entry.attribute("id").unwrapOr("?")}: {title}")
+///     let title = entry.child("title").map((title) { title.text() }) ?? ""
+///     console.println("{entry.attribute("id") ?? "?"}: {title}")
 /// }
 /// ```
 pub type Element = {
@@ -487,7 +487,7 @@ fn Scanner.reference(mut self, until: Int): String ! XmlError {
 }
 
 fn Scanner.numbered(self, digits: String, radix: Int): String ! XmlError {
-    let code = Int.parse(digits, radix: radix).unwrapOr(-1)
+    let code = Int.parse(digits, radix: radix) ?? -1
     match Char.from(code) {
         some(c) if code > 0 => "{c}"
         _ => fail self.error("`{digits}` is not the number of a character")
@@ -810,7 +810,7 @@ fn Reading.written(mut self, names: Array[String]): Array[String] {
         let notes = self.frames[top].notes
         var written: Array[String] = []
         for index in 0..names.length() {
-            let noted = notes.get(index).unwrapOr([])
+            let noted = notes.get(index) ?? []
             written.push(if marked(noted, "Text") { TextKey } else { renamed(noted, names[index]) })
         }
         self.frames[top].written = written
@@ -1132,7 +1132,7 @@ fn encodeName(key: String): String {
         written = if escaped {
             let hex = c.code().toString(16).toUpper()
             let width = if hex.length() <= 4 { 4 } else { 8 }
-            "{written}_x{"0000000".slice(0, width - hex.length()).unwrapOr("")}{hex}_"
+            "{written}_x{"0000000".slice(0, width - hex.length()) ?? ""}{hex}_"
         } else {
             "{written}{c}"
         }
@@ -1153,7 +1153,7 @@ fn decodeName(name: String): String {
         for end < chars.length() and end - at < 11 and chars[end] != '_' {
             end += 1
         }
-        let digits = chars.slice(at + 2, end).unwrapOr([]).map((c) { "{c}" }).join("")
+        let digits = (chars.slice(at + 2, end) ?? []).map((c) { "{c}" }).join("")
         let code = if chars[at] == '_' and
             chars.get(at + 1) == 'x' and
             chars.get(end) == '_' and

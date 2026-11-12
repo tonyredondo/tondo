@@ -12,9 +12,7 @@ fn bytes(text: String): Array[Byte] {
     var at = 0
     for at + 1 < text.length() {
         out.push(
-            Byte(Int.parse(text.slice(at, at + 2).unwrapOr("00"), radix: 16).unwrapOr(0)).unwrapOr(
-                0,
-            ),
+            Byte(Int.parse(text.slice(at, at + 2) ?? "00", radix: 16) ?? 0) ?? 0,
         )
         at += 2
     }

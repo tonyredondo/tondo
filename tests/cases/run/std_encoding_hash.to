@@ -16,7 +16,7 @@ fn main(): !encoding.EncodingError {
     console.println("{query} {encoding.urlDecode(query)?} {encoding.urlDecode("%zz")} {encoding.urlDecode("%FF")} {encoding.urlDecode("ab%4")}")
     console.println("{hash.sha256("abc".bytes())}")
     console.println("{hash.sha1("abc".bytes())} {hash.sha256([]).bytes().length()}")
-    console.println("{hash.sha512("".bytes()).hex().slice(0, 16).unwrapOr("")} {hash.sha256("a".bytes()) == hash.sha256("a".bytes())}")
+    console.println("{hash.sha512("".bytes()).hex().slice(0, 16) ?? ""} {hash.sha256("a".bytes()) == hash.sha256("a".bytes())}")
     console.println("{hash.hmacSha256("key".bytes(), "The quick brown fox jumps over the lazy dog".bytes())}")
 }
 

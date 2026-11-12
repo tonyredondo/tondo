@@ -343,13 +343,13 @@ import std.ffi
 /// The words of `text`, separated by spaces.
 pub extern fn words_count(text: ffi.CString): ffi.CSize {
     let words = unsafe { ffi.fromCString(text) }.split(" ")
-    UInt64(words.length()).unwrapOr(0u64)
+    UInt64(words.length()) ?? 0u64
 }
 
 /// The sum of `count` numbers.
 pub extern fn numbers_sum(numbers: Pointer[ffi.CLong], count: ffi.CSize): ffi.CLong {
     var total = 0
-    for index in 0..Int(count).unwrapOr(0) {
+    for index in 0..(Int(count) ?? 0) {
         total += unsafe { numbers.offset(index).read() }
     }
     total

@@ -227,7 +227,7 @@ fn main() {
     ages["ana"] = 33                            // replaces, and keeps its place
     console.println("{ages} {ages.length()}")
 
-    console.println("{ages["leo"]} {ages["nobody"]} {ages.getOr("nobody", 0)} {"zoe" in ages}")
+    console.println("{ages["leo"]} {ages["nobody"]} {ages["nobody"] ?? 0} {"zoe" in ages}")
     let removed = ages.remove("leo")
     console.println("{removed} {ages}")
 
@@ -271,7 +271,7 @@ fn main() {
     // Counting words.
     var counts: Map[String, Int] = [:]
     for word in "to be or not to be".words() {
-        counts[word] = counts.getOr(word, 0) + 1
+        counts[word] = (counts[word] ?? 0) + 1
     }
     console.println("{counts}")
 
@@ -281,7 +281,7 @@ fn main() {
     let frequent = counts.filter((_, count) { count > 1 })
     let doubled = counts.mapValues((count) { count * 2 })
     let merged = frequent.merge(["and": 1])
-    console.println("{visited.length()} {frequent} {doubled.getOr("to", 0)} {merged}")
+    console.println("{visited.length()} {frequent} {doubled["to"] ?? 0} {merged}")
 }
 ```
 

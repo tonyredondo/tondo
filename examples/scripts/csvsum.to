@@ -33,7 +33,7 @@ for record in csv.records(io.reader(fs.readText(file)?)) {
     let fields = record?
     match (fields.get(by), fields.get(amount).andThen((text) { Float.parse(text.trim()).ok() })) {
         (some(key), some(value)) => {
-            let (rows, sum) = totals.get(key).unwrapOr((0, 0.0))
+            let (rows, sum) = totals.get(key) ?? (0, 0.0)
             totals[key] = (rows + 1, sum + value)
         }
         _ => skipped += 1

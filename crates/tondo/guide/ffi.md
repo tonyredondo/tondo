@@ -35,7 +35,7 @@ import std.ffi
 /// The words of `text`, separated by spaces.
 pub extern fn words_count(text: ffi.CString): ffi.CSize {
     let words = unsafe { ffi.fromCString(text) }.split(" ")
-    UInt64(words.length()).unwrapOr(0u64)
+    UInt64(words.length()) ?? 0u64
 }
 ```
 

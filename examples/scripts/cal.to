@@ -23,8 +23,8 @@ fn column(day: time.Weekday): Int {
 
 let arguments = env.args()
 let today = time.localNow()
-let year = arguments.get(0).andThen((text) { Int.parse(text).ok() }).unwrapOr(today.year)
-let month = arguments.get(1).andThen((text) { Int.parse(text).ok() }).unwrapOr(today.month)
+let year = arguments.get(0).andThen((text) { Int.parse(text).ok() }) ?? today.year
+let month = arguments.get(1).andThen((text) { Int.parse(text).ok() }) ?? today.month
 
 let first = time.DateTime { year, month, day: 1, hour: 0, minute: 0, second: 0, nanosecond: 0 }
 let days = first.addMonths(1).since(first).hours() / 24

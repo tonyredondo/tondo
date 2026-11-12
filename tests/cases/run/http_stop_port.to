@@ -11,7 +11,7 @@ fn main(): !(http.HttpError | net.NetError) {
     var open = 0
     for _ in 0..50 {
         let server = app.start()?
-        let port = Int.parse(server.address().split(":").last().unwrapOr("")).unwrapOr(0)
+        let port = Int.parse(server.address().split(":").last() ?? "") ?? 0
         server.stop()
         match net.connect("127.0.0.1", port) {
             ok(stream) => {

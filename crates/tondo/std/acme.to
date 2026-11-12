@@ -97,7 +97,7 @@ pub fn tls(
 fn folderOf(directory: String, cache: String?): String {
     let base = match cache {
         some(given) => given
-        none => "{__env.cacheDirectory().unwrapOr(".")}/tondo/acme"
+        none => "{__env.cacheDirectory() ?? "."}/tondo/acme"
     }
     let host = match __url.parse(directory) {
         ok(parsed) => parsed.host
@@ -176,8 +176,8 @@ fn Keeper.show(self, chain: String, key: String): !AcmeError {
 
 /// The kept certificate for these domains, and when it started and expires.
 fn Keeper.kept(self): (String, String, __time.Duration, __time.Duration)? {
-    let chain = __fs.readText("{self.folder}/{self.domains[0]}.pem").unwrapOr("")
-    let key = __fs.readText("{self.folder}/{self.domains[0]}.key").unwrapOr("")
+    let chain = __fs.readText("{self.folder}/{self.domains[0]}.pem") ?? ""
+    let key = __fs.readText("{self.folder}/{self.domains[0]}.key") ?? ""
     let first = match __crypto.certificates(chain) {
         ok(found) => found.get(0)?
         err(_) => return none
@@ -233,9 +233,9 @@ fn Keeper.session(self): Session ! AcmeError {
     }
     // The point of the public key ends its SubjectPublicKeyInfo.
     let spki = spkiOf(key)
-    let point = spki.slice(spki.length() - 64, spki.length()).unwrapOr([])
-    let x = base64url(point.slice(0, 32).unwrapOr([]))
-    let y = base64url(point.slice(32, 64).unwrapOr([]))
+    let point = spki.slice(spki.length() - 64, spki.length()) ?? []
+    let x = base64url(point.slice(0, 32) ?? [])
+    let y = base64url(point.slice(32, 64) ?? [])
     let jwk = "{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{x}\",\"y\":\"{y}\"}}"
     let session = Session {
         client
@@ -289,21 +289,19 @@ fn Session.post(self, url: String, payload: String?): __http.Response ! AcmeErro
             err(__http.HttpError.Status(found)) => found
             err(error) => fail AcmeError { message: "{error}" }
         }
-        self.nonce.set(response.header("Replay-Nonce").unwrapOr(""))
+        self.nonce.set(response.header("Replay-Nonce") ?? "")
         if response.status() < 400 {
             return response
         }
-        let problem = answer(ok(response)).unwrapOr(__json.Value.Null)
+        let problem = (answer(ok(response)) ?? __json.Value.Null)
         // A nonce the authority refuses is replaced: a test authority
         // refuses some on purpose.
         if attempt < 4 and member(problem, "type").endsWith(":badNonce") {
             attempt += 1
             continue
         }
-        let detail = problem
-            .field("detail")
-            .asText()
-            .unwrapOr("the authority answered {response.status()}")
+        let detail =
+            problem.field("detail").asText() ?? "the authority answered {response.status()}"
         fail AcmeError { message: "{url}: {detail}" }
     }
 }
@@ -331,10 +329,10 @@ fn Keeper.obtained(self): (String, String) ! AcmeError {
             member(session.urls, "newOrder"),
             "{{\"identifiers\":[{identifiers.join(",")}]}}",
         )?
-    let orderUrl = created.header("Location").unwrapOr("")
+    let orderUrl = created.header("Location") ?? ""
     let order = answer(ok(created))?
-    for authorization in order.field("authorizations").asArray().unwrapOr([]) {
-        self.authorized(session, authorization.asText().unwrapOr(""))?
+    for authorization in (order.field("authorizations").asArray() ?? []) {
+        self.authorized(session, authorization.asText() ?? "")?
     }
     let key = __crypto.PrivateKey.generate(__crypto.Curve.P256)
     let request = certificateRequest(key, self.domains)
@@ -365,7 +363,7 @@ fn Keeper.obtained(self): (String, String) ! AcmeError {
 /// asks for `acme-tls/1`, until the check ends.
 fn Keeper.authorized(self, session: Session, url: String): !AcmeError {
     let found = answer(ok(session.post(url, none)?))?
-    let name = found.field("identifier").field("value").asText().unwrapOr("")
+    let name = found.field("identifier").field("value").asText() ?? ""
     if member(found, "status") == "valid" {
         return
     }
@@ -397,7 +395,7 @@ fn Keeper.authorized(self, session: Session, url: String): !AcmeError {
             let why = alpnChallenge(now).andThen(
                 (each) { each.field("error").field("detail").asText() },
             )
-            fail AcmeError { message: "the check of {name} failed: {why.unwrapOr(status)}" }
+            fail AcmeError { message: "the check of {name} failed: {why ?? status}" }
         }
         __time.sleep(__time.milliseconds(if tries < 10 { 200 } else { 1000 }))
     }
@@ -425,16 +423,14 @@ fn answer(response: __http.Response ! AcmeError): __json.Value ! AcmeError {
 
 /// The text of a member of an object, or an empty one.
 fn member(value: __json.Value, key: String): String {
-    value.field(key).asText().unwrapOr("")
+    value.field(key).asText() ?? ""
 }
 
 /// The TLS-ALPN-01 challenge of an authorization.
 fn alpnChallenge(authorization: __json.Value): __json.Value? {
-    authorization
-        .field("challenges")
-        .asArray()
-        .unwrapOr([])
-        .find((each) { member(each, "type") == "tls-alpn-01" })
+    (authorization.field("challenges").asArray() ?? []).find(
+        (each) { member(each, "type") == "tls-alpn-01" },
+    )
 }
 
 fn base64url(bytes: Array[Byte]): String {
@@ -476,9 +472,9 @@ fn sequence(parts: Array[Array[Byte]]): Array[Byte] {
 }
 
 fn oid(text: String): Array[Byte] {
-    let arcs = text.split(".").map((part) { Int.parse(part).unwrapOr(0) })
+    let arcs = text.split(".").map((part) { Int.parse(part) ?? 0 })
     var content = [Byte(UInt8.wrapping(arcs[0] * 40 + arcs[1]))]
-    for arc in arcs.slice(2, arcs.length()).unwrapOr([]) {
+    for arc in (arcs.slice(2, arcs.length()) ?? []) {
         var digits = [Byte(UInt8.wrapping(arc & 127))]
         var rest = arc >> 7
         for rest > 0 {
@@ -497,8 +493,8 @@ fn integer(bytes: Array[Byte]): Array[Byte] {
     for start < bytes.length() - 1 and bytes[start] == Byte(0u8) {
         start += 1
     }
-    let digits = bytes.slice(start, bytes.length()).unwrapOr([])
-    let positive = if Int(digits.get(0).unwrapOr(Byte(0u8))) >= 128 {
+    let digits = bytes.slice(start, bytes.length()) ?? []
+    let positive = if Int(digits.get(0) ?? Byte(0u8)) >= 128 {
         [Byte(0u8)].concat(digits)
     } else {
         digits
@@ -524,16 +520,14 @@ fn spkiOf(key: __crypto.PrivateKey): Array[Byte] {
         .lines()
         .filter((line) { not line.startsWith("-----") })
         .join("")
-    __encoding.base64Decode(body).unwrapOr([])
+    __encoding.base64Decode(body) ?? []
 }
 
 /// `data` signed with ECDSA and SHA-256, as X.509 writes it: the two
 /// integers of the signature in a sequence, in a bit string.
 fn signed(key: __crypto.PrivateKey, data: Array[Byte]): Array[Byte] {
     let raw = key.sign(data)
-    let pair = sequence(
-        [integer(raw.slice(0, 32).unwrapOr([])), integer(raw.slice(32, 64).unwrapOr([]))],
-    )
+    let pair = sequence([integer(raw.slice(0, 32) ?? []), integer(raw.slice(32, 64) ?? [])])
     tlv(0x03, [Byte(0u8)].concat(pair))
 }
 
@@ -585,7 +579,7 @@ fn pemOf(label: String, der: Array[Byte]): String {
     var lines: Array[String] = []
     var at = 0
     for at < text.length() {
-        lines.push(text.slice(at, (at + 64).min(text.length())).unwrapOr(""))
+        lines.push(text.slice(at, (at + 64).min(text.length())) ?? "")
         at += 64
     }
     "-----BEGIN {label}-----\n{lines.join("\n")}\n-----END {label}-----\n"

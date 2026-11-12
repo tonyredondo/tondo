@@ -18,7 +18,7 @@ type Author = {
     latest: String
 }
 
-let wanted = env.args().get(0).unwrapOr("100")
+let wanted = env.args().get(0) ?? "100"
 let log = process.command("git", "log", "-n", wanted, "--format=%an%x09%ad%x09%s", "--date=short")
 let output = match log.check() {
     ok(ran) => ran.text()?
@@ -33,9 +33,8 @@ for line in output.lines() {
     match line.split("\t", limit: 3) {
         [name, date, subject] => {
             // The log is newest first: the first commit seen of an author is their latest.
-            let known = authors
-                .get(name)
-                .unwrapOr(Author { commits: 0, author: name, latest: "{date} {subject}" })
+            let known =
+                authors.get(name) ?? Author { commits: 0, author: name, latest: "{date} {subject}" }
             authors[name] = known with { commits: known.commits + 1 }
         }
         _ => {}

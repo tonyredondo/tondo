@@ -918,7 +918,7 @@ impl<'a> Checker<'a> {
         let file = self.sources.file_of(span.start);
         let before = file.text[..(span.start - file.base) as usize].trim_end();
         // After an operator, not after `=` or `=>`.
-        let symbol = ["==", "!=", "<=", ">="].iter().any(|op| before.ends_with(op))
+        let symbol = ["==", "!=", "<=", ">=", "..", "..="].iter().any(|op| before.ends_with(op))
             || (before.ends_with(['<', '>', '+', '-', '*', '/', '%', '&', '|', '^', '?']) && !before.ends_with("=>"));
         let word = |w: &str| {
             before.strip_suffix(w).is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))

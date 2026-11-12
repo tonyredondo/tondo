@@ -215,9 +215,9 @@ pub enum Status {
 
 fn main() {
     let info = reflect.typeInfo[User]()
-    console.println("{info.qualifiedName()}: {info.docs().unwrapOr("")}")
+    console.println("{info.qualifiedName()}: {info.docs() ?? ""}")
     for field in info.fields() {
-        console.println("  {field.name()}: {field.typeInfo().qualifiedName()} {field.docs().unwrapOr("")}")
+        console.println("  {field.name()}: {field.typeInfo().qualifiedName()} {field.docs() ?? ""}")
     }
     let status = reflect.typeInfo[Status]()
     console.println("{status.kind()} with {status.variants().length()} variants")

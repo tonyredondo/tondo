@@ -7,8 +7,8 @@ import std.sync
 /// The text C would read at a pointer: the bytes up to the first zero.
 fn textAt(out: Pointer[ffi.CChar], room: Int): String {
     let bytes = unsafe { ffi.bytes(out, room) }
-    let end = bytes.findIndex((byte) { byte == Byte(0u8) }).unwrapOr(room)
-    String.fromBytes(bytes[:end]).unwrapOr("not text")
+    let end = bytes.findIndex((byte) { byte == Byte(0u8) }) ?? room
+    String.fromBytes(bytes[:end]) ?? "not text"
 }
 
 test theSlugIsWrittenWithItsEndingZero {

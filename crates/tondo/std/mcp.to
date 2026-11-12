@@ -129,7 +129,7 @@ pub fn handler[T: __reflect.Reflect](
     (request) {
         let text = request.text()?
         match reply(state, text) {
-            some(written) => __http.Reply.json(__json.parse(written).unwrapOr(__json.Value.Null))
+            some(written) => __http.Reply.json(__json.parse(written) ?? __json.Value.Null)
             none => __http.Reply.text("", status: 202)
         }
     }
@@ -176,7 +176,7 @@ type Served = {
 fn served[T: __reflect.Reflect](server: T, name: String, version: String): Served {
     let info = __reflect.typeInfo[T]()
     let methods = info.methods()
-    let program = __path.fileName(__env.executable()).unwrapOr("server").removeSuffix(".exe")
+    let program = (__path.fileName(__env.executable()) ?? "server").removeSuffix(".exe")
     Served {
         target: __reflect.valueOf(server)
         name: if name.isEmpty() { program } else { name }
@@ -265,7 +265,7 @@ fn completed(result: String, method: String): String {
     if result == "{{}}" {
         return "{{{extra}}}"
     }
-    "{result.slice(0, result.length() - 1).unwrapOr("{{")},{extra}}}"
+    "{result.slice(0, result.length() - 1) ?? "{{"},{extra}}}"
 }
 
 fn handle(state: Served, method: String, params: __json.Value): String ! RpcFailure {
@@ -283,7 +283,7 @@ fn handle(state: Served, method: String, params: __json.Value): String ! RpcFail
     }
     match method {
         "initialize" => {
-            let asked = params.field("protocolVersion").asText().unwrapOr("")
+            let asked = params.field("protocolVersion").asText() ?? ""
             let version = if asked in legacy() { asked } else { legacy()[0] }
             "{{\"protocolVersion\":{quote(version)},\"capabilities\":{{{capabilities}}},\"serverInfo\":{info}{instructions}}}"
         }
@@ -302,7 +302,7 @@ fn handle(state: Served, method: String, params: __json.Value): String ! RpcFail
             let templated = state.resources.filter((found) { resourceOf(found).uri.contains("{{") })
             "{{\"resourceTemplates\":[{templated.map((found) { resourceListed(found, "uriTemplate") }).join(",")}]}}"
         }
-        "resources/read" => read(state, params.field("uri").asText().unwrapOr(""))?
+        "resources/read" => read(state, params.field("uri").asText() ?? "")?
         "prompts/list" => "{{\"prompts\":[{state.prompts.map(promptOf).join(",")}]}}"
         "prompts/get" => prompt(state, params)?
         _ => fail RpcFailure { code: -32601, message: "`{method}` is not a method of this server" }
@@ -356,7 +356,7 @@ fn optional(info: __reflect.TypeInfo): Bool {
 fn toolOf(method: __reflect.MethodInfo): String {
     let (arguments, _) = argumentsOf(method)
     var written =
-        "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"inputSchema\":{objectSchema(arguments)}"
+        "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs() ?? "")},\"inputSchema\":{objectSchema(arguments)}"
     match outputOf(method) {
         some(schema) => written = "{written},\"outputSchema\":{schema}"
         none => {}
@@ -380,7 +380,7 @@ fn objectSchema(arguments: Array[Argument]): String {
 fn described(schema: String, docs: String?): String {
     match docs {
         some(text) if schema.startsWith("{{\"") =>
-            "{{\"description\":{quote(text)},{schema.slice(1, schema.length()).unwrapOr("}}")}"
+            "{{\"description\":{quote(text)},{schema.slice(1, schema.length()) ?? "}}"}"
         some(text) => "{{\"description\":{quote(text)}}}"
         none => schema
     }
@@ -392,7 +392,7 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
         return "{{}}"
     }
     let inner = (index: Int) {
-        info.genericArguments().get(index).map((t) { schemaOf(t, depth + 1) }).unwrapOr("{{}}")
+        info.genericArguments().get(index).map((t) { schemaOf(t, depth + 1) }) ?? "{{}}"
     }
     match info.kind() {
         __reflect.TypeKind.Primitive(kind) => match kind {
@@ -443,10 +443,8 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
 fn successOf(method: __reflect.MethodInfo): __reflect.TypeInfo {
     let outcome = method.function().outcome()
     match outcome.kind() {
-        __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) => outcome
-            .genericArguments()
-            .first()
-            .unwrapOr(outcome)
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) =>
+            outcome.genericArguments().first() ?? outcome
         _ => outcome
     }
 }
@@ -466,7 +464,7 @@ fn outputOf(method: __reflect.MethodInfo): String? {
 }
 
 fn call(state: Served, params: __json.Value): String ! RpcFailure {
-    let name = params.field("name").asText().unwrapOr("")
+    let name = params.field("name").asText() ?? ""
     let method = match state.tools.find((method) { method.name() == name }) {
         some(method) => method
         none => fail RpcFailure {
@@ -486,10 +484,7 @@ fn call(state: Served, params: __json.Value): String ! RpcFailure {
     // which corrects its call.
     let parameters = method.function().parameters()
     for (index, arg) in args.iter().enumerate() {
-        let info = parameters
-            .get(index)
-            .map((parameter) { parameter.typeInfo() })
-            .unwrapOr(arg.typeInfo())
+        let info = parameters.get(index).map((parameter) { parameter.typeInfo() }) ?? arg.typeInfo()
         match __validate.checkAs(arg, info) {
             ok(_) => {}
             err(invalid) => return errorResult(
@@ -503,12 +498,10 @@ fn call(state: Served, params: __json.Value): String ! RpcFailure {
         ok(ok(value)) => {
             let success = match (method.function().outcome().kind(), value.variant()) {
                 (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), some("err")) => {
-                    return errorResult("{value.elements().first().map((e) { "{e}" }).unwrapOr("")}")
+                    return errorResult("{value.elements().first().map((e) { "{e}" }) ?? ""}")
                 }
-                (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) => value
-                    .elements()
-                    .first()
-                    .unwrapOr(value)
+                (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) =>
+                    value.elements().first() ?? value
                 _ => value
             }
             resultOf(success)
@@ -525,7 +518,7 @@ fn errorResult(text: String): String {
 fn resultOf(value: __reflect.Value): String {
     let kind = value.typeName()
     if kind == "String" {
-        return "{{\"content\":[{{\"type\":\"text\",\"text\":{quote(value.to[String]().unwrapOr(""))}}}],\"isError\":false}}"
+        return "{{\"content\":[{{\"type\":\"text\",\"text\":{quote(value.to[String]() ?? "")}}}],\"isError\":false}}"
     }
     if kind == "Unit" {
         return "{{\"content\":[],\"isError\":false}}"
@@ -560,12 +553,12 @@ fn valuesOf(method: __reflect.MethodInfo, given: __json.Value): Array[__reflect.
 // ---------------------------------------------------------------------------
 
 fn resourceOf(method: __reflect.MethodInfo): Resource {
-    method.annotation[Resource]().unwrapOr(Resource { uri: "" })
+    method.annotation[Resource]() ?? Resource { uri: "" }
 }
 
 fn resourceListed(method: __reflect.MethodInfo, key: String): String {
     let resource = resourceOf(method)
-    "{{{quote(key)}:{quote(resource.uri)},\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"mimeType\":{quote(resource.mime)}}}"
+    "{{{quote(key)}:{quote(resource.uri)},\"name\":{quote(method.name())},\"description\":{quote(method.docs() ?? "")},\"mimeType\":{quote(resource.mime)}}}"
 }
 
 /// The parts of a URI that a template names in braces, if the URI is one
@@ -578,24 +571,24 @@ fn matched(template: String, uri: String): Map[String, String]? {
         match rest.find("{{") {
             none => return if at == rest { found } else { none }
             some(open) => {
-                let literal = rest.slice(0, open).unwrapOr("")
+                let literal = rest.slice(0, open) ?? ""
                 if not at.startsWith(literal) {
                     return none
                 }
                 at = at.removePrefix(literal)
-                let close = rest.find("}}").unwrapOr(rest.length() - 1)
-                let name = rest.slice(open + 1, close).unwrapOr("")
-                rest = rest.slice(close + 1, rest.length()).unwrapOr("")
+                let close = rest.find("}}") ?? rest.length() - 1
+                let name = rest.slice(open + 1, close) ?? ""
+                rest = rest.slice(close + 1, rest.length()) ?? ""
                 let next = match rest.find("{{") {
-                    some(brace) => rest.slice(0, brace).unwrapOr("")
+                    some(brace) => rest.slice(0, brace) ?? ""
                     none => rest
                 }
-                let end = if next.isEmpty() { at.length() } else { at.find(next).unwrapOr(-1) }
+                let end = if next.isEmpty() { at.length() } else { at.find(next) ?? -1 }
                 if end < 0 {
                     return none
                 }
-                found[name] = at.slice(0, end).unwrapOr("")
-                at = at.slice(end, at.length()).unwrapOr("")
+                found[name] = at.slice(0, end) ?? ""
+                at = at.slice(end, at.length()) ?? ""
             }
         }
     }
@@ -612,7 +605,7 @@ fn read(state: Served, uri: String): String ! RpcFailure {
         let args = method
             .function()
             .parameters()
-            .map((param) { __reflect.valueOf(parts.get(param.name()).unwrapOr("")) })
+            .map((param) { __reflect.valueOf(parts.get(param.name()) ?? "") })
         let value = match recover { state.target.call(method.name(), ...args) } {
             ok(ok(value)) => value
             ok(err(problem)) => fail RpcFailure { code: -32603, message: "{problem}" }
@@ -625,19 +618,17 @@ fn read(state: Served, uri: String): String ! RpcFailure {
             (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), some("err")) => {
                 fail RpcFailure {
                     code: -32603
-                    message: "{value.elements().first().map((e) { "{e}" }).unwrapOr("")}"
+                    message: "{value.elements().first().map((e) { "{e}" }) ?? ""}"
                 }
             }
-            (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) => value
-                .elements()
-                .first()
-                .unwrapOr(value)
+            (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) =>
+                value.elements().first() ?? value
             _ => value
         }
         let body = match content.to[Array[Byte]]() {
             ok(bytes) if content.typeName() != "String" =>
                 "\"blob\":{quote(codecNative.base64Encode(bytes, false))}"
-            _ => "\"text\":{quote(content.to[String]().unwrapOr("{content}"))}"
+            _ => "\"text\":{quote(content.to[String]() ?? "{content}")}"
         }
         return "{{\"contents\":[{{\"uri\":{quote(uri)},\"mimeType\":{quote(resource.mime)},{body}}}]}}"
     }
@@ -653,11 +644,11 @@ fn promptOf(method: __reflect.MethodInfo): String {
                 "{{\"name\":{quote(param.name())},\"required\":{not optional(param.typeInfo())}}}"
             },
         )
-    "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"arguments\":[{arguments.join(",")}]}}"
+    "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs() ?? "")},\"arguments\":[{arguments.join(",")}]}}"
 }
 
 fn prompt(state: Served, params: __json.Value): String ! RpcFailure {
-    let name = params.field("name").asText().unwrapOr("")
+    let name = params.field("name").asText() ?? ""
     let method = match state.prompts.find((method) { method.name() == name }) {
         some(method) => method
         none => fail RpcFailure {
@@ -684,7 +675,7 @@ fn prompt(state: Served, params: __json.Value): String ! RpcFailure {
             message: "`{name}` panicked: {crash.message}"
         }
     }
-    "{{\"description\":{quote(method.docs().unwrapOr(""))},\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":{quote(text)}}}}}]}}"
+    "{{\"description\":{quote(method.docs() ?? "")},\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":{quote(text)}}}}}]}}"
 }
 
 /// An error, which reflection shows as its message, so a method that fails

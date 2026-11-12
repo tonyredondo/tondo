@@ -34,11 +34,11 @@ fn count(db: sql.Database): Int ! sql.SqlError {
 }
 
 fn plus(db: sql.Database, index: Int): Int {
-    db.queryOne[Int]("SELECT {index} + 1").unwrapOr(0)
+    db.queryOne[Int]("SELECT {index} + 1") ?? 0
 }
 
 fn main(): !sql.SqlError {
-    let url = env.get("DATABASE_URL").unwrapOr("")
+    let url = env.get("DATABASE_URL") ?? ""
     let postgres = url.startsWith("postgres")
     var db = sql.open(url, connections: 4)?
     let nothing: Array[String] = []

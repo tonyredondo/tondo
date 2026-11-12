@@ -82,7 +82,7 @@ import std.console
 type Point = { x: Int, y: Int }
 
 fn bounds(values: Array[Int]): (Int, Int) {
-    (values.min().unwrapOr(0), values.max().unwrapOr(0))
+    (values.min() ?? 0, values.max() ?? 0)
 }
 
 fn main() {
@@ -300,7 +300,7 @@ fn main() {
     let broken = Int(3.7)
     let tiny = Int8(300)
     console.println("{ratio} {whole} {broken} {tiny}")
-    console.println("{UInt8.wrapping(300)} {UInt8.saturating(300)} {Int8(100).unwrapOr(0)}")
+    console.println("{UInt8.wrapping(300)} {UInt8.saturating(300)} {Int8(100) ?? 0}")
 }
 ```
 

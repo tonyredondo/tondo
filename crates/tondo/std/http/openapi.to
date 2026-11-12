@@ -25,14 +25,14 @@ fn openApiDocument(
         let parts = segments(route).map(
             (part) {
                 if part.startsWith(":") or part.startsWith("*") {
-                    "{{{part.slice(1, part.length()).unwrapOr("")}}}"
+                    "{{{part.slice(1, part.length()) ?? ""}}}"
                 } else {
                     part
                 }
             },
         )
         let path = "/{parts.join("/")}"
-        var entries = paths.getOr(path, [])
+        var entries = paths[path] ?? []
         entries.push("{__json.encode(method)}:{operation}")
         paths[path] = entries
     }

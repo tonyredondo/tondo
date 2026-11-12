@@ -2802,7 +2802,7 @@ La indexación de lectura devuelve `V?` y requiere `V: Copy`; nunca mueve el val
 almacenado. La futura librería puede ofrecer una consulta afirmativa como
 `at(key): V`, también limitada a `V: Copy`, y debe fijar en su propia
 especificación la clase de pánico o contrato checked ante ausencia. Un valor por
-defecto se obtiene mediante una operación como `getOr`. Maps con valores afines
+defecto se obtiene con `map[key] ?? fallback` (17.13). Maps con valores afines
 se observan mediante iteración prestada. La extracción destructiva no depende de
 la librería estándar: el lenguaje define la operación intrínseca
 `Map[K, V].remove(var self, key: K): V?`, que transfiere el valor almacenado sin
@@ -2830,7 +2830,7 @@ En contexto de asignación, `map[key] = value` inserta o reemplaza.
 
 Insertar o eliminar una clave cambia la extensión del map y requiere un binding local `var`, un receptor `var self` o un parámetro `var Map[K, V]`. Un préstamo `mut Map[K, V]` solo puede actualizar una clave cuya presencia se afirme mediante una operación nombrada.
 
-La asignación compuesta sobre un índice de map no existe en 0.1. Como la clave podría estar ausente, `map[key] += value` ocultaría una política. Se utiliza una asignación explícita con `getOr` o la API `entry` de la librería.
+La asignación compuesta sobre un índice de map no existe en 0.1. Como la clave podría estar ausente, `map[key] += value` ocultaría una política. Se utiliza una asignación explícita, `counts[word] = (counts[word] ?? 0) + 1`, o la API `entry` de la librería.
 
 Eliminar se expresa únicamente mediante una operación nombrada:
 
@@ -4139,7 +4139,7 @@ fn traced(request: Request, next: Handler): Reply {
     with Trace { span: some(span), sampled: true }
     with Auth { user: request.user() }
     with Request {
-        id: request.header("x-request-id").unwrapOr(uuid.v4())
+        id: request.header("x-request-id") ?? uuid.v4()
         locale: request.locale()
     }
     next(request)
@@ -4279,7 +4279,7 @@ record (9.3).
 ~~~tondo pseudocode
 fn profile(id: Int): Profile ! (HttpError | time.TimedOut) {
     let user = within time.seconds(2) { fetchUser(id) }?
-    let posts = within time.milliseconds(500) { fetchPosts(id) }.unwrapOr([])
+    let posts = within time.milliseconds(500) { fetchPosts(id) } ?? []
     Profile { user, posts }
 }
 ~~~
@@ -5699,23 +5699,6 @@ No puede utilizarse para:
 - Propagar desde una función infallible.
 - Salir de un callback exterior distinto del cierre que contiene el `?`.
 
-Un bloque `try { ... }` da a `?` un destino local: la propagación acaba el bloque y
-no la función, y el bloque vale lo que su última expresión o lo que `?` propagó.
-
-~~~tondo
-type Address = { city: String? }
-type User = { address: Address? }
-
-fn cityOf(user: User): String {
-    let city: String? = try { user.address?.city? }
-    city.unwrapOr("nowhere")
-}
-~~~
-
-Lo que da, una option o un resultado, viene del contexto: sin él es `E1301`, que dice
-cómo escribirlo. `return` no cabe en el bloque (`E1410`), que acaba con su valor.
-`try` no es una keyword: solo lo es seguida de `{`.
-
 ### 15.3 Widening de uniones de error
 
 Si una operación produce `T ! E1` y la función devuelve
@@ -5973,12 +5956,12 @@ Las aserciones no se eliminan en builds optimizadas. Si una comprobación puede 
 `recover bloque` es una expresión que detiene los pánicos del bloque. Si el
 bloque termina, vale `ok` con su valor; si un pánico lo interrumpe, vale `err`
 con ese pánico. Su tipo es `T ! Panic`, con `T` el tipo del bloque, así que se
-maneja como cualquier resultado: con `match`, con `unwrapOr` o propagándolo con
+maneja como cualquier resultado: con `match`, con `??` o propagándolo con
 `?` desde una función cuyo error incluye `Panic`.
 
 ~~~tondo
 // Recuperarse y seguir como si nada:
-let total = recover { sum(values) }.unwrapOr(0)
+let total = recover { sum(values) } ?? 0
 
 // Decidir qué se recupera; lo demás sigue su camino:
 let reply = match recover { route(request) } {
@@ -7000,7 +6983,7 @@ import std.ffi
 /// Las palabras de `text`, separadas por espacios.
 pub extern fn words_count(text: ffi.CString): ffi.CSize {
     let words = unsafe { ffi.fromCString(text) }.split(" ")
-    UInt64(words.length()).unwrapOr(0u64)
+    UInt64(words.length()) ?? 0u64
 }
 ~~~
 
@@ -7281,7 +7264,7 @@ values[nextIndex()] += 1
 
 La asignación compuesta no existe para `and` y `or`.
 
-Tampoco se aplica a índices de `Map`: una clave ausente necesita una política explícita mediante `getOr` o `entry`.
+Tampoco se aplica a índices de `Map`: una clave ausente necesita una política explícita mediante `??` o `entry`.
 
 ### 17.11 Precedencia
 
@@ -10728,7 +10711,7 @@ fn countWords(words: Array[String]): Map[String, Int] {
     var counts: Map[String, Int] = [:]
 
     for word in words {
-        counts[word] = counts.getOr(word, 0) + 1
+        counts[word] = (counts[word] ?? 0) + 1
     }
 
     counts
@@ -11306,7 +11289,7 @@ El lenguaje garantiza las capacidades necesarias para:
 - Comprobar pertenencia.
 - Aplicar operadores definidos.
 
-Los nombres concretos como `length`, `get`, `getOr`, `push`, `remove`, `keys`
+Los nombres concretos como `length`, `get`, `push`, `remove`, `keys`
 y `values` se fijarán en la especificación estándar. Los ejemplos de este
 documento anticipan nombres recomendados, pero no constituyen aún el inventario
 final de métodos.
@@ -12394,9 +12377,7 @@ fn String.isEmpty(self): Bool
 fn String.fromBytes(value: Array[Byte]): String ! TextError
 fn Array[T].length(self): Int
 fn Array[T].isEmpty(self): Bool
-fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
 fn Array[T].push(var self, value: T)
-fn Map[K: Key, V: Copy].getOr(self, key: K, fallback: V): V
 fn Option[T: Copy].at(self): T
 unsafe fn Pointer[T].read(self): T
 ~~~

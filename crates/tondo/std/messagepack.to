@@ -35,7 +35,7 @@ import std.serialization
 ///
 /// let value = messagepack.parse(messagepack.encode(Point { x: 1, y: 2 }))?
 /// let x = value.get("x").andThen((x) { x.asInt() })
-/// console.println("x is {x.unwrapOr(0)}, z is set: {value.get("z").isSome()}")
+/// console.println("x is {x ?? 0}, z is set: {value.get("z").isSome()}")
 /// ```
 pub enum Value {
     Nil
@@ -83,9 +83,9 @@ pub fn Value.find(self, path: String): Value? {
     var found = self
     for step in packcodec.pathSteps(path) {
         found = if step.startsWith(".") {
-            found.get(step.slice(1, step.length()).unwrapOr(""))?
+            found.get(step.slice(1, step.length()) ?? "")?
         } else if step.startsWith("[") {
-            found.at(Int.parse(step.slice(1, step.length()).unwrapOr("")).ok()?)?
+            found.at(Int.parse(step.slice(1, step.length()) ?? "").ok()?)?
         } else {
             return none
         }

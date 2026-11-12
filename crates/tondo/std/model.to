@@ -622,7 +622,7 @@ fn stateOf[S: serialization.Decode](graph: Graph[S], at: Int): S {
 
 /// The states of a level, as `exploreOnDisk` wrote them.
 fn levelStates[S: serialization.Decode](directory: String, level: Int): Array[S] {
-    let text = fs.readText(levelFile(directory, level)).unwrapOr("")
+    let text = fs.readText(levelFile(directory, level)) ?? ""
     var states: Array[S] = []
     for line in text.lines() {
         match json.decode[S](line) {
@@ -1117,7 +1117,7 @@ fn exploreOnDisk[S: reflect.Reflect + serialization.Encode + serialization.Decod
         }
     }
     // What an earlier search left there.
-    for name in fs.list(directory).unwrapOr([]) {
+    for name in (fs.list(directory) ?? []) {
         if name.startsWith("states-") {
             _ = fs.remove("{directory}/{name}")
         }
@@ -1237,9 +1237,7 @@ fn holdsMaps(info: reflect.TypeInfo, seen: var Set[String]): Bool {
         reflect.TypeKind.Union => return true
         reflect.TypeKind.Record => inside.extend(info.fields().map((field) { field.typeInfo() }))
         reflect.TypeKind.Tuple => inside.extend(info.tupleElements())
-        reflect.TypeKind.Newtype => inside.extend(
-            info.underlying().map((under) { [under] }).unwrapOr([]),
-        )
+        reflect.TypeKind.Newtype => inside.extend(info.underlying().map((under) { [under] }) ?? [])
         reflect.TypeKind.Enum => {
             for variant in info.variants() {
                 inside.extend(variant.tupleElements())
@@ -1269,9 +1267,7 @@ fn sortedJson(value: json.Value): String {
             var keys: Array[String] = entries.keys().collect()
             keys.sort()
             let pairs = keys.map(
-                (key) {
-                    "{json.encode(key)}:{sortedJson(entries.get(key).unwrapOr(json.Value.Null))}"
-                },
+                (key) { "{json.encode(key)}:{sortedJson(entries.get(key) ?? json.Value.Null)}" },
             )
             "{{{pairs.join(",")}}}"
         }
@@ -1583,7 +1579,7 @@ fn automaton[S](formulas: Formulas[S], root: Int): Array[Node] {
             Op.False => {}
             Op.Atom(atom, positive) => {
                 let opposite = formulas.numbers.get(Op.Atom(atom, not positive))
-                if not opposite.map((id) { node.old.contains(id) }).unwrapOr(false) {
+                if not (opposite.map((id) { node.old.contains(id) }) ?? false) {
                     pending.push(node with { old: old })
                 }
             }
@@ -1821,7 +1817,7 @@ fn fairLoop(
                 match route(product.edges, inside, here, target) {
                     some(way) => {
                         loop.extend(way)
-                        here = way.last().map((last) { last.0 }).unwrapOr(here)
+                        here = way.last().map((last) { last.0 }) ?? here
                     }
                     none => {}
                 }
@@ -1863,7 +1859,7 @@ fn route(
                 var way = [(edge.to, edge.name)]
                 var back = at
                 for back != start {
-                    let came = from.get(back).unwrapOr((start, ""))
+                    let came = from.get(back) ?? (start, "")
                     way.push((back, came.1))
                     back = came.0
                 }
@@ -1909,7 +1905,7 @@ fn components(edges: Array[Array[Edge]], region: Array[Int]): Array[Array[Int]] 
     for from in region {
         for edge in edges[from] {
             if inside.contains(edge.to) {
-                var list = into.getOr(edge.to, empty)
+                var list = into[edge.to] ?? empty
                 list.push(from)
                 _ = into.insert(edge.to, list)
             }
@@ -1928,7 +1924,7 @@ fn components(edges: Array[Array[Edge]], region: Array[Int]): Array[Array[Int]] 
                 some(at) => at
                 none => break
             }
-            for from in into.getOr(at, empty) {
+            for from in (into[at] ?? empty) {
                 if assigned.insert(from) {
                     part.push(from)
                     pending.push(from)
@@ -2039,7 +2035,7 @@ fn following[S: reflect.Reflect + serialization.Encode + serialization.Decode](
         }
         if next.length() == 0 {
             var paths = now.values()
-            let path = paths.next().map((found) { found.1 }).unwrapOr([])
+            let path = paths.next().map((found) { found.1 }) ?? []
             fail Violation { what: "the code took `{took}` where the model cannot", path, loop: [] }
         }
         now = next

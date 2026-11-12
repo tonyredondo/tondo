@@ -22,9 +22,7 @@ decl spec.core fn String.isEmpty(self): Bool
 decl spec.core fn String.fromBytes(value: Array[Byte]): String ! TextError
 decl spec.core fn Array[T].length(self): Int
 decl spec.core fn Array[T].isEmpty(self): Bool
-decl spec.core fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
 decl spec.core fn Array[T].push(var self, value: T)
-decl spec.core fn Map[K: Key, V: Copy].getOr(self, key: K, fallback: V): V
 decl spec.core fn Option[T: Copy].at(self): T
 decl spec.core unsafe fn Pointer[T].read(self): T
 alias fixture spec.0_1 = spec.core

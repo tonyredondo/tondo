@@ -6195,3 +6195,15 @@ flattened. A `?` that ends the chain applies to all of it, so `user.address?.cit
 gives what it did. On a result `?.` still propagates the error. The old meaning is written
 `(value?).field`, and existing code was rewritten so before the change. The parser keeps the rest
 of the chain from a hole that stands for the value, and the checker makes it a `match`.
+
+## `unwrapOr`, `orElse`, `getOr` and `try` blocks are gone
+
+With `??` and `?.`, `value.unwrapOr(fallback)`, `option.orElse(other)` and `map.getOr(key,
+fallback)` were a second way to write `value ?? fallback` and `map[key] ?? fallback`, and a
+`try { ... }` block a second way to keep a chain of options as a value. Two forms for one thing is
+one more to learn and to choose between, so they are gone. Each method is an error whose fix writes
+`??`, with the parentheses the lowest precedence needs, `(count ?? 0) + 1`; the fix is safe when
+the fallback calls nothing, as `??` evaluates it only when needed, and none is offered inside a
+chain of `?.`, where `??` would take the whole chain. The repository was rewritten by those fixes.
+`try {` is the diagnostic for other languages' `try` again. A template of a `Set` writes `??` as
+code does, and `unwrapOr` is gone there too.

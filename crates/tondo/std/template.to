@@ -216,7 +216,7 @@ fn scriptSafe(json: String): String {
 /// A text inside a string of a script, of any quotes.
 fn scriptString(value: String): String {
     let escaped = scriptSafe(__json.encode(value)).replace("'", "\\u0027").replace("`", "\\u0060")
-    escaped.slice(1, escaped.length() - 1).unwrapOr("")
+    escaped.slice(1, escaped.length() - 1) ?? ""
 }
 
 /// A value of an attribute without quotes: every character but letters,
@@ -238,8 +238,8 @@ fn unquoted(value: String): String {
 /// with what a URL does not hold encoded.
 fn urlStart(value: String): String {
     let trimmed = value.trim()
-    let colon = trimmed.find(":").unwrapOr(-1)
-    let before = trimmed.slice(0, colon.max(0)).unwrapOr("")
+    let colon = trimmed.find(":") ?? -1
+    let before = trimmed.slice(0, colon.max(0)) ?? ""
     let plain = colon < 0 or before.contains("/") or before.contains("?") or before.contains("#")
     let scheme = before.toLowerAscii()
     if not plain and not (scheme in ["http", "https", "mailto", "tel"]) {
@@ -358,10 +358,7 @@ pub fn Set.addFiles(mut self, files: __fs.FileSystem, pattern: String = "**"): !
         err(error) => fail failed(error, pattern)
     }
     for path in paths {
-        if files
-            .metadata(path)
-            .map((found) { found.kind == __fs.FileKind.Directory })
-            .unwrapOr(false) {
+        if files.metadata(path).map((found) { found.kind == __fs.FileKind.Directory }) ?? false {
             continue
         }
         match files.readText(path) {
@@ -481,6 +478,7 @@ enum Op {
     Range(Bool)
     And(Int)
     Or(Int)
+    Coalesce(Int)
     /// The condition of an `if` that gives a value: when false, this many
     /// operations are skipped.
     Unless(Int)
@@ -601,7 +599,7 @@ fn Run.template(
                     ok(written) => written
                     err(_) => fail self.error(
                         named,
-                        code.at.first().unwrapOr(0),
+                        code.at.first() ?? 0,
                         "an `extends` names a template with a `String`, not with `{value.typeName()}`",
                     )
                 }
@@ -654,7 +652,7 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
         Node.Text(piece) => self.pieces.push(piece)
         Node.Write { value, format, place } => {
             let found = self.evaluate(scope, value)?
-            let piece = self.written(scope, found, format, place, value.at.first().unwrapOr(0))?
+            let piece = self.written(scope, found, format, place, value.at.first() ?? 0)?
             self.pieces.push(piece)
         }
         Node.If { branches, otherwise } => {
@@ -692,7 +690,7 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
         }
         Node.With { name, value, body, otherwise } => {
             let found = self.evaluate(scope, value)?
-            match self.opened(scope, found, value.at.first().unwrapOr(0))? {
+            match self.opened(scope, found, value.at.first() ?? 0)? {
                 some(inner) => {
                     scope.bindings.push([name: inner])
                     let flow = self.nodes(mut scope, body)
@@ -721,7 +719,7 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
             }
             match op {
                 some(operator) => {
-                    let current = scope.bindings[level].get(name).unwrapOr(found)
+                    let current = scope.bindings[level].get(name) ?? found
                     found = self.binary(scope, operator, current, found, at)?
                 }
                 none => {}
@@ -812,14 +810,14 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
                         "Int" => {
                             var map: Map[Int, __reflect.Value] = [:]
                             for (key, value) in keys.zip(values) {
-                                map[key.to[Int]().unwrapOr(0)] = value
+                                map[key.to[Int]() ?? 0] = value
                             }
                             __reflect.valueOf(map)
                         }
                         kind if kind == "String" or kind.isEmpty() => {
                             var map: Map[String, __reflect.Value] = [:]
                             for (key, value) in keys.zip(values) {
-                                map[key.to[String]().unwrapOr("")] = value
+                                map[key.to[String]() ?? ""] = value
                             }
                             __reflect.valueOf(map)
                         }
@@ -897,6 +895,23 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
                     _ = stack.pop()
                 }
             }
+            Op.Coalesce(skip) => {
+                let value = popped(var stack)
+                if not value.typeName().endsWith("?") {
+                    fail self.error(
+                        scope,
+                        at,
+                        "`??` gives the value of an optional, and this is `{value.typeName()}`",
+                    )
+                }
+                match value.elements().first() {
+                    some(inner) => {
+                        stack.push(inner)
+                        index += skip
+                    }
+                    none => {}
+                }
+            }
             Op.Unless(skip) => {
                 if not self.truth(scope, popped(var stack), at, "`if`")? {
                     index += skip
@@ -918,7 +933,7 @@ fn Run.oneType(
     at: Int,
     what: String,
 ): String ! TemplateError {
-    let first = values.first().map((value) { value.typeName() }).unwrapOr("")
+    let first = values.first().map((value) { value.typeName() }) ?? ""
     match values.find((value) { value.typeName() != first }) {
         some(other) => {
             let hint = if what == "a map's values" {
@@ -937,7 +952,7 @@ fn Run.oneType(
 }
 
 fn popped(stack: var Array[__reflect.Value]): __reflect.Value {
-    stack.pop().unwrapOr(__reflect.valueOf(false))
+    stack.pop() ?? __reflect.valueOf(false)
 }
 
 /// The last `count` values of the stack, in order.
@@ -1015,7 +1030,7 @@ fn Run.index(
     }
     let position = self.integer(scope, key, at)?
     let items = if kind == "String" {
-        textNative.split(target.to[String]().unwrapOr(""), "").map((c) { __reflect.valueOf(c) })
+        textNative.split(target.to[String]() ?? "", "").map((c) { __reflect.valueOf(c) })
     } else {
         target.elements()
     }
@@ -1086,7 +1101,7 @@ fn Run.truth(
 ): Bool ! TemplateError {
     let kind = value.typeName()
     if kind == "Bool" {
-        return value.to[Bool]().unwrapOr(false)
+        return value.to[Bool]() ?? false
     }
     let hint = if kind.startsWith("Array[") or kind.startsWith("Map[") or kind == "String" {
         ": ask `not value.isEmpty()`"
@@ -1100,7 +1115,7 @@ fn Run.truth(
 
 fn Run.condition(self, scope: Scope, code: Code): Bool ! TemplateError {
     let value = self.evaluate(scope, code)?
-    self.truth(scope, value, code.at.first().unwrapOr(0), "`if`")?
+    self.truth(scope, value, code.at.first() ?? 0, "`if`")?
 }
 
 /// The value an optional holds, if any.
@@ -1123,7 +1138,7 @@ fn Run.rounds(
     items: Code,
 ): Array[Array[__reflect.Value]] ! TemplateError {
     let source = self.evaluate(scope, items)?
-    let at = items.at.first().unwrapOr(0)
+    let at = items.at.first() ?? 0
     let kind = source.typeName()
     // A value of JSON, YAML or TOML goes over what it holds.
     let dynamic = kind in ["json.Value", "yaml.Value", "toml.Value"]
@@ -1186,7 +1201,7 @@ fn Run.binary(
     if operator == "in" {
         let kind = right.typeName()
         if kind == "String" {
-            return __reflect.valueOf(right.to[String]().unwrapOr("").contains("{left}"))
+            return __reflect.valueOf((right.to[String]() ?? "").contains("{left}"))
         }
         if kind.startsWith("Map[") {
             return __reflect.valueOf(right.entries().any((entry) { same(entry.0, left) }))
@@ -1195,7 +1210,7 @@ fn Run.binary(
     }
     let both = left.typeName() == "String" and right.typeName() == "String"
     if both and operator in ["<", "<=", ">", ">="] {
-        let order = left.to[String]().unwrapOr("").compare(right.to[String]().unwrapOr(""))
+        let order = (left.to[String]() ?? "").compare(right.to[String]() ?? "")
         return __reflect.valueOf(ordered(operator, order))
     }
     let (a, b) = match (number(left), number(right)) {
@@ -1218,8 +1233,8 @@ fn Run.binary(
     }
     let integers = isInteger(left.typeName()) and isInteger(right.typeName())
     if integers {
-        let x = Int.parse("{left}").unwrapOr(0)
-        let y = Int.parse("{right}").unwrapOr(0)
+        let x = Int.parse("{left}") ?? 0
+        let y = Int.parse("{right}") ?? 0
         if (operator == "/" or operator == "%") and y == 0 {
             fail self.error(scope, at, "division by zero")
         }
@@ -1309,7 +1324,7 @@ fn Run.method(
 ): __reflect.Value ! TemplateError {
     let kind = target.typeName()
     let some = if kind == "String" {
-        textMethod(target.to[String]().unwrapOr(""), name, args)
+        textMethod(target.to[String]() ?? "", name, args)
     } else if kind.startsWith("Array[") {
         arrayMethod(target.elements(), name, args)
     } else if kind.startsWith("Map[") {
@@ -1324,6 +1339,11 @@ fn Run.method(
     }
     match some {
         some(value) => value
+        none if name == "unwrapOr" => fail self.error(
+            scope,
+            at,
+            "`unwrapOr` is gone: write `value ?? fallback`",
+        )
         none => fail self.error(
             scope,
             at,
@@ -1333,12 +1353,12 @@ fn Run.method(
 }
 
 fn argument(args: Array[__reflect.Value], index: Int): String {
-    args.get(index).map((value) { "{value}" }).unwrapOr("")
+    args.get(index).map((value) { "{value}" }) ?? ""
 }
 
 fn textMethod(value: String, name: String, args: Array[__reflect.Value]): __reflect.Value? {
     let first = argument(args, 0)
-    let count = Int.parse(first).unwrapOr(0)
+    let count = Int.parse(first) ?? 0
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(value.length())
         ("isEmpty", 0) => __reflect.valueOf(value.isEmpty())
@@ -1372,7 +1392,7 @@ fn arrayMethod(
     name: String,
     args: Array[__reflect.Value],
 ): __reflect.Value? {
-    let count = Int.parse(argument(args, 0)).unwrapOr(0)
+    let count = Int.parse(argument(args, 0)) ?? 0
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(items.length())
         ("isEmpty", 0) => __reflect.valueOf(items.isEmpty())
@@ -1431,7 +1451,6 @@ fn optionMethod(
     let result = match (name, args.length()) {
         ("isSome", 0) => __reflect.valueOf(inner.isSome())
         ("isNone", 0) => __reflect.valueOf(inner.isNone())
-        ("unwrapOr", 1) => inner.unwrapOr(args[0])
         _ => return none
     }
     result
@@ -1483,10 +1502,10 @@ fn Run.shown(
         some(spec) => spec
         none => return "{value}"
     }
-    let fill = spec.fill.get(0).unwrapOr(' ')
-    let width = spec.width.unwrapOr(0)
-    let precision = spec.precision.unwrapOr(-1)
-    let typed = spec.kind.unwrapOr("")
+    let fill = spec.fill.get(0) ?? ' '
+    let width = spec.width ?? 0
+    let precision = spec.precision ?? -1
+    let typed = spec.kind ?? ""
     let integer = isInteger(kind)
     let float = kind == "Float" or kind == "Float32"
     let wrong = if integer {
@@ -1508,7 +1527,7 @@ fn Run.shown(
             "b" => 2
             _ => 10
         }
-        let digits = Int128.parse("{value}").unwrapOr(0)
+        let digits = Int128.parse("{value}") ?? 0
         let align = firstChar(spec.align, '>')
         return __formats.formatInteger(
             digits,
@@ -1523,7 +1542,7 @@ fn Run.shown(
         )
     }
     if float {
-        let real = Float.parse("{value}").unwrapOr(0.0)
+        let real = Float.parse("{value}") ?? 0.0
         let exponent = typed == "e" or typed == "E"
         let align = firstChar(spec.align, '>')
         return __formats.formatFloat(
@@ -1545,7 +1564,7 @@ fn Run.shown(
 /// The first character of a text, if any.
 fn firstChar(written: String?, otherwise: Char): Char {
     match written {
-        some(c) => c.get(0).unwrapOr(otherwise)
+        some(c) => c.get(0) ?? otherwise
         none => otherwise
     }
 }
@@ -1564,25 +1583,21 @@ fn parsedOf(value: __json.Value): Parsed {
             false => codeOf(value.field("computed"))
         }
         nodes: nodesOf(value.field("nodes"))
-        defines: value
-            .field("defines")
-            .asArray()
-            .unwrapOr([])
-            .map(
-                (each) {
-                    Definition {
-                        name: each.field("name").asText().unwrapOr("")
-                        nodes: nodesOf(each.field("nodes"))
-                    }
-                },
-            )
+        defines: (value.field("defines").asArray() ?? []).map(
+            (each) {
+                Definition {
+                    name: each.field("name").asText() ?? ""
+                    nodes: nodesOf(each.field("nodes"))
+                }
+            },
+        )
         error: value.field("error").asText()
-        at: value.field("at").asInt().unwrapOr(0)
+        at: value.field("at").asInt() ?? 0
     }
 }
 
 fn nodesOf(value: __json.Value): Array[Node] {
-    value.asArray().unwrapOr([]).map(nodeOf)
+    (value.asArray() ?? []).map(nodeOf)
 }
 
 fn optionalNodes(value: __json.Value): Array[Node]? {
@@ -1594,39 +1609,36 @@ fn optionalNodes(value: __json.Value): Array[Node]? {
 
 /// The only member of an object: `{"Write": {...}}`.
 fn variantOf(value: __json.Value): (String, __json.Value) {
-    for (name, payload) in value.asObject().unwrapOr([:]) {
+    for (name, payload) in (value.asObject() ?? [:]) {
         return (name, payload)
     }
-    (value.asText().unwrapOr(""), __json.Value.Null)
+    (value.asText() ?? "", __json.Value.Null)
 }
 
 fn nodeOf(value: __json.Value): Node {
     let (name, payload) = variantOf(value)
     let field = (key: String) { payload.field(key) }
-    let named = (key: String) { payload.field(key).asText().unwrapOr("") }
+    let named = (key: String) { payload.field(key).asText() ?? "" }
     match name {
-        "Text" => Node.Text(payload.asText().unwrapOr(""))
+        "Text" => Node.Text(payload.asText() ?? "")
         "Write" => Node.Write {
             value: codeOf(field("value"))
             format: formatOf(field("format"))
-            place: field("place").asInt().unwrapOr(0)
+            place: field("place").asInt() ?? 0
         }
         "If" => Node.If {
-            branches: field("branches")
-                .asArray()
-                .unwrapOr([])
-                .map(
-                    (branch) {
-                        Branch {
-                            condition: codeOf(branch.field("condition"))
-                            body: nodesOf(branch.field("body"))
-                        }
-                    },
-                )
+            branches: (field("branches").asArray() ?? []).map(
+                (branch) {
+                    Branch {
+                        condition: codeOf(branch.field("condition"))
+                        body: nodesOf(branch.field("body"))
+                    }
+                },
+            )
             otherwise: optionalNodes(field("otherwise"))
         }
         "For" => Node.For {
-            names: field("names").asArray().unwrapOr([]).map((n) { n.asText().unwrapOr("") })
+            names: (field("names").asArray() ?? []).map((n) { n.asText() ?? "" })
             items: codeOf(field("items"))
             body: nodesOf(field("body"))
             otherwise: optionalNodes(field("otherwise"))
@@ -1642,11 +1654,11 @@ fn nodeOf(value: __json.Value): Node {
             name: named("name")
             op: field("op").asText()
             value: codeOf(field("value"))
-            at: field("at").asInt().unwrapOr(0)
+            at: field("at").asInt() ?? 0
         }
         "Block" => Node.Block { name: named("name"), body: nodesOf(field("body")) }
         "Include" => Node.Include {
-            name: field("name").asText().unwrapOr("")
+            name: field("name").asText() ?? ""
             computed: match field("name").asText() {
                 some(_) => none
                 none => codeOf(field("name"))
@@ -1655,18 +1667,15 @@ fn nodeOf(value: __json.Value): Node {
                 true => none
                 false => codeOf(field("data"))
             }
-            named: field("named")
-                .asArray()
-                .unwrapOr([])
-                .map(
-                    (each) {
-                        NamedValue {
-                            name: each.field("name").asText().unwrapOr("")
-                            value: codeOf(each.field("value"))
-                        }
-                    },
-                )
-            at: field("at").asInt().unwrapOr(0)
+            named: (field("named").asArray() ?? []).map(
+                (each) {
+                    NamedValue {
+                        name: each.field("name").asText() ?? ""
+                        value: codeOf(each.field("value"))
+                    }
+                },
+            )
+            at: field("at").asInt() ?? 0
         }
         "Break" => Node.Break
         _ => Node.Continue
@@ -1675,38 +1684,39 @@ fn nodeOf(value: __json.Value): Node {
 
 fn codeOf(value: __json.Value): Code {
     Code {
-        ops: value.field("ops").asArray().unwrapOr([]).map(opOf)
-        at: value.field("at").asArray().unwrapOr([]).map((n) { n.asInt().unwrapOr(0) })
+        ops: (value.field("ops").asArray() ?? []).map(opOf)
+        at: (value.field("at").asArray() ?? []).map((n) { n.asInt() ?? 0 })
     }
 }
 
 fn opOf(value: __json.Value): Op {
     let (name, payload) = variantOf(value)
     let first = payload.item(0)
-    let count = payload.item(1).asInt().unwrapOr(0)
+    let count = payload.item(1).asInt() ?? 0
     match name {
-        "Int" => Op.Int(payload.asInt().unwrapOr(0))
-        "Float" => Op.Float(payload.asFloat().unwrapOr(0.0))
-        "Text" => Op.Text(payload.asText().unwrapOr(""))
-        "Bool" => Op.Bool(payload.asBool().unwrapOr(false))
-        "Char" => Op.Char(payload.asText().unwrapOr(" ").chars().collect().first().unwrapOr(' '))
-        "Array" => Op.Array(payload.asInt().unwrapOr(0))
-        "Map" => Op.Map(payload.asInt().unwrapOr(0))
+        "Int" => Op.Int(payload.asInt() ?? 0)
+        "Float" => Op.Float(payload.asFloat() ?? 0.0)
+        "Text" => Op.Text(payload.asText() ?? "")
+        "Bool" => Op.Bool(payload.asBool() ?? false)
+        "Char" => Op.Char((payload.asText() ?? " ").chars().collect().first() ?? ' ')
+        "Array" => Op.Array(payload.asInt() ?? 0)
+        "Map" => Op.Map(payload.asInt() ?? 0)
         "Shown" => Op.Shown(formatOf(payload))
-        "Join" => Op.Join(payload.asInt().unwrapOr(0))
-        "Name" => Op.Name(payload.asText().unwrapOr(""))
-        "Field" => Op.Field(payload.asText().unwrapOr(""))
+        "Join" => Op.Join(payload.asInt() ?? 0)
+        "Name" => Op.Name(payload.asText() ?? "")
+        "Field" => Op.Field(payload.asText() ?? "")
         "Index" => Op.Index
-        "Call" => Op.Call(first.asText().unwrapOr(""), count)
-        "Method" => Op.Method(first.asText().unwrapOr(""), count)
+        "Call" => Op.Call(first.asText() ?? "", count)
+        "Method" => Op.Method(first.asText() ?? "", count)
         "Not" => Op.Not
         "Negate" => Op.Negate
-        "Binary" => Op.Binary(payload.asText().unwrapOr(""))
-        "Range" => Op.Range(payload.asBool().unwrapOr(false))
-        "And" => Op.And(payload.asInt().unwrapOr(0))
-        "Unless" => Op.Unless(payload.asInt().unwrapOr(0))
-        "Skip" => Op.Skip(payload.asInt().unwrapOr(0))
-        _ => Op.Or(payload.asInt().unwrapOr(0))
+        "Binary" => Op.Binary(payload.asText() ?? "")
+        "Range" => Op.Range(payload.asBool() ?? false)
+        "And" => Op.And(payload.asInt() ?? 0)
+        "Unless" => Op.Unless(payload.asInt() ?? 0)
+        "Skip" => Op.Skip(payload.asInt() ?? 0)
+        "Coalesce" => Op.Coalesce(payload.asInt() ?? 0)
+        _ => Op.Or(payload.asInt() ?? 0)
     }
 }
 
@@ -1715,11 +1725,11 @@ fn formatOf(value: __json.Value): Format? {
         return none
     }
     some(Format {
-        fill: value.field("fill").asText().unwrapOr(" ")
+        fill: value.field("fill").asText() ?? " "
         align: value.field("align").asText()
-        plus: value.field("plus").asBool().unwrapOr(false)
-        alternate: value.field("alternate").asBool().unwrapOr(false)
-        zero: value.field("zero").asBool().unwrapOr(false)
+        plus: value.field("plus").asBool() ?? false
+        alternate: value.field("alternate").asBool() ?? false
+        zero: value.field("zero").asBool() ?? false
         width: value.field("width").asInt()
         precision: value.field("precision").asInt()
         kind: value.field("kind").asText()

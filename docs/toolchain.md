@@ -48,7 +48,7 @@ pub fn count(text: String): Map[String, Int] {
         if word.isEmpty() {
             continue
         }
-        counts[word] = counts.getOr(word, 0) + 1
+        counts[word] = (counts[word] ?? 0) + 1
     }
     counts
 }
@@ -113,7 +113,7 @@ import std.testing
 fn count(text: String): Map[String, Int] {
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = counts.getOr(word, 0) + 1
+        counts[word] = (counts[word] ?? 0) + 1
     }
     counts
 }

@@ -31,8 +31,8 @@ import std.serialization
 ///
 /// let config = yaml.parse("server:\n  host: localhost\n  ports: [8080, 8081]\n")?
 /// let host = config.find("server.host").andThen((value) { value.asText() })
-/// let ports = config.find("server.ports").andThen((value) { value.asArray() }).unwrapOr([])
-/// console.println("{host.unwrapOr("?")} with {ports.length()} ports")
+/// let ports = config.find("server.ports").andThen((value) { value.asArray() }) ?? []
+/// console.println("{host ?? "?"} with {ports.length()} ports")
 /// ```
 pub enum Value {
     Null
@@ -405,8 +405,8 @@ fn Reader.error(self, kind: serialization.ErrorKind): YamlError {
         kind: kind
         message: yamlnative.where(self.native, 0)
         path: yamlnative.where(self.native, 1)
-        line: Int.parse(yamlnative.where(self.native, 2)).unwrapOr(0)
-        column: Int.parse(yamlnative.where(self.native, 3)).unwrapOr(0)
+        line: Int.parse(yamlnative.where(self.native, 2)) ?? 0
+        column: Int.parse(yamlnative.where(self.native, 3)) ?? 0
         violations: []
     }
 }
@@ -597,7 +597,7 @@ pub type Document = {
 ///
 /// let doc = yaml.load("port: 8080   # where it listens\n")?
 /// let port = doc.find("port").expect("port is set")
-/// console.println("line {port.line}, column {port.column}: {port.comment.unwrapOr("")}")
+/// console.println("line {port.line}, column {port.column}: {port.comment ?? ""}")
 /// ```
 pub type Node = {
     value: Value
@@ -689,7 +689,7 @@ impl Display for NodeStyle {
 /// after it stay as they are.
 pub fn load(text: String): Document ! YamlError {
     // The first document, which the outline is of; the rest stay as text.
-    let root = parseAll(text)?.first().unwrapOr(Value.Null)
+    let root = parseAll(text)?.first() ?? Value.Null
     let outlined = yamlnative.outline(text)
     let failure = yamlnative.outlineError(outlined)
     if not failure.isEmpty() {
@@ -796,8 +796,8 @@ pub fn Document.insert[T: serialization.Encode](
         self.set("{place}[{index}]", value)?
         return
     }
-    let list = self.paths.findIndex((each) { each == place }).unwrapOr(0)
-    let item = self.paths.findIndex((each) { each == "{place}[{index}]" }).unwrapOr(0)
+    let list = self.paths.findIndex((each) { each == place }) ?? 0
+    let item = self.paths.findIndex((each) { each == "{place}[{index}]" }) ?? 0
     let indent = self.number(item, 6)
     let line = self.lineStart(self.number(item, 1))
     let written = encode(value).trimEnd()
@@ -806,11 +806,9 @@ pub fn Document.insert[T: serialization.Encode](
         let at = self.commentsAbove(line)
         self.spliced(at, at, "{" ".repeat(indent)}- {indentedAfterFirst(written, indent + 2)}\n")
     } else {
-        let inserted = items
-            .slice(0, index)
-            .unwrapOr([])
+        let inserted = (items.slice(0, index) ?? [])
             .concat([parse(written)?])
-            .concat(items.slice(index, items.length()).unwrapOr([]))
+            .concat(items.slice(index, items.length()) ?? [])
         self.replaced(list, encode(Value.Array(inserted)).trimEnd())
     }
     self.reload(changed)?
@@ -822,7 +820,7 @@ pub fn Document.insert[T: serialization.Encode](
 /// left empty is written `{}` or `[]`.
 pub fn Document.remove(mut self, path: String): !YamlError {
     let place = canonical(path)?
-    let parts = segments(place).unwrapOr([])
+    let parts = segments(place) ?? []
     if parts.isEmpty() {
         fail documentError("a document keeps its root: set it instead", place)
     }
@@ -830,8 +828,8 @@ pub fn Document.remove(mut self, path: String): !YamlError {
         some(found) => found
         none => fail documentError("there is no value at `{path}` in the text to remove", place)
     }
-    let parentPath = joined(parts.slice(0, parts.length() - 1).unwrapOr([]))
-    let parent = self.paths.findIndex((each) { each == parentPath }).unwrapOr(0)
+    let parentPath = joined(parts.slice(0, parts.length() - 1) ?? [])
+    let parent = self.paths.findIndex((each) { each == parentPath }) ?? 0
     let (key, at) = parts[parts.length() - 1]
     let rest = match valueAt(self.root, parentPath).map((found) { found.content() }) {
         some(Value.Map(members)) => {
@@ -840,7 +838,7 @@ pub fn Document.remove(mut self, path: String): !YamlError {
             Value.Map(kept)
         }
         some(Value.Array(items)) => Value.Array(
-            items.slice(0, at).unwrapOr([]).concat(items.slice(at + 1, items.length()).unwrapOr([])),
+            (items.slice(0, at) ?? []).concat(items.slice(at + 1, items.length()) ?? []),
         )
         _ => Value.Null
     }
@@ -886,7 +884,7 @@ fn canonical(path: String): String ! YamlError {
 
 /// Where the line of a position starts.
 fn Document.lineStart(self, position: Int): Int {
-    match self.source.slice(0, position).unwrapOr("").findLast("\n") {
+    match (self.source.slice(0, position) ?? "").findLast("\n") {
         some(at) => at + 1
         none => 0
     }
@@ -895,7 +893,7 @@ fn Document.lineStart(self, position: Int): Int {
 /// Whether only spaces come before `column` on the line at `line`: its
 /// key or `-` starts the line.
 fn Document.alone(self, line: Int, column: Int): Bool {
-    self.source.slice(line, line + column).unwrapOr("x").trim().isEmpty()
+    (self.source.slice(line, line + column) ?? "x").trim().isEmpty()
 }
 
 /// Where the comment lines right above the line at `line` start.
@@ -903,7 +901,7 @@ fn Document.commentsAbove(self, line: Int): Int {
     var at = line
     for at > 0 {
         let above = self.lineStart(at - 1)
-        if not self.source.slice(above, at).unwrapOr("").trim().startsWith("#") {
+        if not (self.source.slice(above, at) ?? "").trim().startsWith("#") {
             break
         }
         at = above
@@ -940,11 +938,11 @@ fn valueAt(root: Value, path: String): Value? {
 fn segments(path: String): Array[(String, Int)]? {
     var parts: Array[(String, Int)] = []
     for step in yamlcodec.pathSteps(path) {
-        let rest = step.slice(1, step.length()).unwrapOr("")
+        let rest = step.slice(1, step.length()) ?? ""
         if step.startsWith(".") {
             parts.push((rest, -1))
         } else if step.startsWith("[") {
-            parts.push(("", Int.parse(rest).unwrapOr(-2)))
+            parts.push(("", Int.parse(rest) ?? -2))
         } else {
             return none
         }
@@ -958,19 +956,15 @@ fn Document.number(self, index: Int, field: Int): Int {
 
 /// The text with `start..end` replaced.
 fn Document.spliced(self, start: Int, end: Int, replacement: String): String {
-    "{self.source.slice(0, start).unwrapOr("")}{replacement}{self.source.slice(end, self.source.length()).unwrapOr("")}"
+    "{self.source.slice(0, start) ?? ""}{replacement}{self.source.slice(end, self.source.length()) ?? ""}"
 }
 
 /// What follows a key's `:` on its line but the tag of its value, which a
 /// value set in its place replaces: an anchor and a comment.
 fn withoutTag(rest: String): String {
-    let at = rest.find("#").unwrapOr(rest.length())
-    let before = rest
-        .slice(0, at)
-        .unwrapOr("")
-        .split(" ")
-        .filter((word) { not word.startsWith("!") })
-    "{before.join(" ")}{rest.slice(at, rest.length()).unwrapOr("")}"
+    let at = rest.find("#") ?? rest.length()
+    let before = (rest.slice(0, at) ?? "").split(" ").filter((word) { not word.startsWith("!") })
+    "{before.join(" ")}{rest.slice(at, rest.length()) ?? ""}"
 }
 
 /// Each line but the first indented by `width` spaces.
@@ -1004,12 +998,11 @@ fn Document.replaced(self, index: Int, written: String): String {
         // the key line's comment before the value's lines or after it.
         let block = kind == 1 or kind == 2
         let comment = withoutTag(
-            self.source
-                .slice(
-                    if block { afterKey } else { end },
-                    self.lineEnd(if block { afterKey } else { end }),
-                )
-                .unwrapOr(""),
+            self.source.slice(
+                if block { afterKey } else { end },
+                self.lineEnd(if block { afterKey } else { end }),
+            ) ??
+                "",
         )
         let rendered = if ownLines(written) {
             "{comment}\n{" ".repeat(indent + 2)}{indentedAfterFirst(written, indent + 2)}"
@@ -1027,8 +1020,8 @@ fn Document.replaced(self, index: Int, written: String): String {
     }
     // After an anchor the value keeps, a value of several lines starts on
     // the next line.
-    let before = self.source.slice(0, start).unwrapOr("").trimEnd()
-    let anchored = before.words().last().unwrapOr("").startsWith("&")
+    let before = (self.source.slice(0, start) ?? "").trimEnd()
+    let anchored = (before.words().last() ?? "").startsWith("&")
     let rendered = indentedAfterFirst(written, width)
     if anchored and ownLines(written) {
         return self.spliced(before.length(), end, "\n{" ".repeat(width)}{rendered}")
@@ -1038,7 +1031,7 @@ fn Document.replaced(self, index: Int, written: String): String {
 
 /// The end of the line a position is on.
 fn Document.lineEnd(self, position: Int): Int {
-    let rest = self.source.slice(position, self.source.length()).unwrapOr("")
+    let rest = self.source.slice(position, self.source.length()) ?? ""
     match rest.find("\n") {
         some(at) => position + at
         none => self.source.length()
@@ -1047,14 +1040,14 @@ fn Document.lineEnd(self, position: Int): Int {
 
 /// The text with a key or an item at `path` that it does not have.
 fn Document.added(self, path: String, written: String): String ! YamlError {
-    let parts = segments(path).unwrapOr([])
+    let parts = (segments(path) ?? [])
     // The longest part of the path the document has.
     var known = parts.length() - 1
     for known > 0 and
-        self.paths.findIndex((each) { each == joined(parts.slice(0, known).unwrapOr([])) }).isNone() {
+        self.paths.findIndex((each) { each == joined(parts.slice(0, known) ?? []) }).isNone() {
         known -= 1
     }
-    let parentPath = joined(parts.slice(0, known).unwrapOr([]))
+    let parentPath = joined(parts.slice(0, known) ?? [])
     let parent = match self.paths.findIndex((each) { each == parentPath }) {
         some(found) => found
         none => fail documentError(
@@ -1099,8 +1092,8 @@ fn Document.added(self, path: String, written: String): String ! YamlError {
         )
         // A scalar, or a map or a list in flow style: written again whole.
         _ => {
-            let before = valueAt(self.root, parentPath).unwrapOr(Value.Null)
-            let addedValue = parse(value).unwrapOr(Value.Null)
+            let before = valueAt(self.root, parentPath) ?? Value.Null
+            let addedValue = parse(value) ?? Value.Null
             let whole = match (before, at) {
                 (Value.Map(members), -1) => {
                     var grown = members
@@ -1144,10 +1137,10 @@ fn joined(parts: Array[(String, Int)]): String {
 /// The column of a collection's keys or items' `-`, from one of them, or
 /// two more than the collection's.
 fn Document.childIndent(self, parent: Int, parentPath: String): Int {
-    let depth = segments(parentPath).unwrapOr([]).length() + 1
+    let depth = (segments(parentPath) ?? []).length() + 1
     for (index, path) in self.paths.enumerate() {
-        let parts = segments(path).unwrapOr([])
-        if parts.length() == depth and joined(parts.slice(0, depth - 1).unwrapOr([])) == parentPath {
+        let parts = segments(path) ?? []
+        if parts.length() == depth and joined(parts.slice(0, depth - 1) ?? []) == parentPath {
             return self.number(index, 6)
         }
     }
@@ -1168,16 +1161,16 @@ fn Document.commentOf(self, index: Int): String? {
     let kind = self.number(index, 0)
     let after = if kind == 1 or kind == 2 { self.number(index, 5) } else { self.number(index, 2) }
     if after >= 0 {
-        let line = self.source.slice(after, self.lineEnd(after)).unwrapOr("")
+        let line = self.source.slice(after, self.lineEnd(after)) ?? ""
         match line.find("#") {
-            some(at) => return line.slice(at + 1, line.length()).unwrapOr("").trim()
+            some(at) => return (line.slice(at + 1, line.length()) ?? "").trim()
             none => {}
         }
     }
     let afterKey = self.number(index, 5)
     let start = if afterKey >= 0 { afterKey } else { self.number(index, 1) }
     var above: Array[String] = []
-    let lines = self.source.slice(0, start).unwrapOr("").lines()
+    let lines = (self.source.slice(0, start) ?? "").lines()
     var at = lines.length() - 2
     for at >= 0 and lines[at].trim().startsWith("#") {
         above.push(lines[at].trim().trimStart("#").trim())

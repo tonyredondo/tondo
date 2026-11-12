@@ -344,7 +344,7 @@ fn serve(
     let trailers = __http.Trailers()
     let ready = grpcNative.signal()
     var metadata = request.headers()
-    let contentType = metadata.get("content-type").unwrapOr("")
+    let contentType = metadata.get("content-type") ?? ""
     let asked = request.method() == "GET"
     let wire = Wire.of(request.method(), contentType)
     let json = if asked {
@@ -356,15 +356,15 @@ fn serve(
     let timeout = match wire {
         Wire.Connect => connectTimeout(metadata.get("connect-timeout-ms"))
         Wire.ConnectStream => connectTimeout(metadata.get("connect-timeout-ms"))
-        _ => timeoutOf(metadata.get("grpc-timeout").unwrapOr(""))
+        _ => timeoutOf(metadata.get("grpc-timeout") ?? "")
     }
     let (encodingHeader, acceptHeader) = wire.encodings()
     let encoding = if asked {
-        request.query("compression").unwrapOr("identity")
+        request.query("compression") ?? "identity"
     } else {
-        metadata.get(encodingHeader).unwrapOr("identity")
+        metadata.get(encodingHeader) ?? "identity"
     }
-    let accepted = metadata.get(acceptHeader).unwrapOr("").split(",").map((name) { name.trim() })
+    let accepted = (metadata.get(acceptHeader) ?? "").split(",").map((name) { name.trim() })
     let compressed = compressing and accepted.contains("gzip")
     // A unary reply of Connect says how it is compressed when it is sent.
     if wire != Wire.Connect {
@@ -406,10 +406,10 @@ fn serve(
     with Incoming { call: incoming, headers: headers, trailers: trailers }
     spawn detached run(server, handler, layers, timeout, trailers, done)
     if wire == Wire.Connect {
-        let body = reader.readBytes().unwrapOr([])
-        let status = outcome
-            .receive()
-            .unwrapOr(Status { code: Code.Internal, message: "the method ended without a status" })
+        let body = reader.readBytes() ?? []
+        let status =
+            outcome.receive() ??
+                Status { code: Code.Internal, message: "the method ended without a status" }
         return connectReply(body, status, json, headers, trailers)
     }
     // The headers go once the method sends its first message, or ends.

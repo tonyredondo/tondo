@@ -86,7 +86,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     }
     let metrics = diagnostics.metrics()
     let counted = (name: String) {
-        metrics.find((m) { m.name == name }).map((m) { m.value }).unwrapOr(-1)
+        metrics.find((m) { m.name == name }).map((m) { m.value }) ?? -1
     }
     console.println(
         "client {counted("grpc.client.calls")} calls, {counted("grpc.client.failed")} failed; server {counted("grpc.server.calls")} calls, {counted("grpc.server.failed")} failed",

@@ -22,7 +22,7 @@ fn main() {
     let values = [1, 2]
     match recover { values[5] } {
         ok(_) => console.println("not stopped")
-        err(stopped) => console.println("{stopped}".lines().first().unwrapOr(""))
+        err(stopped) => console.println("{stopped}".lines().first() ?? "")
     }
 }
 

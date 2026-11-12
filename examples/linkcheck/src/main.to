@@ -43,8 +43,7 @@ fn main() {
     let started = time.now()
     // A deadline is not a parameter of the crawl: it holds for the block,
     // for all it calls and for every task it starts, and ends them all.
-    let result =
-        within options.deadline.unwrapOr(time.hours(24)) { crawl.crawl(options.url, settings) }
+    let result = within options.deadline ?? time.hours(24) { crawl.crawl(options.url, settings) }
     let report = match result {
         ok(found) => found
         err(error) => {

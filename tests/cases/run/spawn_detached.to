@@ -20,7 +20,7 @@ fn main() {
     signal.close()
     var total = 0
     for _ in 0..3 {
-        total += results.receive().unwrapOr(-100)
+        total += results.receive() ?? -100
     }
     console.println("detached tasks ran at once: {total}")
 

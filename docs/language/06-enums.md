@@ -67,7 +67,7 @@ fn Level.isSerious(self): Bool {
 fn main() {
     let level = Level.Warning
     var counts: Map[Level, Int] = [:]
-    counts[level] = counts.getOr(level, 0) + 1
+    counts[level] = (counts[level] ?? 0) + 1
     console.println("{level} {level.isSerious()} {counts}")
 }
 ```

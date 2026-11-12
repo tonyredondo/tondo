@@ -305,7 +305,7 @@ pub fn write(pattern: String, locale: String, fields: Array[Int], zone: String):
                 "S" => number(fields[5], 2, "0")
                 key if key in ["3f", "6f", "9f"] => {
                     let all = "{fields[6]}".padStart(9, "0")
-                    all.slice(0, Int.parse(piece.text.removeSuffix("f")).unwrapOr(9)).unwrapOr(all)
+                    all.slice(0, Int.parse(piece.text.removeSuffix("f")) ?? 9) ?? all
                 }
                 "z" => offsetText(fields[7], "")
                 ":z" => offsetText(fields[7], ":")
@@ -383,7 +383,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
             "M" => minute = (digits(ref chars, mut at, 1, 2)?).0
             "S" => second = (digits(ref chars, mut at, 1, 2)?).0
             key if key in ["3f", "6f", "9f"] => {
-                let most = Int.parse(piece.text.removeSuffix("f")).unwrapOr(9)
+                let most = Int.parse(piece.text.removeSuffix("f")) ?? 9
                 let (value, count) = digits(ref chars, mut at, 1, most)?
                 nanosecond = value
                 for _ in count..9 {
@@ -410,7 +410,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                 }
             }
             "Z" => {
-                let name = input.slice(at, at + 3).unwrapOr("")
+                let name = input.slice(at, at + 3) ?? ""
                 if name != "UTC" and name != "GMT" {
                     return none
                 }
@@ -527,7 +527,7 @@ fn longest(input: String, names: ref Array[String], at: mut Int, from: Int, to: 
     for index in from..to {
         let length = names[index].length()
         if length > size and
-            input.slice(at, at + length).unwrapOr("").toLower() == names[index].toLower() {
+            (input.slice(at, at + length) ?? "").toLower() == names[index].toLower() {
             found = index
             size = length
         }
@@ -603,7 +603,7 @@ pub fn duration(text: String): Int? {
         var (unit, size) = (0, 0)
         for (name, nanos) in units {
             let length = name.length()
-            if length > size and rest.slice(at, at + length).unwrapOr("") == name {
+            if length > size and (rest.slice(at, at + length) ?? "") == name {
                 unit = nanos
                 size = length
             }

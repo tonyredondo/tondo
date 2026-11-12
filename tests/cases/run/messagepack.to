@@ -43,15 +43,15 @@ fn main(): !(messagepack.MessagePackError | time.TimeError) {
     console.println("{json.encode(back)}")
     console.println("{messagepack.parse(bytes)?}")
     console.println("{messagepack.encode(1)} {messagepack.encode(-1)} {messagepack.encode(300)} {messagepack.encode("")}")
-    match messagepack.decode[Packet](encoding.hexDecode("81a26964a178").unwrapOr([])) {
+    match messagepack.decode[Packet](encoding.hexDecode("81a26964a178") ?? []) {
         ok(_) => console.println("decoded")
         err(error) => console.println("{error}")
     }
-    match messagepack.parse(encoding.hexDecode("9201").unwrapOr([])) {
+    match messagepack.parse(encoding.hexDecode("9201") ?? []) {
         ok(_) => console.println("parsed")
         err(error) => console.println("{error}")
     }
-    match messagepack.parse(encoding.hexDecode("c1").unwrapOr([])) {
+    match messagepack.parse(encoding.hexDecode("c1") ?? []) {
         ok(_) => console.println("parsed")
         err(error) => console.println("{error}")
     }
@@ -65,7 +65,7 @@ fn vectors() {
         "d6ff00000000", "c70cff000000000000000000000001", "cf8000000000000000",
     ]
     for form in forms {
-        match messagepack.parse(encoding.hexDecode(form).unwrapOr([])) {
+        match messagepack.parse(encoding.hexDecode(form) ?? []) {
             ok(value) => console.println("{form} {value}")
             err(error) => console.println("{form} {error}")
         }

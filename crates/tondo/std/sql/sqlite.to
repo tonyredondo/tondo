@@ -36,7 +36,7 @@ fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError
     let reply = sqlNative.run(opened, statement.text, encoded, batch)
     var at = 1
     if reply.get(0) != Byte(0u8) {
-        let kind = kindOf(Int(reply.get(1).unwrapOr(Byte(10u8))))
+        let kind = kindOf(Int(reply.get(1) ?? Byte(10u8)))
         at = 2
         let message = readValue(reply, var at)
         let code = readValue(reply, var at)
@@ -120,7 +120,7 @@ fn unsigned(bytes: Array[Byte], at: Int, count: Int): Int {
     var value: UInt = 0
     var index = count - 1
     for index >= 0 {
-        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        value = (value << 8) | UInt(bytes.get(at + index) ?? Byte(0u8))
         index -= 1
     }
     Int.wrapping(value)
@@ -128,7 +128,7 @@ fn unsigned(bytes: Array[Byte], at: Int, count: Int): Int {
 
 /// The value encoded at `at`, which moves past it.
 fn readValue(bytes: Array[Byte], at: var Int): Value {
-    let tag = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    let tag = Int(bytes.get(at) ?? Byte(0u8))
     at += 1
     match tag {
         1 => {
@@ -141,13 +141,9 @@ fn readValue(bytes: Array[Byte], at: var Int): Value {
         }
         kind if kind == 3 or kind == 4 => {
             let length = unsigned(bytes, at, 4)
-            let body = bytes.slice(at + 4, at + 4 + length).unwrapOr([])
+            let body = bytes.slice(at + 4, at + 4 + length) ?? []
             at += 4 + length
-            if tag == 3 {
-                Value.Text(String.fromBytes(body).unwrapOr(""))
-            } else {
-                Value.Bytes(body)
-            }
+            if tag == 3 { Value.Text(String.fromBytes(body) ?? "") } else { Value.Bytes(body) }
         }
         _ => Value.Null
     }

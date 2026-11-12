@@ -15,7 +15,7 @@ fn main(): !fs.FsError {
     }
     for each in ["src/a.to", "src/deep/b.to", "node_modules/x/c.js", "locked/d.txt"] {
         let path = "{dir}/{each}"
-        fs.createDirectory(path.slice(0, path.findLast("/").unwrapOr(0)).unwrapOr(dir))?
+        fs.createDirectory(path.slice(0, path.findLast("/") ?? 0) ?? dir)?
         fs.writeText(path, "")?
     }
     let short = (entries: Array[fs.Entry]) {

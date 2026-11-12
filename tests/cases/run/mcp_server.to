@@ -69,7 +69,7 @@ pub fn Weather.forecast(self, input: ForecastInput): Forecast ! WeatherError {
         fail WeatherError.Unknown(input.city)
     }
     var days: Array[Day] = []
-    for day in 0..input.days.unwrapOr(2) {
+    for day in 0..(input.days ?? 2) {
         days.push(Day { day, high: self.base + Float(day) })
     }
     Forecast { city: input.city, days, every: input.step }
@@ -106,7 +106,7 @@ pub fn Weather.city(self, name: String): String {
 /// Asks for a forecast.
 @mcp.Prompt
 pub fn Weather.ask(self, city: String, mood: String?): String {
-    "What is the weather in {city}? {mood.unwrapOr("")}"
+    "What is the weather in {city}? {mood ?? ""}"
 }
 
 fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
@@ -137,9 +137,9 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
     console.setOutput(output)
     // Each request is answered in a task of its own, so in any order.
     var replies: Array[(Int, String)] = []
-    for line in protocol.text().unwrapOr("").lines() {
-        let reply = json.parse(line).unwrapOr(json.Value.Null)
-        replies.push((reply.field("id").asInt().unwrapOr(0), line))
+    for line in (protocol.text() ?? "").lines() {
+        let reply = json.parse(line) ?? json.Value.Null
+        replies.push((reply.field("id").asInt() ?? 0, line))
     }
     for (_, line) in replies.sortedWith((a, b) { a.0 - b.0 }) {
         console.println(line)

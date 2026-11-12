@@ -10,7 +10,7 @@ pub annotation Get = { path: String }
 pub fn missing[T: reflect.Reflect](values: Map[String, String]): Array[String] {
     var found: Array[String] = []
     for field in reflect.typeInfo[T]().fields() {
-        let required = field.annotation[Check]().map((check) { check.required }).unwrapOr(false)
+        let required = field.annotation[Check]().map((check) { check.required }) ?? false
         if required and not values.contains(field.name()) {
             found.push(field.name())
         }

@@ -91,7 +91,7 @@ fn slow(options: Slow) {
 
 fn status(options: Files) {
     let classes = report.byClass(load(options.files))
-    let most = classes.values().collect().max().unwrapOr(0)
+    let most = classes.values().collect().max() ?? 0
     for (class, count) in classes {
         console.println("{class} {count:>6} {report.bar(count, most)}")
     }

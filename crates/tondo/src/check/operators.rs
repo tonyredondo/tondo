@@ -208,7 +208,7 @@ impl<'a> Checker<'a> {
                     ": floats have no `%`, since remainders follow several conventions; the truncated one is `a - b * (a / b).truncate()`",
                 ),
                 _ if matches!(self.types.kind(left), TyKind::Result(..) | TyKind::Option(_)) => message.push_str(
-                    ": the value may be missing or an error; get the number first with `?`, `.unwrapOr(value)` or `match`",
+                    ": the value may be missing or an error; get the number first with `?`, `?? fallback` or `match`",
                 ),
                 _ => {}
             }

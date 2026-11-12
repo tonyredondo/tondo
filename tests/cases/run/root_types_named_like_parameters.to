@@ -10,7 +10,7 @@ type T = { value: Int }
 
 fn main() {
     let found: Int? = 2
-    let t = T { value: found.unwrapOr(0) }
+    let t = T { value: found ?? 0 }
     let e = E.B
     let name = match e {
         E.A => "a"

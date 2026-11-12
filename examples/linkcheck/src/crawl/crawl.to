@@ -202,13 +202,13 @@ fn visit(client: http.Client, home: url.Url, job: Job): Visit {
 }
 
 fn isHtml(response: http.Response): Bool {
-    response.header("Content-Type").unwrapOr("").startsWith("text/html")
+    (response.header("Content-Type") ?? "").startsWith("text/html")
 }
 
 /// The links of a page that answered. A body that cannot be read has none.
 fn linksOf(address: url.Url, response: http.Response): Array[String] {
     match response.text() {
-        ok(html) => links.targets(address, html).unwrapOr([])
+        ok(html) => links.targets(address, html) ?? []
         err(_) => []
     }
 }

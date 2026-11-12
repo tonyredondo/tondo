@@ -55,9 +55,9 @@ import std.uuid
 pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
     let input = request.input("colors.txt")?
     var lines: Array[String] = []
-    for line in input.text().unwrapOr("").lines() {
+    for line in (input.text() ?? "").lines() {
         let parts = line.split(" ")
-        let name = "{parts[0].slice(0, 1).unwrapOr("").toUpper()}{parts[0].slice(1, parts[0].length()).unwrapOr("")}"
+        let name = "{(parts[0].slice(0, 1) ?? "").toUpper()}{parts[0].slice(1, parts[0].length()) ?? ""}"
         lines.push(meta.code(r"pub const $name: String = $hex", ["name": name, "hex": "\"{parts[1]}\""]))
     }
     lines.push("pub const Hash: String = \"{input.sha256}\"")
@@ -141,7 +141,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
         for param in declaration.parameters() {
             params.push("{param.name}: {param.typeRef} {param.annotations.length()}")
         }
-        routes.push("\"{get.path} {declaration.name()}({params.join(", ")}): {declaration.result().map((r) { r.identity() }).unwrapOr("")}\"")
+        routes.push("\"{get.path} {declaration.name()}({params.join(", ")}): {declaration.result().map((r) { r.identity() }) ?? ""}\"")
     }
     var out = request.sourceBuilder()
     out.write("routes", "pub const Routes: Array[String] = [{routes.join(", ")}]")?

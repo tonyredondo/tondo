@@ -317,12 +317,6 @@ impl<'a> Checker<'a> {
                 None
             }
             ast::StmtKind::Defer(deferred) => self.defer(cx, deferred, stmt.span),
-            ast::StmtKind::Return(_) if cx.try_body => {
-                let message = "a `try` block ends with its value, and `return` would only leave the block: \
-                    end it, or take `?` out of the block";
-                self.diags.error("E1410", stmt.span, message);
-                None
-            }
             ast::StmtKind::Return(_) if cx.setup => {
                 let message = "the setup of a suite cannot `return`, or its tests would never run; use `fail` or `testing.skip(reason)`";
                 self.diags.error("E1205", stmt.span, message);

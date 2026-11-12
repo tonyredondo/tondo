@@ -100,7 +100,6 @@ pub fn Contexts.current(): Contexts
 pub fn Deque[T: Equatable].contains(self, value: T): Bool
 pub fn Failure.find[E](self): E?
 pub fn Map[K: Key, V].filter(self, keep: fn(K, V): Bool): Map[K, V]
-pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V
 pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W]
 pub fn Map[K: Key, V].merge(self, other: Map[K, V]): Map[K, V]
 pub fn Option[T].andThen[U](self, next: fn(T): U?): U?
@@ -111,8 +110,6 @@ pub fn Option[T].isNone(self): Bool
 pub fn Option[T].isSome(self): Bool
 pub fn Option[T].map[U](self, transform: fn(T): U): U?
 pub fn Option[T].okOr[E](self, error: E): T ! E
-pub fn Option[T].orElse(self, other: T?): T?
-pub fn Option[T].unwrapOr(self, fallback: T): T
 pub fn Range[T: Ordered].contains(self, value: T): Bool
 pub fn Range[T: Ordered].isEmpty(self): Bool
 pub fn Range[T].end(self): T
@@ -127,7 +124,6 @@ pub fn Result[T, E].isOk(self): Bool
 pub fn Result[T, E].mapErr[F](self, transform: fn(E): F): T ! F
 pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E
 pub fn Result[T, E].ok(self): T?
-pub fn Result[T, E].unwrapOr(self, fallback: T): T
 pub fn Set[T: Key].difference(self, other: Set[T]): Set[T]
 pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T]
 pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool

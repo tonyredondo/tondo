@@ -16,7 +16,7 @@ fn beat() {
 }
 
 fn fetch(answers: Receiver[Int]): Int {
-    answers.receive().unwrapOr(0)
+    answers.receive() ?? 0
 }
 
 fn main() {

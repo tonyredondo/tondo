@@ -36,9 +36,9 @@ fn main(): !protobuf.ProtobufError {
         byFlag: [true: 5, false: -6]
         at: time.utc(time.seconds(1700000000) + time.nanoseconds(1500))
         took: time.seconds(-3) - time.milliseconds(500)
-        object: json.parse("{{\"a\": 1, \"b\": [true, null, \"x\"]}}").unwrapOr(json.Value.Null)
-        value: json.parse("2.5").unwrapOr(json.Value.Null)
-        list: json.parse("[1, \"two\"]").unwrapOr(json.Value.Null)
+        object: json.parse("{{\"a\": 1, \"b\": [true, null, \"x\"]}}") ?? json.Value.Null
+        value: json.parse("2.5") ?? json.Value.Null
+        list: json.parse("[1, \"two\"]") ?? json.Value.Null
         mask: protobuf.FieldMask { paths: ["display_name", "inner.big_numbers"] }
         anyMessage: some(protobuf.pack(inner))
         anyDuration: protobuf.Any {

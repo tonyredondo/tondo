@@ -6,7 +6,7 @@ import std.console
 import std.http
 
 fn shown(response: http.Response, names: Array[String]): String {
-    names.map((name) { "{response.header(name).unwrapOr("-")}" }).join(" ")
+    names.map((name) { "{response.header(name) ?? "-"}" }).join(" ")
 }
 
 fn main(): !http.HttpError {

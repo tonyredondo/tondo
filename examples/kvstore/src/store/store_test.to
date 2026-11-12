@@ -47,7 +47,7 @@ fn commands(store: Store): Array[protocol.Command] {
         out.push(protocol.Command.Get(key))
         out.push(protocol.Command.Delete(key))
         // Counting up to 2 keeps the states finite.
-        let small = store.values[key].andThen((text) { Int.parse(text).ok() }).unwrapOr(0) < 2
+        let small = (store.values[key].andThen((text) { Int.parse(text).ok() }) ?? 0) < 2
         if small {
             out.push(protocol.Command.Increment { key, by: 1 })
         }

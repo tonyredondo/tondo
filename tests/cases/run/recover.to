@@ -35,7 +35,7 @@ fn main() {
     for _ in 0..100 {
         let _ = recover { build(3) }
     }
-    let total = recover { divide(10, 0) }.unwrapOr(-1)
+    let total = recover { divide(10, 0) } ?? -1
     console.println("total {total}")
     let xs = [1, 2, 3]
     match recover { xs[7] } {

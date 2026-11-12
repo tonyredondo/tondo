@@ -1,0 +1,8 @@
+// There is no `try` block: a chain of options is `?.`, a fallback is `??`,
+// and steps that fail together are a function that returns `T ! E`.
+
+fn main() {
+    let city: String? = try { none }
+}
+
+// expect-error: E0004 there is no `try`: a function that can fail returns `T ! E`, `?` passes a failure on and `match` handles it; a chain of options is `?.`, a fallback `??`

@@ -8,7 +8,7 @@
 
 `tondo api Option` shows the same in a terminal.
 
-- [Option](#option): [`Option.isSome`](#optionissome), [`Option.isNone`](#optionisnone), [`Option.map`](#optionmap), [`Option.andThen`](#optionandthen), [`Option.unwrapOr`](#optionunwrapor), [`Option.orElse`](#optionorelse), [`Option.filter`](#optionfilter), [`Option.okOr`](#optionokor), [`Option.expect`](#optionexpect), [`Option.context`](#optioncontext)
+- [Option](#option): [`Option.isSome`](#optionissome), [`Option.isNone`](#optionisnone), [`Option.map`](#optionmap), [`Option.andThen`](#optionandthen), [`Option.filter`](#optionfilter), [`Option.okOr`](#optionokor), [`Option.expect`](#optionexpect), [`Option.context`](#optioncontext)
 
 ### Option
 
@@ -43,22 +43,6 @@ pub fn Option[T].andThen[U](self, next: fn(T): U?): U?
 ```
 
 The option the function gives for the value, or `none`.
-
-#### Option.unwrapOr
-
-```tondo
-pub fn Option[T].unwrapOr(self, fallback: T): T
-```
-
-The value, or `fallback` when there is none.
-
-#### Option.orElse
-
-```tondo
-pub fn Option[T].orElse(self, other: T?): T?
-```
-
-This option if it has a value, or `other`.
 
 #### Option.filter
 

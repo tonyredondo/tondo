@@ -47,9 +47,9 @@ fn unpadded(text: String): Array[Byte] {
     var start = 0
     var at = 4
     for at <= text.length() {
-        if text.slice(at - 1, at).unwrapOr("") == "=" or at == text.length() {
+        if (text.slice(at - 1, at) ?? "") == "=" or at == text.length() {
             bytes = bytes.concat(
-                encoding.base64Decode(text.slice(start, at).unwrapOr("")).unwrapOr([]),
+                encoding.base64Decode(text.slice(start, at) ?? "") ?? [],
             )
             start = at
         }
@@ -66,7 +66,7 @@ fn shown(body: Array[Byte]): String {
         let length = Int(UInt32.fromBytes(body, at: at + 1))
         let bytes = body.drop(at + 5).take(length)
         if body[at] == 0x80 {
-            let block = String.fromBytes(bytes).unwrapOr("?")
+            let block = String.fromBytes(bytes) ?? "?"
             parts.push(block.trimEnd("\r\n").split("\r\n").join(", "))
         } else {
             match protobuf.decode[greeter.HelloReply](bytes) {
@@ -92,7 +92,7 @@ fn main(): !(http.HttpError | grpc.Status) {
             body: http.Body.bytes(framed(greeter.HelloRequest { name: "web" }), contentType: binary),
             headers: ["x-grpc-web": "1"],
         )?
-    console.println("{hello.header("content-type").unwrapOr("-")} {shown(hello.bytes()?)}")
+    console.println("{hello.header("content-type") ?? "-"} {shown(hello.bytes()?)}")
     let repeated =
         web.post(
             "{base}/Repeat",
@@ -114,10 +114,10 @@ fn main(): !(http.HttpError | grpc.Status) {
     let pieces = "{encoding.base64Encode(frame.take(4))}{encoding.base64Encode(frame.drop(4))}"
     let text = "application/grpc-web-text+proto"
     let typed = web.post("{base}/Repeat", body: http.Body.text(pieces, contentType: text))?
-    let answer = String.fromBytes(typed.bytes()?).unwrapOr("")
-    console.println("{typed.header("content-type").unwrapOr("-")} {shown(unpadded(answer))}")
+    let answer = String.fromBytes(typed.bytes()?) ?? ""
+    console.println("{typed.header("content-type") ?? "-"} {shown(unpadded(answer))}")
     let wrong = web.post("{base}/SayHello", body: http.Body.text("AAA*", contentType: text))?
-    console.println(shown(unpadded(String.fromBytes(wrong.bytes()?).unwrapOr(""))))
+    console.println(shown(unpadded(String.fromBytes(wrong.bytes()?) ?? "")))
     // The same routes still answer gRPC.
     let client = greeter.GreeterClient.on(grpc.connect("http://{server.address()}")?)
     console.println(client.sayHello(greeter.HelloRequest { name: "grpc" })?.message)

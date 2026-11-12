@@ -31,7 +31,7 @@ fn pick(values: Array[String], at: Int): String? {
 fn main() {
     var total = 0
     for i in -2..10 {
-        total += named(i).unwrapOr("none").length()
+        total += (named(i) ?? "none").length()
         match named(i) {
             ok(text) => total += text.length()
             err(Problem.Odd(text)) => total += text.length() * 2
@@ -40,11 +40,11 @@ fn main() {
     }
     console.println("{total}")
     let kept = wrap(wrap(wrap("kept")))
-    console.println("{kept.unwrapOr("")}")
+    console.println("{kept ?? ""}")
     // The index panics between the value it reads and the copy.
     let words = ["alpha", "beta"]
     for at in 0..3 {
-        match recover { pick(words, at).unwrapOr("") } {
+        match recover { pick(words, at) ?? "" } {
             ok(word) => console.println("{at} {word}")
             err(caught) => console.println("{at} caught {caught.message}")
         }

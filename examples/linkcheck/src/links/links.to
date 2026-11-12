@@ -15,7 +15,7 @@ pub fn written(html: String): Array[String] ! regex.RegexError {
     var links: Array[String] = []
     for found in Patterns.attribute.findAll(html)? {
         let attribute = found?
-        match attribute.capture(1).orElse(attribute.capture(2)) {
+        match attribute.capture(1) ?? attribute.capture(2) {
             some(value) => links.push(value.text)
             none => {}
         }

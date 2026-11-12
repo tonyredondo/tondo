@@ -2083,7 +2083,7 @@ fn writes_constants_and_branches_and_marks_what_is_deprecated() {
 /// cancelled task stops, and where a `defer` of one ends.
 #[test]
 fn a_hover_says_where_a_function_can_wait() {
-    let main = "fn inner(take: Receiver[Int]): Int {\n    take.receive().unwrapOr(0)\n}\n\n\
+    let main = "fn inner(take: Receiver[Int]): Int {\n    take.receive() ?? 0\n}\n\n\
         fn outer(take: Receiver[Int]): Int {\n    inner(take)\n}\n\nfn main() {}\n";
     let dir = project("hover-waits", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main)]);
     let mut editor = Editor::start();

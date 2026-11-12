@@ -93,7 +93,6 @@ fn check_with<'a>(
         implementing: None,
         traits: Vec::new(),
         trait_names: HashMap::new(),
-        try_body: false,
         dropped_calls: Vec::new(),
         impls: Vec::new(),
         impl_heads: HashMap::new(),
@@ -973,8 +972,6 @@ struct Checker<'a> {
     implementing: Option<(TraitId, Vec<Ty>)>,
     traits: Vec<TraitDef>,
     trait_names: HashMap<String, TraitId>,
-    /// The next closure is the body of a `try` block.
-    try_body: bool,
     /// Calls whose result nothing uses, of functions not all known yet.
     dropped_calls: Vec<(FnId, Span)>,
     impls: Vec<ImplDef>,
@@ -1209,8 +1206,6 @@ struct FnCx {
     mutates: bool,
     /// A closure without a declared result infers it from its body.
     infer_result: bool,
-    /// The body of a `try` block, which ends with its value (15.2).
-    try_body: bool,
     /// For each local: how it was passed if it is a parameter (16.3), or
     /// how it borrows if it is a `ref`, `mut` or `var` binding (14.3).
     params: Vec<Option<ast::Mode>>,

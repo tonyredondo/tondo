@@ -254,9 +254,9 @@ fn failed(sent: httpNative.Native): !HttpError {
     if failure.isEmpty() {
         return
     }
-    let tab = failure.find("\t").unwrapOr(0)
-    let kind = failure.slice(0, tab).unwrapOr("")
-    let why = failure.slice(tab + 1, failure.length()).unwrapOr("")
+    let tab = failure.find("\t") ?? 0
+    let kind = failure.slice(0, tab) ?? ""
+    let why = failure.slice(tab + 1, failure.length()) ?? ""
     if kind == "url" {
         fail HttpError.InvalidUrl(why)
     } else if kind == "timeout" {

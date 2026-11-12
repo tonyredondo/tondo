@@ -88,7 +88,7 @@ fn framed(kind: Char, body: Array[Byte]): Array[Byte] {
 fn Postgres.next(self): (Char, Array[Byte]) ! SqlError {
     let head = self.wire.take(5)?
     let body = self.wire.take(bigEndian(head, 1, 4) - 4)?
-    (Char.from(Int(head[0])).unwrapOr(' '), body)
+    (Char.from(Int(head[0])) ?? ' ', body)
 }
 
 /// The startup and the authentication, by password, MD5 or SCRAM-SHA-256.
@@ -121,7 +121,7 @@ fn Postgres.start(self, settings: Settings): !SqlError {
                 3 => self.wire.send(framed('p', cstring(settings.password)))?
                 5 => {
                     let inner = __hash.md5("{settings.password}{settings.user}".bytes()).hex()
-                    let salted = inner.bytes().concat(body.slice(4, 8).unwrapOr([]))
+                    let salted = inner.bytes().concat(body.slice(4, 8) ?? [])
                     self.wire.send(framed('p', cstring("md5{__hash.md5(salted).hex()}")))?
                 }
                 10 => {
@@ -150,17 +150,13 @@ fn Postgres.start(self, settings: Settings): !SqlError {
                             "the server continued an authentication that did not start",
                         )
                     }
-                    let challenge = String
-                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
-                        .unwrapOr("")
+                    let challenge = String.fromBytes(body.slice(4, body.length()) ?? []) ?? ""
                     let answered = started.answer(challenge, settings.password)?
                     self.wire.send(framed('p', answered.final.bytes()))?
                     scram = answered
                 }
                 12 => {
-                    let proof = String
-                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
-                        .unwrapOr("")
+                    let proof = String.fromBytes(body.slice(4, body.length()) ?? []) ?? ""
                     match scram {
                         some(answered) if answered.verifies(proof) => {}
                         _ => fail lost("the server did not prove that it knows the password")
@@ -199,8 +195,8 @@ fn Scram.answer(self, challenge: String, password: String): Scram ! SqlError {
     for part in challenge.split(",") {
         match part.splitOnce("=") {
             some(("r", value)) => nonce = value
-            some(("s", value)) => salt = __encoding.base64Decode(value).unwrapOr([])
-            some(("i", value)) => iterations = Int.parse(value).unwrapOr(0)
+            some(("s", value)) => salt = __encoding.base64Decode(value) ?? []
+            some(("i", value)) => iterations = Int.parse(value) ?? 0
             _ => {}
         }
     }
@@ -305,7 +301,7 @@ fn Postgres.simple(self, text: String): Outcome ! SqlError {
 /// The rows a command's tag counts: `INSERT 0 3`, `UPDATE 2`, `SELECT 5`.
 fn affectedBy(tag: String): Int {
     match tag.split(" ").last() {
-        some(last) => Int.parse(last).unwrapOr(0)
+        some(last) => Int.parse(last) ?? 0
         none => 0
     }
 }
@@ -403,9 +399,7 @@ fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! Sql
                     if length < 0 {
                         cells.push(Value.Null)
                     } else {
-                        cells.push(
-                            postgresValue(column.oid, row.slice(at, at + length).unwrapOr([])),
-                        )
+                        cells.push(postgresValue(column.oid, row.slice(at, at + length) ?? []))
                         at += length
                     }
                 }
@@ -547,7 +541,7 @@ fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
         701 => Value.Float(Float.fromBits(UInt.wrapping(bigEndian(bytes, 0, 8))))
         1114 => timestampOf(bigEndian(bytes, 0, 8))
         1184 => timestampOf(bigEndian(bytes, 0, 8))
-        1700 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+        1700 => Value.Number(String.fromBytes(bytes) ?? "")
         2950 => {
             let hex = __encoding.hexEncode(bytes)
             let parts = [
@@ -557,12 +551,10 @@ fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
                 hex.slice(16, 20),
                 hex.slice(20, 32),
             ]
-            Value.Text(parts.map((part) { part.unwrapOr("") }).join("-"))
+            Value.Text(parts.map((part) { part ?? "" }).join("-"))
         }
         // jsonb in binary: a version, 1, and its text.
-        3802 => Value.Text(
-            String.fromBytes(bytes.slice(1, bytes.length()).unwrapOr([])).unwrapOr(""),
-        )
+        3802 => Value.Text(String.fromBytes(bytes.slice(1, bytes.length()) ?? []) ?? "")
         _ => match elementOid(oid) {
             some(element) => {
                 let dimensions = bigEndian(bytes, 0, 4)
@@ -577,7 +569,7 @@ fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
                     arrayOf(bytes, var at, sizes, 0, element)
                 }
             }
-            none => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+            none => Value.Text(String.fromBytes(bytes) ?? "")
         }
     }
 }
@@ -594,7 +586,7 @@ fn arrayOf(bytes: Array[Byte], at: var Int, sizes: Array[Int], dimension: Int, o
             if length < 0 {
                 found.push(Value.Null)
             } else {
-                found.push(postgresValue(oid, bytes.slice(at, at + length).unwrapOr([])))
+                found.push(postgresValue(oid, bytes.slice(at, at + length) ?? []))
                 at += length
             }
         }
@@ -618,11 +610,11 @@ fn postgresError(body: Array[Byte], connecting: Bool): SqlError {
     var fields: Map[String, String] = [:]
     var at = 0
     for at < body.length() and body[at] != Byte(0u8) {
-        let field = Char.from(Int(body[at])).unwrapOr(' ')
+        let field = Char.from(Int(body[at])) ?? ' '
         at += 1
         _ = fields.insert("{field}", cstringAt(body, var at))
     }
-    let state = fields.get("C").unwrapOr("")
+    let state = fields.get("C") ?? ""
     let kind = match state {
         "23505" => ErrorKind.Unique
         "23503" => ErrorKind.ForeignKey
@@ -639,7 +631,7 @@ fn postgresError(body: Array[Byte], connecting: Bool): SqlError {
             ErrorKind.Connection
         _ => ErrorKind.Other
     }
-    let said = fields.get("M").unwrapOr("the server failed")
+    let said = fields.get("M") ?? "the server failed"
     SqlError {
         kind
         message: match fields.get("D") {

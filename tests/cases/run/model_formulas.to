@@ -104,7 +104,7 @@ fn main() {
     say("next", model.check(start, steps, holds: [model.temporal(never, name: "1 holds it next, always")]))
     // The same with four tasks at once, and with the states on disk.
     say("in parallel", model.check(start, steps, holds: [both], symmetry: some(mirror), workers: 4))
-    let directory = fs.createTemporaryDirectory().unwrapOr("model-states")
+    let directory = fs.createTemporaryDirectory() ?? "model-states"
     say("on disk", model.check(start, steps, holds: [both], disk: some(directory)))
     say("next on disk", model.check(start, steps, holds: [model.temporal(never, name: "1 holds it next, always")], disk: some(directory), workers: 2))
     _ = fs.remove(directory, recursive: true)

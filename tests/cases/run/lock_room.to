@@ -40,7 +40,7 @@ fn holding(cell: sync.Mutex[Int], go: Receiver[Int], ready: Sender[Int]) {
     cell.update(
         (n) {
             ready.send(1)
-            n += go.receive().unwrapOr(0)
+            n += go.receive() ?? 0
         },
     )
 }

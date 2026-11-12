@@ -13,7 +13,7 @@ fn main(): !http.HttpError {
                 ok(reply) => reply
                 err(problem) => http.Reply.problem(problem)
             }
-            let size = reply.body().map((bytes) { bytes.length() }).unwrapOr(-1)
+            let size = reply.body().map((bytes) { bytes.length() }) ?? -1
             reply
                 .header("x-size", "{size}")
                 .header("X-Size", "{size}")
@@ -39,7 +39,7 @@ fn main(): !http.HttpError {
         let headers = "{response.headerValues("x-size")} {response.headerValues("content-type")}"
         let cookies = response.headerValues("set-cookie").length()
         console.println(
-            "{path} {response.status()} {headers} {cookies} [{response.text().unwrapOr("")}]",
+            "{path} {response.status()} {headers} {cookies} [{response.text() ?? ""}]",
         )
     }
 }

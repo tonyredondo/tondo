@@ -44,9 +44,9 @@ fn main(): !process.ProcessError {
             .grace(time.seconds(5))
             .start()?
     let said = graceful.stdout()
-    console.println(said.readLine().unwrapOr(none).unwrapOr(""))
+    console.println((said.readLine() ?? none) ?? "")
     console.println("graceful: {graceful.cancel()?.code}")
-    console.println(said.readLine().unwrapOr(none).unwrapOr(""))
+    console.println((said.readLine() ?? none) ?? "")
     let abrupt = process.command("sh", "-c", script).stdout(process.Output.Null).start()?
     console.println("abrupt: {abrupt.cancel()?.code}")
     // A descendant keeps the output open; grace bounds the wait for it.

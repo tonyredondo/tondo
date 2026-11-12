@@ -18,7 +18,7 @@ fn fingerprint(file: String): (String, String)? {
     }
 }
 
-let root = env.args().get(0).unwrapOr(".")
+let root = env.args().get(0) ?? "."
 let files = fs.walk(root, skipUnreadable: true)?.filter((entry) { entry.kind == fs.FileKind.File })
 
 // A task for each file: they read and hash at once, on every core, and the
@@ -32,7 +32,7 @@ var same: Map[String, Array[String]] = [:]
 for found in hashing.wait() {
     match found {
         some((digest, file)) => {
-            var group = same.get(digest).unwrapOr([])
+            var group = same.get(digest) ?? []
             group.push(file)
             same[digest] = group
         }

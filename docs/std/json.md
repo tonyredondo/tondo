@@ -78,7 +78,7 @@ import std.json
 fn main(): !json.JsonError {
     let document = json.parse(r"""{"name": "tondo", "items": [{"id": 7, "tags": ["a", "b"]}], "ratio": 0.5}""")?
     let id = document.find("items[0].id").andThen((value) { value.asInt() })
-    let tags = document.find("items[0].tags").andThen((value) { value.asArray() }).unwrapOr([])
+    let tags = document.find("items[0].tags").andThen((value) { value.asArray() }) ?? []
     console.println("{id} {tags.length()} {document.find("missing.path").isNone()}")
     console.println(json.encode(document.field("items").item(0), pretty: true))
 }

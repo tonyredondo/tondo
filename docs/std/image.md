@@ -523,7 +523,7 @@ import std.image
 let bytes = fs.readBytes("photo.jpg")?
 match image.exif(bytes) {
     some(exif) => {
-        console.println("taken {exif.date} with {exif.camera.unwrapOr("an unknown camera")}")
+        console.println("taken {exif.date} with {exif.camera ?? "an unknown camera"}")
         match (exif.latitude, exif.longitude) {
             (some(latitude), some(longitude)) => console.println("at {latitude}, {longitude}")
             _ => console.println("no place")

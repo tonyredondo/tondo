@@ -11,7 +11,7 @@ fn inserted(count: Int): Int {
 fn looked(squares: Map[Int, Int], count: Int): Int {
     var total = 0
     for i in 0..count {
-        total += squares.get(i).unwrapOr(0)
+        total += squares.get(i) ?? 0
     }
     total
 }

@@ -589,7 +589,7 @@ impl serialization.Decode for Version {
     fn decode[S: serialization.Source](input: S, first: serialization.Event): Version ! serialization.Error {
         let text = serialization.Decode.decode[String](input, first)?
         let parts = text.split(".")
-        match (Int.parse(parts[0]), Int.parse(parts.get(1).unwrapOr(""))) {
+        match (Int.parse(parts[0]), Int.parse(parts.get(1) ?? "")) {
             (ok(major), ok(minor)) => Version { major, minor }
             _ => fail input.mismatch(first, "a version, as `1.2`")
         }

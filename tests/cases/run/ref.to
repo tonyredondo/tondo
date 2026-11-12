@@ -55,12 +55,12 @@ fn main() {
     let same = users
     let other = Ref(["ana": User { name: "Ana", age: 30 }])
     console.println("{users == same} {users != other} {users.value == other.value}")
-    console.println("{users.value.length()} {users.value.get("ana").map((u) { u.name }).unwrapOr("-")}")
+    console.println("{users.value.length()} {users.value.get("ana").map((u) { u.name }) ?? "-"}")
 
     var labels: Map[Ref[Map[String, User]], String] = [:]
     labels[users] = "primary"
     labels[other] = "secondary"
-    console.println("{labels.length()} {labels.get(same).unwrapOr("-")}")
+    console.println("{labels.length()} {labels.get(same) ?? "-"}")
 
     let util = Ref(Module { name: "util", imports: [] })
     let http = Ref(Module { name: "http", imports: [util] })

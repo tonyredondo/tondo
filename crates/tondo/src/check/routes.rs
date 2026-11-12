@@ -365,7 +365,7 @@ impl Checker<'_> {
                         let mapper = s.closure(&["·value"], s.block(Vec::new(), converted));
                         let found = s.method(value, "map", vec![mapper]);
                         let missing = s.call(s.path(&["http.Reply", "notFound"]), Vec::new());
-                        s.method(found, "unwrapOr", vec![missing])
+                        s.expr(ast::ExprKind::Coalesce(Box::new(found), Box::new(missing)))
                     }
                     _ => reply_of(self, value, result, &mut doc),
                 };

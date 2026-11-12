@@ -10,7 +10,7 @@ fn main(): !yaml.YamlError {
     let text = "image: !env IMAGE\nscript: !reference [.setup, script]\nplain: ! 12\n"
     let value = yaml.parse(text)?
     match value.get("script") {
-        some(yaml.Value.Tagged(tag, inner)) => console.println("{tag}: {inner.asArray().unwrapOr([]).length()} items")
+        some(yaml.Value.Tagged(tag, inner)) => console.println("{tag}: {(inner.asArray() ?? []).length()} items")
         _ => console.println("no tag")
     }
     // The other methods read the value under the tag, and `!` alone says text.

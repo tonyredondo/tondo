@@ -379,7 +379,7 @@ fn sizes(urls: Array[String]): Array[Int] {
     for url in urls {
         pages.add(spawn size(url))
     }
-    pages.wait().unwrapOr([])
+    pages.wait() ?? []
 }
 
 fn main() {
@@ -403,8 +403,7 @@ type Address = { city: String? }
 type User = { name: String, address: Address? }
 
 fn cityOf(user: User?): String {
-    let city: String? = try { ((user?).address?).city? }
-    city.unwrapOr("nowhere")
+    user?.address?.city ?? "nowhere"
 }
 
 fn main() {

@@ -373,7 +373,7 @@ extern fn write(fd: ffi.CInt, data: ffi.CString, count: ffi.CSize): ffi.CSSize
 
 // The bytes written, or -1 when it fails.
 let text = "written by C\n"
-let written: ffi.CSSize = unsafe { write(1, text, UInt64(text.length()).unwrapOr(0u64)) }
+let written: ffi.CSSize = unsafe { write(1, text, UInt64(text.length()) ?? 0u64) }
 if written < 0 {
     panic("write failed")
 }

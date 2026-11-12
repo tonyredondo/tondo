@@ -117,8 +117,8 @@ import std.yaml
 
 let config = yaml.parse("server:\n  host: localhost\n  ports: [8080, 8081]\n")?
 let host = config.find("server.host").andThen((value) { value.asText() })
-let ports = config.find("server.ports").andThen((value) { value.asArray() }).unwrapOr([])
-console.println("{host.unwrapOr("?")} with {ports.length()} ports")
+let ports = config.find("server.ports").andThen((value) { value.asArray() }) ?? []
+console.println("{host ?? "?"} with {ports.length()} ports")
 ```
 
 Implements `Display`, `reflect.Reflect`, `serialization.Encode`, `serialization.Decode`.
@@ -372,7 +372,7 @@ import std.yaml
 
 let doc = yaml.load("port: 8080   # where it listens\n")?
 let port = doc.find("port").expect("port is set")
-console.println("line {port.line}, column {port.column}: {port.comment.unwrapOr("")}")
+console.println("line {port.line}, column {port.column}: {port.comment ?? ""}")
 ```
 
 ### NodeKind

@@ -103,7 +103,7 @@ impl Message for Any {
             out.end()
             return
         }
-        let name = self.typeUrl.split("/").last().unwrapOr(self.typeUrl)
+        let name = self.typeUrl.split("/").last() ?? self.typeUrl
         let inner = JsonWriter { json: __json.writer(), protoNames: out.protoNames }
         if not wellKnownToJson(name, self.value, inner)? {
             let known = match knownMessage(name) {
@@ -149,7 +149,7 @@ impl Message for Any {
                 "an `Any` in JSON says its type in `@type`",
             )
         }
-        let name = typeUrl.split("/").last().unwrapOr(typeUrl)
+        let name = typeUrl.split("/").last() ?? typeUrl
         let held = if specialJson(name) {
             match fields.find((field) { field.0 == "value" }) {
                 some((_, inner)) => inner

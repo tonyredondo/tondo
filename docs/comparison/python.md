@@ -66,7 +66,7 @@ fn main() {
     let numbers = [3, 1, 4, 1, 5, 9, 2, 6]
     console.println("{numbers[-1]} {numbers[1:4]} {numbers[::2]} {5 in numbers}")
 
-    let (smallest, largest) = (numbers.min().unwrapOr(0), numbers.max().unwrapOr(0))
+    let (smallest, largest) = (numbers.min() ?? 0, numbers.max() ?? 0)
     console.println("from {smallest} to {largest}, {numbers.sum() / numbers.length()} on average")
 
     let words = long("the quick brown fox jumps over the lazy dog", least: 5)
@@ -214,7 +214,7 @@ fn main() {
     ]
     for name in ["ada", "alan", "grace"] {
         // A user that may not be there, with an email that may not be there.
-        let email = find(users, name).andThen((user) { user.email }).unwrapOr("no email")
+        let email = find(users, name).andThen((user) { user.email }) ?? "no email"
         console.println("{name}: {email}")
     }
 }
@@ -407,7 +407,7 @@ fn area(shape: Shape): Float {
         Shape.Rectangle(width, height) => width * height
         Shape.Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
-            math.sqrt(s * (s - a) * (s - b) * (s - c)).unwrapOr(0.0)
+            math.sqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
         }
     }
 }
@@ -577,7 +577,7 @@ fn main() {
     let text = "to be or not to be that is the question to be"
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = counts.get(word).unwrapOr(0) + 1
+        counts[word] = (counts.get(word) ?? 0) + 1
     }
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
@@ -772,7 +772,7 @@ import std.sync
 
 fn work(hits: sync.Mutex[Map[String, Int]], page: String) {
     for _ in 0..100 {
-        hits.update((counts) { counts[page] = counts.get(page).unwrapOr(0) + 1 })
+        hits.update((counts) { counts[page] = (counts.get(page) ?? 0) + 1 })
     }
 }
 
@@ -785,7 +785,7 @@ fn main() {
     }
     _ = group.wait()
     let counts = hits.get()
-    console.println("{counts.get("/home").unwrapOr(0)} {counts.get("/about").unwrapOr(0)}")
+    console.println("{counts.get("/home") ?? 0} {counts.get("/about") ?? 0}")
 }
 ```
 

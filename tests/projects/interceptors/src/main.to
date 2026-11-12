@@ -99,7 +99,7 @@ fn main(): !(http.HttpError | grpc.Status) {
             (_, direction, message) {
                 match direction {
                     grpc.Direction.Received => {
-                        let name = message.get("name").map((value) { "{value}" }).unwrapOr("?")
+                        let name = message.get("name").map((value) { "{value}" }) ?? "?"
                         names.update((list) { list.push(name) })
                     }
                     grpc.Direction.Sent => _ = replied.add(1)

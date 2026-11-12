@@ -24,7 +24,7 @@ fn main() {
         none => console.println("none")
     }
     console.println(
-        "{image.exif(image.blank(2, 2, image.Color.rgb(0, 0, 0)).encode(image.Format.Png).unwrapOr([])).isNone()}",
+        "{image.exif(image.blank(2, 2, image.Color.rgb(0, 0, 0)).encode(image.Format.Png) ?? []).isNone()}",
     )
     console.println("{image.exif([]).isNone()}")
     console.println("{image.exif(Turned).map((e) { e.orientation })}")

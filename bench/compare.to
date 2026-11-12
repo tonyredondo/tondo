@@ -57,17 +57,13 @@ fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
     let text = ran.text().mapErr((e) { "tondo's report is not text: {e}" })?
     let report = json.parse(text).mapErr((e) { "tondo gave no report: {e}" })?
     var measured: Map[String, Measure] = [:]
-    for entry in report.field("tests").asArray().unwrapOr([]) {
-        let name = entry.field("name").asText().unwrapOr("")
-        for attempt in entry.field("attempts").asArray().unwrapOr([]) {
-            for benchmark in attempt.field("benchmarks").asArray().unwrapOr([]) {
-                let key = "{name}/{benchmark.field("name").asText().unwrapOr("")}"
-                let nanoseconds = benchmark
-                    .field("ns_per_op")
-                    .field("median")
-                    .asFloat()
-                    .unwrapOr(0.0)
-                let allocations = benchmark.field("allocations_per_op").asFloat().unwrapOr(0.0)
+    for entry in (report.field("tests").asArray() ?? []) {
+        let name = entry.field("name").asText() ?? ""
+        for attempt in (entry.field("attempts").asArray() ?? []) {
+            for benchmark in (attempt.field("benchmarks").asArray() ?? []) {
+                let key = "{name}/{benchmark.field("name").asText() ?? ""}"
+                let nanoseconds = benchmark.field("ns_per_op").field("median").asFloat() ?? 0.0
+                let allocations = benchmark.field("allocations_per_op").asFloat() ?? 0.0
                 let instructions = benchmark.field("instructions_per_op").asFloat()
                 let cycles = benchmark.field("cycles_per_op").asFloat()
                 measured[key] = Measure { nanoseconds, allocations, instructions, cycles }
@@ -111,14 +107,10 @@ fn goSide(seconds: String): Map[String, Measure] ! String {
             continue
         }
         let suffix = parts[1].split("-")
-        let benchmark = suffix
-            .slice(0, suffix.length() - 1)
-            .unwrapOr([])
-            .join("-")
-            .replace("_", " ")
+        let benchmark = (suffix.slice(0, suffix.length() - 1) ?? []).join("-").replace("_", " ")
         let key = "{parts[0].toLower()}/{benchmark}"
-        let nanoseconds = Float.parse(words[2]).unwrapOr(0.0)
-        let allocations = Float.parse(words[6]).unwrapOr(0.0)
+        let nanoseconds = Float.parse(words[2]) ?? 0.0
+        let allocations = Float.parse(words[6]) ?? 0.0
         measured[key] = Measure { nanoseconds, allocations, instructions: none, cycles: none }
     }
     measured
@@ -133,7 +125,7 @@ fn perfCounts(text: String): (Float, Float) {
         if fields.length() < 3 {
             continue
         }
-        let value = Float.parse(fields[0]).unwrapOr(0.0)
+        let value = Float.parse(fields[0]) ?? 0.0
         if fields[2].startsWith("instructions") {
             instructions = value
         } else if fields[2].startsWith("cycles") {
@@ -199,7 +191,7 @@ fn goCounts(measured: Map[String, Measure]): Map[String, Measure] ! String {
                 .directory("bench/go")
                 .output()
             match ran {
-                ok(out) => perfCounts(String.fromBytes(out.stderr).unwrapOr(""))
+                ok(out) => perfCounts(String.fromBytes(out.stderr) ?? "")
                 err(_) => (0.0, 0.0)
             }
         }
@@ -285,7 +277,7 @@ fn againstOld(
         }
     }
     var rows: Array[(String, Measure, Measure)] = []
-    for (name, _) in news.first().unwrapOr([:]) {
+    for (name, _) in (news.first() ?? [:]) {
         rows.push((name, combined(olds, name), combined(news, name)))
     }
     rows.sortBy((row) { -row.2.nanoseconds / row.1.nanoseconds })
@@ -333,12 +325,12 @@ fn main(): !String {
             "--time" => seconds = value
             "--output" => output = value
             "--old" => old = value
-            "--rounds" => rounds = Int.parse(value).unwrapOr(4)
-            "--max" => max = Float.parse(value).unwrapOr(5.0)
+            "--rounds" => rounds = Int.parse(value) ?? 4
+            "--max" => max = Float.parse(value) ?? 5.0
             _ => {}
         }
     }
-    let tondo = env.get("TONDO").unwrapOr("tondo")
+    let tondo = env.get("TONDO") ?? "tondo"
     if old != "" {
         againstOld(old, tondo, seconds, rounds, max, output)?
         return

@@ -181,9 +181,7 @@ pub fn checkAs(value: __reflect.Value, info: __reflect.TypeInfo): !Invalid {
 /// under the path `at`.
 fn violationsOf(value: __reflect.Value, info: __reflect.TypeInfo, at: String): Array[Violation] {
     var found: Array[Violation] = []
-    let inner = (index: Int): __reflect.TypeInfo {
-        info.genericArguments().get(index).unwrapOr(info)
-    }
+    let inner = (index: Int): __reflect.TypeInfo { info.genericArguments().get(index) ?? info }
     match info.kind() {
         __reflect.TypeKind.Record => {
             for described in info.fields() {
@@ -251,13 +249,13 @@ fn rulesOf(field: __reflect.FieldInfo, written: __reflect.Value, path: String): 
             none => return []
         }
     }
-    let text = value.to[String]().unwrapOr("{value}")
+    let text = value.to[String]() ?? "{value}"
     let count = match value.typeInfo().kind() {
         __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => value.entries().length()
         __reflect.TypeKind.Applied(_) => value.elements().length()
         _ => text.length()
     }
-    let number = Float.parse("{value}").unwrapOr(0.0)
+    let number = Float.parse("{value}") ?? 0.0
     let integer = not "{value}".contains(".")
     let shown = (bound: Float): String {
         if integer { "{bound}".removeSuffix(".0") } else { "{bound}" }

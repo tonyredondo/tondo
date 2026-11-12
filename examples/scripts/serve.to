@@ -10,8 +10,8 @@ import std.fs
 import std.http
 
 let arguments = env.args()
-let directory = arguments.get(0).unwrapOr(".")
-let port = arguments.get(1).andThen((text) { Int.parse(text).ok() }).unwrapOr(8000)
+let directory = arguments.get(0) ?? "."
+let port = arguments.get(1).andThen((text) { Int.parse(text).ok() }) ?? 8000
 
 var app = http.App()
 app.files("", fs.disk(directory))

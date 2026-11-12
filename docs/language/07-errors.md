@@ -48,7 +48,7 @@ fn main() {
         some(user) => console.println("found {user.name}")
         none => console.println("nobody")
     }
-    let email = find(users, "bo").andThen((user) { user.email }).unwrapOr("no email")
+    let email = find(users, "bo").andThen((user) { user.email }) ?? "no email"
     console.println(email)
     console.println("{find(users, "cy").isNone()} {users.get(5).isSome()} {users.first().map((user) { user.name })}")
 }
@@ -280,14 +280,14 @@ fn parse(text: String): Int ! String {
 }
 
 fn main() {
-    let fallback = parse("x").unwrapOr(0)
+    let fallback = parse("x") ?? 0
     let doubled = parse("21").map((n) { n * 2 })
     let chained = parse("4").andThen((n) { parse("{n}0") })
     let maybe = parse("").ok()
     let required = some(5).okOr("missing")
     console.println("{fallback} {doubled} {chained} {maybe} {required}")
     let missing: Int? = none
-    console.println("{some(3).filter((n) { n > 5 })} {missing.orElse(some(1))} {parse("7").expect("a literal")}")
+    console.println("{some(3).filter((n) { n > 5 })} {missing ?? some(1)} {parse("7").expect("a literal")}")
 }
 ```
 
@@ -312,8 +312,8 @@ type Address = { city: String? }
 type User = { name: String, address: Address? }
 
 fn cityOf(user: User): String {
-    let city: String? = try { (user.address?).city? }
-    city.unwrapOr("nowhere")
+    let city: String? = user.address?.city
+    city ?? "nowhere"
 }
 
 fn main() {

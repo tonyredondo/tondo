@@ -1,0 +1,29 @@
+// A loaded template writes `value ?? fallback` as code does, the fallback
+// only when needed and binding least of all; `unwrapOr` is gone there too.
+
+import std.console
+import std.template
+
+type Page = {
+    title: String?
+    count: Int?
+}
+
+fn main(): !template.TemplateError {
+    var site = template.Set.text()
+    site.add(
+        "page",
+        r"""<h1>{{ title ?? "untitled" }}</h1><p>{{ count ?? 0 }} {{ count ?? 1 + 1 }}</p>""",
+    )?
+    console.println(site.render("page", Page { title: none, count: 3 })?)
+    console.println(site.render("page", Page { title: "Tea", count: none })?)
+    site.add("old", r"""{{ title.unwrapOr("x") }}""")?
+    match site.render("old", Page { title: none, count: none }) {
+        ok(text) => console.println(text)
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: <h1>untitled</h1><p>3 3</p>
+// expect-stdout: <h1>Tea</h1><p>0 2</p>
+// expect-stdout: old:1:9: `unwrapOr` is gone: write `value ?? fallback`

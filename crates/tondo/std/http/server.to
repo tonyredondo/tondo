@@ -179,7 +179,7 @@ pub fn proxy(
     strip: String = "",
     client: Client? = none,
 ): fn(Request): Reply ! Problem {
-    let sender = client.unwrapOr(Client(redirects: 0))
+    let sender = client ?? Client(redirects: 0)
     let base = target.removeSuffix("/")
     (request): Reply ! Problem {
         var path = request.path().removePrefix(strip)
@@ -203,7 +203,7 @@ pub fn proxy(
         headers["x-forwarded-host"] = request.host()
         headers["x-forwarded-proto"] = request.scheme()
         let length = request.header("content-length").andThen((text) { Int.parse(text).ok() })
-        let contentType = request.header("content-type").unwrapOr("application/octet-stream")
+        let contentType = request.header("content-type") ?? "application/octet-stream"
         let body: Body? = if request.method() == "GET" or request.method() == "HEAD" {
             none
         } else {
@@ -222,7 +222,7 @@ pub fn proxy(
         }
         var reply = Reply.stream(
             response.body(),
-            contentType: response.header("content-type").unwrapOr("application/octet-stream"),
+            contentType: response.header("content-type") ?? "application/octet-stream",
             status: response.status(),
         )
         for (name, value) in response.headers() {
@@ -257,10 +257,10 @@ const HopByHop: Array[String] = [
 /// The IP address of `address:port` or `[address]:port`.
 fn peerIp(address: String): String {
     if address.startsWith("[") {
-        return address.removePrefix("[").splitOnce("]").map((parts) { parts.0 }).unwrapOr("")
+        return address.removePrefix("[").splitOnce("]").map((parts) { parts.0 }) ?? ""
     }
     match address.findLast(":") {
-        some(at) => address.slice(0, at).unwrapOr("")
+        some(at) => address.slice(0, at) ?? ""
         none => address
     }
 }
@@ -297,7 +297,7 @@ fn tlsParts(tls: Tls?): (String, String, String, Int) {
                 __net.TlsVersion.Tls12 => 12
                 __net.TlsVersion.Tls13 => 13
             }
-            (given.certificate, given.privateKey, given.clients.unwrapOr(""), minimum)
+            (given.certificate, given.privateKey, given.clients ?? "", minimum)
         }
         none => ("", "", "", 12)
     }
@@ -311,7 +311,7 @@ fn bound(
     limits: Limits?,
 ): httpNative.Native ! HttpError {
     let (certificate, key, clients, minimum) = tlsParts(tls)
-    let allowed = limits.unwrapOr(Limits.standard())
+    let allowed = limits ?? Limits.standard()
     let (heads, bodies, replies) = (
         allowed.headTimeout.milliseconds(),
         allowed.bodyTimeout.milliseconds(),

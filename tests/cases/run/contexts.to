@@ -57,7 +57,7 @@ fn main() {
     let show = () { "closure sees {Ctx.name}" }
     let (out, seen) = channel[String](1)
     spawn detached report(out)
-    console.println(seen.receive().unwrapOr("nothing"))
+    console.println(seen.receive() ?? "nothing")
     {
         with Ctx { name: "block" }
         console.println(show())

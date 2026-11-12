@@ -192,7 +192,7 @@ import std.console
 
 fn main() {
     let values = [3, 4]
-    let third = recover { values[2] }.unwrapOr(0)
+    let third = recover { values[2] } ?? 0
     console.println("{third}")
     match recover { panic("broken", code: "cache.corrupt") } {
         err(p) if p.code == "cache.corrupt" => console.println("rebuild: {p.message}")

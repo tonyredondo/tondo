@@ -62,7 +62,7 @@ fn main(): !(mcp.McpError | fs.FsError) {
     mcp.serve(Notes { files, dir: "notes" }, name: "notes")?
     console.setOutput(output)
     // Each request is answered in a task of its own, so in any order.
-    let lines = protocol.text().unwrapOr("").lines().sortedWith((a, b) { a.compare(b) })
+    let lines = (protocol.text() ?? "").lines().sortedWith((a, b) { a.compare(b) })
     for line in lines {
         console.println(line)
     }

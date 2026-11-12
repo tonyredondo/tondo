@@ -724,7 +724,7 @@ fn main() {
         match console.readLine() {
             some(line) => {
                 seen += 1
-                let by = Int.parse(line).unwrapOr(1)
+                let by = Int.parse(line) ?? 1
                 console.println("{seen} {share(100, by)}")
             }
             none => break

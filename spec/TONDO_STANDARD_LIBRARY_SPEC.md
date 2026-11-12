@@ -2862,10 +2862,10 @@ su otra forma es uno solo; `code(): Int`, `Char.from(code: Int): Char?` y
 `compare`.
 
 `Option[T]`: `isSome`, `isNone`, `map(fn(T): U): U?`, `andThen(fn(T): U?): U?`,
-`unwrapOr(fallback: T): T`, `orElse(other: T?): T?`, `filter(fn(T): Bool): T?`,
+`filter(fn(T): Bool): T?`,
 `okOr(error: E): T ! E` y `expect(message: String): T`, que hace pánico con el
 mensaje si no hay valor. `Result[T, E]`: `isOk`, `isErr`, `map(fn(T): U): U ! E`,
-`mapErr(fn(E): F): T ! F`, `andThen(fn(T): U ! E): U ! E`, `unwrapOr`, `ok(): T?`,
+`mapErr(fn(E): F): T ! F`, `andThen(fn(T): U ! E): U ! E`, `ok(): T?`,
 `err(): E?` y `expect`, cuyo pánico dice el mensaje y el error: `loading the app:
 LoadError.Missing`. Un pánico dentro de la librería estándar se ubica en la
 llamada del programa que llegó a él; la traza conserva el frame de la librería.
@@ -2912,7 +2912,7 @@ fn extend(var self, other: Array[T])
 fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 ~~~
 
-`Map[K, V]`: `getOr(key, fallback): V`, `mapValues(fn(V): W): Map[K, W]`,
+`Map[K, V]`: `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
 `other`. `Set[T]`: `union`, `intersection`, `difference` e `isSubset`.
 `Deque[T]`: `contains(value: T): Bool`, con `T: Equatable`, como `Array`.
@@ -4645,7 +4645,7 @@ registro, así que un archivo de cualquier tamaño pasa sin cargarse entero:
 let input = fs.open("sales.csv", fs.OpenMode.Read)?.reader()
 for record in csv.records(input) {
     let sale = record?
-    total += Int.parse(sale.getOr("amount", "0"))?
+    total += Int.parse(sale["amount"] ?? "0")?
 }
 
 let out = csv.Writer(fs.open("report.csv", fs.OpenMode.Write)?.writer())
@@ -5841,7 +5841,7 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
     `drop`, `reversed`, `enumerate`, `join`, `concat`.
   - `Map`: `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
     `entries`.
-  - Opcionales: `isSome`, `isNone`, `unwrapOr`.
+  - Opcionales: `isSome`, `isNone`, y `value ?? fallback` (lenguaje 17.13).
 - Un `json.Value`, `yaml.Value` o `toml.Value` se lee como lo que tiene: un
   texto es un `String`, un número un `Int` o un `Float`, un booleano un
   `Bool`, y un array o un mapa se recorre con `for` y se lee por sus

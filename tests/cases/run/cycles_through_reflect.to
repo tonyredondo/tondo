@@ -21,7 +21,7 @@ fn main() {
     for i in 0..2000 {
         _ = holder("h{i}")
     }
-    let back = alive.value.kept.get().map((value) { value.to[Ref[Holder]]().map((it) { it == alive }).unwrapOr(false) })
+    let back = alive.value.kept.get().map((value) { value.to[Ref[Holder]]().map((it) { it == alive }) ?? false })
     console.println("{alive.value.name} {back}")
 }
 

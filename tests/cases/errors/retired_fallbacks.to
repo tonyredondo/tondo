@@ -1,0 +1,16 @@
+// `unwrapOr`, `orElse` and `getOr` are gone: `??` gives the value or a
+// fallback, which it evaluates only when needed.
+
+fn main() {
+    let name: String? = none
+    let count: Int? = 4
+    let ages = ["ada": 36]
+    let a = name.unwrapOr("guest")
+    let b = Int.parse("12").unwrapOr(0)
+    let c = name.orElse("other")
+    let d = ages.getOr("bo", 0)
+}
+
+// expect-error: E1001 `unwrapOr` is gone: write `value ?? fallback`, which evaluates the fallback only when needed
+// expect-error: E1001 `orElse` is gone: write `value ?? fallback`
+// expect-error: E1001 `getOr` is gone: write `map[key] ?? fallback`

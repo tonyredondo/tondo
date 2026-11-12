@@ -103,7 +103,7 @@ fn roundTrips(stream: net.Stream, count: Int): Int ! net.NetError {
     var total = 0
     for i in 0..count {
         stream.write("ping {i}\n")?
-        total += stream.readLine()?.unwrapOr("").length()
+        total += (stream.readLine()? ?? "").length()
     }
     total
 }

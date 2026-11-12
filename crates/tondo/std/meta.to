@@ -494,7 +494,7 @@ pub fn Input.text(self): String ! Error {
 ///     var keys: Array[String] = []
 ///     for line in request.input("messages.txt")?.text()?.lines() {
 ///         match line.find(" = ") {
-///             some(at) => keys.push(line.slice(0, at).unwrapOr("").trim())
+///             some(at) => keys.push((line.slice(0, at) ?? "").trim())
 ///             none => {}
 ///         }
 ///     }
@@ -657,7 +657,7 @@ pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error {
     if self.written.isNone() and self.problems.length() == 0 {
         fail Error.MissingOutput("derive")
     }
-    DeriveResponse { source: self.written.unwrapOr(""), problems: self.problems }
+    DeriveResponse { source: self.written ?? "", problems: self.problems }
 }
 
 /// What a provider gives back.
@@ -756,7 +756,7 @@ fn substitute(name: String, values: Map[String, String]): String {
 }
 
 fn text(value: __json.Value): String {
-    value.asText().unwrapOr("")
+    value.asText() ?? ""
 }
 
 fn typeRef(value: __json.Value): TypeRef {
@@ -765,12 +765,12 @@ fn typeRef(value: __json.Value): TypeRef {
 
 fn fieldViews(value: __json.Value): Array[FieldView] {
     var fields: Array[FieldView] = []
-    for field in value.asArray().unwrapOr([]) {
+    for field in (value.asArray() ?? []) {
         fields.push(
             FieldView {
                 name: text(field["name"])
                 typeRef: typeRef(field["type"])
-                private: field["private"].asBool().unwrapOr(false)
+                private: field["private"].asBool() ?? false
                 annotations: annotationViews(field["annotations"])
             },
         )
@@ -780,7 +780,7 @@ fn fieldViews(value: __json.Value): Array[FieldView] {
 
 fn annotationViews(value: __json.Value): Array[AnnotationView] {
     var annotations: Array[AnnotationView] = []
-    for annotation in value.asArray().unwrapOr([]) {
+    for annotation in (value.asArray() ?? []) {
         annotations.push(
             AnnotationView { annotationName: text(annotation["name"]), value: annotation["value"] },
         )
@@ -794,23 +794,23 @@ fn readRequest(source: String): DeriveRequest {
     DeriveRequest {
         traitText: text(document["trait"])
         declaration: declarationOf(document["target"])
-        outputLimit: document["limits"]["output"].asInt().unwrapOr(1048576)
+        outputLimit: document["limits"]["output"].asInt() ?? 1048576
     }
 }
 
 fn declarationOf(target: __json.Value): Declaration {
     var generics: Array[GenericView] = []
-    for generic in target["generics"].asArray().unwrapOr([]) {
+    for generic in (target["generics"].asArray() ?? []) {
         var bounds: Array[String] = []
-        for bound in generic["bounds"].asArray().unwrapOr([]) {
+        for bound in (generic["bounds"].asArray() ?? []) {
             bounds.push(text(bound))
         }
         generics.push(GenericView { name: text(generic["name"]), bounds })
     }
     var variants: Array[VariantView] = []
-    for variant in target["variants"].asArray().unwrapOr([]) {
+    for variant in (target["variants"].asArray() ?? []) {
         var elements: Array[TypeRef] = []
-        for element in variant["elements"].asArray().unwrapOr([]) {
+        for element in (variant["elements"].asArray() ?? []) {
             elements.push(typeRef(element))
         }
         variants.push(
@@ -869,7 +869,7 @@ fn parsed(source: String): __json.Value {
 fn readGenerate(source: String): GenerateRequest {
     let document = parsed(source)
     var inputs: Array[Input] = []
-    for input in document["inputs"].asArray().unwrapOr([]) {
+    for input in (document["inputs"].asArray() ?? []) {
         inputs.push(
             Input {
                 name: text(input["name"])
@@ -879,18 +879,18 @@ fn readGenerate(source: String): GenerateRequest {
         )
     }
     var outputs: Array[String] = []
-    for output in document["outputs"].asArray().unwrapOr([]) {
+    for output in (document["outputs"].asArray() ?? []) {
         outputs.push(text(output))
     }
     var declarations: Array[Declaration] = []
-    for declaration in document["declarations"].asArray().unwrapOr([]) {
+    for declaration in (document["declarations"].asArray() ?? []) {
         declarations.push(declarationOf(declaration))
     }
     GenerateRequest {
         inputList: inputs
         outputList: outputs
         declarationList: declarations
-        outputLimit: document["limits"]["output"].asInt().unwrapOr(1048576)
+        outputLimit: document["limits"]["output"].asInt() ?? 1048576
     }
 }
 

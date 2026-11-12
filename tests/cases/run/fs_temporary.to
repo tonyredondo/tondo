@@ -6,7 +6,7 @@ import std.fs
 import std.path
 
 fn name(of: String): String {
-    return path.fileName(of).unwrapOr("")
+    return path.fileName(of) ?? ""
 }
 
 fn main(): !fs.FsError {

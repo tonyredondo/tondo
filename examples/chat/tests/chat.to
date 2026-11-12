@@ -102,7 +102,7 @@ test thePageComesFromTheExecutable {
     let server = chat.routes().start()?
     defer server.stop()
     let page = http.get("{server.url()}/")?
-    assert(page.header("Content-Type").unwrapOr("").startsWith("text/html"))
+    assert((page.header("Content-Type") ?? "").startsWith("text/html"))
     assert(page.text()?.contains("<title>Chat</title>"))
     assert(http.get("{server.url()}/app.js")?.text()?.contains("new WebSocket"))
 }

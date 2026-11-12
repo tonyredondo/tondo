@@ -553,9 +553,12 @@ impl Lexer<'_> {
             return;
         };
         self.pos += text.len();
-        // `value??` with nothing after it is two propagations, which are
-        // written `(value?)?`: it goes on as that.
+        // `value??` written against its value with nothing after it is two
+        // propagations, which are written `(value?)?`: it goes on as that. A
+        // `??` with a space before it that ends a line goes on with the next.
+        let spaced = self.text[..start].ends_with([' ', '\t']);
         if *tok == Tok::Coalesce
+            && !spaced
             && self.rest().trim_start_matches([' ', '\t']).starts_with(['\n', '\r', ')', ']', '}', ','])
         {
             let message = "`??` needs what to give when there is no value, as `value ?? fallback`; to propagate twice, write `(value?)?`, and an option of an option is the type `(T?)?`";
@@ -1187,5 +1190,6 @@ let c = "{"{get("http://127.0.0.1:1/")}".startsWith("err(no")}""#;
         assert_eq!(toks("a ?? b").1, 0);
         assert_eq!(toks("a??\n").1, 1);
         assert_eq!(toks("f(a??)").1, 1);
+        assert_eq!(toks("a ??\nb").1, 0);
     }
 }

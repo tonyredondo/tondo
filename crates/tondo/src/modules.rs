@@ -1037,7 +1037,7 @@ impl Linker<'_> {
                     }
                 }
             }
-            ExprKind::Unsafe(block) | ExprKind::Recover(block) | ExprKind::TryBlock(block) => self.block(block),
+            ExprKind::Unsafe(block) | ExprKind::Recover(block) => self.block(block),
             ExprKind::Within(limit, block) => {
                 self.expr(limit);
                 self.block(block);

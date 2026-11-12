@@ -88,7 +88,7 @@ pub fn verifyPassword(password: String, hash: String): Bool {
         return pbkdf2Matches(password, iterations, unpadded(parts[3]), unpadded(parts[4]))
     }
     if hash.startsWith("pbkdf2_sha256$") and parts.length() == 4 {
-        let expected = __encoding.base64Decode(parts[3]).unwrapOr([])
+        let expected = __encoding.base64Decode(parts[3]) ?? []
         return pbkdf2Is(password, parts[1], parts[2].bytes(), expected)
     }
     false
@@ -97,9 +97,7 @@ pub fn verifyPassword(password: String, hash: String): Bool {
 /// PBKDF2 of PHC and passlib, whose salt and digest are Base64 without
 /// padding, passlib's with `.` for `+`.
 fn pbkdf2Matches(password: String, iterations: String, salt: String, digest: String): Bool {
-    let read = (text: String): Array[Byte] {
-        __encoding.base64Decode(text.replace(".", "+")).unwrapOr([])
-    }
+    let read = (text: String): Array[Byte] { __encoding.base64Decode(text.replace(".", "+")) ?? [] }
     pbkdf2Is(password, iterations, read(salt), read(digest))
 }
 
@@ -217,13 +215,13 @@ pub fn SecretKey.open(
     if sealed.length() < 28 {
         fail refused
     }
-    let nonce = sealed.slice(0, 12).unwrapOr([])
-    let rest = sealed.slice(12, sealed.length()).unwrapOr([])
+    let nonce = sealed.slice(0, 12) ?? []
+    let rest = sealed.slice(12, sealed.length()) ?? []
     let opened = codecNative.open(cipherCode(self.cipher), self.key, nonce, rest, context)
     if opened.isEmpty() or opened[0] == Byte(UInt8.wrapping(0)) {
         fail refused
     }
-    opened.slice(1, opened.length()).unwrapOr([])
+    opened.slice(1, opened.length()) ?? []
 }
 
 fn cipherCode(cipher: Cipher): Int {
@@ -468,7 +466,7 @@ fn privateKeyInfo(identifier: Array[Byte], key: Array[Byte]): Array[Byte] {
 }
 
 fn algorithm(oid: String, parameters: Array[Byte]?): Array[Byte] {
-    tlv(0x30, tlv(0x06, oidBytes(oid)).concat(parameters.unwrapOr([])))
+    tlv(0x30, tlv(0x06, oidBytes(oid)).concat(parameters ?? []))
 }
 
 fn kindCode(kind: KeyKind): Int {
@@ -549,7 +547,7 @@ pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError {
     }
     let validity = children(der, tbs[3 + shift])?
     var names: Array[String] = []
-    for part in tbs.slice(6 + shift, tbs.length()).unwrapOr([]) {
+    for part in (tbs.slice(6 + shift, tbs.length()) ?? []) {
         if part.tag == 0xa3 {
             names = alternativeNames(der, element(der, part.start)?)?
         }
@@ -577,7 +575,7 @@ fn alternativeNames(der: Array[Byte], extensions: Element): Array[String] ! Cryp
         for name in children(der, element(der, value.start)?)? {
             let bytes = slice(der, name.start, name.end)
             if name.tag == 0x82 {
-                names.push(String.fromBytes(bytes).unwrapOr(""))
+                names.push(String.fromBytes(bytes) ?? "")
             } else if name.tag == 0x87 {
                 names.push(ipText(bytes))
             }
@@ -608,8 +606,8 @@ fn ipText(bytes: Array[Byte]): String {
     if best < 0 {
         return hex(groups)
     }
-    let before = groups.slice(0, best).unwrapOr([])
-    let after = groups.slice(best + bestLength, groups.length()).unwrapOr([])
+    let before = groups.slice(0, best) ?? []
+    let after = groups.slice(best + bestLength, groups.length()) ?? []
     "{hex(before)}::{hex(after)}"
 }
 
@@ -620,7 +618,7 @@ fn nameOf(der: Array[Byte], name: Element): String ! CryptoError {
     for set in children(der, name)? {
         for pair in children(der, set)? {
             let fields = children(der, pair)?
-            let value = String.fromBytes(slice(der, fields[1].start, fields[1].end)).unwrapOr("")
+            let value = String.fromBytes(slice(der, fields[1].start, fields[1].end)) ?? ""
             parts.insert(0, "{attributeName(oidOf(der, fields[0]))}={value}")
         }
     }
@@ -644,10 +642,10 @@ fn attributeName(oid: String): String {
 
 /// UTCTime or GeneralizedTime, in UTC.
 fn timeOf(der: Array[Byte], at: Element): __time.DateTime ! CryptoError {
-    let text = String.fromBytes(slice(der, at.start, at.end)).unwrapOr("")
+    let text = String.fromBytes(slice(der, at.start, at.end)) ?? ""
     let digits = text.removeSuffix("Z")
     let full = if at.tag == 0x17 {
-        let year = Int.parse(digits.slice(0, 2).unwrapOr("")).unwrapOr(0)
+        let year = Int.parse(digits.slice(0, 2) ?? "") ?? 0
         "{if year < 50 { "20" } else { "19" }}{digits}"
     } else {
         digits
@@ -655,9 +653,7 @@ fn timeOf(der: Array[Byte], at: Element): __time.DateTime ! CryptoError {
     if full.length() < 14 {
         fail failure("the certificate's time `{text}` is not read")
     }
-    let number = (start: Int, end: Int): Int {
-        Int.parse(full.slice(start, end).unwrapOr("")).unwrapOr(0)
-    }
+    let number = (start: Int, end: Int): Int { Int.parse(full.slice(start, end) ?? "") ?? 0 }
     __time.DateTime {
         year: number(0, 4)
         month: number(4, 6)
@@ -714,7 +710,7 @@ fn pemOf(label: String, der: Array[Byte]): String {
     var lines: Array[String] = []
     var at = 0
     for at < text.length() {
-        lines.push(text.slice(at, (at + 64).min(text.length())).unwrapOr(""))
+        lines.push(text.slice(at, (at + 64).min(text.length())) ?? "")
         at += 64
     }
     "-----BEGIN {label}-----\n{lines.join("\n")}\n-----END {label}-----\n"
@@ -763,7 +759,7 @@ fn children(der: Array[Byte], parent: Element): Array[Element] ! CryptoError {
 }
 
 fn slice(der: Array[Byte], start: Int, end: Int): Array[Byte] {
-    der.slice(start, end).unwrapOr([])
+    der.slice(start, end) ?? []
 }
 
 fn broken(): CryptoError {
@@ -793,10 +789,10 @@ fn oidOf(der: Array[Byte], at: Element): String {
 
 /// An object identifier's DER content.
 fn oidBytes(oid: String): Array[Byte] {
-    let numbers = oid.split(".").map((part) { Int.parse(part).unwrapOr(0) })
+    let numbers = oid.split(".").map((part) { Int.parse(part) ?? 0 })
     var bytes: Array[Byte] = []
     var values = [numbers[0] * 40 + numbers[1]]
-    values.extend(numbers.slice(2, numbers.length()).unwrapOr([]))
+    values.extend(numbers.slice(2, numbers.length()) ?? [])
     for value in values {
         var groups = [Byte(UInt8.wrapping(value & 0x7f))]
         var rest = value / 128

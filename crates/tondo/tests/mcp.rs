@@ -192,7 +192,7 @@ fn twice(n: Int): Int {
 }
 
 fn main() {
-    let line = console.readLine().unwrapOr(\"\")
+    let line = console.readLine() ?? \"\"
     console.println(\"{line} {twice(21)}\")
 }
 ";

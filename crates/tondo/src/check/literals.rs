@@ -1,36 +1,10 @@
-//! `try`, collection literals, numbers, templates, display, strings and paths.
+//! `?`, collection literals, numbers, templates, display, strings and paths.
 
 use super::*;
 
 impl<'a> Checker<'a> {
     /// `value?` propagates `none` or an error out of the enclosing function
     /// and otherwise yields the payload (15.2).
-    /// `try { ... }` (15.2): a closure called there, whose `?` ends the block
-    /// and not the function. What it gives comes from where it goes.
-    pub(super) fn try_block(
-        &mut self,
-        cx: &mut FnCx,
-        block: &ast::Block,
-        expected: Option<Ty>,
-        span: Span,
-    ) -> hir::Expr {
-        let gives = expected.filter(|&ty| matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Result(..)));
-        let Some(gives) = gives else {
-            let message = "a `try` block gives an option or a result: say which, as `let city: String? = try { ... }`";
-            self.diags.error("E1301", span, message);
-            return Self::error_expr(span);
-        };
-        let function = self.types.intern(TyKind::Fn(Vec::new(), gives, false, Vec::new(), false));
-        let closure = ast::Closure { is_unsafe: false, params: Vec::new(), result: None, body: block.clone() };
-        self.try_body = true;
-        let value = self.closure(cx, &closure, Some(function), span);
-        let local = self.hidden_local(cx, value.ty);
-        let read = Self::mk(hir::ExprKind::Local(local), value.ty, span);
-        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), Vec::new()), gives, span);
-        let stmts = vec![hir::Stmt::Let(local, value)];
-        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(call)), ty: gives }), gives, span)
-    }
-
     pub(super) fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, expected: Option<Ty>, span: Span) -> hir::Expr {
         if cx.deferred {
             self.diags.error("E1410", span, "a defer block cannot propagate an error; handle it inside the block");

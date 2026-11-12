@@ -145,7 +145,7 @@ pub fn Trailers.all(self): Map[String, String] {
 /// `If-None-Match` and `If-Modified-Since` with `304`. With `download`,
 /// the browser saves it under that name. A missing file is `404`.
 pub fn Reply.file(path: String, download: String? = none): Reply {
-    Reply { code: 200, headerList: [], payload: Payload.File(path, download.unwrapOr("")) }
+    Reply { code: 200, headerList: [], payload: Payload.File(path, download ?? "") }
 }
 
 /// Server-Sent Events: each event the channel receives, until it closes.

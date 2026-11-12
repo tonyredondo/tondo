@@ -6,7 +6,7 @@ the program's standard output, error and input.
 import std.console
 
 console.print("What is your name? ")
-let name = console.readLine().unwrapOr("stranger")
+let name = console.readLine() ?? "stranger"
 console.println("Hello, {name}!")
 console.eprintln("greeted {name}")
 ```

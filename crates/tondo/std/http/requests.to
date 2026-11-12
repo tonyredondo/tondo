@@ -105,8 +105,8 @@ pub fn Problem.from[E: Display](error: E): Problem {
 /// var app = http.App()
 /// app.get("/users/:id", (request) {
 ///     let id = request.intParam("id")?
-///     let fields = request.query("fields").unwrapOr("all")
-///     let route = request.route().unwrapOr("")
+///     let fields = request.query("fields") ?? "all"
+///     let route = request.route() ?? ""
 ///     http.Reply.text("{request.method()} {route} {request.path()}: user {id}, fields {fields}")
 /// })
 /// console.println(app.client().get("/users/42", query: ["fields": "name"])?.text()?)
@@ -252,7 +252,7 @@ pub fn Request.clientIp(self): String {
             last
         }
         none => match self.header("x-real-ip") {
-            some(real) => __net.ip(real.trim()).map((address) { "{address}" }).unwrapOr(remote)
+            some(real) => __net.ip(real.trim()).map((address) { "{address}" }) ?? remote
             none => remote
         }
     }
@@ -261,10 +261,10 @@ pub fn Request.clientIp(self): String {
 /// The address of `1.2.3.4:5678` or `[::1]:5678`, without its port.
 fn hostOf(peer: String): String {
     if peer.startsWith("[") {
-        return peer.slice(1, peer.find("]").unwrapOr(1)).unwrapOr(peer)
+        return peer.slice(1, peer.find("]") ?? 1) ?? peer
     }
     match peer.findLast(":") {
-        some(at) => peer.slice(0, at).unwrapOr(peer)
+        some(at) => peer.slice(0, at) ?? peer
         none => peer
     }
 }
@@ -286,7 +286,7 @@ fn trusts(networks: Array[__net.Network], address: String): Bool {
 
 /// A parameter of the route, decoded: `id` in `/users/:id`.
 pub fn Request.param(self, name: String): String {
-    self.params.getOr(name, "")
+    self.params[name] ?? ""
 }
 
 /// A parameter of the route that must be an integer.
@@ -321,7 +321,7 @@ pub fn Request.queryAs[T: __serialization.Decode](self): T ! Problem {
 /// query: a URL-encoded one, or a multipart one, whose files go to fields
 /// of type `UploadedFile`, in memory.
 pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
-    let kind = self.header("content-type").unwrapOr("").toLower()
+    let kind = (self.header("content-type") ?? "").toLower()
     if not kind.startsWith("multipart/") {
         return readInto[T](pairsOf(self.formText()?), "the form")?
     }
@@ -419,7 +419,7 @@ impl __serialization.Decode for UploadedFile {
 
 /// The text of a URL-encoded form; a multipart one is read by its parts.
 fn Request.formText(self): String ! Problem {
-    let kind = self.header("content-type").unwrapOr("").toLower()
+    let kind = (self.header("content-type") ?? "").toLower()
     if kind.startsWith("multipart/") {
         fail Problem(
             415,
@@ -437,9 +437,9 @@ fn pairsOf(text: String): Array[(String, String)] {
         if pair.isEmpty() {
             continue
         }
-        let equals = pair.find("=").unwrapOr(pair.length())
-        let name = formDecoded(pair.slice(0, equals).unwrapOr(""))
-        pairs.push((name, formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr(""))))
+        let equals = pair.find("=") ?? pair.length()
+        let name = formDecoded(pair.slice(0, equals) ?? "")
+        pairs.push((name, formDecoded(pair.slice(equals + 1, pair.length()) ?? "")))
     }
     pairs
 }
@@ -487,7 +487,7 @@ fn Fields.of(pairs: Array[(String, Given)]): Fields {
     var events: Array[__serialization.Event] = []
     for name in names {
         events.push(__serialization.Event.Key(name))
-        let given = values.get(name).unwrapOr([])
+        let given = values.get(name) ?? []
         if given.length() == 1 {
             events.extend(eventsOf(given[0]))
         } else {
@@ -785,7 +785,7 @@ pub fn Request.bytes(self): Array[Byte] ! Problem {
 /// The body as text, in the charset its content type names, as
 /// `Response.text()` reads it.
 pub fn Request.text(self): String ! Problem {
-    let windows = match windows1252(self.header("content-type").unwrapOr("")) {
+    let windows = match windows1252(self.header("content-type") ?? "") {
         ok(windows) => windows
         err(why) => fail Problem.badRequest("the body: {why}")
     }
@@ -888,7 +888,7 @@ pub fn Request.saveTo(self, path: String): Int ! Problem {
 
 /// A query or form value as it was meant: `+` is a space.
 fn formDecoded(text: String): String {
-    __encoding.urlDecode(text.replace("+", " ")).unwrapOr(text)
+    __encoding.urlDecode(text.replace("+", " ")) ?? text
 }
 
 /// A part of a multipart body. Parts arrive in order: reading one skips
@@ -909,7 +909,7 @@ fn formDecoded(text: String): String {
 ///         if upload.fileName().isEmpty() {
 ///             saved.push("{upload.name()}={upload.text()?}")
 ///         } else {
-///             let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()).unwrapOr("upload")))?
+///             let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()) ?? "upload"))?
 ///             saved.push("{upload.fileName()} ({upload.contentType()}, {size} bytes)")
 ///         }
 ///     }

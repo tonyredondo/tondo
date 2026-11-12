@@ -233,6 +233,7 @@ fn code(out: &mut String, source: &str, range: &Range<usize>) -> Result<(), synt
             Op::Range(inclusive) => write!(out, "{{\"Range\":{inclusive}}}"),
             Op::And(skip) => write!(out, "{{\"And\":{skip}}}"),
             Op::Or(skip) => write!(out, "{{\"Or\":{skip}}}"),
+            Op::Coalesce(skip) => write!(out, "{{\"Coalesce\":{skip}}}"),
             Op::Unless(skip) => write!(out, "{{\"Unless\":{skip}}}"),
             Op::Skip(skip) => write!(out, "{{\"Skip\":{skip}}}"),
         };

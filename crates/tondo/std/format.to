@@ -104,7 +104,7 @@ pub fn apply[T: Display](value: T, spec: String): String ! FormatError {
         format.precision,
         format.width,
         format.fill,
-        format.align.unwrapOr('<'),
+        format.align ?? '<',
     )
 }
 
@@ -131,7 +131,7 @@ fn applyInteger[T: Integer](value: T, spec: String): String ! FormatError {
         format.zero,
         format.width,
         format.fill,
-        format.align.unwrapOr('>'),
+        format.align ?? '>',
     )
 }
 
@@ -152,7 +152,7 @@ fn applyFloat(value: Float, single: Bool, spec: String): String ! FormatError {
         format.zero,
         format.width,
         format.fill,
-        format.align.unwrapOr('>'),
+        format.align ?? '>',
     )
 }
 
@@ -210,7 +210,7 @@ fn specOf(text: String): Spec ! FormatError {
         at += 1
     }
     let (width, afterWidth) = digitsAt(chars, at)
-    format.width = width.unwrapOr(0)
+    format.width = width ?? 0
     at = afterWidth
     if chars.get(at) == '.' {
         let (precision, afterPrecision) = digitsAt(chars, at + 1)
@@ -382,25 +382,25 @@ fn meets(condition: String, count: Int): Bool {
 }
 
 fn holds(words: Array[String], size: Int): Bool {
-    let operand = words.get(0).unwrapOr("")
+    let operand = words.get(0) ?? ""
     var value = if operand == "n" or operand == "i" { size } else { 0 }
     var at = 1
     if words.get(1) == "%" {
-        let modulus = Int.parse(words.get(2).unwrapOr("1")).unwrapOr(1)
+        let modulus = Int.parse(words.get(2) ?? "1") ?? 1
         value = value % modulus
         at = 3
     }
     let equal = words.get(at) == "="
     var inside = false
-    for range in words.get(at + 1).unwrapOr("").split(",") {
+    for range in (words.get(at + 1) ?? "").split(",") {
         match range.splitOnce("..") {
             some((low, high)) => {
-                if value >= Int.parse(low).unwrapOr(0) and value <= Int.parse(high).unwrapOr(0) {
+                if value >= (Int.parse(low) ?? 0) and value <= (Int.parse(high) ?? 0) {
                     inside = true
                 }
             }
             none => {
-                if value == Int.parse(range).unwrapOr(-1) {
+                if value == (Int.parse(range) ?? -1) {
                     inside = true
                 }
             }
@@ -424,14 +424,14 @@ type Symbols = {
 
 fn symbolsOf(locale: String): Symbols {
     let found = textNative.numberSymbols(locale)
-    let at = (index: Int): String { found.get(index).unwrapOr("") }
+    let at = (index: Int): String { found.get(index) ?? "" }
     Symbols {
         digits: at(0)
         decimal: at(1)
         group: at(2)
         minus: at(3)
         percent: at(5)
-        minimumGrouping: Int.parse(at(6)).unwrapOr(1)
+        minimumGrouping: Int.parse(at(6)) ?? 1
         decimalPattern: at(7)
         percentPattern: at(8)
         currencyPattern: at(9)
@@ -454,7 +454,7 @@ fn patternOf(text: String): Pattern {
         none => (text, none)
     }
     let (prefix, digits, suffix) = partsOf(positive)
-    let whole = digits.splitOnce(".").map((parts) { parts.0 }).unwrapOr(digits)
+    let whole = digits.splitOnce(".").map((parts) { parts.0 }) ?? digits
     let groups = whole.split(",")
     let count = groups.length()
     let primary = if count > 1 { groups[count - 1].length() } else { 0 }
@@ -486,7 +486,7 @@ fn partsOf(text: String): (String, String, String) {
         last -= 1
     }
     let part = (start: Int, end: Int): String {
-        chars.slice(start, end).unwrapOr([]).map((c) { "{c}" }).join("")
+        (chars.slice(start, end) ?? []).map((c) { "{c}" }).join("")
     }
     (part(0, first), part(first, last), part(last, chars.length()))
 }
@@ -516,7 +516,7 @@ fn written(parts: __formats.Digits, symbols: Symbols, pattern: Pattern, symbol: 
         }
     }
     // A symbol of letters is kept apart from the digits it touches.
-    let lettered = (found: Char?): Bool { found.map((c) { c.isLetter() }).unwrapOr(false) }
+    let lettered = (found: Char?): Bool { found.map((c) { c.isLetter() }) ?? false }
     let before = if prefix.endsWith("¤") and
         lettered(symbol.chars().collect().get(symbol.length() - 1)) {
         "{symbol}\u{a0}"
@@ -546,11 +546,11 @@ fn grouped(whole: String, pattern: Pattern, symbols: Symbols): String {
     var end = length
     var size = pattern.primary
     for end > size {
-        groups.insert(0, digits.slice(end - size, end).unwrapOr(""))
+        groups.insert(0, digits.slice(end - size, end) ?? "")
         end -= size
         size = pattern.secondary
     }
-    groups.insert(0, digits.slice(0, end).unwrapOr(""))
+    groups.insert(0, digits.slice(0, end) ?? "")
     groups.join(symbols.group)
 }
 
@@ -562,11 +562,7 @@ fn localDigits(text: String, symbols: Symbols): String {
     let local = symbols.digits.chars().collect()
     text
         .chars()
-        .map(
-            (c) {
-                if c.isDigit() { "{local.get(c.code() - '0'.code()).unwrapOr(c)}" } else { "{c}" }
-            },
-        )
+        .map((c) { if c.isDigit() { "{local.get(c.code() - '0'.code()) ?? c}" } else { "{c}" } })
         .collect()
         .join("")
 }

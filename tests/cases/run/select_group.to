@@ -8,7 +8,7 @@ import std.console
 import std.time
 
 fn worker(gate: Receiver[Int]): Int {
-    gate.receive().unwrapOr(-1) * 10
+    (gate.receive() ?? -1) * 10
 }
 
 fn closeSoon(other: Sender[Int]) {

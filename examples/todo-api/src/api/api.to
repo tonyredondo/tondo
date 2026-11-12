@@ -74,7 +74,7 @@ fn traced(
     request: http.Request,
     next: fn(http.Request): http.Reply ! http.Problem,
 ): http.Reply ! http.Problem {
-    with Request { id: request.header("x-request-id").unwrapOr("{uuid.Uuid.v7()}") }
+    with Request { id: request.header("x-request-id") ?? "{uuid.Uuid.v7()}" }
     let started = time.now()
     let reply = next(request)
     let status = match reply {
@@ -85,7 +85,7 @@ fn traced(
         "request",
         [
             "method": request.method(),
-            "route": request.route().unwrapOr(request.path()),
+            "route": request.route() ?? request.path(),
             "status": "{status}",
             "ms": "{started.elapsed().milliseconds()}",
         ],

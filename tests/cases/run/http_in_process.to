@@ -19,7 +19,7 @@ fn main(): !http.HttpError {
     backend.get(
         "/items/:id",
         (request) {
-            let host = request.header("x-forwarded-host").unwrapOr("")
+            let host = request.header("x-forwarded-host") ?? ""
             http.Reply
                 .text("item {request.param("id")} via {host} {request.rawQuery()}")
                 .header("x-backend", "yes")

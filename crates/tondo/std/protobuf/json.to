@@ -232,9 +232,9 @@ fn fractionText(nanoseconds: Int): String {
     }
     let digits = "{nanoseconds}".padStart(9, "0")
     if nanoseconds % 1_000_000 == 0 {
-        ".{digits.slice(0, 3).unwrapOr(digits)}"
+        ".{digits.slice(0, 3) ?? digits}"
     } else if nanoseconds % 1_000 == 0 {
-        ".{digits.slice(0, 6).unwrapOr(digits)}"
+        ".{digits.slice(0, 6) ?? digits}"
     } else {
         ".{digits}"
     }

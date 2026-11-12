@@ -688,7 +688,7 @@ fn describe(info: reflect.TypeInfo): String {
     match info.kind() {
         reflect.TypeKind.Record => "a record of {info.fields().length()} fields"
         reflect.TypeKind.Enum => "an enum of {info.variants().length()} variants"
-        reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }).unwrapOr("?")}"
+        reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }) ?? "?"}"
         reflect.TypeKind.Primitive(_) => "a primitive"
         _ => "another kind"
     }
@@ -874,7 +874,7 @@ pub fn User.greet(self, greeting: String): String {
 }
 
 let info = reflect.typeInfo[User]()
-console.println("{info.qualifiedName()}: {info.docs().unwrapOr("")}")
+console.println("{info.qualifiedName()}: {info.docs() ?? ""}")
 console.println("fields {info.fields().map((field) { field.name() })}, methods {info.methods().map((method) { method.name() })}")
 console.println("{reflect.typeOf(User { name: "Ada", age: 36 }).id() == info.id()}")
 ```
@@ -1013,7 +1013,7 @@ pub type User = {
 }
 
 for field in reflect.typeInfo[User]().fields() {
-    let column = field.annotation[Column]().map((column) { column.name }).unwrapOr(field.externalName())
+    let column = field.annotation[Column]().map((column) { column.name }) ?? field.externalName()
     console.println("{field.ordinal()} {field.name()} -> {column}, default {field.default()}, docs {field.docs()}")
 }
 ```
@@ -1143,7 +1143,7 @@ pub enum Level {
 }
 
 for variant in reflect.typeInfo[Level]().variants() {
-    console.println("{variant.ordinal()} {variant.name()} as {variant.externalName()}: {variant.docs().unwrapOr("")}")
+    console.println("{variant.ordinal()} {variant.name()} as {variant.externalName()}: {variant.docs() ?? ""}")
 }
 ```
 
@@ -1290,7 +1290,7 @@ pub fn Account.deposit(mut self, amount: Int) {
 
 for method in reflect.typeInfo[Account]().methods() {
     let function = method.function()
-    console.println("{method.name()}: {function.parameters().length()} parameters, gives {function.outcome().qualifiedName()}; {method.docs().unwrapOr("")}")
+    console.println("{method.name()}: {function.parameters().length()} parameters, gives {function.outcome().qualifiedName()}; {method.docs() ?? ""}")
 }
 ```
 
@@ -1393,7 +1393,7 @@ pub fn Volume.set(mut self, @Bounds(min: 0, max: 11) level: Int, fade: Bool) {
 
 let method = reflect.typeInfo[Volume]().methods()[0]
 for parameter in method.function().parameters() {
-    let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }).unwrapOr("")
+    let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }) ?? ""
     console.println("{parameter.position()} {parameter.name()}: {parameter.typeInfo().qualifiedName()}{range}")
 }
 ```

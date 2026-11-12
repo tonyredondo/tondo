@@ -281,7 +281,7 @@ pub fn BigInt.toInt(self): Int? {
     if self.limbs.length() > 2 {
         return none
     }
-    let absolute = self.limbs.get(0).unwrapOr(0) | (self.limbs.get(1).unwrapOr(0) << 32)
+    let absolute = (self.limbs.get(0) ?? 0) | ((self.limbs.get(1) ?? 0) << 32)
     if not self.negative {
         return if absolute <= 9223372036854775807 { Int.wrapping(absolute) } else { none }
     }
@@ -530,7 +530,7 @@ fn addMagnitude(a: Array[UInt], b: Array[UInt]): Array[UInt] {
     var carry: UInt = 0
     let count = if a.length() > b.length() { a.length() } else { b.length() }
     for at in 0..count {
-        let sum = a.get(at).unwrapOr(0) + b.get(at).unwrapOr(0) + carry
+        let sum = (a.get(at) ?? 0) + (b.get(at) ?? 0) + carry
         out.push(sum & LimbMask)
         carry = sum >> 32
     }
@@ -545,7 +545,7 @@ fn subtractMagnitude(a: Array[UInt], b: Array[UInt]): Array[UInt] {
     var out: Array[UInt] = []
     var borrow: UInt = 0
     for at in 0..a.length() {
-        let take = b.get(at).unwrapOr(0) + borrow
+        let take = (b.get(at) ?? 0) + borrow
         if a[at] >= take {
             out.push(a[at] - take)
             borrow = 0
@@ -681,7 +681,7 @@ fn divideMagnitude(a: Array[UInt], b: Array[UInt]): (Array[UInt], Array[UInt]) {
         quotient[j] = guess
         j -= 1
     }
-    let remainder = shiftRight(withoutTopZeros(u.slice(0, n).unwrapOr([])), shift)
+    let remainder = shiftRight(withoutTopZeros(u.slice(0, n) ?? []), shift)
     (withoutTopZeros(quotient), remainder)
 }
 
@@ -709,7 +709,7 @@ fn shiftRight(a: Array[UInt], shift: Int): Array[UInt] {
     }
     var out: Array[UInt] = []
     for at in 0..a.length() {
-        let high = a.get(at + 1).unwrapOr(0)
+        let high = a.get(at + 1) ?? 0
         out.push((a[at] >> shift) | ((high << (32 - shift)) & LimbMask))
     }
     withoutTopZeros(out)
@@ -769,7 +769,7 @@ pub fn Decimal.parse(text: String): Decimal ! MathError {
         }
         none => (lower, 0)
     }
-    let (whole, fraction) = mantissa.splitOnce(".").unwrapOr((mantissa, ""))
+    let (whole, fraction) = mantissa.splitOnce(".") ?? (mantissa, "")
     let signless = whole.removePrefix("-").removePrefix("+")
     if (signless.isEmpty() and fraction.isEmpty()) or not fraction.chars().all((c) { c.isDigit() }) {
         fail MathError.NotANumber(text)
@@ -823,7 +823,7 @@ pub fn Decimal.scale(self): Int {
 
 /// The nearest `Float`.
 pub fn Decimal.toFloat(self): Float {
-    Float.parse("{self}").unwrapOr(0.0)
+    Float.parse("{self}") ?? 0.0
 }
 
 /// The digits, with a point before the last `scale()`: `12.5`, `-0.03`.
@@ -836,7 +836,7 @@ impl Display for Decimal {
         }
         let padded = digits.padStart(self.places + 1, "0")
         let point = padded.length() - self.places
-        "{sign}{padded.slice(0, point).unwrapOr("0")}.{padded.slice(point, padded.length()).unwrapOr("")}"
+        "{sign}{padded.slice(0, point) ?? "0"}.{padded.slice(point, padded.length()) ?? ""}"
     }
 }
 
@@ -973,7 +973,7 @@ fn roundedQuotient(numerator: BigInt, denominator: BigInt, mode: Rounding): BigI
         return made(negative, quotient)
     }
     let half = compareMagnitude(addMagnitude(remainder, remainder), denominator.limbs)
-    let odd = quotient.get(0).unwrapOr(0) & 1 == 1
+    let odd = (quotient.get(0) ?? 0) & 1 == 1
     let up = match mode {
         Rounding.HalfEven => half > 0 or (half == 0 and odd)
         Rounding.HalfUp => half >= 0

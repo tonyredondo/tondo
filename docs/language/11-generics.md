@@ -28,7 +28,7 @@ A type parameter goes in brackets after the function's name:
 import std.console
 
 fn firstOr[T](values: Array[T], fallback: T): T {
-    values.get(0).unwrapOr(fallback)
+    values.get(0) ?? fallback
 }
 
 fn pairs[A, B](keys: Array[A], values: Array[B]): Array[(A, B)] {

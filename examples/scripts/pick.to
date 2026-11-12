@@ -11,11 +11,11 @@ import std.env
 import std.json
 import std.process
 
-let path = env.args().get(0).unwrapOr("")
+let path = env.args().get(0) ?? ""
 let document = json.parse(console.stdin().readText()?)?
 match document.find(path) {
     // A text is printed as it is, anything else as JSON.
-    some(found) => console.println(found.asText().unwrapOr(json.encode(found, pretty: true)))
+    some(found) => console.println(found.asText() ?? json.encode(found, pretty: true))
     none => {
         console.eprintln("nothing at `{path}`")
         process.exit(1)

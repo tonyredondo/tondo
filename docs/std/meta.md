@@ -630,7 +630,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
     var keys: Array[String] = []
     for line in request.input("messages.txt")?.text()?.lines() {
         match line.find(" = ") {
-            some(at) => keys.push(line.slice(0, at).unwrapOr("").trim())
+            some(at) => keys.push((line.slice(0, at) ?? "").trim())
             none => {}
         }
     }

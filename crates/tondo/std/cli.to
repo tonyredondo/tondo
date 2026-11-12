@@ -193,7 +193,7 @@ pub fn parseArgs[T: __reflect.Reflect](args: Array[String]): T ! CliError {
         err(invalid) => {
             let broken = invalid.violations.map(
                 (violation) {
-                    let field = violation.path.split(".").get(-1).unwrapOr(violation.path)
+                    let field = violation.path.split(".").get(-1) ?? violation.path
                     "`--{kebab(field)}` {violation.message}"
                 },
             )
@@ -225,7 +225,7 @@ pub fn help[T: __reflect.Reflect](): String {
 
 /// The name the program is run as.
 fn program(): String {
-    let file = __path.fileName(__env.executable()).unwrapOr("program")
+    let file = __path.fileName(__env.executable()) ?? "program"
     file.removeSuffix(".exe")
 }
 
@@ -265,7 +265,7 @@ fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
     fields.map(
         (field) {
             let argument = field.annotation[Argument]()
-            let option = field.annotation[Option]().unwrapOr(Option {})
+            let option = field.annotation[Option]() ?? Option {}
             let rest = field.annotation[Rest]()
             if rest.isSome() and "{field.typeInfo()}" != "Array[String]" {
                 panic(
@@ -278,7 +278,7 @@ fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
                     some(found) => found.name
                     none => kebab(field.name())
                 }
-                docs: field.docs().unwrapOr("")
+                docs: field.docs() ?? ""
                 short: option.short
                 default: match argument {
                     some(found) => found.default
@@ -320,8 +320,8 @@ fn arityOf(spec: Spec): Arity {
 /// array holds.
 fn element(spec: Spec): __reflect.TypeInfo {
     match arityOf(spec) {
-        Arity.Optional => spec.info.genericArguments().first().unwrapOr(spec.info)
-        Arity.Many => spec.info.genericArguments().first().unwrapOr(spec.info)
+        Arity.Optional => spec.info.genericArguments().first() ?? spec.info
+        Arity.Many => spec.info.genericArguments().first() ?? spec.info
         _ => spec.info
     }
 }
@@ -405,7 +405,7 @@ fn subcommand(
             }
             let payload = match parts[0].kind() {
                 __reflect.TypeKind.Record => {
-                    let docs = parts[0].docs().orElse(chosen.docs())
+                    let docs = parts[0].docs() ?? chosen.docs()
                     __shapes.record(
                         members(parts[0].fields(), docs, rest, inner, outer, var lifted)?,
                     )
@@ -452,10 +452,7 @@ fn members(
         if not plain and arg == "--" {
             match rest {
                 some(spec) => {
-                    written[spec.field] = written
-                        .get(spec.field)
-                        .unwrapOr([])
-                        .concat(args.drop(index))
+                    written[spec.field] = (written.get(spec.field) ?? []).concat(args.drop(index))
                     index = args.length()
                 }
                 none => plain = true
@@ -464,7 +461,7 @@ fn members(
         }
         if not plain and arg.startsWith("--") {
             let (name, inline) = match arg.find("=") {
-                some(at) => (arg.slice(2, at).unwrapOr(""), arg.slice(at + 1, arg.length()).ok())
+                some(at) => (arg.slice(2, at) ?? "", arg.slice(at + 1, arg.length()).ok())
                 none => (arg.removePrefix("--"), none)
             }
             // Its own, one of the commands around it, or what it passes on.
@@ -473,7 +470,7 @@ fn members(
                 none => match (shared.find((spec) { spec.name == name }), rest) {
                     (some(spec), _) => (spec, false)
                     (none, some(passed)) => {
-                        written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                        written[passed.field] = (written.get(passed.field) ?? []).concat([arg])
                         continue
                     }
                     (none, none) => {
@@ -498,21 +495,21 @@ fn members(
                 }
             }
             if owner {
-                written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+                written[spec.field] = (written.get(spec.field) ?? []).concat([value])
             } else {
-                lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat([value])
+                lifted[spec.field] = (lifted.get(spec.field) ?? []).concat([value])
             }
             continue
         }
         if not plain and arg.startsWith("-") and arg.length() > 1 and not (arg[1].isDigit()) {
             // Letters this command does not know go on whole, with a `Rest`.
-            let letters = arg.slice(1, arg.length()).unwrapOr("")
+            let letters = arg.slice(1, arg.length()) ?? ""
             let knows = (letter: Char) {
                 options.concat(shared).any((spec) { spec.short == some("{letter}") })
             }
             match rest {
                 some(passed) if not letters.chars().all(knows) => {
-                    written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                    written[passed.field] = (written.get(passed.field) ?? []).concat([arg])
                     continue
                 }
                 _ => {}
@@ -531,14 +528,14 @@ fn members(
                 }
                 if arityOf(spec) == Arity.Flag {
                     if owner {
-                        written[spec.field] = written.get(spec.field).unwrapOr([]).concat(["true"])
+                        written[spec.field] = (written.get(spec.field) ?? []).concat(["true"])
                     } else {
-                        lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat(["true"])
+                        lifted[spec.field] = (lifted.get(spec.field) ?? []).concat(["true"])
                     }
                     continue
                 }
                 let value = if at < arg.length() {
-                    arg.slice(at, arg.length()).unwrapOr("")
+                    arg.slice(at, arg.length()) ?? ""
                 } else {
                     match args.get(index) {
                         some(next) => {
@@ -549,9 +546,9 @@ fn members(
                     }
                 }
                 if owner {
-                    written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+                    written[spec.field] = (written.get(spec.field) ?? []).concat([value])
                 } else {
-                    lifted[spec.field] = lifted.get(spec.field).unwrapOr([]).concat([value])
+                    lifted[spec.field] = (lifted.get(spec.field) ?? []).concat([value])
                 }
                 at = arg.length()
             }
@@ -561,7 +558,7 @@ fn members(
         let spec = match (arguments.get(position), rest) {
             (some(spec), _) => spec
             (none, some(passed)) => {
-                written[passed.field] = written.get(passed.field).unwrapOr([]).concat([arg])
+                written[passed.field] = (written.get(passed.field) ?? []).concat([arg])
                 continue
             }
             (none, none) => fail usageError(path, "unexpected argument `{arg}`", usage)
@@ -579,7 +576,7 @@ fn members(
             index = args.length()
             continue
         }
-        written[spec.field] = written.get(spec.field).unwrapOr([]).concat([arg])
+        written[spec.field] = (written.get(spec.field) ?? []).concat([arg])
         if arityOf(spec) != Arity.Many {
             position += 1
         }
@@ -588,7 +585,7 @@ fn members(
         if spec.field in found {
             continue
         }
-        var texts = written.get(spec.field).unwrapOr([])
+        var texts = written.get(spec.field) ?? []
         if texts.isEmpty() {
             match spec.env.map((name) { __env.get(name) }).find((value) { value.isSome() }) {
                 some(some(value)) => texts = [value]
@@ -608,7 +605,7 @@ fn members(
         let shown = if spec.positional { "<{spec.name}>" } else { "--{spec.name}" }
         match arityOf(spec) {
             Arity.Flag => {
-                let value = texts.last().unwrapOr("false")
+                let value = texts.last() ?? "false"
                 found[spec.field] = typed(spec.info, value, shown, path, usage)?
             }
             Arity.Optional => match texts.last() {
@@ -632,7 +629,7 @@ fn members(
     // What a command around it has, for that command.
     for (field, texts) in written {
         if not specs.any((spec) { spec.field == field }) {
-            lifted[field] = lifted.get(field).unwrapOr([]).concat(texts)
+            lifted[field] = (lifted.get(field) ?? []).concat(texts)
         }
     }
     found
@@ -750,7 +747,7 @@ fn lined(rows: Array[(String, String)]): String {
 /// may end in the middle of a sentence.
 fn summary(docs: String?): String {
     var words: Array[String] = []
-    for line in docs.unwrapOr("").lines() {
+    for line in (docs ?? "").lines() {
         let trimmed = line.trim()
         if trimmed.isEmpty() {
             if not words.isEmpty() {
@@ -824,7 +821,7 @@ fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
 /// kebab-case, and the elements of a list one after another.
 fn asTyped(value: __reflect.Value): String {
     match value.typeInfo().kind() {
-        __reflect.TypeKind.Enum => kebab(value.variant().unwrapOr("{value}"))
+        __reflect.TypeKind.Enum => kebab(value.variant() ?? "{value}")
         __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) => value
             .elements()
             .map((item) { asTyped(item) })
@@ -1059,11 +1056,7 @@ pub fn markup(text: String): String {
             for close < chars.length() and chars[close] != ']' {
                 close += 1
             }
-            let tag = if close < chars.length() {
-                text.slice(at + 1, close).unwrapOr("")
-            } else {
-                ""
-            }
+            let tag = if close < chars.length() { text.slice(at + 1, close) ?? "" } else { "" }
             if tag == "/" and not styles.isEmpty() {
                 _ = styles.pop()
                 if paint {
@@ -1145,9 +1138,7 @@ fn colorCode(word: String, background: Bool): String? {
     }
     if word.startsWith("#") and word.length() == 7 {
         let digits = word.removePrefix("#")
-        let part = (from: Int) {
-            Int.parse(digits.slice(from, from + 2).unwrapOr(""), radix: 16).ok()
-        }
+        let part = (from: Int) { Int.parse(digits.slice(from, from + 2) ?? "", radix: 16).ok() }
         match (part(0), part(2), part(4)) {
             (some(r), some(g), some(b)) => return "{base + 8};2;{r};{g};{b}"
             _ => {}
@@ -1516,7 +1507,7 @@ pub fn secret(question: String): String {
         _ = textNative.terminalEcho(true)
         __console.println("")
     }
-    text.unwrapOr("")
+    text ?? ""
 }
 
 fn answer(prompt: String): String? {

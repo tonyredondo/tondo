@@ -65,7 +65,7 @@ fn shown(body: Array[Byte]): String {
         let length = Int(UInt32.fromBytes(body, at: at + 1))
         let bytes = body.drop(at + 5).take(length)
         if body[at] == 2 {
-            parts.push(String.fromBytes(bytes).unwrapOr("?"))
+            parts.push(String.fromBytes(bytes) ?? "?")
         } else {
             match protobuf.decode[greeter.HelloReply](bytes) {
                 ok(reply) => parts.push(reply.message)
@@ -90,9 +90,9 @@ fn main(): !(http.HttpError | grpc.Status) {
             body: http.Body.bytes(request, contentType: "application/proto"),
             headers: ["connect-protocol-version": "1"],
         )?
-    let reply = protobuf.decode[greeter.HelloReply](hello.bytes()?).unwrapOr(greeter.HelloReply {})
+    let reply = protobuf.decode[greeter.HelloReply](hello.bytes()?) ?? greeter.HelloReply {}
     console.println(
-        "{hello.status()} {hello.header("content-type").unwrapOr("-")} {reply.message} {hello.header("x-header").unwrapOr("-")} {hello.header("trailer-x-trailer").unwrapOr("-")}",
+        "{hello.status()} {hello.header("content-type") ?? "-"} {reply.message} {hello.header("x-header") ?? "-"} {hello.header("trailer-x-trailer") ?? "-"}",
     )
     let json =
         web.post(
@@ -102,7 +102,7 @@ fn main(): !(http.HttpError | grpc.Status) {
                 contentType: "application/json",
             ),
         )?
-    console.println("{json.header("content-type").unwrapOr("-")} {json.text()?}")
+    console.println("{json.header("content-type") ?? "-"} {json.text()?}")
     let zipped =
         web.post(
             "{base}/SayHello",
@@ -110,13 +110,13 @@ fn main(): !(http.HttpError | grpc.Status) {
             headers: ["content-encoding": "gzip"],
         )?
     console.println(
-        protobuf.decode[greeter.HelloReply](zipped.bytes()?).unwrapOr(greeter.HelloReply {}).message,
+        (protobuf.decode[greeter.HelloReply](zipped.bytes()?) ?? greeter.HelloReply {}).message,
     )
     match web.post("{base}/SayHello", body: http.Body.text("{{}}", contentType: "application/json")) {
         ok(response) => console.println("{response.status()}")
         err(http.HttpError.Status(response)) => {
             console.println(
-                "{response.status()} {response.header("content-type").unwrapOr("-")} {response.text()?}",
+                "{response.status()} {response.header("content-type") ?? "-"} {response.text()?}",
             )
         }
         err(error) => console.println("{error}")
@@ -126,7 +126,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     let message = encoding.base64Encode(request, alphabet: encoding.Base64Alphabet.Url)
     let asked = web.get("{base}/Lookup?connect=v1&encoding=proto&base64=1&message={message}")?
     console.println(
-        protobuf.decode[greeter.HelloReply](asked.bytes()?).unwrapOr(greeter.HelloReply {}).message,
+        (protobuf.decode[greeter.HelloReply](asked.bytes()?) ?? greeter.HelloReply {}).message,
     )
     let query = "%7B%22name%22%3A%22query%22%7D"
     let typed = web.get("{base}/Lookup?connect=v1&encoding=json&message={query}")?
@@ -146,7 +146,7 @@ fn main(): !(http.HttpError | grpc.Status) {
                 contentType: stream,
             ),
         )?
-    console.println("{ticks.header("content-type").unwrapOr("-")} {shown(ticks.bytes()?)}")
+    console.println("{ticks.header("content-type") ?? "-"} {shown(ticks.bytes()?)}")
     let failed =
         web.post(
             "{base}/Repeat",
@@ -171,7 +171,7 @@ fn main(): !(http.HttpError | grpc.Status) {
         )?
     let body = jsonStream.bytes()?
     console.println(
-        "{String.fromBytes(body.drop(5).take(Int(UInt32.fromBytes(body, at: 1)))).unwrapOr("?")} {body.length()}",
+        "{String.fromBytes(body.drop(5).take(Int(UInt32.fromBytes(body, at: 1)))) ?? "?"} {body.length()}",
     )
     server.stop()
 }

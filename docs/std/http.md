@@ -375,7 +375,7 @@ import std.http
 
 var app = http.App()
 app.post("/echo", (request) {
-    http.Reply.text("{request.header("Content-Type").unwrapOr("")}: {request.text()?}")
+    http.Reply.text("{request.header("Content-Type") ?? ""}: {request.text()?}")
 })
 let client = app.client()
 for body in [http.Body.text("hi"), http.Body.json(["a": 1]), http.Body.form(["q": "tea & cake"])] {
@@ -741,7 +741,7 @@ import std.http
 let stream = http.get("https://stream.example.com/updates", headers: ["Accept": "text/event-stream"])?
 for received in stream.events() {
     let event = received?
-    console.println("{event.event} #{event.id.unwrapOr("-")}: {event.data}")
+    console.println("{event.event} #{event.id ?? "-"}: {event.data}")
 }
 ```
 
@@ -941,7 +941,7 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/me", (request) { http.Reply.text(request.header("Authorization").unwrapOr("anonymous")) })
+app.get("/me", (request) { http.Reply.text(request.header("Authorization") ?? "anonymous") })
 var client = app.client()
 // Every request of the client through this hook: logged and authorized.
 client.use((request, next) {
@@ -1215,8 +1215,8 @@ import std.http
 var app = http.App()
 app.get("/users/:id", (request) {
     let id = request.intParam("id")?
-    let fields = request.query("fields").unwrapOr("all")
-    let route = request.route().unwrapOr("")
+    let fields = request.query("fields") ?? "all"
+    let route = request.route() ?? ""
     http.Reply.text("{request.method()} {route} {request.path()}: user {id}, fields {fields}")
 })
 console.println(app.client().get("/users/42", query: ["fields": "name"])?.text()?)
@@ -1628,7 +1628,7 @@ app.post("/documents", (request) {
         if upload.fileName().isEmpty() {
             saved.push("{upload.name()}={upload.text()?}")
         } else {
-            let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()).unwrapOr("upload")))?
+            let size = upload.saveTo(path.join(directory, path.fileName(upload.fileName()) ?? "upload"))?
             saved.push("{upload.fileName()} ({upload.contentType()}, {size} bytes)")
         }
     }

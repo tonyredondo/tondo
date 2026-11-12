@@ -69,7 +69,7 @@ fn main() {
     let looked = within time.seconds(5) {
         let job = spawn looks()
         spawn detached report(out)
-        (job.wait(), seen.receive().unwrapOr(true))
+        (job.wait(), seen.receive() ?? true)
     }
     console.println("the task sees it, a detached one does not: {looked}")
     let stuck = within time.milliseconds(30) {

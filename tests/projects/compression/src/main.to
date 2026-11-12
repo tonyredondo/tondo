@@ -13,7 +13,7 @@ type Greetings = {}
 impl greeter.Greeter for Greetings {
     fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
         greeter.HelloReply {
-            message: "{request.name.length()} {request.name.slice(0, 3).unwrapOr("")}"
+            message: "{request.name.length()} {request.name.slice(0, 3) ?? ""}"
         }
     }
 

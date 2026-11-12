@@ -30,21 +30,21 @@ fn lengths(texts: Receiver[String], out: Sender[Int]) {
 }
 
 fn lastOf(count: Int): String {
-    let all = json.decode[Array[String]](names(count)).unwrapOr([])
+    let all = json.decode[Array[String]](names(count)) ?? []
     all[all.length() - 1]
 }
 
 fn main() {
     // Kept after its reader goes, and changed.
     let text = "{{\"name\": \"lamp\", \"tags\": [\"home\", \"light\"], \"price\": 19.5}}"
-    var item = json.decode[Item](text).unwrapOr(Item { name: "", tags: [], price: 0.0 })
+    var item = json.decode[Item](text) ?? Item { name: "", tags: [], price: 0.0 }
     item.tags[0] = "{item.tags[0]}!"
     console.println("{item.name} {item.tags} {item.price}")
     // More texts than a block holds, the last kept after the others go.
     console.println("{lastOf(1)} {lastOf(300)}")
     // Long ones, strings of their own, beside short and empty ones.
     let long = "y".repeat(64)
-    let mixed = json.decode[Array[String]]("[\"{"x".repeat(63)}\", \"{long}\", \"\", \"caf\\u00e9\"]").unwrapOr([])
+    let mixed = json.decode[Array[String]]("[\"{"x".repeat(63)}\", \"{long}\", \"\", \"caf\\u00e9\"]") ?? []
     console.println("{mixed.map((t) { t.length() })} {mixed[3]}")
     // Sent to another task, which lets go of them there, while the reader
     // of a stream reads on into the same block.
@@ -77,8 +77,8 @@ fn main() {
         }
     }
     console.println("{numbers}")
-    let value = json.parse(text).unwrapOr(json.Value.Null)
-    let object = value.asObject().unwrapOr([:])
+    let value = json.parse(text) ?? json.Value.Null
+    let object = value.asObject() ?? [:]
     var keys: Array[String] = []
     for key in object.keys() {
         keys.push(key)

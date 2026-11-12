@@ -100,17 +100,17 @@ fn once(
     }
     let ran = run.output().mapErr((e) { "cannot run {tondo}: {e}" })?
     if not ran.statuses.all((status) { status.success }) {
-        fail "{case.program} {command(case.kind)} failed: {String.fromBytes(ran.stderr).unwrapOr("")}"
+        fail "{case.program} {command(case.kind)} failed: {String.fromBytes(ran.stderr) ?? ""}"
     }
     ran
 }
 
 /// The instructions `perf stat -x,` counted, in its lines on stderr.
 fn counted(ran: process.ProcessOutput): Float {
-    for line in String.fromBytes(ran.stderr).unwrapOr("").lines() {
+    for line in (String.fromBytes(ran.stderr) ?? "").lines() {
         let fields = line.split(",")
         if fields.length() > 2 and fields[2].startsWith("instructions") {
-            return Float.parse(fields[0]).unwrapOr(0.0)
+            return Float.parse(fields[0]) ?? 0.0
         }
     }
     0.0
@@ -160,9 +160,9 @@ fn generated(tondo: String, lines: Int, directory: String): Int ! String {
             .mapErr((e) { "cannot run the generator: {e}" })?
     let said = ran.text().mapErr((e) { "the generator said no text: {e}" })?
     if not ran.statuses.all((status) { status.success }) {
-        fail "the generator failed: {String.fromBytes(ran.stderr).unwrapOr("")}"
+        fail "the generator failed: {String.fromBytes(ran.stderr) ?? ""}"
     }
-    Int.parse(said.words().first().unwrapOr("0")).unwrapOr(lines)
+    Int.parse(said.words().first() ?? "0") ?? lines
 }
 
 /// The rows: every command for each program, and the first build of
@@ -201,15 +201,14 @@ fn report(lines: Array[String], output: String): !String {
 /// a part summed.
 fn parts(ran: process.ProcessOutput): Map[String, Float] {
     var took: Map[String, Float] = [:]
-    for line in String.fromBytes(ran.stderr).unwrapOr("").lines() {
+    for line in (String.fromBytes(ran.stderr) ?? "").lines() {
         let rest = line.removePrefix("tondo: ")
         match rest.findLast(" took ") {
             some(at) if rest.endsWith(" ms") => {
-                let name = rest.slice(0, at).unwrapOr("")
+                let name = rest.slice(0, at) ?? ""
                 let ms = Float
-                    .parse(rest.slice(at + 6, rest.length() - 3).unwrapOr(""))
-                    .unwrapOr(0.0)
-                took[name] = took.get(name).unwrapOr(0.0) + ms
+                    .parse(rest.slice(at + 6, rest.length() - 3) ?? "") ?? 0.0
+                took[name] = (took.get(name) ?? 0.0) + ms
             }
             _ => {}
         }
@@ -254,7 +253,7 @@ fn guard(tondo: String, size: Int, runs: Int, counting: Bool, scratch: String): 
         }
         var (worst, worstGrowth) = ("", 0.0)
         for (name, ms) in afterParts {
-            let grew = ms / beforeParts.get(name).unwrapOr(ms).max(0.01)
+            let grew = ms / (beforeParts.get(name) ?? ms).max(0.01)
             // Parts that take a few milliseconds even when large grow by noise.
             if ms > 50.0 and grew > worstGrowth {
                 (worst, worstGrowth) = (name, grew)
@@ -346,24 +345,23 @@ fn main(): !String {
     for i in 0..arguments.length() {
         let value = if i + 1 < arguments.length() { arguments[i + 1] } else { "" }
         match arguments[i] {
-            "--runs" => runs = Int.parse(value).unwrapOr(5)
-            "--sizes" => sizes = value.split(",").map((n) { Int.parse(n).unwrapOr(0) })
+            "--runs" => runs = Int.parse(value) ?? 5
+            "--sizes" => sizes = value.split(",").map((n) { Int.parse(n) ?? 0 })
             "--output" => output = value
             "--old" => old = value
-            "--max" => max = Float.parse(value).unwrapOr(5.0)
-            "--size" => size = Int.parse(value).unwrapOr(24000)
+            "--max" => max = Float.parse(value) ?? 5.0
+            "--size" => size = Int.parse(value) ?? 24000
             "--guard" => guarding = true
             _ => {}
         }
     }
-    let tondo = env.get("TONDO").unwrapOr("tondo")
+    let tondo = (env.get("TONDO") ?? "tondo")
     // `perf` counts where the system lets it: a count of instructions, or
     // none, as in a container.
     let counting = process
         .command("perf", "stat", "-x,", "-e", "instructions:u", "--", "true")
         .output()
-        .map((ran) { counted(ran) > 0.0 })
-        .unwrapOr(false)
+        .map((ran) { counted(ran) > 0.0 }) ?? false
     let scratch =
         fs.createTemporaryDirectory(pattern: "tondo-compile-").mapErr((e) { "no scratch: {e}" })?
     defer {
@@ -377,9 +375,9 @@ fn main(): !String {
         // A revision of tondo's repository, built once, or a `tondo`.
         if not fs.exists(old) {
             let built = process.command(tondo, "compiler", old).output().mapErr((e) { "no tondo of {old}: {e}" })?
-            old = String.fromBytes(built.stdout).unwrapOr("").trim()
+            old = (String.fromBytes(built.stdout) ?? "").trim()
             if not fs.exists(old) {
-                fail "no tondo of the revision: {String.fromBytes(built.stderr).unwrapOr("").trim()}"
+                fail "no tondo of the revision: {(String.fromBytes(built.stderr) ?? "").trim()}"
             }
         }
         againstOld(old, tondo, sizes, runs, max, counting, scratch, output)?

@@ -9,9 +9,9 @@ fn main(): !image.ImageError {
     var pixels: Array[Byte] = []
     for y in 0..256 {
         for x in 0..256 {
-            pixels.push(Byte(x).unwrapOr(Byte(0u8)))
-            pixels.push(Byte(y).unwrapOr(Byte(0u8)))
-            pixels.push(Byte((x + y) / 2).unwrapOr(Byte(0u8)))
+            pixels.push(Byte(x) ?? Byte(0u8))
+            pixels.push(Byte(y) ?? Byte(0u8))
+            pixels.push(Byte((x + y) / 2) ?? Byte(0u8))
             pixels.push(Byte(255u8))
         }
     }

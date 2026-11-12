@@ -30,7 +30,7 @@ impl greeter.Greeter for Greetings {
             _ => {}
         }
         let call = grpc.call()
-        let caller = call.metadata.get("x-caller").unwrapOr("nobody")
+        let caller = call.metadata.get("x-caller") ?? "nobody"
         greeter.HelloReply {
             message: "{self.prefix} {request.name} from {caller}, deadline {call.timeout.isSome()}"
         }

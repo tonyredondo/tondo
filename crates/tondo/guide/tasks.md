@@ -168,7 +168,7 @@ context Request = {
 }
 
 fn greet(): String {
-    let user = Request.user.unwrapOr("guest")
+    let user = Request.user ?? "guest"
     "hello {user} ({Request.id})"
 }
 

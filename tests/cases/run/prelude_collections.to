@@ -27,18 +27,18 @@ fn main() {
     console.println("{items}")
     // Map and Set
     let ages = ["ada": 36, "bo": 20]
-    console.println("{ages.getOr("cy", 0)} {ages.mapValues((a) { a + 1 })} {ages.filter((_, v) { v > 30 })} {ages.merge(["bo": 21, "cy": 5])}")
+    console.println("{ages["cy"] ?? 0} {ages.mapValues((a) { a + 1 })} {ages.filter((_, v) { v > 30 })} {ages.merge(["bo": 21, "cy": 5])}")
     let a = Set[1, 2, 3]
     let b = Set[2, 3, 4]
     console.println("{a.union(b)} {a.intersection(b)} {a.difference(b)} {Set[2].isSubset(a)} {a.isSubset(b)}")
     // Option and Result
     let some3: Int? = 3
     let nothing: Int? = none
-    console.println("{some3.map((n) { n + 1 })} {nothing.map((n) { n + 1 })} {some3.andThen((n) { if n > 2 { some(n) } else { none } })} {nothing.unwrapOr(7)}")
-    console.println("{nothing.orElse(some(1))} {some3.filter((n) { n > 5 })} {some3.isSome()} {nothing.isNone()} {some3.okOr("missing")} {nothing.okOr("missing")}")
+    console.println("{some3.map((n) { n + 1 })} {nothing.map((n) { n + 1 })} {some3.andThen((n) { if n > 2 { some(n) } else { none } })} {nothing ?? 7}")
+    console.println("{nothing ?? some(1)} {some3.filter((n) { n > 5 })} {some3.isSome()} {nothing.isNone()} {some3.okOr("missing")} {nothing.okOr("missing")}")
     let good: Int ! String = ok(2)
     let bad: Int ! String = err("boom")
-    console.println("{good.map((n) { n * 10 })} {bad.mapErr((e) { e.length() })} {good.unwrapOr(0)} {bad.unwrapOr(0)} {good.ok()} {bad.err()} {good.isOk()} {bad.isErr()}")
+    console.println("{good.map((n) { n * 10 })} {bad.mapErr((e) { e.length() })} {good ?? 0} {bad ?? 0} {good.ok()} {bad.err()} {good.isOk()} {bad.isErr()}")
     let checked: Int ! String = good.andThen((n) { if n > 1 { n } else { fail "small" } })
     console.println("{checked} {some3.expect("there")}")
 }

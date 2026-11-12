@@ -145,8 +145,8 @@ fn followed(
     for {
         let before = last
         let now = statuses.updateWhen(
-            (all) { some(all.get(service).unwrapOr(ServingStatus.ServiceUnknown)) != before },
-            (all) { all.get(service).unwrapOr(ServingStatus.ServiceUnknown) },
+            (all) { some(all.get(service) ?? ServingStatus.ServiceUnknown) != before },
+            (all) { all.get(service) ?? ServingStatus.ServiceUnknown },
         )
         out.send(HealthReply { status: now })
         last = now
@@ -454,10 +454,9 @@ fn healthFile(): __protobuf.FileDescriptor {
             "grpc.health.v1.Health.List",
             "grpc.health.v1.Health.Watch",
         ]
-        bytes: __encoding
-            .base64Decode(
-                "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADIhMKEUhlYWx0aExpc3RSZXF1ZXN0IsQBChJIZWFsdGhMaXN0UmVzcG9uc2USTAoIc3RhdHVzZXMYASADKAsyMC5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2UuU3RhdHVzZXNFbnRyeVIIc3RhdHVzZXMaYAoNU3RhdHVzZXNFbnRyeRIQCgNrZXkYASABKAlSA2tleRI5CgV2YWx1ZRgCIAEoCzIjLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2VSBXZhbHVlOgI4ATL9AQoGSGVhbHRoElAKBUNoZWNrEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZRJNCgRMaXN0EiEuZ3JwYy5oZWFsdGgudjEuSGVhbHRoTGlzdFJlcXVlc3QaIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2USUgoFV2F0Y2gSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlMAFiBnByb3RvMw==",
-            )
-            .unwrapOr([])
+        bytes: __encoding.base64Decode(
+            "ChtncnBjL2hlYWx0aC92MS9oZWFsdGgucHJvdG8SDmdycGMuaGVhbHRoLnYxIi4KEkhlYWx0aENoZWNrUmVxdWVzdBIYCgdzZXJ2aWNlGAEgASgJUgdzZXJ2aWNlIrEBChNIZWFsdGhDaGVja1Jlc3BvbnNlEkkKBnN0YXR1cxgBIAEoDjIxLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2UuU2VydmluZ1N0YXR1c1IGc3RhdHVzIk8KDVNlcnZpbmdTdGF0dXMSCwoHVU5LTk9XThAAEgsKB1NFUlZJTkcQARIPCgtOT1RfU0VSVklORxACEhMKD1NFUlZJQ0VfVU5LTk9XThADIhMKEUhlYWx0aExpc3RSZXF1ZXN0IsQBChJIZWFsdGhMaXN0UmVzcG9uc2USTAoIc3RhdHVzZXMYASADKAsyMC5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2UuU3RhdHVzZXNFbnRyeVIIc3RhdHVzZXMaYAoNU3RhdHVzZXNFbnRyeRIQCgNrZXkYASABKAlSA2tleRI5CgV2YWx1ZRgCIAEoCzIjLmdycGMuaGVhbHRoLnYxLkhlYWx0aENoZWNrUmVzcG9uc2VSBXZhbHVlOgI4ATL9AQoGSGVhbHRoElAKBUNoZWNrEiIuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXF1ZXN0GiMuZ3JwYy5oZWFsdGgudjEuSGVhbHRoQ2hlY2tSZXNwb25zZRJNCgRMaXN0EiEuZ3JwYy5oZWFsdGgudjEuSGVhbHRoTGlzdFJlcXVlc3QaIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhMaXN0UmVzcG9uc2USUgoFV2F0Y2gSIi5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1JlcXVlc3QaIy5ncnBjLmhlYWx0aC52MS5IZWFsdGhDaGVja1Jlc3BvbnNlMAFiBnByb3RvMw==",
+        ) ??
+            []
     }
 }

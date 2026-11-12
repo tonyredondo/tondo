@@ -10,7 +10,7 @@ fn connect(running: server.Running): net.Stream ! net.NetError {
 /// Sends a line and gives the answer.
 fn ask(client: net.Stream, line: String): String ! net.NetError {
     client.write("{line}\n")?
-    client.readLine(timeout: time.seconds(5))?.unwrapOr("(closed)")
+    client.readLine(timeout: time.seconds(5))? ?? "(closed)"
 }
 
 test answersOverTcp {

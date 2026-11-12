@@ -13,7 +13,7 @@ fn hex(data: Array[Byte]): String {
 }
 
 fn unhex(text: String): Array[Byte] {
-    encoding.hexDecode(text).unwrapOr([])
+    encoding.hexDecode(text) ?? []
 }
 
 fn main(): !crypto.CryptoError {
@@ -61,7 +61,7 @@ fn main(): !crypto.CryptoError {
         let key = crypto.SecretKey.generate(cipher)
         let sealed = key.seal("hello".bytes(), context: "user 7".bytes())
         let kept = crypto.SecretKey.fromBytes(key.bytes(), cipher)?
-        let opened = String.fromBytes(kept.open(sealed, context: "user 7".bytes())?).unwrapOr("")
+        let opened = String.fromBytes(kept.open(sealed, context: "user 7".bytes())?) ?? ""
         console.println(
             "{sealed.length()} {opened} {kept.open(sealed).isErr()} {crypto.SecretKey.generate().open(sealed).isErr()}",
         )
@@ -141,8 +141,7 @@ MCowBQYDK2VwAyEADWl7o4GjnV+gLBetPjTEubktsxk4gXU9IifeA20QXy0=
     let signature = encoding
         .base64Decode(
             "+Xnlgs4YfhqKmlUOyvL6AqwOJWSH5dR7dJyYK1Olu3KBEakGLtvarGz8YN3QET5+xgq698c0vSiG0Nn5oO5WCQ==",
-        )
-        .unwrapOr([])
+        ) ?? []
     console.println(
         "{public.kind()} {public.verify("data".bytes(), signature)} {public.pem().contains("MCowBQYDK2VwAyEA")}",
     )

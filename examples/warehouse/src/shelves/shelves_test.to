@@ -82,7 +82,7 @@ test ordersForTheLastUnitsCannotAllGetThem {
 fn next(changes: Receiver[stock.Change]): String {
     match changes.receive() {
         some(change) => {
-            let item = change.item.unwrapOr(stock.Item {})
+            let item = change.item ?? stock.Item {}
             "{item.sku} {item.available} {change.delta}"
         }
         none => "nothing"

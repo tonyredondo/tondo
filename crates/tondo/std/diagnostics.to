@@ -129,7 +129,7 @@ pub fn metrics(): Array[Metric] {
                 name: parts[0]
                 unit: parts[1]
                 gauge: parts[2] == "1"
-                value: Int.parse(parts[3]).unwrapOr(0)
+                value: Int.parse(parts[3]) ?? 0
             },
         )
     }
@@ -170,8 +170,8 @@ pub fn stack(): Array[Frame] {
             Frame {
                 function: parts[0]
                 file: parts[1]
-                line: Int.parse(parts[2]).unwrapOr(0)
-                column: Int.parse(parts[3]).unwrapOr(0)
+                line: Int.parse(parts[2]) ?? 0
+                column: Int.parse(parts[3]) ?? 0
             },
         )
     }

@@ -35,17 +35,17 @@ fn main(): !(http.HttpError | net.NetError) {
         replyTimeout: time.milliseconds(100)
     }
     let server = app.start(limits: limits)?
-    let port = Int.parse(server.address().split(":").last().unwrapOr("0")).unwrapOr(0)
+    let port = (Int.parse(server.address().split(":").last() ?? "0") ?? 0)
     // Ten bytes promised, three sent.
     let uploader = net.connect("127.0.0.1", port)?
     uploader.write("POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\nabc")?
-    let answer = String.fromBytes(uploader.readAll()?).unwrapOr("")
-    console.println(answer.lines().first().unwrapOr(""))
-    console.println(answer.lines().last().unwrapOr(""))
+    let answer = String.fromBytes(uploader.readAll()?) ?? ""
+    console.println(answer.lines().first() ?? "")
+    console.println(answer.lines().last() ?? "")
     // A reply asked for and never read.
     let reader = net.connect("127.0.0.1", port)?
     reader.write("GET /big HTTP/1.1\r\nHost: a\r\n\r\n")?
-    console.println(stopped.receive().unwrapOr("closed"))
+    console.println(stopped.receive() ?? "closed")
     server.stop()
 }
 

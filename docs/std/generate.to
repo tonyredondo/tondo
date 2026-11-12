@@ -265,7 +265,7 @@ fn anchor(heading: String, seen: var Map[String, Int]): String {
             slug = "{slug}-"
         }
     }
-    let count = seen.getOr(slug, 0)
+    let count = seen[slug] ?? 0
     seen[slug] = count + 1
     if count == 0 { slug } else { "{slug}-{count}" }
 }
@@ -395,7 +395,7 @@ fn written(page: Page, listings: Array[Listing]): String ! String {
 
 fn main(): !String {
     let check = env.args().contains("--check")
-    let tondo = env.get("TONDO").unwrapOr("tondo")
+    let tondo = env.get("TONDO") ?? "tondo"
     var pages = preludePages()
     for module in modules(tondo)? {
         pages.push(
@@ -420,7 +420,7 @@ fn main(): !String {
     for (index, page) in pages.enumerate() {
         let path = "docs/std/{page.file}"
         let text = written(page, listings[index])?
-        let current = fs.readText(path).unwrapOr("")
+        let current = fs.readText(path) ?? ""
         if text == current {
             continue
         }

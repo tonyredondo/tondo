@@ -79,7 +79,7 @@ import std.toml
 let config = toml.parse("[server]\nhost = \"localhost\"\nports = [8080, 8081]\n")?
 let host = config.find("server.host").andThen((value) { value.asText() })
 let port = config.find("server.ports").andThen((ports) { ports.at(1) }).andThen((value) { value.asInt() })
-console.println("{host.unwrapOr("?")}:{port.unwrapOr(0)}")
+console.println("{host ?? "?"}:{port ?? 0}")
 ```
 
 Implements `Display`, `reflect.Reflect`, `serialization.Encode`, `serialization.Decode`.

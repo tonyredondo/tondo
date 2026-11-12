@@ -334,7 +334,7 @@ fn rowAs[T: __serialization.Decode](columns: Array[String], row: Array[Value]): 
     }
     var events: Array[__serialization.Event] = []
     valueEvents(row[0], var events)
-    let first = events.removeAt(0).unwrapOr(__serialization.Event.Null)
+    let first = events.removeAt(0) ?? __serialization.Event.Null
     events.reverse()
     match __serialization.Decode.decode[T](Row { events: __sync.Mutex(events) }, first) {
         ok(value) => value
@@ -355,7 +355,7 @@ fn Row.of(columns: Array[String], row: Array[Value]): Row {
     var events: Array[__serialization.Event] = []
     for (index, name) in columns.iter().enumerate() {
         events.push(__serialization.Event.Key(name))
-        valueEvents(row.get(index).unwrapOr(Value.Null), var events)
+        valueEvents(row.get(index) ?? Value.Null, var events)
     }
     events.push(__serialization.Event.EndMap)
     // Served from the end.

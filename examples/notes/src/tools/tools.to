@@ -61,13 +61,9 @@ pub type Listed = {
 pub fn Notes.list(self, tag: String?): Array[Listed] ! library.NoteError {
     var listed: Array[Listed] = []
     for note in library.all(self.files)? {
-        if tag.isNone() or note.tags.contains(tag.unwrapOr("")) {
+        if tag.isNone() or note.tags.contains(tag ?? "") {
             listed.push(
-                Listed {
-                    name: note.name
-                    tags: note.tags
-                    title: note.text.lines().first().unwrapOr("")
-                },
+                Listed { name: note.name, tags: note.tags, title: note.text.lines().first() ?? "" },
             )
         }
     }

@@ -34,11 +34,8 @@ fn call(
     arguments: String,
 ): (String, Bool) ! (http.HttpError | json.JsonError) {
     let answer = ask(server, "tools/call", "{{\"name\":\"{tool}\",\"arguments\":{arguments}}}")?
-    let said = answer
-        .find("result.content[0].text")
-        .andThen((text) { text.asText() })
-        .unwrapOr("no text")
-    let failed = answer.find("result.isError").andThen((flag) { flag.asBool() }).unwrapOr(true)
+    let said = answer.find("result.content[0].text").andThen((text) { text.asText() }) ?? "no text"
+    let failed = (answer.find("result.isError").andThen((flag) { flag.asBool() }) ?? true)
     (said, failed)
 }
 
@@ -48,9 +45,9 @@ test saysWhatItOffers {
     defer server.stop()
 
     let listed = ask(server, "tools/list")?
-    let names = listed.find("result.tools").andThen((list) { list.asArray() }).unwrapOr([])
+    let names = listed.find("result.tools").andThen((list) { list.asArray() }) ?? []
     assert(
-        names.map((tool) { tool.field("name").asText().unwrapOr("") }) ==
+        names.map((tool) { tool.field("name").asText() ?? "" }) ==
             ["write", "search", "list", "remove"],
     )
     // The schema of a tool is its record: the documentation, and what is required.
@@ -61,7 +58,7 @@ test saysWhatItOffers {
             "Words to find it by.",
     )
     assert(
-        "{listed.find("result.tools[0].inputSchema.required").unwrapOr(json.Value.Null)}" ==
+        "{listed.find("result.tools[0].inputSchema.required") ?? json.Value.Null}" ==
             r"""["name","text"]""",
     )
 

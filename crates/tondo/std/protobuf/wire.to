@@ -238,7 +238,7 @@ pub fn Writer.jsonValue(self, number: Int, value: __json.Value) {
 /// empty one.
 pub fn Writer.jsonStruct(self, number: Int, value: __json.Value) {
     self.begin(number)
-    for (key, member) in value.asObject().unwrapOr([:]) {
+    for (key, member) in (value.asObject() ?? [:]) {
         self.begin(1)
         self.string(1, key)
         self.jsonValue(2, member)
@@ -250,7 +250,7 @@ pub fn Writer.jsonStruct(self, number: Int, value: __json.Value) {
 /// A `google.protobuf.ListValue`, from a JSON array.
 pub fn Writer.jsonList(self, number: Int, value: __json.Value) {
     self.begin(number)
-    for item in value.asArray().unwrapOr([]) {
+    for item in (value.asArray() ?? []) {
         self.jsonValue(1, item)
     }
     self.end()

@@ -272,11 +272,7 @@ fn bound[T: __serialization.Encode](value: T): Piece {
     let sink = Capture { values: __sync.Mutex([]), listed: __sync.Mutex(false) }
     value.encode(sink)
     let values = sink.values.get()
-    if sink.listed.get() {
-        Piece.Listed(values)
-    } else {
-        Piece.Bound(values.get(0).unwrapOr(Value.Null))
-    }
+    if sink.listed.get() { Piece.Listed(values) } else { Piece.Bound(values.get(0) ?? Value.Null) }
 }
 
 /// Bytes interpolated in a literal: one parameter, not a list of numbers.
@@ -556,7 +552,7 @@ pub type Connection = {
 ///         placeholder: (index) { ":{index}" }
 ///         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
 ///         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
-///         place: (url) { (url.split("/").last().unwrapOr(""), none) }
+///         place: (url) { (url.split("/").last() ?? "", none) }
 ///     }
 /// }
 ///

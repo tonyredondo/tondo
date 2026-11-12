@@ -206,7 +206,7 @@ fn step(statement: &Statement, source: &Place) -> Step {
 /// A temporary only ever made of variants that hold nothing to release, and
 /// then released, with nothing reading it: as inlining leaves the result of
 /// `math.sqrt(x)`, `Float ! MathError`, whose error may hold a text, after
-/// `unwrapOr` took its value from where it was made. Its releases, which
+/// `??` took its value from where it was made. Its releases, which
 /// read its tag to find nothing to free, and what it is made of, go.
 fn drop_empty_values(body: &mut Body, types: &crate::types::Types, standard: &[bool]) {
     let count = body.locals.len();

@@ -229,7 +229,7 @@ import std.console
 
 fn main() {
     let line = "  name = Ada Lovelace  "
-    let (key, value) = line.trim().splitOnce(" = ").unwrapOr(("", ""))
+    let (key, value) = line.trim().splitOnce(" = ") ?? ("", "")
     console.println("[{key}] [{value}] {value.words()} {value.toUpper()}")
 
     console.println("{"a,b,,c".split(",")} {"a=b=c".split("=", limit: 2)} {"one\ntwo".lines()}")
@@ -368,7 +368,7 @@ fn main() {
     console.println("{Float.parse("2.5")} {Float.parse("1e3")} {UInt8.parse("300").isErr()}")
     let n = 255
     console.println("{n} {n.toString(radix: 2)} {n.toString(radix: 16)} {3.14159.toFixed(2)}")
-    let port = Int.parse("80a").unwrapOr(8080)
+    let port = Int.parse("80a") ?? 8080
     console.println("{port}")
 }
 ```

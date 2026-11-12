@@ -62,8 +62,8 @@ pub fn change(db: sql.Database, id: Int, edit: TaskChange): Task? ! sql.SqlError
                 none => return none
             }
             let next = current with {
-                title: edit.title.unwrapOr(current.title)
-                done: edit.done.unwrapOr(current.done)
+                title: edit.title ?? current.title
+                done: edit.done ?? current.done
             }
             _ =
                 tx.execute(

@@ -23,7 +23,7 @@ pub extern fn textkit_slug(
     capacity: ffi.CSize,
 ): ffi.CSize {
     let bytes = text.slug(unsafe { ffi.fromCString(source) }).bytes()
-    let room = Int(capacity).unwrapOr(0)
+    let room = Int(capacity) ?? 0
     if room > 0 {
         let fits = bytes.length().min(room - 1)
         unsafe {
@@ -33,7 +33,7 @@ pub extern fn textkit_slug(
             out.offset(fits).write(Byte(0u8))
         }
     }
-    UInt64(bytes.length()).unwrapOr(0u64)
+    UInt64(bytes.length()) ?? 0u64
 }
 
 /// How many characters must be added, removed or changed to make `right`

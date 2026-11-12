@@ -16,9 +16,13 @@ context Counts = {
     first: sync.Atomic[Bool] = sync.Atomic(true)
 }
 
+fn digits(text: String): Bool {
+    Patterns.digits.isMatch(text) ?? false
+}
+
 fn compiled(): regex.Regex ! regex.RegexError {
     _ = Counts.patterns.add(1)
-    regex.Regex.compile(env.get("WORD_PATTERN").unwrapOr("("))?
+    regex.Regex.compile(env.get("WORD_PATTERN") ?? "(")?
 }
 
 context Patterns = {
@@ -40,7 +44,11 @@ fn slowValue(): Int {
 
 fn slowly(): Int {
     if Counts.first.swap(false) {
-        Counts.started.update((started) { started = true })
+        Counts.started.update(
+            (started) {
+                started = true
+            },
+        )
         time.sleep(time.hours(1))
     }
     42
@@ -56,14 +64,17 @@ fn main() {
     console.println("limit {Patterns.limit}, computed {Counts.patterns.load()} times")
     var group = Group[Bool]()
     for text in ["12", "a1", "7"] {
-        group.add(spawn Patterns.digits.isMatch(text).unwrapOr(false))
+        group.add(spawn digits(text))
     }
     console.println("{group.wait()}")
     for _ in 0..3 {
-        _ = Patterns.seen.insert(Patterns.words.pattern(), Patterns.seen.get(Patterns.words.pattern()).unwrapOr(0) + 1)
+        _ = Patterns.seen.insert(
+            Patterns.words.pattern(),
+            (Patterns.seen.get(Patterns.words.pattern()) ?? 0) + 1,
+        )
     }
     console.println("{Patterns.seen.snapshot()}, computed {Counts.patterns.load()} times")
-    let other = regex.Regex.compile(r"x").unwrapOr(Patterns.words)
+    let other = regex.Regex.compile(r"x") ?? Patterns.words
     with Patterns { words: other }
     console.println("with: {Patterns.words.pattern()}")
     match recover { Patterns.loop } {

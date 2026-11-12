@@ -1001,7 +1001,7 @@ fn a_watch_names_the_line_that_changed_it() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "fn plus(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {\n    \
         var counts: Map[String, Int] = [:]\n    for word in [\"a\", \"b\"] {\n        \
-        counts[word] = plus(counts.get(word).unwrapOr(0), 1)\n    }\n}\n";
+        counts[word] = plus(counts.get(word) ?? 0, 1)\n    }\n}\n";
     std::fs::write(dir.join("counted.to"), program).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "counted.to"])
@@ -1397,8 +1397,8 @@ fn second(): Int ! Other {
 }
 
 fn main() {
-    _ = first([]).unwrapOr(0)
-    _ = second().unwrapOr(0)
+    _ = first([]) ?? 0
+    _ = second() ?? 0
     let values = [1, 2]
     _ = values[5]
 }
@@ -1946,7 +1946,7 @@ import std.time
 fn main() {
     var dice = random.Random()
     let rolled = dice.int(0..1000000)
-    let name = console.readLine().unwrapOr("nobody")
+    let name = console.readLine() ?? "nobody"
     let path = "{name}.txt"
     fs.writeText(path, "{rolled} at {time.unixTime().nanoseconds()}").expect("written")
     let kept = fs.readText(path).expect("read")
@@ -2049,7 +2049,7 @@ fn main() {
     spawn produce(out, done)
     var total = 0
     for _ in 0..3 {
-        let got = inbox.receive().unwrapOr(0)
+        let got = inbox.receive() ?? 0
         total += got
     }
     _ = total
@@ -2418,7 +2418,7 @@ fn main() {
     let dir = fs.realPath(fs.createTemporaryDirectory()?)?
     let changes = fs.watch([dir], settle: time.milliseconds(100))?
     fs.writeText(path.join(dir, "a.txt"), "a")?
-    for change in changes.receive(timeout: time.seconds(10)).unwrapOr([]) {
+    for change in changes.receive(timeout: time.seconds(10)) ?? [] {
         console.println("{change.path.removePrefix(dir)} {change.kind}")
     }
     let cpu = profile.startCpu()
@@ -5059,8 +5059,8 @@ fn main() {
     let (done, finished) = channel[String](1)
     spawn count("a", done.copy())
     spawn count("b", done)
-    console.println(finished.receive().unwrapOr(""))
-    console.println(finished.receive().unwrapOr(""))
+    console.println(finished.receive() ?? "")
+    console.println(finished.receive() ?? "")
 }
 "#;
 

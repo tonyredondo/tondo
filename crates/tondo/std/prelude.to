@@ -290,8 +290,8 @@ pub fn String.split(self, separator: String, limit: Int? = none): Array[String] 
     if pieces.length() <= most {
         return pieces
     }
-    var kept = pieces.slice(0, most - 1).unwrapOr([])
-    kept.push(pieces.slice(most - 1, pieces.length()).unwrapOr([]).join(separator))
+    var kept = pieces.slice(0, most - 1) ?? []
+    kept.push((pieces.slice(most - 1, pieces.length()) ?? []).join(separator))
     kept
 }
 
@@ -299,8 +299,8 @@ pub fn String.split(self, separator: String, limit: Int? = none): Array[String] 
 /// when it has none: `"key=a=b".splitOnce("=")` is `some(("key", "a=b"))`.
 pub fn String.splitOnce(self, separator: String): (String, String)? {
     let at = self.find(separator)?
-    let before = self.slice(0, at).unwrapOr("")
-    let after = self.slice(at + separator.length(), self.length()).unwrapOr("")
+    let before = self.slice(0, at) ?? ""
+    let after = (self.slice(at + separator.length(), self.length()) ?? "")
     (before, after)
 }
 
@@ -500,7 +500,7 @@ pub fn Char.from(code: Int): Char? {
 ///
 /// let length = 513
 /// let big = length.toBytes()
-/// let little = Int32(length).unwrapOr(0).toBytes(order: ByteOrder.Little)
+/// let little = (Int32(length) ?? 0).toBytes(order: ByteOrder.Little)
 /// console.println("{big} {little} {Int32.fromBytes(little, order: ByteOrder.Little)}")
 /// ```
 pub enum ByteOrder {
@@ -538,22 +538,6 @@ pub fn Option[T].andThen[U](self, next: fn(T): U?): U? {
     match self {
         some(value) => next(value)
         none => none
-    }
-}
-
-/// The value, or `fallback` when there is none.
-pub fn Option[T].unwrapOr(self, fallback: T): T {
-    match self {
-        some(value) => value
-        none => fallback
-    }
-}
-
-/// This option if it has a value, or `other`.
-pub fn Option[T].orElse(self, other: T?): T? {
-    match self {
-        some(value) => value
-        none => other
     }
 }
 
@@ -615,14 +599,6 @@ pub fn Result[T, E].andThen[U](self, next: fn(T): U ! E): U ! E {
     match self {
         ok(value) => next(value)?
         err(error) => fail error
-    }
-}
-
-/// The value, or `fallback` when it holds an error.
-pub fn Result[T, E].unwrapOr(self, fallback: T): T {
-    match self {
-        ok(value) => value
-        err(_) => fallback
     }
 }
 
@@ -1106,7 +1082,7 @@ pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]] {
     var groups: Map[K, Array[T]] = [:]
     for item in self {
         let k = key(item)
-        var group = groups.getOr(k, [])
+        var group = groups[k] ?? []
         group.push(item)
         groups[k] = group
     }
@@ -1168,14 +1144,6 @@ pub fn Array[T].extend(var self, other: Array[T]) {
 // ---------------------------------------------------------------------------
 // Map and Set
 // ---------------------------------------------------------------------------
-
-/// The value of the key, or `fallback`.
-pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V {
-    match self[key] {
-        some(value) => value
-        none => fallback
-    }
-}
 
 /// The same keys, each with the function's result for its value.
 pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W] {

@@ -49,9 +49,9 @@ fn main() {
     // Keys of a map, compared and hashed as any string.
     var counts: Map[String, Int] = [:]
     for word in "b a b c a b".split(" ") {
-        counts[word] = counts[word].unwrapOr(0) + 1
+        counts[word] = (counts[word] ?? 0) + 1
     }
-    console.println("{counts["a"].unwrapOr(0)} {counts["b"].unwrapOr(0)} {counts["c"].unwrapOr(0)}")
+    console.println("{counts["a"] ?? 0} {counts["b"] ?? 0} {counts["c"] ?? 0}")
     // To C and back, and to JSON.
     let line = "x=1\ny=22\n".lines()[1]
     let c = ffi.toCString(line)

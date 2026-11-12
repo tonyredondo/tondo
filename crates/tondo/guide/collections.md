@@ -18,7 +18,7 @@ fn main() {
     var ages: Map[String, Int] = [:]
     ages["ada"] = 36
     ages["bo"] = 20
-    console.println("{ages.get("ada")} {ages.getOr("cy", 0)} {"bo" in ages}")
+    console.println("{ages.get("ada")} {ages["cy"] ?? 0} {"bo" in ages}")
     for (name, age) in ages {                   // in insertion order
         console.println("{name} is {age}")
     }
@@ -49,7 +49,7 @@ fn main() {
     let cheap = items.filter((item) { item.price < 4 })
     let total = items.reduce(0, (sum, item) { sum + item.price })
     let sorted = items.sortedBy((item) { item.price })
-    let byLetter = items.groupBy((item) { item.name.slice(0, 1).unwrapOr("") })
+    let byLetter = items.groupBy((item) { item.name.slice(0, 1) ?? "" })
     console.println("{names} {cheap.length()} {total} {sorted[0].name} {byLetter.length()}")
     console.println("{names.join(", ")} {[3, 1, 2].sorted()} {[1, 2, 3].sum()} {[1, 2].zip(["a", "b"])}")
 }

@@ -183,7 +183,7 @@ fn status(client: http.Client, index: Int): Int {
 }
 
 fn main(): !(http.HttpError | fs.FsError) {
-    let base = env.get("BASE").unwrapOr("")
+    let base = env.get("BASE") ?? ""
     let hello = http.get("{base}/hello", query: ["q": "a b"], headers: ["X-Test": "yes"])?
     console.println("{hello.status()} {hello.reason()} {hello.version()} {hello.header("X-ECHO")} {hello.headerValues("set-cookie")}")
     console.println(hello.text()?)
@@ -342,7 +342,7 @@ import std.env
 import std.http
 
 fn main(): !http.HttpError {
-    let socket = http.WebSocket.connect("{env.get("WS").unwrapOr("")}/chat", headers: ["X-Test": "yes"])?
+    let socket = http.WebSocket.connect("{env.get("WS") ?? ""}/chat", headers: ["X-Test": "yes"])?
     socket.sendText("hola")?
     socket.sendBytes([Byte(1u8), Byte(2u8), Byte(3u8)])?
     console.println("{socket.receive()?}")
@@ -414,7 +414,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     var app = http.App()
     app.use((request, next) {
         let reply = next(request)?
-        reply.header("x-served-by", "tondo").header("x-route", request.route().unwrapOr("-"))
+        reply.header("x-served-by", "tondo").header("x-route", request.route() ?? "-")
     })
     app.get("/users/:id", (request) {
         let id = request.intParam("id")?
@@ -505,7 +505,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     console.println("{part.status()} {part.header("content-range")} {part.text()?}")
     let tail = client.get("/files/letters.txt", headers: ["Range": "bytes=-3"])?
     console.println("{tail.status()} {tail.text()?}")
-    let etag = whole.header("etag").unwrapOr("")
+    let etag = whole.header("etag") ?? ""
     console.println("{client.get("/files/letters.txt", headers: ["If-None-Match": etag])?.status()}")
     console.println("{client.get("/files/letters.txt", headers: ["Range": "bytes=50-"])}")
     console.println("{client.get("/files/missing.txt")}")
@@ -530,8 +530,8 @@ fn main(): !(http.HttpError | fs.FsError) {
     // A directory, listed: folders first, each file with its size and a
     // link to download it; a parent but at the top; none without `listing`.
     let top = client.get("/browse/")?.text()?
-    let up = top.find("<a href=\"/browse/up\">up/</a>").unwrapOr(-1)
-    let letters = top.find("<a href=\"/browse/letters.txt\">letters.txt</a></td><td class=\"size\">20 B</td>").unwrapOr(-1)
+    let up = top.find("<a href=\"/browse/up\">up/</a>") ?? -1
+    let letters = top.find("<a href=\"/browse/letters.txt\">letters.txt</a></td><td class=\"size\">20 B</td>") ?? -1
     console.println("{up >= 0} {letters > up} {top.contains("download>download")} {top.contains("../")}")
     let folder = client.get("/browse/up")?.text()?
     console.println("{folder.contains("<a href=\"/browse/\">../</a>")} {folder.contains("/browse/up/notes.txt")}")
@@ -542,7 +542,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     console.println("{index.header("content-type")} {index.text()?}")
     let style = client.get("/site/css/site.css", headers: ["Range": "bytes=2-"])?
     console.println("{style.status()} {style.header("content-type")} {style.text()?}")
-    let tag = style.header("etag").unwrapOr("")
+    let tag = style.header("etag") ?? ""
     console.println("{client.get("/site/css/site.css", headers: ["If-None-Match": tag])?.status()}")
     console.println("{client.get("/site/.env")}")
     // A handler that panics answers 500, and the server goes on.
@@ -736,7 +736,7 @@ fn main(): !http.HttpError {
     let secure = server.url().replace("127.0.0.1", "localhost")
     console.println(http.Client(trust: "authority.pem").get(secure)?.text()?)
     console.println(http.get("http://example.invalid/through?a=1")?.text()?)
-    console.println(http.get("{env.get("BASE").unwrapOr("")}/hello")?.text()?)
+    console.println(http.get("{env.get("BASE") ?? ""}/hello")?.text()?)
     console.println(server.url().replace("https://127.0.0.1", "localhost"))
     server.stop()
 }
@@ -892,7 +892,7 @@ fn find(id: Int): User? {
 }
 
 fn listUsers(page: Int?, search: String): Array[User] {
-    [User { id: page.unwrapOr(1), name: search, email: none, role: Role.Member }]
+    [User { id: page ?? 1, name: search, email: none, role: Role.Member }]
 }
 
 fn main(): !http.HttpError {

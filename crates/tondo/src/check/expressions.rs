@@ -15,7 +15,7 @@ impl<'a> Checker<'a> {
             if self.must_use(value.ty) {
                 let message = match value.kind {
                     hir::ExprKind::Recover(..) => format!(
-                        "what `recover` gives, of type {}, is not used; read it with `match`, `.unwrapOr(...)` or `.isErr()`, or discard it with `_ = ...`",
+                        "what `recover` gives, of type {}, is not used; read it with `match`, `?? fallback` or `.isErr()`, or discard it with `_ = ...`",
                         self.display(value.ty)
                     ),
                     _ => format!(
@@ -159,12 +159,12 @@ impl<'a> Checker<'a> {
                     }
                 }
                 _ if wrapped && matches!(self.types.kind(value.ty), TyKind::Option(_)) => format!(
-                    "expected {}, found {}, which may be `none`: give a fallback with `.unwrapOr(value)`, handle it with `match`, or pass it on with `?` in a function that returns an option",
+                    "expected {}, found {}, which may be `none`: give a fallback with `value ?? fallback`, handle it with `match`, or pass it on with `?` in a function that returns an option",
                     self.display(expected),
                     self.display(value.ty)
                 ),
                 _ if wrapped => format!(
-                    "expected {}, found {}: add `?` to pass the failure on, give a fallback with `.unwrapOr(value)`, or handle it with `match`",
+                    "expected {}, found {}: add `?` to pass the failure on, give a fallback with `value ?? fallback`, or handle it with `match`",
                     self.display(expected),
                     self.display(value.ty)
                 ),
@@ -633,7 +633,6 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
-            ast::ExprKind::TryBlock(block) => self.try_block(cx, block, expected, span),
             ast::ExprKind::Within(limit, block) => self.within(cx, limit, block, span),
             // The text of `template.html` or `template.text`, which the call
             // compiles (standard library 14.31).

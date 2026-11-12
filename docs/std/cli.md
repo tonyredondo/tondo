@@ -36,7 +36,7 @@ fn main() {
     for line in [["a.txt", "b.txt", "-t", "production", "--timeout", "2m"], ["--dry-run", "a.txt"], ["--port", "80"]] {
         match cli.parseArgs[Upload](line) {
             ok(upload) => console.println("{upload.files} to {upload.target}, {upload.timeout}, dry run: {upload.dryRun}")
-            err(error) => console.println("{error}".lines().first().unwrapOr(""))
+            err(error) => console.println("{error}".lines().first() ?? "")
         }
     }
 }

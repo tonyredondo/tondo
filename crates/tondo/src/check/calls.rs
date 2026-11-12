@@ -342,7 +342,145 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let value = self.expr(cx, receiver, None);
+        if let Some(retired) = self.retired_fallback(cx, &value, receiver, method, args, span) {
+            return retired;
+        }
         self.method_of(cx, value, method, args, expected, span)
+    }
+
+    /// `unwrapOr`, `orElse` and `getOr`, which `??` replaced (17.13): an
+    /// error whose fix writes `value ?? fallback` or `map[key] ?? fallback`,
+    /// in parentheses where the call was the operand of another operator or
+    /// of an access. The fallback is then evaluated only when needed, so the
+    /// fix is safe only for one that calls nothing.
+    fn retired_fallback(
+        &mut self,
+        cx: &mut FnCx,
+        value: &hir::Expr,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let kind = self.types.kind(self.types.repr(value.ty)).clone();
+        let (key, fallback) = match (method.name.as_str(), &kind, args) {
+            ("unwrapOr", TyKind::Option(_) | TyKind::Result(..), [fallback]) => (None, fallback),
+            ("orElse", TyKind::Option(_), [fallback]) => (None, fallback),
+            ("getOr", TyKind::Map(..), [key, fallback]) => (Some(key), fallback),
+            _ => return None,
+        };
+        let text = |this: &Self, span: Span| this.sources.slice(span).to_string();
+        let left = match key {
+            Some(key) => format!("{}[{}]", text(self, receiver.span), text(self, key.value.span)),
+            None => text(self, receiver.span),
+        };
+        let written = format!("{left} ?? {}", text(self, fallback.value.span));
+        let shown = if key.is_some() { "map[key] ?? fallback" } else { "value ?? fallback" };
+        let message =
+            format!("`{}` is gone: write `{shown}`, which evaluates the fallback only when needed", method.name);
+        self.diags.error("E1001", method.span, message);
+        // Inside a chain of `?.`, `??` would take the whole chain: no fix.
+        if !Self::after_hole(receiver) {
+            let replacement = if self.needs_parentheses(span) { format!("({written})") } else { written };
+            let safe = Self::calls_nothing(&fallback.value);
+            self.diags.fix(format!("write `{shown}`"), safe, vec![(span, replacement)]);
+        }
+        // What the arguments use is used.
+        for arg in args {
+            self.expr(cx, &arg.value, None);
+        }
+        Some(Self::error_expr(span))
+    }
+
+    /// Whether `??` written in place of `span` needs parentheses: the source
+    /// has an operator or an access around it, and none of its own.
+    fn needs_parentheses(&self, span: Span) -> bool {
+        let file = self.sources.file_of(span.start);
+        let (start, end) = ((span.start - file.base) as usize, (span.end - file.base) as usize);
+        let written = &file.text[start..end];
+        // Parentheses of its own that hold all of it.
+        if written.starts_with('(') && written.ends_with(')') {
+            let mut depth = 0;
+            let closes_at_end = written.char_indices().all(|(at, c)| {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                depth > 0 || at == written.len() - 1
+            });
+            if closes_at_end {
+                return false;
+            }
+        }
+        let before = file.text[..start].trim_end();
+        let after = file.text[end..].trim_start();
+        let word = |text: &str, w: &str, at_end: bool| {
+            if at_end {
+                text.strip_suffix(w).is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+            } else {
+                text.strip_prefix(w).is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+            }
+        };
+        let operator_after = after
+            .starts_with(['.', '?', '[', '(', '+', '-', '*', '/', '%', '<', '>', '=', '!', '&', '|', '^'])
+            && !after.starts_with("=>")
+            && !after.starts_with("??");
+        let operator_before = (before.ends_with(['+', '-', '*', '/', '%', '<', '>', '!', '&', '|', '^', '~'])
+            || ["==", "!=", "<=", ">=", "..", "..="].iter().any(|op| before.ends_with(op)))
+            && !before.ends_with("=>")
+            && !before.ends_with("->");
+        // A `with` after it updates it only before `{`: before a name it
+        // starts a statement of its own.
+        let update = word(after, "with", false) && after["with".len()..].trim_start().starts_with('{');
+        operator_after
+            || operator_before
+            || update
+            || ["and", "or", "in"].iter().any(|w| word(after, w, false))
+            || ["and", "or", "not", "in", "spawn"].iter().any(|w| word(before, w, true))
+    }
+
+    /// Whether an expression goes on from the hole of a `?.` chain.
+    fn after_hole(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Hole => true,
+            ast::ExprKind::Field(base, _)
+            | ast::ExprKind::TupleSlot(base, _)
+            | ast::ExprKind::Try(base)
+            | ast::ExprKind::Index { base, .. }
+            | ast::ExprKind::Generic { base, .. } => Self::after_hole(base),
+            ast::ExprKind::Call { callee, .. } => Self::after_hole(callee),
+            _ => false,
+        }
+    }
+
+    /// Whether an expression calls nothing, so that evaluating it or not
+    /// makes no difference.
+    fn calls_nothing(expr: &ast::Expr) -> bool {
+        use ast::ExprKind as E;
+        match &expr.kind {
+            E::Int { .. }
+            | E::Float { .. }
+            | E::BigInt(_)
+            | E::Bool(_)
+            | E::Char(_)
+            | E::Unit
+            | E::None
+            | E::Path(_) => true,
+            E::Str(segments) => segments.iter().all(|segment| match segment {
+                ast::StrSegment::Text(_) => true,
+                ast::StrSegment::Expr(part, _) => Self::calls_nothing(part),
+            }),
+            E::Field(base, _) | E::TupleSlot(base, _) | E::Unary(_, base) | E::Construct(_, base) => {
+                Self::calls_nothing(base)
+            }
+            E::Binary(_, left, right) => Self::calls_nothing(left) && Self::calls_nothing(right),
+            E::Tuple(items) | E::Array(items) | E::Set(items) => items.iter().all(Self::calls_nothing),
+            E::Map(pairs) => pairs.iter().all(|(key, value)| Self::calls_nothing(key) && Self::calls_nothing(value)),
+            E::Record { fields, .. } => fields.iter().filter_map(|f| f.value.as_ref()).all(Self::calls_nothing),
+            E::Closure(_) => true,
+            _ => false,
+        }
     }
 
     /// `Array.concat(a, b)`: a method the language gives, with its receiver
@@ -1293,15 +1431,15 @@ impl<'a> Checker<'a> {
     pub(super) fn method_hint(&self, ty: Ty, name: &str) -> Option<&'static str> {
         let hint = match (self.types.kind(ty), name) {
             (TyKind::Option(_), "unwrap" | "get" | "value" | "orElseThrow") => {
-                "use `expect(message)`, which panics with the message on `none`; or `unwrapOr(fallback)`, `?` or `match`"
+                "use `expect(message)`, which panics with the message on `none`; or `value ?? fallback`, `?` or `match`"
             }
             (TyKind::Option(_) | TyKind::Result(..), "unwrap_or" | "getOrElse" | "orElseGet" | "valueOr") => {
-                "use `unwrapOr(fallback)`"
+                "use `value ?? fallback`"
             }
             (TyKind::Option(_), "isPresent" | "is_some" | "hasValue") => "use `isSome()`",
             (TyKind::Option(_), "is_none" | "isEmpty" | "isAbsent") => "use `isNone()`",
             (TyKind::Result(..), "unwrap" | "get" | "value") => {
-                "use `expect(message)`, which panics with the message on an error; or `unwrapOr(fallback)`, `?` or `match`"
+                "use `expect(message)`, which panics with the message on an error; or `value ?? fallback`, `?` or `match`"
             }
             (TyKind::Result(..), "is_ok" | "isSuccess") => "use `isOk()`",
             (TyKind::Result(..), "is_err" | "isFailure" | "isError") => "use `isErr()`",
@@ -1335,7 +1473,7 @@ impl<'a> Checker<'a> {
             (TyKind::Array(_), "sort_by" | "sortWith" | "sorted_by") => "use `sortBy(key)`, or `sortedWith(compare)`",
             (TyKind::Array(_), "addAll" | "append_all" | "push_all") => "use `extend(other)`",
             (TyKind::Map(..), "forEach" | "each" | "items" | "iter") => "use `for (key, value) in map { ... }`",
-            (TyKind::Map(..), "getOrDefault" | "get_or_default" | "get_or") => "use `getOr(key, fallback)`",
+            (TyKind::Map(..), "getOrDefault" | "get_or_default" | "get_or") => "use `map[key] ?? fallback`",
             (_, "size" | "count" | "len") => "use `length()`",
             (_, "empty") => "use `isEmpty()`",
             (TyKind::String, "charAt" | "at") => "use `text[index]`, or `get(index)` for a `Char?`",
@@ -1389,7 +1527,7 @@ impl<'a> Checker<'a> {
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
                 return self.method_call(cx, &receiver, method, args, expected, span);
             }
-            // `Request.user.unwrapOr("")`: a method of a context's field.
+            // `Request.user.isSome()`: a method of a context's field.
             ast::ExprKind::Path(segments) if segments.len() > 2 && self.is_context(&segments[0].name) => {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);

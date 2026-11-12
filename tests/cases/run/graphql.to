@@ -31,7 +31,7 @@ pub fn User.posts(self, first: Int?): Array[Post] {
         Post { title: "Hello from {self.name}", stars: 3 },
         Post { title: "Again", stars: 1 },
     ]
-    all.slice(0, first.unwrapOr(10).min(all.length())).unwrapOr([])
+    all.slice(0, (first ?? 10).min(all.length())) ?? []
 }
 
 pub type Post = {
@@ -102,7 +102,7 @@ fn main() {
         json.encode[json.Value](
             schema.execute(
                 r"query Q($id: Int!) { user(id: $id) { name } }",
-                variables: ["id": json.parse("1").unwrapOr(json.Value.Null)],
+                variables: ["id": json.parse("1") ?? json.Value.Null],
             ),
         ),
     )

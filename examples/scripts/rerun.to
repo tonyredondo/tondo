@@ -14,7 +14,7 @@ import std.process
 import std.time
 
 let arguments = env.args()
-let directory = arguments.get(0).unwrapOr(".")
+let directory = arguments.get(0) ?? "."
 let command = arguments[1:].filter((word) { word != "--" })
 if command.isEmpty() {
     console.eprintln("usage: tondo rerun.to <directory> -- <command> [<argument>...]")

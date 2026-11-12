@@ -117,7 +117,7 @@ fn described(
     root: String = "",
 ): String {
     let optional = info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Option)
-    let inner = if optional { info.genericArguments().first().unwrapOr(info) } else { info }
+    let inner = if optional { info.genericArguments().first() ?? info } else { info }
     let base = match inner.kind() {
         __reflect.TypeKind.Primitive(kind) => match kind {
             __reflect.PrimitiveKind.String => "String"
@@ -130,10 +130,10 @@ fn described(
         }
         __reflect.TypeKind.Applied(kind) if kind == __reflect.AppliedKind.Array or
             kind == __reflect.AppliedKind.Set => {
-            "[{described(inner.genericArguments().first().unwrapOr(inner), input, var types)}]"
+            "[{described(inner.genericArguments().first() ?? inner, input, var types)}]"
         }
         __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) => {
-            return described(inner.genericArguments().first().unwrapOr(inner), input, var types)
+            return described(inner.genericArguments().first() ?? inner, input, var types)
         }
         __reflect.TypeKind.Newtype => match inner.underlying() {
             some(underlying) => return described(underlying, input, var types)
@@ -198,8 +198,8 @@ fn scalar(name: String, info: __reflect.TypeInfo, types: var Array[Named]): Stri
 /// input that shares it with an output ends in `Input`.
 fn nameOf(info: __reflect.TypeInfo, suffix: String): String {
     let qualified = info.qualifiedName()
-    let bare = qualified.split(".").last().unwrapOr(qualified)
-    let plain = bare.split("[").first().unwrapOr(bare)
+    let bare = qualified.split(".").last() ?? qualified
+    let plain = bare.split("[").first() ?? bare
     "{plain}{suffix}"
 }
 
@@ -267,7 +267,7 @@ fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root
             }
         }
     }
-    let index = types.findIndex((t) { t.name == name and t.kind == kind }).unwrapOr(0)
+    let index = types.findIndex((t) { t.name == name and t.kind == kind }) ?? 0
     types[index] = types[index] with { fields: fields }
     name
 }
@@ -452,14 +452,13 @@ fn tokens(source: String): Array[Token] ! Unreadable {
                             'b' => "\u{8}"
                             'f' => "\u{c}"
                             'u' => {
-                                let digits = chars
-                                    .slice(at + 1, (at + 5).min(chars.length()))
-                                    .unwrapOr([])
+                                let digits = (chars.slice(at + 1, (at + 5).min(chars.length())) ??
+                                    [])
                                     .map((d) { "{d}" })
                                     .join("")
                                 at += 4
                                 match Int.parse(digits, radix: 16) {
-                                    ok(code) => "{Char.from(code).unwrapOr('?')}"
+                                    ok(code) => "{Char.from(code) ?? '?'}"
                                     err(_) => fail Unreadable {
                                         message: "`\\u{digits}` is no character"
                                         line
@@ -530,7 +529,7 @@ fn blockText(raw: String): String {
     for (index, each) in lines.iter().enumerate() {
         kept.push(
             if index > 0 and common > 0 {
-                each.slice(common.min(each.length()), each.length()).unwrapOr("")
+                each.slice(common.min(each.length()), each.length()) ?? ""
             } else {
                 each
             },
@@ -755,8 +754,8 @@ fn Reader.literal(self): Literal ! Unreadable {
     let token = self.take()
     match token.kind {
         "$" => Literal.Variable(self.name()?)
-        "int" => Literal.Constant(__json.parse(token.text).unwrapOr(__json.Value.Null))
-        "float" => Literal.Constant(__json.parse(token.text).unwrapOr(__json.Value.Null))
+        "int" => Literal.Constant(__json.parse(token.text) ?? __json.Value.Null)
+        "float" => Literal.Constant(__json.parse(token.text) ?? __json.Value.Null)
         "string" => Literal.Constant(__json.Value.Text(token.text))
         "name" => match token.text {
             "true" => Literal.Constant(__json.Value.Bool(true))
@@ -798,7 +797,7 @@ fn constant(literal: Literal): __json.Value {
 /// A literal as JSON, its variables replaced.
 fn valueOf(literal: Literal, variables: Map[String, __json.Value]): __json.Value {
     match literal {
-        Literal.Variable(name) => variables.get(name).unwrapOr(__json.Value.Null)
+        Literal.Variable(name) => variables.get(name) ?? __json.Value.Null
         Literal.Constant(value) => value
         Literal.Listed(items) => __json.Value.Array(items.map((item) { valueOf(item, variables) }))
         Literal.Members(members) => {
@@ -840,7 +839,7 @@ pub fn Schema.execute(
     operation: String? = none,
 ): __json.Value {
     let text = self.executed(document, variables, operation)
-    __json.parse(text).unwrapOr(__json.Value.Null)
+    __json.parse(text) ?? __json.Value.Null
 }
 
 fn Schema.executed(
@@ -861,7 +860,7 @@ fn Schema.executed(
     let picked = match chosen {
         some(found) => found
         none if operation.isSome() => return failedWith(
-            "the document has no operation `{operation.unwrapOr("")}`",
+            "the document has no operation `{operation ?? ""}`",
             1,
             1,
         )
@@ -901,7 +900,7 @@ fn Schema.executed(
     }
     let data = run.selected(root, rootType, picked.selections, "")
     let errors = run.errors.get()
-    let shown = data.unwrapOr("null")
+    let shown = data ?? "null"
     if errors.isEmpty() {
         "{{\"data\":{shown}}}"
     } else {
@@ -926,7 +925,7 @@ fn Run.kept(self, directives: Array[Directive]): Bool {
         let condition = directive.arguments
             .find((a) { a.0 == "if" })
             .map((a) { valueOf(a.1, variables) })
-        let truth = condition.andThen((value) { value.asBool() }).unwrapOr(false)
+        let truth = condition.andThen((value) { value.asBool() }) ?? false
         if directive.name == "skip" and truth {
             return false
         }
@@ -955,7 +954,7 @@ fn Run.collected(self, typeName: String, selections: Array[Selection], into: var
                 }
             }
             Selection.Inline(condition, directives, inner) => {
-                if self.kept(directives) and condition.map((on) { on == typeName }).unwrapOr(true) {
+                if self.kept(directives) and (condition.map((on) { on == typeName }) ?? true) {
                     self.collected(typeName, inner, var into)
                 }
             }
@@ -977,7 +976,7 @@ fn Run.selected(
     var written: Array[String] = []
     var keys: Array[String] = []
     for field in fields {
-        let key = field.label.unwrapOr(field.name)
+        let key = field.label ?? field.name
         if keys.any((seen) { seen == key }) {
             continue
         }
@@ -1003,13 +1002,11 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
             let wanted = field.arguments
                 .find((a) { a.0 == "name" })
                 .map((a) { valueOf(a.1, variables) })
-            let name = wanted.andThen((v) { v.asText() }).unwrapOr("")
-            meta
-                .field("types")
-                .asArray()
-                .unwrapOr([])
-                .find((t) { t.field("name").asText() == some(name) })
-                .unwrapOr(__json.Value.Null)
+            let name = wanted.andThen((v) { v.asText() }) ?? ""
+            (meta.field("types").asArray() ?? []).find(
+                (t) { t.field("name").asText() == some(name) },
+            ) ??
+                __json.Value.Null
         }
         return self.completed(
             Node.Meta(answer),
@@ -1029,10 +1026,11 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
                 .andThen((named) { named.fields.find((m) { m.name == field.name }) }) {
                 some(found) => found
                 none => {
-                    let known = self.schema
-                        .named(typeName)
-                        .map((named) { named.fields.map((m) { m.name }) })
-                        .unwrapOr([])
+                    let known =
+                        self.schema
+                            .named(typeName)
+                            .map((named) { named.fields.map((m) { m.name }) }) ??
+                            []
                     let listed = if known.isEmpty() { "none" } else { known.join(", ") }
                     self.failed(
                         "`{typeName}` has no field `{field.name}`; its fields: {listed}",
@@ -1077,11 +1075,7 @@ fn Run.called(
         let given = field.arguments
             .find((a) { a.0 == parameter.name() })
             .map((a) { valueOf(a.1, variables) })
-        match __shapes.fromJson(
-            parameter.typeInfo(),
-            given.unwrapOr(__json.Value.Null),
-            parameter.name(),
-        ) {
+        match __shapes.fromJson(parameter.typeInfo(), given ?? __json.Value.Null, parameter.name()) {
             ok(value) => args.push(value)
             err(problem) => {
                 self.failed("the argument {problem}", field, path)
@@ -1104,7 +1098,7 @@ fn Run.called(
         method.function().outcome().kind() ==
             __reflect.TypeKind.Applied(__reflect.AppliedKind.Result)
     if result {
-        let inner = outcome.elements().first().unwrapOr(outcome)
+        let inner = outcome.elements().first() ?? outcome
         if outcome.variant() == "err" {
             self.failed("{inner}", field, path)
             return none
@@ -1118,7 +1112,7 @@ fn Run.called(
 fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path: String): String? {
     let required = reference.endsWith("!")
     let inner = if required {
-        reference.slice(0, reference.length() - 1).unwrapOr(reference)
+        reference.slice(0, reference.length() - 1) ?? reference
     } else {
         reference
     }
@@ -1130,7 +1124,7 @@ fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path
         }
     }
     let written = if inner.startsWith("[") {
-        let element = inner.slice(1, inner.length() - 1).unwrapOr(inner)
+        let element = inner.slice(1, inner.length() - 1) ?? inner
         var items: Array[String] = []
         for (index, item) in value.elements().iter().enumerate() {
             match self.value(item, element, field, "{path},{index}") {
@@ -1178,9 +1172,8 @@ fn Run.completed(self, node: Node, typeName: String, field: Field, path: String)
                     var written: Array[String] = []
                     for (index, item) in items.iter().enumerate() {
                         written.push(
-                            self
-                                .completed(Node.Meta(item), typeName, field, "{path},{index}")
-                                .unwrapOr("null"),
+                            self.completed(Node.Meta(item), typeName, field, "{path},{index}") ??
+                                "null",
                         )
                     }
                     "[{written.join(",")}]"
@@ -1282,7 +1275,7 @@ fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
             jsonObject(
                 [
                     "name": jsonText(member.name),
-                    "description": member.docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+                    "description": member.docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
                     "args": __json.Value.Array(
                         member.arguments.map((a) { inputValue(a.name, a.reference, a.docs, kinds) }),
                     ),
@@ -1297,7 +1290,7 @@ fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
         [
             "kind": jsonText(kind),
             "name": jsonText(named.name),
-            "description": named.docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+            "description": named.docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
             "fields": if named.kind == Kind.Object {
                 __json.Value.Array(fields)
             } else {
@@ -1347,7 +1340,7 @@ fn inputValue(
     jsonObject(
         [
             "name": jsonText(name),
-            "description": docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+            "description": docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
             "type": typeReference(reference, kinds),
             "defaultValue": __json.Value.Null,
         ],
@@ -1362,10 +1355,7 @@ fn typeReference(reference: String, kinds: Array[(String, String)]): __json.Valu
             [
                 "kind": jsonText("NON_NULL"),
                 "name": __json.Value.Null,
-                "ofType": typeReference(
-                    reference.slice(0, reference.length() - 1).unwrapOr(""),
-                    kinds,
-                ),
+                "ofType": typeReference(reference.slice(0, reference.length() - 1) ?? "", kinds),
             ],
         )
     }
@@ -1374,14 +1364,11 @@ fn typeReference(reference: String, kinds: Array[(String, String)]): __json.Valu
             [
                 "kind": jsonText("LIST"),
                 "name": __json.Value.Null,
-                "ofType": typeReference(
-                    reference.slice(1, reference.length() - 1).unwrapOr(""),
-                    kinds,
-                ),
+                "ofType": typeReference(reference.slice(1, reference.length() - 1) ?? "", kinds),
             ],
         )
     }
-    let kind = kinds.find((pair) { pair.0 == reference }).map((pair) { pair.1 }).unwrapOr("SCALAR")
+    let kind = kinds.find((pair) { pair.0 == reference }).map((pair) { pair.1 }) ?? "SCALAR"
     jsonObject(["kind": jsonText(kind), "name": jsonText(reference), "ofType": __json.Value.Null])
 }
 
@@ -1396,24 +1383,22 @@ pub fn Schema.handler(self): fn(__http.Request): __http.Reply ! __http.Problem {
     let served = self
     (request) {
         let (document, variables, operation) = if request.method() == "GET" {
-            let query = request.query("query").unwrapOr("")
-            if query.isEmpty() and request.header("Accept").unwrapOr("").contains("text/html") {
+            let query = request.query("query") ?? ""
+            if query.isEmpty() and (request.header("Accept") ?? "").contains("text/html") {
                 return __http.Reply.html(graphiql(request.path()))
             }
-            let given = __json
-                .parse(request.query("variables").unwrapOr("{{}}"))
-                .unwrapOr(__json.Value.Null)
+            let given = (__json.parse(request.query("variables") ?? "{{}}") ?? __json.Value.Null)
             (query, given, request.query("operationName"))
         } else {
-            let body = __json.parse(request.text()?).unwrapOr(__json.Value.Null)
+            let body = (__json.parse(request.text()?) ?? __json.Value.Null)
             (
-                body.field("query").asText().unwrapOr(""),
+                body.field("query").asText() ?? "",
                 body.field("variables"),
                 body.field("operationName").asText(),
             )
         }
-        let text = served.executed(document, variables.asObject().unwrapOr([:]), operation)
-        __http.Reply.json(__json.parse(text).unwrapOr(__json.Value.Null))
+        let text = served.executed(document, variables.asObject() ?? [:], operation)
+        __http.Reply.json(__json.parse(text) ?? __json.Value.Null)
     }
 }
 

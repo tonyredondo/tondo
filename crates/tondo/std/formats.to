@@ -89,7 +89,7 @@ fn formatNumber(
 pub fn formatText(text: String, precision: Int, width: Int, fill: Char, align: Char): String {
     var cut = text
     if precision >= 0 and text.length() > precision {
-        cut = text.slice(0, precision).unwrapOr(text)
+        cut = text.slice(0, precision) ?? text
     }
     let missing = width - cut.length()
     if missing <= 0 {
@@ -123,11 +123,11 @@ pub fn digitsOf(shown: String): Digits {
     match rest.splitOnce("e") {
         some((mantissa, power)) => {
             rest = mantissa
-            exponent = Int.parse(power).unwrapOr(0)
+            exponent = Int.parse(power) ?? 0
         }
         none => {}
     }
-    let (whole, fraction) = rest.splitOnce(".").unwrapOr((rest, ""))
+    let (whole, fraction) = rest.splitOnce(".") ?? (rest, "")
     var all = "{whole}{fraction}"
     var point = whole.length() + exponent
     if point < 0 {
@@ -139,8 +139,8 @@ pub fn digitsOf(shown: String): Digits {
     }
     Digits {
         negative: negative
-        whole: all.slice(0, point).unwrapOr("")
-        fraction: all.slice(point, all.length()).unwrapOr("")
+        whole: all.slice(0, point) ?? ""
+        fraction: all.slice(point, all.length()) ?? ""
         special: none
     }
 }
@@ -150,8 +150,8 @@ pub fn shifted(parts: Digits, places: Int): Digits {
     let moved = parts.fraction.padEnd(places, "0")
     Digits {
         negative: parts.negative
-        whole: "{parts.whole}{moved.slice(0, places).unwrapOr("")}"
-        fraction: moved.slice(places, moved.length()).unwrapOr("")
+        whole: "{parts.whole}{moved.slice(0, places) ?? ""}"
+        fraction: moved.slice(places, moved.length()) ?? ""
         special: parts.special
     }
 }
@@ -172,15 +172,10 @@ pub fn rounded(parts: Digits, decimals: Int?): Digits {
             special: parts.special
         }
     }
-    let dropped = parts.fraction
-        .slice(wanted, parts.fraction.length())
-        .unwrapOr("")
-        .chars()
-        .collect()
-    var kept = "{parts.whole}{parts.fraction.slice(0, wanted).unwrapOr("")}".chars().collect()
-    let beyond =
-        dropped.slice(1, dropped.length()).unwrapOr([]).filter((c) { c != '0' }).length() > 0
-    let last = kept.get(kept.length() - 1).unwrapOr('0')
+    let dropped = (parts.fraction.slice(wanted, parts.fraction.length()) ?? "").chars().collect()
+    var kept = "{parts.whole}{parts.fraction.slice(0, wanted) ?? ""}".chars().collect()
+    let beyond = (dropped.slice(1, dropped.length()) ?? []).filter((c) { c != '0' }).length() > 0
+    let last = kept.get(kept.length() - 1) ?? '0'
     let odd = (last.code() - '0'.code()) % 2 == 1
     let up = dropped[0] > '5' or (dropped[0] == '5' and (beyond or odd))
     if up {
@@ -191,7 +186,7 @@ pub fn rounded(parts: Digits, decimals: Int?): Digits {
                 kept[at] = '0'
                 at -= 1
             } else {
-                kept[at] = Char.from(kept[at].code() + 1).unwrapOr('0')
+                kept[at] = Char.from(kept[at].code() + 1) ?? '0'
                 carry = false
             }
         }
@@ -203,8 +198,8 @@ pub fn rounded(parts: Digits, decimals: Int?): Digits {
     let point = digits.length() - wanted
     Digits {
         negative: parts.negative
-        whole: digits.slice(0, point).unwrapOr("")
-        fraction: digits.slice(point, digits.length()).unwrapOr("")
+        whole: digits.slice(0, point) ?? ""
+        fraction: digits.slice(point, digits.length()) ?? ""
         special: none
     }
 }

@@ -1354,6 +1354,10 @@ pub enum Op {
     /// operations are skipped, and it stays.
     And(usize),
     Or(usize),
+    /// `??`: when the optional on the stack has a value, it becomes it and
+    /// this many operations, those of the fallback, are skipped; otherwise
+    /// it is taken off.
+    Coalesce(usize),
     /// The `Bool` of an `if` that is an expression, which it takes off the
     /// stack: when false, this many operations are skipped, those of the
     /// value it gives when true.
@@ -1374,7 +1378,7 @@ pub struct Code {
 pub fn expression(source: &str, range: Range<usize>) -> Result<Code, Error> {
     let tokens = tokens(source, range.clone())?;
     let mut parser = Expression { source, tokens, next: 0, code: Code::default(), end: range.end };
-    parser.or()?;
+    parser.whole()?;
     if let Some((_, at)) = parser.tokens.get(parser.next) {
         return error(*at, "expected the end of the expression");
     }
@@ -1411,9 +1415,9 @@ enum Part {
     Value(Range<usize>, Option<Range<usize>>),
 }
 
-const SYMBOLS: [&str; 23] = [
-    "..=", "..", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!", ":",
-    "{", "}",
+const SYMBOLS: [&str; 24] = [
+    "..=", "..", "??", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!",
+    ":", "{", "}",
 ];
 
 fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Error> {
@@ -1604,6 +1608,19 @@ impl Expression<'_> {
         self.code.at.push(at);
     }
 
+    /// An expression, whose lowest operator is `??`, to the right.
+    fn whole(&mut self) -> Result<(), Error> {
+        self.or()?;
+        let at = self.at();
+        if self.eat("??") {
+            let jump = self.code.ops.len();
+            self.emit(Op::Coalesce(0), at);
+            self.whole()?;
+            self.code.ops[jump] = Op::Coalesce(self.code.ops.len() - jump - 1);
+        }
+        Ok(())
+    }
+
     fn or(&mut self) -> Result<(), Error> {
         self.and()?;
         while matches!(self.peek(), Some(Token::Name(name)) if name == "or") {
@@ -1732,7 +1749,7 @@ impl Expression<'_> {
                     self.emit(Op::Field(name), at);
                 }
             } else if self.eat("[") {
-                self.or()?;
+                self.whole()?;
                 if !self.eat("]") {
                     return error(self.at(), "expected `]`");
                 }
@@ -1761,7 +1778,7 @@ impl Expression<'_> {
             if self.eat("]") {
                 break;
             }
-            self.or()?;
+            self.whole()?;
             let keyed = self.eat(":");
             match map {
                 None => map = Some(keyed),
@@ -1774,7 +1791,7 @@ impl Expression<'_> {
                 _ => {}
             }
             if keyed {
-                self.or()?;
+                self.whole()?;
             }
             count += 1;
         }
@@ -1789,7 +1806,7 @@ impl Expression<'_> {
             return Ok(0);
         }
         loop {
-            self.or()?;
+            self.whole()?;
             count += 1;
             if self.eat(")") {
                 return Ok(count);
@@ -1853,7 +1870,7 @@ impl Expression<'_> {
                 }
             }
             Token::Symbol("(") => {
-                self.or()?;
+                self.whole()?;
                 if !self.eat(")") {
                     return error(self.at(), "expected `)`");
                 }
@@ -1867,7 +1884,7 @@ impl Expression<'_> {
     /// `if condition { value } else { value }`, after its `if`; the `else`
     /// may be another `if`.
     fn choice(&mut self, at: usize) -> Result<(), Error> {
-        self.or()?;
+        self.whole()?;
         let unless = self.code.ops.len();
         self.emit(Op::Unless(0), at);
         self.braced_value()?;
@@ -1892,7 +1909,7 @@ impl Expression<'_> {
         if !self.eat("{") {
             return error(self.at(), "write the value of the branch in braces: `if c { a } else { b }`");
         }
-        self.or()?;
+        self.whole()?;
         if !self.eat("}") {
             return error(self.at(), "expected `}` after the value of the branch");
         }

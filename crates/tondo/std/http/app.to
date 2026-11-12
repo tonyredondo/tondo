@@ -193,10 +193,10 @@ fn Cors.answer(self, request: Request, next: fn(Request): Reply ! Problem): Repl
             some(value) => {
                 reply = reply
                     .header("access-control-allow-origin", value)
-                    .header("access-control-allow-methods", asked.unwrapOr(""))
+                    .header("access-control-allow-methods", asked ?? "")
                     .header("access-control-max-age", "{self.maxAge.nanoseconds() / 1_000_000_000}")
                 let headers = if self.headers.isEmpty() {
-                    request.header("access-control-request-headers").unwrapOr("")
+                    request.header("access-control-request-headers") ?? ""
                 } else {
                     self.headers.join(", ")
                 }
@@ -312,7 +312,7 @@ fn served(files: __fs.FileSystem, at: String): Reply ! Problem {
             ok(contents) => {
                 let tag = match files.tag(at) {
                     some(tag) => tag
-                    none => __hash.sha256(contents).hex().slice(0, 16).unwrapOr("")
+                    none => __hash.sha256(contents).hex().slice(0, 16) ?? ""
                 }
                 Reply { code: 200, headerList: [], payload: Payload.Embedded(at, contents, tag) }
             }
@@ -342,7 +342,7 @@ fn listingPage(base: String, relative: String, tree: __fs.FileSystem, at: String
         let shown = escaped(name)
         let child = if at.isEmpty() { name } else { "{at}/{name}" }
         let found = tree.metadata(child)
-        if found.map((entry) { entry.kind == __fs.FileKind.Directory }).unwrapOr(false) {
+        if found.map((entry) { entry.kind == __fs.FileKind.Directory }) ?? false {
             rows.push("<tr><td><a href=\"{href}\">{shown}/</a></td><td></td><td></td></tr>")
         } else {
             let size = match found {
@@ -505,7 +505,7 @@ impl __serialization.Decode for Saved {
 pub fn App.compress(mut self, minimum: Int = 1024) {
     self.use(
         (request, next) {
-            compressed(next(request)?, request.header("accept-encoding").unwrapOr(""), minimum)
+            compressed(next(request)?, request.header("accept-encoding") ?? "", minimum)
         },
     )
 }
@@ -518,13 +518,12 @@ fn encodingFor(accepted: String): String? {
     for offer in accepted.split(",") {
         let parts = offer.split(";")
         let name = parts[0].trim().toLowerAscii()
-        let weight = parts
-            .slice(1, parts.length())
-            .unwrapOr([])
-            .map((p) { p.trim() })
-            .find((p) { p.startsWith("q=") })
-            .andThen((p) { Float.parse(p.removePrefix("q=")).ok() })
-            .unwrapOr(1.0)
+        let weight =
+            ((parts.slice(1, parts.length()) ?? [])
+                .map((p) { p.trim() })
+                .find((p) { p.startsWith("q=") })
+                .andThen((p) { Float.parse(p.removePrefix("q=")).ok() }) ??
+                1.0)
         // zstd before gzip when the client weighs them the same.
         let known = name == "zstd" or name == "gzip"
         if known and
@@ -553,7 +552,7 @@ fn compressed(reply: Reply, accepted: String, minimum: Int): Reply {
         none => return reply
     }
     if headers.contains("content-encoding") or
-        not compressible(headers.get("content-type").unwrapOr("")) or
+        not compressible(headers.get("content-type") ?? "") or
         reply.code < 200 or
         reply.code == 204 or
         reply.code == 304 {
@@ -762,15 +761,14 @@ fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], 
     for index < pattern.length() {
         let part = pattern[index]
         if part.startsWith("*") {
-            let name = part.slice(1, part.length()).unwrapOr("")
+            let name = part.slice(1, part.length()) ?? ""
             params[name] = path
                 .drop(index)
-                .map((segment) { __encoding.urlDecode(segment).unwrapOr(segment) })
+                .map((segment) { __encoding.urlDecode(segment) ?? segment })
                 .join("/")
         } else if part.startsWith(":") {
-            params[part.slice(1, part.length()).unwrapOr("")] = __encoding
-                .urlDecode(path[index])
-                .unwrapOr(path[index])
+            params[part.slice(1, part.length()) ?? ""] =
+                __encoding.urlDecode(path[index]) ?? path[index]
         }
         index += 1
     }
@@ -795,7 +793,7 @@ fn routeSegments(path: String): Array[String] {
         if not (part.startsWith(":") or part.startsWith("*")) {
             continue
         }
-        let name = part.slice(1, part.length()).unwrapOr("")
+        let name = part.slice(1, part.length()) ?? ""
         let named = name.chars().all((c) { c.isLetter() or c.isDigit() or c == '_' })
         if name.isEmpty() or not named or name.chars().collect()[0].isDigit() {
             panic(
@@ -824,8 +822,8 @@ fn inside(directory: String, relative: String): String ! Problem {
 /// The first byte of `Content-Range: bytes start-end/total`.
 fn rangeStart(range: String): Int ! Problem {
     let spec = range.removePrefix("bytes ")
-    let dash = spec.find("-").unwrapOr(0)
-    match Int.parse(spec.slice(0, dash).unwrapOr("")) {
+    let dash = spec.find("-") ?? 0
+    match Int.parse(spec.slice(0, dash) ?? "") {
         ok(start) => start
         err(_) => fail Problem.badRequest("`Content-Range: {range}` is not `bytes start-end/total`")
     }

@@ -57,8 +57,8 @@ fn sleepy(n: Int): Int {
 /// Its timer still holds the wait when the task ends.
 fn chosen(first: Receiver[Int], second: Receiver[Int]): Int {
     select {
-        let value = first.receive() => value.unwrapOr(-1)
-        let value = second.receive() => value.unwrapOr(-2) * 10
+        let value = first.receive() => value ?? -1
+        let value = second.receive() => (value ?? -2) * 10
         time.sleep(time.seconds(60)) => 0
     }
 }

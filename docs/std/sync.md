@@ -80,7 +80,7 @@ import std.sync
 
 /// Takes the next job, waiting while there is none.
 fn take(jobs: sync.Mutex[Array[String]]): String {
-    jobs.updateWhen((waiting) { not waiting.isEmpty() }, (waiting) { waiting.removeAt(0).unwrapOr("") })
+    jobs.updateWhen((waiting) { not waiting.isEmpty() }, (waiting) { waiting.removeAt(0) ?? "" })
 }
 
 fn main() {
@@ -277,7 +277,7 @@ import std.sync
 fn visit(seen: sync.Map[String, Int], page: String) {
     for {
         let before = seen.get(page)
-        let after = some(before.unwrapOr(0) + 1)
+        let after = some((before ?? 0) + 1)
         match seen.compareExchange(page, before, after) {
             sync.CompareExchange.Exchanged(_) => break
             sync.CompareExchange.Mismatch(_) => {}
@@ -617,7 +617,7 @@ import std.console
 import std.sync
 
 let totals = sync.Mutex(["apples": 0])
-totals.update((map) { map["apples"] = map["apples"].unwrapOr(0) + 3 })
+totals.update((map) { map["apples"] = (map["apples"] ?? 0) + 3 })
 console.println("{totals.get()}")
 ```
 

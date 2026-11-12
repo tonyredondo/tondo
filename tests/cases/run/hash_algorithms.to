@@ -7,7 +7,7 @@ import std.hash
 fn main() {
     let a = "a".bytes()
     let foobar = "foobar".bytes()
-    console.println("{hash.md5(a)} {hash.sha384("abc".bytes()).hex().slice(0, 16).unwrapOr("")}")
+    console.println("{hash.md5(a)} {hash.sha384("abc".bytes()).hex().slice(0, 16) ?? ""}")
     // In parts, the same as at once; and it takes more after.
     let digest = hash.hasher(hash.Algorithm.Sha256)
     digest.update("hello ".bytes())

@@ -65,7 +65,7 @@
   },
   {
     "file": "spec/TONDO_LANGUAGE_SPEC.md",
-    "source_sha256": "4fc7a09c2711fbf622f24b66588c1fbf7e567b316e22be7f8b77dde21265f7b0",
+    "source_sha256": "f178fc2f959f0df0fd8d3af177fecf22630e1f019325ece9974d1f666e5dcf88",
     "kind": "runtime",
     "cases": [
       "tests/cases/run/maps_and_sets.to"

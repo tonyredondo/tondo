@@ -29,7 +29,7 @@ fn main() {
     // Larger than what a thread keeps: let go, not kept.
     let many: Array[Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].repeat(10_000)
     let text = json.encode(many)
-    console.println("{text.length()} {json.decode[Array[Int]](text).unwrapOr([]).length()}")
+    console.println("{text.length()} {(json.decode[Array[Int]](text) ?? []).length()}")
     console.println(json.encode(Point { x: 7, y: 8 }))
 }
 

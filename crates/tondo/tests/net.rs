@@ -59,7 +59,7 @@ fn main(): !net.NetError {
     // take more.
     let long = net.connectTls("localhost", port, trust: "authority.pem")?
     long.write("{"x".repeat(8000000)}\n")?
-    console.println("long {long.readLine()?.unwrapOr("").length()}")
+    console.println("long {(long.readLine()? ?? "").length()}")
 
     // The system does not trust the authority, and the name must match.
     let attempts: Array[(String, String?)] = [("localhost", none), ("127.0.0.1", some("authority.pem"))]

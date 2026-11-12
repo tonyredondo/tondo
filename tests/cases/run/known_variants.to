@@ -63,7 +63,7 @@ fn main() {
     var total = 0
     var odd = ""
     for n in 0..7 {
-        total += half(n).unwrapOr(100)
+        total += half(n) ?? 100
         match half(n) {
             ok(value) => total += value
             err(message) => odd = message

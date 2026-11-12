@@ -100,7 +100,7 @@ fn expand(pattern: String): Array[String] {
         }
         cuts.push(end)
         let text = (from: Int, to: Int) {
-            chars.slice(from, to).unwrapOr([]).map((c) { "{c}" }).join("")
+            (chars.slice(from, to) ?? []).map((c) { "{c}" }).join("")
         }
         var out: Array[String] = []
         for index in 0..cuts.length() - 1 {

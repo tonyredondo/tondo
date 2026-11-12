@@ -116,7 +116,7 @@ impl Iterator[Array[String] ! CsvError] for Rows {
             started = true
             let problem = codecNative.csvCheck(record, self.separator)
             if problem >= 0 {
-                let before = record.slice(0, problem).unwrapOr("")
+                let before = record.slice(0, problem) ?? ""
                 let column = match before.findLast("\n") {
                     some(at) => problem - at
                     none => problem + 1
@@ -167,7 +167,7 @@ impl Iterator[Map[String, String] ! CsvError] for Records {
                 err(error) => return err(error)
             }
         }
-        let names = self.header.unwrapOr([])
+        let names = self.header ?? []
         let fields = match self.source.next()? {
             ok(fields) => fields
             err(error) => return err(error)
@@ -243,7 +243,7 @@ pub fn formatRecords(entries: Array[Map[String, String]], separator: Char = ',')
     }
     var table = [names]
     for entry in entries {
-        table.push(names.map((name) { entry.getOr(name, "") }))
+        table.push(names.map((name) { entry[name] ?? "" }))
     }
     format(table, separator)
 }

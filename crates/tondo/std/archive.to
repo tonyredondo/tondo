@@ -199,7 +199,7 @@ pub fn Archive.extract(self, into: String): !ArchiveError {
     let root = __path.clean(into)
     for (index, entry) in self.listed.iter().enumerate() {
         let target = inside(root, entry.name)?
-        let parent = __path.parent(target).unwrapOr(root)
+        let parent = __path.parent(target) ?? root
         failed(__fs.createDirectory(parent), parent)?
         match entry.kind {
             EntryKind.Directory => failed(__fs.createDirectory(target), target)?
@@ -210,13 +210,13 @@ pub fn Archive.extract(self, into: String): !ArchiveError {
                 }
             }
             EntryKind.Symlink => {
-                let pointed = entry.target.unwrapOr("")
+                let pointed = entry.target ?? ""
                 if __path.isAbsolute(pointed) {
                     fail problem(
                         "the link `{entry.name}` points outside the archive, to `{pointed}`",
                     )
                 }
-                _ = inside(root, __path.join(__path.parent(entry.name).unwrapOr(""), pointed))?
+                _ = inside(root, __path.join(__path.parent(entry.name) ?? "", pointed))?
                 // A link of an earlier extraction gives way.
                 _ = __fs.remove(target)
                 failed(__fs.createSymlink(pointed, target), target)?
@@ -486,7 +486,7 @@ fn little(bytes: Array[Byte], at: Int, count: Int): Int {
     var value = 0
     var index = count - 1
     for index >= 0 {
-        value = value * 256 + Int(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        value = value * 256 + Int(bytes.get(at + index) ?? Byte(0u8))
         index -= 1
     }
     value
@@ -504,9 +504,9 @@ fn littleBytes(value: Int, count: Int): Array[Byte] {
 }
 
 fn textOf(bytes: Array[Byte], start: Int, end: Int): String {
-    let part = bytes.slice(start, end).unwrapOr([])
+    let part = bytes.slice(start, end) ?? []
     let length = part.iter().takeWhile((b) { b != Byte(0u8) }).count()
-    String.fromBytes(part.slice(0, length).unwrapOr([])).unwrapOr("")
+    String.fromBytes(part.slice(0, length) ?? []) ?? ""
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +524,7 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
     var longTarget: String? = none
     var extended: Map[String, String] = [:]
     for at + 512 <= bytes.length() {
-        let header = bytes.slice(at, at + 512).unwrapOr([])
+        let header = bytes.slice(at, at + 512) ?? []
         if header.iter().all((b) { b == Byte(0u8) }) {
             break
         }
@@ -541,11 +541,11 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
             }
         }
         let size = match extended.get("size") {
-            some(text) => Int.parse(text).unwrapOr(0)
+            some(text) => Int.parse(text) ?? 0
             none => octal(header, 124, 12)
         }
         let kind = Int(header[156])
-        let data = bytes.slice(at + 512, at + 512 + size).unwrapOr([])
+        let data = bytes.slice(at + 512, at + 512 + size) ?? []
         at += 512 + (size + 511) / 512 * 512
         // A header of the next entry's long name or of its PAX records.
         if kind == 0x4c {
@@ -570,10 +570,10 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
         } else {
             "{prefix}/{short}"
         }
-        let name = extended.get("path").orElse(longName).unwrapOr(named).removePrefix("./")
-        let target = extended.get("linkpath").orElse(longTarget).unwrapOr(textOf(header, 157, 257))
+        let name = ((extended.get("path") ?? longName) ?? named).removePrefix("./")
+        let target = (extended.get("linkpath") ?? longTarget) ?? textOf(header, 157, 257)
         let seconds = match extended.get("mtime") {
-            some(text) => Int.parse(text.split(".")[0]).unwrapOr(0)
+            some(text) => Int.parse(text.split(".")[0]) ?? 0
             none => octal(header, 136, 12)
         }
         let entryKind = match kind {
@@ -632,7 +632,7 @@ fn octal(header: Array[Byte], at: Int, count: Int): Int {
 /// PAX records: `length key=value\n`, one after another.
 fn paxRecords(data: Array[Byte]): Map[String, String] {
     var records: Map[String, String] = [:]
-    for line in String.fromBytes(data).unwrapOr("").split("\n") {
+    for line in (String.fromBytes(data) ?? "").split("\n") {
         match line.splitOnce(" ") {
             some((_, record)) => match record.splitOnce("=") {
                 some((key, value)) => records[key] = value
@@ -648,7 +648,7 @@ fn paxRecords(data: Array[Byte]): Map[String, String] {
 /// does not fit, then its header and its data padded to 512 bytes.
 fn tarEntry(entry: Entry, data: Array[Byte]): Array[Byte] {
     var out: Array[Byte] = []
-    let target = entry.target.unwrapOr("")
+    let target = entry.target ?? ""
     if entry.name.byteLength() > 100 or target.byteLength() > 100 {
         var records = paxRecord("path", entry.name)
         if not target.isEmpty() {
@@ -710,7 +710,7 @@ fn tarHeader(name: String, kind: Int, size: Int, entry: Entry, target: String): 
 fn padField(text: String, width: Int): Array[Byte] {
     let bytes = text.bytes()
     if bytes.length() >= width {
-        return bytes.slice(0, width).unwrapOr([])
+        return bytes.slice(0, width) ?? []
     }
     bytes.concat([Byte(0u8)].repeat(width - bytes.length()))
 }
@@ -792,7 +792,7 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
             EntryKind.File
         }
         let start = local + 30 + little(bytes, local + 26, 2) + little(bytes, local + 28, 2)
-        let packed = bytes.slice(start, start + packedSize).unwrapOr([])
+        let packed = bytes.slice(start, start + packedSize) ?? []
         let data = match method {
             0 => packed
             8 => {

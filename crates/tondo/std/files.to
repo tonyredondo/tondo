@@ -96,7 +96,7 @@ pub enum ChangeKind {
 /// import std.time
 ///
 /// let changes = fs.watch(["content"], settle: some(time.milliseconds(200)))?
-/// for change in changes.receive().unwrapOr([]) {
+/// for change in (changes.receive() ?? []) {
 ///     let what = match change.kind {
 ///         fs.ChangeKind.Created => "new"
 ///         fs.ChangeKind.Modified => "changed"
@@ -200,14 +200,14 @@ pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! __fs
     for literal < parts.length() and not wild(parts[literal]) {
         literal += 1
     }
-    let base = parts.slice(0, literal).unwrapOr([]).join("/")
+    let base = (parts.slice(0, literal) ?? []).join("/")
     if literal == parts.length() {
         return match fsNative.failure(fsNative.stat(base)) {
             0 if not base.isEmpty() => [base]
             _ => []
         }
     }
-    let rest = parts.slice(literal, parts.length()).unwrapOr([]).join("/")
+    let rest = (parts.slice(literal, parts.length()) ?? []).join("/")
     let directory = if base.isEmpty() and pattern.startsWith("/") { "/" } else { base }
     let walked = fsNative.walk(
         if directory.isEmpty() { "." } else { directory },
@@ -225,7 +225,7 @@ pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! __fs
         let candidate = if directory.isEmpty() {
             path
         } else {
-            "{base}/{__path.relative(directory, path).unwrapOr(path)}"
+            "{base}/{__path.relative(directory, path) ?? path}"
         }
         if __path.matches(pattern, candidate) {
             found.push(__path.clean(candidate))
@@ -266,7 +266,7 @@ pub fn createTemporaryDirectory(
     directory: String? = none,
     pattern: String = "",
 ): String ! __fs.FsError {
-    fsNative.texts(done(fsNative.temporary(true, directory.unwrapOr(""), pattern))?)[0]
+    fsNative.texts(done(fsNative.temporary(true, directory ?? "", pattern))?)[0]
 }
 
 /// A new empty file in `directory`, or the system's temporary one, which
@@ -274,7 +274,7 @@ pub fn createTemporaryDirectory(
 /// with its last `*` made random, `"report-*.json"`, or with random
 /// characters after it if it has none.
 pub fn createTemporaryFile(directory: String? = none, pattern: String = ""): String ! __fs.FsError {
-    fsNative.texts(done(fsNative.temporary(false, directory.unwrapOr(""), pattern))?)[0]
+    fsNative.texts(done(fsNative.temporary(false, directory ?? "", pattern))?)[0]
 }
 
 /// Sets the Unix permissions of the entry: `0o755` to run a script.
@@ -324,7 +324,7 @@ pub fn watch(
     paths: Array[String],
     settle: __time.Duration? = none,
 ): Receiver[Array[Change]] ! __fs.FsError {
-    let quiet = settle.unwrapOr(__time.milliseconds(100))
+    let quiet = settle ?? __time.milliseconds(100)
     let watching = done(fsNative.watch(paths, quiet.nanoseconds()))?
     let (sender, receiver) = channel[Array[Change]](discardWhenAbandoned: true)
     spawn detached forward(watching, sender)
@@ -465,7 +465,7 @@ pub fn FileSystem.directory(self): String? {
 /// The digest of a file kept in the executable, which `std.http` sends as
 /// its `ETag`; `none` for another tree's.
 pub fn FileSystem.tag(self, path: String): String? {
-    let at = placed(path).unwrapOr(path)
+    let at = placed(path) ?? path
     match self.tree {
         Tree.Kept(names, _, tags) => indexOf(names, at).map((index) { tags[index] })
         Tree.Layers(layers) => layers
@@ -822,7 +822,7 @@ fn parents(path: String): Array[String] {
     var found: Array[String] = []
     let parts = path.split("/")
     for count in 1..parts.length() {
-        found.push(parts.slice(0, count).unwrapOr([]).join("/"))
+        found.push((parts.slice(0, count) ?? []).join("/"))
     }
     found
 }
@@ -834,7 +834,7 @@ fn children(paths: Array[String], at: String): Array[String] {
     for path in paths {
         if path.startsWith(prefix) and path != at {
             let rest = path.removePrefix(prefix)
-            found.push(rest.splitOnce("/").map((parts) { parts.0 }).unwrapOr(rest))
+            found.push(rest.splitOnce("/").map((parts) { parts.0 }) ?? rest)
         }
     }
     found

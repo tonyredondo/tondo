@@ -72,7 +72,7 @@ import std.fs
 fn titles(files: fs.FileSystem): Array[String] ! fs.FsError {
     var found: Array[String] = []
     for file in files.glob("**/*.md")? {
-        found.push(files.readText(file)?.lines().first().unwrapOr("").removePrefix("# "))
+        found.push((files.readText(file)?.lines().first() ?? "").removePrefix("# "))
     }
     found
 }
@@ -712,7 +712,7 @@ import std.fs
 import std.time
 
 let changes = fs.watch(["content"], settle: some(time.milliseconds(200)))?
-for change in changes.receive().unwrapOr([]) {
+for change in (changes.receive() ?? []) {
     let what = match change.kind {
         fs.ChangeKind.Created => "new"
         fs.ChangeKind.Modified => "changed"

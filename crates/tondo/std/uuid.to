@@ -112,7 +112,7 @@ pub fn Uuid.namespaceX500(): Uuid {
 /// without `urn:uuid:` before it.
 pub fn Uuid.parse(input: String): Uuid ! UuidError {
     let body = if input.toLower().startsWith("urn:uuid:") {
-        input.slice(9, input.length()).unwrapOr("")
+        input.slice(9, input.length()) ?? ""
     } else {
         input
     }
@@ -142,7 +142,7 @@ pub fn Uuid.bytes(self): Array[Byte] {
 
 /// The version its bits say: 4, 5 or 7 for the ones this module makes.
 pub fn Uuid.version(self): Int {
-    Int.parse(self.hex.slice(12, 13).unwrapOr("0"), radix: 16).unwrapOr(0)
+    Int.parse(self.hex.slice(12, 13) ?? "0", radix: 16) ?? 0
 }
 
 /// Negative, zero or positive as `self` goes before, with or after `other`.
@@ -159,7 +159,7 @@ impl Ordered for Uuid {
 impl Display for Uuid {
     fn display(self): String {
         let hex = self.hex
-        let part = (from: Int, to: Int) { hex.slice(from, to).unwrapOr("") }
+        let part = (from: Int, to: Int) { hex.slice(from, to) ?? "" }
         "{part(0, 8)}-{part(8, 12)}-{part(12, 16)}-{part(16, 20)}-{part(20, 32)}"
     }
 }
@@ -206,7 +206,7 @@ fn stamped(bytes: Array[Byte], version: Int): Uuid {
 
 /// The low eight bits.
 fn byte(value: Int): Byte {
-    Byte(value & 255).unwrapOr(Byte(0u8))
+    Byte(value & 255) ?? Byte(0u8)
 }
 
 /// An error, which reflection shows as its message, so a method that fails

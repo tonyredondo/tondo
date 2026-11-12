@@ -32,7 +32,7 @@ import std.serialization
 /// let config = toml.parse("[server]\nhost = \"localhost\"\nports = [8080, 8081]\n")?
 /// let host = config.find("server.host").andThen((value) { value.asText() })
 /// let port = config.find("server.ports").andThen((ports) { ports.at(1) }).andThen((value) { value.asInt() })
-/// console.println("{host.unwrapOr("?")}:{port.unwrapOr(0)}")
+/// console.println("{host ?? "?"}:{port ?? 0}")
 /// ```
 pub enum Value {
     Text(String)
@@ -68,9 +68,9 @@ pub fn Value.find(self, path: String): Value? {
     var found = self
     for step in tomlcodec.pathSteps(path) {
         found = if step.startsWith(".") {
-            found.get(step.slice(1, step.length()).unwrapOr(""))?
+            found.get(step.slice(1, step.length()) ?? "")?
         } else if step.startsWith("[") {
-            found.at(Int.parse(step.slice(1, step.length()).unwrapOr("")).ok()?)?
+            found.at(Int.parse(step.slice(1, step.length()) ?? "").ok()?)?
         } else {
             return none
         }
@@ -141,9 +141,9 @@ pub fn Value.asTable(self): Map[String, Value]? {
 impl Display for Value {
     fn display(self): String {
         match self {
-            Value.Table(_) => encode(self).unwrapOr("")
+            Value.Table(_) => encode(self) ?? ""
             _ => {
-                let line = encode(Value.Table(["v": self])).unwrapOr("v = ")
+                let line = encode(Value.Table(["v": self])) ?? "v = "
                 line.removePrefix("v = ").trimEnd()
             }
         }
@@ -377,8 +377,8 @@ fn Reader.error(self, kind: serialization.ErrorKind): TomlError {
         kind: kind
         message: tomlnative.where(self.native, 0)
         path: tomlnative.where(self.native, 1)
-        line: Int.parse(tomlnative.where(self.native, 2)).unwrapOr(0)
-        column: Int.parse(tomlnative.where(self.native, 3)).unwrapOr(0)
+        line: Int.parse(tomlnative.where(self.native, 2)) ?? 0
+        column: Int.parse(tomlnative.where(self.native, 3)) ?? 0
         violations: []
     }
 }

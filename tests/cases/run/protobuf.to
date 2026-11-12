@@ -75,7 +75,7 @@ fn main(): !protobuf.ProtobufError {
         contact: Contact.Phone(Phone { number: "555", extension: -3 })
         born: time.utc(time.seconds(1_000_000_000))
         nickname: ""
-        extra: json.parse("{{\"k\": [1, true, null]}}").unwrapOr(json.Value.Null)
+        extra: json.parse("{{\"k\": [1, true, null]}}") ?? json.Value.Null
     }
     let bytes = protobuf.encode(user, deterministic: true)
     console.println(hex(bytes))

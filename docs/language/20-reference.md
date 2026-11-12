@@ -284,10 +284,10 @@ fn main() {
         ok(count) => console.println("{count}")
         err(error) => console.println("failed: {error}")
     }
-    console.println("{lines("/missing").unwrapOr(0)} {describe("/missing")}")
+    console.println("{lines("/missing") ?? 0} {describe("/missing")}")
     let caught = recover { [1, 2][5] }      // stop a panic
     let missing: Int? = none
-    let found: Int? = try { missing? + 1 }  // a `?` that ends the block
+    let found: Int? = missing.map((n) { n + 1 })  // a chain of an option
     console.println("{caught.isErr()} {found} {some(2).map((n) { n * 2 })}")
     assert(1 + 1 == 2, "arithmetic holds")
 }
@@ -316,7 +316,7 @@ fn main() {
     _ = seen.insert(3)
 
     console.println("{list} {list[0]} {list[-1]} {list[1:3]} {list.get(9)} {list * 2}")
-    console.println("{ages["ada"]} {ages.getOr("cy", 0)} {"bo" in ages} {seen} {(1..=3).collect()}")
+    console.println("{ages["ada"]} {ages["cy"] ?? 0} {"bo" in ages} {seen} {(1..=3).collect()}")
     console.println("{list.map((n) { n * n }).filter((n) { n > 4 }).sum()} {list.sortedBy((n) { -n })}")
 
     let name = "Ada"

@@ -8,7 +8,7 @@
 
 `tondo api Result`, `tondo api Failure`, `tondo api Panic` show the same in a terminal.
 
-- [Result](#result): [`Result.isOk`](#resultisok), [`Result.isErr`](#resultiserr), [`Result.map`](#resultmap), [`Result.mapErr`](#resultmaperr), [`Result.andThen`](#resultandthen), [`Result.unwrapOr`](#resultunwrapor), [`Result.ok`](#resultok), [`Result.err`](#resulterr), [`Result.expect`](#resultexpect), [`Result.context`](#resultcontext)
+- [Result](#result): [`Result.isOk`](#resultisok), [`Result.isErr`](#resultiserr), [`Result.map`](#resultmap), [`Result.mapErr`](#resultmaperr), [`Result.andThen`](#resultandthen), [`Result.ok`](#resultok), [`Result.err`](#resulterr), [`Result.expect`](#resultexpect), [`Result.context`](#resultcontext)
 - [Failure](#failure): [`Failure.find`](#failurefind)
 - [Panic](#panic): [`Panic.resume`](#panicresume)
 
@@ -53,14 +53,6 @@ pub fn Result[T, E].andThen[U](self, next: fn(T): U ! E): U ! E
 ```
 
 The result the function gives for the value, or the error.
-
-#### Result.unwrapOr
-
-```tondo
-pub fn Result[T, E].unwrapOr(self, fallback: T): T
-```
-
-The value, or `fallback` when it holds an error.
 
 #### Result.ok
 

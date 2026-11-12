@@ -25,7 +25,7 @@ fn main() {
         "done"
     }
     console.println(
-        "{sync.retry(busyTwice, attempts: 5, delay: time.milliseconds(1)).unwrapOr("gave up")} {calls.load()}",
+        "{sync.retry(busyTwice, attempts: 5, delay: time.milliseconds(1)) ?? "gave up"} {calls.load()}",
     )
     calls.store(0)
     let broken = (): Int ! Flaky {

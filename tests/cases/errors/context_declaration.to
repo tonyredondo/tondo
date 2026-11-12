@@ -7,7 +7,7 @@ context Pair = {
     a: Int = Pair.b + 1
     b: Int = Other.c * 2
     @log
-    named: String = env.get("NAME").unwrapOr("x")
+    named: String = env.get("NAME") ?? "x"
 }
 
 context Other = {

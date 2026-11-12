@@ -40,7 +40,7 @@ context Request = {
 }
 
 fn audit(action: String): String {
-    let who = Request.user.unwrapOr("anonymous")
+    let who = Request.user ?? "anonymous"
     "[{Request.id}] {who}: {action}"
 }
 
@@ -79,7 +79,7 @@ context Request = {
 }
 
 fn audit(action: String): String {
-    let who = Request.user.unwrapOr("anonymous")
+    let who = Request.user ?? "anonymous"
     "[{Request.id}] {who}: {action}"
 }
 
@@ -207,7 +207,7 @@ context Shared = {
 
 fn isWord(text: String): Bool {
     _ = Shared.hits.add(1)
-    Shared.words.isFullMatch(text).unwrapOr(false)
+    Shared.words.isFullMatch(text) ?? false
 }
 
 fn main() {

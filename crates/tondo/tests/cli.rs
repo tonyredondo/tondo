@@ -218,6 +218,19 @@ fn manages_projects() {
         "fn total(): Int? {\n    1 + 2\n}\n\nfn main() {\n    let flag: Bool? = true\n    _ = flag == (true and false)\n    _ = total()\n}\n"
     );
 
+    // `unwrapOr` becomes `??`, in parentheses as the operand of another
+    // operator or of an access; one whose fallback calls something waits
+    // for a person, as `??` evaluates it only when needed.
+    let program = "fn fallback(): String {\n    \"d\"\n}\n\nfn main() {\n    let count: Int? = 4\n    let name: String? = none\n    _ = count.unwrapOr(0) + 1\n    _ = name.unwrapOr(\"x\").trim()\n    _ = count.unwrapOr(0)\n    _ = name.unwrapOr(fallback())\n}\n";
+    std::fs::write(dir.join("retired.to"), program).unwrap();
+    let (_, status) = json(&dir, &["fix", "retired.to", "--json"]);
+    assert_ne!(status, 0, "what calls something is left");
+    let fixed = std::fs::read_to_string(dir.join("retired.to")).unwrap();
+    assert!(fixed.contains("_ = (count ?? 0) + 1\n"), "{fixed}");
+    assert!(fixed.contains("_ = (name ?? \"x\").trim()\n"), "{fixed}");
+    assert!(fixed.contains("_ = count ?? 0\n"), "{fixed}");
+    assert!(fixed.contains("name.unwrapOr(fallback())"), "{fixed}");
+
     // What a code means, with the guide's examples of it.
     let (explained, _, status) = tondo(&dir, &["explain", "E1003"]);
     assert_eq!(status, 0);
@@ -897,8 +910,8 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
 #[test]
 fn a_test_the_facts_decide_is_a_jump() {
     let source: &[u8] = b"import std.console\nimport std.math\n\nfn roots(count: Int): Float {\n    \
-        var total = 0.0\n    for i in 0..count {\n        total += math.sqrt(Float(i)).unwrapOr(0.0)\n    }\n    \
-        total\n}\n\nfn any(from: Int): Float {\n    math.sqrt(Float(from)).unwrapOr(-1.0)\n}\n\n\
+        var total = 0.0\n    for i in 0..count {\n        total += math.sqrt(Float(i)) ?? 0.0\n    }\n    \
+        total\n}\n\nfn any(from: Int): Float {\n    math.sqrt(Float(from)) ?? -1.0\n}\n\n\
         fn main() {\n    console.println(\"{roots(10)} {any(-4)} {any(4)}\")\n}\n";
     let dir = project_at("decided-tests", &[("main.to", source)]);
     let dumped = |asked: &str| {

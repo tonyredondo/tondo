@@ -60,7 +60,7 @@ fn counted(xs: Array[Int]): (Int, Int) {
 fn roots(n: Int): Float {
     var total = 0.0
     for i in 0..n {
-        total += math.sqrt(Float(i - 2)).unwrapOr(-1.0)
+        total += math.sqrt(Float(i - 2)) ?? -1.0
     }
     total
 }

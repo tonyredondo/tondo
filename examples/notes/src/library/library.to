@@ -128,7 +128,7 @@ pub fn search(files: fs.FileSystem, query: String, limit: Int = 5): Array[Match]
             let line = note.text
                 .lines()
                 .find((each) { wanted.any((word) { each.toLower().contains(word) }) })
-            found.push(Match { name: note.name, score, line: line.unwrapOr("") })
+            found.push(Match { name: note.name, score, line: line ?? "" })
         }
     }
     found.sortedBy((each) { -each.score }).take(limit)

@@ -22,10 +22,10 @@ fn shelf(): fs.FileSystem ! NoteError {
 test aNoteIsAFileOfMarkdown {
     let files = shelf()?
     assert(
-        files.readText("green-tea.md").unwrapOr("") ==
+        (files.readText("green-tea.md") ?? "") ==
             "tags: tea, shopping\n\nBuy sencha.\nBrew it at 70 degrees, never boiling.\n",
     )
-    assert(files.readText("bread.md").unwrapOr("") == "# Bread\n\nFlour, water, salt and time.\n")
+    assert((files.readText("bread.md") ?? "") == "# Bread\n\nFlour, water, salt and time.\n")
 }
 
 test readsBackWhatItWrote {

@@ -20,15 +20,15 @@ fn put(out: Sender[Int], value: Int) {
 
 fn either(inbox: Receiver[Int], same: Receiver[Int]): Int {
     select {
-        let value = inbox.receive() => value.unwrapOr(-1)
-        let value = same.receive() => value.unwrapOr(-2)
+        let value = inbox.receive() => value ?? -1
+        let value = same.receive() => value ?? -2
     }
 }
 
 fn sum(got: Receiver[Int], count: Int): Int {
     var total = 0
     for _ in 0..count {
-        total += got.receive().unwrapOr(1000)
+        total += got.receive() ?? 1000
     }
     total
 }
@@ -84,7 +84,7 @@ fn main() {
     second.cancel()
     var sent = 0
     for _ in 0..4 {
-        sent += room.receive().unwrapOr(1000)
+        sent += room.receive() ?? 1000
     }
     console.println("sent {sent}")
     match room.receive(timeout: time.milliseconds(5)) {
@@ -104,7 +104,7 @@ fn main() {
     twice.send(5)
     console.println("picked {picker.wait()}")
     twice.send(6)
-    console.println("then {both.receive().unwrapOr(-3)}")
+    console.println("then {both.receive() ?? -3}")
 }
 
 // expect-stdout: taken 100

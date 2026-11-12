@@ -53,7 +53,7 @@ options.caseInsensitive = true
 options.multiLine = true
 let heading = regex.Regex.compile(r"^# (\w+)$", options: options)?
 for found in heading.findAll("# Intro\ntext\n# USAGE\n")? {
-    console.println(found?.capture(1).map((title) { title.text }).unwrapOr(""))
+    console.println(found?.capture(1).map((title) { title.text }) ?? "")
 }
 ```
 
@@ -283,8 +283,8 @@ import std.regex
 let pair = regex.Regex.compile(r"(\w+)=(\w+)")?
 for found in pair.findAll("a=1 b=2")? {
     let item = found?
-    let key = item.capture(1).map((capture) { capture.text }).unwrapOr("")
-    let value = item.capture(2).map((capture) { capture.text }).unwrapOr("")
+    let key = item.capture(1).map((capture) { capture.text }) ?? ""
+    let value = item.capture(2).map((capture) { capture.text }) ?? ""
     console.println("{item.text}: {key} is {value}")
 }
 ```

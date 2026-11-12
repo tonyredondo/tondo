@@ -8,17 +8,9 @@
 
 `tondo api Map` shows the same in a terminal.
 
-- [Map](#map): [`Map.getOr`](#mapgetor), [`Map.mapValues`](#mapmapvalues), [`Map.filter`](#mapfilter), [`Map.merge`](#mapmerge), [`Map.length`](#maplength), [`Map.get`](#mapget), [`Map.contains`](#mapcontains), [`Map.insert`](#mapinsert), [`Map.remove`](#mapremove), [`Map.clear`](#mapclear), [`Map.keys`](#mapkeys), [`Map.values`](#mapvalues), [`Map.entries`](#mapentries)
+- [Map](#map): [`Map.mapValues`](#mapmapvalues), [`Map.filter`](#mapfilter), [`Map.merge`](#mapmerge), [`Map.length`](#maplength), [`Map.get`](#mapget), [`Map.contains`](#mapcontains), [`Map.insert`](#mapinsert), [`Map.remove`](#mapremove), [`Map.clear`](#mapclear), [`Map.keys`](#mapkeys), [`Map.values`](#mapvalues), [`Map.entries`](#mapentries)
 
 ### Map
-
-#### Map.getOr
-
-```tondo
-pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V
-```
-
-The value of the key, or `fallback`.
 
 #### Map.mapValues
 

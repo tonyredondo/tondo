@@ -539,7 +539,7 @@ fn oracle(): sql.Driver {
         placeholder: (index) { ":{index}" }
         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
-        place: (url) { (url.split("/").last().unwrapOr(""), none) }
+        place: (url) { (url.split("/").last() ?? "", none) }
     }
 }
 

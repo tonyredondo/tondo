@@ -83,7 +83,7 @@ fn main() {
     }
     var reported = 0
     for _ in 0..10 {
-        reported += inbox.receive().unwrapOr(1000)
+        reported += inbox.receive() ?? 1000
     }
     console.println("reported {reported}")
 

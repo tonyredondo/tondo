@@ -136,8 +136,8 @@ pub fn system(): System {
 fn readUser(): User {
     let fields = envNative.user()
     User {
-        id: Int.parse(fields[0]).unwrapOr(-1)
-        group: Int.parse(fields[1]).unwrapOr(-1)
+        id: Int.parse(fields[0]) ?? -1
+        group: Int.parse(fields[1]) ?? -1
         name: fields[2]
         home: fields[3]
     }
@@ -151,9 +151,9 @@ fn readSystem(): System {
 /// What the program was built from, read when it compiled.
 pub fn build(): Build {
     let lines = envNative.built().lines()
-    let line = (index: Int): String { lines.get(index).unwrapOr("") }
+    let line = (index: Int): String { lines.get(index) ?? "" }
     var dependencies: Array[Dependency] = []
-    for written in lines.slice(5, lines.length()).unwrapOr([]) {
+    for written in (lines.slice(5, lines.length()) ?? []) {
         match written.splitOnce("\t") {
             some((name, version)) => dependencies.push(Dependency { name: name, version: version })
             none => {}

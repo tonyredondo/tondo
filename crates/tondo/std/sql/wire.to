@@ -30,7 +30,7 @@ fn Wire.take(self, count: Int): Array[Byte] ! SqlError {
                 if inbox.bytes.length() - inbox.at < count {
                     none
                 } else {
-                    let piece = inbox.bytes.slice(inbox.at, inbox.at + count).unwrapOr([])
+                    let piece = inbox.bytes.slice(inbox.at, inbox.at + count) ?? []
                     inbox.at += count
                     piece
                 }
@@ -48,7 +48,7 @@ fn Wire.take(self, count: Int): Array[Byte] ! SqlError {
         self.inbox.update(
             (inbox) {
                 if inbox.at > 0 {
-                    inbox.bytes = inbox.bytes.slice(inbox.at, inbox.bytes.length()).unwrapOr([])
+                    inbox.bytes = inbox.bytes.slice(inbox.at, inbox.bytes.length()) ?? []
                     inbox.at = 0
                 }
                 inbox.bytes.extend(chunk)
@@ -77,7 +77,7 @@ fn lost(why: String): SqlError {
 fn bigEndian(bytes: Array[Byte], at: Int, count: Int): Int {
     var value: UInt = 0
     for index in 0..count {
-        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        value = (value << 8) | UInt(bytes.get(at + index) ?? Byte(0u8))
     }
     let spread = 64 - count * 8
     Int.wrapping(value << spread) >> spread
@@ -104,7 +104,7 @@ fn cstringAt(bytes: Array[Byte], at: var Int): String {
     for end < bytes.length() and bytes[end] != Byte(0u8) {
         end += 1
     }
-    let found = String.fromBytes(bytes.slice(at, end).unwrapOr([])).unwrapOr("")
+    let found = String.fromBytes(bytes.slice(at, end) ?? []) ?? ""
     at = end + 1
     found
 }
@@ -132,10 +132,7 @@ fn settingsOf(url: String, port: Int): Settings ! SqlError {
         ok(found) => found
         err(error) => fail lost("the URL of the database: {error}")
     }
-    let tls = match parsed
-        .param("sslmode")
-        .unwrapOr(parsed.param("ssl-mode").unwrapOr("prefer"))
-        .toLowerAscii() {
+    let tls = match (parsed.param("sslmode") ?? parsed.param("ssl-mode") ?? "prefer").toLowerAscii() {
         "disable" => "disable"
         "disabled" => "disable"
         "allow" => "prefer"
@@ -146,12 +143,12 @@ fn settingsOf(url: String, port: Int): Settings ! SqlError {
     }
     Settings {
         host: if parsed.host.isEmpty() { "localhost" } else { parsed.host }
-        port: parsed.port.unwrapOr(port)
+        port: parsed.port ?? port
         user: parsed.user
-        password: parsed.password.unwrapOr("")
+        password: parsed.password ?? ""
         database: parsed.path.removePrefix("/")
         tls
-        trust: parsed.param("sslrootcert").orElse(parsed.param("ssl-ca"))
+        trust: parsed.param("sslrootcert") ?? parsed.param("ssl-ca")
         options: parsed
     }
 }
@@ -177,7 +174,7 @@ fn reached(settings: Settings): __net.Stream ! SqlError {
 fn tlsWanted(settings: Settings): Bool {
     let local =
         settings.host == "localhost" or
-            __net.ip(settings.host).map((ip) { ip.isLoopback() }).unwrapOr(false)
+            (__net.ip(settings.host).map((ip) { ip.isLoopback() }) ?? false)
     settings.tls == "require" or (settings.tls == "prefer" and not local)
 }
 

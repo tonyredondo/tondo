@@ -89,7 +89,7 @@ fn run(options: Warehouse): !(http.HttpError | grpc.Status | time.TimedOut) {
             for text in lines {
                 match text.splitOnce("=") {
                     some((sku, units)) =>
-                        upload.send(stock.Units { sku, quantity: Int.parse(units).unwrapOr(0) })?
+                        upload.send(stock.Units { sku, quantity: Int.parse(units) ?? 0 })?
                     none => fail grpc.Status {
                         code: grpc.Code.InvalidArgument
                         message: "`{text}` is not `SKU=units`"
@@ -103,7 +103,7 @@ fn run(options: Warehouse): !(http.HttpError | grpc.Status | time.TimedOut) {
             let client = stock.StockServiceClient.connect(options.server)?
             for each in client.watch(stock.WatchItems { skus }) {
                 let change = each?
-                let item = change.item.unwrapOr(stock.Item {})
+                let item = change.item ?? stock.Item {}
                 let sign = if change.delta > 0 { "+" } else { "" }
                 console.println("{item.sku}  {item.available} available ({sign}{change.delta})")
             }

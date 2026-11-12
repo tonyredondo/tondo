@@ -40,9 +40,9 @@ fn garbage(i: Int) {
     let handlers: sync.Map[String, fn(): Int] = sync.Map[:]
     _ = handlers.insert("size", () { handlers.length() })
     let queue: sync.Queue[fn(): Int] = sync.Queue[]
-    queue.push(() { queue.get(0).map((_) { 1 }).unwrapOr(0) })
+    queue.push(() { queue.get(0).map((_) { 1 }) ?? 0 })
     let stack: sync.Stack[fn(): Int] = sync.Stack[]
-    stack.push(() { stack.get(0).map((_) { 1 }).unwrapOr(0) })
+    stack.push(() { stack.get(0).map((_) { 1 }) ?? 0 })
     let slots: sync.Array[fn(): Int] = sync.Array([() { 0 }])
     _ = slots.set(0, () { slots.length() })
 
@@ -71,7 +71,7 @@ fn main() {
     }
 
     let friend = ana.value.friends.get()[0]
-    let size = handlers.get("size").map((f) { f() }).unwrapOr(-1)
+    let size = handlers.get("size").map((f) { f() }) ?? -1
     console.println("{pairs} pairs; {friend.value.name} {friend.value.friends.get()[0] == ana} {size}")
 }
 

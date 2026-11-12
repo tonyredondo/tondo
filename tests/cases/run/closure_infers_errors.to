@@ -28,7 +28,7 @@ fn main() {
         let again = parse("{once}")?
         again
     }
-    console.println(load("config").unwrapOr("?"))
+    console.println(load("config") ?? "?")
     match load("") {
         ok(name) => console.println(name)
         err(error) => console.println("load failed: {error}")
@@ -40,7 +40,7 @@ fn main() {
             err(error) => console.println("parse failed: {error}")
         }
     }
-    console.println("{plain(1)} {twice("5").unwrapOr(0)}")
+    console.println("{plain(1)} {twice("5") ?? 0}")
 }
 
 // expect-stdout: config

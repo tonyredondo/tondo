@@ -9,7 +9,7 @@
 //
 // let connection = net.connect("example.com", 80)?
 // connection.write("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n")?
-// console.println(connection.readLine()?.unwrapOr(""))
+// console.println(connection.readLine()? ?? "")
 // connection.close()?
 // ```
 
@@ -246,7 +246,7 @@ pub type Network = {
 pub fn network(text: String): Network ! NetError {
     let written = netNative.network(text.trim())
     match written.split("/") {
-        [first, bits] => Network { address: Ip { text: first }, bits: Int.parse(bits).unwrapOr(0) }
+        [first, bits] => Network { address: Ip { text: first }, bits: Int.parse(bits) ?? 0 }
         _ => fail NetError.InvalidAddress(
             "`{text}` is not a network: write it as `10.0.0.0/8` or `fd00::/8`",
         )
@@ -295,7 +295,7 @@ pub fn resolve(host: String, timeout: __time.Duration? = none): Array[String] ! 
 ///
 /// fn echo(listener: net.Listener): !net.NetError {
 ///     let client = listener.accept()?
-///     let line = client.readLine()?.unwrapOr("")
+///     let line = client.readLine()? ?? ""
 ///     client.write("echo: {line}\n")?
 ///     client.close()?
 /// }
@@ -304,7 +304,7 @@ pub fn resolve(host: String, timeout: __time.Duration? = none): Array[String] ! 
 /// let server = spawn echo(listener)
 /// let stream = net.connect("127.0.0.1", listener.address().port)?
 /// stream.write("hello\n")?
-/// console.println(stream.readLine()?.unwrapOr(""))
+/// console.println(stream.readLine()? ?? "")
 /// stream.close()?
 /// server.wait()?
 /// ```
@@ -340,7 +340,7 @@ pub fn connectTls(
         port,
         millis(timeout),
         true,
-        trust.unwrapOr(""),
+        trust ?? "",
         certificate,
         key,
         minimum,
@@ -364,7 +364,7 @@ pub fn Stream.startTls(
     let upgraded = netNative.startTls(
         self.native,
         host,
-        trust.unwrapOr(""),
+        trust ?? "",
         certificate,
         key,
         minimum,
@@ -635,7 +635,7 @@ fn served(tls: Tls?): (String, String, String, Int) {
         some(given) => (
             given.certificate,
             given.privateKey,
-            given.clients.unwrapOr(""),
+            given.clients ?? "",
             versionCode(given.minimumVersion),
         )
         none => ("", "", "", 12)
@@ -746,7 +746,7 @@ pub fn bind(host: String, port: Int): Socket ! NetError {
 /// `path`, one without a name, which only sends.
 pub fn bindUnix(path: String? = none): Socket ! NetError {
     let named = path.isSome()
-    Socket { native: made(netNative.bindUnix(path.unwrapOr(""), named))? }
+    Socket { native: made(netNative.bindUnix(path ?? "", named))? }
 }
 
 /// The address and port the socket is bound to.
