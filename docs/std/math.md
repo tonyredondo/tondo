@@ -1,12 +1,12 @@
 # std.math
 
-scalar math with IEEE-754 semantics and no fast-math, and integers of any size and exact decimals written in Tondo. An operation outside its domain is an error, never a quiet `NaN`.
+scalar math with IEEE-754 semantics and no fast-math, and integers of any size and exact decimals written in Tondo. An operation outside its domain gives `NaN` or an infinity, as `/` does, and its `checked` twin an error.
 
 ```tondo
 import std.console
 import std.math
 
-let side = math.sqrt(3.0 * 3.0 + 4.0 * 4.0)?
+let side = math.sqrt(3.0 * 3.0 + 4.0 * 4.0)
 console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 ```
 
@@ -16,7 +16,7 @@ console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 
 `tondo api std.math` shows the same in a terminal.
 
-- [Functions](#functions): [`Pi`](#pi), [`E`](#e), [`sqrt`](#sqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`log10`](#log10), [`log2`](#log2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`acos`](#acos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`gcd`](#gcd), [`lcm`](#lcm)
+- [Functions](#functions): [`Pi`](#pi), [`E`](#e), [`sqrt`](#sqrt), [`checkedSqrt`](#checkedsqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`checkedLn`](#checkedln), [`log10`](#log10), [`checkedLog10`](#checkedlog10), [`log2`](#log2), [`checkedLog2`](#checkedlog2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`checkedAsin`](#checkedasin), [`acos`](#acos), [`checkedAcos`](#checkedacos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`gcd`](#gcd), [`lcm`](#lcm)
 - [MathError](#matherror)
 - [BigInt](#bigint): [`BigInt.parse`](#bigintparse), [`BigInt.toInt`](#biginttoint), [`BigInt.toString`](#biginttostring), [`BigInt.abs`](#bigintabs), [`BigInt.remainder`](#bigintremainder), [`BigInt.pow`](#bigintpow), [`BigInt.modPow`](#bigintmodpow), [`BigInt.gcd`](#bigintgcd)
 - [Decimal](#decimal): [`Decimal.parse`](#decimalparse), [`Decimal.round`](#decimalround), [`Decimal.divide`](#decimaldivide), [`Decimal.scale`](#decimalscale), [`Decimal.toFloat`](#decimaltofloat)
@@ -44,7 +44,16 @@ e, the base of the natural logarithm, as the nearest `Float`.
 #### sqrt
 
 ```tondo
-pub fn sqrt(value: Float): Float ! MathError
+pub fn sqrt(value: Float): Float
+```
+
+The square root, by IEEE 754: `NaN` for a negative value. `checkedSqrt`
+gives an error instead.
+
+#### checkedSqrt
+
+```tondo
+pub fn checkedSqrt(value: Float): Float ! MathError
 ```
 
 The square root; a negative value is `MathError.Domain`.
@@ -68,15 +77,34 @@ e raised to the value.
 #### ln
 
 ```tondo
-pub fn ln(value: Float): Float ! MathError
+pub fn ln(value: Float): Float
 ```
 
-The natural logarithm of a value above zero.
+The natural logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+negative value. `checkedLn` gives an error instead.
+
+#### checkedLn
+
+```tondo
+pub fn checkedLn(value: Float): Float ! MathError
+```
+
+The natural logarithm of a value above zero; another is
+`MathError.Domain`.
 
 #### log10
 
 ```tondo
-pub fn log10(value: Float): Float ! MathError
+pub fn log10(value: Float): Float
+```
+
+The base-10 logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+negative value. `checkedLog10` gives an error instead.
+
+#### checkedLog10
+
+```tondo
+pub fn checkedLog10(value: Float): Float ! MathError
 ```
 
 The base-10 logarithm of a value above zero; another is
@@ -85,7 +113,16 @@ The base-10 logarithm of a value above zero; another is
 #### log2
 
 ```tondo
-pub fn log2(value: Float): Float ! MathError
+pub fn log2(value: Float): Float
+```
+
+The base-2 logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+negative value. `checkedLog2` gives an error instead.
+
+#### checkedLog2
+
+```tondo
+pub fn checkedLog2(value: Float): Float ! MathError
 ```
 
 The base-2 logarithm of a value above zero; another is
@@ -118,18 +155,36 @@ The tangent of an angle in radians.
 #### asin
 
 ```tondo
-pub fn asin(value: Float): Float ! MathError
+pub fn asin(value: Float): Float
 ```
 
-The arcsine of a value from -1 to 1.
+The arcsine, by IEEE 754: `NaN` for a value outside -1 to 1.
+`checkedAsin` gives an error instead.
+
+#### checkedAsin
+
+```tondo
+pub fn checkedAsin(value: Float): Float ! MathError
+```
+
+The arcsine of a value from -1 to 1; another is `MathError.Domain`.
 
 #### acos
 
 ```tondo
-pub fn acos(value: Float): Float ! MathError
+pub fn acos(value: Float): Float
 ```
 
-The arccosine of a value from -1 to 1.
+The arccosine, by IEEE 754: `NaN` for a value outside -1 to 1.
+`checkedAcos` gives an error instead.
+
+#### checkedAcos
+
+```tondo
+pub fn checkedAcos(value: Float): Float ! MathError
+```
+
+The arccosine of a value from -1 to 1; another is `MathError.Domain`.
 
 #### atan
 
@@ -237,7 +292,7 @@ Why an operation has no result.
 import std.console
 import std.math
 
-match math.sqrt(-1.0) {
+match math.checkedSqrt(-1.0) {
     ok(root) => console.println("{root}")
     err(math.MathError.Domain) => console.println("no real square root")
     err(error) => console.println("{error}")

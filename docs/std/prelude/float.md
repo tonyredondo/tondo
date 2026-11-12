@@ -8,8 +8,8 @@
 
 `tondo api Float`, `tondo api Float32` show the same in a terminal.
 
-- [Float](#float): [`Float.parse`](#floatparse), [`Float.compare`](#floatcompare), [`Float.min`](#floatmin), [`Float.max`](#floatmax), [`Float.clamp`](#floatclamp), [`Float.pow`](#floatpow), [`Float.abs`](#floatabs), [`Float.floor`](#floatfloor), [`Float.ceil`](#floatceil), [`Float.round`](#floatround), [`Float.roundTiesAway`](#floatroundtiesaway), [`Float.truncate`](#floattruncate), [`Float.sqrt`](#floatsqrt), [`Float.isNaN`](#floatisnan), [`Float.isInfinite`](#floatisinfinite), [`Float.isFinite`](#floatisfinite), [`Float.toFixed`](#floattofixed), [`Float.bits`](#floatbits), [`Float.fromBits`](#floatfrombits)
-- [Float32](#float32): [`Float32.parse`](#float32parse), [`Float32.compare`](#float32compare), [`Float32.min`](#float32min), [`Float32.max`](#float32max), [`Float32.clamp`](#float32clamp), [`Float32.pow`](#float32pow), [`Float32.abs`](#float32abs), [`Float32.floor`](#float32floor), [`Float32.ceil`](#float32ceil), [`Float32.round`](#float32round), [`Float32.roundTiesAway`](#float32roundtiesaway), [`Float32.truncate`](#float32truncate), [`Float32.sqrt`](#float32sqrt), [`Float32.isNaN`](#float32isnan), [`Float32.isInfinite`](#float32isinfinite), [`Float32.isFinite`](#float32isfinite), [`Float32.toFixed`](#float32tofixed), [`Float32.bits`](#float32bits), [`Float32.fromBits`](#float32frombits)
+- [Float](#float): [`Float.parse`](#floatparse), [`Float.compare`](#floatcompare), [`Float.min`](#floatmin), [`Float.max`](#floatmax), [`Float.clamp`](#floatclamp), [`Float.pow`](#floatpow), [`Float.abs`](#floatabs), [`Float.floor`](#floatfloor), [`Float.ceil`](#floatceil), [`Float.round`](#floatround), [`Float.roundTiesAway`](#floatroundtiesaway), [`Float.truncate`](#floattruncate), [`Float.sqrt`](#floatsqrt), [`Float.checkedSqrt`](#floatcheckedsqrt), [`Float.isNaN`](#floatisnan), [`Float.isInfinite`](#floatisinfinite), [`Float.isFinite`](#floatisfinite), [`Float.toFixed`](#floattofixed), [`Float.bits`](#floatbits), [`Float.fromBits`](#floatfrombits)
+- [Float32](#float32): [`Float32.parse`](#float32parse), [`Float32.compare`](#float32compare), [`Float32.min`](#float32min), [`Float32.max`](#float32max), [`Float32.clamp`](#float32clamp), [`Float32.pow`](#float32pow), [`Float32.abs`](#float32abs), [`Float32.floor`](#float32floor), [`Float32.ceil`](#float32ceil), [`Float32.round`](#float32round), [`Float32.roundTiesAway`](#float32roundtiesaway), [`Float32.truncate`](#float32truncate), [`Float32.sqrt`](#float32sqrt), [`Float32.checkedSqrt`](#float32checkedsqrt), [`Float32.isNaN`](#float32isnan), [`Float32.isInfinite`](#float32isinfinite), [`Float32.isFinite`](#float32isfinite), [`Float32.toFixed`](#float32tofixed), [`Float32.bits`](#float32bits), [`Float32.fromBits`](#float32frombits)
 
 ### Float
 
@@ -115,7 +115,15 @@ The integer part, toward zero: `-1.0` for `-1.7`.
 #### Float.sqrt
 
 ```tondo
-pub fn Float.sqrt(self): Float ! math.MathError
+pub fn Float.sqrt(self): Float
+```
+
+The square root, by IEEE 754: `NaN` for a negative value.
+
+#### Float.checkedSqrt
+
+```tondo
+pub fn Float.checkedSqrt(self): Float ! math.MathError
 ```
 
 The square root; an error for a negative value.
@@ -271,7 +279,15 @@ The integer part, toward zero: `-1.0` for `-1.7`.
 #### Float32.sqrt
 
 ```tondo
-pub fn Float32.sqrt(self): Float32 ! math.MathError
+pub fn Float32.sqrt(self): Float32
+```
+
+The square root, by IEEE 754: `NaN` for a negative value.
+
+#### Float32.checkedSqrt
+
+```tondo
+pub fn Float32.checkedSqrt(self): Float32 ! math.MathError
 ```
 
 The square root; an error for a negative value.

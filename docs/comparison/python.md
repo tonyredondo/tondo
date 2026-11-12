@@ -407,7 +407,7 @@ fn area(shape: Shape): Float {
         Shape.Rectangle(width, height) => width * height
         Shape.Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
-            math.sqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
+            math.checkedSqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
         }
     }
 }

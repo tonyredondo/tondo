@@ -1,7 +1,7 @@
 //! Copies of values the function never reads again, as inlining leaves a
 //! call's result: `a = value` then `b = a`, with `a` read nowhere after,
 //! becomes `b = value`. A value that lives in memory, as an enum's, was
-//! copied whole each time, two or three times for `math.sqrt(x)`'s result.
+//! copied whole each time, two or three times for `math.checkedSqrt(x)`'s result.
 //! A counted value goes only when its reference passes along the copies:
 //! when nothing ever retains, releases or clears the local it goes through,
 //! and nothing between where it takes the value and the copy may panic,
@@ -26,7 +26,7 @@ pub fn elide(bodies: &mut [Body], types: &Types) {
 
 /// A comparison with zero of a `Float` converted from an `Int` compares the
 /// `Int`: the conversion keeps the sign, and gives no NaN, so `prove` tells
-/// it from what it knows of the `Int`, as `math.sqrt(Float(i))`'s test of a
+/// it from what it knows of the `Int`, as `math.checkedSqrt(Float(i))`'s test of a
 /// negative value is `i < 0`, never true where `i` counts from zero. The
 /// `Float` is written once, right after the `Int`, in the same block, and
 /// neither is lent: wherever the `Float` is read, the `Int` is the one it

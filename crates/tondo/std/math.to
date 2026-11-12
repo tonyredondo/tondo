@@ -1,12 +1,13 @@
 // std.math (standard library 14.1): scalar math with IEEE-754 semantics and
 // no fast-math, and integers of any size and exact decimals written in
-// Tondo. An operation outside its domain is an error, never a quiet `NaN`.
+// Tondo. An operation outside its domain gives `NaN` or an infinity, as `/`
+// does, and its `checked` twin an error.
 //
 // ```tondo
 // import std.console
 // import std.math
 //
-// let side = math.sqrt(3.0 * 3.0 + 4.0 * 4.0)?
+// let side = math.sqrt(3.0 * 3.0 + 4.0 * 4.0)
 // console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 // ```
 
@@ -20,7 +21,7 @@ import std.serialization as __serialization
 /// import std.console
 /// import std.math
 ///
-/// match math.sqrt(-1.0) {
+/// match math.checkedSqrt(-1.0) {
 ///     ok(root) => console.println("{root}")
 ///     err(math.MathError.Domain) => console.println("no real square root")
 ///     err(error) => console.println("{error}")
@@ -50,8 +51,14 @@ pub const Pi: Float = 3.141592653589793
 /// e, the base of the natural logarithm, as the nearest `Float`.
 pub const E: Float = 2.718281828459045
 
+/// The square root, by IEEE 754: `NaN` for a negative value. `checkedSqrt`
+/// gives an error instead.
+pub fn sqrt(value: Float): Float {
+    mathNative.sqrt(value)
+}
+
 /// The square root; a negative value is `MathError.Domain`.
-pub fn sqrt(value: Float): Float ! MathError {
+pub fn checkedSqrt(value: Float): Float ! MathError {
     if value < 0.0 {
         fail MathError.Domain
     }
@@ -68,26 +75,45 @@ pub fn exp(value: Float): Float {
     mathNative.exp(value)
 }
 
-/// The natural logarithm of a value above zero.
-pub fn ln(value: Float): Float ! MathError {
+/// The natural logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+/// negative value. `checkedLn` gives an error instead.
+pub fn ln(value: Float): Float {
+    mathNative.ln(value)
+}
+
+/// The natural logarithm of a value above zero; another is
+/// `MathError.Domain`.
+pub fn checkedLn(value: Float): Float ! MathError {
     if value <= 0.0 {
         fail MathError.Domain
     }
     mathNative.ln(value)
 }
 
+/// The base-10 logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+/// negative value. `checkedLog10` gives an error instead.
+pub fn log10(value: Float): Float {
+    mathNative.log10(value)
+}
+
 /// The base-10 logarithm of a value above zero; another is
 /// `MathError.Domain`.
-pub fn log10(value: Float): Float ! MathError {
+pub fn checkedLog10(value: Float): Float ! MathError {
     if value <= 0.0 {
         fail MathError.Domain
     }
     mathNative.log10(value)
 }
 
+/// The base-2 logarithm, by IEEE 754: `-inf` for zero and `NaN` for a
+/// negative value. `checkedLog2` gives an error instead.
+pub fn log2(value: Float): Float {
+    mathNative.log2(value)
+}
+
 /// The base-2 logarithm of a value above zero; another is
 /// `MathError.Domain`.
-pub fn log2(value: Float): Float ! MathError {
+pub fn checkedLog2(value: Float): Float ! MathError {
     if value <= 0.0 {
         fail MathError.Domain
     }
@@ -109,16 +135,28 @@ pub fn tan(value: Float): Float {
     mathNative.tan(value)
 }
 
-/// The arcsine of a value from -1 to 1.
-pub fn asin(value: Float): Float ! MathError {
+/// The arcsine, by IEEE 754: `NaN` for a value outside -1 to 1.
+/// `checkedAsin` gives an error instead.
+pub fn asin(value: Float): Float {
+    mathNative.asin(value)
+}
+
+/// The arcsine of a value from -1 to 1; another is `MathError.Domain`.
+pub fn checkedAsin(value: Float): Float ! MathError {
     if value < -1.0 or value > 1.0 {
         fail MathError.Domain
     }
     mathNative.asin(value)
 }
 
-/// The arccosine of a value from -1 to 1.
-pub fn acos(value: Float): Float ! MathError {
+/// The arccosine, by IEEE 754: `NaN` for a value outside -1 to 1.
+/// `checkedAcos` gives an error instead.
+pub fn acos(value: Float): Float {
+    mathNative.acos(value)
+}
+
+/// The arccosine of a value from -1 to 1; another is `MathError.Domain`.
+pub fn checkedAcos(value: Float): Float ! MathError {
     if value < -1.0 or value > 1.0 {
         fail MathError.Domain
     }

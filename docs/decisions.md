@@ -6241,3 +6241,15 @@ checker writes the closure they stand for, with the parameters and modes the exp
 gives, so it compiles to what the closure did. A method of a trait takes the type of the function
 expected, as a generic function does. `value.method`, a method bound to a value, is still no value,
 and where no function is expected the error says how to give one.
+
+## `sqrt` and the logarithms follow IEEE 754
+
+`math.sqrt`, `math.ln`, `math.log10`, `math.log2`, `math.asin`, `math.acos` and `Float.sqrt` gave
+`Float ! MathError` while the rest of the floats follow IEEE 754: `1.0 / 0.0` is `inf` and
+`(-1.0).pow(0.5)` is `NaN`, but `(-1.0).sqrt()` was an `err`, and `"{math.sqrt(4.0)}"` printed
+`ok(2.0)`. Most calls only wrote `?` or a fallback because they had to, as a distance does. They now
+give a `Float`, `NaN` or an infinity outside their domain, and each has a checked twin, `checkedSqrt`,
+`checkedLn` and so on, that gives `MathError.Domain` there. The twins keep the old result type
+rather than an option, as the integers' `checkedAdd` give, so that the code written for the old
+functions only changes their name and keeps its meaning. `MathError` stays for them and for the
+parsing of `BigInt` and `Decimal`.

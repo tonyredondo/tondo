@@ -1,0 +1,27 @@
+// `sqrt`, the logarithms, `asin` and `acos` follow IEEE 754, as `/` and
+// `pow` do: outside their domain they give `NaN` or an infinity. Their
+// `checked` twins give `MathError.Domain` instead.
+
+import std.console
+import std.math
+
+fn main() {
+    console.println("{math.sqrt(9.0)} {math.sqrt(-1.0)} {(-4.0).sqrt()} {2.25f32.sqrt()}")
+    console.println("{math.ln(0.0)} {math.ln(-1.0)} {math.log10(1000.0)} {math.log2(0.0)}")
+    console.println("{math.asin(2.0)} {math.acos(1.0)} {math.asin(1.0) == math.Pi / 2.0}")
+    console.println(
+        "{math.checkedSqrt(-1.0)} {math.checkedLn(0.0).isErr()} {math.checkedLog2(8.0)}",
+    )
+    console.println(
+        "{(-4.0).checkedSqrt().isErr()} {4.0f32.checkedSqrt()} {math.checkedAcos(1.5).isErr()} {math.checkedAsin(0.0)}",
+    )
+    let distance = (3.0 * 3.0 + 4.0 * 4.0).sqrt()
+    console.println("{distance} {math.checkedLog10(-1.0) ?? -1.0}")
+}
+
+// expect-stdout: 3.0 NaN NaN 1.5
+// expect-stdout: -inf NaN 3.0 -inf
+// expect-stdout: NaN 0.0 true
+// expect-stdout: err(the value is outside the operation's domain) true ok(3.0)
+// expect-stdout: true ok(2.0) true ok(0.0)
+// expect-stdout: 5.0 -1.0

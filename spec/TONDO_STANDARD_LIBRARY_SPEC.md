@@ -2941,19 +2941,25 @@ llamada: `numbers.map((n) { n * 2 })`, `(0..10).filter((n) { n % 2 == 0 })` o
 `text.chars().filter((c) { c.isLetter() })`.
 
 `std.math` da las operaciones escalares con la semántica de IEEE-754 y sin
-fast-math. Una operación fuera de su dominio es un error, nunca un `NaN`
-silencioso:
+fast-math. Una operación fuera de su dominio da `NaN` o un infinito, como `/`
+y `pow`; su gemelo `checked` da `MathError.Domain`:
 
 ~~~tondo pseudocode
 pub enum MathError { Domain, NotANumber(String) }
 pub const Pi: Float = 3.141592653589793             // el Float más cercano a π
 pub const E: Float = 2.718281828459045              // y a e
-pub fn sqrt(value: Float): Float ! MathError
-pub fn ln(value: Float): Float ! MathError
-pub fn log10(value: Float): Float ! MathError
-pub fn log2(value: Float): Float ! MathError
-pub fn asin(value: Float): Float ! MathError
-pub fn acos(value: Float): Float ! MathError
+pub fn sqrt(value: Float): Float                    // NaN si es negativo
+pub fn ln(value: Float): Float                      // -inf en 0, NaN si es negativo
+pub fn log10(value: Float): Float
+pub fn log2(value: Float): Float
+pub fn asin(value: Float): Float                    // NaN fuera de -1 a 1
+pub fn acos(value: Float): Float
+pub fn checkedSqrt(value: Float): Float ! MathError // Domain si es negativo
+pub fn checkedLn(value: Float): Float ! MathError   // Domain si no es positivo
+pub fn checkedLog10(value: Float): Float ! MathError
+pub fn checkedLog2(value: Float): Float ! MathError
+pub fn checkedAsin(value: Float): Float ! MathError // Domain fuera de -1 a 1
+pub fn checkedAcos(value: Float): Float ! MathError
 pub fn pow(base: Float, exponent: Float): Float
 pub fn exp(value: Float): Float
 pub fn sin(value: Float): Float

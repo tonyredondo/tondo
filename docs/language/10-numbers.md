@@ -199,7 +199,7 @@ fn main() {
     console.println("{infinite} {-infinite} {undefined} {undefined == undefined} {undefined.isNaN()}")
     console.println("{2.5.round()} {3.5.round()} {2.5.roundTiesAway()} {2.7.floor()} {2.2.ceil()} {(-2.7).truncate()}")
     console.println("{2.0.pow(10.0)} {(-3.5).abs()} {3.14159.toFixed(2)} {7.5.clamp(0.0, 5.0)} {1.5.min(2.5)}")
-    console.println("{2.0.sqrt()} {(-1.0).sqrt().isErr()}")
+    console.println("{2.0.checkedSqrt()} {(-1.0).checkedSqrt().isErr()}")
 }
 ```
 
@@ -261,7 +261,7 @@ import std.math
 fn main() {
     console.println("{math.hypot(3.0, 4.0)} {math.pow(2.0, 0.5):.4} {math.exp(1.0):.4}")
     console.println("{math.sin(0.0)} {math.cos(0.0)} {math.atan2(1.0, 1.0):.4}")
-    console.println("{math.sqrt(2.0)} {math.ln(-1.0).isErr()} {math.log10(1000.0)}")
+    console.println("{math.checkedSqrt(2.0)} {math.checkedLn(-1.0).isErr()} {math.checkedLog10(1000.0)}")
     console.println("{math.gcd(12, 18)} {math.lcm(4, 6)}")
 }
 ```

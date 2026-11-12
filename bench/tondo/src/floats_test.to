@@ -26,7 +26,7 @@ fn mandelbrot(size: Int): Int {
 fn roots(count: Int): Float {
     var total = 0.0
     for i in 0..count {
-        total += math.sqrt(Float(i)) ?? 0.0
+        total += math.checkedSqrt(Float(i)) ?? 0.0
     }
     total
 }

@@ -16,7 +16,7 @@ fn signs(value: Int): String {
 fn roots(count: Int): Float {
     var total = 0.0
     for i in 0..count {
-        total += math.sqrt(Float(i)) ?? 0.0
+        total += math.checkedSqrt(Float(i)) ?? 0.0
     }
     total
 }
@@ -24,7 +24,7 @@ fn roots(count: Int): Float {
 fn negatives(from: Int, count: Int): Int {
     var found = 0
     for i in from..from + count {
-        if math.sqrt(Float(i)).isErr() {
+        if math.checkedSqrt(Float(i)).isErr() {
             found += 1
         }
     }

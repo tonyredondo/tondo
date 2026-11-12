@@ -17,7 +17,7 @@ fn main(): Unit ! math.MathError {
     console.println("{'7'.isDigit()} {'é'.isLetter()} {' '.isWhitespace()} {'A'.isUpper()} {'a'.toUpper()} {'é'.code()} {Char.from(97)} {Char.from(-1)}")
     // Int and Float
     console.println("{(-5).abs()} {3.min(9)} {3.max(9)} {15.clamp(0, 10)} {2.pow(10)} {Int.max}")
-    console.println("{(-2.5).abs()} {2.7.floor()} {2.1.ceil()} {2.5.round()} {3.5.round()} {9.0.sqrt()?} {2.0.pow(0.5)} {Float.nan.isNaN()} {(1.0 / 0.0).isInfinite()}")
+    console.println("{(-2.5).abs()} {2.7.floor()} {2.1.ceil()} {2.5.round()} {3.5.round()} {9.0.checkedSqrt()?} {2.0.pow(0.5)} {Float.nan.isNaN()} {(1.0 / 0.0).isInfinite()}")
     console.println("{math.gcd(12, 18)} {math.lcm(4, 6)} {math.roundTiesAway(2.5)} {math.hypot(3.0, 4.0)}")
 }
 

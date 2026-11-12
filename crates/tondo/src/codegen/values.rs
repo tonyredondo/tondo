@@ -1136,7 +1136,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let rounded = self.e.call_rt(Rt::MathRoundAway, &[value]).unwrap();
                 if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, rounded) } else { rounded }
             }
-            Sqrt => {
+            Sqrt => self.e.fb.ins().sqrt(values[0]),
+            CheckedSqrt => {
                 let zero = self.float_const(clif, 0.0);
                 let negative = self.e.fb.ins().fcmp(FloatCC::LessThan, values[0], zero);
                 let root = self.e.fb.ins().sqrt(values[0]);

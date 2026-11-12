@@ -943,15 +943,15 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     assert!(!quiet.contains("== measured"), "{quiet}");
 }
 
-/// A test the facts decide is a jump: `math.sqrt`'s test of a negative
+/// A test the facts decide is a jump: `math.checkedSqrt`'s test of a negative
 /// value, of a `Float` converted from an `Int` that counts from zero, which
 /// `elide` makes a test of the `Int`; one of a value that may be negative
 /// stays.
 #[test]
 fn a_test_the_facts_decide_is_a_jump() {
     let source: &[u8] = b"import std.console\nimport std.math\n\nfn roots(count: Int): Float {\n    \
-        var total = 0.0\n    for i in 0..count {\n        total += math.sqrt(Float(i)) ?? 0.0\n    }\n    \
-        total\n}\n\nfn any(from: Int): Float {\n    math.sqrt(Float(from)) ?? -1.0\n}\n\n\
+        var total = 0.0\n    for i in 0..count {\n        total += math.checkedSqrt(Float(i)) ?? 0.0\n    }\n    \
+        total\n}\n\nfn any(from: Int): Float {\n    math.checkedSqrt(Float(from)) ?? -1.0\n}\n\n\
         fn main() {\n    console.println(\"{roots(10)} {any(-4)} {any(4)}\")\n}\n";
     let dir = project_at("decided-tests", &[("main.to", source)]);
     let dumped = |asked: &str| {

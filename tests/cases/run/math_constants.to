@@ -6,7 +6,7 @@ import std.math
 fn main(): !math.MathError {
     let area = math.Pi * 2.0 * 2.0
     console.println("{math.Pi} {math.E} {area}")
-    console.println("{math.cos(math.Pi)} {math.ln(math.E)?}")
+    console.println("{math.cos(math.Pi)} {math.checkedLn(math.E)?}")
 }
 
 // expect-stdout: 3.141592653589793 2.718281828459045 12.566370614359172

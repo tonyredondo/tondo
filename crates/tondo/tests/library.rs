@@ -24,7 +24,7 @@ pub extern fn words_count(text: ffi.CString): ffi.CSize {
 /// The distance between two points.
 pub extern fn words_distance(a: Point, b: Point): Float {
     let (dx, dy) = (a.x - b.x, a.y - b.y)
-    (dx * dx + dy * dy).sqrt() ?? 0.0
+    (dx * dx + dy * dy).checkedSqrt() ?? 0.0
 }
 
 /// Calls `visit` with each number from 1 to `count`.

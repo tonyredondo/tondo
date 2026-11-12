@@ -7484,6 +7484,10 @@ Reglas:
 
 - Redondeo por defecto: nearest, ties to even.
 - División flotante por cero produce infinito o NaN según IEEE; no pánico.
+- La raíz cuadrada, los logaritmos, `asin` y `acos` también siguen IEEE 754:
+  fuera de su dominio dan `NaN` o un infinito, como `/` y `pow`. Su gemelo
+  `checked` (`x.checkedSqrt()`, `math.checkedLn(x)`) da `math.MathError.Domain`
+  a quien quiera el error.
 - Overflow produce infinito.
 - El underflow utiliza gradual underflow: produce el subnormal correctamente redondeado o cero con signo cuando así lo exige IEEE 754. Una implementación no puede convertir por conveniencia un subnormal representable en cero.
 - `NaN` no es igual a ningún valor, incluido sí mismo.
@@ -7675,7 +7679,8 @@ T.parse(text: String): T ! text.TextError
 x.compare(other: T): Int                 // NaN después de todo, igual a sí mismo
 x.abs()  x.min(other)  x.max(other)  x.clamp(low, high)
 x.floor()  x.ceil()  x.round()  x.roundTiesAway()  x.truncate()
-x.sqrt(): T ! math.MathError
+x.sqrt(): T                              // NaN para un valor negativo
+x.checkedSqrt(): T ! math.MathError      // Domain para un valor negativo
 x.pow(exponent: T): T
 x.isNaN()  x.isInfinite()  x.isFinite(): Bool
 x.toFixed(decimals: Int): String
