@@ -1,0 +1,66 @@
+// Where a function is expected, a method with `self`, a variant with
+// positional data, a newtype, `some`, `ok` and `err` are given by their
+// names, as the closures that call them; a method of a trait takes the
+// type the function expected gives it.
+
+import std.console
+import std.text
+
+type UserId = Int
+
+enum NoteError {
+    Files(text.TextError)
+    Empty
+}
+
+type User = {
+    name: String
+}
+
+fn User.greet(self): String {
+    "hi {self.name}"
+}
+
+type Counter = {
+    count: Int
+}
+
+fn Counter.bump(mut self, by: Int) {
+    self.count += by
+}
+
+type Point = {
+    x: Int
+}
+
+impl Display for Point {
+    fn display(self): String {
+        "p{self.x}"
+    }
+}
+
+fn apply(change: fn(mut Counter, Int), counter: mut Counter) {
+    change(mut counter, 5)
+}
+
+fn main() {
+    let names = ["ada", "bo"]
+    let failed = Int.parse("x").mapErr(NoteError.Files)
+    let ids = [1, 2].map(UserId)
+    var counter = Counter { count: 1 }
+    apply(Counter.bump, mut counter)
+    let shown: fn(Point): String = Display.display
+    let upper: fn(String): String = String.toUpper
+    console.println(
+        "{names.map(String.toUpper)} {failed.isErr()} {ids.length()} {[1, 2].map(some)}",
+    )
+    console.println(
+        "{[User { name: "x" }].map(User.greet)} {counter.count} {shown(Point { x: 3 })} {upper("a")}",
+    )
+    let results: Array[Int ! NoteError] = [1].map(ok)
+    console.println("{[Point { x: 1 }].map(Display.display)} {results.length()}")
+}
+
+// expect-stdout: [ADA, BO] true 2 [some(1), some(2)]
+// expect-stdout: [hi x] 6 p3 A
+// expect-stdout: [p1] 1

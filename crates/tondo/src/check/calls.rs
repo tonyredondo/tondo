@@ -882,9 +882,10 @@ impl<'a> Checker<'a> {
         self.repeatable(id, span);
         let signature = self.signatures[id.0 as usize].clone();
         if signature.receiver.is_some() {
+            let method = signature.name.rsplit('.').next().unwrap_or_default();
             let message = format!(
-                "a method is not a value; write a closure that calls it, such as `(x) {{ value.{}(x) }}`",
-                signature.name.rsplit('.').next().unwrap_or_default()
+                "a method is a value only where a function is expected, as `items.map({0})` or `let f: fn(...) = {0}`; here write a closure that calls it, such as `(x) {{ x.{method}() }}`",
+                signature.name
             );
             self.diags.error("E1102", span, message);
             return Self::error_expr(span);
@@ -2354,6 +2355,128 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// What a name is as a function value, where a function is expected
+    /// (11.7): a method with `self`, as `String.toUpper`, a variant with
+    /// positional data, a newtype, or `some`, `ok` and `err`; as the closure
+    /// that calls it, which compiles as one written out would.
+    pub(super) fn function_form(&mut self, cx: &FnCx, expr: &ast::Expr) -> Option<ast::Expr> {
+        let ast::ExprKind::Path(segments) = &expr.kind else { return None };
+        if self.lookup(cx, &segments[0].name).is_some() || self.visible_capture(cx, &segments[0].name) {
+            return None;
+        }
+        let span = expr.span;
+        let ident = |name: &str| ast::Ident { name: name.to_string(), span };
+        let path = |this: &[ast::Ident]| ast::Expr { kind: ast::ExprKind::Path(this.to_vec()), span };
+        // What it takes: the mode of each argument of its call.
+        let (modes, call): (Vec<ast::Mode>, Box<dyn Fn(Vec<ast::Expr>, &[ast::Mode]) -> ast::Expr>) =
+            match segments.as_slice() {
+                // A function that gives `T ! E` is written in terms of its
+                // `T`: `ok` gives the value, and `err` fails with it.
+                [name] if name.name == "some" => {
+                    let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| ast::Expr {
+                        kind: ast::ExprKind::Construct("some", Box::new(values.remove(0))),
+                        span,
+                    };
+                    (vec![ast::Mode::Value], Box::new(call))
+                }
+                [name] if name.name == "ok" => {
+                    (vec![ast::Mode::Value], Box::new(|mut values: Vec<ast::Expr>, _: &[ast::Mode]| values.remove(0)))
+                }
+                [name] if name.name == "err" => {
+                    let call = move |mut values: Vec<ast::Expr>, _: &[ast::Mode]| {
+                        let fail = ast::Stmt { kind: ast::StmtKind::Fail(values.remove(0)), span };
+                        let block = ast::Block { stmts: vec![fail], tail: None, span };
+                        ast::Expr { kind: ast::ExprKind::Block(block), span }
+                    };
+                    (vec![ast::Mode::Value], Box::new(call))
+                }
+                [name] if matches!(self.names.get(&name.name), Some(ModuleName::Newtype(_))) => {
+                    (vec![ast::Mode::Value], Box::new(Self::calling(path(segments), span)))
+                }
+                // A method of a trait, which the function expected
+                // specializes.
+                [owner, method]
+                    if let Some(&trait_id) = self.trait_names.get(&owner.name)
+                        && self.type_named(&owner.name).is_none() =>
+                {
+                    let found = self.traits[trait_id.0 as usize].methods.iter().find(|m| m.name == method.name)?;
+                    let receiver = found.signature.receiver?;
+                    let mut modes = found.signature.modes.clone();
+                    modes[0] = match receiver {
+                        ast::Mode::Mut | ast::Mode::Var => receiver,
+                        _ => ast::Mode::Value,
+                    };
+                    (modes, Box::new(Self::calling(path(segments), span)))
+                }
+                [.., _] if segments.len() >= 2 => {
+                    let (method, owner) = segments.split_last()?;
+                    let owner_ty = match owner {
+                        [name] => self.type_named(&name.name).or_else(|| self.intrinsic_owner(&name.name)),
+                        [module, name] => self.module_type(&module.name, &name.name),
+                        _ => None,
+                    };
+                    let owner_ty = owner_ty?;
+                    // A variant with positional data.
+                    if let TyKind::Adt(id) = self.types.kind(self.types.repr(owner_ty))
+                        && let AdtKind::Enum(variants) = &self.types.adt(*id).kind
+                    {
+                        let variant = variants.iter().find(|v| v.name == method.name)?;
+                        let count = variant.payload.types().len();
+                        if count == 0 || !matches!(variant.payload, Payload::Tuple(_)) {
+                            return None;
+                        }
+                        (vec![ast::Mode::Value; count], Box::new(Self::calling(path(segments), span)))
+                    } else {
+                        // A method with `self`.
+                        let key = self.owner_key(owner_ty);
+                        let id = *self.methods.get(&(key, method.name.clone()))?;
+                        let signature = &self.signatures[id.0 as usize];
+                        let receiver = signature.receiver?;
+                        let mut modes = signature.modes.clone();
+                        modes[0] = match receiver {
+                            ast::Mode::Mut | ast::Mode::Var => receiver,
+                            _ => ast::Mode::Value,
+                        };
+                        (modes, Box::new(Self::calling(path(segments), span)))
+                    }
+                }
+                _ => return None,
+            };
+        let params: Vec<ast::ClosureParam> = (0..modes.len())
+            .map(|index| ast::ClosureParam {
+                name: ident(&format!("·{index}")),
+                ty: None,
+                mode: modes[index],
+                variadic: false,
+            })
+            .collect();
+        let values = (0..modes.len()).map(|index| path(&[ident(&format!("·{index}"))])).collect();
+        let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call(values, &modes))), span };
+        let closure = ast::Closure { is_unsafe: false, params, result: None, body };
+        Some(ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span })
+    }
+
+    /// A call of `callee` with the values given, each in its mode.
+    fn calling(callee: ast::Expr, span: Span) -> impl Fn(Vec<ast::Expr>, &[ast::Mode]) -> ast::Expr {
+        move |values: Vec<ast::Expr>, modes: &[ast::Mode]| {
+            let args = values
+                .into_iter()
+                .zip(modes)
+                .map(|(value, &mode)| ast::Arg { name: None, value, mode, spread: false, span })
+                .collect();
+            ast::Expr { kind: ast::ExprKind::Call { callee: Box::new(callee.clone()), args }, span }
+        }
+    }
+
+    /// Whether a value of `ty` is a function, which a name can be given as.
+    pub(super) fn wants_function(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Fn(..) | TyKind::CFn(..) => true,
+            TyKind::Option(inner) => matches!(self.types.kind(*inner), TyKind::Fn(..)),
+            _ => self.call_bounds.contains_key(&ty),
+        }
+    }
+
     pub(super) fn call_signature(
         &mut self,
         cx: &mut FnCx,
@@ -2524,6 +2647,17 @@ impl<'a> Checker<'a> {
         // Check the arguments in the order they are written; an unsuffixed
         // literal waits until the others have fixed its type.
         let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
+        // A name given where a function goes, as `String.toUpper`, is the
+        // closure that calls it, which waits for the call as one does.
+        let forms: Vec<Option<ast::Arg>> = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                let wanted = arg.mode == ast::Mode::Value && !arg.spread && self.wants_function(type_of(index));
+                let value = if wanted { self.function_form(cx, &arg.value)? } else { return None };
+                Some(ast::Arg { value, ..arg.clone() })
+            })
+            .collect();
         for pass in 0..2 {
             // What the call is expected to give fixes what the arguments
             // that wait for context, such as closures, may not.
@@ -2537,6 +2671,7 @@ impl<'a> Checker<'a> {
                 if values[index].is_some() {
                     continue;
                 }
+                let arg = forms[index].as_ref().unwrap_or(arg);
                 let ty = type_of(index);
                 // Any value becomes a `reflect.Value` where one is a parameter (27.10).
                 let dynamic = self.reflect_value_ty() == Some(ty);

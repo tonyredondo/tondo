@@ -3540,6 +3540,28 @@ Una llamada a través de un valor de función utiliza solo argumentos posicional
 
 Tondo 0.1 no crea bound methods implícitos: `value.method` no es un valor de función y el acceso a un método debe ir seguido de su llamada. Una función libre o una operación asociada sin `self`, como `Resource.release`, sí puede utilizarse como valor nombrado cuando su firma coincide. Para fijar argumentos se escribe un cierre explícito y se aplican sus reglas de captura.
 
+Donde se espera un tipo de función, también son valores por su nombre:
+
+- Un método con `self`, `Tipo.metodo`: una función cuyo primer parámetro es el
+  receptor, en el modo de este. `String.toUpper` es un `fn(String): String`; un
+  método `mut self` es un `fn(mut T, ...)` y uno `var self` un `fn(var T, ...)`.
+  El de un trait, como `Display.display`, se especializa con el tipo de función
+  esperado, como una función genérica.
+- Una variante con datos posicionales: `NoteError.Files` es un
+  `fn(fs.FsError): NoteError`. Una con campos con nombre no lo es.
+- `some`, `ok` y `err`, especializados por lo que se espera.
+- Un newtype: `UserId` es un `fn(Int): UserId`.
+
+~~~tondo
+let names = ["ada", "grace"]
+let upper = names.map(String.toUpper)
+let checked = Int.parse("12").mapErr(NoteError.Files)
+~~~
+
+Se compilan como el cierre que sustituyen, `(name) { name.toUpper() }`, y como
+cualquier valor `fn(...)` olvidan los valores por omisión. Donde no se espera un
+tipo de función, `String.toUpper` sigue siendo `E1102`, que dice cómo darlo.
+
 ~~~tondo
 fn apply[F: Call[fn(Int): Int]](
     value: Int,

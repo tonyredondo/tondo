@@ -6230,3 +6230,14 @@ variant of the enum is a binding, as before. A name that is also a type or a fun
 asked for in full rather than chosen, and where no error is declared, as in `main`, the error for
 an unknown name says which enum has it. A leading dot, as Swift's `.card`, was not an option: a
 line that starts with `.` continues the one before.
+
+## Constructors and methods are function values
+
+About 120 closures of the standard library and the examples only passed their value to a
+constructor or called one method on it: `(error) { NoteError.Files(error) }`, `(name) {
+name.toUpper() }`. Where a function is expected, a method with `self`, a variant with positional
+data, a newtype, and `some`, `ok` and `err` are now given by name, `names.map(String.toUpper)`. The
+checker writes the closure they stand for, with the parameters and modes the expected function
+gives, so it compiles to what the closure did. A method of a trait takes the type of the function
+expected, as a generic function does. `value.method`, a method bound to a value, is still no value,
+and where no function is expected the error says how to give one.

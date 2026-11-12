@@ -33,5 +33,5 @@ fn main() {
 // expect-error: E1101 closure parameter `x` needs a type: `(x: Int) { ... }`
 // expect-error: E1102 `Int` cannot be called
 // expect-error: E1102 a call through a function value takes positional arguments
-// expect-error: E1102 a method is not a value; write a closure that calls it, such as `(x) { value.moved(x) }`
+// expect-error: E1102 a method is a value only where a function is expected, as `items.map(Point.moved)` or `let f: fn(...) = Point.moved`; here write a closure that calls it, such as `(x) { x.moved() }`
 // expect-error: E1101 `identity` is generic: specialize it, as in `identity[Int]`

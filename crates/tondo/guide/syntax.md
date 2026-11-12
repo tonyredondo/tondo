@@ -139,7 +139,9 @@ A closure is `(params) { body }`, with parameter types when the context does
 not give them. Where no function type is expected, as in a `let`, it infers
 its result, and what it fails with from its `fail` and `?`: a closure that
 fails with `fail LoadError.Missing` and gives a `String` is a
-`fn(...): String ! LoadError`.
+`fn(...): String ! LoadError`. Where a function is expected, a method, a
+variant with data, a newtype and `some` are given by name:
+`names.map(String.toUpper)`, `result.mapErr(AppError.Io)`.
 
 ## defer
 

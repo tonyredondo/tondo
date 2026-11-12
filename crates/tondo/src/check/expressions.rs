@@ -505,6 +505,14 @@ impl<'a> Checker<'a> {
                     None => self.string(cx, segments, span),
                 }
             }
+            // A name given where a function is expected (11.7).
+            ast::ExprKind::Path(_)
+                if let Some(expected) = expected
+                    && self.wants_function(expected)
+                    && let Some(form) = self.function_form(cx, e) =>
+            {
+                self.expr_kind(cx, &form, Some(expected))
+            }
             ast::ExprKind::Path(segments) => self.path(cx, segments, expected, span),
             ast::ExprKind::Call { callee, args } => self.call(cx, callee, args, expected, span),
             ast::ExprKind::Unary(op, operand) => self.unary(cx, *op, operand, expected, span),
