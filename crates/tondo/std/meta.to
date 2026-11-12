@@ -22,6 +22,7 @@
 
 import std.internal.meta as metaNative
 import std.json as __json
+import std.reflect as __reflect
 import std.serialization
 
 /// Why a provider cannot give its response.
@@ -939,4 +940,12 @@ pub fn serveDerive(provider: fn(DeriveRequest): DeriveResponse ! Error) {
         err(error) => section("error", "{error}")
     }
     metaNative.respond(response)
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for Error {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

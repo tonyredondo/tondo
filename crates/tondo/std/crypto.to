@@ -16,6 +16,7 @@
 import std.encoding as __encoding
 import std.internal.codec as codecNative
 import std.random as __random
+import std.reflect as __reflect
 import std.time as __time
 
 /// Why a key, a PEM text, a certificate or sealed data could not be used.
@@ -831,4 +832,12 @@ fn tlv(tag: Int, content: Array[Byte]): Array[Byte] {
         head.extend(digits)
     }
     head.concat(content)
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for CryptoError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

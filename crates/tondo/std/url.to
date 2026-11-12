@@ -446,3 +446,11 @@ fn encoded(text: String, kept: String): String {
     }
     out.join("")
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for UrlError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

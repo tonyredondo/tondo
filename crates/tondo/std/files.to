@@ -6,6 +6,7 @@
 import std.fs as __fs
 import std.internal.fs as fsNative
 import std.path as __path
+import std.reflect as __reflect
 import std.sync as __sync
 import std.time as __time
 
@@ -837,4 +838,12 @@ fn children(paths: Array[String], at: String): Array[String] {
         }
     }
     found
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for __fs.FsError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

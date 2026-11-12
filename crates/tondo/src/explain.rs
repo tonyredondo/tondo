@@ -179,6 +179,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-proto-file",
         "A `.proto` file does not read as proto2 or proto3, imports a file the package does not have, or names a type that none of its files declares.",
     ),
+    (
+        "E1912",
+        "method-not-a-tool",
+        "A `pub` method of a value `std.mcp` serves cannot be a tool: reflection cannot build its arguments or show its result.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

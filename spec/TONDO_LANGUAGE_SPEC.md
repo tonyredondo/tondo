@@ -8845,6 +8845,7 @@ oculten un diagnóstico independiente.
 | `E1909` | `invalid-pattern` | El patrón literal de `Regex.compile` no está en el dialecto de `std.regex` (biblioteca estándar 14.16). |
 | `E1910` | `invalid-protobuf-message` | Un mensaje de protobuf tiene un campo sin número, un número repetido o fuera de 1 a 536870911, un tipo o una codificación que protobuf no escribe, o un enum de protobuf una variante sin número (biblioteca estándar 14.12). |
 | `E1911` | `invalid-proto-file` | Un archivo `.proto` no se lee como proto2 o proto3, importa un archivo que el paquete no tiene o nombra un tipo que ninguno de sus archivos declara (biblioteca estándar 14.12). |
+| `E1912` | `method-not-a-tool` | Un método `pub` de un valor que sirve `std.mcp` no puede ser una herramienta: la reflexión no construye sus argumentos o no muestra su resultado (biblioteca estándar 14.33). |
 
 #### Testing
 
@@ -11660,9 +11661,13 @@ Reglas:
 
 - La reflexión trabaja con los tipos que implementan `reflect.Reflect`. El
   compilador lo implementa, con código que llega directamente a cada campo y
-  método, para cada record, enum y newtype cuyas partes lo implementan, igual
-  que `serialization.Encode` (14.7 de la librería estándar); `std.reflect` lo implementa
-  para los tipos intrínsecos y las colecciones. Un `impl` del programa sustituye
+  método, para cada record, enum y newtype del programa; `std.reflect` lo
+  implementa para los tipos intrínsecos y las colecciones. Una parte cuyo tipo
+  no lo implementa, como una función o un `fs.FileSystem`, se lleva tal cual
+  (`reflect.opaqueOf`): se muestra como `<` su tipo `>`, no tiene partes ni
+  métodos, no se asigna, y el valor que la tiene no se construye desde un
+  `reflect.Value` de otro tipo; un método cuyos parámetros no se construyen
+  así no se llama por nombre. Un `impl` del programa sustituye
   al automático. Los valores que se reflejan son `Copy`: `reflect.Value` se
   copia, así que no puede contener un valor afín.
 - `reflect.Value` contiene un valor cualquiera con su tipo. Un argumento cuyo

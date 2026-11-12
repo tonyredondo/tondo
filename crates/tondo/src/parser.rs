@@ -612,6 +612,7 @@ impl Parser<'_> {
                     body,
                     span,
                     module: 0,
+                    unreflected: Vec::new(),
                 })))
             }
             Tok::Kw(Kw::Const) => {
@@ -791,6 +792,7 @@ impl Parser<'_> {
             body,
             span,
             module: 0,
+            unreflected: Vec::new(),
         })
     }
 
@@ -844,7 +846,7 @@ impl Parser<'_> {
         }
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(EnumDecl { public, uses: Vec::new(), name, generics, variants, span, module: 0 })
+        Ok(EnumDecl { public, uses: Vec::new(), name, generics, variants, span, module: 0, unreflected: Vec::new() })
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines; with

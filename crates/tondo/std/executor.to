@@ -20,6 +20,7 @@
 // ```
 
 import std.internal.channel as __channel
+import std.reflect as __reflect
 import std.sync as __sync
 
 /// Why a pool or an actor cannot be made.
@@ -339,5 +340,29 @@ pub fn ActorRef[M].trySend(self, message: M): !SendError {
             }
         }
         none => fail SendError.Stopped
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for ExecutorError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for SendError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for SubmitError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
     }
 }

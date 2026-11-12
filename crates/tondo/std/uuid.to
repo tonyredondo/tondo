@@ -208,3 +208,11 @@ fn stamped(bytes: Array[Byte], version: Int): Uuid {
 fn byte(value: Int): Byte {
     Byte(value & 255).unwrapOr(Byte(0u8))
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for UuidError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

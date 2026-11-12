@@ -1,0 +1,69 @@
+// A part whose type has no `Reflect`, as a function or a `fs.FileSystem`,
+// does not keep its record or enum from having it: reflection carries it as
+// it is, shows it as `<` its type `>`, and cannot set it or build the value
+// from parts; a value of the type itself still converts. An error of the
+// standard library has `Reflect`, shown as its message.
+
+import std.console
+import std.fs
+import std.json
+import std.math
+import std.reflect
+
+pub type Notes = {
+    files: fs.FileSystem
+    dir: String
+    pick: fn(Int): Int
+}
+
+/// Errors of modules whose other types reflection knows by name.
+pub enum Failed {
+    Json(json.JsonError)
+    Math(math.MathError)
+    Reflection(reflect.ReflectError)
+}
+
+pub enum NoteError {
+    Missing(String)
+    Files(fs.FsError)
+}
+
+pub fn Notes.count(self, extra: Int): Int ! NoteError {
+    if extra < 0 {
+        fail NoteError.Missing("negative")
+    }
+    self.pick(extra)
+}
+
+fn main(): !reflect.ReflectError {
+    let notes = Notes { files: fs.memory(), dir: "notes", pick: (n) { n + 1 } }
+    let value = reflect.valueOf(notes)
+    console.println("{value}")
+    console.println("{value.get("dir")?} {value.get("files")?} {value.get("pick")?.typeName()}")
+    console.println("{value.call("count", reflect.valueOf(4))?}")
+    let info = reflect.typeOf(notes)
+    console.println("{info.fields().map((f) { "{f.name()}: {f.typeInfo().kind()}" })}")
+    console.println("{info.methods().map((m): String { m.name() })}")
+    var copy = notes
+    match reflect.set(mut copy, "files", reflect.valueOf("x")) {
+        ok(_) => console.println("set")
+        err(error) => console.println("{error}")
+    }
+    match value.to[Notes]() {
+        ok(_) => console.println("built")
+        err(error) => console.println("{error}")
+    }
+    let failed = reflect.valueOf(NoteError.Files(fs.FsError.NotFound))
+    console.println("{failed} {failed.variant()}")
+    console.println("{reflect.valueOf(Failed.Math(math.MathError.Domain))}")
+}
+
+// expect-stdout: Notes { files: <fs.FileSystem>, dir: "notes", pick: <fn(Int): Int> }
+// expect-stdout: notes <fs.FileSystem> fn(Int): Int
+// expect-stdout: ok(5)
+// expect-stdout: [files: Opaque, dir: Primitive(String), pick: Opaque]
+// expect-stdout: [count]
+// expect-stdout: `Notes.files` is a `fs.FileSystem`, which has no `Reflect`: reflection shows it, but cannot set it or build a `Notes`
+// expect-stdout: built
+// expect-stdout: Files(not found) some(Files)
+// expect-stdout: Math(the value is outside the operation's domain)

@@ -203,6 +203,10 @@ pub struct EnumDecl {
     /// The module that declares it, numbered when modules are linked; the
     /// root module is 0.
     pub module: u32,
+    /// Its `pub` methods with a receiver that reflection cannot call, as
+    /// the derivation of `Reflect` found them: each one's name and where
+    /// it is, and why.
+    pub unreflected: Vec<(String, Span, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -325,6 +329,10 @@ pub struct TypeDecl {
     /// The module that declares it, numbered when modules are linked; the
     /// root module is 0.
     pub module: u32,
+    /// Its `pub` methods with a receiver that reflection cannot call, as
+    /// the derivation of `Reflect` found them: each one's name and where
+    /// it is, and why.
+    pub unreflected: Vec<(String, Span, String)>,
 }
 
 #[derive(Clone, Debug)]

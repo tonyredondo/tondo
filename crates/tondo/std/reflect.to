@@ -266,6 +266,40 @@ pub fn valueOf[T: Reflect](value: T): Value {
     Value { box, ops: dispatch[T] }
 }
 
+/// A value of a type without `Reflect`, which reflection carries as it is:
+/// a part of a record or an enum that holds a function or a handle, as a
+/// `fs.FileSystem`. It shows as `<` its type `>`, and has no parts or
+/// methods; the type it is part of cannot be built from a `Value`.
+///
+/// ```tondo
+/// import std.console
+/// import std.reflect
+///
+/// let value = reflect.opaqueOf((n: Int) { n + 1 })
+/// console.println("{value} {value.typeName()}")
+/// ```
+pub fn opaqueOf[T](value: T): Value {
+    Value { box: reflectNative.box(value), ops: carried[T] }
+}
+
+/// The operations of a value reflection carries as it is.
+fn carried[T](_box: reflectNative.Box, op: Op): Reply ! ReflectError {
+    let name = reflectNative.typeName[T]()
+    match op {
+        Op.Show(_) => Reply.Text(some("<{name}>"))
+        Op.Info => Reply.Info(opaqueInfo[T]())
+        Op.Fields => Reply.Fields(none)
+        Op.Elements => Reply.Values(none)
+        Op.Entries => Reply.Pairs(none)
+        Op.Variant => Reply.Text(none)
+        Op.Rules => Reply.Broken([])
+        Op.Get(part) => fail ReflectError.noField(name, part, [])
+        Op.Set(part, _) => fail ReflectError.noField(name, part, [])
+        Op.Call(method, _) => fail ReflectError.noMethod(name, method, [])
+        Op.CallMut(method, _) => fail ReflectError.noMethod(name, method, [])
+    }
+}
+
 /// The value at a path of fields, indexes and map keys separated by `.`.
 pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError {
     valueOf(value).get(path)?.to()?
@@ -582,6 +616,14 @@ pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError 
     let message =
         "`{typeName}` has private fields, so only a `{typeName}` converts to it, not a `{value.typeName()}`"
     ReflectError { kind: ReflectErrorKind.WrongType, path: "", message }
+}
+
+/// A part reflection carries as it is (`opaqueOf`), which it cannot set
+/// or build the value it is part of with.
+pub fn ReflectError.opaque(typeName: String, name: String, partType: String): ReflectError {
+    let message =
+        "`{typeName}.{name}` is a `{partType}`, which has no `Reflect`: reflection shows it, but cannot set it or build a `{typeName}`"
+    ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
 }
 
 /// The method `Value.callMut` needs, called on a value with `call`.
@@ -1477,6 +1519,21 @@ pub fn typeInfo[T: Reflect](): TypeInfo {
     }
 }
 
+/// The description of a type reflection carries as it is (`opaqueOf`):
+/// its name, and the kind `Opaque`.
+pub fn opaqueInfo[T](): TypeInfo {
+    TypeInfo {
+        typeId: TypeId { value: reflectNative.identity[T]() }
+        name: reflectNative.typeName[T]()
+        bits: reflectNative.capabilities[T]()
+        describe: opaqueDescription
+    }
+}
+
+fn opaqueDescription(): TypeDescription {
+    TypeDescription.of(TypeKind.Opaque)
+}
+
 /// The description of the type of a value.
 pub fn typeOf[T: Reflect](value: T): TypeInfo {
     typeInfo[T]()
@@ -2107,5 +2164,13 @@ impl Display for TypeKind {
             TypeKind.Reference(kind) => "Reference({kind})"
             TypeKind.Opaque => "Opaque"
         }
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl Reflect for ReflectError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
     }
 }

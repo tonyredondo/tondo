@@ -3211,6 +3211,8 @@ pub type Value
 pub type Field = { name: String, value: Value }
 
 pub fn valueOf[T: Reflect](value: T): Value
+pub fn opaqueOf[T](value: T): Value                  // tal cual: se muestra como <T>
+pub fn opaqueInfo[T](): TypeInfo                     // un TypeKind.Opaque con su nombre
 pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError
 pub fn set[S: Reflect](value: mut S, path: String, new: Value): Unit ! ReflectError
 pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): R ! ReflectError
@@ -3264,6 +3266,7 @@ pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError
 pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int, optional: Int = 0, variadic: Bool = false): ReflectError
 pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
 pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
+pub fn ReflectError.opaque(typeName: String, name: String, partType: String): ReflectError
 ~~~
 
 `Reflect` tiene una implementación por defecto de cada operación salvo
@@ -3309,15 +3312,17 @@ Valores:
   `Map` y `Semaphore`, y un `sql.Database`, implementan `Reflect` como
   opacos: la reflexión los lleva tal cual y no mira dentro, así que el record
   que los tiene, como la raíz que sirven `std.mcp` y `std.graphql`, también
-  lo implementa. `sql.SqlError` se muestra como su mensaje, así que un método
-  que falla con él también se llama por nombre.
+  lo implementa. Cada error de la librería estándar, como `sql.SqlError`,
+  `fs.FsError` o `json.JsonError`, se muestra como su mensaje, así que un
+  método que falla con él también se llama por nombre.
 - `json.Value`, `yaml.Value` y `toml.Value` implementan `Reflect` como lo
   que tienen: un texto se lee como `String`, un número como `Int` o `Float`
   y un booleano como `Bool`, y un array o un mapa da sus elementos y sus
   claves, cada uno igual; se muestran como su texto. `url.Url` se muestra
   como su texto y da sus partes por nombre. Las anotaciones de `std.xml`
   lo implementan, como las de los demás módulos.
-- El compilador implementa `Reflect` para los tipos del programa cuando este
+- El compilador implementa `Reflect` para los tipos del programa, con las
+  partes que no lo implementan llevadas tal cual (27 del lenguaje), cuando este
   trae `std.reflect`, directamente o por un módulo que lo pide de los tipos
   del programa, como `std.template` o `std.cli`. Un módulo que lo importa
   solo para implementarlo en sus propios tipos, como `std.json` o
@@ -6070,6 +6075,11 @@ pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String
   da como JSON en el texto y en `structuredContent`, con su `outputSchema`. Un
   `T ! E` que falla da `isError` con el `Display` del error, y un pánico,
   `isError` con su mensaje; el servidor sigue.
+- Un método `pub` con `self` o `mut self` cuyos parámetros la reflexión no
+  construye, o cuyo resultado no muestra, no puede ser una herramienta: es el
+  error `E1912`, en el método, cuando el programa sirve su tipo, en vez de una
+  herramienta que falta. El valor que se sirve puede tener partes que no
+  implementan `Reflect`, como un `fs.FileSystem`, que se llevan tal cual.
 - Un recurso no tiene parámetros y devuelve un `String` o bytes; si su URI
   nombra entre llaves parámetros `String`, como `r"docs://{name}"`, es una
   plantilla de recursos. Un prompt toma parámetros `String` o `String?`, sus

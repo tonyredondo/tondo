@@ -67,6 +67,9 @@ impl Kind {
     /// Whether a type of a standard module has the implementations.
     fn standard(self, module: &str, name: &str) -> bool {
         match (self, module) {
+            // Every error of the standard library, shown as its message, but
+            // the one of `collections`, which no module of Tondo completes.
+            (Kind::Reflect, module) if name.ends_with("Error") && module != "collections" => true,
             (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
             (Kind::Serialization, "toml" | "yaml" | "messagepack" | "cbor") => name == "Value",
             (Kind::Serialization, "serialization") => name == "Bytes",
@@ -277,17 +280,27 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
             break;
         }
     }
-    // The methods reflection calls, by declaration.
-    let methods: Vec<Vec<Method>> = declared
+    // Reflection carries a part it cannot look into as it is (`opaqueOf`):
+    // every type of the program has it, and those whose parts all have it
+    // are complete, which reflection can build from a `Value`.
+    let complete = qualifies.clone();
+    if kind == Kind::Reflect {
+        qualifies.fill(true);
+    }
+    // The methods reflection calls, by declaration, and those it cannot.
+    let (methods, unreflected): (Vec<Vec<Method>>, Vec<_>) = declared
         .iter()
         .map(|d| match kind {
-            Kind::Serialization => Vec::new(),
+            Kind::Serialization => (Vec::new(), Vec::new()),
             Kind::Reflect => {
-                let allowed = |file: &ast::Module, ty: &ast::TypeExpr| {
+                let allowed = |file: &ast::Module, ty: &ast::TypeExpr, of: &[bool]| {
                     let context = Context { kind, module: d.module, file, generics: &d.generics, paths: &paths };
-                    context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| qualifies[i]))
+                    context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| of[i]))
                 };
-                callable(&modules[d.module], &d.name, &allowed, sources)
+                // Its arguments are built from values, and its result shown.
+                let built = |file: &ast::Module, ty: &ast::TypeExpr| allowed(file, ty, &complete);
+                let shown = |file: &ast::Module, ty: &ast::TypeExpr| allowed(file, ty, &qualifies);
+                callable(&modules[d.module], &d.name, &built, &shown, sources)
             }
         })
         .collect();
@@ -342,7 +355,22 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 let displayed = implemented("Display");
                 let validate = alias_of(file, "validate");
                 let ruled = ruled.contains(&(d.module, d.name.clone()));
-                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed, validate, ruled };
+                let shared: &ast::Module = file;
+                let opaque = |ty: &ast::TypeExpr| {
+                    let context =
+                        Context { kind, module: d.module, file: shared, generics: &d.generics, paths: &paths };
+                    kind == Kind::Reflect && !context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| qualifies[i]))
+                };
+                let generator = Generator {
+                    alias: &alias,
+                    noted,
+                    sources,
+                    declared: d,
+                    displayed,
+                    validate,
+                    ruled,
+                    opaque: &opaque,
+                };
                 for &name in kind.traits() {
                     if implemented(name) {
                         continue;
@@ -395,34 +423,66 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
             file.items.extend(generated.items);
         }
     }
+    // The methods reflection cannot call, on their type's declaration, for
+    // what serves its methods to say so (`std.mcp`).
+    for (d, unreflected) in declared.iter().zip(unreflected).filter(|(_, u)| !u.is_empty()) {
+        for item in modules[d.module].files[d.file].0.items.iter_mut() {
+            match item {
+                ast::Item::Type(t) if t.name.name == d.name => t.unreflected = unreflected.clone(),
+                ast::Item::Enum(e) if e.name.name == d.name => e.unreflected = unreflected.clone(),
+                _ => {}
+            }
+        }
+    }
 }
 
 /// The `pub` methods of a type that reflection can call, from every file
-/// of its module.
+/// of its module: whose parameters it can build, `built`, and whose
+/// result it can show, `shown`; and those with a receiver it cannot, each
+/// with where it is and why.
 fn callable(
     module: &ModuleSource,
     name: &str,
-    allowed: &dyn Fn(&ast::Module, &ast::TypeExpr) -> bool,
+    built: &dyn Fn(&ast::Module, &ast::TypeExpr) -> bool,
+    shown: &dyn Fn(&ast::Module, &ast::TypeExpr) -> bool,
     sources: &SourceMap,
-) -> Vec<Method> {
-    let mut found = Vec::new();
+) -> (Vec<Method>, Vec<(String, crate::source::Span, String)>) {
+    let (mut found, mut skipped) = (Vec::new(), Vec::new());
     for (file, _) in &module.files {
         for item in &file.items {
             let ast::Item::Fn(f) = item else { continue };
-            if !f.public || f.owner.as_ref().is_none_or(|o| o.name != name) || !f.generics.is_empty() {
+            if !f.public || f.owner.as_ref().is_none_or(|o| o.name != name) {
                 continue;
             }
-            let Some((receiver, params)) = f.params.split_first() else { continue };
-            let mutating = match (&receiver.ty, receiver.mode) {
-                (None, ast::Mode::Ref) => false,
-                (None, ast::Mode::Mut) => true,
-                _ => continue,
+            // A function of the type without a receiver is no method.
+            let Some((receiver, params)) = f.params.split_first().filter(|(r, _)| r.ty.is_none()) else { continue };
+            let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+            let why = if !f.generics.is_empty() {
+                Some("it has type parameters".to_string())
+            } else if !matches!(receiver.mode, ast::Mode::Ref | ast::Mode::Mut) {
+                Some("its receiver is not `self` or `mut self`".to_string())
+            } else if let Some(p) = params.iter().find(|p| p.mode != ast::Mode::Value) {
+                Some(format!("its parameter `{}` is a loan, and reflection passes values", p.name.name))
+            } else if let Some((p, ty)) =
+                params.iter().find_map(|p| Some((p, p.ty.as_ref()?)).filter(|(_, ty)| !built(file, ty)))
+            {
+                Some(format!(
+                    "its parameter `{}` is `{}`, which reflection cannot build from a value: a type without `Reflect`, or one that holds such a part",
+                    p.name.name,
+                    text(ty)
+                ))
+            } else {
+                f.result
+                    .as_ref()
+                    .filter(|r| !shown(file, r))
+                    .map(|r| format!("its result is `{}`, which has no `Reflect`", text(r)))
             };
-            let plain =
-                params.iter().all(|p| p.mode == ast::Mode::Value && p.ty.as_ref().is_some_and(|t| allowed(file, t)));
-            let result = f.result.as_ref().is_none_or(|r| allowed(file, r));
-            if plain && result {
-                let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+            if let Some(why) = why {
+                skipped.push((f.name.name.clone(), f.name.span, why));
+                continue;
+            }
+            let mutating = receiver.mode == ast::Mode::Mut;
+            {
                 let variadic = params.last().is_some_and(|p| p.variadic);
                 let fixed = &params[..params.len() - usize::from(variadic)];
                 let reflected = alias_of(file, "reflect");
@@ -449,7 +509,7 @@ fn callable(
             }
         }
     }
-    found
+    (found, skipped)
 }
 
 /// The `///` lines just before a declaration, without their markers.
@@ -616,6 +676,15 @@ fn optional(ty: &ast::TypeExpr) -> bool {
     matches!(ty.kind, ast::TypeKind::Optional(_))
 }
 
+/// The types of the parts of a variant's payload, in order.
+fn payload_types(payload: &ast::VariantPayload) -> Vec<&ast::TypeExpr> {
+    match payload {
+        ast::VariantPayload::Unit => Vec::new(),
+        ast::VariantPayload::Tuple(types) => types.iter().collect(),
+        ast::VariantPayload::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+    }
+}
+
 /// Whether a field is an `Array`, which a format may write as nothing when
 /// it is empty.
 fn list(ty: &ast::TypeExpr) -> bool {
@@ -666,11 +735,40 @@ struct Generator<'a> {
     ruled: bool,
     sources: &'a SourceMap,
     declared: &'a Declared,
+    /// Whether reflection carries a part of this type as it is, as it has
+    /// no `Reflect`.
+    opaque: &'a dyn Fn(&ast::TypeExpr) -> bool,
 }
 
 impl Generator<'_> {
     fn text(&self, ty: &ast::TypeExpr) -> String {
         self.sources.slice(ty.span).to_string()
+    }
+
+    /// A part as a `reflect.Value`, as it is when its type has no `Reflect`.
+    fn value_of(&self, ty: &ast::TypeExpr, expr: &str) -> String {
+        let r = self.alias;
+        if (self.opaque)(ty) { format!("{r}.opaqueOf({expr})") } else { format!("{r}.valueOf({expr})") }
+    }
+
+    /// The description of a part's type.
+    fn info_of(&self, ty: &ast::TypeExpr) -> String {
+        let r = self.alias;
+        let opaque = if (self.opaque)(ty) { "opaqueInfo" } else { "typeInfo" };
+        format!("{r}.{opaque}[{}]()", self.text(ty))
+    }
+
+    /// The failure of setting a part reflection carries as it is, or of
+    /// building the value with it.
+    fn opaque_error(&self, owner: &str, part: &str, ty: &ast::TypeExpr) -> String {
+        let r = self.alias;
+        format!("fail {r}.ReflectError.opaque({}, {}, {})", literal(owner), literal(part), literal(&self.text(ty)))
+    }
+
+    /// The first visible field reflection cannot build the value without:
+    /// carried as it is, with no default, and not optional.
+    fn unbuilt<'f>(&self, fields: &'f [ast::FieldDecl]) -> Option<&'f ast::FieldDecl> {
+        fields.iter().find(|f| !f.private && (self.opaque)(&f.ty) && f.default.is_none() && !optional(&f.ty))
     }
 
     /// The notes of the annotations of formats among some, as an array:
@@ -1091,10 +1189,12 @@ impl Generator<'_> {
         match item {
             ast::Item::Type(t) => match &t.body {
                 ast::TypeBody::Record(fields) => out.push_str(&self.reflect_record(fields)),
-                ast::TypeBody::Newtype(_) => {
-                    let (r, name) = (self.alias, &self.declared.name);
+                ast::TypeBody::Newtype(inner) => {
+                    let name = &self.declared.name;
+                    let parts = [("value".to_string(), "self.value".to_string())];
                     out.push_str(&format!(
-                        "    fn reflectShow(self, __nested: Bool): String {{\n        \"{name}({{{r}.Reflect.reflectShow(self.value, true)}})\"\n    }}\n\n"
+                        "    fn reflectShow(self, __nested: Bool): String {{\n        \"{name}({})\"\n    }}\n\n",
+                        self.shown(&parts, &[inner], false)
                     ));
                 }
                 ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
@@ -1159,16 +1259,17 @@ impl Generator<'_> {
                         (false, None) => notes(1, ordinal, 0, ""),
                         (false, Some(variant)) => notes(3, variant, ordinal, ""),
                     };
-                    let defaulted = f.default.as_ref().map_or(String::new(), |default| {
-                        let text = self.sources.slice(default.span);
-                        format!(".defaulted({r}.valueOf[{}]({text}))", self.text(&f.ty))
-                    });
+                    let defaulted =
+                        f.default.as_ref().filter(|_| !(self.opaque)(&f.ty)).map_or(String::new(), |default| {
+                            let text = self.sources.slice(default.span);
+                            format!(".defaulted({r}.valueOf[{}]({text}))", self.text(&f.ty))
+                        });
                     let named =
                         named(&f.annotations).map_or(String::new(), |name| format!(".externallyNamed({name:?})"));
                     format!(
                         "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}{named}",
                         f.name.name,
-                        info(&self.text(&f.ty))
+                        self.info_of(&f.ty)
                     )
                 })
                 .collect();
@@ -1182,7 +1283,7 @@ impl Generator<'_> {
                     "Record"
                 }
                 ast::TypeBody::Newtype(inner) => {
-                    parts.push(format!("underlying: some({})", info(&self.text(inner))));
+                    parts.push(format!("underlying: some({})", self.info_of(inner)));
                     "Newtype"
                 }
                 ast::TypeBody::Opaque => "Opaque",
@@ -1197,7 +1298,7 @@ impl Generator<'_> {
                         let (kind, elements, named) = match &v.payload {
                             ast::VariantPayload::Unit => ("Unit", "[]".to_string(), "[]".to_string()),
                             ast::VariantPayload::Tuple(types) => {
-                                let elements: Vec<String> = types.iter().map(|t| info(&self.text(t))).collect();
+                                let elements: Vec<String> = types.iter().map(|t| self.info_of(t)).collect();
                                 ("Tuple", format!("[{}]", elements.join(", ")), "[]".to_string())
                             }
                             ast::VariantPayload::Record(declared) => {
@@ -1281,13 +1382,20 @@ impl Generator<'_> {
         out
     }
 
-    /// `"a: {show(a)}, b: {show(b)}"`, for parts and the locals they are in.
-    fn shown(&self, parts: &[(String, String)], labels: bool) -> String {
+    /// `"a: {show(a)}, b: {show(b)}"`, for parts, the locals they are in
+    /// and their types: one carried as it is shows as `<` its type `>`.
+    fn shown(&self, parts: &[(String, String)], types: &[&ast::TypeExpr], labels: bool) -> String {
         let r = self.alias;
         let shown: Vec<String> = parts
             .iter()
-            .map(|(label, local)| {
-                let value = format!("{{{r}.Reflect.reflectShow({local}, true)}}");
+            .zip(types)
+            .map(|((label, local), ty)| {
+                let value = if (self.opaque)(ty) {
+                    let text = literal(&format!("<{}>", self.text(ty)));
+                    text[1..text.len() - 1].to_string()
+                } else {
+                    format!("{{{r}.Reflect.reflectShow({local}, true)}}")
+                };
                 if labels { format!("{label}: {value}") } else { value }
             })
             .collect();
@@ -1302,6 +1410,13 @@ impl Generator<'_> {
         let mut out = String::new();
         for field in fields.iter().filter(|f| !f.private) {
             let name = &field.name.name;
+            // A part reflection carries as it is takes its default, or none.
+            if (self.opaque)(&field.ty) {
+                let value =
+                    field.default.as_ref().map_or("none".to_string(), |d| self.sources.slice(d.span).to_string());
+                out.push_str(&format!("{indent}{name}: {value}\n"));
+                continue;
+            }
             if let Some(default) = &field.default {
                 let default = self.sources.slice(default.span);
                 out.push_str(&format!(
@@ -1320,37 +1435,53 @@ impl Generator<'_> {
 
     fn reflect_record(&self, fields: &[ast::FieldDecl]) -> String {
         let (r, name) = (self.alias, &self.declared.name);
-        let visible: Vec<&str> = fields.iter().filter(|f| !f.private).map(|f| f.name.name.as_str()).collect();
-        let listed: Vec<String> = visible.iter().map(|f| format!("{f:?}")).collect();
+        let visible: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !f.private).collect();
+        let listed: Vec<String> = visible.iter().map(|f| format!("{:?}", f.name.name)).collect();
         let missing = format!("fail {r}.ReflectError.noField({name:?}, __name, [{}])", listed.join(", "));
         let mut out = format!(
             "    fn reflectGet(self, __name: String): {r}.Value ! {r}.ReflectError {{\n        match __name {{\n"
         );
         for f in &visible {
-            out.push_str(&format!("            {f:?} => {r}.valueOf(self.{f})\n"));
+            let n = &f.name.name;
+            out.push_str(&format!("            {n:?} => {}\n", self.value_of(&f.ty, &format!("self.{n}"))));
         }
         out.push_str(&format!("            _ => {missing}\n        }}\n    }}\n\n"));
         out.push_str(&format!(
             "    fn reflectSet(mut self, __name: String, __value: {r}.Value): Unit ! {r}.ReflectError {{\n        match __name {{\n"
         ));
         for f in &visible {
-            out.push_str(&format!(
-                "            {f:?} => {{\n                self.{f} = __value.to()?\n            }}\n"
-            ));
+            let n = &f.name.name;
+            let set = if (self.opaque)(&f.ty) {
+                self.opaque_error(name, n, &f.ty)
+            } else {
+                format!("{{\n                self.{n} = __value.to()?\n            }}")
+            };
+            out.push_str(&format!("            {n:?} => {set}\n"));
         }
         out.push_str(&format!("            _ => {missing}\n        }}\n    }}\n\n"));
         out.push_str(&format!("    fn reflectFields(self): Array[{r}.Field]? {{\n        some([\n"));
         for f in &visible {
-            out.push_str(&format!("            {r}.Field {{ name: {f:?}, value: {r}.valueOf(self.{f}) }},\n"));
+            let n = &f.name.name;
+            out.push_str(&format!(
+                "            {r}.Field {{ name: {n:?}, value: {} }},\n",
+                self.value_of(&f.ty, &format!("self.{n}"))
+            ));
         }
         out.push_str("        ])\n    }\n\n");
-        let parts: Vec<(String, String)> = visible.iter().map(|f| (f.to_string(), format!("self.{f}"))).collect();
-        let text =
-            if parts.is_empty() { name.clone() } else { format!("{name} {{{{ {} }}}}", self.shown(&parts, true)) };
+        let parts: Vec<(String, String)> =
+            visible.iter().map(|f| (f.name.name.clone(), format!("self.{}", f.name.name))).collect();
+        let types: Vec<&ast::TypeExpr> = visible.iter().map(|f| &f.ty).collect();
+        let text = if parts.is_empty() {
+            name.clone()
+        } else {
+            format!("{name} {{{{ {} }}}}", self.shown(&parts, &types, true))
+        };
         out.push_str(&format!("    fn reflectShow(self, __nested: Bool): String {{\n        \"{text}\"\n    }}\n\n"));
         out.push_str(&format!("    fn reflectFrom(__value: {r}.Value): {} ! {r}.ReflectError {{\n", self.target()));
         if fields.iter().any(|f| f.private && f.default.is_none()) {
             out.push_str(&format!("        fail {r}.ReflectError.privateFields({name:?}, __value)\n"));
+        } else if let Some(field) = self.unbuilt(fields) {
+            out.push_str(&format!("        {}\n", self.opaque_error(name, &field.name.name, &field.ty)));
         } else {
             out.push_str(&format!("        {name} {{\n{}        }}\n", self.converted(fields, "            ")));
         }
@@ -1406,7 +1537,7 @@ impl Generator<'_> {
                 let values: Vec<String> = if record(payload) {
                     Vec::new()
                 } else {
-                    parts.iter().map(|(_, l)| format!("{r}.valueOf({l})")).collect()
+                    parts.iter().zip(payload_types(payload)).map(|((_, l), ty)| self.value_of(ty, l)).collect()
                 };
                 format!("some([{}])", values.join(", "))
             })
@@ -1415,7 +1546,11 @@ impl Generator<'_> {
             "    fn reflectFields(self): Array[{r}.Field]? {{\n{}    }}\n\n",
             arms(&|_, parts, payload| {
                 let fields: Vec<String> = if record(payload) {
-                    parts.iter().map(|(f, l)| format!("{r}.Field {{ name: {f:?}, value: {r}.valueOf({l}) }}")).collect()
+                    parts
+                        .iter()
+                        .zip(payload_types(payload))
+                        .map(|((f, l), ty)| format!("{r}.Field {{ name: {f:?}, value: {} }}", self.value_of(ty, l)))
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -1428,10 +1563,10 @@ impl Generator<'_> {
         };
         out.push_str(&format!(
             "    fn reflectGet(self, __name: String): {r}.Value ! {r}.ReflectError {{\n{}    }}\n\n",
-            arms(&|variant, parts, _| {
+            arms(&|variant, parts, payload| {
                 let mut body = String::from("match __name {\n");
-                for (label, local) in parts {
-                    body.push_str(&format!("                {label:?} => {r}.valueOf({local})\n"));
+                for ((label, local), ty) in parts.iter().zip(payload_types(payload)) {
+                    body.push_str(&format!("                {label:?} => {}\n", self.value_of(ty, local)));
                 }
                 body.push_str(&format!("                _ => {}\n            }}", missing(variant, parts)));
                 body
@@ -1441,7 +1576,14 @@ impl Generator<'_> {
             "    fn reflectSet(mut self, __name: String, __value: {r}.Value): Unit ! {r}.ReflectError {{\n{}    }}\n\n",
             arms(&|variant, parts, payload| {
                 let mut body = String::from("match __name {\n");
+                let types = payload_types(payload);
                 for (index, (label, _)) in parts.iter().enumerate() {
+                    if (self.opaque)(types[index]) {
+                        let owner = format!("{name}.{variant}");
+                        let failed = self.opaque_error(&owner, label, types[index]);
+                        body.push_str(&format!("                {label:?} => {failed}\n"));
+                        continue;
+                    }
                     let values: Vec<String> = parts
                         .iter()
                         .enumerate()
@@ -1467,8 +1609,12 @@ impl Generator<'_> {
             "    fn reflectShow(self, __nested: Bool): String {{\n{}    }}\n\n",
             arms(&|variant, parts, payload| match payload {
                 ast::VariantPayload::Unit => format!("{variant:?}"),
-                ast::VariantPayload::Tuple(_) => format!("\"{variant}({})\"", self.shown(parts, false)),
-                ast::VariantPayload::Record(_) => format!("\"{variant} {{{{ {} }}}}\"", self.shown(parts, true)),
+                ast::VariantPayload::Tuple(_) => {
+                    format!("\"{variant}({})\"", self.shown(parts, &payload_types(payload), false))
+                }
+                ast::VariantPayload::Record(_) => {
+                    format!("\"{variant} {{{{ {} }}}}\"", self.shown(parts, &payload_types(payload), true))
+                }
             })
         ));
         out.push_str(&format!(
@@ -1480,6 +1626,14 @@ impl Generator<'_> {
             let variant = &v.name.name;
             let body = match &v.payload {
                 ast::VariantPayload::Unit => format!("{name}.{variant}"),
+                ast::VariantPayload::Tuple(types) if types.iter().any(|t| (self.opaque)(t)) => {
+                    let (index, ty) = types.iter().enumerate().find(|(_, t)| (self.opaque)(t)).unwrap();
+                    self.opaque_error(&format!("{name}.{variant}"), &index.to_string(), ty)
+                }
+                ast::VariantPayload::Record(fields) if self.unbuilt(fields).is_some() => {
+                    let field = self.unbuilt(fields).unwrap();
+                    self.opaque_error(&format!("{name}.{variant}"), &field.name.name, &field.ty)
+                }
                 ast::VariantPayload::Tuple(types) => {
                     let items: Vec<String> = (0..types.len()).map(|i| format!("__items[{i}].to()?")).collect();
                     format!(

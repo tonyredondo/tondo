@@ -4,6 +4,8 @@
 // `Char` are in the prelude: `tondo api prelude`.
 
 import std.internal.text as textNative
+import std.reflect as __reflect
+import std.text as __texts
 
 /// A normalization form of Unicode (UAX #15): NFC and NFD compose and
 /// decompose characters; NFKC and NFKD also replace those of compatibility
@@ -785,4 +787,12 @@ pub fn collator(
 /// takes: `names.sortedWith((a, b) { order.compare(a, b) })`.
 pub fn Collator.compare(self, a: String, b: String): Int {
     textNative.collate(self.native, a, b)
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for __texts.TextError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

@@ -1,13 +1,21 @@
+// A handle of the standard library without `Reflect` is not a
+// `reflect.Value` by itself; in a field of a record of the program, which
+// has `Reflect`, reflection carries it as it is.
+
+import std.fs
 import std.reflect
 
-pub type Job = { name: String, run: fn(): Int }
-
-fn main() {
-    let job = Job { name: "build", run: () { 1 } }
-    let value = reflect.valueOf(job)
-    let name: String ! reflect.ReflectError = reflect.call(job, "name", job)
+pub type Notes = {
+    files: fs.FileSystem
 }
 
-// expect-error: E1105 `Job` does not implement `reflect.Reflect`, which `reflect.valueOf` requires of `T`; the compiler implements it for records whose fields all implement it, and its field `run` is `fn(): Int`, which does not
-// expect-error: E1105 `Job` does not implement `reflect.Reflect`, which `reflect.call` requires of `S`; the compiler implements it for records whose fields all implement it, and its field `run` is `fn(): Int`, which does not
-// expect-error: E1105 `Job` does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`; the compiler implements it for records, enums and newtypes whose parts all implement it
+fn main() {
+    let files = fs.memory()
+    let value = reflect.valueOf(files)
+    let name: String ! reflect.ReflectError = reflect.call(files, "name", files)
+    let notes = reflect.valueOf(Notes { files })
+}
+
+// expect-error: E1105 `fs.FileSystem` does not implement `reflect.Reflect`, which `reflect.valueOf` requires of `T`; the compiler implements it for every record, enum and newtype of the program: a field of one holds this value, which reflection carries as it is
+// expect-error: E1105 `fs.FileSystem` does not implement `reflect.Reflect`, which `reflect.call` requires of `S`; the compiler implements it for every record, enum and newtype of the program: a field of one holds this value, which reflection carries as it is
+// expect-error: E1105 `fs.FileSystem` does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`; the compiler implements it for every record, enum and newtype of the program: a field of one holds this value, which reflection carries as it is

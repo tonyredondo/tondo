@@ -4,6 +4,7 @@
 
 import std.internal.process as processNative
 import std.process as __process
+import std.reflect as __reflect
 
 /// The file a shell runs for `name`: `name` itself when it holds a `/`,
 /// or else the first file of that name in the directories of `PATH` that
@@ -121,4 +122,12 @@ fn quotedWord(word: String): String {
         return word
     }
     "'{word.replace("'", "'\\''")}'"
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for __process.ProcessError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

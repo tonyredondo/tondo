@@ -23,6 +23,7 @@ import std.json as __json
 import std.log as __log
 import std.net as __net
 import std.random as __random
+import std.reflect as __reflect
 import std.sync as __sync
 import std.time as __time
 import std.url as __url
@@ -588,4 +589,12 @@ fn pemOf(label: String, der: Array[Byte]): String {
         at += 64
     }
     "-----BEGIN {label}-----\n{lines.join("\n")}\n-----END {label}-----\n"
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for AcmeError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

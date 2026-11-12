@@ -13,6 +13,7 @@
 
 import std.fs as __fs
 import std.internal.image as imageNative
+import std.reflect as __reflect
 import std.time as __time
 
 /// A format of image.
@@ -577,5 +578,13 @@ pub fn Image.save(self, path: String, quality: Int = 85): !ImageError {
     match __fs.writeBytes(path, bytes) {
         ok(_) => {}
         err(error) => fail ImageError { message: "{path}: {error}" }
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for ImageError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
     }
 }

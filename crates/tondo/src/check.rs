@@ -116,6 +116,7 @@ fn check_with<'a>(
         fs: None,
         module: 0,
         owners: HashMap::new(),
+        served: HashSet::new(),
         method_visibility: HashMap::new(),
         public_fns: HashSet::new(),
         prelude: None,
@@ -1019,6 +1020,8 @@ struct Checker<'a> {
     module: u32,
     /// Who declares each nominal type, by name.
     owners: HashMap<String, Owner>,
+    /// The types whose methods `std.mcp` serves, said once (E1912).
+    served: HashSet<Ty>,
     /// The module of each inherent operation, and whether it is `pub`.
     method_visibility: HashMap<FnId, (u32, bool)>,
     /// The module functions declared `pub`.
@@ -1314,6 +1317,8 @@ struct Owner {
     module: u32,
     public: bool,
     private_fields: Vec<bool>,
+    /// Its `pub` methods that reflection cannot call, and why (`derive`).
+    unreflected: Vec<(String, Span, String)>,
 }
 
 /// A binding a closure captures: read from `source` in the enclosing
@@ -1586,3 +1591,7 @@ fn markup_problem(segments: &[ast::StrSegment]) -> Option<String> {
     }
     open.pop().map(|tag| format!("`[{tag}]` is not closed: close it with `[/]`"))
 }
+
+/// Why a type has no `Reflect`, which the compiler implements for every type
+/// of the program, and how to reflect a value of it.
+pub(crate) const REFLECT_WHY: &str = "; the compiler implements it for every record, enum and newtype of the program: a field of one holds this value, which reflection carries as it is";

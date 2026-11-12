@@ -83,7 +83,10 @@ impl<'a> Checker<'a> {
                 Field { name: "collection".into(), ty: collection, private: true, secret: false },
                 Field { name: "position".into(), ty: Ty::INT, private: true, secret: false },
             ];
-            self.owners.insert(name.into(), Owner { module: u32::MAX, public: true, private_fields: vec![true, true] });
+            self.owners.insert(
+                name.into(),
+                Owner { module: u32::MAX, public: true, private_fields: vec![true, true], unreflected: Vec::new() },
+            );
             self.types.define_template(template, AdtKind::Record(fields));
             self.types.declare_cursor(template, kind);
             let element = match (kind, set) {
@@ -624,17 +627,19 @@ impl<'a> Checker<'a> {
                         ast::TypeBody::Record(fields) => fields.iter().map(|f| f.private).collect(),
                         ast::TypeBody::Newtype(_) | ast::TypeBody::Opaque => Vec::new(),
                     },
+                    decl.unreflected.clone(),
                 )),
-                ast::Item::Enum(decl) => Some((decl.module, decl.public, Vec::new())),
+                ast::Item::Enum(decl) => Some((decl.module, decl.public, Vec::new(), decl.unreflected.clone())),
                 _ => None,
             };
-            if let Some((module, public, private_fields)) = owner {
+            if let Some((module, public, private_fields, unreflected)) = owner {
                 let name = match item {
                     ast::Item::Type(decl) => &decl.name.name,
                     ast::Item::Enum(decl) => &decl.name.name,
                     _ => unreachable!(),
                 };
-                self.owners.insert(self.shown_type_name(name, module), Owner { module, public, private_fields });
+                let owner = Owner { module, public, private_fields, unreflected };
+                self.owners.insert(self.shown_type_name(name, module), owner);
             }
             let name = match item {
                 ast::Item::Type(decl) => &decl.name,

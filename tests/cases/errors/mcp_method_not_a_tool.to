@@ -1,0 +1,47 @@
+// A `pub` method of a value std.mcp serves is a tool: one reflection cannot
+// call is an error, rather than a tool left out of the list. A function of
+// the type without a receiver is no method, and a private method no tool.
+
+import std.fs
+import std.mcp
+
+pub type Notes = {
+    files: fs.FileSystem
+}
+
+/// Lists the notes.
+pub fn Notes.list(self): Array[String] {
+    []
+}
+
+pub fn Notes.mount(self, _files: fs.FileSystem): Bool {
+    true
+}
+
+pub fn Notes.raw(self): fs.FileSystem {
+    self.files
+}
+
+pub fn Notes.rename(self, name: mut String) {
+    name = "x"
+}
+
+pub fn Notes.first[T](self, items: Array[T]): T? {
+    items.first()
+}
+
+pub fn Notes.of(files: fs.FileSystem): Notes {
+    Notes { files }
+}
+
+fn Notes.hidden(self, _files: fs.FileSystem) {}
+
+fn main(): !mcp.McpError {
+    mcp.serve(Notes.of(fs.memory()), name: "notes")?
+    mcp.serve(Notes.of(fs.memory()), name: "again")?
+}
+
+// expect-error: E1912 `Notes.mount` is `pub`, so `std.mcp` serves it as a tool, which it cannot be: its parameter `_files` is `fs.FileSystem`, which reflection cannot build from a value: a type without `Reflect`, or one that holds such a part; make it private, or take and give values a tool can
+// expect-error: E1912 `Notes.raw` is `pub`, so `std.mcp` serves it as a tool, which it cannot be: its result is `fs.FileSystem`, which has no `Reflect`; make it private, or take and give values a tool can
+// expect-error: E1912 `Notes.rename` is `pub`, so `std.mcp` serves it as a tool, which it cannot be: its parameter `name` is a loan, and reflection passes values; make it private, or take and give values a tool can
+// expect-error: E1912 `Notes.first` is `pub`, so `std.mcp` serves it as a tool, which it cannot be: it has type parameters; make it private, or take and give values a tool can

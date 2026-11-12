@@ -218,6 +218,33 @@ fn every_standard_type_has_an_example() {
     assert!(missing.is_empty(), "these types have no example in their `///`: {missing:?}");
 }
 
+/// Every error of the standard library has `Reflect`, as its message, so a
+/// method that fails with one is a tool of `std.mcp`; the derivation of
+/// `Reflect` counts on it (`derive.rs`). `collections.CollectionError` is
+/// the compiler's alone.
+#[test]
+fn every_standard_error_has_reflect() {
+    let (mut missing, mut errors) = (Vec::new(), 0);
+    for module in tondo::api::standard_modules() {
+        let Some(text) = tondo::api::standard(&module) else { continue };
+        for declaration in tondo::api::declarations(&text) {
+            let kind = declaration["kind"].as_str().unwrap_or_default();
+            let name = declaration["name"].as_str().unwrap_or_default();
+            errors += usize::from(["type", "enum"].contains(&kind) && name.ends_with("Error"));
+            let implemented = [format!("impl reflect.Reflect for {name}\n"), format!("impl Reflect for {name}\n")];
+            if ["type", "enum"].contains(&kind)
+                && name.ends_with("Error")
+                && name != "CollectionError"
+                && !implemented.iter().any(|line| text.contains(line.as_str()))
+            {
+                missing.push(format!("{module}.{name}"));
+            }
+        }
+    }
+    assert!(errors > 25, "only {errors} errors in the standard library");
+    assert!(missing.is_empty(), "these errors have no `Reflect`, which reflection shows as their message: {missing:?}");
+}
+
 /// Every example of the standard library's documentation compiles, and
 /// each module that a program imports has one at its head, which `tondo
 /// api` and an editor's hover show.

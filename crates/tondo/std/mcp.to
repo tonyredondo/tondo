@@ -686,3 +686,11 @@ fn prompt(state: Served, params: __json.Value): String ! RpcFailure {
     }
     "{{\"description\":{quote(method.docs().unwrapOr(""))},\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":{quote(text)}}}}}]}}"
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for McpError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

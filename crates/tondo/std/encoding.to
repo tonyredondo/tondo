@@ -11,6 +11,7 @@
 // ```
 
 import std.internal.codec as codecNative
+import std.reflect as __reflect
 
 /// The alphabets of Base64 (RFC 4648): `Standard`, with `+`, `/` and `=`
 /// padding, and `Url`, with `-` and `_` and without padding.
@@ -126,5 +127,13 @@ fn checked(input: String, problem: Int): !EncodingError {
     }
     if problem >= 0 {
         fail EncodingError.InvalidCharacter(problem)
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for EncodingError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
     }
 }

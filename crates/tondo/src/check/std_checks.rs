@@ -4,6 +4,24 @@ use super::*;
 
 impl<'a> Checker<'a> {
     /// Whether a function is `name` of the standard module `module`.
+    /// A value whose methods `std.mcp` serves, as `served`: each `pub`
+    /// method reflection cannot call would be no tool, which is an error
+    /// rather than one left out (E1912).
+    pub(super) fn serving(&mut self, id: FnId, served: Ty) {
+        let mcp = self.is_std_fn(id, "mcp", "mcp.serve") || self.is_std_fn(id, "mcp", "mcp.handler");
+        if !mcp || !self.served.insert(served) {
+            return;
+        }
+        let Some(owner) = self.owner(served) else { return };
+        let (name, unreflected) = (self.types.display(served), owner.unreflected.clone());
+        for (method, span, why) in unreflected {
+            let message = format!(
+                "`{name}.{method}` is `pub`, so `std.mcp` serves it as a tool, which it cannot be: {why}; make it private, or take and give values a tool can"
+            );
+            self.diags.error("E1912", span, message);
+        }
+    }
+
     pub(super) fn is_std_fn(&self, id: FnId, module: &str, name: &str) -> bool {
         matches!(self.names.get(name), Some(&ModuleName::Fn(f)) if f == id)
             && self.fn_scopes.get(id.0 as usize).is_some_and(|scope| {
@@ -511,7 +529,7 @@ impl<'a> Checker<'a> {
         let (ty, span) = (value.ty, value.span);
         if ty != Ty::ERROR && !self.satisfies(ty, reflect, &[]) {
             let message = format!(
-                "{} does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`; the compiler implements it for records, enums and newtypes whose parts all implement it",
+                "{} does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`{REFLECT_WHY}",
                 self.display(ty)
             );
             self.diags.error("E1105", span, message);

@@ -4,6 +4,7 @@
 
 import std.internal.codec as codecNative
 import std.io as __io
+import std.reflect as __reflect
 
 /// A writer and a reader joined: what a task writes to one, another reads
 /// from the other, in order and as soon as it is written. A write waits
@@ -38,4 +39,12 @@ pub fn multiWriter(writers: ...__io.Writer): __io.Writer {
         joined = codecNative.tee(writer, joined)
     }
     joined
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for __io.IoError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

@@ -15,6 +15,7 @@
 
 import std.internal.net as netNative
 import std.io as __io
+import std.reflect as __reflect
 import std.time as __time
 
 /// Why a network operation failed.
@@ -774,4 +775,12 @@ pub fn Socket.receive(self, timeout: __time.Duration? = none): (Array[Byte], Add
 /// Closes the socket: waiting `receive` calls fail with `Closed`.
 pub fn Socket.close(self) {
     netNative.stop(self.native)
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for NetError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

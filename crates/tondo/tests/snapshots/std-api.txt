@@ -264,6 +264,7 @@ pub type ZipIterator[I, J, T, U] = {
 }
 == std.acme
 impl Display for AcmeError
+impl reflect.Reflect for AcmeError
 pub const LetsEncrypt: String = "https://acme-v02.api.letsencrypt.org/directory"
 pub const LetsEncryptStaging: String = "https://acme-staging-v02.api.letsencrypt.org/directory"
 pub fn tls(
@@ -279,6 +280,7 @@ pub type AcmeError = {
 == std.archive
 impl Display for ArchiveError
 impl Display for Format
+impl reflect.Reflect for ArchiveError
 pub enum EntryKind {
     File
     Directory
@@ -360,6 +362,7 @@ pub fn parse(input: Array[Byte]): Value ! CborError
 == std.cli
 impl Display for CliError
 impl reflect.Reflect for Argument
+impl reflect.Reflect for CliError
 impl reflect.Reflect for Option
 impl reflect.Reflect for Rest
 pub annotation Argument = {
@@ -426,6 +429,7 @@ pub fn stdout(): io.Writer
 == std.crypto
 impl Display for CryptoError
 impl Display for KeyKind
+impl reflect.Reflect for CryptoError
 pub enum Cipher {
     Aes256Gcm
     ChaCha20Poly1305
@@ -505,6 +509,7 @@ pub type SecretKey = {
 impl Display for CsvError
 impl Iterator[Array[String] ! CsvError] for Rows
 impl Iterator[Map[String, String] ! CsvError] for Records
+impl reflect.Reflect for CsvError
 pub enum CsvError {
     /// A quote inside a field that does not start with one, or text after a
     /// closing quote, at this line and column.
@@ -574,6 +579,7 @@ pub fn files(path: String): fs.FileSystem
 pub fn text(path: String): String
 == std.encoding
 impl Display for EncodingError
+impl reflect.Reflect for EncodingError
 pub enum Base64Alphabet {
     Standard
     Url
@@ -598,6 +604,7 @@ pub fn htmlUnescape(input: String): String
 pub fn urlDecode(input: String): String ! EncodingError
 pub fn urlEncode(input: String): String
 == std.env
+impl reflect.Reflect for EnvError
 pub enum EnvError {
     NotFound
     NotADirectory
@@ -659,6 +666,9 @@ pub type User = {
 impl Display for ExecutorError
 impl Display for SendError
 impl Display for SubmitError
+impl reflect.Reflect for ExecutorError
+impl reflect.Reflect for SendError
+impl reflect.Reflect for SubmitError
 pub enum ExecutorError {
     /// A pool runs at least one job at a time: the number given.
     InvalidWorkers(Int)
@@ -735,6 +745,7 @@ pub unsafe fn fromContext[T](data: Pointer[Void]): T
 impl Display for Builder
 impl Display for FormatError
 impl Display for Plural
+impl reflect.Reflect for FormatError
 pub enum Plural {
     Zero
     One
@@ -760,6 +771,7 @@ pub type FormatError = {
     message: String
 }
 == std.fs
+impl reflect.Reflect for FsError
 pub enum ChangeKind {
     Created
     Modified
@@ -1105,6 +1117,7 @@ impl Iterator[Event ! HttpError] for Events
 impl Iterator[Message ! HttpError] for WebSocket
 impl Iterator[String ! HttpError] for Lines
 impl Iterator[Upload ! Problem] for Uploads
+impl reflect.Reflect for HttpError
 impl serialization.Decode for Saved
 impl serialization.Decode for UploadedFile
 impl serialization.Encode for Saved
@@ -1538,6 +1551,7 @@ pub type WebSocket = {
 impl Display for Color
 impl Display for Format
 impl Display for ImageError
+impl reflect.Reflect for ImageError
 pub enum Anchor {
     Center
     Top
@@ -1638,6 +1652,7 @@ pub type Info = {
     height: Int
 }
 == std.io
+impl reflect.Reflect for IoError
 pub enum IoError {
     Closed
     InvalidData
@@ -1867,6 +1882,7 @@ impl Ordered for BigInt
 impl Ordered for Decimal
 impl reflect.Reflect for BigInt
 impl reflect.Reflect for Decimal
+impl reflect.Reflect for MathError
 impl serialization.Decode for BigInt
 impl serialization.Decode for Decimal
 impl serialization.Encode for BigInt
@@ -1931,6 +1947,7 @@ pub type Decimal = {
 }
 == std.mcp
 impl Display for McpError
+impl reflect.Reflect for McpError
 impl reflect.Reflect for Prompt
 impl reflect.Reflect for Resource
 pub annotation Prompt = {}
@@ -2009,6 +2026,7 @@ pub type Writer = {
 == std.meta
 impl Display for Error
 impl Display for TypeRef
+impl reflect.Reflect for Error
 pub enum DeclarationKind {
     Record
     Enum
@@ -2249,6 +2267,7 @@ impl Display for Ip
 impl Display for NetError
 impl Display for Network
 impl Iterator[Stream] for Listener
+impl reflect.Reflect for NetError
 pub enum NetError {
     /// The name does not resolve: the name.
     NotFound(String)
@@ -2398,6 +2417,7 @@ pub fn matches(pattern: String, path: String): Bool
 pub fn parent(path: String): String?
 pub fn relative(from: String, to: String): String?
 == std.process
+impl reflect.Reflect for ProcessError
 pub enum Input {
     Inherit
     Null
@@ -2789,6 +2809,7 @@ impl Reflect for Int128
 impl Reflect for Int16
 impl Reflect for Int32
 impl Reflect for Int8
+impl Reflect for ReflectError
 impl Reflect for String
 impl Reflect for UInt
 impl Reflect for UInt128
@@ -2930,6 +2951,7 @@ pub fn ReflectError.arguments(
 pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
 pub fn ReflectError.noField(typeName: String, name: String, fields: Array[String]): ReflectError
 pub fn ReflectError.noMethod(typeName: String, name: String, methods: Array[String]): ReflectError
+pub fn ReflectError.opaque(typeName: String, name: String, partType: String): ReflectError
 pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
 pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError
 pub fn TypeDescription.of(kind: TypeKind): TypeDescription
@@ -2987,6 +3009,8 @@ pub fn callMut[R: Reflect, S: Reflect](
 pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): R ! ReflectError
 pub fn convert[T: Reflect, S: Reflect](value: S): T
 pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError
+pub fn opaqueInfo[T](): TypeInfo
+pub fn opaqueOf[T](value: T): Value
 pub fn set[S: Reflect](value: mut S, path: String, new: Value): !ReflectError
 pub fn typeInfo[T: Reflect](): TypeInfo
 pub fn typeOf[T: Reflect](value: T): TypeInfo
@@ -3081,6 +3105,7 @@ impl Display for RegexError
 impl Display for RegexErrorKind
 impl Display for RegexPhase
 impl Iterator[RegexMatch ! RegexError] for RegexFindIterator
+impl reflect.Reflect for RegexError
 pub enum RegexErrorKind {
     InvalidSyntax
     UnexpectedEnd
@@ -3229,6 +3254,7 @@ impl Encode for UInt128
 impl Encode for UInt16
 impl Encode for UInt32
 impl Encode for UInt8
+impl reflect.Reflect for Error
 impl[A: Decode, B: Decode, C: Decode, D: Decode, E: Decode, F: Decode, G: Decode, H: Decode] Decode for (
     A,
     B,
@@ -3740,6 +3766,7 @@ pub fn withVirtualTime[E, F: Send + CallOnce[fn(VirtualTime): !E]](body: F): !E
 == std.text
 impl Display for Category
 impl Display for Script
+impl reflect.Reflect for text.TextError
 pub enum Category {
     UppercaseLetter
     LowercaseLetter
@@ -3997,6 +4024,7 @@ impl Ordered for ZonedDateTime
 impl reflect.Reflect for DateTime
 impl reflect.Reflect for Duration
 impl reflect.Reflect for IsoWeek
+impl reflect.Reflect for TimeError
 impl reflect.Reflect for Weekday
 impl reflect.Reflect for Zone
 impl reflect.Reflect for ZonedDateTime
@@ -4164,6 +4192,7 @@ pub fn parse(text: String): Value ! TomlError
 impl Display for Url
 impl Display for UrlError
 impl reflect.Reflect for Url
+impl reflect.Reflect for UrlError
 pub fn Url.escapedPath(self): String
 pub fn Url.isAbsolute(self): Bool
 pub fn Url.param(self, name: String): String?
@@ -4196,6 +4225,7 @@ impl Display for Uuid
 impl Display for UuidError
 impl Ordered for Uuid
 impl reflect.Reflect for Uuid
+impl reflect.Reflect for UuidError
 impl serialization.Decode for Uuid
 impl serialization.Encode for Uuid
 pub enum UuidError {
@@ -4257,6 +4287,7 @@ impl Display for XmlError
 impl reflect.Reflect for Attribute
 impl reflect.Reflect for Name
 impl reflect.Reflect for Text
+impl reflect.Reflect for XmlError
 pub annotation Attribute = {}
 pub annotation Name = {
     value: String

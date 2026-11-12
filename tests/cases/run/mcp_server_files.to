@@ -1,0 +1,77 @@
+// A server of std.mcp can hold what has no `Reflect`, as the
+// `fs.FileSystem` it works on, which reflection carries as it is; a tool
+// can fail with an error of the standard library, or with one of the
+// program that holds one, which shows as its message.
+
+import std.console
+import std.fs
+import std.io
+import std.mcp
+
+pub enum NoteError {
+    Empty
+    Files(fs.FsError)
+}
+
+impl Display for NoteError {
+    fn display(self): String {
+        match self {
+            NoteError.Empty => "a note needs text"
+            NoteError.Files(error) => "the notes: {error}"
+        }
+    }
+}
+
+/// Keeps notes in a folder.
+pub type Notes = {
+    files: fs.FileSystem
+    dir: String
+}
+
+/// Writes a note.
+pub fn Notes.write(self, name: String, text: String): String ! NoteError {
+    if text.isEmpty() {
+        fail NoteError.Empty
+    }
+    match self.files.writeText("{self.dir}/{name}.md", text) {
+        ok(_) => "saved {name}"
+        err(error) => fail NoteError.Files(error)
+    }
+}
+
+/// Reads a note.
+pub fn Notes.read(self, name: String): String ! fs.FsError {
+    self.files.readText("{self.dir}/{name}.md")?
+}
+
+fn main(): !(mcp.McpError | fs.FsError) {
+    let files = fs.memory()
+    files.createDirectory("notes")?
+    files.writeText("notes/a.md", "hello")?
+    let messages = [
+        r"""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""",
+        r"""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write","arguments":{"name":"b","text":"hi"}}}""",
+        r"""{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"name":"a"}}}""",
+        r"""{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read","arguments":{"name":"missing"}}}""",
+        r"""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write","arguments":{"name":"c","text":""}}}""",
+    ]
+    let output = console.stdout()
+    let protocol = io.Buffer()
+    console.setOutput(protocol.writer())
+    console.setInput(io.reader(messages.join("\n")))
+    mcp.serve(Notes { files, dir: "notes" }, name: "notes")?
+    console.setOutput(output)
+    // Each request is answered in a task of its own, so in any order.
+    let lines = protocol.text().unwrapOr("").lines().sortedWith((a, b) { a.compare(b) })
+    for line in lines {
+        console.println(line)
+    }
+    console.println(files.readText("notes/b.md")?)
+}
+
+// expect-stdout: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"write","description":"Writes a note.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"text":{"type":"string"}},"required":["name","text"]}},{"name":"read","description":"Reads a note.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"saved b"}],"isError":false}}
+// expect-stdout: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"hello"}],"isError":false}}
+// expect-stdout: {"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"not found"}],"isError":true}}
+// expect-stdout: {"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"a note needs text"}],"isError":true}}
+// expect-stdout: hi

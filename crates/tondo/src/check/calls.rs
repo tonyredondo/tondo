@@ -2477,6 +2477,9 @@ impl<'a> Checker<'a> {
         let receiver_shared = signature.modes.first() == Some(&ast::Mode::Ref);
         self.check_loan_overlap(lent.chain(receiver.iter().map(|r| (r, receiver_shared))), span);
         let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
+        if let (Callee::Fn(id), Some(&served)) = (callee, type_args.first()) {
+            self.serving(id, served);
+        }
         // The arguments must meet the bounds of the parameters they replace.
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {
             if let Some(missing) = self.bound_holds(param, actual, &inference.map, 0) {
@@ -2485,7 +2488,11 @@ impl<'a> Checker<'a> {
                     missing.as_str(),
                     "`reflect.Reflect`" | "`serialization.Encode`" | "`serialization.Decode`"
                 );
-                let lacking = automatic.then(|| self.lacking_field(actual, param, &inference.map)).flatten();
+                // Every type of the program has `Reflect`, with what it cannot
+                // look into carried as it is.
+                let reflect = missing == "`reflect.Reflect`";
+                let lacking =
+                    (automatic && !reflect).then(|| self.lacking_field(actual, param, &inference.map)).flatten();
                 // A type named like the prelude's has its error already.
                 let misnamed = |ty: Ty| self.misnamed.contains(&self.types.display(ty));
                 if misnamed(actual) || lacking.as_ref().is_some_and(|(_, ty)| misnamed(*ty)) {
@@ -2496,6 +2503,7 @@ impl<'a> Checker<'a> {
                         "; the compiler implements it for records whose fields all implement it, and its field `{field}` is {}, which does not",
                         self.display(ty)
                     ),
+                    None if reflect => REFLECT_WHY.into(),
                     None if automatic => {
                         "; the compiler implements it for records, enums and newtypes whose parts all implement it"
                             .into()

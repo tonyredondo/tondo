@@ -346,10 +346,21 @@ impl<'a> Checker<'a> {
         }
         // Coherence (12.6): the module owns the trait or the target's nominal type.
         let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
+        // A standard module written in Tondo that completes one the compiler
+        // implements owns that module's types, as `files` the errors of `fs`.
+        let completes = || match self.module_paths.get(decl.module as usize).map(Vec::as_slice) {
+            // Named as the module that declared it imports it, `__time` in a
+            // companion.
+            Some([std, companion]) if std == "std" => crate::stdlib::completed(companion).is_some_and(|module| {
+                target_name.trim_start_matches("__").strip_prefix(module).is_some_and(|rest| rest.starts_with('.'))
+            }),
+            _ => false,
+        };
         let local_target = self.owner(target).is_some_and(|o| o.module == decl.module)
             || (self.datetime_module == Some(decl.module)
                 && [self.datetime, self.duration, self.instant].contains(&Some(target)))
-            || (self.pacing_module == Some(decl.module) && matches!(self.types.kind(target), TyKind::Handle(..)));
+            || (self.pacing_module == Some(decl.module) && matches!(self.types.kind(target), TyKind::Handle(..)))
+            || completes();
         if !local_trait && !local_target {
             let message = format!(
                 "`impl {trait_name} for {target_name}` implements a trait for a type, neither of which this module declares; implement it in the module of one of them, or wrap the type in a newtype, such as `type Name = {target_name}`"

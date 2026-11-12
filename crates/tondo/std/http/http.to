@@ -14,6 +14,7 @@
 import std.encoding as __encoding
 import std.io as __io
 import std.json as __json
+import std.reflect as __reflect
 import std.serialization as __serialization
 
 /// Why a request has no response a program can use.
@@ -194,4 +195,12 @@ pub fn Part.stream(
     length: Int? = none,
 ): Part {
     Part { name, source: Source.Stream(input, length.unwrapOr(-1)), fileName, contentType }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for HttpError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

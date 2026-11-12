@@ -985,3 +985,11 @@ fn roundedQuotient(numerator: BigInt, denominator: BigInt, mode: Rounding): BigI
     let absolute = if up { addMagnitude(quotient, [1]) } else { quotient }
     made(negative, absolute)
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for MathError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

@@ -17,6 +17,7 @@ import std.gzip as __gzip
 import std.internal.codec as codecNative
 import std.io as __io
 import std.path as __path
+import std.reflect as __reflect
 import std.sync as __sync
 import std.time as __time
 import std.zstd as __zstd
@@ -883,4 +884,12 @@ fn zipEnd(count: Int, size: Int, offset: Int): Array[Byte] {
     var out = littleBytes(0x06054b50, 4).concat(littleBytes(0, 2)).concat(littleBytes(0, 2))
     out = out.concat(littleBytes(count, 2)).concat(littleBytes(count, 2))
     out.concat(littleBytes(size, 4)).concat(littleBytes(offset, 4)).concat(littleBytes(0, 2))
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for ArchiveError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

@@ -360,7 +360,11 @@ fn main(): !mcp.McpError {
   standard error meanwhile. `mcp.handler(value)` serves the same on a route
   of `std.http`.
 - A `T ! E` that fails is the tool's error, with its `Display`; a panic too,
-  and the server goes on.
+  and the server goes on. The errors of the standard library, as
+  `fs.FsError`, show as their message.
+- The value can hold what is no tool's business, as the `fs.FileSystem` it
+  works on or an `http.Client`. A `pub` method whose arguments or result
+  cannot cross as JSON is the error E1912, where it is: make it private.
 
 ## Files in the executable
 

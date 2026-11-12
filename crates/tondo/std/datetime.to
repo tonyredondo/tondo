@@ -794,3 +794,11 @@ impl __reflect.Reflect for IsoWeek {
         }
     }
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for __time.TimeError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

@@ -1175,3 +1175,11 @@ fn decodeName(name: String): String {
     }
     read
 }
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for XmlError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

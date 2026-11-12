@@ -13,6 +13,7 @@
 
 import std.internal.codec as codecNative
 import std.io as __io
+import std.reflect as __reflect
 
 /// Why a CSV stream could not be read: a quote out of place, a quoted field
 /// that does not end, a record with other than the header's number of
@@ -257,4 +258,12 @@ fn csvLine(fields: Array[String], separator: Char): String {
         if special { "\"{field.replace("\"", "\"\"")}\"" } else { field }
     }
     fields.map(quoted).join("{separator}")
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for CsvError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
 }

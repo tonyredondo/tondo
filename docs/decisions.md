@@ -6105,3 +6105,17 @@ it is never the only owner of its storage, so a change copies it first, as one o
 and its last reference gives back the one the block holds for it, which goes with the last of
 them. A program that reads what `split` gives, as most do, makes one allocation; one that changes
 it copies it first, which a push did before too, as the array is made at its length.
+
+## Reflection carries what it cannot look into
+
+The compiler implemented `Reflect` for a record, enum or newtype only when all its parts had it,
+so a server of `std.mcp` could not hold the `fs.FileSystem` it works on, and a method failing with
+an error that held a `fs.FsError` was no tool, left out of the list without a word. Every type of
+the program has `Reflect` now. A part without it, as a function or a handle of the standard
+library, is carried as it is (`reflect.opaqueOf`): it shows as `<fs.FileSystem>`, has no parts or
+methods, is not set, and the value that holds it is not built from a `reflect.Value` of another
+type. The derivation keeps two answers for each type, whether it has `Reflect` and whether
+reflection can build it, and a method is called by name only when it can build its arguments.
+Every error of the standard library has `Reflect`, shown as its message, as `sql.SqlError` had, and
+a test holds them to it. A `pub` method of a value `std.mcp` serves that reflection cannot call is
+the error E1912 where it is declared, instead of a tool that is not there.

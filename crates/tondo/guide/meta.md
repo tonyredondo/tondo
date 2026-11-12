@@ -5,8 +5,10 @@
 The compiler implements `serialization.Encode` and `serialization.Decode`
 for every record, enum and newtype whose parts have them, when the program
 uses a format (`std.json`, `std.http`) or `std.serialization`, and
-`reflect.Reflect` when it uses `std.reflect`. Nothing to write: the same
-type reads and writes every format.
+`reflect.Reflect` for every one when it uses `std.reflect`: a part without
+it, as a function or a `fs.FileSystem`, is carried as it is, shows as
+`<fs.FileSystem>` and is not set. Nothing to write: the same type reads and
+writes every format.
 
 ## derive
 

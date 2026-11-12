@@ -207,8 +207,36 @@ fn imported(text: &'static str) -> impl Iterator<Item = &'static str> {
 }
 
 /// The standard modules that import `std.reflect` only to implement it for
-/// their own types: they do not ask it of the program's.
-const OWN_REFLECTION: [&str; 9] = ["datetime", "json", "math", "pacing", "toml", "url", "uuid", "xml", "yaml"];
+/// their own types, as their errors: they do not ask it of the program's.
+const OWN_REFLECTION: &[&str] = &[
+    "acme",
+    "archive",
+    "crypto",
+    "csv",
+    "datetime",
+    "encoding",
+    "environment",
+    "executor",
+    "files",
+    "format",
+    "http",
+    "image",
+    "json",
+    "math",
+    "meta",
+    "net",
+    "pacing",
+    "processes",
+    "regex",
+    "serialization",
+    "streams",
+    "texts",
+    "toml",
+    "url",
+    "uuid",
+    "xml",
+    "yaml",
+];
 
 /// Whether the standard module `name` is `target` or imports it, directly
 /// or through another standard module.
