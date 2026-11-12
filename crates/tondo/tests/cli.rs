@@ -634,6 +634,46 @@ fn output_goes_out_when_a_program_has_nothing_to_do() {
     assert_eq!(line, "waiting\n");
 }
 
+/// The options of `run`, `build` and `test` go before the program or after
+/// it, as people write them in either order.
+#[test]
+fn options_go_before_the_program_or_after_it() {
+    let dir = scratch("options-in-any-order");
+    let main = "import std.console\nimport std.env\n\nfn main() {\n    console.println(\"{env.args()}\")\n}\n";
+    std::fs::write(dir.join("hello.to"), main).unwrap();
+    let library = "import std.ffi\n\npub extern fn twice(value: ffi.CInt): ffi.CInt {\n    value * 2\n}\n";
+    std::fs::write(dir.join("twice.to"), library).unwrap();
+    for args in [&["run", "--debug", "hello.to", "--", "a"][..], &["run", "hello.to", "--debug", "--", "a"]] {
+        let (stdout, stderr, status) = tondo(&dir, args);
+        assert_eq!((stdout.as_str(), status), ("[a]\n", 0), "{args:?}: {stderr}");
+    }
+    let (_, stderr, status) = tondo(&dir, &["run", "hello.to", "a"]);
+    assert!(status == 2 && stderr.contains("program arguments go after `--`"), "{stderr}");
+    for args in
+        [&["build", "--debug", "--output", "first", "hello.to"][..], &["build", "hello.to", "--debug", "-o", "second"]]
+    {
+        let (_, stderr, status) = tondo(&dir, args);
+        assert_eq!(status, 0, "{args:?}: {stderr}");
+    }
+    assert!(dir.join("first").exists() && dir.join("second").exists());
+    let (_, stderr, status) = tondo(&dir, &["build", "--library", "--debug", "twice.to", "--output", "out"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(dir.join("out/twice.h").exists());
+    let project = project_at(
+        "options-in-any-order-sums",
+        &[
+            ("tondo.toml", b"[package]\nname = \"sums\"\n"),
+            ("src/main.to", b"fn main() {}\n"),
+            ("src/main_test.to", b"test adds {\n    assert(1 + 1 == 2)\n}\n"),
+        ],
+    );
+    let sums = project.to_str().unwrap();
+    for args in [&["test", "--debug", sums][..], &["test", sums, "--debug"], &["test", "--filter", "adds", sums]] {
+        let (stdout, stderr, status) = tondo(&dir, args);
+        assert_eq!(status, 0, "{args:?}: {stdout}{stderr}");
+    }
+}
+
 /// Exploring orders, the thread that stands in for a worker that a function
 /// C called back holds sees the task go on although nothing wakes it: here
 /// a process it waits for ends. The case of it otherwise runs as any other.

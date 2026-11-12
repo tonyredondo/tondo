@@ -230,6 +230,24 @@ fn source_argument(args: &[OsString]) -> (PathBuf, &[OsString]) {
     }
 }
 
+/// Takes `arg` as the program's project or file when it is one, for a
+/// command that reads its arguments one by one, so that its options may
+/// come before the program or after it.
+fn take_source(source: &mut Option<PathBuf>, arg: &OsString, rest: &mut std::slice::Iter<OsString>) -> bool {
+    if source.is_some() {
+        return false;
+    }
+    if arg == "--project" {
+        *source = rest.next().map(PathBuf::from);
+        return source.is_some();
+    }
+    if arg != "--" && !arg.to_string_lossy().starts_with('-') {
+        *source = Some(PathBuf::from(arg));
+        return true;
+    }
+    false
+}
+
 /// The name of the executable built from `path`: the file's stem, or the
 /// project directory's name.
 fn program_name(path: &Path) -> Result<PathBuf, String> {
@@ -314,6 +332,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(first) if !first.to_string_lossy().starts_with('-') => (PathBuf::from(first), &args[1..]),
         _ => source_argument(args),
     };
+    // The project may also come after the options.
+    let (mut path, mut path_given) = (path, rest.len() < args.len());
     let mut options = runner::Options {
         selector: Selector::All,
         shard: None,
@@ -593,6 +613,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 }
                 options.reports.push(report);
             }
+            other if !path_given && !other.starts_with('-') => (path, path_given) = (PathBuf::from(other), true),
             other => return Err(usage(format!("unknown option {other}"))),
         }
     }
@@ -2692,13 +2713,15 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let mut args = args.to_vec();
     let json = take_flag(&mut args, "--json");
-    let (path, rest) = source_argument(&args);
-    let (options, rest) = link_options(rest)?;
-    let mut output = None;
+    let (options, rest) = link_options(&args)?;
+    let (mut source, mut output) = (None, None);
     let mut strip = false;
     let mut links = true;
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
+        if take_source(&mut source, arg, &mut rest) {
+            continue;
+        }
         match arg.to_str() {
             Some("--output" | "-o") if output.is_none() => match rest.next() {
                 Some(path) => output = Some(PathBuf::from(path)),
@@ -2709,6 +2732,7 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
             _ => return Err(format!("unexpected arguments\n{USAGE}")),
         }
     }
+    let path = source.unwrap_or_else(|| PathBuf::from("."));
     let output = match output {
         Some(output) => output,
         None => program_name(&path)?,
@@ -2752,10 +2776,12 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
     let json = take_flag(&mut args, "--json");
-    let (path, rest) = source_argument(&args);
-    let (mut output, mut debug) = (None, false);
-    let mut rest = rest.iter();
+    let (mut source, mut output, mut debug) = (None, None, false);
+    let mut rest = args.iter();
     while let Some(arg) = rest.next() {
+        if take_source(&mut source, arg, &mut rest) {
+            continue;
+        }
         match arg.to_str() {
             Some("--output" | "-o") if output.is_none() => match rest.next() {
                 Some(dir) => output = Some(PathBuf::from(dir)),
@@ -2774,6 +2800,7 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
             _ => return Err(format!("unexpected arguments\n{USAGE}")),
         }
     }
+    let path = source.unwrap_or_else(|| PathBuf::from("."));
     // A library is named after its package, or its file.
     let name = match path.is_dir() {
         true => tondo::deps::resolve(&path, None)?[0].name.clone(),
@@ -2858,9 +2885,10 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
     if hold.is_some() && last.is_none() {
         return Err(format!("--hold says how long the end of a run waits: it goes with --last\n{USAGE}"));
     }
-    let (path, rest) = source_argument(&args);
-    let (options, rest) = link_options(rest)?;
-    let program_args = match rest.as_slice() {
+    // The options go before the program or after it.
+    let (options, rest) = link_options(&args)?;
+    let (path, rest) = source_argument(&rest);
+    let program_args = match rest {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
