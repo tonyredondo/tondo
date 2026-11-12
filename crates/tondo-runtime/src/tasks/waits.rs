@@ -224,7 +224,11 @@ pub(crate) fn lock(flag: &AtomicBool) {
 #[inline(always)]
 pub(super) fn lock_unseen(flag: &AtomicBool) {
     while flag.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        std::hint::spin_loop();
+        // Waits reading, which leaves the line of memory to the holder that
+        // writes it, rather than taking it from it at every try.
+        while flag.load(Ordering::Relaxed) {
+            std::hint::spin_loop();
+        }
     }
 }
 

@@ -6065,3 +6065,13 @@ one it follows or of a counter, and makes a test its facts decide a jump, which 
 Following every `Int` tested against a constant made a large build 3.4 % dearer; a counter's copies,
 0.6 %. The sqrt row does 27 % fewer instructions: four turns of its loop are four conversions, roots
 and additions.
+
+## A spin lock waits reading
+
+The runtime's short spin locks, over a channel's state or a lock's queue, tried their compare and
+swap again at every turn of the wait: each try takes the line of memory from the holder, which has
+to take it back to let go. In `select 1000`, two senders spun so on the channels the receiving
+`select` held, and a send spent nine tenths of its cycles there. A waiter now reads the flag until
+it looks free and only then tries, as a test-and-test-and-set lock does. `select` went from 55.4 to
+49.8 ms against Go's 48.9; the mutex row, whose four tasks then run more often at once, from 47.3 to
+50.0 against Go's 50.8.
