@@ -188,7 +188,7 @@ fn turn(file: &SourceFile, body: &Block, diags: &mut Diagnostics) {
 fn writes(stmt: &ast::Stmt, owner: &str) -> bool {
     match &stmt.kind {
         StmtKind::Assign { target, .. } => {
-            matches!(&target.kind, ExprKind::Index { base, .. } if is_named(base, owner))
+            matches!(&target.kind, ExprKind::Index { base, .. } | ExprKind::Entry { base, .. } if is_named(base, owner))
         }
         StmtKind::Expr(value) => changes(value, owner),
         _ => false,

@@ -1,0 +1,33 @@
+// `map[key, default: value]` changes a map's entry: read alone, assigned
+// with `=` or through a `mut` loan, which keeps its keys, it is an error
+// that says what to write; and `map[key] += 1` asks for the value a missing
+// key starts from.
+
+import std.console
+
+fn keep(counts: mut Map[String, Int]) {
+    counts["a", default: 0] += 1
+}
+
+fn main() {
+    var counts: Map[String, Int] = [:]
+    let read = counts["a", default: 0]
+    counts["a", default: 0] = 3
+    counts["a"] += 1
+    var prices: Map[String, Float] = [:]
+    prices["tea"] *= 2.0
+    var numbers = [1]
+    numbers[0, default: 2] += 1
+    let fixed: Map[String, Int] = [:]
+    fixed["a", default: 0] += 1
+    console.println("{counts["b", default: 1].abs()} {read}")
+}
+
+// expect-error: E1411 `counts[key, default: value]` can add a key to `counts`, a `mut` loan that keeps its keys; take it as `var`
+// expect-error: E1411 `[key, default: value]` is an entry to change, as `counts[word, default: 0] += 1`, and adds it when it is missing; to read it, write `counts["a"] ?? 0`
+// expect-error: E1411 `= value` replaces the entry whatever it held, so it needs no `default:`; write `counts["a"] = ...`
+// expect-error: E1411 `counts["a"] +=` needs what a missing key starts from: write `counts["a", default: 0] += ...`
+// expect-error: E1411 `prices["tea"] *=` needs what a missing key starts from: write `prices["tea", default: 1.0] *= ...`
+// expect-error: E1102 `[key, default: value]` is the entry of a map, and `Array[Int]` is not one
+// expect-error: E1411 cannot assign to `fixed`: it is not declared with `var`; declare it as `var fixed`
+// expect-error: E1411 `[key, default: value]` is an entry to change, as `counts[word, default: 0] += 1`, and adds it when it is missing; to read it, write `counts["b"] ?? 1`

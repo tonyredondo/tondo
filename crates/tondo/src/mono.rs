@@ -364,8 +364,13 @@ impl Mono<'_> {
 
     fn steps(&mut self, steps: &mut [PlaceStep], map: &HashMap<Ty, Ty>) {
         for step in steps {
-            if let PlaceStep::Index(index) = step {
-                self.expr(index, map);
+            match step {
+                PlaceStep::Index(index) => self.expr(index, map),
+                PlaceStep::Entry { key, default } => {
+                    self.expr(key, map);
+                    self.expr(default, map);
+                }
+                PlaceStep::Field(_) => {}
             }
         }
     }
@@ -470,7 +475,9 @@ impl Mono<'_> {
                     self.expr(part, map);
                 }
             }
-            ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => self.place(place, map),
+            ExprKind::Loan(place) | ExprKind::CursorNext(place, _) | ExprKind::PlaceValue(place) => {
+                self.place(place, map)
+            }
             ExprKind::Region(place, parts) => {
                 self.place(place, map);
                 for part in parts.iter_mut().flatten() {

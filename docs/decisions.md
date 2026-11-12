@@ -6267,3 +6267,19 @@ also for a collection's elements and after inlining: an interpolation in the mod
 `join` or a function that logs, of another module, does not. `@secret` is `<secret>` there too, as
 the tools show it, so the standard library's private keys are `@secret` now: they had no `Display`,
 which kept them out of logs. A type's own `impl Display` wins.
+
+## An entry of a map with a value for when it is missing
+
+`map[key] += 1` does not exist because the key may be missing, which left counting as
+`counts[word] = (counts[word] ?? 0) + 1`: the key written twice and looked up twice, and for a map
+of arrays a read, a push on a copy and a write back. `map[key, default: value]` is the entry of
+`key`, put there with `value` first when the map has none, and a place to change: `counts[word,
+default: 0] += 1`, `byRoom[room, default: []].push(name)`, a `var` method on it or a `var` loan of
+it. The key is evaluated once, and the value only when the key is missing. It finds the key's
+position in the order of insertion, or inserts and takes the last one, and changes the entry there,
+in storage of the map's own, as iteration with `var` bindings already did, so it hashes the key once
+when it is there and the code generator needs nothing new but that position. It inserts, so it asks
+for a `var` map as `map[key] = value` does. Read as a value it changes nothing, and is an error that
+gives `map[key] ?? value`, to keep one way to read; `map[key, default: value] = x` is one too, as
+`map[key] = x` already inserts or replaces. The entry is found, or added, when the place is, before
+the right side of an assignment, so a right side that fails leaves the entry with its value.

@@ -1202,6 +1202,10 @@ struct FnCx {
     /// How many errors there were when the body began: one in it may have
     /// left uses of its bindings unchecked.
     errors_before: usize,
+    /// The `map[key, default: value]` read as values, which a `mut` or
+    /// `var` loan of the expression around takes as places: what is left
+    /// changes nothing, and is an error with the read to write instead.
+    entry_values: Vec<(Span, String)>,
     /// One entry per enclosing loop: whether a `break` targets it.
     loops: Vec<bool>,
     /// The current path has unconditionally left the enclosing block.

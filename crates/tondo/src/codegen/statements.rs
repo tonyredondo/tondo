@@ -488,6 +488,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     let offset = self.e.fb.ins().iconst(POINTER, offset as i64);
                     Val::Scalar(self.e.call_rt(Rt::MapNew, &[size, offset]).unwrap())
                 }
+                // The position of the key's entry, from where its value is,
+                // or -1.
+                MapOp::Position => {
+                    let map_ty = self.operand_ty(&operands[0]);
+                    let (key, _) = self.e.cg.map_parts(map_ty);
+                    let map = self.scalar(&operands[0]);
+                    let key_value = self.operand(&operands[1]);
+                    let key_address = self.in_memory(key, key_value);
+                    let glue = self.e.map_glue_address(map_ty);
+                    let found = self.e.call_rt(Rt::MapFind, &[map, key_address, glue]).unwrap();
+                    let zero = self.e.fb.ins().iconst(types::I64, 0);
+                    let first = self.e.call_rt(Rt::MapEntry, &[map, zero]).unwrap();
+                    let (size, offset) = self.e.cg.entry_layout(map_ty);
+                    let entry = self.e.fb.ins().iadd_imm_s(found, -(offset as i64));
+                    let bytes = self.e.fb.ins().isub(entry, first);
+                    let position = self.e.fb.ins().udiv_imm_u(bytes, size.max(1) as i64);
+                    let present = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, found, 0);
+                    let missing = self.e.fb.ins().iconst(types::I64, -1);
+                    Val::Scalar(self.e.fb.ins().select(present, position, missing))
+                }
                 MapOp::Contains | MapOp::Get => {
                     let map_ty = self.operand_ty(&operands[0]);
                     let (key, value) = self.e.cg.map_parts(map_ty);

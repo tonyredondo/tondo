@@ -1,0 +1,81 @@
+// `map[key, default: value]` is the entry of `key`, put there with `value`
+// first when the map has none: a place to change with a compound
+// assignment, a `mut` or `var` method or a `var` loan. The key is evaluated
+// once and the value only when the key is missing; a map another binding
+// shares is copied before its entry changes.
+
+import std.console
+import std.math
+
+type Tally = {
+    count: Int
+    names: Array[String]
+}
+
+fn Tally.add(var self, name: String) {
+    self.count += 1
+    self.names.push(name)
+}
+
+fn bump(counts: var Map[String, Int], word: String) {
+    counts[word, default: 0] += 1
+}
+
+fn five(): Int {
+    console.println("default")
+    5
+}
+
+fn key(name: String): String {
+    console.println("key {name}")
+    name
+}
+
+fn main() {
+    var counts: Map[String, Int] = [:]
+    for word in ["a", "b", "a", "c", "a", "b"] {
+        counts[word, default: 0] += 1
+    }
+    console.println("{counts}")
+    var byRoom: Map[String, Array[String]] = [:]
+    for (room, name) in [("x", "ana"), ("y", "leo"), ("x", "eva")] {
+        byRoom[room, default: []].push(name)
+    }
+    console.println("{byRoom}")
+    var tallies: Map[String, Tally] = [:]
+    tallies["t", default: Tally { count: 0, names: [] }].add("one")
+    tallies["t", default: Tally { count: 0, names: [] }].add("two")
+    console.println("{tallies}")
+    var nested: Map[String, Map[String, Int]] = [:]
+    nested["a", default: [:]]["b", default: 10] *= 3
+    nested["a", default: [:]]["b", default: 10] -= 1
+    console.println("{nested}")
+    bump(var counts, "z")
+    counts[key("a"), default: five()] += 10
+    counts[key("new"), default: five()] += 10
+    console.println("{counts}")
+    let shared = counts
+    counts["a", default: 0] += 1
+    console.println("{shared["a"]} {counts["a"]}")
+    var totals: Map[String, math.Decimal] = [:]
+    let half = math.Decimal.parse("1.5") ?? panic("a decimal")
+    totals["a", default: math.Decimal.parse("0") ?? panic("zero")] += half
+    totals["a", default: math.Decimal.parse("0") ?? panic("zero")] += half
+    console.println("{totals}")
+    for var value in byRoom["x", default: []] {
+        value = value.toUpper()
+    }
+    console.println("{byRoom}")
+}
+
+// expect-stdout: [a: 3, b: 2, c: 1]
+// expect-stdout: [x: [ana, eva], y: [leo]]
+// expect-stdout: [t: Tally { count: 2, names: [one, two] }]
+// expect-stdout: [a: [b: 29]]
+// expect-stdout: key a
+// expect-stdout: key new
+// expect-stdout: default
+// expect-stdout: [a: 13, b: 2, c: 1, z: 1, new: 15]
+// expect-stdout: some(13) some(14)
+// expect-stdout: [a: 3]
+// expect-stdout: [x: [ANA, EVA], y: [leo]]

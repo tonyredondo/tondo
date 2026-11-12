@@ -3148,6 +3148,12 @@ impl<'a> Checker<'a> {
                     steps.push(hir::PlaceStep::Index(*index));
                     current = *base;
                 }
+                // A map's entry, which this loan takes as the place it is.
+                hir::ExprKind::PlaceValue(place) => {
+                    cx.entry_values.retain(|(at, _)| *at != current.span);
+                    steps.extend(place.path.into_iter().rev());
+                    break place.local;
+                }
                 hir::ExprKind::Error => return None,
                 hir::ExprKind::RefValue(_) => {
                     self.diags.error("E1411", span, format!("{operation} would change it, but {REF_UNCHANGED}"));

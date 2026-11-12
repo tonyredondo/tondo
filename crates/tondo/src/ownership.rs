@@ -270,8 +270,14 @@ impl Checker<'_> {
     fn indices(&mut self, path: &[PlaceStep], flow: Flow) -> Option<Flow> {
         let mut flow = flow;
         for step in path {
-            if let PlaceStep::Index(index) = step {
-                flow = self.consume(index, flow)?;
+            match step {
+                PlaceStep::Index(index) => flow = self.consume(index, flow)?,
+                // The value moves into the map when the key is missing.
+                PlaceStep::Entry { key, default } => {
+                    flow = self.consume(key, flow)?;
+                    flow = self.consume(default, flow)?;
+                }
+                PlaceStep::Field(_) => {}
             }
         }
         Some(flow)
@@ -638,7 +644,7 @@ impl Checker<'_> {
                 }
                 Some(flow)
             }
-            ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => {
+            ExprKind::Loan(place) | ExprKind::CursorNext(place, _) | ExprKind::PlaceValue(place) => {
                 let flow = self.indices(&place.path, flow)?;
                 self.use_local(place.local, expr.span, &flow);
                 Some(flow)

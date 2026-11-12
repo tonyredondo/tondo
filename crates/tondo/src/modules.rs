@@ -975,6 +975,11 @@ impl Linker<'_> {
                 self.expr(base);
                 self.expr(index);
             }
+            ExprKind::Entry { base, key, default } => {
+                self.expr(base);
+                self.expr(key);
+                self.expr(default);
+            }
             ExprKind::Slice { base, start, end, step } => {
                 self.expr(base);
                 for part in [start, end, step].into_iter().flatten() {

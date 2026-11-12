@@ -10,6 +10,7 @@ impl<'a> Checker<'a> {
         };
         FnCx {
             errors_before: self.error_count(),
+            entry_values: Vec::new(),
             withs: Vec::new(),
             locals: Vec::new(),
             local_defs: HashMap::new(),

@@ -116,7 +116,9 @@ impl<'a> Checker<'a> {
             if cx.diverged {
                 self.diags.warning("W1006", t.span, "unreachable expression");
             }
+            let entries = cx.entry_values.len();
             let value = self.expr(cx, t, expected);
+            self.unchanged_entries(cx, entries);
             if expected == Some(Ty::UNIT) {
                 self.dropped_value(t, &value);
             }
@@ -172,7 +174,10 @@ impl<'a> Checker<'a> {
                 self.diags.warning("W1006", stmt.span, "unreachable statement");
                 warned = true;
             }
-            if let Some(stmt) = self.statement(cx, stmt)
+            let entries = cx.entry_values.len();
+            let checked = self.statement(cx, stmt);
+            self.unchanged_entries(cx, entries);
+            if let Some(stmt) = checked
                 && reachable
             {
                 out.push(stmt);
@@ -434,10 +439,32 @@ impl<'a> Checker<'a> {
                     );
                     self.diags.error("E1411", span, message);
                 }
-                // `map[key] = value` inserts or replaces (10.11); there is no
-                // compound form because the key may be absent.
-                if op.is_some() {
-                    self.diags.error("E1411", span, "a map entry has no compound assignment; read it with `get` first");
+                // `map[key] = value` inserts or replaces (10.11); a compound
+                // form says what a missing key starts from.
+                if let Some(op) = op {
+                    let (written, key) = (self.sources.slice(base.span), self.sources.slice(index.span));
+                    let start = match self.types.kind(entry) {
+                        TyKind::Int(_) | TyKind::Byte if matches!(op, BinOp::Mul | BinOp::Div) => Some("1"),
+                        TyKind::Float(_) if matches!(op, BinOp::Mul | BinOp::Div) => Some("1.0"),
+                        TyKind::Int(_) | TyKind::Byte => Some("0"),
+                        TyKind::Float(_) => Some("0.0"),
+                        _ => None,
+                    };
+                    let message = format!(
+                        "`{written}[{key}] {}=` needs what a missing key starts from: write `{written}[{key}, default: {}] {}= ...`",
+                        op.as_str(),
+                        start.unwrap_or("value"),
+                        op.as_str()
+                    );
+                    self.diags.error("E1411", span, message);
+                    if let Some(start) = start {
+                        let end = Span::new(index.span.end, index.span.end);
+                        self.diags.fix(
+                            format!("start a missing key at {start}"),
+                            false,
+                            vec![(end, format!(", default: {start}"))],
+                        );
+                    }
                     return None;
                 }
                 let key_value = self.expr(cx, index, Some(key));
@@ -452,6 +479,17 @@ impl<'a> Checker<'a> {
             }
             let (local, path, ty) = self.index_place(cx, (local, path, ty), index, base.span)?;
             return self.assign_to(cx, (local, path, ty), op, value, span);
+        }
+        if let ast::ExprKind::Entry { base, key, .. } = &target.kind
+            && op.is_none()
+        {
+            let written = format!("{}[{}]", self.sources.slice(base.span), self.sources.slice(key.span));
+            let message = format!(
+                "`= value` replaces the entry whatever it held, so it needs no `default:`; write `{written} = ...`"
+            );
+            self.diags.error("E1411", target.span, message);
+            self.diags.fix(format!("write `{written}`"), true, vec![(target.span, written)]);
+            return None;
         }
         let place = self.place(cx, target)?;
         self.assign_to(cx, place, op, value, span)
@@ -498,6 +536,11 @@ impl<'a> Checker<'a> {
                     }
                     self.index_place(cx, base_place, index, base.span)?
                 }
+                ast::ExprKind::Entry { .. } => {
+                    let message = "a map entry cannot be one of several places assigned at once; assign it on its own";
+                    self.diags.error("E1411", target.span, message);
+                    return None;
+                }
                 ast::ExprKind::Slice { .. } => {
                     let message = "a slice cannot be one of several places assigned at once; assign it on its own";
                     self.diags.error("E1411", target.span, message);
@@ -514,6 +557,7 @@ impl<'a> Checker<'a> {
                         hir::ExprKind::Local(local) => PlaceKey::Binding(*local),
                         _ => PlaceKey::Unknown,
                     },
+                    hir::PlaceStep::Entry { .. } => PlaceKey::Unknown,
                 })
                 .collect();
             // Indices are evaluated now, before the value.
@@ -635,11 +679,19 @@ impl<'a> Checker<'a> {
             {
                 let value = self.expr(cx, value, Some(ty));
                 let value = self.coerce(value, ty);
+                // The key of a map's entry, read and then written, once.
+                let (mut stmts, path) = self.hoisted_keys(cx, path);
                 let read = self.place_read(cx, &hir::Place { local, path: path.clone() }, span);
                 let call = hir::ExprKind::Call(Callee::Trait(trait_id, index), vec![ty], vec![read, value]);
                 let value = Self::mk(call, ty, span);
                 cx.diverged |= value.ty == Ty::NEVER;
-                return Some(hir::Stmt::Assign { local, path, op: None, value, span });
+                let assign = hir::Stmt::Assign { local, path, op: None, value, span };
+                if stmts.is_empty() {
+                    return Some(assign);
+                }
+                stmts.push(assign);
+                let block = hir::Block { stmts, tail: None, ty: Ty::UNIT };
+                return Some(hir::Stmt::Expr(Self::mk(hir::ExprKind::Block(block), Ty::UNIT, span)));
             }
             Some(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem)) => {
                 self.compound_value(cx, op, ty, value, span)
@@ -813,6 +865,34 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Index { base, index } => {
                 let (local, path, ty) = self.place(cx, base)?;
                 return self.index_place(cx, (local, path, ty), index, base.span);
+            }
+            // The entry of `key`, put there with `default` first when the
+            // map has none (10.11): it inserts, as `map[key] = value` does.
+            ast::ExprKind::Entry { base, key, default } => {
+                let (local, mut path, ty) = self.place(cx, base)?;
+                let TyKind::Map(key_ty, value_ty) = *self.types.kind(ty) else {
+                    let message =
+                        format!("`[key, default: value]` is the entry of a map, and {} is not one", self.display(ty));
+                    self.diags.error("E1102", base.span, message);
+                    return None;
+                };
+                if path.is_empty() && cx.params[local.0 as usize] == Some(ast::Mode::Mut) {
+                    let name = &cx.locals[local.0 as usize].name;
+                    let message = format!(
+                        "`{name}[key, default: value]` can add a key to `{name}`, a `mut` loan that keeps its keys; take it as `var`"
+                    );
+                    self.diags.error("E1411", target.span, message);
+                }
+                let key = self.expr(cx, key, Some(key_ty));
+                let key = self.coerce(key, key_ty);
+                let default = self.expr(cx, default, Some(value_ty));
+                let default = self.coerce(default, value_ty);
+                // What lowering reaches it through: the entry, and the value
+                // an insertion replaces.
+                self.types.intern(TyKind::Tuple(vec![key_ty, value_ty]));
+                self.types.intern(TyKind::Option(value_ty));
+                path.push(hir::PlaceStep::Entry { key: Box::new(key), default: Box::new(default) });
+                return Some((local, path, value_ty));
             }
             ast::ExprKind::Field(base, name) => (base, (FieldRef::Name(&name.name), name.span)),
             ast::ExprKind::TupleSlot(base, slot) => (base, (FieldRef::Slot(*slot), target.span)),
@@ -1290,6 +1370,13 @@ impl<'a> Checker<'a> {
                     stmts.push(hir::Stmt::Let(local, index));
                     hir::PlaceStep::Index(read)
                 }
+                hir::PlaceStep::Entry { key, default } => {
+                    let (ty, span) = (key.ty, key.span);
+                    let local = self.hidden_local(cx, ty);
+                    stmts.push(hir::Stmt::Let(local, *key));
+                    let key = Box::new(Self::mk(hir::ExprKind::Local(local), ty, span));
+                    hir::PlaceStep::Entry { key, default }
+                }
                 step => step,
             });
         }
@@ -1434,6 +1521,13 @@ impl<'a> Checker<'a> {
                         _ => Ty::ERROR,
                     };
                 }
+                hir::PlaceStep::Entry { .. } => {
+                    name.push_str("[..]");
+                    ty = match *self.types.kind(self.types.repr(ty)) {
+                        TyKind::Map(_, value) => value,
+                        _ => Ty::ERROR,
+                    };
+                }
             }
         }
         name
@@ -1453,9 +1547,47 @@ impl<'a> Checker<'a> {
         self.diags.error("E1403", span, message);
     }
 
+    /// A path whose map entries have their keys in hidden bindings, and the
+    /// statements that bind them: a place that is read and then written
+    /// evaluates each key once.
+    pub(super) fn hoisted_keys(
+        &mut self,
+        cx: &mut FnCx,
+        path: Vec<hir::PlaceStep>,
+    ) -> (Vec<hir::Stmt>, Vec<hir::PlaceStep>) {
+        let mut stmts = Vec::new();
+        let path = path
+            .into_iter()
+            .map(|step| match step {
+                hir::PlaceStep::Entry { key, default }
+                    if !matches!(key.kind, hir::ExprKind::Local(_) | hir::ExprKind::Int(_) | hir::ExprKind::Str(_)) =>
+                {
+                    let (ty, span) = (key.ty, key.span);
+                    let local = self.hidden_local(cx, ty);
+                    stmts.push(hir::Stmt::Let(local, *key));
+                    hir::PlaceStep::Entry { key: Box::new(Self::mk(hir::ExprKind::Local(local), ty, span)), default }
+                }
+                step => step,
+            })
+            .collect();
+        (stmts, path)
+    }
+
     /// An expression reading a place.
     pub(super) fn place_read(&mut self, cx: &FnCx, place: &hir::Place, span: Span) -> hir::Expr {
         let ty = cx.locals[place.local.0 as usize].ty;
+        // A map's entry is found, or added, where the place is.
+        if place.path.iter().any(|step| matches!(step, hir::PlaceStep::Entry { .. })) {
+            let ty = place.path.iter().fold(ty, |ty, step| match (step, self.types.kind(self.types.repr(ty))) {
+                (hir::PlaceStep::Field(index), _) => {
+                    self.types.components(ty).map_or(Ty::ERROR, |c| c[*index as usize])
+                }
+                (hir::PlaceStep::Index(_), &TyKind::Array(element) | &TyKind::Deque(element)) => element,
+                (hir::PlaceStep::Entry { .. }, &TyKind::Map(_, value)) => value,
+                _ => Ty::ERROR,
+            });
+            return Self::mk(hir::ExprKind::PlaceValue(place.clone()), ty, span);
+        }
         let mut value = Self::mk(hir::ExprKind::Local(place.local), ty, span);
         for step in &place.path {
             value = match step {
@@ -1470,6 +1602,7 @@ impl<'a> Checker<'a> {
                     };
                     Self::mk(hir::ExprKind::Index(Box::new(value), Box::new(index.clone())), ty, span)
                 }
+                hir::PlaceStep::Entry { .. } => unreachable!("an entry is read as a place"),
             };
         }
         value

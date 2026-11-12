@@ -23,6 +23,15 @@ fn main() {
         console.println("{name} is {age}")
     }
 
+    // An entry to change, put there first when it is missing.
+    var counts: Map[String, Int] = [:]
+    var byLetter: Map[String, Array[String]] = [:]
+    for word in ["ox", "ant", "owl"] {
+        counts[word, default: 0] += 1
+        byLetter[word.slice(0, 1) ?? "", default: []].push(word)
+    }
+    console.println("{counts} {byLetter}")
+
     var seen = Set[1, 2]
     seen.insert(3)
     console.println("{seen.contains(2)} {seen}")

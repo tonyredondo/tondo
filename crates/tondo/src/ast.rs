@@ -684,6 +684,13 @@ pub enum ExprKind {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// `map[key, default: value]`: the entry of `key`, put there with
+    /// `value` first when the map has none, as a place to change (10.11).
+    Entry {
+        base: Box<Expr>,
+        key: Box<Expr>,
+        default: Box<Expr>,
+    },
     /// `base[start:end:step]`, each part optional.
     Slice {
         base: Box<Expr>,

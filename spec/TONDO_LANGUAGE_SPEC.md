@@ -2803,7 +2803,8 @@ La indexación de lectura devuelve `V?` y requiere `V: Copy`; nunca mueve el val
 almacenado. La futura librería puede ofrecer una consulta afirmativa como
 `at(key): V`, también limitada a `V: Copy`, y debe fijar en su propia
 especificación la clase de pánico o contrato checked ante ausencia. Un valor por
-defecto se obtiene con `map[key] ?? fallback` (17.13). Maps con valores afines
+defecto se obtiene con `map[key] ?? fallback` (17.13); para cambiar la entrada
+desde ese valor, `map[key, default: value]` (10.11). Maps con valores afines
 se observan mediante iteración prestada. La extracción destructiva no depende de
 la librería estándar: el lenguaje define la operación intrínseca
 `Map[K, V].remove(var self, key: K): V?`, que transfiere el valor almacenado sin
@@ -2831,7 +2832,19 @@ En contexto de asignación, `map[key] = value` inserta o reemplaza.
 
 Insertar o eliminar una clave cambia la extensión del map y requiere un binding local `var`, un receptor `var self` o un parámetro `var Map[K, V]`. Un préstamo `mut Map[K, V]` solo puede actualizar una clave cuya presencia se afirme mediante una operación nombrada.
 
-La asignación compuesta sobre un índice de map no existe en 0.1. Como la clave podría estar ausente, `map[key] += value` ocultaría una política. Se utiliza una asignación explícita, `counts[word] = (counts[word] ?? 0) + 1`, o la API `entry` de la librería.
+`map[key] += value` no existe: como la clave podría estar ausente, ocultaría una política. La política se escribe: `map[key, default: value]` es la entrada de `key`, puesta antes con `value` cuando el map no la tiene, y es un lugar que se cambia: el lado izquierdo de una asignación compuesta, el receptor de un método con `mut self` o `var self`, o un argumento prestado con `mut` o `var`:
+
+~~~tondo
+var counts: Map[String, Int] = [:]
+for word in words {
+    counts[word, default: 0] += 1
+}
+
+var byRoom: Map[String, Array[String]] = [:]
+byRoom[room, default: []].push(name)
+~~~
+
+La clave se evalúa una vez, y `value` solo cuando falta. La entrada se resuelve, y se inserta si falta, al resolver la ubicación, antes del lado derecho de la asignación (13.8): si este falla, el map queda con la entrada y su `value`. Como inserta, pide lo que cualquier inserción: un binding `var`, un receptor `var self` o un parámetro `var Map[K, V]`. Una entrada que nada cambia, leída como valor, es `E1411`, que da la lectura `map[key] ?? value`; `map[key, default: value] = x` también, porque `map[key] = x` ya inserta o reemplaza. `map[key] += value` es `E1411`, que da la forma con `default:`.
 
 Eliminar se expresa únicamente mediante una operación nombrada:
 
@@ -10403,7 +10416,7 @@ Restricciones:
 ### 23.22 Índices y slices
 
 ~~~ebnf
-index_suffix    = "[", ( slice_spec | expression ), "]" ;
+index_suffix    = "[", ( slice_spec | expression, [ ",", "default", ":", expression ] ), "]" ;
 
 slice_spec      = [ expression ], ":",
                   [ expression ],
@@ -10411,6 +10424,7 @@ slice_spec      = [ expression ], ":",
 ~~~
 
 La presencia de `:` al nivel superior del corchete distingue slice de índice.
+`[key, default: value]` es la entrada de un map (10.11).
 Si aparece el segundo `:`, el paso es obligatorio; `values[::]` y
 `values[start:end:]` no crean grafías redundantes de un slice con paso `1`.
 

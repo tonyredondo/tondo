@@ -428,6 +428,10 @@ pub enum ExprKind {
     ArrayOp(ArrayOp, Vec<Expr>),
     /// A `mut` or `var` loan of a place, passed to a loan parameter.
     Loan(Place),
+    /// The value at a place whose path adds a map's entry when it is
+    /// missing, `map[key, default: value]` (10.11): as a method's `mut`
+    /// receiver, or read by a compound assignment.
+    PlaceValue(Place),
     /// `mut values[start:end:step]` passed to a `mut Array[T]` parameter:
     /// the callee changes the selected elements of the array in place
     /// (16.4).
@@ -547,6 +551,10 @@ impl Place {
                     steps.push(PlaceStep::Index(*index));
                     current = *base;
                 }
+                ExprKind::PlaceValue(place) => {
+                    steps.extend(place.path.into_iter().rev());
+                    break place.local;
+                }
                 _ => return None,
             }
         };
@@ -559,6 +567,12 @@ impl Place {
 pub enum PlaceStep {
     Field(u32),
     Index(Expr),
+    /// The value of a map's entry, put there with `default` first when the
+    /// map has no `key` (10.11).
+    Entry {
+        key: Box<Expr>,
+        default: Box<Expr>,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -806,6 +820,9 @@ pub enum MapOp {
     Get,
     /// `key in map`, `value in set` and `contains`; the collection comes first.
     Contains,
+    /// The position of the entry of a key, in the order of insertion, or
+    /// `-1`: what `map[key, default: value]` finds.
+    Position,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1962,7 +1979,7 @@ pub const NATIVES: &[Native] = {
 pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
     let many = |items: &[Expr], out: &mut Vec<LocalId>| items.iter().for_each(|item| written(item, out));
     match &e.kind {
-        ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => out.push(place.local),
+        ExprKind::Loan(place) | ExprKind::CursorNext(place, _) | ExprKind::PlaceValue(place) => out.push(place.local),
         ExprKind::Region(place, bounds) => {
             out.push(place.local);
             bounds.iter().flatten().for_each(|bound| written(bound, out));

@@ -2184,6 +2184,18 @@ impl Parser<'_> {
         let start = if self.at(&Tok::Colon) { None } else { Some(Box::new(self.expression()?)) };
         if !self.eat(&Tok::Colon) {
             let Some(index) = start else { return self.expected("index") };
+            // `map[key, default: value]` (10.11).
+            if self.eat(&Tok::Comma) {
+                if !matches!(self.tok(), Tok::Ident(name) if name == "default") {
+                    return self.expected("`default: value`, the value of a missing key");
+                }
+                self.bump();
+                self.expect(Tok::Colon)?;
+                let default = Box::new(self.expression()?);
+                self.expect(Tok::RBracket)?;
+                let span = base.span.to(self.prev_span());
+                return Ok(Expr { kind: ExprKind::Entry { base: Box::new(base), key: index, default }, span });
+            }
             self.expect(Tok::RBracket)?;
             let span = base.span.to(self.prev_span());
             return Ok(Expr { kind: ExprKind::Index { base: Box::new(base), index }, span });

@@ -2114,9 +2114,51 @@ impl Builder<'_> {
                     let local = self.index_local(index);
                     place.index(local, index.span)
                 }
+                hir::PlaceStep::Entry { key, default } => self.entry(place, key, default),
             };
         }
         place
+    }
+
+    /// The value of the entry of `key` in the map at `map`, put there with
+    /// `default` first when it is missing (10.11): the entry at the key's
+    /// position, or at the last one after the insertion, which evaluates
+    /// `default` only then.
+    fn entry(&mut self, map: Place, key: &hir::Expr, default: &hir::Expr) -> Place {
+        let (span, key_ty) = (key.span, key.ty);
+        let key = match self.expr(key) {
+            Operand::Copy(Place { local, path }) if path.is_empty() => Operand::local(local),
+            value => {
+                let local = self.new_local(key_ty);
+                self.assign(Place::local(local), Rvalue::Use(value), span);
+                Operand::local(local)
+            }
+        };
+        let position = self.new_local(Ty::INT);
+        let find = Rvalue::MapOp(hir::MapOp::Position, vec![Operand::Copy(map.clone()), key.clone()], span);
+        self.assign(Place::local(position), find, span);
+        let zero = Operand::Const(Const::Int(0, Ty::INT));
+        let missing = self.temp(Ty::BOOL, Rvalue::Binary(BinOp::Lt, Operand::local(position), zero), span);
+        let (insert, done) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(missing, insert, done));
+        self.switch_to(insert);
+        self.in_frame(|b| {
+            let value = b.expr(default);
+            // The map takes a reference of its own to the key, which stays
+            // its owner's, and the value, unless it is a temporary.
+            let retain =
+                vec![b.needs_drop(key_ty), b.move_flags(std::slice::from_ref(&value), &[true], &[default.ty])[0]];
+            let TyKind::Map(_, entry) = *b.types.kind(b.place_ty(&map)) else { unreachable!("an entry of a map") };
+            let replaced = b.types.lookup(&TyKind::Option(entry)).expect("the checker interns `V?` with every map");
+            let insert = Rvalue::Mutate(hir::Mutation::Insert, map.clone(), vec![key, value], retain, span);
+            b.temp(replaced, insert, span);
+            let length = b.temp(Ty::INT, Rvalue::Length(Operand::Copy(map.clone())), span);
+            let last = Rvalue::Binary(BinOp::Sub, length, Operand::Const(Const::Int(1, Ty::INT)));
+            b.assign(Place::local(position), last, span);
+        });
+        self.goto(done);
+        self.switch_to(done);
+        map.index(position, span).field(1)
     }
 
     fn loop_body(&mut self, body: &hir::Block, break_to: BlockId, continue_to: BlockId) {
@@ -2337,6 +2379,8 @@ impl Builder<'_> {
             }
             // The callee receives the place's address (see `Body::loans`).
             hir::ExprKind::Loan(place) => Operand::Copy(self.place(place.local, &place.path)),
+            // A map's entry, found or added, read where it is.
+            hir::ExprKind::PlaceValue(place) => Operand::Copy(self.place(place.local, &place.path)),
             hir::ExprKind::Region(..) => unreachable!("a region is only lent to a call"),
             hir::ExprKind::Length(collection) => {
                 let collection = self.expr(collection);

@@ -1062,6 +1062,14 @@ impl Formatter<'_> {
             ExprKind::Index { base, index } => {
                 concat(vec![self.postfix_base(base), text("["), self.expr(index), text("]")])
             }
+            ExprKind::Entry { base, key, default } => concat(vec![
+                self.postfix_base(base),
+                text("["),
+                self.expr(key),
+                text(", default: "),
+                self.expr(default),
+                text("]"),
+            ]),
             ExprKind::Slice { base, start, end, step } => {
                 let mut docs = vec![self.postfix_base(base), text("[")];
                 if let Some(start) = start {

@@ -330,9 +330,27 @@ impl<'a> Checker<'a> {
             Some(&TyKind::Option(inner)) if Self::typed_by_expected(e) => Some(inner),
             _ => expected,
         };
+        let entries = cx.entry_values.len();
         let value = self.expr_kind(cx, e, expected);
         self.index_expr(e.span, value.ty);
+        // A map's entry that this expression did not lend changes nothing.
+        if !matches!(e.kind, ast::ExprKind::Entry { .. }) {
+            self.unchanged_entries(cx, entries);
+        }
         value
+    }
+
+    /// `map[key, default: value]` read as values since the first `from`,
+    /// which no `mut` or `var` loan took: they change nothing, so each is
+    /// the read it stands for.
+    pub(super) fn unchanged_entries(&mut self, cx: &mut FnCx, from: usize) {
+        for (span, read) in cx.entry_values.split_off(from.min(cx.entry_values.len())) {
+            let message = format!(
+                "`[key, default: value]` is an entry to change, as `counts[word, default: 0] += 1`, and adds it when it is missing; to read it, write `{read}`"
+            );
+            self.diags.error("E1411", span, message);
+            self.diags.fix(format!("read `{read}`"), true, vec![(span, read)]);
+        }
     }
 
     /// `value ?? fallback` (17.11): the `T` that an option or a result holds,
@@ -553,6 +571,15 @@ impl<'a> Checker<'a> {
                         Self::error_expr(span)
                     }
                 }
+            }
+            // A map's entry as a value, which a `mut` receiver or argument
+            // takes as a place.
+            ast::ExprKind::Entry { base: map, key, default } => {
+                let Some((local, path, ty)) = self.place(cx, e) else { return Self::error_expr(span) };
+                let text = |e: &ast::Expr| self.sources.slice(e.span).to_string();
+                let read = format!("{}[{}] ?? {}", text(map), text(key), text(default));
+                cx.entry_values.push((span, read));
+                Self::mk(hir::ExprKind::PlaceValue(hir::Place { local, path }), ty, span)
             }
             ast::ExprKind::Index { base, index } => {
                 let base = self.expr(cx, base, None);

@@ -214,8 +214,13 @@ fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
 
 fn steps(path: &[hir::PlaceStep], f: &mut impl FnMut(&hir::Expr)) {
     for step in path {
-        if let hir::PlaceStep::Index(index) = step {
-            expr(index, f);
+        match step {
+            hir::PlaceStep::Index(index) => expr(index, f),
+            hir::PlaceStep::Entry { key, default } => {
+                expr(key, f);
+                expr(default, f);
+            }
+            hir::PlaceStep::Field(_) => {}
         }
     }
 }
@@ -281,7 +286,7 @@ fn expr(e: &hir::Expr, f: &mut impl FnMut(&hir::Expr)) {
             expr(base, f);
             bounds.iter().flatten().for_each(|bound| expr(bound, f));
         }
-        E::Loan(place) | E::CursorNext(place, _) => steps(&place.path, f),
+        E::Loan(place) | E::CursorNext(place, _) | E::PlaceValue(place) => steps(&place.path, f),
         E::Region(place, bounds) => {
             steps(&place.path, f);
             bounds.iter().flatten().for_each(|bound| expr(bound, f));
