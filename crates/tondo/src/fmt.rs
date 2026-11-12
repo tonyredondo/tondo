@@ -1135,6 +1135,10 @@ impl Formatter<'_> {
                 }
                 group(concat(docs))
             }
+            // `base?.rest`: the rest is written from its hole, which is the
+            // `?`.
+            ExprKind::Navigate(base, rest) => concat(vec![self.postfix_base(base), text("?"), self.expr(rest)]),
+            ExprKind::Hole => concat(Vec::new()),
             ExprKind::Coalesce(..) => {
                 // `a ?? b ?? c` is one chain, which breaks after each `??`.
                 let mut docs = Vec::new();

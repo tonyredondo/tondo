@@ -6183,3 +6183,15 @@ It binds least of all and to the right, as C#'s, so `count ?? 0 + 1` is `count ?
 error of a result is dropped, as `unwrapOr` did. Two propagations stay `(value?)?`; `value??` with
 nothing after it is a lexical error that says so, and so is the type `T??`, written `(T?)?`. The
 checker makes it a `match` of the value, so nothing after it changes.
+
+## `?.` on an option goes on only when there is a value
+
+`?` on an option left the function on `none`, so `user.address?.city` was valid only in a function
+that gave an option, and a chain of options kept as a value needed a `try` block. Now a `?`
+followed by `.` on an option starts a chain: what follows it in the same postfix chain runs on the
+value when there is one, and the whole is `none` when there is not, as C#'s `?.`. A chain that
+already gives an option is not wrapped again, which `user.address?.city` needs; nothing else is
+flattened. A `?` that ends the chain applies to all of it, so `user.address?.city?` reads and
+gives what it did. On a result `?.` still propagates the error. The old meaning is written
+`(value?).field`, and existing code was rewritten so before the change. The parser keeps the rest
+of the chain from a hole that stands for the value, and the checker makes it a `match`.

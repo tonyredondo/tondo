@@ -403,7 +403,7 @@ type Address = { city: String? }
 type User = { name: String, address: Address? }
 
 fn cityOf(user: User?): String {
-    let city: String? = try { user?.address?.city? }
+    let city: String? = try { ((user?).address?).city? }
     city.unwrapOr("nowhere")
 }
 

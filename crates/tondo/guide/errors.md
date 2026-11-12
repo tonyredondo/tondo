@@ -120,16 +120,17 @@ fn main() {
 }
 ```
 
-`?` leaves the function. In a `try` block it only ends the block, so a chain of
-options needs no function of its own:
+`?` leaves the function, but on an option `?.` goes on only when there is a
+value, and gives `none` when there is not: a chain of options needs no
+function of its own. `(value?).field` leaves the function instead, and on a
+result `?.` propagates the error as `?` does:
 
 ```tondo
 type Address = { city: String? }
 type User = { address: Address? }
 
 fn cityOf(user: User): String {
-    let city: String? = try { user.address?.city? }
-    city.unwrapOr("nowhere")
+    user.address?.city ?? "nowhere"
 }
 
 fn main() {}

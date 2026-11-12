@@ -75,6 +75,7 @@ fn check_with<'a>(
         index,
         every_body,
         inferring: 0,
+        holes: Vec::new(),
         index_exprs: Vec::new(),
         cell_uses: Vec::new(),
         meta,
@@ -891,6 +892,8 @@ struct Checker<'a> {
     /// inference that their own type then feeds: a `some(...)` there is not
     /// one W1021 can remove.
     inferring: u32,
+    /// The values the `Navigate`s being checked go on with, innermost last.
+    holes: Vec<(LocalId, Ty)>,
     /// For an editor: the type of each expression of the program's own files.
     index_exprs: Vec<(Span, Ty)>,
     /// The `meta` profile: no host capabilities (27.7).

@@ -35,12 +35,18 @@ impl<'a> Checker<'a> {
         if cx.deferred {
             self.diags.error("E1410", span, "a defer block cannot propagate an error; handle it inside the block");
         }
-        // A call learns the success type it should give: `decode(text)?`.
+        // A call learns the success type it should give: `decode(text)?`,
+        // and so does one at the end of a chain, `value.get(path)?.to()?`.
         let hint = match &inner.kind {
-            ast::ExprKind::Call { .. } => expected,
+            ast::ExprKind::Call { .. } | ast::ExprKind::Navigate(..) => expected,
             _ => None,
         };
         let value = self.expr(cx, inner, hint);
+        self.try_value(cx, value, span)
+    }
+
+    /// `?` on a value already checked, written at the end of `span`.
+    pub(super) fn try_value(&mut self, cx: &mut FnCx, value: hir::Expr, span: Span) -> hir::Expr {
         self.note_propagation(cx, value.ty, Span::new(span.end - 1, span.end), "?");
         self.note_exit(cx, Span::new(span.end - 1, span.end));
         match self.types.kind(value.ty).clone() {

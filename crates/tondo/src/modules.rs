@@ -949,7 +949,7 @@ impl Linker<'_> {
                 self.expr(base);
                 updates.iter_mut().filter_map(|f| f.value.as_mut()).for_each(|v| self.expr(v));
             }
-            ExprKind::Coalesce(value, fallback) => {
+            ExprKind::Coalesce(value, fallback) | ExprKind::Navigate(value, fallback) => {
                 self.expr(value);
                 self.expr(fallback);
             }
@@ -1071,6 +1071,7 @@ impl Linker<'_> {
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Unit
+            | ExprKind::Hole
             | ExprKind::None
             | ExprKind::Error => {}
         }

@@ -350,38 +350,38 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
             continue
         }
         match piece.text {
-            "Y" => year = digits(ref chars, mut at, 1, 4)?.0
+            "Y" => year = (digits(ref chars, mut at, 1, 4)?).0
             "y" => {
-                let short = digits(ref chars, mut at, 1, 2)?.0
+                let short = (digits(ref chars, mut at, 1, 2)?).0
                 year = if short < 69 { 2000 + short } else { 1900 + short }
             }
-            "m" => month = digits(ref chars, mut at, 1, 2)?.0
+            "m" => month = (digits(ref chars, mut at, 1, 2)?).0
             key if key in ["B", "b", "OB"] => month =
                 longest(input, ref names, mut at, 0, 36)? % 12 + 1
-            "d" => day = digits(ref chars, mut at, 1, 2)?.0
+            "d" => day = (digits(ref chars, mut at, 1, 2)?).0
             "e" => {
                 for chars.get(at) == ' ' {
                     at += 1
                 }
-                day = digits(ref chars, mut at, 1, 2)?.0
+                day = (digits(ref chars, mut at, 1, 2)?).0
             }
-            "j" => ordinal = digits(ref chars, mut at, 1, 3)?.0
+            "j" => ordinal = (digits(ref chars, mut at, 1, 3)?).0
             key if key in ["A", "a"] => dayOfWeek =
                 ((longest(input, ref names, mut at, 36, 50)? - 36) % 7 + 6) % 7
-            "u" => dayOfWeek = digits(ref chars, mut at, 1, 1)?.0 - 1
-            "w" => dayOfWeek = (digits(ref chars, mut at, 1, 1)?.0 + 6) % 7
-            "U" => sundays = digits(ref chars, mut at, 1, 2)?.0
-            "W" => mondays = digits(ref chars, mut at, 1, 2)?.0
-            "V" => week = digits(ref chars, mut at, 1, 2)?.0
-            "G" => weekYear = digits(ref chars, mut at, 1, 4)?.0
+            "u" => dayOfWeek = (digits(ref chars, mut at, 1, 1)?).0 - 1
+            "w" => dayOfWeek = ((digits(ref chars, mut at, 1, 1)?).0 + 6) % 7
+            "U" => sundays = (digits(ref chars, mut at, 1, 2)?).0
+            "W" => mondays = (digits(ref chars, mut at, 1, 2)?).0
+            "V" => week = (digits(ref chars, mut at, 1, 2)?).0
+            "G" => weekYear = (digits(ref chars, mut at, 1, 4)?).0
             "g" => {
-                let short = digits(ref chars, mut at, 1, 2)?.0
+                let short = (digits(ref chars, mut at, 1, 2)?).0
                 weekYear = if short < 69 { 2000 + short } else { 1900 + short }
             }
-            key if key in ["H", "I"] => hour = digits(ref chars, mut at, 1, 2)?.0
+            key if key in ["H", "I"] => hour = (digits(ref chars, mut at, 1, 2)?).0
             "p" => meridiem = longest(input, ref names, mut at, 50, 52)? - 50
-            "M" => minute = digits(ref chars, mut at, 1, 2)?.0
-            "S" => second = digits(ref chars, mut at, 1, 2)?.0
+            "M" => minute = (digits(ref chars, mut at, 1, 2)?).0
+            "S" => second = (digits(ref chars, mut at, 1, 2)?).0
             key if key in ["3f", "6f", "9f"] => {
                 let most = Int.parse(piece.text.removeSuffix("f")).unwrapOr(9)
                 let (value, count) = digits(ref chars, mut at, 1, most)?
@@ -396,11 +396,11 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                     some('Z') => at += 1
                     some(sign) if sign == '+' or sign == '-' => {
                         at += 1
-                        let hours = digits(ref chars, mut at, 2, 2)?.0
+                        let hours = (digits(ref chars, mut at, 2, 2)?).0
                         if chars.get(at) == ':' {
                             at += 1
                         }
-                        let minutes = digits(ref chars, mut at, 2, 2)?.0
+                        let minutes = (digits(ref chars, mut at, 2, 2)?).0
                         offset = hours * 3600 + minutes * 60
                         if sign == '-' {
                             offset = -offset
@@ -422,7 +422,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                 if negative {
                     at += 1
                 }
-                let value = digits(ref chars, mut at, 1, 18)?.0
+                let value = (digits(ref chars, mut at, 1, 18)?).0
                 seconds = some(if negative { -value } else { value })
             }
         }
@@ -581,7 +581,7 @@ pub fn duration(text: String): Int? {
     for at < chars.length() {
         var (whole, fraction, scale, seen) = (Int128(0), 0, 1, 0)
         for at < chars.length() and chars[at].isDigit() {
-            whole = whole.checkedMul(10)?.checkedAdd(Int128(chars[at].code() - '0'.code()))?
+            whole = (whole.checkedMul(10)?).checkedAdd(Int128(chars[at].code() - '0'.code()))?
             seen += 1
             at += 1
         }
@@ -613,9 +613,9 @@ pub fn duration(text: String): Int? {
         }
         at += size
         let part =
-            whole
-                .checkedMul(Int128(unit))?
-                .checkedAdd(Int128(fraction) * Int128(unit) / Int128(scale))?
+            (whole.checkedMul(Int128(unit))?).checkedAdd(
+                Int128(fraction) * Int128(unit) / Int128(scale),
+            )?
         total = total.checkedAdd(part)?
     }
     Int(if negative { -total } else { total }).ok()

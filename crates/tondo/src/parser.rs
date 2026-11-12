@@ -1953,9 +1953,25 @@ impl Parser<'_> {
     }
 
     fn postfix(&mut self) -> PResult<Expr> {
-        let mut expr = self.primary()?;
+        let expr = self.primary()?;
+        self.postfix_from(expr, false)
+    }
+
+    /// The postfix operations after `expr`. A `?` followed by `.` starts a
+    /// `Navigate` whose rest, from a `Hole`, runs to a `?` that is not
+    /// followed by `.`, which then applies to the whole (17.2); `inside`
+    /// says this is such a rest.
+    fn postfix_from(&mut self, mut expr: Expr, inside: bool) -> PResult<Expr> {
         loop {
             match self.tok() {
+                Tok::Question if self.nth(1) == &Tok::Dot => {
+                    let at = self.bump();
+                    let hole = Expr { kind: ExprKind::Hole, span: at };
+                    let rest = self.postfix_from(hole, true)?;
+                    let span = expr.span.to(rest.span);
+                    expr = Expr { kind: ExprKind::Navigate(Box::new(expr), Box::new(rest)), span };
+                }
+                Tok::Question if inside => return Ok(expr),
                 Tok::LParen => {
                     self.bump();
                     let args = self.call_arguments()?;

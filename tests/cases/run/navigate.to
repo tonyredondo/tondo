@@ -1,0 +1,79 @@
+// On an option, `?.` goes on only when there is a value and gives `none`
+// when there is not, without leaving the function; what follows it runs only
+// on the value. A level of option is flattened. A `?` that ends the chain
+// still propagates, `(value?).field` still leaves, and on a result `?.`
+// propagates the error.
+
+import std.console
+
+type Address = {
+    city: String?
+}
+
+type User = {
+    name: String
+    address: Address?
+}
+
+enum LoadError {
+    Missing
+}
+
+fn loud(text: String): String {
+    console.println("ran {text}")
+    text
+}
+
+// No option here: `?.` was an error in such a function.
+fn cityOf(user: User): String {
+    user.address?.city ?? "nowhere"
+}
+
+// The final `?` leaves on the first absence.
+fn shouted(user: User): String? {
+    let city = user.address?.city?
+    city.toUpperAscii()
+}
+
+// The old meaning, with parentheses: leaves when there is no address.
+fn street(user: User): String? {
+    let address = (user.address?).city ?? "unknown"
+    address
+}
+
+fn load(found: Bool): User ! LoadError {
+    if not found {
+        fail LoadError.Missing
+    }
+    User { name: "ada", address: Address { city: "Paris" } }
+}
+
+fn loaded(found: Bool): String? ! LoadError {
+    load(found)?.address?.city
+}
+
+fn main() {
+    let ada = User { name: "ada", address: Address { city: "Paris" } }
+    let nowhere = User { name: "bo", address: none }
+    let homeless = User { name: "cy", address: Address { city: none } }
+    console.println("{cityOf(ada)} {cityOf(nowhere)} {cityOf(homeless)}")
+    console.println(
+        "{shouted(ada)} {shouted(homeless)} {street(ada)} {street(nowhere)} {street(homeless)}",
+    )
+    let missing: String? = none
+    let present: String? = "x"
+    let skipped = missing?.concat(loud("on none"))
+    let called = present?.concat(loud("on some"))
+    console.println("{skipped} {called} {missing?.length()} {present?.length()}")
+    let nested: (String?)? = some(none)
+    let flattened = ada.address?.city
+    console.println("{flattened} {nested?.isSome()}")
+    console.println("{loaded(true) ?? none} {loaded(false) ?? "failed"}")
+}
+
+// expect-stdout: Paris nowhere nowhere
+// expect-stdout: some(PARIS) none some(Paris) none some(unknown)
+// expect-stdout: ran on some
+// expect-stdout: none some(xon some) none some(1)
+// expect-stdout: some(Paris) some(false)
+// expect-stdout: some(Paris) some(failed)

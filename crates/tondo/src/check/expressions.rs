@@ -349,7 +349,9 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         // A call learns the success type it should give, as with `?`.
         let hint = match &value.kind {
-            ast::ExprKind::Call { .. } => expected.filter(|t| !matches!(self.types.kind(*t), TyKind::Option(_))),
+            ast::ExprKind::Call { .. } | ast::ExprKind::Navigate(..) => {
+                expected.filter(|t| !matches!(self.types.kind(*t), TyKind::Option(_)))
+            }
             _ => None,
         };
         let value = self.expr(cx, value, hint);
@@ -399,6 +401,72 @@ impl<'a> Checker<'a> {
             hir::Arm { pattern: none, guard: None, body: fallback },
         ];
         Self::mk(hir::ExprKind::Match(Box::new(value), arms), result, span)
+    }
+
+    /// `base?.rest` (17.2): on an option, the rest of the chain runs on the
+    /// value when there is one, and the whole is an option, `none` when there
+    /// is not, a level flattened when the rest gives one already; on a
+    /// result, `?` propagates the error and the rest runs on the value.
+    pub(super) fn navigate(
+        &mut self,
+        cx: &mut FnCx,
+        base: &ast::Expr,
+        rest: &ast::Expr,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(cx, base, None);
+        let question = Span::new(base.span.end, rest.span.start + 1);
+        match self.types.kind(self.types.repr(value.ty)).clone() {
+            TyKind::Option(payload) => {
+                let local = self.hidden_local(cx, payload);
+                self.holes.push((local, payload));
+                // What the rest gives is the value of the option expected.
+                let hint = expected.and_then(|ty| match self.types.kind(ty) {
+                    TyKind::Option(inner) => Some(*inner),
+                    _ => None,
+                });
+                let then = self.expr(cx, rest, hint);
+                self.holes.pop();
+                if then.ty == Ty::ERROR {
+                    return Self::error_expr(span);
+                }
+                let (result, then) = match self.types.kind(then.ty) {
+                    TyKind::Option(_) => (then.ty, then),
+                    _ => {
+                        let result = self.types.intern(TyKind::Option(then.ty));
+                        (result, Self::mk(hir::ExprKind::Variant(SOME, vec![(0, then)]), result, span))
+                    }
+                };
+                let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
+                let present = hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![bound]), ty: value.ty, span };
+                let absent = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: value.ty, span };
+                let none = Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), result, span);
+                let arms = vec![
+                    hir::Arm { pattern: present, guard: None, body: then },
+                    hir::Arm { pattern: absent, guard: None, body: none },
+                ];
+                Self::mk(hir::ExprKind::Match(Box::new(value), arms), result, span)
+            }
+            TyKind::Error => {
+                let local = self.hidden_local(cx, Ty::ERROR);
+                self.holes.push((local, Ty::ERROR));
+                self.expr(cx, rest, None);
+                self.holes.pop();
+                Self::error_expr(span)
+            }
+            // A result, or what `?` reports it cannot apply to.
+            _ => {
+                let tried = self.try_value(cx, value, Span::new(base.span.start, question.end));
+                let local = self.hidden_local(cx, tried.ty);
+                self.holes.push((local, tried.ty));
+                let then = self.expr(cx, rest, expected);
+                self.holes.pop();
+                let ty = then.ty;
+                let block = hir::Block { stmts: vec![hir::Stmt::Let(local, tried)], tail: Some(Box::new(then)), ty };
+                Self::mk(hir::ExprKind::Block(block), ty, span)
+            }
+        }
     }
 
     /// Whether an expression takes its type from the one expected and is
@@ -557,6 +625,11 @@ impl<'a> Checker<'a> {
             }
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Coalesce(value, fallback) => self.coalesce(cx, value, fallback, expected, span),
+            ast::ExprKind::Navigate(base, rest) => self.navigate(cx, base, rest, expected, span),
+            ast::ExprKind::Hole => {
+                let (local, ty) = *self.holes.last().expect("a hole is inside a `Navigate`");
+                Self::mk(hir::ExprKind::Local(local), ty, span)
+            }
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),

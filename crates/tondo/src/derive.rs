@@ -1419,7 +1419,7 @@ impl Generator<'_> {
                     "{indent}{name}: match __value.optional({name:?})? {{\n{indent}    some(__found) => __found.to()?\n{indent}    none => none\n{indent}}}\n"
                 ));
             } else {
-                out.push_str(&format!("{indent}{name}: __value.get({name:?})?.to()?\n"));
+                out.push_str(&format!("{indent}{name}: (__value.get({name:?})?).to()?\n"));
             }
         }
         out

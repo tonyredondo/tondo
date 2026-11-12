@@ -2227,7 +2227,8 @@ none
 ~~~
 
 El valor de una option, o una alternativa cuando no tiene, es
-`value ?? fallback` (17.13).
+`value ?? fallback` (17.13), y `value?.field` sigue con el valor solo cuando lo
+hay (17.2).
 
 Ejemplo:
 
@@ -5685,6 +5686,10 @@ fn cachedUser(id: UserId): User? ! CacheError {
 }
 ~~~
 
+Seguido de `.`, el `?` de una option no propaga: empieza una cadena que da una
+option (17.2). Para salir de la función antes del acceso se escribe
+`(value?).field`.
+
 De forma dual, un error solo puede salir por el `Result` exterior declarado. El operador no reordena automáticamente `Option[Result[T, E]]` y `Result[Option[T], E]`; son tipos distintos.
 
 No puede utilizarse para:
@@ -7059,10 +7064,34 @@ let name = repository
 
 El `?` se aplica al valor completo inmediatamente anterior.
 
-`?.` no es un token de navegación segura. Cuando aparece sin espacio, el lexer
-produce `?` y `.`: primero se propaga ausencia o error fuera de la función actual
-y solo en el camino presente/exitoso continúa el acceso ordinario. Por claridad,
-dos propagaciones consecutivas se parentizan como `(value?)?`: la secuencia
+Sobre una option, un `?` seguido de `.` no sale de la función: empieza una
+cadena que sigue solo cuando hay valor. Lo que viene después en la misma cadena
+de postfijos —accesos, llamadas, índices y otros `?.`— se evalúa sobre el valor
+si lo hay, y no se evalúa si no:
+
+~~~tondo
+type Address = { city: String? }
+type User = { address: Address? }
+
+fn cityOf(user: User): String {
+    user.address?.city ?? "nowhere"
+}
+~~~
+
+Si el resto de la cadena da un `U`, el total es un `U?`, `none` cuando no había
+valor; si ya da un `U?`, el total es ese `U?`: se aplana un nivel, el que
+necesita `user.address?.city`, y nada más. El `.` puede empezar la línea
+siguiente, como en el ejemplo anterior. Un `?` que termina la cadena, sin `.`
+detrás, se aplica a la cadena entera y propaga como siempre:
+`user.address?.city?`, en una función que da una option, sale de ella en la
+primera ausencia. Sobre un result, `?.` propaga el error como `?` (15.2) y la
+cadena sigue con el valor: en `load()?.address?.city`, el primer `?.` propaga y
+el segundo es una cadena sobre la option. Salir de la función por la ausencia de
+una option antes de un acceso se escribe con paréntesis, `(value?).field`, y
+tras un result que contiene una option, `(lookup(id)?)?.name`. Un índice tras
+`?` no empieza cadena: `value?[0]` propaga y luego indexa.
+
+Por claridad, dos propagaciones consecutivas se parentizan como `(value?)?`: la secuencia
 adyacente `??` es el operador de 17.13. Escrita tras un valor sin nada detrás,
 como `value??` al final de una línea o ante `)`, es error léxico (`E0002`) que
 nombra `(value?)?`, y en un tipo, `T??`, el mismo error nombra `(T?)?`.
@@ -10206,6 +10235,8 @@ postfix_suffix  = call_suffix
                 | generic_args
                 | ".", ( field_name | tuple_slot )
                 | "?" ;
+(* Un "?" seguido de "." empieza la cadena de 17.2, que llega hasta el
+   siguiente "?" no seguido de "." o el final de los sufijos. *)
 
 plain_postfix_suffix
                 = call_suffix
@@ -11002,10 +11033,9 @@ option o un result, o una alternativa, es `value ?? fallback` (17.13).
 
 ### 25.10 Safe navigation
 
-No existe un operador `?.`. La secuencia escrita igual son dos tokens: `?` propaga
-fuera de la función y `.` continúa solo en el camino exitoso, según 17.2; nunca
-produce una option local por navegación. Las cadenas que deban decidir localmente
-dónde aparece ausencia utilizan `match` u operaciones nombradas.
+`value?.rest` sobre una option sigue solo cuando hay valor y da `none` cuando no
+(17.2), como en C#; sobre un result propaga el error. Solo `.` empieza una
+cadena: no existe `?[`.
 
 ### 25.11 Globals mutables
 

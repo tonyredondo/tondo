@@ -644,6 +644,13 @@ pub enum ExprKind {
     /// or else the fallback, which may be a block holding only `return`,
     /// `fail`, `break` or `continue`, as `?? return` is written.
     Coalesce(Box<Expr>, Box<Expr>),
+    /// `value?.rest` (17.2): on an option, `rest` is evaluated on the value
+    /// when there is one, and the whole is `none` when there is not; on a
+    /// result, `?` propagates its error. `rest` starts at a `Hole`, which
+    /// stands for the value.
+    Navigate(Box<Expr>, Box<Expr>),
+    /// The value a `Navigate` goes on with.
+    Hole,
     Call {
         callee: Box<Expr>,
         args: Vec<Arg>,
