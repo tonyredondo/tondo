@@ -672,6 +672,27 @@ fn assertions_of_other_languages_say_what_to_write() {
     }
 }
 
+/// A test calls the private operations of its own file, as it calls its
+/// private functions: in a file next to the code and in one under `tests/`.
+#[test]
+fn a_test_calls_the_private_operations_of_its_file() {
+    let helper =
+        "type Client = {\n    base: Int\n}\n\nfn Client.ask(self, more: Int): Int {\n    self.base + more\n}\n\n";
+    let dir = project(
+        "private-operations",
+        &format!("{helper}test asks {{\n    assert(Client {{ base: 1 }}.ask(2) == 3)\n}}\n"),
+    );
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("tests/server.to"),
+        format!("{helper}test asksTheServer {{\n    assert(Client {{ base: 2 }}.ask(2) == 4)\n}}\n"),
+    )
+    .unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("2 passed"), "{stdout}");
+}
+
 fn project(name: &str, tests: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);

@@ -595,13 +595,20 @@ impl<'a> Checker<'a> {
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
             self.closure_name = Some(format!("{} {}", if suite { "suite" } else { "test" }, name.name));
-            // A test's own body may measure (`testing.bench`).
+            // A test's own body may measure (`testing.bench`), and it is of
+            // its file's module, whose private operations it calls.
             let outer = std::mem::replace(&mut self.measuring, (!suite).then_some(index));
+            let module = match node {
+                ast::TestNode::Test(t) => t.module,
+                ast::TestNode::Suite(s) => s.module,
+            };
+            let outer_module = std::mem::replace(&mut self.module, module);
             let closure =
                 self.closure_with(cx, (&[], None), Some(unit), kind, node.span(), |this, inner, _| match node {
                     ast::TestNode::Test(t) => this.block(inner, &t.body, Some(Ty::UNIT)),
                     ast::TestNode::Suite(s) => this.suite_body(inner, s, index, &id),
                 });
+            self.module = outer_module;
             self.measuring = outer;
             let Some((body, _, info)) = self.types.closure(closure.ty) else { continue };
             let erased = self.types.intern(TyKind::Fn(Vec::new(), info.result, false, Vec::new(), false));
