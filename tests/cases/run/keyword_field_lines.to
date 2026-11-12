@@ -1,0 +1,39 @@
+// A keyword names a field in every place that takes one (5.4), on a line
+// of its own after a field with a type or a default, where the operator
+// that keyword also is would otherwise continue the line before.
+
+import std.console
+
+type Span = {
+    from: String = ""
+    in: Int = 0
+    count: Int
+    or: Bool
+    for: String = "everyone"
+}
+
+fn main() {
+    let span = Span {
+        count: 2
+        in: 1
+        or: true
+    }
+    let moved = span with {
+        in: 5
+    }
+    match moved {
+        Span {
+            from: _
+            in: start
+            count: count
+            or: either
+            for: everyone
+        } => console.println("{span.in} {moved.in} {start} {either} {everyone} {count}")
+    }
+    let found = 3
+        in [1, 2, 3]
+    console.println("{found}")
+}
+
+// expect-stdout: 1 5 5 true everyone 2
+// expect-stdout: true
