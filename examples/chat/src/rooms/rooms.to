@@ -1,4 +1,6 @@
+import std.executor
 import std.json
+import std.sync
 
 /// What happened in a room.
 pub enum Kind {
@@ -11,8 +13,8 @@ pub enum Kind {
     Said
     @name("left")
     Left
-    /// What someone who could not keep up is told: how many lines went by
-    /// without them.
+    /// What someone who could not keep up is told: how many messages went
+    /// by without them.
     @name("missed")
     Missed
 }
@@ -28,151 +30,123 @@ pub type Event = {
     people: Array[String] = []
 }
 
+/// Where to send what someone should see: the mailbox of their connection.
+pub alias Outbox = executor.ActorRef[String]
+
+/// What the hub is told.
+pub enum Told {
+    /// A connection came into a room under a name.
+    Enter(Int, String, String, Outbox)
+    /// A connection said something.
+    Say(Int, String)
+    /// A connection went.
+    Leave(Int)
+}
+
+/// The address of the hub.
+pub alias Hub = executor.ActorRef[Told]
+
 /// Someone in a room.
 type Member = {
     name: String
     room: String
-    /// The lines their connection has not taken yet.
-    waiting: Array[String] = []
-    /// The lines that found `waiting` full.
+    outbox: Outbox
+    /// The lines that found their mailbox full.
     missed: Int = 0
 }
 
-/// Every room and who is in it. It is a value: each thing that happens is a
-/// function that changes it, and nothing here waits, locks or sends.
-pub type Rooms = {
-    priv members: Map[Int, Member] = [:]
+/// Everything the hub knows. Only its own task reads or changes it.
+type State = {
+    members: Map[Int, Member] = [:]
     /// The last things said in each room, for who comes later.
-    priv recent: Map[String, Array[String]] = [:]
+    recent: Map[String, Array[String]] = [:]
+    /// How many people each room has, for the rest of the program to read.
+    counts: sync.Map[String, Int]
 }
 
 /// How much of what was said a room keeps.
 pub const Kept: Int = 20
 
-/// How many lines wait for a connection before the next ones are lost.
+/// How many lines wait in a connection's mailbox before the next ones are
+/// lost.
 pub const Waiting: Int = 64
 
-/// The longest name, and the longest message.
+/// The longest name and the longest message.
 const NameLimit: Int = 24
 
 const TextLimit: Int = 500
 
-/// A connection comes into a room under a name. It is told who is there
-/// and what was said, and the others that it came.
-pub fn Rooms.enter(var self, id: Int, room: String, name: String) {
-    let member = Member { name: tidy(name, NameLimit), room: tidy(room, NameLimit) }
-    self.members[id] = member
-    let now = self.people(member.room)
-    self.deliver(id, line(Event { kind: Kind.Welcome, room: member.room, people: now }))
-    for said in self.recent.get(member.room).unwrapOr([]) {
-        self.deliver(id, said)
-    }
-    let joined = Event { kind: Kind.Joined, room: member.room, from: member.name, people: now }
-    self.broadcast(member.room, line(joined), except: some(id))
+/// Starts the hub: an actor that owns the rooms and is told what happens,
+/// one message at a time. `counts` is kept up to date with the people of
+/// each room, for whoever else wants to read it.
+pub fn start(counts: sync.Map[String, Int]): executor.Actor[Told, Never] ! executor.ExecutorError {
+    executor.actor(
+        State { counts },
+        256,
+        (state: var State, told: Told) { handle(var state, told) },
+    )
 }
 
-/// A connection says something to its room.
-pub fn Rooms.say(var self, id: Int, text: String) {
-    let member = match self.members.get(id) {
-        some(found) => found
-        none => return
-    }
-    let words = tidy(text, TextLimit)
-    if words.isEmpty() {
-        return
-    }
-    let said = line(Event { kind: Kind.Said, room: member.room, from: member.name, text: words })
-    var kept = self.recent.get(member.room).unwrapOr([])
-    kept.push(said)
-    if kept.length() > Kept {
-        _ = kept.removeAt(0)
-    }
-    self.recent[member.room] = kept
-    self.broadcast(member.room, said)
-}
-
-/// A connection goes, and its room is told. An empty room forgets what was
-/// said in it.
-pub fn Rooms.leave(var self, id: Int) {
-    let member = match self.members.remove(id) {
-        some(found) => found
-        none => return
-    }
-    let now = self.people(member.room)
-    if now.isEmpty() {
-        _ = self.recent.remove(member.room)
-    }
-    let left = Event { kind: Kind.Left, room: member.room, from: member.name, people: now }
-    self.broadcast(member.room, line(left))
-}
-
-/// Whether lines wait for a connection.
-pub fn Rooms.hasLinesFor(self, id: Int): Bool {
-    match self.members.get(id) {
-        some(member) => not member.waiting.isEmpty() or member.missed > 0
-        none => false
-    }
-}
-
-/// Takes the lines that wait for a connection. When some were lost, the
-/// last one says how many.
-pub fn Rooms.take(var self, id: Int): Array[String] {
-    var member = match self.members.get(id) {
-        some(found) => found
-        none => return []
-    }
-    var lines = member.waiting
-    if member.missed > 0 {
-        lines.push(line(Event { kind: Kind.Missed, room: member.room, text: "{member.missed}" }))
-    }
-    member.waiting = []
-    member.missed = 0
-    self.members[id] = member
-    lines
-}
-
-/// How many people each room has.
-pub fn Rooms.counts(self): Map[String, Int] {
-    var counts: Map[String, Int] = [:]
-    for member in self.members.values() {
-        counts[member.room] = counts.get(member.room).unwrapOr(0) + 1
-    }
-    counts
-}
-
-/// The names of who is in a room, in the order they came.
-fn Rooms.people(self, room: String): Array[String] {
-    self.members
-        .values()
-        .filter((member) { member.room == room })
-        .map((member) { member.name })
-        .collect()
-}
-
-/// Leaves a line for everyone in a room.
-fn Rooms.broadcast(var self, room: String, text: String, except: Int? = none) {
-    for (id, member) in self.members {
-        if member.room == room and some(id) != except {
-            self.deliver(id, text)
+/// One message at a time: there is nothing here to lock.
+fn handle(state: var State, told: Told) {
+    match told {
+        Told.Enter(id, room, name, outbox) => {
+            let member = Member { name: tidy(name, NameLimit), room: tidy(room, NameLimit), outbox }
+            state.members[id] = member
+            count(var state, member.room)
+            let now = people(state, member.room)
+            // The newcomer hears who is there and what was said, then
+            // everyone hears who came.
+            deliver(
+                var state,
+                id,
+                line(Event { kind: Kind.Welcome, room: member.room, people: now }),
+            )
+            for said in state.recent.get(member.room).unwrapOr([]) {
+                deliver(var state, id, said)
+            }
+            let joined = Event {
+                kind: Kind.Joined
+                room: member.room
+                from: member.name
+                people: now
+            }
+            broadcast(var state, member.room, line(joined), except: some(id))
+        }
+        Told.Say(id, text) => {
+            let member = match state.members.get(id) {
+                some(found) => found
+                none => return
+            }
+            let words = tidy(text, TextLimit)
+            if words.isEmpty() {
+                return
+            }
+            let said = line(
+                Event { kind: Kind.Said, room: member.room, from: member.name, text: words },
+            )
+            var kept = state.recent.get(member.room).unwrapOr([])
+            kept.push(said)
+            if kept.length() > Kept {
+                _ = kept.removeAt(0)
+            }
+            state.recent[member.room] = kept
+            broadcast(var state, member.room, said)
+        }
+        Told.Leave(id) => {
+            let member = match state.members.remove(id) {
+                some(found) => found
+                none => return
+            }
+            count(var state, member.room)
+            let now = people(state, member.room)
+            if now.isEmpty() {
+                _ = state.recent.remove(member.room)  // an empty room forgets
+            }
+            let left = Event { kind: Kind.Left, room: member.room, from: member.name, people: now }
+            broadcast(var state, member.room, line(left))
         }
     }
-}
-
-/// Leaves a line for one connection. One that already has `Waiting` lines
-/// loses it, and is told how many it lost when it next takes its lines: a
-/// reader that cannot keep up costs a bounded amount of memory, and never
-/// holds up its room.
-fn Rooms.deliver(var self, id: Int, text: String) {
-    var member = match self.members.get(id) {
-        some(found) => found
-        none => return
-    }
-    if member.waiting.length() < Waiting {
-        member.waiting.push(text)
-    } else {
-        member.missed += 1
-    }
-    self.members[id] = member
 }
 
 /// A name, a room or a message as it is kept: without the space around it
@@ -183,4 +157,52 @@ fn tidy(text: String, limit: Int): String {
 
 fn line(event: Event): String {
     json.encode(event)
+}
+
+/// The names of who is in a room, in the order they came.
+fn people(state: State, room: String): Array[String] {
+    state.members
+        .values()
+        .filter((member) { member.room == room })
+        .map((member) { member.name })
+        .collect()
+}
+
+/// Writes how many people a room has where the rest of the program reads it.
+fn count(state: var State, room: String) {
+    let now = people(state, room).length()
+    if now == 0 {
+        _ = state.counts.remove(room)
+    } else {
+        _ = state.counts.insert(room, now)
+    }
+}
+
+/// Sends a line to everyone in a room.
+fn broadcast(state: var State, room: String, text: String, except: Int? = none) {
+    for (id, member) in state.members {
+        if member.room == room and some(id) != except {
+            deliver(var state, id, text)
+        }
+    }
+}
+
+/// Sends a line to one connection without waiting for it. A mailbox that is
+/// full loses the line, and its owner is told how many were lost once there
+/// is room again: one slow reader never holds up a room.
+fn deliver(state: var State, id: Int, text: String) {
+    var member = match state.members.get(id) {
+        some(found) => found
+        none => return
+    }
+    if member.missed > 0 {
+        let gap = Event { kind: Kind.Missed, room: member.room, text: "{member.missed}" }
+        if member.outbox.trySend(line(gap)).isOk() {
+            member.missed = 0
+        }
+    }
+    if member.missed > 0 or member.outbox.trySend(text).isErr() {
+        member.missed += 1
+    }
+    state.members[id] = member
 }

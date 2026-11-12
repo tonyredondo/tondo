@@ -112,9 +112,10 @@ resize the images
 
 Passing values between tasks is a channel, in the language, and often the
 better design: [Tasks](../language/13-tasks.md) has both, and when to
-choose which. The [`chat`](../../examples/chat) and
-[`warehouse`](../../examples/warehouse) examples keep their state in a
-`Mutex`, and [`linkcheck`](../../examples/linkcheck) shares a rate limiter.
+choose which. The [`warehouse`](../../examples/warehouse) example keeps
+its state in a `Mutex`, [`chat`](../../examples/chat) gives its state to an
+actor instead, and [`linkcheck`](../../examples/linkcheck) shares a rate
+limiter.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

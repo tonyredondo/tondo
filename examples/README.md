@@ -12,7 +12,7 @@ warning and passes its own tests on each change to the compiler.
 | [`kvstore`](kvstore) | a key-value store over TCP | a protocol as enums, a pure core behind a lock, a model of it checked in every state, sockets |
 | [`sitegen`](sitegen) | a static site generator | templates, YAML into a type, file systems as values, a task for each page |
 | [`linkcheck`](linkcheck) | a concurrent link checker | channels, a group of workers, a rate limit, a deadline around everything, tests against real servers |
-| [`chat`](chat) | rooms over WebSockets | state as a value behind one lock, waiting for a condition, bounded memory for slow readers, the page inside the executable |
+| [`chat`](chat) | rooms over WebSockets | an actor that owns the rooms and one for each connection, messages as an enum, bounded mailboxes for slow readers, the page inside the executable |
 | [`warehouse`](warehouse) | a gRPC service and its client | a `.proto` as a module, the four kinds of call, interceptors, deadlines, health and reflection |
 | [`textkit`](textkit) | a library for C | `pub extern fn`, a struct by value, C's conventions for buffers and callbacks, the header the build writes, a C program that links it |
 | [`notes`](notes) | an MCP server | tools from the methods of a type, schemas from records, validated arguments, resources and prompts |
@@ -37,11 +37,12 @@ Each README has the commands for its example, with what they print.
 | A database | `todo-api` |
 | A command line | `logstat`, `warehouse`, `sitegen` |
 | Tasks and channels | `linkcheck`, `sitegen`, `scripts/dupes.to` |
-| Shared state | `kvstore`, `chat`, `warehouse` |
+| Shared state | `kvstore`, `warehouse` |
+| Actors | `chat` |
 | Deadlines and cancelling | `linkcheck`, `warehouse`, `chat` |
 | Errors as values | `logstat`, `kvstore`, `sitegen` |
 | Tests over a real socket | `todo-api`, `kvstore`, `linkcheck`, `chat`, `warehouse`, `notes` |
-| Tests of every order of tasks | `warehouse`, `sitegen` |
+| Tests of every order of tasks | `warehouse`, `sitegen`, `chat` |
 | Fuzzing and models | `logstat`, `textkit`, `kvstore` |
 | Files and templates | `sitegen`, `notes`, `scripts` |
 | JSON, YAML, CSV, Protocol Buffers | `todo-api`, `sitegen`, `scripts/csvsum.to`, `warehouse` |
