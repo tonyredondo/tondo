@@ -566,7 +566,8 @@ impl<'a> Checker<'a> {
             // A cancelled task's `defer` ends at a wait: a lock another holds.
             if cx.deferred && matches!(handle, Handle::Mutex | Handle::RwLock) && method.name != "tryUpdate" {
                 let message = "in a cancelled task this `defer` ends here if another task holds the lock, and what it \
-                               does is lost: use an `Atomic`, or send to a channel with room, which need no wait";
+                               does is lost: use an `Atomic`, or send to a channel with room, which need no wait, or \
+                               take the lock in a `within`, whose waits go on until its deadline";
                 self.diags.warning("W1017", span, message);
                 let receiver = Span::new(span.start, method.span.start.saturating_sub(1));
                 if let Some(edits) = self.as_counter(self.sources.slice(receiver), span) {

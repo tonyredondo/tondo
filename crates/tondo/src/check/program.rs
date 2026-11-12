@@ -723,7 +723,11 @@ impl<'a> Checker<'a> {
         let limit = self.expr(cx, limit, Some(duration));
         let limit = self.coerce(limit, duration);
         let held = self.hidden_local(cx, duration);
+        // In a `defer` of a cancelled task, its waits go on until its
+        // deadline (11.17): a lock there is no end of the `defer`.
+        let deferred = std::mem::replace(&mut cx.deferred, false);
         let block = self.block(cx, block, None);
+        cx.deferred = deferred;
         let (ty, error) = match *self.types.kind(block.ty) {
             TyKind::Result(ok, error) => {
                 let error = self.types.union(&[error, timed_out]);

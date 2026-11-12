@@ -1,0 +1,43 @@
+// A lock taken in a `within` of a `defer` of a cancelled task waits for
+// the lock until the deadline (11.17), and the checker does not warn of it
+// as of a lock the `defer` would end at (W1017).
+
+import std.console
+import std.sync
+import std.time
+
+fn worker(ready: Sender[Bool], idle: Receiver[Int], count: sync.Mutex[Int]) {
+    defer {
+        _ = within time.seconds(5) {
+            count.update((n) { n += 100 })
+        }
+    }
+    ready.send(true)
+    _ = idle.receive()
+}
+
+fn holder(count: sync.Mutex[Int], held: Sender[Bool]) {
+    count.update((n) {
+        held.send(true)
+        time.sleep(time.milliseconds(50))
+        n += 1
+    })
+}
+
+fn main() {
+    let count = sync.Mutex(0)
+    let (ready, started) = channel[Bool](1)
+    let (hold, idle) = channel[Int](1)
+    let (held, holding) = channel[Bool](1)
+    let job = spawn worker(ready, idle, count)
+    _ = started.receive()
+    let holdingTask = spawn holder(count, held)
+    // The holder has the lock when the worker is cancelled.
+    _ = holding.receive()
+    job.cancel()
+    holdingTask.wait()
+    console.println("count: {count.get()}")
+    hold.close()
+}
+
+// expect-stdout: count: 101
