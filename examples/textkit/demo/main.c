@@ -5,7 +5,7 @@
 #include "textkit.h"
 
 /* What `textkit_words` calls for each word: prints those said more than once. */
-static void print_repeated(char *word, long count, void *context) {
+static void print_repeated(const char *word, long count, void *context) {
     long *printed = context;
     if (count > 1) {
         printf("  %-10s %ld\n", word, count);
