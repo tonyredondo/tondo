@@ -661,13 +661,13 @@ pub(super) fn checkpoint(table: &Table) -> Result<u32, String> {
     let forked = crate::tasks::fork_copy();
     drop(locks);
     match forked {
-        -1 => Err(format!("cannot fork the replay: {}", std::io::Error::last_os_error())),
-        0 => {
+        Err(error) => Err(format!("cannot fork the replay: {error}")),
+        Ok(0) => {
             kept(table);
             crate::diagnostics::listen_again();
             Ok(0)
         }
-        pid => Ok(pid as u32),
+        Ok(pid) => Ok(pid as u32),
     }
 }
 
@@ -1265,14 +1265,14 @@ pub(super) fn periodic(table: &Table, mut here: Stop, every: u64) -> Option<Stop
         return None;
     }
     match crate::tasks::fork_copy() {
-        0 => {
+        Ok(0) => {
             drop((busy, client, state));
             kept(table);
             here.bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
             Some(here)
         }
-        -1 => None,
-        pid => {
+        Err(_) => None,
+        Ok(pid) => {
             drop((busy, client, state));
             tell(&format!("{{\"checkpointed\":{{\"pid\":{pid},\"tick\":{}}}}}", crate::replay::ticks()));
             None

@@ -161,7 +161,8 @@ pub(crate) fn copy(copied: impl FnOnce(u32)) {
     }
     let mut log = log();
     let baton = baton();
-    let pid = crate::tasks::fork_copy();
+    // No copy this time when one cannot be made safely; the next is due soon.
+    let Ok(pid) = crate::tasks::fork_copy() else { return };
     if pid == 0 {
         drop(baton);
         drop(file);
@@ -173,9 +174,6 @@ pub(crate) fn copy(copied: impl FnOnce(u32)) {
         return;
     }
     drop(baton);
-    if pid < 0 {
-        return;
-    }
     log.file = Some(file);
     drop(log);
     held.push(Copied { tick: TICKS.load(Ordering::Relaxed), pid, segment, at: now });

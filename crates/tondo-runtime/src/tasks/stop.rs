@@ -164,11 +164,20 @@ pub(super) fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>>
 /// Forks a copy of the process that goes on running, on this thread alone.
 /// What another thread is in the middle of stays so in the copy, with no
 /// one to end it: the scheduler's locks are held across the fork, so that the
-/// copy has them free, and a stop of the world ends there.
-pub(crate) fn fork_copy() -> i32 {
-    let held = (soon(&QUEUE), soon(&IN_TONDO), soon(crate::cycles::wanted()));
+/// copy has them free, and a stop of the world ends there. When another
+/// thread keeps one of them longer than a fork waits, as on a machine too
+/// busy to run it, there is no copy, which would wait for it forever.
+pub(crate) fn fork_copy() -> std::io::Result<i32> {
+    let (Some(queue), Some(in_tondo), Some(wanted)) = (soon(&QUEUE), soon(&IN_TONDO), soon(crate::cycles::wanted()))
+    else {
+        let why = "another thread holds the scheduler, which a copy could never have: try again";
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, why));
+    };
     let pid = unsafe { libc::fork() };
-    drop(held);
+    drop((queue, in_tondo, wanted));
+    if pid < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     if pid == 0 {
         if STOPPING.swap(false, Ordering::SeqCst) {
             attend(false);
@@ -176,7 +185,7 @@ pub(crate) fn fork_copy() -> i32 {
         STOPPER.store(false, Ordering::SeqCst);
         crate::cycles::forked();
     }
-    pid
+    Ok(pid)
 }
 
 pub(crate) fn resume_world() {
@@ -196,6 +205,27 @@ mod tests {
     /// The cycle collector, a dump and a logpoint each stop the world, and
     /// the first to end must not let it go on under another
     /// (testing/models/Stop.tla).
+    /// A fork while another thread keeps the scheduler's queue longer than it
+    /// waits makes no copy: the copy would wait for that lock forever, as a
+    /// held copy of a recording once did on a busy machine.
+    #[test]
+    fn a_fork_makes_no_copy_while_the_scheduler_is_held() {
+        let (held, taken) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let queue = super::super::QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+            held.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            drop(queue);
+        });
+        taken.recv().unwrap();
+        let forked = super::fork_copy();
+        if let Ok(0) = forked {
+            unsafe { libc::_exit(0) };
+        }
+        assert!(forked.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock), "{forked:?}");
+        holder.join().unwrap();
+    }
+
     #[test]
     fn one_stops_the_world_at_a_time() {
         static INSIDE: AtomicUsize = AtomicUsize::new(0);
