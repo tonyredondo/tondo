@@ -11,6 +11,19 @@ Where everything about Tondo is written, and which to read for what.
 | [Tondo next to other languages](comparison.md) | What it shares with Go, Rust and C# and where it differs, and a page of programs for each of eight languages |
 | [The README](../README.md) | What Tondo is, how to install it and where it stands |
 
+## The manual
+
+Everything, at length. Its examples are compiled and run by the tests of
+the repository, so what a page says a program prints is what it prints.
+
+| Read | For |
+| --- | --- |
+| [The language](language/README.md) | Twenty chapters, from the shape of a file to unsafe code and C, and a quick reference |
+| [The standard library](std/README.md) | A page for each of its modules and for each type of the prelude, written from the library's own documentation, with an introduction to the modules a program meets first |
+| [The toolchain, chapter by chapter](toolchain.md) | The daily loop, testing, debugging, a running program, performance, editors and agents, and every command with its options |
+| [Tondo for someone who writes another language](comparison.md#a-page-for-each-language) | The same twelve programs in Go, Rust, C#, Python, TypeScript, Java, Kotlin or Swift, and in Tondo |
+| [The examples](../examples/README.md) | Ten projects with their tests: an HTTP API over SQLite, a command-line tool, a TCP server, a site generator, a link checker, a chat, a gRPC service, a library for C, an MCP server, and scripts |
+
 ## The guide
 
 `tondo guide` is the reference, a topic at a time, written for people and for
