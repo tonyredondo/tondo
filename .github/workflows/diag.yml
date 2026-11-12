@@ -26,17 +26,17 @@ jobs:
         with:
           label: ${{ matrix.os }}-${{ matrix.target }}
       - run: cargo test -p tondo --test observe --no-run
-      - name: The signal test, with a watchdog
+      - name: The tests that observe, one at a time, with a watchdog
         shell: bash {0}
         run: |
-          cargo test -p tondo --test observe a_debugger_ended_by_a_signal_ends_its_program -- --nocapture > test.log 2>&1 &
+          cargo test -p tondo --test observe -- --test-threads=1 > test.log 2>&1 &
           pid=$!
-          for i in $(seq 300); do
+          for i in $(seq 1500); do
             kill -0 $pid 2>/dev/null || break
             sleep 1
           done
           if kill -0 $pid 2>/dev/null; then
-            echo "HUNG after 300 s"
+            echo "HUNG after 1500 s"; tail -5 test.log
             ps -A -o pid,ppid,pgid,stat,etime,command | grep -E 'tondo|endless|observe' | grep -v grep
             for p in $(pgrep -f 'endless|tondo debug|tondo dap|observe-'); do
               echo "=== sample $p"; sample $p 3 2>&1 | head -80
