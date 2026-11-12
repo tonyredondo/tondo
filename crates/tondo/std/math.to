@@ -43,6 +43,13 @@ impl Display for MathError {
     }
 }
 
+/// π, the ratio of a circle's circumference to its diameter, as the
+/// nearest `Float`.
+pub const Pi: Float = 3.141592653589793
+
+/// e, the base of the natural logarithm, as the nearest `Float`.
+pub const E: Float = 2.718281828459045
+
 /// The square root; a negative value is `MathError.Domain`.
 pub fn sqrt(value: Float): Float ! MathError {
     if value < 0.0 {

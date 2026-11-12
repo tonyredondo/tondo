@@ -48,7 +48,7 @@ std.crypto     passwords, sealing with a key, signatures, PEM keys and certifica
 std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7, as text in every format
 std.format     a text builder, formats chosen at run time, numbers and plurals per language
-std.math       floating-point math and integers' gcd and lcm
+std.math       floating-point math, Pi and E, and integers' gcd and lcm
 std.sync       Mutex, Atomic, shared collections, rate limits, retries (`tondo guide tasks`)
 std.validate   rules on the fields of a type, which reading checks: lengths, bounds, patterns
 std.executor   pools that bound work, actors with a mailbox (`tondo guide tasks`)

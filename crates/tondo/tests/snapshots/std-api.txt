@@ -1867,6 +1867,8 @@ impl serialization.Decode for BigInt
 impl serialization.Decode for Decimal
 impl serialization.Encode for BigInt
 impl serialization.Encode for Decimal
+pub const E: Float = 2.718281828459045
+pub const Pi: Float = 3.141592653589793
 pub enum MathError {
     /// The value is outside the operation's domain, such as the square root
     /// of a negative number.

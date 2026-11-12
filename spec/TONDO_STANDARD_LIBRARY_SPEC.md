@@ -2946,6 +2946,8 @@ silencioso:
 
 ~~~tondo pseudocode
 pub enum MathError { Domain, NotANumber(String) }
+pub const Pi: Float = 3.141592653589793             // el Float más cercano a π
+pub const E: Float = 2.718281828459045              // y a e
 pub fn sqrt(value: Float): Float ! MathError
 pub fn ln(value: Float): Float ! MathError
 pub fn log10(value: Float): Float ! MathError
