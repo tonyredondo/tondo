@@ -263,6 +263,28 @@ fn watching_reloads_what_is_saved() {
     server.stop();
 }
 
+/// A watcher ended by SIGTERM, as a script, an editor's task or an agent
+/// ends it by its pid, ends the program it runs too, which would otherwise
+/// run on alone and keep what it holds, as a port.
+#[test]
+fn a_watcher_ended_ends_its_program() {
+    // Its program is read from /proc.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = dir("live_watch_ended");
+    std::fs::write(dir.join("server.to"), MODES).unwrap();
+    let mut server = Running::start(&dir, &["run", "server.to", "--watch"]);
+    assert_eq!(server.answer("a"), "v1 a 1");
+    let tondo = server.child.id();
+    let children = std::fs::read_to_string(format!("/proc/{tondo}/task/{tondo}/children")).unwrap();
+    let program: i32 = children.split_whitespace().next().expect("the program").parse().unwrap();
+    unsafe { libc::kill(tondo as i32, libc::SIGTERM) };
+    let status = server.child.wait().unwrap();
+    assert_eq!(status.code(), Some(128 + libc::SIGTERM), "{status}");
+    assert_ne!(unsafe { libc::kill(program, 0) }, 0, "the program {program} runs on");
+}
+
 const HANDLER: &str = r#"import std.console
 
 type Reply = { text: String }

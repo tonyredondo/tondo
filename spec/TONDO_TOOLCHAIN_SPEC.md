@@ -1892,7 +1892,9 @@ también los que embebe, lo cambia como `reload`; si el cambio pide arrancarlo d
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
 diagnósticos y el programa sigue con su código. Atiende un cambio cuando los
 archivos dejan de cambiar, así que lee entero uno que se guarda en varias
-escrituras.
+escrituras. Un SIGTERM o un SIGHUP a `tondo`, como los manda un script, la
+tarea de un editor o un agente a su pid, llega también al programa, y `tondo`
+termina cuando él termina; lo mismo con `tondo run --record`.
 
 Un build vivo no libera el código de los parches, y un frame que pasa al
 código nuevo deja debajo el suyo viejo, que solo devuelve lo que el nuevo

@@ -2943,9 +2943,12 @@ fn record_run(
         .envs(hold.as_ref().map(|(ms, _)| ("TONDO_RT_RECORD_HOLD", ms.to_string())))
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
-    // Ctrl-C is the program's to handle; the recording ends with it.
+    // Ctrl-C is the program's to handle; the recording ends with it, and
+    // with SIGTERM or SIGHUP of `tondo`, which reach the program too.
     unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+    pass_endings_on(&child);
     let status = child.wait().map_err(|e| e.to_string())?;
+    RUNNING.store(0, std::sync::atomic::Ordering::SeqCst);
     tondo::debug::keep_children(dir);
     use tondo::debug::Kept;
     let shown = dir.display();
@@ -2970,10 +2973,33 @@ fn record_run(
     Ok(ExitCode::from(code.clamp(0, 255) as u8))
 }
 
+/// The program `tondo` runs and waits for, and the signal that asked
+/// `tondo` to end, as a script, an editor's task or an agent sends one to
+/// the pid it knows: the program ends with it, rather than run on alone.
+static RUNNING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static ENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn pass_on(signal: libc::c_int) {
+    ENDING.store(signal, std::sync::atomic::Ordering::SeqCst);
+    let running = RUNNING.load(std::sync::atomic::Ordering::SeqCst);
+    if running > 0 {
+        unsafe { libc::kill(running, signal) };
+    }
+}
+
+/// SIGTERM and SIGHUP of `tondo` reach the program it runs, `child`.
+fn pass_endings_on(child: &std::process::Child) {
+    RUNNING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+    for signal in [libc::SIGTERM, libc::SIGHUP] {
+        unsafe { libc::signal(signal, pass_on as *const () as libc::sighandler_t) };
+    }
+}
+
 /// `tondo run --watch` (toolchain 7.10): runs a live build of the program
 /// and, when its files change, reloads it; it runs the program again when
 /// it had ended or the change needs it, and goes on with the old code when
-/// the files do not compile.
+/// the files do not compile. Ended by SIGTERM or SIGHUP, it ends the
+/// program first.
 fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result<ExitCode, String> {
     let stamps = || -> Vec<(PathBuf, Option<std::time::SystemTime>)> {
         let inputs = driver::inputs(path).unwrap_or_default();
@@ -2992,15 +3018,30 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         };
         // A panic waits for a fix: this is what saves it.
         command.env("TONDO_LIVE_HOLD", "1");
-        command.args(program_args).spawn().map(Some).map_err(|e| format!("cannot start {}: {e}", executable.display()))
+        let child =
+            command.args(program_args).spawn().map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+        pass_endings_on(&child);
+        Ok(Some(child))
     };
     // Read first: a change while it starts is a change.
     let mut seen = stamps();
     let mut child = start()?;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
+        // Asked to end: the program, which the signal reached, ends first,
+        // even one that started as it came.
+        let signal = ENDING.load(std::sync::atomic::Ordering::SeqCst);
+        if signal != 0 {
+            if let Some(mut running) = child.take() {
+                unsafe { libc::kill(running.id() as i32, signal) };
+                let _ = running.wait();
+            }
+            return Ok(ExitCode::from(128 + signal as u8));
+        }
         if let Some(status) = child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
             eprintln!("tondo: the program ended ({status}); a change to its files runs it again");
+            // Its pid may be another process's now.
+            RUNNING.store(0, std::sync::atomic::Ordering::SeqCst);
             child = None;
         }
         let now = stamps();
@@ -3020,6 +3061,7 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
             Err(tondo::live::Refused::Restart(message)) => {
                 // Stopped before it says so, so that what comes next goes
                 // to the program run again.
+                RUNNING.store(0, std::sync::atomic::Ordering::SeqCst);
                 let _ = running.kill();
                 let _ = running.wait();
                 eprintln!("tondo: not reloaded: {message}; running it again");
