@@ -147,7 +147,7 @@ impl<'a> Checker<'a> {
             }
             TyKind::CArray(inner, count) => CType::Array(Box::new(self.c_type(written, inner)), count),
             TyKind::Adt(_) if repr == self.void => CType::Named("void"),
-            TyKind::Adt(id) => CType::Struct(self.types.adt(id).name.clone()),
+            TyKind::Adt(id) => CType::Struct(c_name(&self.types.adt(id).name)),
             _ => CType::Named("void"),
         }
     }
@@ -168,7 +168,7 @@ impl<'a> Checker<'a> {
                     if !seen.insert(name.clone()) {
                         return;
                     }
-                    let found = this.c_decls.iter().find(|(id, _)| this.types.adt(**id).name == *name);
+                    let found = this.c_decls.iter().find(|(id, _)| c_name(&this.types.adt(**id).name) == *name);
                     let Some((&id, decl)) = found else { return };
                     let written: Vec<&ast::FieldDecl> = match &decl.body {
                         ast::TypeBody::Record(fields) => fields.iter().collect(),
@@ -508,4 +508,10 @@ impl<'a> Checker<'a> {
         let hir::ExprKind::Call(_, _, values) = call.kind else { return call };
         Self::mk(hir::ExprKind::CallValue(Box::new(callee), values), call.ty, span)
     }
+}
+
+/// The C name of an `extern type`: its name as declared, without the
+/// module a project with several qualifies it with, which C cannot have.
+fn c_name(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or(name).to_string()
 }

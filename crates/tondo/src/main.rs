@@ -2768,7 +2768,11 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
             _ => return Err(format!("unexpected arguments\n{USAGE}")),
         }
     }
-    let name = program_name(&path)?.to_string_lossy().into_owned();
+    // A library is named after its package, or its file.
+    let name = match path.is_dir() {
+        true => tondo::deps::resolve(&path, None)?[0].name.clone(),
+        false => program_name(&path)?.to_string_lossy().into_owned(),
+    };
     let analysis = driver::analyze_library(&path)?;
     let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
     if !json {

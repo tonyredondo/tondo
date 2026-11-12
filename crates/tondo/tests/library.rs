@@ -145,6 +145,50 @@ fn a_c_program_calls_a_library() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "5050 2 hidden\n", "{}", String::from_utf8_lossy(&run.stderr));
 }
 
+/// A project of several modules writes its `extern type`s in the header by
+/// the names they were declared with, which C takes, and is named after its
+/// package, not its directory.
+#[test]
+fn a_project_of_modules_publishes_its_types_by_their_names() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("library").join("several");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src/text")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"textkit\"\n").unwrap();
+    std::fs::write(
+        dir.join("src/textkit.to"),
+        "import std.ffi\nimport textkit.text\n\npub extern type Stats = {\n    words: ffi.CLong\n}\n\n\
+         pub extern fn textkit_stats(input: ffi.CString): Stats {\n    \
+         Stats { words: text.words(unsafe { ffi.fromCString(input) }) }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/text/text.to"),
+        "pub fn words(line: String): Int {\n    line.split(\" \").length()\n}\n",
+    )
+    .unwrap();
+    let built = tondo(&dir, &["build", "--library", "--output", "out"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let header = std::fs::read_to_string(dir.join("out/textkit.h")).unwrap();
+    for declaration in ["typedef struct Stats Stats;", "struct Stats {", "Stats textkit_stats(char *input);"] {
+        assert!(header.contains(declaration), "{declaration} in\n{header}");
+    }
+    std::fs::write(
+        dir.join("app.c"),
+        "#include \"textkit.h\"\n#include <stdio.h>\n\
+         int main(void) { printf(\"%ld\\n\", (long)textkit_stats(\"a b c\").words); return 0; }\n",
+    )
+    .unwrap();
+    let rpath = format!("-Wl,-rpath,{}", dir.join("out").display());
+    let compiled = Command::new("cc")
+        .args(["app.c", "-Iout", "-Lout", "-ltextkit", &rpath, "-o", "app"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let run = Command::new(dir.join("app")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n", "{}", String::from_utf8_lossy(&run.stderr));
+}
+
 const LOADER: &str = r#"#include <dlfcn.h>
 #include <stdio.h>
 
