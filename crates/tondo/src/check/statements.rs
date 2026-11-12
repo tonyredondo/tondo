@@ -374,7 +374,14 @@ impl<'a> Checker<'a> {
             }
             ast::StmtKind::Fail(value) => {
                 let declared = cx.error;
-                let value = self.expr(cx, value, declared);
+                let bare = match declared {
+                    Some(declared) if !cx.infer_error => self.bare_failure(cx, value, declared),
+                    _ => None,
+                };
+                let value = match bare {
+                    Some(value) => value,
+                    None => self.expr(cx, value, declared),
+                };
                 // It ends the function, even where it cannot.
                 cx.diverged = true;
                 let error = self.error_channel(cx, value.ty, stmt.span, "E1302")?;

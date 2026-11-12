@@ -6217,3 +6217,16 @@ in one: an arm that binds is written for each pattern, and the error says so. Th
 the top of an arm, where they read as a list of cases. Exhaustiveness counts each as a pattern of
 its own, so one that earlier ones cover is reported. The lowering tests them in turn and jumps to
 the one body, which is not copied.
+
+## A variant alone, where its enum is known
+
+1,330 arms of the standard library and the examples repeated their enum's name, as 112 `fail`s
+did, when the type there could only be that enum. A pattern at a place whose type is an enum now
+names its variant alone, at any depth, `some(Card(number))`, as `some` and `none` always were; and
+`fail` does in a function or a closure that declares an enum as its error, or a union of enums of
+which only one has the variant. Only there: in other expressions the type is often not known when
+the name is read, and a name that meant two things would depend on it. A name that is not a
+variant of the enum is a binding, as before. A name that is also a type or a function there is
+asked for in full rather than chosen, and where no error is declared, as in `main`, the error for
+an unknown name says which enum has it. A leading dot, as Swift's `.card`, was not an option: a
+line that starts with `.` continues the one before.

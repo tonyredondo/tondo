@@ -1183,6 +1183,22 @@ impl<'a> Checker<'a> {
         self.diags.fix(format!("write `{near}`"), false, vec![(span, near)]);
     }
 
+    /// The one enum of the module's names that has a variant `name`.
+    fn enum_of_variant(&self, name: &str) -> Option<String> {
+        let mut owners = self.type_names.iter().filter_map(|(owner, found)| match found {
+            TypeName::Nominal(ty) => match self.types.kind(*ty) {
+                TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                    AdtKind::Enum(variants) if variants.iter().any(|v| v.name == name) => Some(owner.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        });
+        let owner = owners.next()?;
+        owners.next().is_none().then_some(owner)
+    }
+
     /// Reports `E1001`, pointing habits from other languages at the canonical form.
     pub(super) fn unknown_name(&mut self, cx: &FnCx, name: &str, span: Span) {
         // A module of the program this file does not import.
@@ -1241,6 +1257,10 @@ impl<'a> Checker<'a> {
                     system.name(),
                     found.head
                 )
+            }
+            // A variant written alone where its enum is not known.
+            _ if let Some(owner) = self.enum_of_variant(name) => {
+                format!("`{name}` is a variant of `{owner}`: write `{owner}.{name}`")
             }
             _ if module.is_some() => {
                 format!(
@@ -1315,6 +1335,9 @@ impl<'a> Checker<'a> {
             "True" | "TRUE" => Some((true, "true".into())),
             "False" | "FALSE" => Some((true, "false".into())),
             "this" => Some((false, "self".into())),
+            _ if hint.contains(" is a variant of `") => {
+                hint.rsplit_once(": write `").map(|(_, written)| (true, written.trim_end_matches('`').to_string()))
+            }
             _ => hint
                 .strip_prefix("did you mean `")
                 .and_then(|h| h.strip_suffix("`?"))

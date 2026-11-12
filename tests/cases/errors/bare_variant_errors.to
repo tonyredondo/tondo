@@ -1,0 +1,37 @@
+// A variant written alone that holds data, one whose name is also a type
+// there, and one where no error is declared, as in `main`.
+
+enum Payment {
+    Cash
+    Card(String)
+    Coupon
+}
+
+type Coupon = {
+    code: String
+}
+
+enum Problem {
+    Coupon
+}
+
+fn kind(payment: Payment): String {
+    match payment {
+        Cash => "cash"
+        Card => "card"
+        Coupon => "coupon"
+    }
+}
+
+fn check(): !Problem {
+    fail Coupon
+}
+
+fn main() {
+    fail Cash
+}
+
+// expect-error: E1202 `Card` holds data: write `Card(...)`
+// expect-error: E1001 `Coupon` is a variant of `Payment` and a type here: write the variant in full, `Payment.Coupon`
+// expect-error: E1001 `Coupon` is a variant of `Problem` and a type here: write the variant in full, `Problem.Coupon`
+// expect-error: E1001 unknown name `Cash`; `Cash` is a variant of `Payment`: write `Payment.Cash`

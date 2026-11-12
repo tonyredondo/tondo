@@ -1,0 +1,82 @@
+// Where an enum is expected, a pattern names its variant alone, at any
+// depth; and `fail` does in a function that declares the enum as its error,
+// or a union of enums of which one has the variant.
+
+import std.console
+
+enum ConfigError {
+    Missing(String)
+    Invalid { field: String, reason: String }
+    Empty
+}
+
+enum NetError {
+    Refused
+}
+
+fn port(text: String): Int ! ConfigError {
+    if text.isEmpty() {
+        fail Missing("port")
+    }
+    if text == "-" {
+        fail Empty
+    }
+    Int.parse(text) ?? fail Invalid { field: "port", reason: "not a number" }
+}
+
+fn either(flag: Int): Int ! (ConfigError | NetError) {
+    match flag {
+        0 => fail Refused
+        1 => fail Empty
+        _ => flag
+    }
+}
+
+enum Payment {
+    Cash
+    Card(String)
+    Transfer { iban: String, reference: String }
+}
+
+fn describe(payment: Payment?): String {
+    match payment {
+        some(Cash) => "cash"
+        some(Card(number)) => "card {number}"
+        some(Transfer { iban, reference }) => "transfer {iban} {reference}"
+        none => "nothing"
+    }
+}
+
+fn main() {
+    for text in ["", "-", "x", "80"] {
+        match port(text) {
+            ok(value) => console.println("{value}")
+            err(Missing(what)) => console.println("missing {what}")
+            err(Invalid { field, reason }) => console.println("{field}: {reason}")
+            err(Empty) => console.println("empty")
+        }
+    }
+    for flag in [0, 1, 2] {
+        match either(flag) {
+            ok(value) => console.println("{value}")
+            err(ConfigError(_)) => console.println("config")
+            err(NetError(_)) => console.println("net")
+        }
+    }
+    let payments: Array[Payment?] = [
+        Payment.Cash,
+        Payment.Card("4242"),
+        Payment.Transfer { iban: "ES1", reference: "r" },
+        none,
+    ]
+    console.println("{payments.map(describe)}")
+}
+
+// expect-stdout: missing port
+// expect-stdout: empty
+// expect-stdout: port: not a number
+// expect-stdout: 80
+// expect-stdout: net
+// expect-stdout: config
+// expect-stdout: 2
+// expect-stdout: [cash, card 4242, transfer ES1 r, nothing]

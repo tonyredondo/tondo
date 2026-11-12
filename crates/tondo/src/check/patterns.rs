@@ -9,6 +9,119 @@ impl<'a> Checker<'a> {
 
     /// Resolves `Enum.Variant`. Returns `None` when the path does not name a
     /// type, and `Some(None)` after reporting a bad variant.
+    /// The variant `name` alone names where an enum is expected (14.3): its
+    /// index, or `None` when the enum has none of that name. A name that is
+    /// also a type or a function there is asked for in full.
+    pub(super) fn bare_variant(&mut self, ty: Ty, name: &ast::Ident) -> Option<Result<u32, ()>> {
+        let ty = self.types.repr(ty);
+        let TyKind::Adt(id) = self.types.kind(ty) else { return None };
+        let AdtKind::Enum(variants) = &self.types.adt(*id).kind else { return None };
+        let index = variants.iter().position(|v| v.name == name.name)?;
+        let enum_name = self.types.display(ty);
+        let other = if self.type_named(&name.name).is_some() {
+            Some("a type")
+        } else if matches!(self.names.get(&name.name), Some(ModuleName::Fn(_) | ModuleName::Newtype(_))) {
+            Some("a function")
+        } else {
+            None
+        };
+        if let Some(other) = other {
+            self.bare_variants.push(name.span);
+            let message = format!(
+                "`{0}` is a variant of `{enum_name}` and {other} here: write the variant in full, `{enum_name}.{0}`",
+                name.name
+            );
+            self.diags.error("E1001", name.span, message);
+            return Some(Err(()));
+        }
+        if let Some(owner) = self.index_type_name(ty) {
+            self.index_refer(name, crate::index::Key::Variant(owner, name.name.clone()));
+        }
+        Some(Ok(index as u32))
+    }
+
+    /// `fail V`, `fail V(...)` or `fail V { ... }` (13.6): a variant of the
+    /// enum the function declares it fails with, or of the one enum of a
+    /// declared union that has it, written alone.
+    pub(super) fn bare_failure(&mut self, cx: &mut FnCx, value: &ast::Expr, declared: Ty) -> Option<hir::Expr> {
+        let span = value.span;
+        let (name, args, inits) = match &value.kind {
+            ast::ExprKind::Path(path) if path.len() == 1 => (&path[0], None, None),
+            ast::ExprKind::Call { callee, args } => match &callee.kind {
+                ast::ExprKind::Path(path) if path.len() == 1 => (&path[0], Some(args), None),
+                _ => return None,
+            },
+            ast::ExprKind::Record { path, type_args, fields } if path.len() == 1 && type_args.is_empty() => {
+                (&path[0], None, Some(fields))
+            }
+            _ => return None,
+        };
+        // A binding of that name is what it is.
+        if self.lookup(cx, &name.name).is_some() || self.visible_capture(cx, &name.name) {
+            return None;
+        }
+        let enums = self.types.members(declared).map_or(vec![declared], <[Ty]>::to_vec);
+        let having: Vec<Ty> = enums
+            .into_iter()
+            .filter(|&e| match self.types.kind(self.types.repr(e)) {
+                TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                    AdtKind::Enum(variants) => variants.iter().any(|v| v.name == name.name),
+                    _ => false,
+                },
+                _ => false,
+            })
+            .collect();
+        let enum_ty = match having.as_slice() {
+            [] => return None,
+            [only] => *only,
+            many => {
+                let names: Vec<String> =
+                    many.iter().map(|&e| format!("`{}.{}`", self.types.display(e), name.name)).collect();
+                let message = format!(
+                    "`{}` is a variant of more than one error: write it in full, {}",
+                    name.name,
+                    listed(&names)
+                );
+                self.diags.error("E1001", name.span, message);
+                return Some(Self::error_expr(span));
+            }
+        };
+        let variant = match self.bare_variant(enum_ty, name)? {
+            Ok(variant) => variant,
+            Err(()) => return Some(Self::error_expr(span)),
+        };
+        let shown = format!("{}.{}", self.types.display(enum_ty), name.name);
+        let built = match (self.payload(enum_ty, variant), args, inits) {
+            (Payload::Unit, None, None) => Vec::new(),
+            (Payload::Tuple(types), Some(args), None) if types.len() == args.len() => args
+                .iter()
+                .zip(types)
+                .enumerate()
+                .map(|(index, (arg, ty))| {
+                    let value = self.expr(cx, &arg.value, Some(ty));
+                    (index as u32, self.coerce(value, ty))
+                })
+                .collect(),
+            (Payload::Record(fields), None, Some(inits)) => {
+                let fields: Vec<(String, Ty)> = fields.into_iter().map(|f| (f.name, f.ty)).collect();
+                let (_, values, seen) = self.generic_fields(cx, enum_ty, &fields, inits, Some(enum_ty), span);
+                self.report_missing(&fields, &seen, inits, span);
+                values
+            }
+            (payload, _, _) => {
+                let written = match payload {
+                    Payload::Unit => name.name.clone(),
+                    Payload::Tuple(types) => format!("{}({})", name.name, vec!["..."; types.len()].join(", ")),
+                    Payload::Record(_) => format!("{} {{ ... }}", name.name),
+                };
+                let message = format!("`{shown}` is written `{written}`");
+                self.diags.error("E1102", span, message);
+                return Some(Self::error_expr(span));
+            }
+        };
+        Some(Self::mk(hir::ExprKind::Variant(variant, built), enum_ty, span))
+    }
+
     pub(super) fn variant_path(&mut self, path: &[ast::Ident]) -> Option<Option<(Ty, u32)>> {
         let (variant, type_path) = path.split_last()?;
         let type_name = type_path.last()?;
@@ -391,6 +504,25 @@ impl<'a> Checker<'a> {
                 if let Some(message) = message {
                     return self.pattern_error(name.span, message);
                 }
+                // A variant of the enum, written alone.
+                match self.bare_variant(ty, name) {
+                    Some(Err(())) => return Self::wild(ty, span),
+                    Some(Ok(variant)) => {
+                        // A variant, which is `PascalCase`, and not a binding
+                        // whose name the linker found wrong.
+                        self.bare_variants.push(name.span);
+                        let written = match self.payload(ty, variant) {
+                            Payload::Unit => {
+                                return hir::Pattern { kind: hir::PatKind::Variant(variant, Vec::new()), ty, span };
+                            }
+                            Payload::Tuple(_) => format!("{}(...)", name.name),
+                            Payload::Record(_) => format!("{} {{ ... }}", name.name),
+                        };
+                        let message = format!("`{}` holds data: write `{written}`", name.name);
+                        return self.pattern_error(name.span, message);
+                    }
+                    None => {}
+                }
                 hir::PatKind::Binding(self.declare(cx, name, ty, context.mutable))
             }
             ast::PatternKind::Loan(mode, name) => {
@@ -491,6 +623,21 @@ impl<'a> Checker<'a> {
                     let fields = args.iter().zip(types).map(|(arg, t)| self.pattern(cx, arg, t, context)).collect();
                     hir::PatKind::Variant(variant, fields)
                 } else if let [name] = path.as_slice()
+                    && let Some(found) = self.bare_variant(ty, name)
+                {
+                    // A variant of the enum, written alone.
+                    let Ok(variant) = found else { return Self::wild(ty, span) };
+                    let Payload::Tuple(types) = self.payload(ty, variant) else {
+                        let message = format!("`{}` has no positional payload", name.name);
+                        return self.pattern_error(span, message);
+                    };
+                    if types.len() != args.len() {
+                        let message = format!("`{}` has {} payload values", name.name, types.len());
+                        return self.pattern_error(span, message);
+                    }
+                    let fields = args.iter().zip(types).map(|(arg, t)| self.pattern(cx, arg, t, context)).collect();
+                    hir::PatKind::Variant(variant, fields)
+                } else if let [name] = path.as_slice()
                     && let Some(&ModuleName::Newtype(newtype)) = self.names.get(&name.name)
                 {
                     if newtype != ty {
@@ -518,6 +665,16 @@ impl<'a> Checker<'a> {
                         return self.pattern_error(span, message);
                     };
                     (enum_ty, fields.into_iter().map(|f| (f.name, f.ty)).collect(), Some(variant))
+                } else if let [name] = path.as_slice()
+                    && let Some(found) = self.bare_variant(ty, name)
+                {
+                    // A variant of the enum, written alone.
+                    let Ok(variant) = found else { return Self::wild(ty, span) };
+                    let Payload::Record(fields) = self.payload(ty, variant) else {
+                        let message = format!("`{}` has no named fields", name.name);
+                        return self.pattern_error(span, message);
+                    };
+                    (ty, fields.into_iter().map(|f| (f.name, f.ty)).collect(), Some(variant))
                 } else if let [name] = path.as_slice()
                     && let Some(record) = self.type_named(&name.name)
                 {

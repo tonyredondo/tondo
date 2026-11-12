@@ -46,7 +46,9 @@ fn main() {
 ```
 
 - `T ! E`: a function that returns `T` or fails with `E`. Its body's value is
-  the success; `fail error` ends it with the error.
+  the success; `fail error` ends it with the error. In a function that
+  declares an enum as its error, `fail Missing("port")` names its variant
+  alone.
 - `?` on a `T ! E` gives the `T` or returns the error; on a `T?` in a function
   that returns an option, it gives the value or returns `none`.
 - Different error types: declare a union, `fn run(): !(ConfigError |

@@ -114,7 +114,8 @@ fn main() {
 
 A match is exhaustive: a missing case is a compile error that names it. One
 arm per line; `_` matches anything. `1 | 2 =>` joins patterns that bind
-nothing in one arm.
+nothing in one arm. Where the value is of an enum, a pattern names a variant
+alone, at any depth: `some(Card(number))` for `some(Payment.Card(number))`.
 
 ## Closures and function values
 

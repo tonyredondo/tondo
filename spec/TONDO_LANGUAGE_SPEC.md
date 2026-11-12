@@ -5035,6 +5035,28 @@ El tipo del error debe ser `E`, un miembro inyectable o una unión cuyo conjunto
 normalizado sea subconjunto de la unión `E`, según 8.9. `fail` tiene tipo `Never`
 en la ruta actual.
 
+En una función o un cierre que declara su error, y este es un enum `E`,
+`fail V`, `fail V(...)` y `fail V { ... }` nombran la variante `V` de `E`:
+
+~~~tondo
+enum ConfigError {
+    Missing(String)
+    Invalid(String)
+}
+
+fn port(text: String): Int ! ConfigError {
+    if text.isEmpty() {
+        fail Missing("port")
+    }
+    Int.parse(text) ?? fail Invalid("port")
+}
+~~~
+
+Si el error declarado es una unión de enums, `V` debe ser variante de uno solo
+de ellos. Donde no se declara error, como en `main`, un script o un cierre que
+lo infiere, la variante se escribe entera; un nombre que es variante de un solo
+enum del módulo lo dice en el error.
+
 Como `return`, `fail` termina únicamente la función o cierre más cercano; nunca sale de un callback exterior.
 
 ### 13.7 `defer`
@@ -5498,6 +5520,15 @@ Shape.Circle(radius)
 HttpResult.Success { status, body }
 Shape.Point
 ~~~
+
+Donde el valor es de un enum `E`, a cualquier profundidad, la variante se
+escribe también sola: `Circle(radius)`, `Success { status, body }`, `Point`,
+`some(Card(number))`. Un nombre que no es variante de `E` es lo que era, un
+binding; uno que tomara su lugar por error deja el `match` sin cubrir, y uno en
+`PascalCase` avisa (`W1004`). Donde el valor es de una unión nada cambia, aunque
+un miembro sea un enum. Si el nombre es además un tipo o una función visibles
+ahí, es `E1001`, que pide la variante entera, `E.V`, en vez de elegir; y una
+variante con datos escrita sin ellos es `E1202`.
 
 #### Option y Result
 

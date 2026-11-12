@@ -76,6 +76,7 @@ fn check_with<'a>(
         every_body,
         inferring: 0,
         holes: Vec::new(),
+        bare_variants: Vec::new(),
         index_exprs: Vec::new(),
         cell_uses: Vec::new(),
         meta,
@@ -179,6 +180,8 @@ fn check_with<'a>(
     let program = checker.program(module);
     checker.index_finish();
     checker.lost_updates();
+    let bare = std::mem::take(&mut checker.bare_variants);
+    checker.diags.list.retain(|d| !(d.code == Some("W1004") && d.span.is_some_and(|span| bare.contains(&span))));
     if let Some(index) = checker.index.as_ref().filter(|_| !meta && !deprecated.is_empty()) {
         let mut warned = HashSet::new();
         for &(span, def) in &index.uses {
@@ -893,6 +896,9 @@ struct Checker<'a> {
     inferring: u32,
     /// The values the `Navigate`s being checked go on with, innermost last.
     holes: Vec<(LocalId, Ty)>,
+    /// Where a pattern names a variant alone (14.3), which the linker took
+    /// for a binding whose name it found wrong.
+    bare_variants: Vec<Span>,
     /// For an editor: the type of each expression of the program's own files.
     index_exprs: Vec<(Span, Ty)>,
     /// The `meta` profile: no host capabilities (27.7).
