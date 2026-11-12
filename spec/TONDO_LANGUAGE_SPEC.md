@@ -3574,6 +3574,26 @@ Sin firma esperada, cada parámetro declara su tipo. El retorno puede inferirse
 desde el cuerpo o escribirse después de `:`. No se utiliza una flecha para
 separar parámetros y retorno.
 
+Sin firma esperada ni retorno escrito, el cierre también infiere el error con
+que falla: la unión cerrada de los errores de sus `fail` y sus `?`, como `main`
+(20.2). Uno que no falla devuelve el valor de su cuerpo:
+
+~~~tondo
+enum LoadError {
+    Missing
+}
+
+let load = (name: String) {
+    if name.isEmpty() {
+        fail LoadError.Missing
+    }
+    name
+}
+~~~
+
+Aquí `load` es `fn(String): String ! LoadError`. Con un retorno escrito sin
+error, como `(name: String): String { ... }`, un `fail` es `E1302`.
+
 El cierre sin parámetros es `() { ... }`. Los paréntesis son siempre obligatorios, también para un único parámetro.
 
 Un cierre puede anteponer `unsafe` cuando su llamador deba cumplir precondiciones

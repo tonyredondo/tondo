@@ -169,21 +169,6 @@ fn main() {
 }
 ```
 
-A closure that fails declares its result when nothing else gives it:
-`(): Int ! LoadError { ... }`.
-
-```tondo error E1302
-enum LoadError {
-    Missing
-}
-
-fn main() {
-    let load = () {
-        fail LoadError.Missing
-    }
-}
-```
-
 There is no C-style `for`: `for i in 0..count`, `for condition`, `for`.
 
 ```tondo error E0004

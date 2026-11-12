@@ -1,0 +1,51 @@
+// A closure that declares no result where no function type is expected
+// infers what it fails with from its `fail` and its `?`, the union of them,
+// as `main` does; one that cannot fail gives its body's value.
+
+import std.console
+
+enum LoadError {
+    Missing
+}
+
+fn main() {
+    let load = (name: String) {
+        if name.isEmpty() {
+            fail LoadError.Missing
+        }
+        name
+    }
+    let parse = (word: String) {
+        let number = Int.parse(word)?
+        if number < 0 {
+            fail LoadError.Missing
+        }
+        number * 2
+    }
+    let plain = (number: Int) { number + 1 }
+    let twice = (word: String) {
+        let once = parse(word)?
+        let again = parse("{once}")?
+        again
+    }
+    console.println(load("config").unwrapOr("?"))
+    match load("") {
+        ok(name) => console.println(name)
+        err(error) => console.println("load failed: {error}")
+    }
+    for word in ["21", "-1", "x"] {
+        match parse(word) {
+            ok(number) => console.println("{number}")
+            err(LoadError.Missing) => console.println("missing")
+            err(error) => console.println("parse failed: {error}")
+        }
+    }
+    console.println("{plain(1)} {twice("5").unwrapOr(0)}")
+}
+
+// expect-stdout: config
+// expect-stdout: load failed: Missing
+// expect-stdout: 42
+// expect-stdout: missing
+// expect-stdout: parse failed: invalid data
+// expect-stdout: 2 20

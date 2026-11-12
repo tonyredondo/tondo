@@ -51,6 +51,10 @@ impl<'a> Checker<'a> {
                         Some(error) if Some(error) == self.failure_type() => {
                             "`?` on an option needs the function to return an option; this one fails with `Failure`, so say what is missing with `.context(\"...\")?`".to_string()
                         }
+                        // A closure whose result is not known yet.
+                        _ if cx.result == Ty::ERROR && cx.parent.is_some() => {
+                            "`?` on an option needs the closure to return an option: declare its result after its parameters, `(...): T? { ... }`".to_string()
+                        }
                         _ => format!(
                             "`?` on an option needs the function to return an option, but it returns {}",
                             self.display(cx.result)

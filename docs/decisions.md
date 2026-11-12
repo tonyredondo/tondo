@@ -6129,3 +6129,13 @@ just before, as a line that starts with a binary operator goes on with the one b
 `select`'s `else =>` still starts an arm of its own. `tondo fmt` writes `} else {`, and a comment
 that stood above the `else` goes into the branch it introduces, at its start, instead of after
 the whole `if`.
+
+## A closure infers what it fails with
+
+A closure that failed had to declare its result, `(name: String): String ! LoadError { ... }`,
+unless it was given where a function type said so; written without it, its `fail` was E1302. A
+closure is no API: what it fails with is seen where it is made, as with `main`, a script or a
+test, which already inferred theirs. A closure that declares no result where no function type is
+expected now infers the union of what its `fail` and its `?` give, and one that cannot fail gives
+its body's value as before. A named function still declares what it fails with, as its callers
+in other modules read its signature, and so does a closure that declares its result.

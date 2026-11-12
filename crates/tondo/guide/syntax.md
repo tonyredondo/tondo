@@ -135,8 +135,10 @@ fn main() {
 ```
 
 A closure is `(params) { body }`, with parameter types when the context does
-not give them. A closure that fails declares its result:
-`(): String ! LoadError { ... }`.
+not give them. Where no function type is expected, as in a `let`, it infers
+its result, and what it fails with from its `fail` and `?`: a closure that
+fails with `fail LoadError.Missing` and gives a `String` is a
+`fn(...): String ! LoadError`.
 
 ## defer
 

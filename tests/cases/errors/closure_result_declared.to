@@ -1,0 +1,29 @@
+// A closure infers what it fails with only when nothing gives its result:
+// one that declares it, or that is given where a function type is
+// expected, fails as that says.
+
+enum LoadError {
+    Missing
+}
+
+fn main() {
+    let load = (name: String): String {
+        if name.isEmpty() {
+            fail LoadError.Missing
+        }
+        name
+    }
+    let strict: fn(String): String = (name) {
+        if name.isEmpty() {
+            fail LoadError.Missing
+        }
+        name
+    }
+    let first = (values: Array[Int]) {
+        let value = values.first()?
+        value
+    }
+}
+
+// expect-error: E1302 this function cannot fail; declare its result as `T ! E`
+// expect-error: E1301 `?` on an option needs the closure to return an option: declare its result after its parameters, `(...): T? { ... }`

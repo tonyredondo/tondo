@@ -725,6 +725,9 @@ impl<'a> Checker<'a> {
             };
             params.push(ty);
         }
+        // Declaring no result where no function type is expected, it
+        // infers what it fails with, as `main` does (11.8).
+        let infer_error = infer_error || (closure_result.is_none() && expected.is_none());
         let declared = closure_result
             .map(|t| self.resolve_type(t))
             .or(expected.as_ref().map(|e| e.result).filter(|&r| r != Ty::ERROR));
