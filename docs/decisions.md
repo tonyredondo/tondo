@@ -6161,3 +6161,13 @@ union and an option that holds an option. Removing it showed that the values tha
 from the one expected did not see through a `T?`: `[]`, `[:]`, a tuple, a number of a type other
 than `Int`, `ok(...)` and `err(...)` where an option was expected needed `some` to compile. They
 are typed as the `T` now and then become the option, as 9.7 says a value does.
+
+## A function's body stays a block
+
+`tondo fmt` writes a closure of one expression on one line, `(n) { n * 2 }`, as it goes inside a
+call. Doing the same for a function or a method that gives a value, `fn Square.area(self): Float
+{ self.side * self.side }` when it fits, was tried and left out. The gain is lines, not reading:
+a function would change shape when its signature crosses the width, so renaming or adding a
+parameter rewrites a body that did not change; the value it gives sits at the end of a long
+signature; and a reader meets two shapes for one thing, chosen by a limit nobody sees. A
+function's body is always a block.
