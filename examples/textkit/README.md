@@ -44,17 +44,24 @@ that is 3 words
 header, with the documentation of each function as its comment:
 
 ```c
-/** Writes the slug of `source` into `out`, which has room for `capacity`
- * bytes, and ends it with a zero. Gives the length of the whole slug: one
- * that is not under `capacity` was cut to fit.
- */
-size_t textkit_slug(char *source, char *out, size_t capacity);
+typedef struct TextkitStats TextkitStats;
 
-/** Calls `each` with every word of `source` and how many times it appears,
- * the most frequent first, and with `context` as it was given. The word
- * is good until `each` returns.
+/** What a text holds. An `extern type` is laid out as C lays a struct out,
+ * so it crosses to C by value.
  */
-void textkit_words(char *source, void (*each)(char *, long, void *), void *context);
+struct TextkitStats {
+    long characters;
+    long words;
+    long lines;
+};
+
+/** How many characters must be added, removed or changed to make `right`
+ * of `left`.
+ */
+long textkit_distance(const char *left, const char *right);
+
+/** The characters, words and lines of `source`. */
+TextkitStats textkit_stats(const char *source);
 ```
 
 ## What to look at
@@ -75,7 +82,8 @@ and all of the language is there for it.
 **C's conventions, kept.** `textkit_slug` writes into a buffer the caller
 owns, never past its capacity, always ends it with a zero, and gives the
 length of the whole result so the caller can tell that it was cut, as
-`snprintf` does. `textkit_count` fills the places it is given.
+`snprintf` does. `textkit_stats` gives a struct by value: `TextkitStats`
+is an `extern type`, laid out as C lays it out, and the header declares it.
 `textkit_words` takes a function and a `void *` to hand back to it, the way
 C libraries pass state to a callback.
 

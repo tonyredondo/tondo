@@ -35,15 +35,11 @@ test aSlugThatDoesNotFitIsCutAndItsWholeLengthGiven {
     }
 }
 
-test countsIntoThePlacesGiven {
+test countsCharactersWordsAndLines {
     let words = ffi.toCString("to be or not\nto be")
-    let counts = ffi.allocate[ffi.CLong](3)
-    unsafe {
-        textkit_count(words, counts, counts.offset(1), counts.offset(2))
-        assert([counts.read(), counts.offset(1).read(), counts.offset(2).read()] == [18, 6, 2])
-        ffi.free(counts)
-        ffi.free(words)
-    }
+    let stats = textkit_stats(words)
+    assert(stats.characters == 18 and stats.words == 6 and stats.lines == 2)
+    unsafe { ffi.free(words) }
 }
 
 /// What C would give `textkit_words` to call: it keeps each word in the
