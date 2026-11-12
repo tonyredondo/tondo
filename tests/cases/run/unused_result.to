@@ -15,6 +15,9 @@ fn loud(number: Int): Int {
 fn main() {
     let list = [1, 2, 3]
     list.contains(2)
+    list.length()
+    let ages = Map[String, Int]()
+    ages.get("ada")
     doubled(4)
     loud(5)
     var more = [1]

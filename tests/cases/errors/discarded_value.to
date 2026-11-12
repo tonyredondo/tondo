@@ -8,6 +8,8 @@ fn risky(): Int ! Problem { 1 }
 
 fn maybe(): Int? { none }
 
+// An option that nobody reads is no failure: it warns as any value that a
+// call with no effect gives.
 fn main() {
     value()
     _ = risky()
@@ -16,5 +18,4 @@ fn main() {
 }
 
 // expect-error: E1303 a value of type `Int ! Problem` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
-// expect-error: E1303 a value of type `Int?` is not used
 // expect-warning: W1018 nothing uses what this call gives

@@ -396,16 +396,37 @@ impl<'a> Checker<'a> {
     /// a method of the language that only reads, or a function of the program
     /// that only computes, which is known once all are declared.
     pub(super) fn dropped_result(&mut self, call: &ast::ExprKind, value: &hir::Expr) {
-        match (&value.kind, call) {
-            (hir::ExprKind::Call(Callee::Fn(id), ..), _) => self.dropped_calls.push((*id, value.span)),
-            (hir::ExprKind::Call(Callee::Std(_), _, args), ast::ExprKind::Call { callee, .. }) => {
-                if let (ast::ExprKind::Field(_, method), Some(receiver)) = (&callee.kind, args.first())
-                    && self.only_reads(receiver.ty, &method.name)
-                {
-                    self.result_unused(value.span);
-                }
+        if let hir::ExprKind::Call(Callee::Fn(id), ..) = &value.kind {
+            self.dropped_calls.push((*id, value.span));
+        } else if let ast::ExprKind::Call { callee, .. } = call
+            && let Some(method) = match &callee.kind {
+                ast::ExprKind::Field(_, method) => Some(method),
+                // `names.length()` on a binding is a path.
+                ast::ExprKind::Path(segments) if segments.len() > 1 => segments.last(),
+                _ => None,
             }
-            _ => {}
+            && let Some(receiver) = Self::receiver(value)
+            && self.only_reads(receiver.ty, &method.name)
+        {
+            self.result_unused(value.span);
+        }
+    }
+
+    /// The value a method of the language is called on, in what its call
+    /// became: `map.get(key)` an operation of the map, `text.isEmpty()` a
+    /// comparison of its length.
+    fn receiver(value: &hir::Expr) -> Option<&hir::Expr> {
+        match &value.kind {
+            hir::ExprKind::Length(receiver) => Some(receiver),
+            hir::ExprKind::Binary(BinOp::Eq, length, _) => match &length.kind {
+                hir::ExprKind::Length(_) | hir::ExprKind::StrOp(hir::StrOp::ByteLength, _) => Self::receiver(length),
+                _ => None,
+            },
+            hir::ExprKind::MapOp(_, values) | hir::ExprKind::ArrayOp(_, values) | hir::ExprKind::StrOp(_, values) => {
+                values.first()
+            }
+            hir::ExprKind::Call(Callee::Std(_), _, args) => args.first(),
+            _ => None,
         }
     }
 

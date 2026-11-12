@@ -6139,3 +6139,14 @@ test, which already inferred theirs. A closure that declares no result where no 
 expected now infers the union of what its `fail` and its `?` give, and one that cannot fail gives
 its body's value as before. A named function still declares what it fails with, as its callers
 in other modules read its signature, and so does a closure that declares its result.
+
+## An option may go unread
+
+A `Result` and an `Option` dropped as a statement were both E1303, so `seen.remove(key)`,
+`queue.pop()` and `names.removeAt(0)`, called for what they change, needed `_ =` before them:
+nearly half of the `_ =` of the standard library and the examples. An absence is no failure, and
+what these calls give is often not needed. E1303 stays for `T ! E`, which may hold a failure the
+program has to see; an option is dropped as any other value. What catches a `map.get(key)` left
+alone is W1018, the warning for a call with no other effect, which now knows the methods of the
+language whatever they compile to: `get`, `length` and `contains` on a binding warned only in
+some of their forms.

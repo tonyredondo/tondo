@@ -289,8 +289,8 @@ impl<'a> Checker<'a> {
                 let written = value;
                 let value = self.expr(cx, written, expected);
                 self.dropped_value(written, &value);
-                // Only a result or an option must be used: it may be a
-                // failure or an absence the program has to see (11.9).
+                // Only a result must be used: it may be a failure the
+                // program has to see (11.9).
                 if self.must_use(value.ty) {
                     let message = format!(
                         "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
@@ -1502,12 +1502,11 @@ impl<'a> Checker<'a> {
         parts.into_iter().find_map(|part| self.not_send(part)).or(Some(ty))
     }
 
-    /// Whether a value may be a failure or an absence the program must see
-    /// (11.9): an option, or a result that can fail.
+    /// Whether a value may be a failure the program must see (11.9): a
+    /// result that can fail.
     pub(super) fn must_use(&self, ty: Ty) -> bool {
         match self.types.kind(self.types.repr(ty)) {
             TyKind::Result(_, error) => *error != Ty::NEVER,
-            TyKind::Option(_) => true,
             _ => false,
         }
     }

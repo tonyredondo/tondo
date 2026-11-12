@@ -184,7 +184,7 @@ Every code has a longer explanation, with an example:
 $ tondo explain E1303
 E1303 discarded-result (error)
 
-A `Result` or `Option` is dropped as a statement, unused and without `_ =`.
+A `Result` is dropped as a statement, unused and without `_ =`.
 
 From `tondo guide pitfalls`:
 

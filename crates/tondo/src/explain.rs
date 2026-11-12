@@ -58,7 +58,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1206", "invalid-for-source", "A `for` loop's header, pattern or source does not allow what it asks."),
     ("E1301", "incompatible-error-propagation", "`?` cannot pass on its error through the function's result."),
     ("E1302", "invalid-fail-context", "`fail` where no compatible error can leave."),
-    ("E1303", "discarded-result", "A `Result` or `Option` is dropped as a statement, unused and without `_ =`."),
+    ("E1303", "discarded-result", "A `Result` is dropped as a statement, unused and without `_ =`."),
     (
         "E1304",
         "invalid-result-construction",

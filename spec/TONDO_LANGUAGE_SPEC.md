@@ -3807,14 +3807,17 @@ process.command("make").run()?   // el ExitStatus se abandona
 cache.insert(key, value)
 ~~~
 
-Un `Result` o un `Option`, incluidos `T ! E` y `T?`, no puede abandonarse así:
-puede contener un fallo o una ausencia que el programa debe ver. Se propaga con
-`?`, se maneja con `match` o se descarta explícitamente, lo que comunica
-intención:
+Un `Result`, `T ! E`, no puede abandonarse así: puede contener un fallo que el
+programa debe ver. Se propaga con `?`, se maneja con `match` o se descarta
+explícitamente, lo que comunica intención:
 
 ~~~tondo
 _ = computeValue()
 ~~~
+
+Un `Option`, `T?`, sí se abandona como cualquier otro valor: una ausencia no es
+un fallo, y lo que da `seen.remove(key)` o `queue.pop()` a menudo no hace falta.
+`_ = ...` sigue siendo válido para él.
 
 Tondo 0.1 no tiene una marca adicional tipo `must_use`; una futura librería o
 perfil de lint puede reconocer APIs concretas sin cambiar la validez del
@@ -8827,7 +8830,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `E1301` | `incompatible-error-propagation` | `?` no puede representar el canal propagado en la firma envolvente. |
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
-| `E1303` | `discarded-result` | Un `Result` u `Option` se abandona como sentencia sin uso ni `_ =`. |
+| `E1303` | `discarded-result` | Un `Result` se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
 | `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
 | `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
@@ -9284,7 +9287,7 @@ Son errores obligatorios, entre otros:
 
 - Rama `match` cubierta por anteriores (`E1203`).
 - `match` no exhaustivo (`E1204`).
-- `Result` u `Option` descartado como sentencia (`E1303`).
+- `Result` descartado como sentencia (`E1303`).
 - Valor sin ninguna llamada como sentencia (`E1306`).
 - Declaración que produciría shadowing (`E1003`).
 - Cabeceras de `impl` que se solapan (`E1111`) o un ciclo de obligaciones que no

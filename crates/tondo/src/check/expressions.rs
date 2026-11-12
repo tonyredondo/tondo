@@ -10,7 +10,7 @@ impl<'a> Checker<'a> {
             return value;
         }
         // Where nothing is expected, a value is dropped, unless it is a
-        // result or an option the program has to see (11.9).
+        // result the program has to see (11.9).
         if expected == Ty::UNIT && value.ty != Ty::NEVER && !self.types.has_error(value.ty) {
             if self.must_use(value.ty) {
                 let message = match value.kind {

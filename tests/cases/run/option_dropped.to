@@ -1,0 +1,21 @@
+// An option that nobody reads is no failure: what `remove`, `pop` and
+// `removeAt` give often is not needed, and a call that changes something
+// drops it in silence.
+
+import std.console
+
+fn main() {
+    var seen = Set[String]()
+    seen.insert("a")
+    seen.insert("b")
+    seen.remove("a")
+    var names = ["x", "y", "z"]
+    names.pop()
+    names.removeAt(0)
+    var ages = Map[String, Int]()
+    ages.insert("ada", 36)
+    ages.remove("ada")
+    console.println("{seen.length()} {names} {ages.length()}")
+}
+
+// expect-stdout: 1 [y] 0
