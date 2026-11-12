@@ -29,7 +29,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match op {
             UnaryOp::Not => self.e.fb.ins().bxor_imm_u(value, 1),
             UnaryOp::BitNot => self.e.fb.ins().bnot(value),
-            UnaryOp::Neg if matches!(self.e.cg.types().kind(ty), TyKind::Float(_)) => self.e.fb.ins().fneg(value),
+            UnaryOp::Neg if matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Float(_)) => {
+                self.e.fb.ins().fneg(value)
+            }
             UnaryOp::Neg => {
                 let clif = self.e.cg.scalar_type(ty);
                 let zero = self.e.int_const(clif, 0);
@@ -320,7 +322,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return self.e.fb.ins().icmp_imm_s(int_condition(op, true), order, 0);
         }
         let types = self.e.cg.types();
-        if let TyKind::Float(_) = types.kind(ty) {
+        // A newtype computes as the number it holds.
+        if let TyKind::Float(_) = types.kind(types.repr(ty)) {
             // IEEE 754 without traps (18.5); relational comparisons with NaN are false.
             let ins = self.e.fb.ins();
             return match op {

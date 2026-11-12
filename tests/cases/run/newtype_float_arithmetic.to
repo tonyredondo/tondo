@@ -1,0 +1,23 @@
+// The value of a newtype over `Float` computes as a `Float`, read straight
+// from the newtype or bound first: division, product, sum, difference,
+// negation and comparison.
+
+import std.console
+
+type Meters = Float
+
+fn kilometers(distance: Meters): Float {
+    distance.value / 1000.0
+}
+
+fn main() {
+    let d = Meters(1500.0)
+    console.println("{d.value / 1000.0} {d.value * 2.0} {d.value + 1.0} {d.value - 1.0} {-d.value}")
+    console.println("{d.value < 2000.0} {d.value >= 1500.0} {kilometers(d)}")
+    let bound = d.value
+    console.println("{bound / 3.0}")
+}
+
+// expect-stdout: 1.5 3000.0 1501.0 1499.0 -1500.0
+// expect-stdout: true true 1.5
+// expect-stdout: 500.0
