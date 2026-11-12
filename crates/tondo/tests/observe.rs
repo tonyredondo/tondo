@@ -3248,8 +3248,11 @@ fn a_request_is_followed_through_its_tasks() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let port = free_port();
+    // Each other task waits 200 ms before it answers, so that the task of
+    // the request blocks first and its waits show: on a loaded machine it
+    // may not run again for tens of milliseconds after it starts one.
     let program = format!(
-        "import std.http\nimport std.time\nimport std.sync\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(20))\n    \
+        "import std.http\nimport std.time\nimport std.sync\nfn fetch(id: Int): Int {{\n    time.sleep(time.milliseconds(200))\n    \
          id * 2\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
          app.get(\"/slow\", () {{\n        let job = spawn fetch(1)\n        let answer = job.wait()\n        \
          let lock = sync.Mutex(0)\n        let (holding, held) = channel[Int]()\n        \
@@ -3260,9 +3263,9 @@ fn a_request_is_followed_through_its_tasks() {
          room.send(1)\n        holder.wait()\n        feeding.wait()\n        draining.wait()\n        \
          \"{{answer}}\"\n    }})\n    app.listen({port})?\n}}\n\n\
          fn hold(lock: sync.Mutex[Int], holding: Sender[Int]) {{\n    lock.update((value) {{\n        \
-         holding.send(1)\n        time.sleep(time.milliseconds(20))\n        value += 1\n    }})\n}}\n\n\
-         fn feed(out: Sender[Int]) {{\n    time.sleep(time.milliseconds(20))\n    out.send(1)\n}}\n\n\
-         fn drain(inbox: Receiver[Int]) {{\n    time.sleep(time.milliseconds(20))\n    _ = inbox.receive()\n    \
+         holding.send(1)\n        time.sleep(time.milliseconds(200))\n        value += 1\n    }})\n}}\n\n\
+         fn feed(out: Sender[Int]) {{\n    time.sleep(time.milliseconds(200))\n    out.send(1)\n}}\n\n\
+         fn drain(inbox: Receiver[Int]) {{\n    time.sleep(time.milliseconds(200))\n    _ = inbox.receive()\n    \
          _ = inbox.receive()\n}}\n"
     );
     let source = dir.join("server.to");
