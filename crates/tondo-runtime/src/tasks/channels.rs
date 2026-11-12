@@ -901,6 +901,33 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
         return -2;
     }
     unsafe {
+        let mut order = Few::new(0, 0..cases.len());
+        for i in (1..order.len()).rev() {
+            order.swap(i, random(i + 1));
+        }
+        // Most often a value waits in one of the channels it receives from:
+        // the first in its order that has one is taken with that channel
+        // alone locked, and the senders of the others do not wait for it. A
+        // channel locked meanwhile, or a case of another kind, leaves the
+        // rest to the way below, as does a tool that watches.
+        if !super::attended() && !crate::race::on() && !crate::replay::on() {
+            for &index in order.iter() {
+                let case = &mut cases[index];
+                if case.kind != RECEIVE {
+                    break;
+                }
+                let channel = case.handle as *mut ChannelObject;
+                if (*channel).lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+                    continue;
+                }
+                let taken = try_case(case);
+                unlock(&(*channel).lock);
+                if let Some(woken) = taken {
+                    woken.into_iter().for_each(notify);
+                    return index as i64;
+                }
+            }
+        }
         // Every object is locked, once and in address order, from checking
         // readiness until the task is registered everywhere.
         let mut locks = Few::new(std::ptr::null(), cases.iter().filter_map(|c| c.lock()));
@@ -910,10 +937,6 @@ pub(super) unsafe fn select(cases: &mut [Case], blocking: bool, location: *const
         let lock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| lock(&**l));
         let unlock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| unlock(&**l));
         lock_all(locks);
-        let mut order = Few::new(0, 0..cases.len());
-        for i in (1..order.len()).rev() {
-            order.swap(i, random(i + 1));
-        }
         for &index in order.iter() {
             let case = &mut cases[index];
             // A panic that a `recover` stops ends the `select` as a

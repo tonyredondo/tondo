@@ -6075,3 +6075,14 @@ to take it back to let go. In `select 1000`, two senders spun so on the channels
 it looks free and only then tries, as a test-and-test-and-set lock does. `select` went from 55.4 to
 49.8 ms against Go's 48.9; the mutex row, whose four tasks then run more often at once, from 47.3 to
 50.0 against Go's 50.8.
+
+## A `select` takes a waiting value with one channel locked
+
+A `select` locked every channel of its cases, in address order, before it looked at any, as Go's
+does, and the senders of the others spun on those locks meanwhile. Most often a value already
+waits in one of the channels it receives from: it now looks first, in the order it drew, at each
+case that receives, taking that channel's lock only if it is free, and takes the first value it
+finds. A case of another kind, or none with a value, leaves the rest to the way it took before,
+every channel locked, and so does a tool that watches or anything that asks for attention, where
+the order of what tasks do must be the one the tools see. The program of the `select` row took 44
+ms where it took 53, under load.
