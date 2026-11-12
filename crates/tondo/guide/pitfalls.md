@@ -169,6 +169,40 @@ fn main() {
 }
 ```
 
+An option of an option, `(T?)?`, has three states: `none`, `some(none)` and
+`some(value)`. Generic code makes it, as `get` on a `Map[String, Int?]`, where
+`none` is a missing key and `some(none)` a key whose value is `none`. Written
+by hand, an enum of its own says what each state means:
+
+```tondo
+import std.console
+
+enum Age {
+    Unknown
+    Withheld
+    Known(Int)
+}
+
+fn ageOf(ages: Map[String, Int?], name: String): Age {
+    match ages.get(name) {
+        none => Age.Unknown
+        some(none) => Age.Withheld
+        some(some(age)) => Age.Known(age)
+    }
+}
+
+fn main() {
+    let ages: Map[String, Int?] = ["ada": 36, "bo": none]
+    for name in ["ada", "bo", "cy"] {
+        match ageOf(ages, name) {
+            Age.Unknown => console.println("{name}: not in the list")
+            Age.Withheld => console.println("{name}: no age given")
+            Age.Known(age) => console.println("{name}: {age}")
+        }
+    }
+}
+```
+
 There is no C-style `for`: `for i in 0..count`, `for condition`, `for`.
 
 ```tondo error E0004
