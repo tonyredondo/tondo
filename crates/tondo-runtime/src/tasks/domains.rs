@@ -23,15 +23,15 @@ struct Map {
 
 fn map() -> &'static Map {
     static MAP: OnceLock<Map> = OnceLock::new();
-    MAP.get_or_init(|| read().unwrap_or(Map { of: Vec::new(), count: 1 }))
+    MAP.get_or_init(|| {
+        let one = crate::config::config().cache_domains.as_deref().is_some_and(|value| value.trim() == "0");
+        (!one).then(read).flatten().unwrap_or(Map { of: Vec::new(), count: 1 })
+    })
 }
 
 /// The cores of each last-level cache, as Linux lists them.
 #[cfg(target_os = "linux")]
 fn read() -> Option<Map> {
-    if crate::config::config().cache_domains.as_deref().is_some_and(|value| value.trim() == "0") {
-        return None;
-    }
     let mut of: Vec<u8> = Vec::new();
     let mut lists: Vec<String> = Vec::new();
     for cpu in 0.. {
@@ -83,14 +83,17 @@ pub(crate) fn here() -> usize {
     if map.count == 1 {
         return 0;
     }
-    #[cfg(target_os = "linux")]
-    {
-        let cpu = unsafe { libc::sched_getcpu() };
-        if cpu >= 0
-            && let Some(&domain) = map.of.get(cpu as usize)
-        {
-            return domain as usize;
-        }
-    }
-    0
+    core().and_then(|core| map.of.get(core)).map_or(0, |&domain| domain as usize)
+}
+
+/// The number of the core the thread runs on now.
+#[cfg(target_os = "linux")]
+fn core() -> Option<usize> {
+    let core = unsafe { libc::sched_getcpu() };
+    (core >= 0).then_some(core as usize)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn core() -> Option<usize> {
+    None
 }
