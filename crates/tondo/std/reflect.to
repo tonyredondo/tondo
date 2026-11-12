@@ -17,6 +17,7 @@
 // console.println(reflect.get[String, User](ada, "name")?)
 // ```
 
+import std.collections as __collections
 import std.internal.reflect as reflectNative
 
 /// What went wrong.
@@ -2170,6 +2171,14 @@ impl Display for TypeKind {
 /// An error, which reflection shows as its message, so a method that fails
 /// with one is a tool of `std.mcp` or a field of `std.graphql`.
 impl Reflect for ReflectError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// The error of the collections, which the compiler declares and no module
+/// of Tondo completes: reflection implements it, as its message.
+impl Reflect for __collections.CollectionError {
     fn reflectShow(self, _nested: Bool): String {
         "{self}"
     }

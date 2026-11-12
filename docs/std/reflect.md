@@ -1568,4 +1568,5 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V]
 impl[T: Reflect, E: Reflect] Reflect for T ! E
 impl[T: Reflect] Reflect for Deque[T]
 impl[T: Reflect + Key] Reflect for Set[T]
+impl Reflect for collections.CollectionError
 ```

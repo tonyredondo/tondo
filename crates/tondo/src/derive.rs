@@ -67,9 +67,8 @@ impl Kind {
     /// Whether a type of a standard module has the implementations.
     fn standard(self, module: &str, name: &str) -> bool {
         match (self, module) {
-            // Every error of the standard library, shown as its message, but
-            // the one of `collections`, which no module of Tondo completes.
-            (Kind::Reflect, module) if name.ends_with("Error") && module != "collections" => true,
+            // Every error of the standard library, shown as its message.
+            (Kind::Reflect, _) if name.ends_with("Error") => true,
             (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
             (Kind::Serialization, "toml" | "yaml" | "messagepack" | "cbor") => name == "Value",
             (Kind::Serialization, "serialization") => name == "Bytes",

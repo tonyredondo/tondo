@@ -4,6 +4,7 @@
 // from parts; a value of the type itself still converts. An error of the
 // standard library has `Reflect`, shown as its message.
 
+import std.collections
 import std.console
 import std.fs
 import std.json
@@ -28,6 +29,7 @@ pub enum Failed {
     Json(json.JsonError)
     Math(math.MathError)
     Reflection(reflect.ReflectError)
+    Collections(collections.CollectionError)
 }
 
 pub enum NoteError {
@@ -63,6 +65,7 @@ fn main(): !(reflect.ReflectError | regex.RegexError) {
     let failed = reflect.valueOf(NoteError.Files(fs.FsError.NotFound))
     console.println("{failed} {failed.variant()}")
     console.println("{reflect.valueOf(Failed.Math(math.MathError.Domain))}")
+    console.println("{reflect.valueOf(Failed.Collections(collections.CollectionError.InvalidIndex))}")
     console.println("{Patterns.word.isMatch("notes")?}")
 }
 
@@ -75,4 +78,5 @@ fn main(): !(reflect.ReflectError | regex.RegexError) {
 // expect-stdout: built
 // expect-stdout: Files(not found) some(Files)
 // expect-stdout: Math(the value is outside the operation's domain)
+// expect-stdout: Collections(invalid index)
 // expect-stdout: true

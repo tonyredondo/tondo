@@ -2818,6 +2818,7 @@ impl Reflect for UInt32
 impl Reflect for UInt8
 impl Reflect for Unit
 impl Reflect for Value
+impl Reflect for collections.CollectionError
 impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V]
 impl[T: Reflect + Key] Reflect for Set[T]
 impl[T: Reflect, E: Reflect] Reflect for T ! E

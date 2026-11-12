@@ -220,11 +220,12 @@ fn every_standard_type_has_an_example() {
 
 /// Every error of the standard library has `Reflect`, as its message, so a
 /// method that fails with one is a tool of `std.mcp`; the derivation of
-/// `Reflect` counts on it (`derive.rs`). `collections.CollectionError` is
-/// the compiler's alone.
+/// `Reflect` counts on it (`derive.rs`).
 #[test]
 fn every_standard_error_has_reflect() {
     let (mut missing, mut errors) = (Vec::new(), 0);
+    // std.reflect implements it for the errors of modules no Tondo completes.
+    let reflection = tondo::api::standard("std.reflect").unwrap_or_default();
     for module in tondo::api::standard_modules() {
         let Some(text) = tondo::api::standard(&module) else { continue };
         for declaration in tondo::api::declarations(&text) {
@@ -232,13 +233,12 @@ fn every_standard_error_has_reflect() {
             let name = declaration["name"].as_str().unwrap_or_default();
             errors += usize::from(["type", "enum"].contains(&kind) && name.ends_with("Error"));
             // By its name, or with its module's, as `text.TextError`.
-            let implemented = text.lines().any(|line| {
+            let implemented = text.lines().chain(reflection.lines()).any(|line| {
                 line.starts_with("impl ")
                     && line.contains("Reflect for ")
                     && (line.ends_with(&format!(" {name}")) || line.ends_with(&format!(".{name}")))
             });
-            if ["type", "enum"].contains(&kind) && name.ends_with("Error") && name != "CollectionError" && !implemented
-            {
+            if ["type", "enum"].contains(&kind) && name.ends_with("Error") && !implemented {
                 missing.push(format!("{module}.{name}"));
             }
         }
