@@ -21,7 +21,9 @@
 <p align="center">
   <a href="#why-tondo">Why Tondo</a> ·
   <a href="docs/tour.md">A tour of the language</a> ·
+  <a href="docs/language/README.md">The manual</a> ·
   <a href="docs/toolchain.md">The toolchain</a> ·
+  <a href="examples/README.md">Examples</a> ·
   <a href="docs/comparison.md">Next to Go, Rust and C#</a> ·
   <a href="#getting-started">Getting started</a>
 </p>
@@ -321,8 +323,14 @@ a call: `ref` to read it and `mut` to change it.
 | Polymorphism | traits, resolved when compiling | interfaces, satisfied implicitly | traits, static or `dyn` | classes and interfaces |
 | What you run | a native executable | a native executable | a native executable | a runtime, or Native AOT |
 
-[Tondo next to Go, Rust and C#](docs/comparison.md) goes through what is
+[Tondo next to other languages](docs/comparison.md) goes through what is
 shared with each, what was left out and why, with the same code in both.
+Each of the three has a page that writes twelve small programs in it and in
+Tondo, from copying a list to an HTTP server, and so have
+[Python](docs/comparison/python.md),
+[TypeScript](docs/comparison/typescript.md),
+[Java](docs/comparison/java.md), [Kotlin](docs/comparison/kotlin.md) and
+[Swift](docs/comparison/swift.md).
 
 ## Getting started
 
@@ -454,8 +462,11 @@ since macOS does not let a program change its code.
 | Read | For |
 | --- | --- |
 | [A tour of the language](docs/tour.md) | The language by example, from a script to tasks and C |
-| [The toolchain](docs/toolchain.md) | What each command of `tondo` is for |
-| [Tondo next to Go, Rust and C#](docs/comparison.md) | What it shares with each and where it differs |
+| [The language](docs/language/README.md) | The manual: the whole language in twenty chapters, with programs and what they print |
+| [The standard library](docs/std/README.md) | A page for each module, with every declaration, its documentation and examples |
+| [The toolchain](docs/toolchain.md) | What each command of `tondo` is for, and a chapter for each part of it at work |
+| [Examples](examples/README.md) | Programs of the size one meets at work: an API over a database, a gRPC service, a chat, a library for C, scripts |
+| [Tondo next to other languages](docs/comparison.md) | What it shares with Go, Rust and C# and where it differs, and the same programs in eight languages |
 | `tondo guide`, in [`crates/tondo/guide`](crates/tondo/guide/overview.md) | The reference people and models learn from, a topic at a time |
 | [`spec/`](spec) | The specifications that define the language, its library, its tests and its toolchain |
 | [`docs/`](docs/README.md) | Everything else: the roadmap, the decisions of design and the plans |

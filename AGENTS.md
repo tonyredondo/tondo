@@ -151,6 +151,15 @@ its own, with `gh workflow run CI --ref <branch>`.
   `tondo test`, are recorded in `crates/tondo/tests/snapshots/formats`: a
   change on purpose records them again with
   `TONDO_UPDATE_FORMATS=1 cargo test -p tondo --test formats`.
+- The manual in `docs/` is held to the code. The pages of `docs/std` are
+  written from `tondo api` and `docs/toolchain/commands.md` from `tondo
+  help --all`, and every example of the manual compiles and prints what
+  its page says. After a change to the standard library's API or
+  documentation, to a command's usage, or to what an example prints, write
+  them again with `TONDO_UPDATE_DOCS=1 cargo test -p tondo --test docs`.
+- The programs in `examples/` are formatted, compile without a warning
+  and pass their own tests: `cargo test -p tondo --test examples` holds
+  them to that.
 - The skill in `.agents/skills/tondo`, which `.claude/skills/tondo` links
   to, is `tondo guide --skill`: after changing the guide's overview, write
   it again with
