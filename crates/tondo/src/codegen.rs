@@ -610,6 +610,10 @@ fn only_before(blocks: &[crate::mir::BlockData]) -> Vec<Option<usize>> {
     before.into_iter().map(|(count, from)| from.filter(|_| count == 1)).collect()
 }
 
+/// The line of the last logpoint site in a function and in each inlined
+/// call its code is in, by the call's scope.
+type LatentLines = Vec<(Option<u32>, usize)>;
+
 /// A binding a debug build's probe shows: its name, its type and the glue
 /// that shows it.
 /// A binding the debugger shows: its name, type, how it shows, and for a
@@ -2830,10 +2834,11 @@ struct FnCodegen<'a, 'b> {
     /// the local that holds it, and the line each block a restart point
     /// leads to is on.
     probed: Option<ir::Value>,
-    /// The blocks a latent site stays out of, the line of the last, and
+    /// The blocks a latent site stays out of; the line of the last in the
+    /// function and in each inlined call the code is in, by its scope; and
     /// what they call.
     tight_loops: Vec<bool>,
-    latent_line: Option<usize>,
+    latent_lines: LatentLines,
     latent_callee: Option<ir::FuncRef>,
     carrying: bool,
     carried: HashMap<usize, (String, usize)>,
@@ -3060,7 +3065,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             block: 0,
             probed: None,
             tight_loops: crate::mir::tight_loops(&body.blocks),
-            latent_line: None,
+            latent_lines: Vec::new(),
             latent_callee: None,
             carrying: false,
             carried: HashMap::new(),
@@ -3153,6 +3158,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // The block that alone leads to each, and the line each ended in.
         let from = only_before(&self.body.blocks);
         let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
+        // With logpoint sites, the blocks that lead to each, and the lines
+        // of the last sites each ended in.
+        let latent = self.debug.is_none() && self.e.cg.dumps() && crate::driver::logpoint_sites();
+        let mut leading = vec![Vec::new(); if latent { self.body.blocks.len() } else { 0 }];
+        for (index, block) in self.body.blocks.iter().enumerate().filter(|_| latent) {
+            for next in crate::mir::successors(&block.terminator) {
+                leading[next].push(index);
+            }
+        }
+        let mut latent_ended: Vec<Option<LatentLines>> = vec![None; leading.len()];
         for (index, block) in self.body.blocks.iter().enumerate() {
             self.scope = self.body.scopes.get(index).copied().flatten();
             if index > 0 {
@@ -3162,6 +3177,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             self.counted = None;
             self.block = index;
+            // Code that only follows that of one line goes on in it, as after
+            // a call that may panic: a logpoint's site there would count the
+            // line twice. Code that may follow another line, or that one
+            // later, as a loop's head, starts its line again.
+            if latent {
+                let before = |other: &usize| latent_ended[*other].as_ref();
+                let first = leading[index].first().and_then(before);
+                let agreed = first.filter(|&first| leading[index].iter().all(|other| before(other) == Some(first)));
+                self.latent_lines = agreed.cloned().unwrap_or_default();
+            }
             if index == 0 {
                 self.count_call();
             } else if let Some(live) = &live {
@@ -3229,6 +3254,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             if let Some(fused) = fused {
                 self.fused_branch(fused, check_quiet);
                 ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
+                if latent {
+                    latent_ended[index] = Some(self.latent_lines.clone());
+                }
                 continue;
             }
             match self.loop_test(index, &block.terminator) {
@@ -3243,6 +3271,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 None => self.terminator(&block.terminator),
             }
             ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
+            if latent {
+                latent_ended[index] = Some(self.latent_lines.clone());
+            }
         }
         self.e.fb.seal_all_blocks();
         let config = self.e.cg.isa().frontend_config();

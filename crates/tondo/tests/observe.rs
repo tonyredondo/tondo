@@ -3626,6 +3626,15 @@ fn a_logpoint_reads_a_running_release_build() {
     let id: u64 = said.split_whitespace().nth(1).unwrap().parse().unwrap_or_else(|_| panic!("{said}"));
     let total = said.rsplit(' ').next().unwrap();
     assert_eq!(total.parse::<f64>().ok(), Some(10.0 + id as f64), "{said}");
+    // A line that goes on after a call inlined in it counts once each time
+    // it runs, and reads its bindings each time.
+    let line = program.lines().position(|l| l.contains("sum = sum + charge")).unwrap() + 1;
+    let place = format!("orders.to:{line}");
+    let rounds = logpoint(&[&place, "{round}", "--max", "3", "--json"]);
+    let rounds: Value = serde_json::from_slice(&rounds.stdout).unwrap();
+    let read: Vec<u64> =
+        rounds["hits"].as_array().unwrap().iter().filter_map(|h| h["text"].as_str()?.parse().ok()).collect();
+    assert!(read.len() == 3 && read[1] == read[0] + 1 && read[2] == read[1] + 1, "{rounds}");
     // A number in a register, which only a logpoint's call keeps.
     let line = program.lines().position(|l| l.contains("let more = value")).unwrap() + 1;
     let place = format!("orders.to:{line}");

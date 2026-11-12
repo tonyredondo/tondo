@@ -2856,7 +2856,11 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
         return Err(error.to_string());
     }
     if !json {
-        eprintln!("tondo: a logpoint on {place}, in {} places: it ends after {max} times", answer["places"]);
+        let places = match answer["places"].as_u64() {
+            Some(1) => "1 place".to_string(),
+            places => format!("{} places", places.unwrap_or_default()),
+        };
+        eprintln!("tondo: a logpoint on {place}, in {places}: it ends after {max} times");
     }
     let waiting = seconds.map(Duration::from_secs);
     let _ = program.reader.get_ref().set_read_timeout(waiting);

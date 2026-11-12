@@ -481,17 +481,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// In a build without probes, a place a logpoint can use at the start of
     /// a line: a call that is nothing until then, and leaves every register
-    /// as it was. Not in a loop that calls nothing, where even that shows.
+    /// as it was. Not in a loop that calls nothing, where even that shows,
+    /// nor where a line goes on after a call inlined in it, which would
+    /// count the line twice.
     pub(super) fn latent_site(&mut self, span: Span) {
         let tight = self.tight_loops.get(self.block).copied().unwrap_or(false);
         if !self.e.cg.dumps() || tight || span == Span::default() || !crate::driver::logpoint_sites() {
             return;
         }
         let (_, line, _) = self.e.cg.sources().position(span.start);
-        if self.latent_line == Some(line) {
+        // The lines of the inlined calls that ended go.
+        let mut within = vec![self.scope];
+        while let Some(scope) = within.last().copied().flatten() {
+            within.push(self.body.inlined[scope as usize].parent);
+        }
+        self.latent_lines.retain(|(scope, _)| within.contains(scope));
+        if self.latent_lines.contains(&(self.scope, line)) {
             return;
         }
-        self.latent_line = Some(line);
+        self.latent_lines.retain(|&(scope, _)| scope != self.scope);
+        self.latent_lines.push((self.scope, line));
         let callee = match self.latent_callee {
             Some(callee) => callee,
             None => {
