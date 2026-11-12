@@ -69,36 +69,41 @@ fn declare(ty: &CType, name: &str) -> String {
         CType::Named(c) => format!("{c} {name}"),
         CType::Struct(c) if name.is_empty() => c.clone(),
         CType::Struct(c) => format!("{c} {name}"),
+        // A returned text, or a field, which its holder may change or free.
+        CType::Text => format!("char *{name}"),
         CType::Pointer(inner) => declare(inner, &format!("*{name}")),
         CType::Array(inner, count) => declare(inner, &format!("{name}[{count}]")),
         CType::Function(parameters, result) => {
             let list = if parameters.is_empty() {
                 "void".to_string()
             } else {
-                parameters.iter().map(|p| declare(p, "")).collect::<Vec<_>>().join(", ")
+                parameters.iter().map(|p| parameter(p, "")).collect::<Vec<_>>().join(", ")
             };
             declare(result, &format!("(*{name})({list})"))
         }
     }
 }
 
-/// The parameters of a published function: a `ffi.CString` is `const char *`,
-/// as the function reads the text and changes none of it.
 fn params(params: &[(String, CType)]) -> String {
     if params.is_empty() {
         return "void".into();
     }
-    let text = CType::Pointer(Box::new(CType::Named("char")));
-    let param = |(name, ty): &(String, CType)| match ty {
-        ty if *ty == text => format!("const char *{name}"),
+    params.iter().map(|(name, ty)| parameter(ty, name)).collect::<Vec<_>>().join(", ")
+}
+
+/// A parameter of a function or a callback: a `ffi.CString` is
+/// `const char *`, as what takes it reads the text and changes none of it.
+fn parameter(ty: &CType, name: &str) -> String {
+    match ty {
+        CType::Text => format!("const char *{name}"),
         ty => declare(ty, name),
-    };
-    params.iter().map(param).collect::<Vec<_>>().join(", ")
+    }
 }
 
 fn mentions(ty: &CType, c: &str) -> bool {
     match ty {
         CType::Named(name) => *name == c,
+        CType::Text => false,
         CType::Struct(_) => false,
         CType::Pointer(inner) | CType::Array(inner, _) => mentions(inner, c),
         CType::Function(params, result) => params.iter().chain([&**result]).any(|p| mentions(p, c)),

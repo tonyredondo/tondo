@@ -178,6 +178,9 @@ pub struct CStruct {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CType {
     Named(&'static str),
+    /// An `ffi.CString`: `char *`, and `const char *` where a function or
+    /// a callback takes it, as it only reads it.
+    Text,
     /// An `extern type`, by name.
     Struct(String),
     Pointer(Box<CType>),

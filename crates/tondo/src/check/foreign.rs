@@ -79,7 +79,7 @@ impl<'a> Checker<'a> {
         use crate::types::{FloatTy, IntTy};
         use hir::CType;
         if ty == self.c_string {
-            return CType::Pointer(Box::new(CType::Named("char")));
+            return CType::Text;
         }
         let repr = self.types.repr(ty);
         let kind = self.types.kind(repr).clone();
@@ -157,7 +157,7 @@ impl<'a> Checker<'a> {
     pub(super) fn c_structs(&self) -> Vec<hir::CStruct> {
         fn reach(this: &Checker, ty: &hir::CType, seen: &mut HashSet<String>, out: &mut Vec<hir::CStruct>) {
             match ty {
-                hir::CType::Named(_) => {}
+                hir::CType::Named(_) | hir::CType::Text => {}
                 hir::CType::Pointer(inner) | hir::CType::Array(inner, _) => reach(this, inner, seen, out),
                 hir::CType::Function(params, result) => {
                     for ty in params.iter().chain([&**result]) {

@@ -44,6 +44,30 @@ pub extern fn words_hello(name: ffi.CString) {
     console.println("hello, {unsafe { ffi.fromCString(name) }}")
 }
 
+/// Writes `text` with dashes for its spaces into `out`, which holds
+/// `capacity` bytes, and gives its length.
+pub extern fn words_dashed(text: ffi.CString, out: Pointer[ffi.CChar], capacity: ffi.CSize): ffi.CSize {
+    let bytes = unsafe { ffi.fromCString(text) }.replace(" ", "-").bytes()
+    let room = Int(capacity).unwrapOr(0)
+    if room > 0 {
+        let fits = bytes.length().min(room - 1)
+        unsafe {
+            for index in 0..fits {
+                out.offset(index).write(bytes[index])
+            }
+            out.offset(fits).write(Byte(0u8))
+        }
+    }
+    UInt64(bytes.length()).unwrapOr(0u64)
+}
+
+/// Calls `each` with each word of `text`.
+pub extern fn words_split(text: ffi.CString, each: extern fn(ffi.CString): Unit) {
+    for word in unsafe { ffi.fromCString(text) }.split(" ") {
+        unsafe { each(word) }
+    }
+}
+
 fn total(n: Int64): Int64 {
     time.sleep(time.milliseconds(2))
     var sum = 0
@@ -60,6 +84,8 @@ const PROGRAM: &str = r#"#include <pthread.h>
 
 static void show(int i) { printf("visit %d\n", i); }
 
+static void word(const char *w) { printf("word %s\n", w); }
+
 static void *work(void *arg) {
     long id = (long)arg;
     size_t words = 0;
@@ -75,6 +101,9 @@ int main(void) {
     printf("distance %g\n", words_distance(a, b));
     words_each(2, show);
     words_hello("C");
+    char dashed[16];
+    printf("dashed %zu %s\n", words_dashed("a b c", dashed, sizeof dashed), dashed);
+    words_split("x y", word);
     pthread_t threads[4];
     for (long i = 0; i < 4; i++) pthread_create(&threads[i], NULL, work, (void *)i);
     int right = 0;
@@ -111,6 +140,9 @@ fn a_c_program_calls_a_library() {
         "/** The words of `text`, separated by spaces. */\nsize_t words_count(const char *text);",
         "double words_distance(Point a, Point b);",
         "void words_each(int count, void (*visit)(int));",
+        // A text it reads is const, and a buffer it writes is not.
+        "size_t words_dashed(const char *text, char *out, size_t capacity);",
+        "void words_split(const char *text, void (*each)(const char *));",
     ] {
         assert!(header.contains(declaration), "{declaration} in\n{header}");
     }
@@ -121,7 +153,7 @@ fn a_c_program_calls_a_library() {
     {
         let line = said.lines().find_map(|l| l.strip_prefix(prefix)).unwrap();
         let compiled = Command::new("cc")
-            .args(["app.c", "-Iout", "-o", program])
+            .args(["app.c", "-Iout", "-Werror=incompatible-pointer-types", "-o", program])
             .args(line.split(' '))
             .current_dir(&dir)
             .output()
@@ -130,7 +162,7 @@ fn a_c_program_calls_a_library() {
         let run = Command::new(dir.join(program)).output().unwrap();
         assert_eq!(
             String::from_utf8_lossy(&run.stdout),
-            "count 3\ndistance 5\nvisit 1\nvisit 2\nhello, C\nthreads 4\n",
+            "count 3\ndistance 5\nvisit 1\nvisit 2\nhello, C\ndashed 5 a-b-c\nword x\nword y\nthreads 4\n",
             "{program}: {}",
             String::from_utf8_lossy(&run.stderr)
         );
