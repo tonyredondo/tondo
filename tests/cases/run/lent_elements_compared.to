@@ -1,0 +1,33 @@
+// An element of an array that a loop compares and adds, reading its
+// fields and keeping none, is lent: its array holds it, and the loop counts
+// no reference to it. An operator reads its operands and keeps none.
+
+import std.console
+
+type Reading = {
+    sensor: String
+    value: Float
+}
+
+fn mean(readings: Array[Reading], sensor: String): Float {
+    var total = 0.0
+    var count = 0
+    for reading in readings {
+        if reading.sensor == sensor {
+            total += reading.value
+            count += 1
+        }
+    }
+    if count == 0 { 0.0 } else { total / Float(count) }
+}
+
+fn main() {
+    var readings: Array[Reading] = []
+    for n in 0..10 {
+        readings.push(Reading { sensor: if n % 2 == 0 { "a" } else { "b" }, value: Float(n) })
+    }
+    console.println("{mean(readings, "a")} {mean(readings, "b")} {mean(readings, "c")}")
+}
+
+// expect-stdout: 4.0 5.0 0.0
+// expect-optimization: 15:9 lent its array holds it

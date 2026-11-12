@@ -122,6 +122,9 @@ fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                             uses[target.local.0 as usize].copy_of = Some(source.clone());
                         }
                         Rvalue::Length(_) => {}
+                        // An operator reads its operands and keeps none of
+                        // them, as `reading.sensor == sensor` does.
+                        Rvalue::Binary(..) | Rvalue::Exact(..) | Rvalue::Unary(..) => {}
                         // An interpolation reads its values and keeps none,
                         // but the text it takes to append to.
                         Rvalue::Concat(pieces) => {
