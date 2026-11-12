@@ -791,8 +791,11 @@ impl Formatter<'_> {
     /// differently.
     fn optional(&mut self, inner: &TypeExpr) -> Doc {
         let doc = self.ty(inner);
-        let wrap = matches!(&inner.kind, TypeKind::Union(_) | TypeKind::Result { .. } | TypeKind::Fn { .. })
-            || matches!(&inner.kind, TypeKind::Path { segments, args } if path_text(segments) == "Result" && args.len() == 2);
+        // `(T?)?`: `T??` is no type (9.7).
+        let wrap = matches!(
+            &inner.kind,
+            TypeKind::Union(_) | TypeKind::Result { .. } | TypeKind::Fn { .. } | TypeKind::Optional(_)
+        ) || matches!(&inner.kind, TypeKind::Path { segments, args } if path_text(segments) == "Result" && args.len() == 2);
         if wrap { concat(vec![text("("), doc, text(")?")]) } else { concat(vec![doc, text("?")]) }
     }
 
@@ -1606,6 +1609,7 @@ mod tests {
             ),
             ("let inverse=- -value\nlet nested=value? ?\n", "let inverse = -(-value)\nlet nested = (value?)?\n"),
             ("type Nested=(T!E)!F\n", "type Nested = (T ! E) ! F\n"),
+            ("type Twice=(Int?)?\n", "type Twice = (Int?)?\n"),
             (
                 "enum E {\n/// One.\nPair(Int, Int)\n/// Two.\nPlain\n}\n",
                 "enum E {\n    /// One.\n    Pair(Int, Int)\n    /// Two.\n    Plain\n}\n",
