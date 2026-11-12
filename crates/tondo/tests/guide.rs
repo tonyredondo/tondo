@@ -19,13 +19,18 @@ fn examples(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Every example builds, as its fence says, and the tests of the guide's
+/// topics run and pass: one that compiled broke what it was to show.
 #[test]
-fn examples_compile() {
+fn examples_compile_and_the_guides_tests_pass() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guide");
     let _ = std::fs::remove_dir_all(&dir);
     let mut jobs = Vec::new();
-    let readme = ("readme", include_str!("../../../README.md"));
-    for (topic, text) in tondo::guide::TOPICS.iter().copied().chain([readme]) {
+    // The guide's tests run, and pass; those of the README may show a
+    // failure on purpose, and only build.
+    let readme = ("readme", include_str!("../../../README.md"), false);
+    let topics = tondo::guide::TOPICS.iter().map(|&(topic, text)| (topic, text, true));
+    for (topic, text, run) in topics.chain([readme]) {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();
@@ -40,7 +45,7 @@ fn examples_compile() {
                 }
                 false => std::fs::write(case.join("main.to"), code.replace("<port>", "8080")).unwrap(),
             }
-            jobs.push((format!("{topic} example {index} ({info})"), info, case, code));
+            jobs.push((format!("{topic} example {index} ({info})"), info, case, code, run));
         }
     }
     let failures: Vec<String> = std::thread::scope(|scope| {
@@ -49,10 +54,13 @@ fn examples_compile() {
             .map(|chunk| {
                 scope.spawn(move || {
                     let mut failures = Vec::new();
-                    for (name, info, case, code) in chunk {
+                    for (name, info, case, code, run) in chunk {
                         // A test needs a project, whose tests `--list` builds.
-                        let checks: &[&str] =
-                            if info == "tondo test" { &["test", "--list"] } else { &["check", "main.to"] };
+                        let checks: &[&str] = match info == "tondo test" {
+                            true if *run => &["test"],
+                            true => &["test", "--list"],
+                            false => &["check", "main.to"],
+                        };
                         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
                             .args(checks)
                             .args(info.ends_with(" library").then_some("--library"))

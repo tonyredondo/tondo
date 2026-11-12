@@ -37,6 +37,7 @@ type Gate = {
 
 fn apply(gate: Gate, event: Event): Gate ! String {
     match event {
+        Event.Insert if gate.open => fail "already open"
         Event.Insert => gate with { paid: true }
         Event.Turn if gate.paid => gate with { open: true, paid: false }
         Event.Turn => fail "not paid"
