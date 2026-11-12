@@ -24,7 +24,9 @@ test answersOverTcp {
     assert(ask(client, "KEYS")? == "KEYS name hits")
     assert(ask(client, "FLY away")? == "ERROR unknown command `FLY`")
     assert(ask(client, "QUIT")? == "BYE")
-    assert(ask(client, "GET name")? == "(closed)")
+    // The server has closed its end. Reading says so; writing to it first
+    // would be a race, which some systems answer with a reset.
+    assert(client.readLine(timeout: time.seconds(5))? == none)
 }
 
 test connectionsShareTheStore {
