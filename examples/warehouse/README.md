@@ -95,6 +95,27 @@ step of the build to forget: its messages are records (`stock.Item`), its
 service is a trait (`stock.StockService`), and it comes with a client
 (`stock.StockServiceClient`) and a function that makes a server's service of
 a value that implements the trait (`stock.stockService(value)`).
+`tondo api` shows the module the compiler made of the file, as it shows any
+other:
+
+```text
+$ tondo api warehouse.api.stock
+...
+/// The calls of the service `warehouse.v1.StockService`, which a server implements.
+pub trait StockService {
+    fn get(self, request: GetItem): Item ! grpc.Status
+
+    fn reserve(self, request: Units): Item ! grpc.Status
+
+    fn restock(self, input: grpc.Stream[Units]): Restocked ! grpc.Status
+
+    fn watch(self, request: WatchItems, out: Sender[Change]): !grpc.Status
+}
+
+/// The service `warehouse.v1.StockService` of `implementation`, which `app.grpc` serves.
+pub fn stockService[T: StockService + Send + Share](implementation: T): grpc.Service
+...
+```
 
 **A call is a method.** In [`shelves.to`](src/shelves/shelves.to), each
 `rpc` of the service is a method of `impl stock.StockService for Shelves`,
