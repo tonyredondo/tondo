@@ -1908,7 +1908,7 @@ pub(super) fn watched(table: &Table, state: &mut State, task: u64, frame: usize,
                     .get_or_insert(format!("watch {}: {} changed from {before} to {after}{at}", watch.id, watch.text));
             }
         }
-        // A frame in a frame below which the task runs now returned.
+        // The frames below the one the task runs in now returned.
         watch.last.retain(|&(outer, _)| outer > frame);
         watch.last.push((frame, site));
     }
