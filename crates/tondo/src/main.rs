@@ -2455,7 +2455,11 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     let render = |paths: &[PathBuf]| -> Result<String, String> {
         let mut out = String::new();
         for path in paths {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            // A `.proto` file shows as the Tondo a build makes of it.
+            let text = match path.extension().is_some_and(|e| e == "proto") {
+                true => tondo::driver::proto_tondo(path).unwrap_or_default(),
+                false => std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?,
+            };
             out.push_str(&tondo::api::render(&text, private));
         }
         Ok(out)

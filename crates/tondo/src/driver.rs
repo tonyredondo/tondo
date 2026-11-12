@@ -916,6 +916,30 @@ fn parse_files<'p>(
 
 /// Reads a file into `sources`, or the text an editor has of it: the file,
 /// unless it cannot be parsed, which `diags` says.
+/// The Tondo a build makes of the `.proto` file at `path`, read with the
+/// other `.proto` files of its package, which it may import: what `tondo
+/// api` shows of the module it gives.
+pub fn proto_tondo(path: &Path) -> Option<String> {
+    let path = path.canonicalize().ok()?;
+    let dir = path.ancestors().find(|dir| dir.join("tondo.toml").is_file())?;
+    let package = deps::resolve(dir, None).ok()?.into_iter().next()?;
+    let (files, _) = project::sources(&package.dir, &package.name, Some(system())).ok()?;
+    let protos: Vec<_> = files.iter().filter(|file| file.path.extension().is_some_and(|e| e == "proto")).collect();
+    let module = protos.iter().find(|file| file.path.canonicalize().ok().as_deref() == Some(&path))?.module.clone();
+    let source_root = if package.dir.join("src").is_dir() { package.dir.join("src") } else { package.dir.clone() };
+    let (mut sources, mut diags) = (SourceMap::default(), Diagnostics::default());
+    let mut read = Vec::new();
+    for file in protos {
+        let Ok(Some(id)) = load(&file.path, &mut sources, &mut diags) else { continue };
+        let relative = file.path.strip_prefix(&package.dir).unwrap_or(&file.path);
+        sources.set_identity(id, relative.display().to_string(), file.module.join("."));
+        let from_root = file.path.strip_prefix(&source_root).unwrap_or(&file.path);
+        let relative = from_root.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+        read.push(crate::proto::ProtoSource { module: file.module.clone(), source: id, relative });
+    }
+    crate::proto::translate(&read, &sources, &mut diags).into_iter().find(|(m, _)| *m == module).map(|(_, text)| text)
+}
+
 fn load(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result<Option<usize>, String> {
     let open = OPEN.with(|o| {
         let open = o.borrow();

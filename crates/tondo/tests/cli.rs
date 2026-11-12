@@ -232,6 +232,31 @@ fn manages_projects() {
     assert!(!cache.join("tondo/run").exists() && cache.join("tondo/deps/kept").exists());
 }
 
+/// `tondo api` shows a module a `.proto` file gives as the Tondo a build
+/// makes of it, which `--search` finds too: its messages, its service's
+/// trait, the function that serves it and its client.
+#[test]
+fn the_api_of_a_module_of_a_proto_file() {
+    let proto: &[u8] =
+        b"syntax = \"proto3\";\npackage shop;\n\nmessage Item {\n  string name = 1;\n  int64 count = 2;\n}\n\n\
+        service StockService {\n  rpc Get(Item) returns (Item);\n}\n";
+    let main: &[u8] = b"import shop.api.stock\n\nfn main() {\n    _ = stock.Item { name: \"a\", count: 1 }\n}\n";
+    let dir = project_at(
+        "api-proto",
+        &[("tondo.toml", b"[package]\nname = \"shop\"\n"), ("src/shop.to", main), ("src/api/stock.proto", proto)],
+    );
+    let (shown, stderr, status) = tondo(&dir, &["api", "shop.api.stock"]);
+    assert_eq!(status, 0, "{stderr}");
+    for declared in
+        ["pub type Item = {", "pub trait StockService {", "pub fn stockService[", "pub type StockServiceClient"]
+    {
+        assert!(shown.contains(declared), "{declared} in\n{shown}");
+    }
+    let (found, _) = json(&dir, &["api", "--search", "StockService", "--json"]);
+    let names: Vec<&str> = found["matches"].as_array().unwrap().iter().filter_map(|m| m["name"].as_str()).collect();
+    assert!(names.contains(&"StockService") && names.contains(&"stockService"), "{found}");
+}
+
 /// `tondo api` shows one declaration and what belongs to it, and finds
 /// declarations by their names and documentation.
 #[test]
